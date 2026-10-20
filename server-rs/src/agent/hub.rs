@@ -118,7 +118,16 @@ pub enum LoginError {
     /// `removed`, then close 4403). Only availability rests on believing it:
     /// a hub that lies can refuse the machine anyway.
     Removed(String),
-    /// Anything else: the network, a bad signature, a hub that is down.
+    /// The hub answered the sign-in with any other refusal (`error` with its
+    /// `code`: `denied` for a key it does not take, `rotated` for one an
+    /// identity renewal retired, …).
+    Refused {
+        /// The `error`'s code.
+        code: String,
+        /// The hub's words.
+        message: String,
+    },
+    /// Anything else: the network, a hub that is down or says nothing.
     Other(String),
 }
 
@@ -126,6 +135,7 @@ impl std::fmt::Display for LoginError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LoginError::Removed(message) => write!(f, "the hub refused the sign-in: this device was removed ({message})"),
+            LoginError::Refused { message, .. } => write!(f, "the hub refused the sign-in: {message:?}"),
             LoginError::Other(message) => f.write_str(message),
         }
     }
@@ -138,14 +148,26 @@ impl From<String> for LoginError {
 }
 
 /// What a refusal of the sign-in says: [`LoginError::Removed`] for the hub's
-/// `removed`, else the hub's words.
+/// `removed`, [`LoginError::Refused`] with its code for any other `error`,
+/// else the hub's words.
 pub fn refusal(answer: &Value) -> LoginError {
     let message = answer["message"].as_str().unwrap_or_default().to_string();
     if answer["t"] == "error" && answer["code"] == "removed" {
         LoginError::Removed(message)
+    } else if answer["t"] == "error" {
+        LoginError::Refused {
+            code: answer["code"].as_str().unwrap_or_default().to_string(),
+            message,
+        }
     } else {
         LoginError::Other(format!("the hub refused the sign-in: {}", answer["message"]))
     }
+}
+
+/// Whether the hub's `welcome` offers `feature` (a hub from before features
+/// offers none).
+pub fn offers(welcome: &Value, feature: &str) -> bool {
+    welcome["features"].as_array().is_some_and(|f| f.iter().any(|v| v == feature))
 }
 
 /// Sign in as an enrolled machine; `Ok` once the hub said `welcome`.
@@ -208,7 +230,19 @@ mod tests {
         let removed = json!({"t": "error", "code": "removed", "message": "this device was removed from the account"});
         assert!(matches!(refusal(&removed), LoginError::Removed(_)));
         let denied = json!({"t": "error", "code": "denied", "message": "sign-in refused"});
-        assert!(matches!(refusal(&denied), LoginError::Other(m) if m.contains("sign-in refused")));
+        assert!(matches!(refusal(&denied), LoginError::Refused { code, message } if code == "denied" && message == "sign-in refused"));
+        assert!(refusal(&denied).to_string().contains("sign-in refused"));
+        let rotated = json!({"t": "error", "code": "rotated", "message": "this device's identity key was renewed"});
+        assert!(matches!(refusal(&rotated), LoginError::Refused { code, .. } if code == "rotated"));
+        assert!(matches!(refusal(&json!({"t": "bye"})), LoginError::Other(_)));
+    }
+
+    #[test]
+    fn a_welcome_offers_what_its_features_name() {
+        assert!(offers(&json!({"t": "welcome", "features": ["rotate/1"]}), "rotate/1"));
+        assert!(!offers(&json!({"t": "welcome", "features": []}), "rotate/1"));
+        assert!(!offers(&json!({"t": "welcome"}), "rotate/1"), "a hub from before features");
+        assert!(!offers(&json!({"t": "welcome", "features": "rotate/1"}), "rotate/1"));
     }
 
     #[test]

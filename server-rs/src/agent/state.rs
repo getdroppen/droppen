@@ -86,6 +86,33 @@ struct StateFile {
     /// When (this agent's clock) the record became complete.
     #[serde(default)]
     controllers_from_ms: Option<u64>,
+    /// This machine's identity renewals as it saw them ([`RotationNote`]).
+    #[serde(default)]
+    rotation: RotationNote,
+}
+
+/// What this machine remembers of renewing its own identity key
+/// (`docs/host-identity-rotation.md` §3.5): what the local settings show.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotationNote {
+    /// When it last took a renewed key (its own clock).
+    #[serde(default)]
+    pub renewed_ms: Option<u64>,
+    /// The fingerprint of the key it renewed away from then.
+    #[serde(default)]
+    pub previous_fingerprint: Option<String>,
+    /// When its own verified chain renewed this machine's identity to keys it
+    /// does not hold (`foreign_rotation`): it holds only a retired key.
+    #[serde(default)]
+    pub foreign_ms: Option<u64>,
+    /// Why (`renewed_elsewhere`).
+    #[serde(default)]
+    pub foreign_reason: Option<String>,
+    /// When the hub last refused the key in use as `rotated` with no chain
+    /// to show for it (not evidence: it waits to sync, and retries).
+    #[serde(default)]
+    pub refused_ms: Option<u64>,
 }
 
 /// What [`AgentState::absorb`] did with a batch of chain entries.
@@ -218,6 +245,8 @@ pub struct AgentState {
     /// When this machine learnt it was removed from the account (see
     /// [`AgentState::removed`]).
     pub removed_ms: Option<u64>,
+    /// Its identity renewals ([`RotationNote`]).
+    pub rotation: RotationNote,
     /// Every device whose handshake it accepted → when it first did.
     controllers: BTreeMap<String, u64>,
     /// The chain seq from which `controllers` is complete ([`Controllers`]),
@@ -271,6 +300,7 @@ impl AgentState {
             alarms: Vec::new(),
             changes: Vec::new(),
             removed_ms: None,
+            rotation: RotationNote::default(),
             controllers: BTreeMap::new(),
             // Nothing can have been accepted before enrollment: the record is whole.
             controllers_from: 0,
@@ -654,6 +684,7 @@ impl AgentState {
             alarms: file.alarms,
             changes: file.changes,
             removed_ms: file.removed_ms,
+            rotation: file.rotation,
             controllers: file.controllers,
             controllers_from,
             controllers_from_ms,
@@ -691,6 +722,7 @@ impl AgentState {
             controllers: self.controllers.clone(),
             controllers_from: Some(self.controllers_from),
             controllers_from_ms: Some(self.controllers_from_ms),
+            rotation: self.rotation.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
         super::write_private(&state_path(paths), &bytes)

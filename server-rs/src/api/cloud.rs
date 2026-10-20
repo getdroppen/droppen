@@ -10,6 +10,7 @@
 //! | `POST /api/cloud/link/cancel {attempt}` | drop the attempt (and an enrollment it started that no device completed) | the same |
 //! | `POST /api/cloud/aggregator {enabled}` | turn the aggregator off (deleting the other devices' keys) or on again | the owner |
 //! | `POST /api/cloud/unlink {deleteCopies}` | disconnect this computer: stop the link, delete everything under `agent/` (and the copy on the hub) | the owner |
+//! | `POST /api/cloud/re-enroll-fresh` | only once its identity key was replaced elsewhere (its own chain says so): archive the seed, forget the enrollment, make a fresh seed (`{fingerprint, state: "unenrolled"}`) | the owner |
 //! | `PUT /api/cloud/access {user, remote}` | which local accounts may see other machines | the owner |
 //! | `POST /api/cloud/claim` | "I added this device": become the owner of an ownerless link | whoever manages it |
 //! | `GET /api/agg/ws` | the local gateway: other devices' copies (S1-7, [`crate::aggregator::gateway`]) | a local account that may see other devices ([`remote_viewer`]) |
@@ -644,6 +645,48 @@ pub struct CloudLinkHealth {
     pub alarms: Vec<String>,
     /// Account changes this machine saw (newest last).
     pub changes: Vec<String>,
+    /// Renewing this computer's identity key.
+    pub rotation: CloudRotation,
+}
+
+/// Renewing this computer's identity key (`docs/host-identity-rotation.md`
+/// §3.5, §3.7): what the local settings show.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudRotation {
+    /// `idle`; `staged` (a new key waits for the renewal to be written);
+    /// `renewed` (it took a renewed key within the last day); `refused` (the
+    /// hub refuses its key as renewed but showed no renewal: it retries,
+    /// nothing else changes); `foreign` (its identity key was replaced
+    /// elsewhere — its own chain gives its id keys it does not hold, for
+    /// example after restoring a backup made before a renewal: the link
+    /// stopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new
+    /// identity).
+    pub state: String,
+    /// For a renewal confirmed on this computer: the code to type on the
+    /// admin device (`XXXX-XXXX`), for ten minutes.
+    pub code: Option<String>,
+    /// Until when (ms) the code is shown.
+    pub code_expires_ms: Option<u64>,
+    /// When (ms) it took the renewed key.
+    pub renewed_ms: Option<u64>,
+    /// Its fingerprint before (8 groups of 4 hex digits).
+    pub previous_fingerprint: Option<String>,
+    /// Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`.
+    pub reason: Option<String>,
+}
+
+impl From<crate::agent::rotation::Status> for CloudRotation {
+    fn from(s: crate::agent::rotation::Status) -> Self {
+        Self {
+            state: s.state,
+            code: s.code,
+            code_expires_ms: s.code_expires_ms,
+            renewed_ms: s.renewed_ms,
+            previous_fingerprint: s.previous_fingerprint,
+            reason: s.reason,
+        }
+    }
 }
 
 /// One device that runs AI and accepts this computer's control, and the
@@ -943,6 +986,16 @@ pub struct UnlinkRequest {
     pub delete_copies: Option<bool>,
 }
 
+/// `POST /api/cloud/re-enroll-fresh`: this computer's new identity.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct ReEnrollFresh {
+    /// The new identity key's fingerprint (8 groups of 4 hex digits).
+    pub fingerprint: String,
+    /// `unenrolled`: it waits for a registration code.
+    pub state: String,
+}
+
 /// `PUT /api/cloud/access`.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -1101,6 +1154,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
             removed_ms: agent.removed_ms,
             alarms: agent.alarms.iter().map(|a| a.what.clone()).collect(),
             changes: agent.changes.iter().map(|a| a.what.clone()).collect(),
+            rotation: agent.rotation.clone().into(),
         }),
         aggregator: {
             let control = cloud.control.control_status().filter(|c| c.running);
@@ -1189,6 +1243,11 @@ pub async fn post_link(
         .control
         .available()
         .map_err(|e| refusal(StatusCode::SERVICE_UNAVAILABLE, "unavailable", &e.to_string()))?;
+    // A seed a renewal retired never signs up again: this sign-in is then a
+    // new device, under a fresh identity (`docs/host-identity-rotation.md` §3.8).
+    if cloud.control.renew_retired_seed().await.map_err(|e| ApiError::internal(e.to_string()))? {
+        tracing::warn!(by = %user, "this computer's identity key was retired: signing in under a new identity");
+    }
     let agent = cloud.control.status();
     let enrolled = match agent.state {
         // The account removed it: a new sign-in is a new machine, with new keys.
@@ -1590,6 +1649,39 @@ pub async fn post_unlink(
     Ok(Json(status_for(&state, Some(&user)).await))
 }
 
+/// "Add this device again with a new identity" (`docs/host-identity-rotation.md`
+/// §3.8 「只剩退役钥时」): only while this computer's identity key was replaced
+/// elsewhere — its own verified chain gives its id keys it does not hold, for
+/// example after restoring a backup made before a renewal
+/// (`link.rotation.state` `foreign`; 409 `not_renewed_elsewhere` otherwise):
+/// it holds only a retired key, which nothing renews in place.
+/// Its seed is archived (`agent/machine-key.retired-<ms>.json`, never used
+/// again), the old enrollment forgotten as a disconnection forgets it, and a
+/// fresh seed made: the computer is signed in to Droppen again like a new
+/// one, with a registration code, under a new id.
+#[api(id = "cloud_re_enroll_fresh", group = "cloud", summary = "Add this computer again with a new identity")]
+pub async fn post_re_enroll_fresh(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<ReEnrollFresh>, ApiError> {
+    let user = local_user(&state, &who).await?;
+    require_manager(&state, &user).await?;
+    let cloud = &state.cloud;
+    if cloud.control.status().rotation.state != "foreign" {
+        return Err(refusal(
+            StatusCode::CONFLICT,
+            "not_renewed_elsewhere",
+            "this computer's identity key was not replaced elsewhere: renew it from an admin device, or disconnect it",
+        ));
+    }
+    let identity = cloud.control.re_enroll_fresh().await.map_err(|e| ApiError::internal(e.to_string()))?;
+    *cloud.attempt.lock().expect("attempt") = None;
+    cloud.forget_aggregator()?;
+    cloud.delete_file()?;
+    tracing::warn!(by = %user, "this computer starts again under a new identity; its old identity key was replaced elsewhere");
+    Ok(Json(ReEnrollFresh {
+        fingerprint: machine_fingerprint(&identity),
+        state: "unenrolled".into(),
+    }))
+}
+
 /// "I added this device": the caller becomes the owner of an ownerless link
 /// (enrolled from the command line, or its owner's local account is gone) —
 /// and so, alone at first, sees the other devices here (the user's decision
@@ -1684,6 +1776,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .post("/api/cloud/link/cancel", post_cancel)
         .post("/api/cloud/aggregator", post_aggregator)
         .post("/api/cloud/unlink", post_unlink)
+        .post("/api/cloud/re-enroll-fresh", post_re_enroll_fresh)
         .put("/api/cloud/access", put_access)
         .post("/api/cloud/claim", post_claim)
 }
@@ -1737,6 +1830,13 @@ pub fn describe(reg: &mut ExtraResponses) {
             "/api/cloud/unlink",
             502,
             "The copy on the hub could not be deleted (`hub_unreachable`)",
+        )
+        .describe("POST", "/api/cloud/re-enroll-fresh", 200, "The new identity's fingerprint; the computer waits for a registration code")
+        .error(
+            "POST",
+            "/api/cloud/re-enroll-fresh",
+            409,
+            "Local authentication is off, or this computer's identity key was not replaced elsewhere (`not_renewed_elsewhere`)",
         )
         .describe("PUT", "/api/cloud/access", 200, "The status after")
         .error(
@@ -1908,6 +2008,58 @@ mod tests {
         state.cloud.forget_pending_aggregator();
         assert!(!crate::aggregator::key_path(&state.cloud.paths).exists());
         assert!(dir.join("keys.json").exists());
+    }
+
+    /// Contract §9 (`docs/host-identity-rotation.md` §3.8 「只剩退役钥时」):
+    /// only a computer whose identity key was renewed elsewhere starts again
+    /// with a new identity — its seed archived, never used again, the
+    /// enrollment forgotten, a fresh seed — and is then signed in like a new one.
+    #[tokio::test]
+    async fn only_a_computer_renewed_elsewhere_starts_again_with_a_new_identity() {
+        let home = tempfile::tempdir().unwrap();
+        let state = crate::api::test_support::state(home.path()).await;
+        state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
+        let alice = || {
+            MaybeIdentity(Some(crate::auth::AuthIdentity {
+                username: "alice".into(),
+                token_sha256: None,
+            }))
+        };
+        let paths = state.cloud.paths.clone();
+        let old = state.cloud.control.identity().unwrap();
+        let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
+        st.save(&paths).unwrap();
+        let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
+        assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
+        assert_eq!(state.cloud.control.identity().unwrap().sign_public(), old.sign_public(), "nothing changed");
+        // Refused by the hub as renewed, without a chain to show for it: not
+        // evidence, nothing to start again for.
+        st.rotation.refused_ms = Some(6);
+        st.save(&paths).unwrap();
+        let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
+        assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
+        let shown = get_cloud(State(state.clone()), alice()).await.unwrap().0.link.unwrap().rotation;
+        assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("refused", Some("rotated")));
+        st.rotation.foreign_ms = Some(6);
+        st.rotation.foreign_reason = Some(crate::agent::rotation::FOREIGN_RENEWED_ELSEWHERE.into());
+        st.save(&paths).unwrap();
+        let before = get_cloud(State(state.clone()), alice()).await.unwrap().0;
+        let rotation = before.link.unwrap().rotation;
+        assert_eq!((rotation.state.as_str(), rotation.reason.as_deref()), ("foreign", Some("renewed_elsewhere")));
+        let fresh = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap().0;
+        assert_eq!(fresh.state, "unenrolled");
+        let new = state.cloud.control.identity().unwrap();
+        assert_ne!(new.sign_public(), old.sign_public(), "a fresh seed");
+        assert_eq!(fresh.fingerprint, machine_fingerprint(&new));
+        let archived: Vec<_> = std::fs::read_dir(paths.instance_dir().join("agent"))
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.starts_with("machine-key.retired-"))
+            .collect();
+        assert_eq!(archived.len(), 1, "the retired seed is archived: {archived:?}");
+        let after = get_cloud(State(state.clone()), alice()).await.unwrap().0;
+        assert_eq!(after.state, "none", "back at entering a registration code");
+        assert!(after.link.is_none());
     }
 
     fn created(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {

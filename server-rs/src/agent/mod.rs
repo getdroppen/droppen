@@ -55,6 +55,13 @@ pub const CHAIN_V3_FEATURE: &str = "chain/3";
 /// that are not admins (local-aggregator §5.4, [`bridge::refusal`]) and
 /// accepts control only as its chain's accept policy says.
 pub const POLICY_FEATURE: &str = "policy/1";
+/// What this agent declares once it renews its identity key on request
+/// (`docs/host-identity-rotation.md` §3.2, §5.6): `POST /rh/rotate`, the
+/// staging on its hub connection, the sign-in confirmation and the
+/// promotion ([`rotation`]). The hub takes a renewal entry only once every
+/// host declares it; the hub's own `welcome` offering it is what lets this
+/// agent send the rotation messages at all.
+pub const ROTATE_FEATURE: &str = "rotate/1";
 
 pub mod bridge;
 pub mod control;
@@ -63,6 +70,9 @@ pub mod enroll;
 pub mod hub;
 pub mod link;
 pub mod relays;
+pub mod rotation;
+#[cfg(test)]
+mod rotation_tests;
 pub mod state;
 pub mod streams;
 pub mod system;
@@ -169,6 +179,28 @@ struct KeyFile {
     seed: String,
 }
 
+/// A staged seed's file (`machine-key.next.json`): the [`KeyFile`] fields
+/// and the renewal it was made for (`docs/host-identity-rotation.md` §3.2).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NextKeyFile {
+    version: u32,
+    uuid: String,
+    /// Hex, 32 bytes.
+    seed: String,
+    /// The admin's request nonce, hex, 16 bytes.
+    nonce: String,
+    /// The chain view the proof was made against.
+    chain_seq: u64,
+    /// Its head (hex, 32 bytes): with the rest, what the high-assurance code
+    /// is computed from, also by `agent status` in another process.
+    chain_head: String,
+    /// 0 automatic, 1 confirmed on this device.
+    assurance: u8,
+    /// When it was staged (this agent's clock).
+    created_ms: u64,
+}
+
 /// A machine seed and the instance identity it belongs to.
 pub struct StoredSeed {
     /// The instance identity the seed was created for.
@@ -177,8 +209,41 @@ pub struct StoredSeed {
     pub seed: Zeroizing<[u8; 32]>,
 }
 
+/// A seed staged for an identity renewal: made on `POST /rh/rotate`, kept
+/// beside the current one until the chain names its keys
+/// ([`SeedStore::promote`]).
+pub struct StagedSeed {
+    /// The instance identity the seed was created for.
+    pub uuid: String,
+    /// The 32 random bytes the new keys expand from.
+    pub seed: Zeroizing<[u8; 32]>,
+    /// The admin's request nonce.
+    pub nonce: [u8; 16],
+    /// The chain view the proof was made against: entry `chain_seq`…
+    pub chain_seq: u64,
+    /// …whose hash is this.
+    pub chain_head: [u8; 32],
+    /// How the renewal is confirmed.
+    pub assurance: rh_proto::chain::Assurance,
+    /// When it was staged (this agent's clock).
+    pub created_ms: u64,
+}
+
+impl StagedSeed {
+    /// The keys it expands to.
+    pub fn identity(&self) -> MachineIdentity {
+        MachineIdentity::from_seed(&self.seed)
+    }
+}
+
 /// Where an agent keeps its machine seed. Tests use the file store under a
 /// temporary home; nothing here touches a real keychain.
+///
+/// An identity renewal (`docs/host-identity-rotation.md` §3.5) never writes
+/// over the seed in use: the new one is staged beside it ([`SeedStore::stage`])
+/// and takes its place in one atomic step ([`SeedStore::promote`]) only once
+/// the chain names its keys. A crash at any point leaves either the old seed
+/// alone, or the old seed and a staged one, or the new seed alone.
 pub trait SeedStore {
     /// Where, for a person reading the output.
     fn describe(&self) -> String;
@@ -186,6 +251,16 @@ pub trait SeedStore {
     fn load(&self) -> Result<Option<StoredSeed>, String>;
     /// Store a new seed; refuses to replace one.
     fn create(&self, seed: &StoredSeed) -> Result<(), String>;
+    /// Stage a seed for a renewal, replacing any staged before it; the seed
+    /// in use is not touched.
+    fn stage(&self, staged: &StagedSeed) -> Result<(), String>;
+    /// The staged seed, if there is one.
+    fn staged(&self) -> Result<Option<StagedSeed>, String>;
+    /// Make the staged seed the one in use, atomically: the old seed is gone
+    /// once this returns, and the staged one with it.
+    fn promote(&self) -> Result<(), String>;
+    /// Forget the staged seed (no-op when there is none).
+    fn discard_staged(&self) -> Result<(), String>;
 }
 
 /// The seed in a 0600 file in the instance directory.
@@ -202,6 +277,13 @@ impl FileSeedStore {
     /// A seed file somewhere else (the aggregator's device key).
     pub fn at(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    /// Where a staged seed waits: `machine-key.next.json` beside
+    /// `machine-key.json`.
+    pub fn next_path(&self) -> PathBuf {
+        let stem = self.path.file_stem().and_then(|s| s.to_str()).unwrap_or("machine-key");
+        self.path.with_file_name(format!("{stem}.next.json"))
     }
 }
 
@@ -240,6 +322,92 @@ impl SeedStore for FileSeedStore {
         );
         write_private(&self.path, &file)
     }
+
+    fn stage(&self, staged: &StagedSeed) -> Result<(), String> {
+        let file = Zeroizing::new(
+            serde_json::to_vec_pretty(&NextKeyFile {
+                version: 1,
+                uuid: staged.uuid.clone(),
+                seed: hub::hex(staged.seed.as_ref()),
+                nonce: hub::hex(&staged.nonce),
+                chain_seq: staged.chain_seq,
+                chain_head: hub::hex(&staged.chain_head),
+                assurance: staged.assurance.to_byte(),
+                created_ms: staged.created_ms,
+            })
+            .map_err(|e| e.to_string())?,
+        );
+        // Written whole beside the seed in use, then renamed into place: a
+        // half-written staged seed is never what the next run finds, and the
+        // seed in use is never touched.
+        write_private(&self.next_path(), &file)
+    }
+
+    fn staged(&self) -> Result<Option<StagedSeed>, String> {
+        let path = self.next_path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => Zeroizing::new(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        check_private(&path)?;
+        let file: NextKeyFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bad = |what: &str| format!("{}: {what}", path.display());
+        if file.version != 1 {
+            return Err(bad(&format!("unsupported key file version {}", file.version)));
+        }
+        let seed = decode_seed(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let nonce = link::unhex(&file.nonce)
+            .and_then(|n| <[u8; 16]>::try_from(n).ok())
+            .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
+        let chain_head = hub::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
+        let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
+        Ok(Some(StagedSeed {
+            uuid: file.uuid,
+            seed: Zeroizing::new(seed),
+            nonce,
+            chain_seq: file.chain_seq,
+            chain_head,
+            assurance,
+            created_ms: file.created_ms,
+        }))
+    }
+
+    fn promote(&self) -> Result<(), String> {
+        let next = self.next_path();
+        // Only a staged seed that reads as one (and is private) takes the place.
+        if self.staged()?.is_none() {
+            return Err(format!("{}: nothing staged", next.display()));
+        }
+        std::fs::rename(&next, &self.path).map_err(|e| format!("{} → {}: {e}", next.display(), self.path.display()))?;
+        sync_dir(&self.path);
+        Ok(())
+    }
+
+    fn discard_staged(&self) -> Result<(), String> {
+        let next = self.next_path();
+        match std::fs::remove_file(&next) {
+            Ok(()) => {
+                sync_dir(&next);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("{}: {e}", next.display())),
+        }
+    }
+}
+
+/// Flush the directory holding `path`, so a rename in it survives a crash
+/// (best effort: not every platform lets a directory be opened).
+fn sync_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(dir) {
+            let _ = dir.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Where this instance's machine identity lives.
@@ -253,7 +421,16 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
     let uuid = crate::identity::ensure(paths)
         .ok_or("cannot read or mint this instance's identity uuid")?
         .uuid;
-    load_or_create_in(&FileSeedStore::for_instance(paths), &uuid)
+    let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(paths), &uuid)?;
+    // A seed this device archived as retired (a crash, or a copy put back)
+    // is never used again (`docs/host-identity-rotation.md` §3.8).
+    if !created && rotation::archived(paths, &identity) {
+        return Err(format!(
+            "{} is an archived (retired) identity key and is never used again: add this device again under a new identity",
+            key_path(paths).display()
+        ));
+    }
+    Ok((identity, created))
 }
 
 /// The same against any [`SeedStore`], for instance identity `uuid`.
@@ -374,7 +551,7 @@ fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentState>, String>
 /// `agent status`: where this instance stands, from its files.
 fn print_status(paths: &Paths) {
     let status = match state::AgentState::load(paths) {
-        Ok(Some(st)) => control::AgentStatus::of(&st),
+        Ok(Some(st)) => control::AgentStatus::of_instance(paths, &st),
         Ok(None) => {
             println!("instance {}: not enrolled (a server on its own)", paths.instance());
             return;
@@ -410,11 +587,48 @@ fn print_status(paths: &Paths) {
     if let Ok((identity, _)) = load_or_create_existing(paths) {
         show("fingerprint", Some(control::machine_fingerprint(&identity)));
     }
+    for line in rotation_lines(&status.rotation, now_ms()) {
+        println!("  {line}");
+    }
     for alarm in &status.alarms {
         println!("  ALARM        {}", alarm.what);
     }
     for change in &status.changes {
         println!("  change       {}", change.what);
+    }
+}
+
+/// What `agent status` says about renewing this device's identity key: on a
+/// server without a screen, the code of a high-assurance renewal is read
+/// here (over SSH) and typed on the admin device.
+fn rotation_lines(rotation: &rotation::Status, now: u64) -> Vec<String> {
+    let minutes = |until: u64| until.saturating_sub(now).div_ceil(60_000);
+    match rotation.state.as_str() {
+        "staged" => match (&rotation.code, rotation.code_expires_ms) {
+            (Some(code), Some(until)) => vec![
+                "renewal      a new identity key is staged; the admin device asks you to confirm it".to_string(),
+                format!("CODE         {code}  (type it on the admin device; shown for {} more minute(s))", minutes(until)),
+            ],
+            _ => vec!["renewal      a new identity key is staged, waiting for the renewal to be written".to_string()],
+        },
+        "renewed" => vec![format!(
+            "renewal      identity key renewed{}",
+            rotation
+                .previous_fingerprint
+                .as_ref()
+                .map(|fp| format!(" (it was {fp})"))
+                .unwrap_or_default()
+        )],
+        "foreign" => vec![
+            format!("renewal      {}", rotation::REPLACED_ELSEWHERE),
+            "             It does not connect meanwhile. On an admin device remove this device's old id; then here: \
+             the local settings' Droppen section, \"add this device again with a new identity\""
+                .to_string(),
+        ],
+        "refused" => vec![
+            "renewal      the hub refuses this device's identity key as renewed but showed no renewal; it tries again".to_string(),
+        ],
+        _ => Vec::new(),
     }
 }
 
@@ -463,7 +677,14 @@ pub const ENROLL_PENDING_EXIT: u8 = 76;
 
 /// `agent enroll`, the code given either way.
 async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> Result<(), String> {
-    let (identity, created) = load_or_create(paths)?;
+    let before = FileSeedStore::for_instance(paths)
+        .load()
+        .ok()
+        .flatten()
+        .map(|s| MachineIdentity::from_seed(&s.seed).sign_public());
+    // A seed a renewal retired (or one archived) never signs up again.
+    let identity = rotation::identity_for_enrolling(paths)?;
+    let created = before != Some(identity.sign_public());
     describe(paths, &identity, created);
     println!(
         "enrolling with account key {} (the code's secret never leaves this device)",
@@ -747,6 +968,90 @@ mod tests {
         assert!(!paths.instance_dir().join("agent").exists());
         assert!(!crate::aggregator::dir(&paths).exists(), "the aggregator's key is gone");
         assert!(!cloud.exists(), "cloud.json is gone");
+    }
+
+    /// Host identity renewal (`docs/host-identity-rotation.md` §3.2, §3.5):
+    /// a staged seed waits beside the one in use — 0600, never over it, the
+    /// next staging replacing it — and takes its place in one rename. At
+    /// every point in between the store holds the old seed (alone, or with a
+    /// staged one) or the new one alone: what a crash leaves.
+    #[test]
+    fn a_staged_seed_never_touches_the_one_in_use_until_promoted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
+        let (old, _) = load_or_create(&paths).unwrap();
+        let store = FileSeedStore::for_instance(&paths);
+        assert_eq!(store.next_path(), key_path(&paths).with_file_name("machine-key.next.json"));
+        assert!(store.staged().unwrap().is_none());
+        assert!(store.promote().is_err(), "nothing staged, nothing promoted");
+        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let staged = |seed: u8, nonce: u8| StagedSeed {
+            uuid: uuid.clone(),
+            seed: Zeroizing::new([seed; 32]),
+            nonce: [nonce; 16],
+            chain_seq: 4,
+            chain_head: [5; 32],
+            assurance: rh_proto::chain::Assurance::OnDevice,
+            created_ms: 6,
+        };
+        store.stage(&staged(7, 1)).unwrap();
+        // Crash here: the old seed is the one in use.
+        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
+        let read = store.staged().unwrap().unwrap();
+        assert_eq!((read.nonce, read.chain_seq, read.chain_head, read.created_ms), ([1; 16], 4, [5; 32], 6));
+        assert_eq!(read.assurance, rh_proto::chain::Assurance::OnDevice);
+        assert_eq!(read.identity().sign_public(), MachineIdentity::from_seed(&[7; 32]).sign_public());
+        let file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.next_path()).unwrap()).unwrap();
+        for field in ["version", "uuid", "seed", "nonce", "chainSeq", "chainHead", "assurance", "createdMs"] {
+            assert!(file.get(field).is_some(), "{field}: {file}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(store.next_path()).unwrap().permissions().mode() & 0o777, 0o600);
+            std::fs::set_permissions(store.next_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(store.staged().err().is_some_and(|e| e.contains("readable by others")));
+            assert!(store.promote().is_err(), "a staged seed others can read is not taken");
+            std::fs::set_permissions(store.next_path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        // A new request replaces the staged seed, never the one in use.
+        store.stage(&staged(8, 2)).unwrap();
+        assert_eq!(store.staged().unwrap().unwrap().nonce, [2; 16]);
+        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
+        // Promoted: the new seed alone; a crash after it starts with it.
+        store.promote().unwrap();
+        assert!(store.staged().unwrap().is_none());
+        let (now, created) = load_or_create(&paths).unwrap();
+        assert!(!created);
+        assert_eq!(now.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public());
+        assert_eq!(store.load().unwrap().unwrap().uuid, uuid, "the same instance");
+        // Forgetting a staged seed leaves the one in use.
+        store.stage(&staged(9, 3)).unwrap();
+        store.discard_staged().unwrap();
+        store.discard_staged().unwrap();
+        assert!(store.staged().unwrap().is_none());
+        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), now.sign_public());
+    }
+
+    #[test]
+    fn the_status_shows_a_renewal_and_its_code() {
+        let code = rotation::Status {
+            state: "staged".into(),
+            code: Some("ABCD-EFGH".into()),
+            code_expires_ms: Some(10 * 60_000),
+            ..Default::default()
+        };
+        let lines = rotation_lines(&code, 0);
+        assert!(lines.iter().any(|l| l.contains("ABCD-EFGH") && l.contains("10 more minute")), "{lines:?}");
+        let foreign = rotation::Status {
+            state: "foreign".into(),
+            reason: Some(rotation::FOREIGN_RENEWED_ELSEWHERE.into()),
+            ..Default::default()
+        };
+        let said = rotation_lines(&foreign, 0).join("\n");
+        assert!(said.contains("replaced elsewhere") && said.contains("backup") && said.contains("new identity"), "{said}");
+        assert!(!said.to_lowercase().contains("impersonat") && !said.to_lowercase().contains("hijack"));
+        assert!(rotation_lines(&rotation::Status::default(), 0).is_empty());
     }
 
     #[test]
