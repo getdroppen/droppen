@@ -581,36 +581,50 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     if matches!(super::rotation::on_chain(shared), super::rotation::Verdict::Foreign { .. }) {
         return Err("this device's identity key was replaced elsewhere: not connecting".into());
     }
-    let staged = {
-        let st = shared.state.lock().expect("agent state");
-        super::rotation::staged_seed(&shared.paths, &st, &shared.identity, now_ms())
-    };
-    // A staged identity key signs in first (a renewal may have been committed
-    // while this device was away); a hub that does not take it yet gets the
-    // key in use.
-    let has_staged = staged.is_some();
-    let mut staged_key = staged.filter(|_| shared.rotation.try_new()).map(|s| s.identity());
-    // Whether the hub just refused the staged key on this attempt.
+    let stagings = super::rotation::staged_seeds(&shared.paths, &shared.identity);
+    // Staged keys sign in first — a renewal may have been committed while
+    // this device was away: the one its chain names, then the newest first.
+    // A hub that takes none of them gets the key in use — never once a
+    // renewal is committed (the hub keeps a retired key's sign-in as evidence
+    // against this device).
+    let has_staged = !stagings.is_empty();
+    let mut candidates: Vec<MachineIdentity> = Vec::new();
+    if shared.rotation.try_new() {
+        let named = {
+            let st = shared.state.lock().expect("agent state");
+            super::rotation::named(&st, &stagings).map(|s| s.nonce)
+        };
+        let mut order: Vec<&super::StagedSeed> = stagings.iter().collect();
+        order.sort_by_key(|s| (Some(s.nonce) != named, std::cmp::Reverse(s.created_ms)));
+        // Popped from the end: the first to try last in the list.
+        candidates = order.iter().rev().map(|s| s.identity()).collect();
+    }
+    let mut staged_key = candidates.pop();
+    // Whether the hub refused a staged key on this attempt.
     let mut staged_refused = false;
-    let (mut sink, mut source, nonce, welcome) = loop {
+    let (mut sink, mut source, nonce, welcome, since) = loop {
         let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
         let identity = staged_key.as_ref().unwrap_or(&shared.identity);
+        let since = now_ms();
         match hub::login(&mut sink, &mut source, identity, &account, &machine, &origin, nonce).await {
-            Ok(welcome) => break (sink, source, nonce, welcome),
-            Err(error @ (hub::LoginError::Removed(_) | hub::LoginError::Refused { .. })) if staged_key.is_some() && shared.rotation.committed() => {
-                // Committed (the chain names the staged key, or the hub
-                // closed with 4005): the key in use is retired and never
-                // signs in again — the hub would keep that as evidence
-                // against this device. The staged key tries again later.
-                let why = format!("the hub does not take the renewed identity key yet: {error}");
-                tracing::warn!("{why}; trying again later");
-                return Err(why);
-            }
-            Err(hub::LoginError::Removed(_) | hub::LoginError::Refused { .. }) if staged_key.is_some() => {
-                tracing::info!("the hub does not take the staged identity key (no renewal committed): signing in with the key in use");
+            Ok(welcome) => break (sink, source, nonce, welcome, since),
+            Err(error @ (hub::LoginError::Removed(_) | hub::LoginError::Refused { .. })) if staged_key.is_some() => {
+                staged_refused = true;
+                if let Some(next) = candidates.pop() {
+                    staged_key = Some(next);
+                    continue;
+                }
+                if shared.rotation.committed() {
+                    // Committed (the chain names a staged key, or the hub
+                    // closed with 4005): the key in use is retired and never
+                    // signs in again. The staged key tries again later.
+                    let why = format!("the hub does not take the renewed identity key yet: {error}");
+                    tracing::warn!("{why}; trying again later");
+                    return Err(why);
+                }
+                tracing::info!("the hub takes no staged identity key (no renewal committed): signing in with the key in use");
                 shared.rotation.set_try_new(false);
                 staged_key = None;
-                staged_refused = true;
             }
             Err(hub::LoginError::Refused { code, message }) if code == "rotated" => {
                 // Not evidence (contract §10): the hub's word that the key in
@@ -663,7 +677,9 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     };
     if staged_key.is_none() {
         // Signed in with the key in use: a hub that refused it as `rotated`
-        // before takes it again.
+        // before takes it again — and no staging that expired before now was
+        // committed, or ever will be.
+        super::rotation::drop_expired(&shared.paths, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
         if st.rotation.refused_ms.take().is_some() {
             tracing::info!("the hub takes this device's identity key again");
@@ -675,6 +691,7 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
         offered: hub::offers(&welcome, super::ROTATE_FEATURE),
         nonce,
         staged_key: staged_key.is_some(),
+        since_ms: since,
     };
     shared.rotation.connected(session);
     let mut features: Vec<&str> = vec![super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE];
@@ -688,7 +705,8 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     .await?;
     hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": from})).await?;
     if session.staged_key {
-        let result = staged_key_connection(shared, &mut source).await;
+        let signed_in = staged_key.expect("a staged key signed in");
+        let result = staged_key_connection(shared, &mut source, &signed_in).await;
         shared.rotation.disconnected();
         let _ = sink.close().await;
         return result;
@@ -865,16 +883,19 @@ async fn rotated_sync(shared: &Arc<Shared>, sink: &mut hub::Sink, source: &mut h
 /// [`super::rotation::NEW_KEY_GRACE`], the next connection signs in with the
 /// key in use again. Nothing else — no channel, no stream write, no relay —
 /// runs on it: the link still holds the old key.
-async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source) -> Result<(), String> {
-    tracing::info!("signed in to the hub with the staged identity key; reading the chain");
+async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source, signed_in: &MachineIdentity) -> Result<(), String> {
+    tracing::info!("signed in to the hub with a staged identity key; reading the chain");
     let promoted = || {
+        // The chain names exactly the key that signed in.
         let named = {
             let st = shared.state.lock().expect("agent state");
-            super::rotation::staged_seed(&shared.paths, &st, &shared.identity, now_ms())
-                .is_some_and(|s| super::rotation::verdict(&st, &shared.identity, Some(&s.identity())) == super::rotation::Verdict::Renewed)
+            st.chain
+                .as_ref()
+                .and_then(|c| c.device_record(&st.machine))
+                .is_some_and(|d| (d.info.sign_key, d.info.dh_key) == (signed_in.sign_public(), signed_in.dh_public()))
         };
         named
-            && match super::rotation::promote(shared) {
+            && match super::rotation::promote(shared, signed_in) {
                 Ok(()) => {
                     // The link restarts with the new key; this one is done.
                     shared.cancel.cancel();

@@ -8,10 +8,14 @@
 //!   host of its own chain with the keys it runs with, about a chain view
 //!   that is on that chain (409 `not_on_chain` otherwise: the page syncs and
 //!   asks again). A new seed is staged beside the one in use
-//!   (`machine-key.next.json`, [`super::SeedStore::stage`]); the seed in use
-//!   is never touched. The answer: both keys' signatures over the proof
-//!   ([`rh_proto::chain::host_rotate_body`]) and the DH confirmation MAC. The
-//!   same nonce gets the same answer; a new nonce replaces the staged seed.
+//!   (`machine-key.next-<nonce>.json`, [`super::SeedStore::stage`]); the seed
+//!   in use is never touched. The answer: both keys' signatures over the
+//!   proof ([`rh_proto::chain::host_rotate_body`]) and the DH confirmation
+//!   MAC. The same nonce gets the same answer. A new nonce adds a staging:
+//!   every staging the hub took is kept until it expires (at most
+//!   [`MAX_STAGINGS`]) — a page whose answer was lost asks again, and the hub
+//!   may still commit the first — while one it refused or never answered
+//!   makes room.
 //! - **The staging** — the proof goes to the hub as `rotation_stage` on this
 //!   agent's own hub connection, signed in with the old key, and only on a
 //!   connection whose `welcome` offered `rotate/1` (an older hub closes on a
@@ -23,17 +27,19 @@
 //!   key's `rotation_ack` over that connection's own challenge nonce, or
 //!   `rotation_unknown` when it does not hold the key asked about
 //!   ([`on_pending`]). Whoever else holds the old key cannot answer.
-//! - **Promotion** — once its chain renews this device to exactly the staged
-//!   keys (the entry, or a hub closing with 4005, which makes it sign in
-//!   with the new key and read the chain), it signs in with the new key,
-//!   sees the entry on the chain it verified, renames the staged seed into
-//!   place, and restarts its link — relays, control end and the streams'
-//!   writer with it — in this process ([`promote`]). AI sessions and
-//!   terminals do not notice. A lying hub cannot make it give up its seed:
-//!   only its own verified chain promotes.
-//! - **Crash safety** — at start, a staged seed is tried first; a hub that
-//!   does not take it yet (`denied`) gets the old one. Every step leaves one
-//!   of: the old seed; the old seed and a staged one; the new seed.
+//! - **Promotion** — once its chain renews this device to exactly one staged
+//!   seed's keys (the entry, or a hub closing with 4005, which makes it sign
+//!   in with the staged keys and read the chain), it signs in with that key,
+//!   sees the entry on the chain it verified, renames that staged seed into
+//!   place (the others go), and restarts its link — relays, control end and
+//!   the streams' writer with it — in this process ([`promote`]). AI
+//!   sessions and terminals do not notice. A lying hub cannot make it give
+//!   up its seed: only its own verified chain promotes.
+//! - **Crash safety** — at start, staged seeds sign in first (the one the
+//!   chain names, then the newest); a hub that takes none of them
+//!   (`denied`) gets the old one — never once a renewal is committed. Every
+//!   step leaves one of: the old seed (alone or with staged ones); the new
+//!   seed (at worst with staged ones never used).
 //! - **Replaced elsewhere** — a verified entry on its own chain renewing
 //!   this device's id to keys it did not stage: this computer came back from
 //!   a backup made before a renewal, or another copy of its old key renewed
@@ -70,14 +76,23 @@ use super::{FileSeedStore, SeedStore, StagedSeed};
 use crate::sessions::Paths;
 
 /// How long `POST /rh/rotate` waits for the hub to stage the proof.
+#[cfg(not(test))]
 pub const STAGE_WAIT: Duration = Duration::from_secs(10);
+/// [`STAGE_WAIT`] in tests.
+#[cfg(test)]
+pub const STAGE_WAIT: Duration = Duration::from_secs(1);
 /// How long a high-assurance renewal's code is shown (§3.7).
 pub const CODE_FOR_MS: u64 = 10 * 60 * 1000;
 /// How long `link.rotation` says a renewal just happened.
 pub const RENEWED_SHOWN_MS: u64 = 24 * 60 * 60 * 1000;
-/// A staged seed older than this that the chain does not name is forgotten:
-/// the hub expires a staging after a day.
-pub const STAGED_FOR_MS: u64 = 48 * 60 * 60 * 1000;
+/// How long a staging the hub took may still be committed: the hub expires
+/// it a day after it staged it ([`drop_expired`]).
+pub const STAGED_FOR_MS: u64 = 24 * 60 * 60 * 1000;
+/// At most this many stagings the hub took are kept at once; one more drops
+/// the oldest. A page whose answer was lost asks again with a new nonce, and
+/// the hub may still commit the earlier staging: each one it took stays
+/// until it expires, so that renewal is this device's, never "elsewhere".
+pub const MAX_STAGINGS: usize = 4;
 /// How long a connection signed in with the staged key waits for the chain
 /// to name it before it signs in with the old key again.
 #[cfg(not(test))]
@@ -107,12 +122,8 @@ pub struct HubSession {
     /// Whether it signed in with the staged key (it then only reads the
     /// chain, to promote).
     pub staged_key: bool,
-}
-
-/// A staging the hub took: what the same nonce is answered with again.
-struct Taken {
-    nonce: [u8; 16],
-    ready_ms: Option<u64>,
+    /// When it signed in (this agent's clock).
+    pub since_ms: u64,
 }
 
 #[derive(Default)]
@@ -120,7 +131,9 @@ struct Inner {
     session: Option<HubSession>,
     /// `rotation_stage`s waiting for the hub's answer, by nonce hash (hex).
     waiting: HashMap<String, oneshot::Sender<Value>>,
-    taken: Option<Taken>,
+    /// The stagings the hub took this run, by nonce, with the `ready_ms` it
+    /// said: what the same nonce is answered with again.
+    taken: HashMap<[u8; 16], Option<u64>>,
     /// Sign in with the staged key first: at start, after the chain renewed
     /// this device to it, after a 4005.
     try_new: bool,
@@ -280,10 +293,11 @@ pub enum Verdict {
 }
 
 /// [`Verdict`] of `st`'s chain for a device running with `current`, with
-/// `staged` staged (if any). Only a renewal makes a device's keys differ
-/// from what it holds (an enrollment with other keys is refused where it
-/// completes, [`super::link`]), so other keys after one are somebody else's.
-pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: Option<&MachineIdentity>) -> Verdict {
+/// `staged` staged. Only a renewal makes a device's keys differ from what it
+/// holds (an enrollment with other keys is refused where it completes,
+/// [`super::link`]), so keys after one that are neither `current` nor any
+/// staged seed's are somebody else's.
+pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: &[MachineIdentity]) -> Verdict {
     let Some(record) = st.chain.as_ref().and_then(|c| c.device_record(&st.machine)) else {
         return Verdict::Unchanged;
     };
@@ -291,7 +305,7 @@ pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: Option<&Machi
     if named == (current.sign_public(), current.dh_public()) {
         return Verdict::Unchanged;
     }
-    if staged.is_some_and(|s| named == (s.sign_public(), s.dh_public())) {
+    if staged.iter().any(|s| named == (s.sign_public(), s.dh_public())) {
         return Verdict::Renewed;
     }
     match record.rotated_seq {
@@ -301,6 +315,15 @@ pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: Option<&Machi
         },
         None => Verdict::Unchanged,
     }
+}
+
+/// Of `stagings`, the one `st`'s chain names for this device, if any.
+pub fn named<'a>(st: &AgentState, stagings: &'a [StagedSeed]) -> Option<&'a StagedSeed> {
+    let record = st.chain.as_ref()?.device_record(&st.machine)?;
+    stagings.iter().find(|s| {
+        let k = s.identity();
+        (record.info.sign_key, record.info.dh_key) == (k.sign_public(), k.dh_public())
+    })
 }
 
 /// Why this device holds only a retired identity key (`link.rotation.reason`
@@ -318,46 +341,59 @@ pub const REPLACED_ELSEWHERE: &str = "This device's identity key was replaced el
      backup made before a renewal, or another copy of its old key renewed it). To keep using it here, add it again under a \
      new identity.";
 
-/// The staged seed as this device may use it: the same instance's, its keys
-/// not the ones in use, and either younger than [`STAGED_FOR_MS`] or named
-/// by the chain (a device off for days after a renewal still takes it). One
-/// past its time is forgotten here.
-pub(super) fn staged_seed(paths: &Paths, st: &AgentState, current: &MachineIdentity, now: u64) -> Option<StagedSeed> {
+/// The staged seeds this device may use, oldest first: this instance's, and
+/// not the key in use (any other is forgotten here). Whether one expired is
+/// judged only where that is safe ([`drop_expired`], [`rotate`]): a renewal
+/// committed while this device was away may name any staging the hub took.
+pub(super) fn staged_seeds(paths: &Paths, current: &MachineIdentity) -> Vec<StagedSeed> {
     let store = FileSeedStore::for_instance(paths);
-    let staged = match store.staged() {
-        Ok(Some(staged)) => staged,
-        Ok(None) => return None,
-        Err(error) => {
-            tracing::warn!(%error, "a staged identity key that does not read: ignoring it");
-            return None;
-        }
-    };
-    match usable(&store, &staged, st, current, now) {
-        Ok(()) => Some(staged),
-        Err(why) => {
-            tracing::warn!(why, "forgetting the staged identity key");
-            if let Err(error) = store.discard_staged() {
-                tracing::error!(%error, "cannot forget the staged identity key");
-            }
+    let uuid = store.load().ok().flatten().map(|s| s.uuid);
+    let mut out = Vec::new();
+    for staged in store.stagings().unwrap_or_default() {
+        let why = if uuid.as_deref() != Some(staged.uuid.as_str()) {
+            Some("it belongs to another instance")
+        } else if staged.identity().sign_public() == current.sign_public() {
+            Some("it is the key in use")
+        } else {
             None
+        };
+        match why {
+            Some(why) => {
+                tracing::warn!(why, "forgetting a staged identity key");
+                if let Err(error) = store.discard_staged(&staged.nonce) {
+                    tracing::error!(%error, "cannot forget a staged identity key");
+                }
+            }
+            None => out.push(staged),
         }
     }
+    out
 }
 
-fn usable(store: &FileSeedStore, staged: &StagedSeed, st: &AgentState, current: &MachineIdentity, now: u64) -> Result<(), &'static str> {
-    let uuid = store.load().ok().flatten().map(|s| s.uuid);
-    if uuid.as_deref() != Some(staged.uuid.as_str()) {
-        return Err("it belongs to another instance");
+/// The keys of `stagings`.
+pub(super) fn identities(stagings: &[StagedSeed]) -> Vec<MachineIdentity> {
+    stagings.iter().map(StagedSeed::identity).collect()
+}
+
+/// When the hub forgets `staged` (24 h after it took it — or after it was
+/// made, for one it never confirmed): no renewal can name it after that.
+fn expiry(staged: &StagedSeed) -> u64 {
+    staged.accepted_ms.unwrap_or(staged.created_ms).saturating_add(STAGED_FOR_MS)
+}
+
+/// The key in use signed in at `since`: the hub had not retired it then — a
+/// commit retires it in the same step — so no staging that expired before
+/// `since` was ever committed, nor can be any more. Those go.
+pub(super) fn drop_expired(paths: &Paths, current: &MachineIdentity, since: u64) {
+    let store = FileSeedStore::for_instance(paths);
+    for staged in staged_seeds(paths, current) {
+        if expiry(&staged) < since {
+            tracing::info!("forgetting a staged identity key no renewal can take any more");
+            if let Err(error) = store.discard_staged(&staged.nonce) {
+                tracing::error!(%error, "cannot forget a staged identity key");
+            }
+        }
     }
-    let new = staged.identity();
-    if new.sign_public() == current.sign_public() {
-        return Err("it is the key in use");
-    }
-    let named = verdict(st, current, Some(&new)) == Verdict::Renewed;
-    if !named && now.saturating_sub(staged.created_ms) > STAGED_FOR_MS {
-        return Err("it is older than any renewal the hub would still take");
-    }
-    Ok(())
 }
 
 /// `POST /rh/rotate` (see the module docs). 200 `{signKey, dhKey, oldSig,
@@ -383,7 +419,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     };
     let session = shared.rotation.session().filter(|s| s.offered && !s.staged_key);
     let text = shared.hub_text.lock().expect("hub text").clone();
-    let (Some(_), Some(text)) = (session, text) else {
+    let (Some(session), Some(text)) = (session, text) else {
         return (
             409,
             json!({"error": "hub_not_ready", "message": "this device's hub connection is down, or its hub does not stage identity renewals yet"}),
@@ -394,7 +430,8 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         Ok(Some(seed)) => seed.uuid,
         _ => return (500, json!({"error": "unavailable", "message": "this device's identity key does not read"})),
     };
-    let existing = store.staged().ok().flatten().filter(|s| s.nonce == req.nonce && s.uuid == uuid);
+    let stagings = staged_seeds(&shared.paths, &shared.identity);
+    let existing = stagings.iter().find(|s| s.nonce == req.nonce).cloned();
     if let Some(s) = &existing {
         if (s.chain_seq, s.chain_head, s.assurance) != (req.chain_seq, req.chain_head, req.assurance) {
             return (
@@ -403,6 +440,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             );
         }
     }
+    let is_new = existing.is_none();
     let staged = match existing {
         Some(staged) => staged,
         None => {
@@ -416,6 +454,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
                 chain_head: req.chain_head,
                 assurance: req.assurance,
                 created_ms: now_ms(),
+                accepted_ms: None,
             }
         }
     };
@@ -439,9 +478,12 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         })
     };
     // The same nonce, staged on the hub already: the same answer.
-    let taken = shared.rotation.lock().taken.as_ref().filter(|t| t.nonce == req.nonce).map(|t| t.ready_ms);
+    let taken = shared.rotation.lock().taken.get(&req.nonce).copied();
     if let Some(ready_ms) = taken {
         return (200, answer(ready_ms));
+    }
+    if is_new {
+        make_room(&store, &stagings, session.since_ms);
     }
     // On disk before the hub hears of it: a renewal the hub stages is one
     // this device can always finish.
@@ -449,7 +491,6 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         tracing::error!(%error, "cannot stage a new identity key");
         return (500, json!({"error": "unavailable", "message": "cannot store the new identity key"}));
     }
-    shared.rotation.lock().taken = None;
     let hash = hex(&nonce_hash(&req.nonce));
     let (tx, rx) = oneshot::channel();
     shared.rotation.lock().waiting.insert(hash.clone(), tx);
@@ -474,10 +515,15 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     match heard {
         Ok(Ok(v)) if v["t"] == "rotation_staged" => {
             let ready_ms = v["ready_ms"].as_u64();
-            shared.rotation.lock().taken = Some(Taken {
-                nonce: req.nonce,
-                ready_ms,
-            });
+            // Taken by the hub: kept until it expires, whatever is asked next.
+            let accepted = StagedSeed {
+                accepted_ms: Some(staged.accepted_ms.unwrap_or_else(now_ms)),
+                ..staged.clone()
+            };
+            if let Err(error) = store.stage(&accepted) {
+                tracing::error!(%error, "cannot note that the hub staged the renewal");
+            }
+            shared.rotation.lock().taken.insert(req.nonce, ready_ms);
             if staged.assurance == Assurance::OnDevice {
                 tracing::warn!(
                     code = %chain::rotate_sas(&body),
@@ -489,8 +535,10 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         Ok(Ok(v)) => {
             let reason = v["reason"].as_str().unwrap_or("unknown").to_string();
             tracing::warn!(%reason, "the hub refused to stage the renewal; forgetting the staged key");
-            if store.staged().ok().flatten().is_some_and(|s| s.nonce == req.nonce) {
-                if let Err(error) = store.discard_staged() {
+            // Only one the hub never took: a staging it took once may still
+            // be committed (the same nonce asked again, and refused now).
+            if staged.accepted_ms.is_none() {
+                if let Err(error) = store.discard_staged(&req.nonce) {
                     tracing::error!(%error, "cannot forget the staged identity key");
                 }
             }
@@ -503,6 +551,31 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             504,
             json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}),
         ),
+    }
+}
+
+/// Room for a new staging among `stagings`: one the hub refused or never
+/// answered goes (no renewal can name it); one it took stays until it
+/// expired before `since` — when the key in use signed in, so nothing
+/// committed it — and beyond [`MAX_STAGINGS`] the oldest the hub took goes.
+fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64) {
+    let mut kept: Vec<&StagedSeed> = Vec::new();
+    for staged in stagings {
+        if staged.accepted_ms.is_none() || expiry(staged) < since {
+            if let Err(error) = store.discard_staged(&staged.nonce) {
+                tracing::error!(%error, "cannot forget a staged identity key");
+            }
+        } else {
+            kept.push(staged);
+        }
+    }
+    kept.sort_by_key(|s| s.accepted_ms);
+    while kept.len() >= MAX_STAGINGS {
+        let oldest = kept.remove(0);
+        tracing::warn!("more renewals staged on the hub than kept: forgetting the oldest staged identity key");
+        if let Err(error) = store.discard_staged(&oldest.nonce) {
+            tracing::error!(%error, "cannot forget a staged identity key");
+        }
     }
 }
 
@@ -586,16 +659,17 @@ pub(super) fn on_pending(shared: &Shared, value: &Value, text: &mpsc::UnboundedS
     };
     let asked = value["sign_key"].as_str().and_then(unhex32);
     let ack = asked.and_then(|asked| {
-        let st = shared.state.lock().expect("agent state");
-        let staged = staged_seed(&shared.paths, &st, &shared.identity, now_ms())?;
+        let stagings = staged_seeds(&shared.paths, &shared.identity);
+        let staged = stagings.iter().find(|s| {
+            let new = s.identity();
+            new.sign_public() == asked
+                && value["dh_key"].as_str().and_then(unhex32) == Some(new.dh_public())
+                && value["nonce_hash"].as_str().and_then(unhex32) == Some(nonce_hash(&s.nonce))
+        })?;
         let new = staged.identity();
-        let ours = new.sign_public() == asked
-            && value["dh_key"].as_str().and_then(unhex32) == Some(new.dh_public())
-            && value["nonce_hash"].as_str().and_then(unhex32) == Some(nonce_hash(&staged.nonce));
-        ours.then(|| {
-            let body = proof(&st.account, &st.machine, &staged, &shared.identity, &new);
-            chain::sign_rotate_ack(new.signing_key(), &st.account, &st.machine, &body, &session.nonce)
-        })
+        let st = shared.state.lock().expect("agent state");
+        let body = proof(&st.account, &st.machine, staged, &shared.identity, &new);
+        Some(chain::sign_rotate_ack(new.signing_key(), &st.account, &st.machine, &body, &session.nonce))
     });
     let reply = match ack {
         Some(sig) => {
@@ -616,9 +690,9 @@ pub(super) fn on_pending(shared: &Shared, value: &Value, text: &mpsc::UnboundedS
 /// not hold — [`foreign`].
 pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
     let verdict = {
+        let staged = identities(&staged_seeds(&shared.paths, &shared.identity));
         let st = shared.state.lock().expect("agent state");
-        let staged = staged_seed(&shared.paths, &st, &shared.identity, now_ms()).map(|s| s.identity());
-        verdict(&st, &shared.identity, staged.as_ref())
+        verdict(&st, &shared.identity, &staged)
     };
     match &verdict {
         Verdict::Unchanged => {}
@@ -736,7 +810,7 @@ pub fn re_enroll_fresh(paths: &Paths, now: u64) -> Result<MachineIdentity, Strin
         super::sync_dir(&current);
         tracing::warn!(archived = %archived.display(), "archived this device's retired identity key; it is never used again");
     }
-    FileSeedStore::for_instance(paths).discard_staged()?;
+    FileSeedStore::for_instance(paths).discard_all_staged()?;
     super::state::forget_enrollment_leftovers(paths)?;
     match std::fs::remove_file(super::state::state_path(paths)) {
         Ok(()) => {}
@@ -761,21 +835,25 @@ pub fn archived_key_path(paths: &Paths, now: u64) -> std::path::PathBuf {
     super::key_path(paths).with_file_name(format!("machine-key.retired-{now}.json"))
 }
 
-/// Take the staged seed (see the module docs): only once this device's own
-/// verified chain names exactly its keys. Renamed into place atomically,
-/// noted for the local settings, and the link restarted with it.
-pub(super) fn promote(shared: &Arc<Shared>) -> Result<(), String> {
+/// Take the staged seed the chain names (see the module docs): only once
+/// this device's own verified chain names exactly its keys, and only the key
+/// that just signed in to the hub (`signed_in`). Renamed into place
+/// atomically — the other stagings go — noted for the local settings, and
+/// the link restarted with it.
+pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Result<(), String> {
     let store = FileSeedStore::for_instance(&shared.paths);
-    let staged = store.staged()?.ok_or("nothing staged")?;
-    let new = staged.identity();
-    {
+    let stagings = staged_seeds(&shared.paths, &shared.identity);
+    let new = {
         let st = shared.state.lock().expect("agent state");
-        if verdict(&st, &shared.identity, Some(&new)) != Verdict::Renewed {
-            return Err("the device chain does not name the staged identity key".into());
+        let staged = named(&st, &stagings).ok_or("the device chain names none of the staged identity keys")?;
+        if staged.identity().sign_public() != signed_in.sign_public() {
+            return Err("the device chain names another staged identity key than the one that signed in".into());
         }
-    }
+        staged.clone()
+    };
     let previous = super::control::machine_fingerprint(&shared.identity);
-    store.promote()?;
+    store.promote(&new.nonce)?;
+    let new = new.identity();
     {
         let mut st = shared.state.lock().expect("agent state");
         st.rotation.renewed_ms = Some(now_ms());
@@ -786,7 +864,7 @@ pub(super) fn promote(shared: &Arc<Shared>) -> Result<(), String> {
     shared.save();
     {
         let mut inner = shared.rotation.lock();
-        inner.taken = None;
+        inner.taken.clear();
         inner.try_new = false;
     }
     tracing::warn!(
@@ -846,17 +924,35 @@ pub fn status(paths: &Paths, st: Option<&AgentState>, now: u64) -> Status {
         };
     }
     let store = FileSeedStore::for_instance(paths);
-    let current = store.load().ok().flatten().map(|s| MachineIdentity::from_seed(&s.seed));
-    let staged = store.staged().ok().flatten();
-    if let (Some(current), Some(staged)) = (current, staged) {
-        if usable(&store, &staged, st, &current, now).is_ok() {
-            let until = staged.created_ms.saturating_add(CODE_FOR_MS);
-            let shown = staged.assurance == Assurance::OnDevice && now < until;
-            let code = shown.then(|| chain::rotate_sas(&proof(&st.account, &st.machine, &staged, &current, &staged.identity())));
+    let seed = store.load().ok().flatten();
+    if let Some(seed) = seed {
+        let current = MachineIdentity::from_seed(&seed.seed);
+        // This instance's stagings, not the key in use, that a renewal may
+        // still take (not expired, or named by the chain).
+        let stagings: Vec<StagedSeed> = store
+            .stagings()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| s.uuid == seed.uuid && s.identity().sign_public() != current.sign_public())
+            .collect();
+        let named = named(st, &stagings).map(|s| s.nonce);
+        let waiting: Vec<&StagedSeed> = stagings.iter().filter(|s| now <= expiry(s) || Some(s.nonce) == named).collect();
+        if !waiting.is_empty() {
+            // The code of the newest high-assurance renewal, for ten minutes.
+            let code = waiting
+                .iter()
+                .filter(|s| s.assurance == Assurance::OnDevice && now < s.created_ms.saturating_add(CODE_FOR_MS))
+                .max_by_key(|s| s.created_ms)
+                .map(|s| {
+                    (
+                        chain::rotate_sas(&proof(&st.account, &st.machine, s, &current, &s.identity())),
+                        s.created_ms.saturating_add(CODE_FOR_MS),
+                    )
+                });
             return Status {
                 state: "staged".into(),
-                code_expires_ms: code.as_ref().map(|_| until),
-                code,
+                code_expires_ms: code.as_ref().map(|(_, until)| *until),
+                code: code.map(|(code, _)| code),
                 ..Status::default()
             };
         }
@@ -886,7 +982,54 @@ mod tests {
             chain_head: [4; 32],
             assurance,
             created_ms,
+            accepted_ms: None,
         }
+    }
+
+    /// The hub phase's review: a page whose `/rh/rotate` answer was lost asks
+    /// again with a new nonce. A staging the hub took stays — the hub may
+    /// still commit it — until it expires (only judged once the key in use
+    /// signed in after it, which no commit allows), at most
+    /// [`MAX_STAGINGS`]; one the hub refused or never answered makes room.
+    #[test]
+    fn stagings_the_hub_took_stay_until_they_expire() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "rotroom");
+        let (current, _) = super::super::load_or_create(&paths).unwrap();
+        let store = FileSeedStore::for_instance(&paths);
+        let at = |seed: u8, nonce: u8, created: u64, accepted: Option<u64>| StagedSeed {
+            nonce: [nonce; 16],
+            accepted_ms: accepted,
+            ..staged(&paths, seed, Assurance::Auto, created)
+        };
+        let now = 100 * STAGED_FOR_MS;
+        let nonces = |store: &FileSeedStore| -> Vec<u8> { store.stagings().unwrap().iter().map(|s| s.nonce[0]).collect() };
+        store.stage(&at(10, 1, now - 10, Some(now - 9))).unwrap(); // taken
+        store.stage(&at(11, 2, now - 8, None)).unwrap(); // never answered
+        store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap(); // taken, expired
+        make_room(&store, &staged_seeds(&paths, &current), now);
+        assert_eq!(nonces(&store), vec![1], "the unanswered and the expired make room; the taken one stays");
+        // Expired, but the key in use last signed in before it expired: kept.
+        store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap();
+        make_room(&store, &staged_seeds(&paths, &current), now - 2 * STAGED_FOR_MS);
+        assert_eq!(nonces(&store), vec![3, 1]);
+        drop_expired(&paths, &current, now - STAGED_FOR_MS - 1);
+        assert_eq!(nonces(&store), vec![3, 1], "not expired then");
+        drop_expired(&paths, &current, now);
+        assert_eq!(nonces(&store), vec![1], "the key in use signed in after it expired: never committed");
+        // At most four the hub took: the oldest goes for a fifth.
+        for n in 4..7u8 {
+            store.stage(&at(20 + n, n, now + u64::from(n), Some(now + u64::from(n)))).unwrap();
+        }
+        assert_eq!(nonces(&store).len(), 4);
+        make_room(&store, &staged_seeds(&paths, &current), now);
+        assert_eq!(nonces(&store), vec![4, 5, 6], "room for one more, the oldest gone");
+        // A staging of the key in use, or of another instance, is not one.
+        let in_use = store.load().unwrap().unwrap().seed;
+        store.stage(&StagedSeed { seed: in_use, ..at(0, 9, now, None) }).unwrap();
+        store.stage(&StagedSeed { uuid: "another".into(), ..at(30, 8, now, None) }).unwrap();
+        assert_eq!(staged_seeds(&paths, &current).len(), 3);
+        assert_eq!(nonces(&store), vec![4, 5, 6]);
     }
 
     /// §3.8 「只剩退役钥时」 (contract §9): "add this device again with a new
@@ -1038,8 +1181,9 @@ mod tests {
         assert_eq!(shown.code_expires_ms, Some(now - 1_000 + CODE_FOR_MS));
         // A staged seed older than any staging the hub keeps (and not on the chain) is not shown…
         assert_eq!(status(&paths, Some(&st), now + STAGED_FOR_MS).state, "idle");
-        // …and is forgotten where the link reads it.
-        assert!(staged_seed(&paths, &st, &current, now + STAGED_FOR_MS).is_none());
+        // …and is forgotten once the key in use signed in after it expired.
+        assert_eq!(staged_seeds(&paths, &current).len(), 1, "not on reading alone");
+        drop_expired(&paths, &current, now + STAGED_FOR_MS);
         assert!(store.staged().unwrap().is_none());
         st.rotation = RotationNote {
             renewed_ms: Some(now),

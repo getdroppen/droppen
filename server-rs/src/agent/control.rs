@@ -877,9 +877,10 @@ mod tests {
                 chain_head: [0; 32],
                 assurance: rh_proto::chain::Assurance::Auto,
                 created_ms: 1,
+                accepted_ms: Some(2),
             })
             .unwrap();
-        store.promote().unwrap();
+        store.promote(&[1; 16]).unwrap();
         let new = MachineIdentity::from_seed(&[9; 32]);
         (control.restart_hook())();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);

@@ -198,6 +198,7 @@ impl Account {
             chain_head: self.hub.head(),
             assurance: Assurance::Auto,
             created_ms: now_ms(),
+            accepted_ms: Some(now_ms()),
         };
         FileSeedStore::for_instance(&self.paths).stage(&staged).unwrap();
         staged.identity()
@@ -237,6 +238,11 @@ impl Account {
     fn staged(&self) -> Option<StagedSeed> {
         FileSeedStore::for_instance(&self.paths).staged().unwrap()
     }
+
+    /// The nonces of every staging, oldest first.
+    fn nonces(&self) -> Vec<[u8; 16]> {
+        FileSeedStore::for_instance(&self.paths).stagings().unwrap().iter().map(|s| s.nonce).collect()
+    }
 }
 
 /// How the fake hub answers a `rotation_stage`.
@@ -244,6 +250,8 @@ impl Account {
 enum StageAnswer {
     Staged,
     Refused(&'static str),
+    /// No answer at all (lost on the way).
+    Silent,
 }
 
 /// What the fake hub does.
@@ -415,6 +423,7 @@ impl FakeHub {
                                         let reply = match script.lock().unwrap().stage {
                                             StageAnswer::Staged => json!({"t": "rotation_staged", "nonce_hash": hash, "ready_ms": 123}),
                                             StageAnswer::Refused(reason) => json!({"t": "rotation_refused", "nonce_hash": hash, "reason": reason}),
+                                            StageAnswer::Silent => continue,
                                         };
                                         Message::Text(reply.to_string().into())
                                     }
@@ -531,7 +540,7 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let next = FileSeedStore::for_instance(&a.paths).next_path();
+        let next = FileSeedStore::for_instance(&a.paths).staging_path(&[7; 16]);
         assert_eq!(std::fs::metadata(next).unwrap().permissions().mode() & 0o777, 0o600);
     }
     // The hub heard the staging, snake_case, with the same proof.
@@ -549,17 +558,28 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     assert_eq!(hub.heard("rotation_stage").len(), 1);
     // The same nonce with another view or assurance is not the same request.
     assert_eq!(rotate(&shared, &a.request([7; 16], &eph, 1)).await.0, 400);
-    // A new nonce: a new seed replaces the staged one.
+    // A new nonce: a new seed, staged beside the one the hub took (which it
+    // may still commit: kept).
     let (status, other) = rotate(&shared, &a.request([8; 16], &eph, 0)).await;
     assert_eq!(status, 200);
     assert_ne!(other["signKey"], answer["signKey"]);
     assert_eq!(a.staged().unwrap().nonce, [8; 16]);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
     assert_eq!(hub.heard("rotation_stage").len(), 2);
-    // A staging the hub refuses: 409 hub_refused {reason}, nothing left staged.
+    // A staging the hub refuses: 409 hub_refused {reason}, not kept; the
+    // ones it took stay.
     hub.script.lock().unwrap().stage = StageAnswer::Refused("conflict");
     let (status, refused) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
     assert_eq!((status, refused["error"].as_str(), refused["reason"].as_str()), (409, Some("hub_refused"), Some("conflict")));
-    assert!(a.staged().is_none());
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
+    // One the hub never answered (504) is kept until the next request replaces it.
+    hub.script.lock().unwrap().stage = StageAnswer::Silent;
+    let (status, lost) = rotate(&shared, &a.request([10; 16], &eph, 0)).await;
+    assert_eq!((status, lost["error"].as_str()), (504, Some("hub_timeout")));
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16]]);
+    hub.script.lock().unwrap().stage = StageAnswer::Staged;
+    assert_eq!(rotate(&shared, &a.request([11; 16], &eph, 0)).await.0, 200);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [11; 16]], "the unanswered one made room");
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     shared.cancel.cancel();
@@ -843,6 +863,87 @@ async fn after_a_committed_renewal_the_old_key_never_signs_in_again() {
     let _ = task.await;
 }
 
+/// The hub phase's review: a page whose answer was lost asks again with a
+/// new nonce; the hub, still holding the FIRST staging, commits it. The
+/// first staged seed is still here: the renewal is this device's own —
+/// promoted, the second forgotten, never "replaced elsewhere".
+#[tokio::test]
+async fn of_two_stagings_the_hub_took_the_first_one_committed_is_promoted() {
+    let mut a = Account::new();
+    let old = machine();
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = a.shared(&hub.url, &restarts);
+    let task = signed_in(&shared).await;
+    let eph = DhKeypair::from_secret([5; 32]);
+    let (status, first) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
+    assert_eq!(status, 200);
+    let (status, second) = rotate(&shared, &a.request([8; 16], &eph, 0)).await;
+    assert_eq!(status, 200);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]], "both kept");
+    let first_key = unhex32(first["signKey"].as_str().unwrap()).unwrap();
+    assert_ne!(first["signKey"], second["signKey"]);
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept = vec![first_key];
+        script.rotated = vec![old.sign_public()];
+    }
+    let entries = a.renew(&first, [7; 16], Assurance::Auto);
+    hub.send_entries(&entries);
+    until("the restart", || restarts.load(Ordering::SeqCst) == 1).await;
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
+    assert_eq!(a.seed_in_use().sign_public(), first_key, "the first staging, promoted");
+    assert!(a.nonces().is_empty(), "the other staging goes with the promotion");
+    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    assert!(st.rotation.foreign_ms.is_none() && st.alarms.is_empty(), "not replaced elsewhere");
+    let logins = hub.logins();
+    assert!(logins[0].by(&old, &hub.url));
+    assert!(logins[1..].iter().all(|l| !l.by(&old, &hub.url)), "the old key never again: {logins:?}");
+}
+
+/// A crash with several staged seeds: at start the one the chain names signs
+/// in first and is taken; with none named, the newest first, then the
+/// older, then the key in use.
+#[tokio::test]
+async fn at_start_several_staged_seeds_sign_in_named_first_then_newest() {
+    // None named: newest, older, then the key in use.
+    let a = Account::new();
+    let old = machine();
+    let older = a.stage([77; 32], [7; 16]);
+    std::thread::sleep(Duration::from_millis(5));
+    let newer = a.stage([78; 32], [8; 16]);
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    let logins = hub.logins();
+    assert_eq!(logins.len(), 3, "{logins:?}");
+    assert!(logins[0].by(&newer, &hub.url) && logins[1].by(&older, &hub.url) && logins[2].by(&old, &hub.url));
+    assert_eq!(a.nonces().len(), 2, "both still staged");
+    shared.cancel.cancel();
+    let _ = task.await;
+
+    // The chain names the older one (committed while this device was away).
+    let mut b = Account::new();
+    let older = b.stage([77; 32], [7; 16]);
+    let answer = b.staged_answer(&older, [7; 16]);
+    std::thread::sleep(Duration::from_millis(5));
+    b.stage([78; 32], [8; 16]);
+    b.renew(&answer, [7; 16], Assurance::Auto);
+    let mut script = Script::rotating(vec![older.sign_public()]);
+    script.rotated = vec![old.sign_public()];
+    let hub = FakeHub::start(script, b.entries.clone()).await;
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = b.shared(&hub.url, &restarts);
+    let task = tokio::spawn(link::run(shared.clone()));
+    until("the restart", || restarts.load(Ordering::SeqCst) == 1).await;
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
+    let logins = hub.logins();
+    assert_eq!(logins.len(), 1, "the named one first: {logins:?}");
+    assert!(logins[0].by(&older, &hub.url));
+    assert_eq!(b.seed_in_use().sign_public(), older.sign_public());
+    assert!(b.nonces().is_empty());
+}
+
 /// A crash after staging, before any commit: at start the staged key signs
 /// in first; the hub does not take it (`denied`) and the key in use signs in
 /// — the seed in use untouched, the staged one kept for a commit to come.
@@ -880,7 +981,7 @@ async fn at_start_a_staged_key_the_chain_names_is_taken() {
     let restarts = Arc::new(AtomicUsize::new(0));
     let shared = a.shared(&hub.url, &restarts);
     assert_eq!(
-        rotation::verdict(&shared.state.lock().unwrap(), &old, Some(&new)),
+        rotation::verdict(&shared.state.lock().unwrap(), &old, std::slice::from_ref(&new)),
         Verdict::Renewed,
         "the saved chain names the staged key"
     );
@@ -946,7 +1047,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
     assert_eq!(
-        rotation::verdict(&st, &old, None),
+        rotation::verdict(&st, &old, &[]),
         Verdict::Foreign {
             seq: entries[0].seq(),
             fingerprint: rh_proto::identity::device_fingerprint_text(&thief().sign_public(), &thief().dh_public()),
