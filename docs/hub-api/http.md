@@ -264,8 +264,24 @@ sign-in (`403 host_devices_off`, even for a host that signed in as a
 device before), a host's device session from before on every route (`403
 host_devices_off`), its device WebSocket (`4403 host_devices_off`) and its
 relay tickets are all refused.
+A host whose identity key is being renewed (`pending`, `attempt` or
+`staged`, [below](#identity-key-renewals)) — or that is isolated, whatever
+its renewal row says — acts as no device meanwhile: this sign-in
+(`403 rotation_pending`), its device sessions (revoked when the renewal was
+asked for; `403 rotation_pending` on every route for one that slipped
+through), its device WebSocket (`4403 rotation_pending`, checked again as it
+is registered), its relay tickets and any channel it would open as a device
+are refused until the renewal is committed or withdrawn (or, isolated, until
+a renewal confirmed on the device). A signature by one of the host's
+**retired** keys (one a renewal replaced) is `401 rotated`, its challenge
+fresh: the signed exchange is kept as evidence (`GET /v1/rotations`
+`disputes`) and may isolate the host. A session is made only if the key it
+was signed with is still the device's when it is made: one checked with a
+key a renewal retires meanwhile is `401 rotated` too, no session made.
 Errors: `401 denied` (anything wrong: unknown device, bad signature, stale
-or reused nonce, clock), `403 device_removed`, `400 bad_request` (`nonce`
+or reused nonce, clock — never a check the hub could not make, which is
+`503 unavailable`), `401 rotated`, `403 device_removed`,
+`403 rotation_pending`, `400 bad_request` (`nonce`
 not 32 bytes of hex), `429 rate` (with `retry_after_ms`). Limits: 30 a
 minute and 300 an hour per device, spent only by the device's own valid
 signature — the hub's table of answered nonces is shared, and no one device
@@ -335,7 +351,7 @@ a Mac `User-Agent`, the device is then named an iPad (`devices[].ua_label`,
 below); it changes nothing else, nor for any other `User-Agent`, nor with a
 login session. Any other value is no hint.
 
-→ `{account, email, plan, chain_seq, chain_v3, relay_prefs, devices, machines, credentials, sign_in_changes, known_client?}`:
+→ `{account, email, plan, chain_seq, chain_v3, relay_prefs, rotations, devices, machines, credentials, sign_in_changes, known_client?}`:
 - `known_client` (with a device session only): a fresh known-client token for the account, as a sign-in gives one (`POST /v1/login`). A device in use keeps getting one, so it never ages out and needs no password login to get its first;
 - `email`: `{address, verified, verification, due_ms, delivery: "pending"|"sent"|"failed"|null, delivery_error}`
   (`due_ms`: when an unverified account starts being refused; `delivery_error`, for a failed mail only, is generic — `the mail service refused to deliver to this address` or `the mail could not be sent in time` — the mail service's own words stay in the hub's log);
@@ -343,9 +359,10 @@ login session. Any other value is no hint.
 - `chain_seq`: the newest chain entry the hub holds, `null` before genesis;
 - `relay_prefs`: `{standby}`, the account's relay preference (`PATCH /v1/relays/prefs`); a hub from before it leaves it out;
 - `chain_v3`: `{mode: "off"|"read"|"write", writable, waiting: [machine], in_use}` — whether the account may take its first v3 entries, or (once `in_use`) add a host, now (`docs/local-aggregator.md` §3.5): the hub must write them (`DROPPEN_HUB_CHAIN_V3=write`) and, before the first, every current host's agent must have declared `chain/3` and `policy/1` (`waiting` lists those that have not; once `in_use` they no longer hold the account back and are listed so the owner can update them); `in_use`: the chain already holds a v3 entry, so nothing that reads only v2 can follow it, and everything but a new host is taken in every mode. Before genesis (`chain_seq: null`) there is no host to wait for, and `writable` says whether the account can be created at all: the web app makes every new account on v3 (`Genesis3` and user key epoch 0 as v3, one batch) and makes none while it is `false`;
+- `rotations`: `{enabled, window_ms, active: [{host, state}]}` — identity key renewals ([below](#identity-key-renewals)): whether this hub takes them (`DROPPEN_HUB_HOST_ROTATION=on`), the window T, and each host with a renewal under way or committed in the last day (`GET /v1/rotations` has the rest); a hub from before renewals leaves it out;
 - `devices[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, kind, host, ua_label, replaces, online}` (`kind`, `host`, `replaces`: as registered, `null` when not given; a hub from before local sign-in leaves them out, and one from before `replaces` and `online` leaves those out; `ua_label`: below; `online`: whether the device is signed in on `/v1/client` now — `last_seen_ms` is when it last signed in, which a device connected for hours does not move);
 - `devices[].ua_label`: the device's browser by a short name, for a page to tell browsers and phones apart: what the device is and which browser, `"<device> · <browser>"` (a space, `·` U+00B7, a space), or either alone. `<device>` is one of `iPhone`, `iPad`, `Mac`, `Windows`, `Android`, `Linux`, `ChromeOS`, `<browser>` one of `Safari`, `Chrome`, `Firefox`, `Edge`, `Opera`, `Samsung Internet` — nothing else, ever: no version, no model, never the `User-Agent` itself, which the hub does not keep. A webview that names no browser (the desktop app's, a home-screen web app) is the device alone (`"Mac"`, `"iPhone"`); an iPad asking for desktop sites reads as `"Mac"` unless its page says `?touch=1` (above), then `"iPad"`. It comes from the `User-Agent` of the device's own requests only: its sign-in on `/v1/client` and its `GET /v1/me` with its device session — never a request body, a login session or another device's request. Replaced when it changes; a request whose `User-Agent` names nothing known (curl, an HTTP library, the agent) leaves it as it is, and so does one that says `Mac` where the device is known as an `iPad` with the same browser (a request without the hint cannot tell the two apart, and a device never turns from one into the other). `null` until one named something; metadata only, like `kind`; a hub from before it leaves it out;
-- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`).
+- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3, rotates}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`; `rotates`: it declared `rotate/1`, it can renew its identity key).
 - A host that signed in as a device (`POST /v1/session`) is listed in `devices[]` too, with `kind: "host"`.
 - `credentials`: `{password, passkeys}` — whether the account has a password (an account made with a passkey, or one whose password was removed, has none) and how many passkeys; a hub from before passkeys leaves it out.
 - `sign_in_changes`: `[{id, kind, device, label, at_ms}]` — how the account's sign-in changed in the last 30 days (below, "The account's ways to sign in"), oldest first, at most the newest 50, each exactly as `sign_in_changed` told the account's devices at the time (websocket.md): `kind` `passkey_added | passkey_renamed | passkey_removed | password_set | password_changed | password_removed`; `device` the device session that made it; `label` the passkey's (the new one, for a rename), `null` for the password. A hub from before it leaves it out.
@@ -386,7 +403,22 @@ them itself. Everything else — removal, demotion, key rotation, recovery,
 pairing a device, a policy — is taken in every mode, whatever other hosts
 lag: a rollback to `read` or `off` stops new v3 accounts and new hosts, and
 never freezes an account that is already v3. `403 email_unverified`
-(a v2 or a v3 genesis, here and as a `CHAIN` frame over `/v1/client`). Body ≤ 256 KiB.
+(a v2 or a v3 genesis, here and as a `CHAIN` frame over `/v1/client`).
+`409 rotation_not_ready` (`{error, reason, message, waiting?, ready_ms?}`)
+for a batch that renews a host's identity key (`RotateHostKey`, kind 20),
+sets the account's renewal policy (`SetRenewalPolicy`, kind 21) or pauses
+control over hosts while they are renewed (`RenewalPause`, kind 22;
+[below](#identity-key-renewals)) the hub does not take now — `reason`:
+`disabled` (`DROPPEN_HUB_HOST_ROTATION` is off: refused before anything else
+is looked at), `v2` (the account's chain is v2), `waiting` (a host current
+*after* the batch has not declared `rotate/1`; `waiting` names them — a host
+the batch removes or stops does not count), `not_staged` (the host's agent
+staged no such renewal, or its staging was voided or ran out), `mismatch`
+(the entry is not the staging byte for byte), `window` (T has not passed
+since the staging, or a sign-in still owes its confirmation; `ready_ms`
+says when), `needs_assurance` (the host takes only a renewal confirmed on
+the device: clone evidence within 30 days, or isolated), `conflict` (the
+host's keys at the hub are not the ones the entry replaces). Body ≤ 256 KiB.
 
 Besides the chain's own rules the hub checks: a device the batch adds (or
 that joins with the recovery words, or founds the chain) is registered to the
@@ -396,6 +428,17 @@ host again) is an *enrolled machine* with the same keys; a batch never ends
 with a new or restarted host still owed its machine key epoch (`422`). An
 agent that has not declared `chain/3` is never sent a v3 entry (it gets the
 v2 prefix only).
+
+A renewal the hub takes is applied in the transaction that stores the
+entries: the host's keys are swapped in `machines` and (if it has its row)
+`devices` only where they are still the old ones — otherwise the whole
+batch is `409 rotation_not_ready` (`conflict`) and nothing is kept — the
+old keys are kept as retired, every mail to the host is deleted (it was
+sealed to the old key), its device sessions are revoked and the renewal is
+`committed`. After it, the entries go out to the chain's subscribers first;
+then the host's agent and device connections hear `error {code: "rotated",
+fp}` and close with 4005, its relay tickets so far are revoked, and the
+account's devices hear `rotation {state: "committed"}`.
 
 ### `POST /v1/enrollments` — requires a current full device
 `{device, token}` (`device`: the session's own; `token`: the enrollment
@@ -548,7 +591,11 @@ relay outside the account's set adds it, replaces a member idle for a week
 (or one the hub added that no device used, `last_used_ms` 0), or is refused
 (`error: "limit"`, with the set); when every member is
 unusable, up to 2 emergency tickets. `error` is `unknown` (not listed for
-this account), `unavailable` (not `up`), `limit` or `forbidden`. The
+this account), `unavailable` (not `up`), `limit` or `forbidden` (and, for an
+agent's `relay_tickets`, `isolated`). An isolated host
+([below](#identity-key-renewals)) gets no ticket and is named in none — but
+while a renewal confirmed on the device is under way for it, an admin
+device's ticket names it and its own agent gets its tickets. The
 ticket's `peers` are the hosts that accept control from this device (chain
 v3 "who may control me": an admin device reaches every current host; any
 other device — a host included — only the hosts an admin's `SetAccept`
@@ -558,7 +605,8 @@ an agent from before would let such a device reach every route,
 self-upgrade included). A host asks here as a
 device, with its own device session. The hub routes a device's `OPEN` by the
 same rules (`4403` otherwise).
-Errors: `400 bad_request`, `403 forbidden` (no chain, or not current).
+Errors: `400 bad_request`, `403 forbidden` (no chain, or not current),
+`403 isolated` (this device is an isolated host), `403 rotation_pending`.
 Limits: 120 an hour per device (`429 rate`; tickets last 15 minutes, so a
 device needs about one per relay every ten).
 
@@ -603,6 +651,162 @@ session's device is not a current device of the account's chain),
 `409 not_a_host` (`machine` is not a current host of this account's chain:
 unknown, another account's, removed, no longer running AI, or a device that
 runs none).
+
+### Identity key renewals
+
+A host's identity key is renewed without enrolling it again
+(`docs/host-identity-rotation.md`; `rh_hub::rotations`): an admin device
+registers a request here, asks the host over its end-to-end channel
+(`POST /rh/rotate`), the host's agent stages its proof on its own `/v1/agent`
+connection (`rotation_stage`, websocket.md), and once the window T is over
+the admin writes `[RotateHostKey, KeyEpochs]` (`POST /v1/chain`). Only the
+host's **current** agent connection stages (one replaced by a newer sign-in
+stages nothing). While the renewal is staged, every agent sign-in with the
+host's old key must confirm the new one within 20 s of `welcome`, or the
+staging is void — graded (websocket.md): `interrupted` when that sign-in
+went away before it answered, or the hub itself failed (no evidence; the
+page asks again with a fresh nonce), `not_acked` when it answered wrong, said
+`rotation_unknown`, or stayed open and silent (evidence). The host's agent
+connection replaced while an attempt is open voids it, `replaced` (no
+evidence); while staged, the new sign-in owes the confirmation (and the
+devices hear `rotation {state: "staged", reason: "replaced"}`). A second
+`interrupted` or `replaced` for a host within a day is `not_acked` — the
+hub's own failures (a database error, a restart losing the connection that
+owed) are shown as `interrupted` but never counted towards it.
+Off unless `DROPPEN_HUB_HOST_ROTATION=on` (then `409 rotation_not_ready`,
+`disabled`; `GET` answers either way); chain v3 accounts only. T is
+`DROPPEN_HUB_ROTATION_WINDOW_SECS` (120 s).
+
+A host's renewal is in one **state**: `pending` (exposed: renew it when it
+can — offline, or its last attempt failed, `failure` saying why), `attempt`
+(an admin's request, open 10 minutes, one at a time per host), `staged` (the
+host's proof, staged by its agent; committable from `ready_ms`; void after
+24 hours, `expired`) or `committed` (kept a day, then gone). Every change is
+pushed to the account's devices (`rotation {host, state, reason?}`), and
+evidence as `host_dispute`. While `pending`, `attempt` or `staged` — and
+while isolated — the host's device role is suspended (`403 rotation_pending`,
+`4403 rotation_pending`; its device sessions are revoked when the request is
+registered; as a device it opens no channel); its agent role is not.
+Asking (`PUT`) and withdrawing (`DELETE`) are serialised with each other and
+with dispute statements; a withdrawal decides isolation in the transaction
+that holds the host's row, so a host isolated meanwhile stays `pending`.
+Every request with a host's device session, and the making of one, asks
+Postgres whether its device role is suspended. A renewal's commit keeps the revocation of the host's relay
+tickets in its own transaction.
+
+**Evidence and isolation.** A sign-in with a retired key (agent, device,
+device session) is refused `rotated` and kept — the signed `HubLogin` as it
+came, at most 4 an hour per host; on a socket the refusal names the renewal
+(`retired_seq`) and the signer may fetch the chain up to it before the close
+(websocket.md) — but it isolates nothing: the one signing in may be the
+host itself, restored from a backup. It counts as clone evidence (below)
+only when the challenge it answered (the socket's, or the device session's
+nonce) was issued more than 10 s after the key's retirement; one from
+before, or just after, is the host racing its own commit and is listed as
+information only (`evidence: false`). A sign-in that was valid when it
+started and is refused because a renewal committed meanwhile is no dispute
+at all. What isolates is the retired key's
+**signed statement** disputing the renewal that retired it
+([`POST /v1/rotations/{host}/disputes`](#post-v1rotationshostdisputes--no-session)):
+for a renewal **not** confirmed on the device (assurance 0) with no renewal
+confirmed on the device after it, the host is
+**isolated**: `pending` again, no relay tickets to or for it, no channel
+through the hub, until a renewal confirmed on the device (assurance 1) is
+committed, or it is removed. While an assurance-1 attempt (opened by an
+admin's `PUT`, its 10 minutes) or staging (until 10 minutes past when it
+could be committed) is open for it — and only then — the hub routes a
+channel to it from a current **admin** device and issues the matching
+tickets (the admin device's ticket names it; its own agent gets its
+tickets), so the confirmation can reach it; once that attempt ends
+(committed, voided, expired, withdrawn) the isolation applies again. A
+voided staging (`not_acked`, `conflict`) is evidence too. Clone evidence
+within 30 days (or isolation) means only assurance 1 is taken
+(`needs_assurance`).
+
+**Always confirm on the device** is the account's, on its chain: an
+admin's `SetRenewalPolicy {always_assured}` (chain v3 kind 21). While it is
+on, the chain's own rule (`ROTATE_NEEDS_ASSURANCE`, both verifiers) refuses
+a `RotateHostKey` not confirmed on the device — the hub answers such a
+batch `422 invalid_entry` like any other the chain refuses, and no hub can
+switch it off. While it is on, the hub opens no attempt with assurance 0
+either (`PUT /v1/rotations/{host}`: `409 rotation_not_ready`,
+`needs_assurance`), one the chain would never take. The hub takes a
+`SetRenewalPolicy` only under the renewal gate, like a `RotateHostKey`
+(`409 rotation_not_ready`: `disabled`, `v2`, `waiting`), so every host that
+reads kind 20 reads kind 21 too — and so is `RenewalPause` (kind 22), the
+overlay a page opens over hosts' accept policies while a group of them is
+renewed (and ends, `completed` or `cancelled`): every reader applies it to
+who may control whom, so the hub only gates it.
+
+#### `GET /v1/rotations`
+Any device session of the account → `{now_ms, enabled, window_ms,
+hosts: [Rotation], disputes: [Dispute]}` — `now_ms` the
+hub's clock, which every age here is measured against:
+- `Rotation`: `{host, state, assurance, requested_ms, requested_by,
+  attempt_expires_ms?, staged_ms?, ready_ms?, sign_key?, dh_key?, staged_seq?,
+  committed_ms?, committed_seq?, failure?: {reason: "not_acked"|"conflict"|"expired"|"refused"|"interrupted"|"replaced", at_ms},
+  needs_assurance, isolated}` — `sign_key`, `dh_key`, `staged_seq` the
+  staged (or committed) new keys; `requested_by` the admin device, or `hub`
+  for a host isolated by evidence;
+- `Dispute`: `{host, kind: "disputed"|"retired_login"|"not_acked"|"conflict", seen_ms,
+  seq?, entry_hash?, isolates?, retired_seq?, evidence?, role?: "agent"|"device"|"device_session", login?: {account,
+  id, hub, nonce, time_ms}, sig?, sign_key?}` (`seq`, `entry_hash`,
+  `isolates`: a `disputed` statement; `retired_seq`, `evidence`, `role`,
+  `login`: a `retired_login` — `evidence: false` for one racing its own
+  commit), the last 90 days, newest
+  first, at most 100 — and, besides those, always every dispute a host's
+  isolation rests on, however old. Soft voids (`interrupted`, `replaced`)
+  are no evidence and not listed. A `retired_login` carries the signed login as it came:
+  a device checks `sig` over `HubLogin {role, account, id, hub, nonce,
+  time_ms}` with the chain's `keys_at(host, retired_seq - 1)` itself — the
+  hub can withhold evidence, never forge it.
+
+#### `PUT /v1/rotations/{host}` — requires a current full device
+`{nonce_hash?, assurance: 0|1}` → the host's `Rotation`. Without
+`nonce_hash`: mark the host `pending` (idempotent). With it (SHA-256 of the
+request's 16-byte nonce, hex): open an attempt, valid 10 minutes — the same
+`nonce_hash` again answers the same; another while an attempt (or a staging)
+of another request is open is `409 rotation_in_progress`.
+Errors: `400 bad_request`, `409 not_a_host` (not a current host of this
+account), `409 rotation_not_ready` with `reason` `disabled`, `v2`,
+`agent_too_old` (its agent has not declared `rotate/1`), `policy_unset`
+(an attempt before the account's chain has a `SetRenewalPolicy`: an admin
+chooses, on or off, before the first — design §8 「打开的顺序」),
+`needs_assurance` (an attempt with assurance 0 for a host that takes only
+1, or while the account's chain asks for every renewal to be confirmed on
+the device — `SetRenewalPolicy`),
+`409 rotation_in_progress`. Limits: 6 attempts an hour and 20 a day per
+host (`429 rate`; marking it pending is not one).
+
+#### `DELETE /v1/rotations/{host}` — requires a current full device
+→ `{}`: withdraw the renewal (its state goes; `rotation {state: "none"}`). A
+committed one stays its day; an isolated host stays `pending` (only a
+renewal confirmed on the device, or its removal, clears it).
+
+#### `POST /v1/rotations/{host}/disputes` — no session
+`{seq, entry_hash, sig}` → `{ok: true}`. A host whose identity key was
+renewed elsewhere (its agent found a `RotateHostKey` for its id with keys
+that are neither its seed nor its staged one) disputes that renewal with the
+key it retired: `sig` is `rh/v1 rotate-dispute` (`rh_proto::chain::sign_rotate_dispute`)
+over `str16 account | str16 host | u64 seq | entry_hash 32 | new_sign 32` —
+`seq` the disputed entry, `entry_hash` its chain hash, `new_sign` the key it
+put in — by `keys_at(host, seq - 1)`'s sign key. No session: the signature is
+the credential, checked against the hub's chain
+(`ChainState::verify_rotate_dispute`). Kept once per renewal (sending it again
+answers the same) and told to the account's devices (`host_dispute {kind:
+"disputed"}`); listed in `GET /v1/rotations` (`kind: "disputed"`, `seq`,
+`entry_hash`, `sig`, `isolates`) — always, while it isolates. It isolates
+the host when the disputed renewal was not confirmed on the device and none
+of the host confirmed on the device came after it.
+Errors: `404 no_such_renewal` (no such device, or entry `seq` is no renewal
+of it), `410 host_removed` (the device left its account: stop sending),
+`422 invalid_dispute` (`entry_hash` is not that entry's, or the signature is
+not the retired key's over it), `429 rate`. Limits: 60 an hour per address,
+for every statement; 10 an hour per host, for statements that verify only
+(so junk cannot use up the host's own). What a statement does — kept,
+isolating — is decided and applied in one step, serialised with the
+account's chain: a renewal or a removal written meanwhile waits for it. A
+statement sent again repairs an isolation that was cut short.
 
 ### The account's ways to sign in (`docs/passkeys.md` §3.4 B, §3.6, K2)
 

@@ -54,7 +54,7 @@
       "required": ["relay", "error"],
       "properties": {
         "relay": { "type": "string" },
-        "error": { "type": "string", "description": "unknown | unavailable | limit | forbidden" },
+        "error": { "type": "string", "description": "unknown | unavailable | limit | forbidden | isolated" },
         "key": { "type": "string" },
         "limit": { "type": "integer" },
         "account_set": { "type": "array", "items": { "type": "string" } }
@@ -77,13 +77,24 @@
         "t": { "const": "welcome" },
         "account": { "$ref": "#/$defs/id" },
         "id": { "$ref": "#/$defs/id" },
-        "chain_seq": { "type": ["integer", "null"], "minimum": 0 }
+        "chain_seq": { "type": ["integer", "null"], "minimum": 0 },
+        "features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "What the hub speaks beyond the base protocol (`rotate/1`: identity key renewals). A peer sends a feature's messages only on a connection whose welcome offered it. Absent from hubs before renewals."
+        }
       }
     },
     "hubError": {
       "type": "object",
       "required": ["t", "code", "message"],
-      "properties": { "t": { "const": "error" }, "code": { "type": "string", "minLength": 1 }, "message": { "type": "string" } }
+      "properties": {
+        "t": { "const": "error" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "fp": { "type": "string", "description": "code `rotated` on a renewed host's connections (closed 4005): the new identity key's fingerprint" },
+        "retired_seq": { "type": "integer", "minimum": 0, "description": "code `rotated` on a sign-in with a retired key: the RotateHostKey that retired it; one chain_sub within 10 s is answered up to it and the KeyEpochs after it, then 4401" }
+      }
     },
     "mail": {
       "type": "object",
@@ -162,9 +173,11 @@
       "type": "object",
       "required": ["t"],
       "properties": {
-        "t": { "enum": ["challenge", "welcome", "presence", "plan", "mail", "chain_result", "error", "stream_synced", "stream_refused", "device_registered", "main_device", "sign_in_changed"] }
+        "t": { "enum": ["challenge", "welcome", "presence", "plan", "mail", "chain_result", "error", "stream_synced", "stream_refused", "device_registered", "main_device", "sign_in_changed", "rotation", "host_dispute"] }
       },
       "oneOf": [
+        { "$ref": "#/$defs/client.s2c.rotation" },
+        { "$ref": "#/$defs/client.s2c.host_dispute" },
         { "$ref": "#/$defs/client.s2c.challenge" },
         { "$ref": "#/$defs/client.s2c.welcome" },
         { "$ref": "#/$defs/client.s2c.presence" },
@@ -225,6 +238,26 @@
         "set_ms": { "type": ["integer", "null"], "minimum": 0, "description": "when it was last set or cleared; null: never" }
       }
     },
+    "client.s2c.rotation": {
+      "type": "object",
+      "required": ["t", "host", "state"],
+      "properties": {
+        "t": { "const": "rotation" },
+        "host": { "$ref": "#/$defs/id" },
+        "state": { "enum": ["pending", "attempt", "staged", "committed", "none"], "description": "the host's identity key renewal now; none: withdrawn" },
+        "reason": { "enum": ["not_acked", "conflict", "expired", "refused", "interrupted", "replaced"], "description": "why an attempt or a staging failed (the host is pending again; interrupted and replaced are no evidence: ask again with a fresh nonce) — or, with state staged, replaced: the staged host's agent connection was replaced and the new sign-in owes the confirmation" }
+      }
+    },
+    "client.s2c.host_dispute": {
+      "type": "object",
+      "required": ["t", "host", "kind", "seen_ms"],
+      "properties": {
+        "t": { "const": "host_dispute" },
+        "host": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["disputed", "retired_login", "not_acked", "conflict"], "description": "disputed: a retired key's signed statement (the only kind that isolates)" },
+        "seen_ms": { "$ref": "#/$defs/ms" }
+      }
+    },
     "client.s2c.sign_in_changed": {
       "type": "object",
       "description": "How the account signs in changed (http.md, \"The account's ways to sign in\"), exactly as GET /v1/me's sign_in_changes lists it",
@@ -243,9 +276,12 @@
       "type": "object",
       "required": ["t"],
       "properties": {
-        "t": { "enum": ["login", "enroll", "enroll_proof", "chain_sub", "mail_ack", "mail_release", "agent_info", "relay_tickets", "relay_state", "stream_list", "stream_delete"] }
+        "t": { "enum": ["login", "enroll", "enroll_proof", "chain_sub", "mail_ack", "mail_release", "agent_info", "relay_tickets", "relay_state", "stream_list", "stream_delete", "rotation_stage", "rotation_ack", "rotation_unknown"] }
       },
       "oneOf": [
+        { "$ref": "#/$defs/agent.c2s.rotation_stage" },
+        { "$ref": "#/$defs/agent.c2s.rotation_ack" },
+        { "$ref": "#/$defs/agent.c2s.rotation_unknown" },
         { "$ref": "#/$defs/agent.c2s.login" },
         { "$ref": "#/$defs/agent.c2s.enroll" },
         { "$ref": "#/$defs/agent.c2s.enroll_proof" },
@@ -332,14 +368,45 @@
       "required": ["t", "stream"],
       "properties": { "t": { "const": "stream_delete" }, "stream": { "$ref": "#/$defs/hex32" } }
     },
+    "agent.c2s.rotation_stage": {
+      "type": "object",
+      "description": "Only where welcome offered rotate/1: the host's proof for an admin's renewal attempt (rh_proto::chain::HostRotation), staged by its own agent connection.",
+      "required": ["t", "nonce", "staged_seq", "staged_head", "sign_key", "dh_key", "assurance", "old_sig", "new_sig"],
+      "properties": {
+        "t": { "const": "rotation_stage" },
+        "nonce": { "$ref": "#/$defs/hex16" },
+        "staged_seq": { "$ref": "#/$defs/count" },
+        "staged_head": { "$ref": "#/$defs/hex32" },
+        "sign_key": { "$ref": "#/$defs/hex32" },
+        "dh_key": { "$ref": "#/$defs/hex32" },
+        "assurance": { "enum": [0, 1] },
+        "old_sig": { "$ref": "#/$defs/hex64" },
+        "new_sig": { "$ref": "#/$defs/hex64" }
+      }
+    },
+    "agent.c2s.rotation_ack": {
+      "type": "object",
+      "description": "Only where welcome offered rotate/1: the staged new key's signature (rh/v1 rotate-ack) over this connection's login challenge, answering rotation_pending.",
+      "required": ["t", "sign_key", "sig"],
+      "properties": { "t": { "const": "rotation_ack" }, "sign_key": { "$ref": "#/$defs/hex32" }, "sig": { "$ref": "#/$defs/hex64" } }
+    },
+    "agent.c2s.rotation_unknown": {
+      "type": "object",
+      "description": "Only where welcome offered rotate/1: this agent does not hold sign_key (answering rotation_pending).",
+      "required": ["t", "sign_key"],
+      "properties": { "t": { "const": "rotation_unknown" }, "sign_key": { "$ref": "#/$defs/hex32" } }
+    },
 
     "/v1/agent s2c": {
       "type": "object",
       "required": ["t"],
       "properties": {
-        "t": { "enum": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets"] }
+        "t": { "enum": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"] }
       },
       "oneOf": [
+        { "$ref": "#/$defs/agent.s2c.rotation_staged" },
+        { "$ref": "#/$defs/agent.s2c.rotation_refused" },
+        { "$ref": "#/$defs/agent.s2c.rotation_pending" },
         { "$ref": "#/$defs/agent.s2c.challenge" },
         { "$ref": "#/$defs/agent.s2c.welcome" },
         { "$ref": "#/$defs/agent.s2c.enroll_assigned" },
@@ -409,6 +476,39 @@
         "t": { "const": "relay_tickets" },
         "tickets": { "type": "array", "items": { "$ref": "#/$defs/issuedTicket" } },
         "errors": { "type": "array", "items": { "$ref": "#/$defs/ticketRefusal" } }
+      }
+    },
+    "agent.s2c.rotation_staged": {
+      "type": "object",
+      "required": ["t", "nonce_hash", "ready_ms"],
+      "properties": {
+        "t": { "const": "rotation_staged" },
+        "nonce_hash": { "$ref": "#/$defs/hex32" },
+        "ready_ms": { "$ref": "#/$defs/ms", "description": "when the renewal may be committed (T after the staging)" }
+      }
+    },
+    "agent.s2c.rotation_refused": {
+      "type": "object",
+      "required": ["t", "nonce_hash", "reason"],
+      "properties": {
+        "t": { "const": "rotation_refused" },
+        "nonce_hash": { "$ref": "#/$defs/hex32" },
+        "reason": { "enum": ["no_attempt", "not_on_chain", "bad_proof", "key_reused", "conflict", "disabled"] }
+      }
+    },
+    "agent.s2c.rotation_pending": {
+      "type": "object",
+      "description": "To a connection signed in with a staged host's old key, once its agent_info declared rotate/1: answer rotation_ack (or rotation_unknown) within 20 s of welcome.",
+      "required": ["t", "sign_key", "dh_key", "staged_seq", "staged_head", "nonce_hash", "assurance", "body_hash"],
+      "properties": {
+        "t": { "const": "rotation_pending" },
+        "sign_key": { "$ref": "#/$defs/hex32" },
+        "dh_key": { "$ref": "#/$defs/hex32" },
+        "staged_seq": { "$ref": "#/$defs/count" },
+        "staged_head": { "$ref": "#/$defs/hex32" },
+        "nonce_hash": { "$ref": "#/$defs/hex32" },
+        "assurance": { "enum": [0, 1] },
+        "body_hash": { "$ref": "#/$defs/hex32", "description": "SHA-256 of the renewal's proof body (rh/v1 host-rotate)" }
       }
     },
 

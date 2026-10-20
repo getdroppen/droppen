@@ -144,13 +144,13 @@ The codes, by status (http.md lists them per route):
 | status | codes |
 |---|---|
 | 400 | `bad_request` (a malformed or too-long field; `message` names it), `disposable_email`, `bad_token` |
-| 401 | `unauthorized` (no, unknown or expired session), `bad_login`, `bad_passkey`, `unknown_passkey`, `denied` (device session exchange), `device_session_required` |
-| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `reauth_required`, `reauth_failed` |
-| 404 | `not_found` |
+| 401 | `unauthorized` (no, unknown or expired session), `bad_login`, `bad_passkey`, `unknown_passkey`, `denied` (device session exchange), `rotated` (device session exchange signed with a key an identity key renewal retired), `device_session_required` |
+| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `host_devices_off`, `rotation_pending` (a host's device role while its identity key is being renewed), `isolated` (relay tickets of an isolated host), `reauth_required`, `reauth_failed` |
+| 404 | `not_found`, `no_such_renewal` |
 | 408 | `slow_request` (a route that needs no sign-in got its body too slowly: within 10 s, or not at all; the connection is closed) |
-| 409 | `limit`, `chain_conflict`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey` |
-| 410 | `expired` (e-mail link) |
-| 422 | `invalid_entry` (a chain entry the hub's verification refused) |
+| 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey` |
+| 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account) |
+| 422 | `invalid_entry` (a chain entry the hub's verification refused), `invalid_dispute` |
 | 429 | `rate` (with `retry_after_ms`), `mail_rate`, `device_rate`, `too_many_pending_devices`, `too_many_enrollments`, `too_many_pairings`, `pairing_full` |
 | 500 | `internal` |
 | 503 | `unavailable` (database, page store), `turnstile_unavailable` |
@@ -209,6 +209,8 @@ A refused request costs nothing and leaves nothing behind.
 | `POST /v1/devices` | 10 an hour per address; 10 a day per account (`429 device_rate`; a host's own device row is not one); 3 registered devices outside the chain at once (`429 too_many_pending_devices`), each counted only within its 30-minute pairing window and deleted a day after it registered |
 | `POST /v1/enrollments` | 10 an hour per device; 5 waiting per account (`429 too_many_enrollments`); `machines.max` counts waiting ones (`409 limit`); a code lives 10 minutes |
 | `POST /v1/relays/tickets` | 120 an hour per device |
+| `PUT /v1/rotations/{host}` | 6 renewal attempts an hour and 20 a day per host (`429 rate`; marking a host pending is not one); `host_dispute` pushes, and retired-key evidence kept, 4 an hour per host |
+| `POST /v1/rotations/{host}/disputes` (no session) | 60 an hour per address; 10 an hour per host, counting only statements that verify (`429 rate`) |
 | `POST /v1/mailbox` | 120 a minute per sending device, sliding (`429 mail_rate`); per recipient **mailbox role** (a host's agent: purpose 2; any device role: the rest — counted apart, so neither fills the other's) 256 mails and 1 MiB, one sender at most 128 of them, mail that delivers no key at most 192 and 512 KiB (`507 mailbox_full`); non-key mail counts against `storage.bytes` (`409 limit`) |
 | pairings | 4 open per account (`429 too_many_pairings`), 8 messages each (`429 pairing_full`), 10 minutes; a device outside the chain holds 1, within 30 minutes of registering |
 | keyring | one name per writer per committed epoch plus 64, at most 10,000 names per account (`507 keyring_full`) |
@@ -246,8 +248,11 @@ tickets. WebSocket limits are in websocket.md.
   type and meaning, a required request field, a route or a message type are
   never changed or removed within `/v1/`.
 - **Features are negotiated, not assumed**: an agent says what it speaks in
-  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`), and the hub tells devices
-  (`presence.relays`); what the hub offers an account shows in `GET /v1/me`
+  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`, `rotate/1`), and the hub tells devices
+  (`presence.relays`, `GET /v1/me` `machines[].rotates`); the hub says what it
+  speaks in `welcome.features` (`rotate/1`), and a peer sends a feature's
+  messages only where it was offered (a hub without it answers an unknown `t`
+  with 4400); what the hub offers an account shows in `GET /v1/me`
   (its `plan`, `email.verification`) and `GET /v1/signup/config`. A client
   tests for a field's presence rather than a hub version.
 - **The hub keeps working with the previous N−2 released versions of the open
@@ -270,7 +275,14 @@ tickets. WebSocket limits are in websocket.md.
   a v3 entry, and an account already on v3 carries on (`off` also stops
   hosts acting as devices)
   (`rh_proto::chain` module docs; the test
-  `c16_once_a_v3_entry_lands_readers_cannot_go_back_below_v3`).
+  `c16_once_a_v3_entry_lands_readers_cannot_go_back_below_v3`). Likewise a
+  host's identity key renewal (`RotateHostKey`, kind 20), the account's
+  renewal policy (`SetRenewalPolicy`, kind 21) and the pause of control over
+  hosts while they are renewed (`RenewalPause`, kind 22): the hub takes one only with
+  `DROPPEN_HUB_HOST_ROTATION=on` and once every current host declared
+  `rotate/1`; after the account's first, no reader may be rolled back below
+  the first release that reads kinds 20 to 22 (switching the hub back to
+  `off` stops new ones, it does not undo one).
 - **Every change to the hub API updates this folder in the same round**: the
   closed change implements, the open change documents (here) and adapts the
   clients; `check.mjs` must pass.

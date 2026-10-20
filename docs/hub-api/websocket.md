@@ -72,7 +72,7 @@ kept.
 | `t` | fields | |
 |---|---|---|
 | `challenge` | `nonce` (32-byte hex), `hub`, `version` | first message on every hub socket |
-| `welcome` | `account`, `id`, `chain_seq` (`null`: no chain yet) | signed in |
+| `welcome` | `account`, `id`, `chain_seq` (`null`: no chain yet), `features` | signed in. `features`: what the hub speaks beyond the base protocol — `rotate/1` (identity key renewals; every hub with them offers it, whatever `DROPPEN_HUB_HOST_ROTATION` says). A peer sends a feature's messages only on a connection whose `welcome` offered it: a hub without it answers an unknown `t` with 4400. Absent from hubs before renewals |
 | `presence` | `machines: [presence]` | a snapshot after `welcome`, then only changes |
 | `plan` | `plan`, `retention_days`, `storage_bytes` (`null`: none), `usage_bytes`, `grace_until_ms?`, `detail` | after `welcome` and on every change; `detail` is `GET /v1/me`'s `plan` |
 | `mail` | `id`, `sender`, `purpose`, `epoch`, `sealed` | mail for this device was posted (it stays in `GET /v1/mailbox` until acknowledged over HTTP) |
@@ -82,7 +82,9 @@ kept.
 | `chain_result` | `ok`, `seq` (`null` on failure), `error` (`null` on success) | the answer to a `CHAIN` frame this device sent |
 | `stream_synced` | `ch`, `stream`, `next_seq`, `exists` | a subscription caught up (`exists: false`: no such stream yet; it stays and follows) |
 | `stream_refused` | `ch`, `stream`, `code`, `retry_ms?` | a subscription the hub will not serve: `forbidden`, `invalid` (a `ch` in use), `limit` (256 per connection) |
-| `error` | `code`, `message` | see the codes below |
+| `rotation` | `host`, `state`, `reason?` | a host's identity key renewal changed state (http.md [identity key renewals](http.md#identity-key-renewals)): `pending`, `attempt`, `staged`, `committed`, or `none` (withdrawn); `reason` when an attempt or a staging failed (`not_acked`, `conflict`, `expired`, `refused`, `interrupted`, `replaced`: the last two no evidence — ask again with a fresh nonce), or with `state: "staged"` and `reason: "replaced"` when a staged host's agent connection was replaced (the new sign-in owes the confirmation). `GET /v1/rotations` has the rest |
+| `host_dispute` | `host`, `kind`, `seen_ms` | evidence that someone else holds a host's key: `disputed` (a retired key's signed statement disputing the renewal that retired it — the only kind that isolates the host; http.md `POST /v1/rotations/{host}/disputes`), `retired_login` (a sign-in with a key a renewal retired), `not_acked`, `conflict` (a voided staging). At most 4 an hour per host; `GET /v1/rotations` `disputes` has the evidence itself |
+| `error` | `code`, `message`, `fp?` | see the codes below |
 
 `presence` items: `{id, state: "online"|"offline"|"unknown", since_ms,
 via?: [{relay, rtt_ms?}], relays?: bool}` — `unknown` for a while after the
@@ -106,12 +108,95 @@ channels go through a relay (`/v1/connect`).
 ```
 hub   → challenge {nonce, hub, version: 1}
 agent → login {role: "agent", account, id, time_ms, sig}
-hub   → welcome {account, id, chain_seq}
+hub   → welcome {account, id, chain_seq, features: ["rotate/1"]}
 hub   → stream_watched {streams}, plan {…, machine_usage_bytes}
 hub   → ATTEST frames (the stored attestations), relay_set {…}
 hub   → mail × ≤ 64                              the first page of its mailbox
 agent → agent_info {version, features}, chain_sub {from}
+hub   → rotation_pending {…}                     only while a renewal of this host is staged,
+                                                 once agent_info declared rotate/1
+agent → rotation_ack {sign_key, sig}             within 20 s of welcome
 ```
+
+**Renewing the host's identity key** (`rotate/1`, offered in `welcome`;
+http.md [identity key renewals](http.md#identity-key-renewals)). Once an
+admin registered an attempt (`PUT /v1/rotations/{host}` with `nonce_hash`)
+and asked the host over its channel, the agent stages its proof on its own
+connection, signed in with its current key:
+
+```
+agent → rotation_stage {nonce, staged_seq, staged_head, sign_key, dh_key, assurance, old_sig, new_sig}
+hub   → rotation_staged {nonce_hash, ready_ms}   or rotation_refused {nonce_hash, reason}
+```
+
+The hub checks that `SHA-256(nonce)` is an open attempt's (with the same
+`assurance`), that `staged_seq`/`staged_head` is an entry of its chain, that
+the host's current key and the new key both signed the proof (`rh/v1
+host-rotate`, `rh_proto::chain::HostRotation`) and that neither new key was
+ever named by the chain. `reason`: `no_attempt`, `not_on_chain`, `bad_proof`,
+`key_reused` (both end the attempt: `failure: refused`), `conflict` (another
+staging for a staged host: it is void, `not_acked`'s twin), `disabled`. Never
+fatal; the same staging again answers the same. Only the host's **current**
+agent connection stages: a connection replaced by a newer sign-in (4001) is
+dead from that moment, and whatever it still sends is dropped (a socket
+delivers data for a while after the hub's close). Any other agent connection
+of the host still open when it stages owes the confirmation below.
+
+**Sign-in errors.** A sign-in the hub cannot check now (its database) is
+`error {code: "unavailable"}` and 1011 — never `denied`, so an agent never
+takes it for a word about its key; it backs off and tries the same key again.
+A sign-in whose key changed between its check and `welcome` (a renewal
+committed meanwhile) is `error {code: "rotated"}` and 4401.
+
+**The window.** While the host is staged, every sign-in with its current
+(old) key owes the new key's confirmation within 20 s of `welcome`: once its
+`agent_info` declares `rotate/1` it gets `rotation_pending {sign_key, dh_key,
+staged_seq, staged_head, nonce_hash, assurance, body_hash}` (`body_hash`:
+SHA-256 of the proof body) and answers `rotation_ack {sign_key, sig}` — the
+new key's `rh/v1 rotate-ack` signature over this connection's challenge
+`nonce` (`rh_proto::chain::sign_rotate_ack`) — or `rotation_unknown
+{sign_key}` if it does not hold that key. Any sign-in in the window that
+does not confirm voids the staging, graded:
+
+- `not_acked` (clone evidence: a dispute, and 30 days of assurance 1 only):
+  `rotation_unknown`, a wrong signature, or a connection still open and
+  silent at its deadline (one that never declares `rotate/1` included);
+- `interrupted` (no evidence; the page asks again with a fresh nonce): the
+  connection went away — closed, timed out, replaced — before it answered,
+  or the hub itself failed to note what it owes (or lost the connection to
+  a restart);
+- a second `interrupted` (or `replaced`, below) for the host within a day is
+  `not_acked` — but the hub's own failures are never counted.
+
+**Replaced.** The host's agent connection replaced by a newer sign-in (4001)
+while an attempt is open voids the attempt, `replaced` (graded like
+`interrupted`); while staged, the new sign-in owes the confirmation, and the
+devices hear `rotation {host, state: "staged", reason: "replaced"}`.
+
+**On the commit** the host's connections get the `CHAIN` frame with the
+renewal first, then `error {code: "rotated", message, fp}` (`fp`: the new
+key's fingerprint) and a close with **4005**: sign in again with the new key.
+**A sign-in with a retired key** (one a renewal replaced; on `/v1/agent`
+and `/v1/client` alike) is refused `error {code: "rotated", message,
+retired_seq}` — `retired_seq` the `RotateHostKey` that retired it — and kept
+(it isolates nothing: an agent that finds the renewal foreign disputes it
+with a signed statement over HTTP instead). The refusal is no evidence to the
+signer by itself: the socket stays open up to 10 s for exactly one
+`chain_sub {from}`, answered with `CHAIN` frames from `from` up to and
+including that `RotateHostKey` and the `KeyEpochs` right after it — never
+beyond — so the agent can check the renewal against its own chain; then it
+closes with 4401. No `chain_sub` within 10 s, or anything else (any other
+message or frame), closes it 4401 at once.
+
+```
+agent → login {…}                                signed with a retired key
+hub   → error {code: "rotated", message, retired_seq}
+agent → chain_sub {from: its seq + 1}            optional, within 10 s
+hub   → CHAIN frames from..=retired_seq + 1
+hub   ✕ close 4401
+```
+
+An agent from before renewals takes it for an ordinary refusal and backs off.
 
 **Enrollment** replaces `login` once, with the 16-byte token of the code a
 full device announced (`POST /v1/enrollments`):
@@ -154,6 +239,13 @@ or is in it, signs in as before.
 | `relay_state` | `rtts: {relay: ms}`, `attached: [relay]` | its round trip to every listed relay and the ones it is signed in on (≤ 64 and 16 kept) |
 | `stream_list` | | list the streams the hub holds for this machine |
 | `stream_delete` | `stream` (32-byte hex) | delete one of its streams (ignored unless the machine is current in the chain) |
+| `rotation_stage` | `nonce` (16-byte hex), `staged_seq`, `staged_head`, `sign_key`, `dh_key` (32-byte hex), `assurance` (0 or 1), `old_sig`, `new_sig` (64-byte hex) | `rotate/1` only: stage the host's proof for an admin's renewal attempt (above) |
+| `rotation_ack` | `sign_key`, `sig` (64-byte hex) | `rotate/1` only: confirm the staged key, answering `rotation_pending` |
+| `rotation_unknown` | `sign_key` | `rotate/1` only: this agent does not hold that key |
+
+`agent_info.features` also says `rotate/1`: it renews its identity key
+(`GET /v1/me` `machines[].rotates`). A batch with a renewal is taken only once
+every current host declared it.
 
 Mail is pushed a page (64) at a time; the next page comes once every mail of
 the last is answered with `mail_ack` or `mail_release`. Only purpose 2 (the
@@ -173,6 +265,9 @@ device role's (`GET /v1/mailbox`).
 | `stream_watched` | `streams: [hex]` | which of its streams have live readers now (send drafts only then) |
 | `stream_list` | `streams: [{stream, next_seq}]` | the answer to `stream_list` |
 | `stream_refused` | `ch`, `stream`, `code`, `retry_ms?` | a write it will not take (not a CAS answer): `quota`, `rate` (retry after `retry_ms`), `compact` (checkpoint first), `forbidden`, `missing_pages`, `invalid`, `unavailable` (retry after `retry_ms`) |
+| `rotation_staged` | `nonce_hash`, `ready_ms` | the staging is kept; it may be committed from `ready_ms` |
+| `rotation_refused` | `nonce_hash`, `reason` | the staging is not kept (above) |
+| `rotation_pending` | `sign_key`, `dh_key`, `staged_seq`, `staged_head`, `nonce_hash`, `assurance`, `body_hash` | confirm the staged key (above) |
 
 **Frames.** Agent → hub: `PING`, `APPEND {ch, stream, expect_seq, records}`
 (answered `ACK {ch, head}` or `CONFLICT {ch, head}`), `HEAD {head}`, `PAGE
@@ -321,9 +416,10 @@ that closes the connection (4400).
 | 1013 | not reading fast enough (outbound budget), or the relay is full or shutting down | hub, relay |
 | 4001 | the same device, machine or relay signed in again elsewhere | hub, relay |
 | 4002 | no heartbeat (silent for 90 s) | hub, relay |
+| 4005 | this host's identity key was renewed (`error rotated` with the new key's fingerprint before it): sign in with the new key. Only to a renewed host's agent and device connections | hub |
 | 4400 | a message or frame the server does not understand, or one not allowed here | hub, relay |
-| 4401 | sign-in refused, or not signed in in time (renew the session, then reconnect) | hub, relay |
-| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay | hub, relay |
+| 4401 | sign-in refused, or not signed in in time (renew the session, then reconnect); `rotated`: signed with a key a renewal retired (after one `chain_sub`, or 10 s) | hub, relay |
+| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed (`rotation_pending`) | hub, relay |
 | 4409 | the enrollment was already completed | hub (`/v1/agent`) |
 | 4419 | the ticket ran out and was not renewed | relay |
 | 4429 | too many attempts (enrollment, relay registration), or over the account's connections on a relay | hub, relay |
@@ -360,6 +456,8 @@ Codes 4408 and 4412 from the agent are end to end: the hub and relays pass
 | `removed` | 4403 | the device or machine was removed from the account (the chain names it removed); do not reconnect as it |
 | `forbidden` | 4403 | `SUB` from a device not current in the chain |
 | `host_devices_off` | 4403 | a host signing in as a device while the hub runs `DROPPEN_HUB_CHAIN_V3=off` |
+| `rotated` | 4005 or 4401 | 4005: this host's identity key was just renewed (`fp`: the new key's fingerprint), sign in with the new key; 4401: the sign-in was signed with a key a renewal retired (`retired_seq`: that renewal; kept as evidence, the host may be isolated) — the close comes after one `chain_sub` answered up to that renewal, or 10 s (see `/v1/agent`) |
+| `rotation_pending` | 4403 | a host signing in as a device (or signed in as one) while its identity key is being renewed: retry once the renewal is committed or withdrawn |
 | `too_large` | 1009 | a control message over 16 KiB (on `/v1/relay`: over 4 KiB before sign-in) |
 | `bad_token`, `bad_keys`, `weak_keys` | 4400 | a malformed enrollment |
 | `unknown_enrollment` | — | no such code, or expired or used: try another |
