@@ -101,6 +101,18 @@ pub fn wanted(paths: &Paths) -> bool {
     file["aggregate"] == true || file["linkedAt"].is_null()
 }
 
+/// Whether `chain` names `me` with exactly `identity`'s keys: this computer's
+/// device role signs in to the hub (a device session, `/v1/client`) only
+/// then. Once a renewal of its identity key is on the chain, the process
+/// still runs with the old key until its link restarts with the new one —
+/// and a sign-in with a retired key is kept by the hub as evidence against
+/// this very computer (`docs/host-identity-rotation.md` §3.8).
+pub(crate) fn holds_named_keys(chain: &rh_proto::chain::ChainState, me: &str, identity: &rh_proto::identity::MachineIdentity) -> bool {
+    chain
+        .device_record(me)
+        .is_some_and(|d| d.info.sign_key == identity.sign_public() && d.info.dh_key == identity.dh_public())
+}
+
 /// `cloud.json` does not read: off, said once per process.
 fn unreadable(path: &std::path::Path, error: &str) -> bool {
     static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

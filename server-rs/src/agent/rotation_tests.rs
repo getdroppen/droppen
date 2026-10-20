@@ -786,6 +786,63 @@ async fn a_close_4005_signs_in_with_the_staged_key_and_promotes_on_the_chain() {
     assert!(logins[2].by(&new, &hub.url) && logins[2].welcomed);
 }
 
+/// The hub phase's constraint (§3.8): once the renewal is committed — the
+/// chain names the staged key, or the hub closed with 4005 — the key in use
+/// never signs in again, even while the hub turns the new one away: a
+/// sign-in with a retired key is the hub's evidence against this very device.
+#[tokio::test]
+async fn after_a_committed_renewal_the_old_key_never_signs_in_again() {
+    // Committed on the chain.
+    let mut a = Account::new();
+    let old = machine();
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    let eph = DhKeypair::from_secret([5; 32]);
+    let (status, answer) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
+    assert_eq!(status, 200);
+    let new = a.staged().unwrap().identity();
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept.clear();
+        script.rotated = vec![old.sign_public()];
+    }
+    let before = hub.logins().len();
+    let entries = a.renew(&answer, [7; 16], Assurance::Auto);
+    hub.send_entries(&entries);
+    until("two more sign-ins", || hub.logins().len() >= before + 2).await;
+    let after: Vec<Login> = hub.logins()[before..].to_vec();
+    assert!(after.iter().all(|l| l.by(&new, &hub.url)), "only the renewed key signs in: {after:?}");
+    assert!(!shared.cancel.is_cancelled(), "it keeps trying");
+    assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "nothing promoted without signing in");
+    assert!(a.staged().is_some());
+    shared.cancel.cancel();
+    let _ = task.await;
+
+    // Committed by a 4005 alone (the entry not seen).
+    let b = Account::new();
+    let new = b.stage([77; 32], [7; 16]);
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), b.entries.clone()).await;
+    let shared = b.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept.clear();
+        script.rotated = vec![old.sign_public()];
+    }
+    let before = hub.logins().len();
+    hub.send(Message::Close(Some(CloseFrame {
+        code: 4005.into(),
+        reason: "rotated".into(),
+    })));
+    until("two more sign-ins", || hub.logins().len() >= before + 2).await;
+    let after: Vec<Login> = hub.logins()[before..].to_vec();
+    assert!(after.iter().all(|l| l.by(&new, &hub.url)), "only the renewed key signs in: {after:?}");
+    assert_eq!(b.seed_in_use().sign_public(), old.sign_public());
+    shared.cancel.cancel();
+    let _ = task.await;
+}
+
 /// A crash after staging, before any commit: at start the staged key signs
 /// in first; the hub does not take it (`denied`) and the key in use signs in
 /// — the seed in use untouched, the staged one kept for a commit to come.

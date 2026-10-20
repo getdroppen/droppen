@@ -262,6 +262,15 @@ mod tests {
         assert_eq!(DeviceClient::judge(403, &body("device_removed")), Err(HubError::Removed));
         assert_eq!(DeviceClient::judge(403, &body("host_devices_off")), Err(HubError::Off));
         assert_eq!(DeviceClient::judge(403, &body("not_in_chain")), Err(HubError::NotInChain));
+        // Host identity renewal: while this computer's renewal is pending
+        // its device role is suspended — a refusal like any other, retried
+        // with backoff, never a removal; a retired key's session is only
+        // unauthorized (sync the chain first).
+        assert_eq!(
+            DeviceClient::judge(403, &body("rotation_pending")),
+            Err(HubError::Refused(403, "rotation_pending".into()))
+        );
+        assert_eq!(DeviceClient::judge(401, &body("rotated")), Err(HubError::Unauthorized));
         assert!(matches!(DeviceClient::judge(503, &body("unavailable")), Err(HubError::Unreachable(_))));
         assert_eq!(
             DeviceClient::judge(403, &body("not_an_admin")),

@@ -858,6 +858,14 @@ impl Copies {
             self.set_status(|s| *s = Status::default());
             return IDLE_EVERY;
         }
+        // This computer's identity key was renewed and the link has not
+        // restarted with the new one yet: no sign-in with the retired key
+        // (`docs/host-identity-rotation.md` §3.8).
+        if !super::holds_named_keys(&view.chain, &view.me, &self.env.identity) {
+            self.session = None;
+            self.set_status(|s| s.error = Some("waiting for this device's renewed identity key".into()));
+            return IDLE_EVERY;
+        }
         let hub = match HubUrl::parse(&view.hub) {
             Ok(hub) => hub,
             Err(error) => {
@@ -1740,6 +1748,24 @@ mod tests {
             reported: None,
         };
         (c, live)
+    }
+
+    /// Host identity renewal (the hub phase's constraint): while this
+    /// computer's renewal is pending the hub suspends its device role —
+    /// `rotation_pending` on `/v1/session` or `/v1/client`. A refusal like
+    /// any other, retried with backoff: nothing is deleted, nothing goes
+    /// quiet for an hour as for a removal.
+    #[tokio::test]
+    async fn a_suspended_device_role_is_retried_not_taken_for_a_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "pendingtest");
+        let (mut c, live) = live(&paths, &["m-2"]);
+        let wait = c.refused(&live.view, "rotation_pending");
+        assert!(wait <= BACKOFF_MAX, "{wait:?}");
+        assert!(c.quiet_until.is_none(), "not quiet as after a removal");
+        assert!(super::super::store::path(&paths).exists(), "the copies stay");
+        assert!(c.store.is_some());
+        assert!(c.env.status.lock().unwrap().error.as_deref().is_some_and(|e| e.contains("rotation_pending")));
     }
 
     fn want(host: &str, name: &str) -> Want {
