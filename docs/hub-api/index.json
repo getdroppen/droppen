@@ -56,6 +56,10 @@
     { "server": "hub", "method": "PATCH", "path": "/v1/relays/prefs", "auth": "device", "requires": "current" },
     { "server": "hub", "method": "GET", "path": "/v1/main-device", "auth": "device" },
     { "server": "hub", "method": "PUT", "path": "/v1/main-device", "auth": "device", "requires": "current" },
+    { "server": "hub", "method": "GET", "path": "/v1/rotations", "auth": "device" },
+    { "server": "hub", "method": "PUT", "path": "/v1/rotations/{host}", "auth": "device", "requires": "full" },
+    { "server": "hub", "method": "DELETE", "path": "/v1/rotations/{host}", "auth": "device", "requires": "full" },
+    { "server": "hub", "method": "POST", "path": "/v1/rotations/{host}/disputes", "auth": "none" },
     { "server": "hub", "method": "GET", "path": "/v1/passkeys", "auth": "device", "requires": "current" },
     { "server": "hub", "method": "POST", "path": "/v1/passkeys/add/options", "auth": "device", "requires": "full" },
     { "server": "hub", "method": "POST", "path": "/v1/passkeys", "auth": "device", "requires": "full" },
@@ -75,13 +79,13 @@
       "server": "hub",
       "kind": "websocket",
       "c2s": ["login", "chain_sub", "stream_unsub"],
-      "s2c": ["challenge", "welcome", "presence", "plan", "mail", "chain_result", "error", "stream_synced", "stream_refused", "device_registered", "main_device", "sign_in_changed"]
+      "s2c": ["challenge", "welcome", "presence", "plan", "mail", "chain_result", "error", "stream_synced", "stream_refused", "device_registered", "main_device", "sign_in_changed", "rotation", "host_dispute"]
     },
     "/v1/agent": {
       "server": "hub",
       "kind": "websocket",
-      "c2s": ["login", "enroll", "enroll_proof", "chain_sub", "mail_ack", "mail_release", "agent_info", "relay_tickets", "relay_state", "stream_list", "stream_delete"],
-      "s2c": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets"]
+      "c2s": ["login", "enroll", "enroll_proof", "chain_sub", "mail_ack", "mail_release", "agent_info", "relay_tickets", "relay_state", "stream_list", "stream_delete", "rotation_stage", "rotation_ack", "rotation_unknown"],
+      "s2c": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"]
     },
     "/v1/relay": {
       "server": "hub",

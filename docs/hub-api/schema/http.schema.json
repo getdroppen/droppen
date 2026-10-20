@@ -528,7 +528,7 @@
               },
               "error": {
                 "type": "string",
-                "description": "unknown | unavailable | limit | forbidden"
+                "description": "unknown | unavailable | limit | forbidden | isolated"
               },
               "key": {
                 "type": "string"
@@ -572,6 +572,196 @@
           ],
           "minimum": 0,
           "description": "When it was last set or cleared (ms); null: never"
+        }
+      }
+    },
+    "rotation": {
+      "type": "object",
+      "description": "A host's identity key renewal (docs/host-identity-rotation.md §3.3): its state, what was asked, the staging (and, committed, the new keys), why it last failed, and what the hub holds against the host.",
+      "required": [
+        "host",
+        "state",
+        "assurance",
+        "requested_ms",
+        "requested_by",
+        "needs_assurance",
+        "isolated"
+      ],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "attempt",
+            "staged",
+            "committed"
+          ]
+        },
+        "assurance": {
+          "enum": [
+            0,
+            1
+          ],
+          "description": "1: confirmed on the device (the code typed in)"
+        },
+        "requested_ms": {
+          "$ref": "#/$defs/ms"
+        },
+        "requested_by": {
+          "type": "string",
+          "description": "the admin device that asked, or `hub` (isolated by evidence)"
+        },
+        "attempt_expires_ms": {
+          "$ref": "#/$defs/ms",
+          "description": "attempt: when it lapses (10 minutes)"
+        },
+        "staged_ms": {
+          "$ref": "#/$defs/ms",
+          "description": "staged: when the host staged it"
+        },
+        "ready_ms": {
+          "$ref": "#/$defs/ms",
+          "description": "staged: when it may be committed (T after staged_ms, later while a sign-in still owes its confirmation)"
+        },
+        "sign_key": {
+          "$ref": "#/$defs/hex32",
+          "description": "staged or committed: the new Ed25519 key"
+        },
+        "dh_key": {
+          "$ref": "#/$defs/hex32",
+          "description": "staged or committed: the new X25519 key"
+        },
+        "staged_seq": {
+          "$ref": "#/$defs/count",
+          "description": "staged or committed: the chain view the proof was made against"
+        },
+        "committed_ms": {
+          "$ref": "#/$defs/ms"
+        },
+        "committed_seq": {
+          "$ref": "#/$defs/count",
+          "description": "the RotateHostKey entry"
+        },
+        "failure": {
+          "type": "object",
+          "required": [
+            "reason",
+            "at_ms"
+          ],
+          "properties": {
+            "reason": {
+              "enum": [
+                "not_acked",
+                "conflict",
+                "expired",
+                "refused",
+                "interrupted",
+                "replaced"
+              ],
+              "description": "not_acked, conflict: clone evidence; interrupted (gone before it answered, or the hub's own error), replaced (the agent connection replaced during an attempt): no evidence — ask again with a fresh nonce; a second within a day is not_acked"
+            },
+            "at_ms": {
+              "$ref": "#/$defs/ms"
+            }
+          }
+        },
+        "needs_assurance": {
+          "type": "boolean",
+          "description": "only a renewal confirmed on the device is taken: clone evidence within 30 days, or isolated (an account that always asks is the chain's own rule, SetRenewalPolicy)"
+        },
+        "isolated": {
+          "type": "boolean",
+          "description": "a key a renewal not confirmed on the device retired was used again, and no renewal confirmed on the device came since: no relay tickets to or for it and no channel, but from an admin device (and its own agent's tickets) while an assurance-1 attempt or staging is open"
+        }
+      }
+    },
+    "rotationDispute": {
+      "type": "object",
+      "description": "Evidence that someone else holds a host's key. A `disputed` statement (the only kind that isolates) carries {seq, entry_hash, sig}: the retired key's rh/v1 rotate-dispute signature over the renewal at seq, which a device checks with ChainState::verify_rotate_dispute on its own chain. A retired_login carries the signed login as it came: rh_proto::sig::HubLogin {role, account, id, hub, nonce, time_ms}, checked with sig against the chain's keys_at(host, retired_seq - 1).",
+      "required": [
+        "host",
+        "kind",
+        "seen_ms"
+      ],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "disputed",
+            "retired_login",
+            "not_acked",
+            "conflict"
+          ]
+        },
+        "seen_ms": {
+          "$ref": "#/$defs/ms"
+        },
+        "retired_seq": {
+          "$ref": "#/$defs/count",
+          "description": "retired_login: the renewal that retired the key"
+        },
+        "role": {
+          "enum": [
+            "agent",
+            "device",
+            "device_session"
+          ],
+          "description": "retired_login: the login's role (HubLogin Agent, Device, DeviceSession)"
+        },
+        "login": {
+          "type": "object",
+          "required": [
+            "account",
+            "id",
+            "hub",
+            "nonce",
+            "time_ms"
+          ],
+          "properties": {
+            "account": {
+              "$ref": "#/$defs/id"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "hub": {
+              "type": "string"
+            },
+            "nonce": {
+              "$ref": "#/$defs/hex32"
+            },
+            "time_ms": {
+              "$ref": "#/$defs/ms"
+            }
+          }
+        },
+        "sig": {
+          "$ref": "#/$defs/hex64",
+          "description": "disputed: the statement's signature; retired_login: the login's"
+        },
+        "sign_key": {
+          "$ref": "#/$defs/hex32",
+          "description": "the retired key that signed it"
+        },
+        "seq": {
+          "$ref": "#/$defs/count",
+          "description": "disputed: the disputed RotateHostKey entry"
+        },
+        "entry_hash": {
+          "$ref": "#/$defs/hex32",
+          "description": "disputed: that entry's chain hash"
+        },
+        "isolates": {
+          "type": "boolean",
+          "description": "disputed: whether it isolates the host (a renewal not confirmed on the device, none confirmed after it)"
+        },
+        "evidence": {
+          "type": "boolean",
+          "description": "retired_login: whether it counts as clone evidence (needs_assurance); false for a sign-in to a challenge issued before the key's retirement or within 10 s after it (the host racing its own commit): information only"
         }
       }
     },
@@ -2008,6 +2198,10 @@
                   "reads_v3": {
                     "type": "boolean",
                     "description": "Its agent last declared `chain/3` and `policy/1`. Absent from hubs before chain v3."
+                  },
+                  "rotates": {
+                    "type": "boolean",
+                    "description": "Its agent last declared `rotate/1`: it can renew its identity key. Absent from hubs before renewals."
                   }
                 }
               }
@@ -2043,6 +2237,46 @@
                 },
                 "in_use": {
                   "type": "boolean"
+                }
+              }
+            },
+            "rotations": {
+              "type": "object",
+              "description": "Identity key renewals (docs/host-identity-rotation.md): whether this hub takes them, T, and each host's state (GET /v1/rotations has the rest). Absent from hubs before renewals.",
+              "required": [
+                "enabled",
+                "window_ms",
+                "active"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "window_ms": {
+                  "$ref": "#/$defs/ms"
+                },
+                "active": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "host",
+                      "state"
+                    ],
+                    "properties": {
+                      "host": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "state": {
+                        "enum": [
+                          "pending",
+                          "attempt",
+                          "staged",
+                          "committed"
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             },
@@ -2768,6 +3002,115 @@
         },
         "response": {
           "$ref": "#/$defs/mainDevice"
+        }
+      }
+    },
+    "GET /v1/rotations": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "required": [
+            "now_ms",
+            "enabled",
+            "window_ms",
+            "hosts",
+            "disputes"
+          ],
+          "properties": {
+            "now_ms": {
+              "$ref": "#/$defs/ms",
+              "description": "the hub's clock: every age here is measured against it"
+            },
+            "enabled": {
+              "type": "boolean",
+              "description": "DROPPEN_HUB_HOST_ROTATION=on"
+            },
+            "window_ms": {
+              "$ref": "#/$defs/ms",
+              "description": "T (DROPPEN_HUB_ROTATION_WINDOW_SECS)"
+            },
+            "hosts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/rotation"
+              }
+            },
+            "disputes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/rotationDispute"
+              },
+              "description": "the last 90 days' evidence, newest first, at most 100 — and always every dispute a still-isolated host's isolation rests on, however old"
+            }
+          }
+        }
+      }
+    },
+    "PUT /v1/rotations/{host}": {
+      "$defs": {
+        "request": {
+          "type": "object",
+          "properties": {
+            "nonce_hash": {
+              "$ref": "#/$defs/hex32",
+              "description": "SHA-256 of the request's 16-byte nonce: open an attempt. Without it: mark the host pending"
+            },
+            "assurance": {
+              "enum": [
+                0,
+                1
+              ]
+            }
+          }
+        },
+        "response": {
+          "$ref": "#/$defs/rotation"
+        }
+      }
+    },
+    "DELETE /v1/rotations/{host}": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "description": "`{}`"
+        }
+      }
+    },
+    "POST /v1/rotations/{host}/disputes": {
+      "description": "No session: the retired key's signature is the credential.",
+      "$defs": {
+        "request": {
+          "type": "object",
+          "required": [
+            "seq",
+            "entry_hash",
+            "sig"
+          ],
+          "properties": {
+            "seq": {
+              "$ref": "#/$defs/count",
+              "description": "the disputed RotateHostKey entry"
+            },
+            "entry_hash": {
+              "$ref": "#/$defs/hex32",
+              "description": "that entry's chain hash"
+            },
+            "sig": {
+              "$ref": "#/$defs/hex64",
+              "description": "rh/v1 rotate-dispute by the sign key that renewal retired"
+            }
+          }
+        },
+        "response": {
+          "type": "object",
+          "required": [
+            "ok"
+          ],
+          "properties": {
+            "ok": {
+              "const": true
+            }
+          }
         }
       }
     },
