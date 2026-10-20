@@ -597,6 +597,15 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
         let identity = staged_key.as_ref().unwrap_or(&shared.identity);
         match hub::login(&mut sink, &mut source, identity, &account, &machine, &origin, nonce).await {
             Ok(welcome) => break (sink, source, nonce, welcome),
+            Err(error @ (hub::LoginError::Removed(_) | hub::LoginError::Refused { .. })) if staged_key.is_some() && shared.rotation.committed() => {
+                // Committed (the chain names the staged key, or the hub
+                // closed with 4005): the key in use is retired and never
+                // signs in again — the hub would keep that as evidence
+                // against this device. The staged key tries again later.
+                let why = format!("the hub does not take the renewed identity key yet: {error}");
+                tracing::warn!("{why}; trying again later");
+                return Err(why);
+            }
             Err(hub::LoginError::Removed(_) | hub::LoginError::Refused { .. }) if staged_key.is_some() => {
                 tracing::info!("the hub does not take the staged identity key (no renewal committed): signing in with the key in use");
                 shared.rotation.set_try_new(false);
@@ -902,6 +911,11 @@ async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source) -
             Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
             Some(Ok(_)) => {}
         }
+    }
+    if shared.rotation.committed() {
+        // The hub closed with 4005: the key in use stays retired; the staged
+        // key reads the chain again next time.
+        return Err("the hub took the staged identity key but the device chain does not name it yet".into());
     }
     shared.rotation.set_try_new(false);
     Err("the hub took the staged identity key but the device chain does not name it: signing in with the key in use".into())

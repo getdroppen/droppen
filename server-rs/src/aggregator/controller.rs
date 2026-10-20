@@ -483,6 +483,13 @@ impl Controller {
         if self.keys.is_none() {
             return Ok(false);
         }
+        // This computer's identity key was renewed and the link has not
+        // restarted with the new one yet: nothing that signs in with the
+        // retired key (`docs/host-identity-rotation.md` §3.8).
+        if !super::holds_named_keys(&view.chain, &view.me, &self.env.identity) {
+            tracing::info!(device = %view.me, "the chain names a renewed identity key for this device: the device role waits for the link to take it");
+            return Ok(false);
+        }
         self.publish(view);
         let now = now_ms();
         let client = self.client.as_mut().expect("a client");
@@ -945,6 +952,8 @@ mod tests {
         acked: Vec<i64>,
         asked: Vec<(String, u8, u64)>,
         sessions: usize,
+        /// Every `POST /v1/session`, taken or not.
+        attempts: usize,
         /// How long a key request takes to be answered (ms).
         ask_delay_ms: u64,
         /// Answer sign-ins `403 device_removed`.
@@ -979,6 +988,7 @@ mod tests {
                 "/v1/session",
                 post(|State(hub): State<Hub>, Json(body): Json<Value>| async move {
                     let mut h = hub.lock().unwrap();
+                    h.attempts += 1;
                     if h.removed {
                         h.sessions += 1;
                         return (StatusCode::FORBIDDEN, Json(json!({"error": "device_removed"})));
@@ -1207,6 +1217,11 @@ mod tests {
     }
 
     fn start(a: &Account, origin: &str) -> Running {
+        start_as(a, origin, MachineIdentity::from_seed(&[9; 32]))
+    }
+
+    /// [`start`], the device role running with `identity`.
+    fn start_as(a: &Account, origin: &str, identity: MachineIdentity) -> Running {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
@@ -1218,7 +1233,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
-            identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
+            identity: Arc::new(identity),
             state: state.clone(),
             chain,
             cancel: cancel.clone(),
@@ -1388,6 +1403,30 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(hub.lock().unwrap().sessions, tries, "no more sign-ins (rounds every 50 ms otherwise)");
         assert!(!crate::aggregator::dir(&r.paths).exists());
+        r.cancel.cancel();
+        r.task.await.unwrap();
+    }
+
+    /// Host identity renewal (`docs/host-identity-rotation.md` §3.8; the
+    /// hub phase's constraint): once the chain names other keys for this
+    /// computer than the ones it runs with — a renewal its link has not taken
+    /// yet — the device role signs in with nothing: the hub would keep a
+    /// sign-in with the retired key as evidence against this very computer.
+    #[tokio::test]
+    async fn a_device_role_never_signs_in_with_a_key_the_chain_does_not_name() {
+        let a = account();
+        let (hub, origin) = fake_hub(a.me.sign_public()).await;
+        let r = start_as(&a, &origin, MachineIdentity::from_seed(&[12; 32]));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        r.bump.send_modify(|v| *v += 1);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(hub.lock().unwrap().attempts, 0, "no sign-in at all (rounds every 50 ms)");
+        assert!(!r.status.lock().unwrap().signed_in);
+        r.cancel.cancel();
+        r.task.await.unwrap();
+        // With the keys the chain names, it signs in as before.
+        let r = start(&a, &origin);
+        until(Duration::from_secs(10), "a sign-in", || hub.lock().unwrap().sessions > 0).await;
         r.cancel.cancel();
         r.task.await.unwrap();
     }

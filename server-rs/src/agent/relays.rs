@@ -698,6 +698,12 @@ async fn session(
     channels: &Arc<AtomicUsize>,
     events: &mpsc::UnboundedSender<Event>,
 ) -> Result<(), String> {
+    // This device's identity key was renewed and the link has not restarted
+    // with the new one yet: no sign-in with the retired key
+    // (`docs/host-identity-rotation.md` §3.8).
+    if super::rotation::renewed_away(&shared.state.lock().expect("agent state"), &shared.identity) {
+        return Err("waiting for this device's renewed identity key".into());
+    }
     let (origin, insecure) = (target.origin.as_str(), target.insecure);
     let socket = tokio::time::timeout(STEP, connect(origin, insecure))
         .await

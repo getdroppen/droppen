@@ -129,6 +129,11 @@ struct Inner {
     switch: bool,
     /// The next connection is made at once, not after the back-off.
     again: bool,
+    /// The renewal to the staged key is committed (the chain names it, or the
+    /// hub closed with 4005): the key in use is retired, and never signs in
+    /// again — a sign-in with it is the hub's evidence against this very
+    /// device (`docs/host-identity-rotation.md` §3.8).
+    committed: bool,
 }
 
 /// What a running link keeps about renewals.
@@ -209,6 +214,13 @@ impl Rotation {
         let mut inner = self.lock();
         inner.try_new = true;
         inner.again = true;
+        inner.committed = true;
+    }
+
+    /// Whether the renewal to the staged key is committed: only the staged
+    /// key signs in from now on, however often the hub turns it away.
+    pub fn committed(&self) -> bool {
+        self.lock().committed
     }
 
     /// Whether the next connection is made at once; taken once.
@@ -613,6 +625,7 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
         Verdict::Renewed => {
             let mut inner = shared.rotation.lock();
             inner.try_new = true;
+            inner.committed = true;
             if inner.session.is_some_and(|s| !s.staged_key) && !inner.switch {
                 tracing::info!("the device chain renewed this device's identity key to the staged one: signing in with it");
                 inner.switch = true;
@@ -649,6 +662,17 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     super::link::raise_alarm(shared, REPLACED_ELSEWHERE.to_string());
     shared.save();
     shared.cancel.cancel();
+}
+
+/// Whether `st`'s chain names this device with other keys than `identity`
+/// (a renewal the link has not taken yet, or one made elsewhere): nothing
+/// signs in with `identity` then — the hub keeps a sign-in with a retired
+/// key as evidence against this very device.
+pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
+    st.chain
+        .as_ref()
+        .and_then(|c| c.device_record(&st.machine))
+        .is_some_and(|d| (d.info.sign_key, d.info.dh_key) != (identity.sign_public(), identity.dh_public()))
 }
 
 /// Whether `identity` is a seed this device must never use again: one a
