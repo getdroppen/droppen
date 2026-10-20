@@ -864,6 +864,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/re-enroll-fresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add this computer again with a new identity
+         * @description "Add this device again with a new identity" (`docs/host-identity-rotation.md`
+         *     §3.8 「只剩退役钥时」): only while this computer's identity key was replaced
+         *     elsewhere — its own verified chain gives its id keys it does not hold, for
+         *     example after restoring a backup made before a renewal
+         *     (`link.rotation.state` `foreign`; 409 `not_renewed_elsewhere` otherwise):
+         *     it holds only a retired key, which nothing renews in place.
+         *     Its seed is archived (`agent/machine-key.retired-<ms>.json`, never used
+         *     again), the old enrollment forgotten as a disconnection forgets it, and a
+         *     fresh seed made: the computer is signed in to Droppen again like a new
+         *     one, with a registration code, under a new id.
+         */
+        post: operations["cloud_re_enroll_fresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/unlink": {
         parameters: {
             query?: never;
@@ -3257,6 +3286,8 @@ export interface components {
             refused?: string | null;
             /** @description When this machine learnt it was removed. */
             removedMs?: number | null;
+            /** @description Renewing this computer's identity key. */
+            rotation: components["schemas"]["CloudRotation"];
             /** @description The link runs in this server. */
             running: boolean;
             /** @description Since when (ms) it has been connected, or not. */
@@ -3273,6 +3304,36 @@ export interface components {
             hostname: string;
             /** @description Its id in the account (`m-…`), once the hub assigned one. */
             id?: string | null;
+        };
+        /**
+         * @description Renewing this computer's identity key (`docs/host-identity-rotation.md`
+         *     §3.5, §3.7): what the local settings show.
+         */
+        CloudRotation: {
+            /**
+             * @description For a renewal confirmed on this computer: the code to type on the
+             *     admin device (`XXXX-XXXX`), for ten minutes.
+             */
+            code?: string | null;
+            /** @description Until when (ms) the code is shown. */
+            codeExpiresMs?: number | null;
+            /** @description Its fingerprint before (8 groups of 4 hex digits). */
+            previousFingerprint?: string | null;
+            /** @description Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`. */
+            reason?: string | null;
+            /** @description When (ms) it took the renewed key. */
+            renewedMs?: number | null;
+            /**
+             * @description `idle`; `staged` (a new key waits for the renewal to be written);
+             *     `renewed` (it took a renewed key within the last day); `refused` (the
+             *     hub refuses its key as renewed but showed no renewal: it retries,
+             *     nothing else changes); `foreign` (its identity key was replaced
+             *     elsewhere — its own chain gives its id keys it does not hold, for
+             *     example after restoring a backup made before a renewal: the link
+             *     stopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new
+             *     identity).
+             */
+            state: string;
         };
         /** @description `GET /api/cloud`: where this computer stands with Droppen. Nothing secret. */
         CloudStatus: {
@@ -4283,6 +4344,13 @@ export interface components {
             usedPercent: number;
             /** @description The window's length in minutes; 0 when unknown. */
             windowMinutes: number;
+        };
+        /** @description `POST /api/cloud/re-enroll-fresh`: this computer's new identity. */
+        ReEnrollFresh: {
+            /** @description The new identity key's fingerprint (8 groups of 4 hex digits). */
+            fingerprint: string;
+            /** @description `unenrolled`: it waits for a registration code. */
+            state: string;
         };
         /**
          * @description The answer to `GET /api/sessions/{source}/{id}/receipts`.
@@ -7572,6 +7640,35 @@ export interface operations {
             };
             /** @description The hub could not be reached (`hub_unreachable`) */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    cloud_re_enroll_fresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new identity's fingerprint; the computer waits for a registration code */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReEnrollFresh"];
+                };
+            };
+            /** @description Local authentication is off, or this computer's identity key was not replaced elsewhere (`not_renewed_elsewhere`) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

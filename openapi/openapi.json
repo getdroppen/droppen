@@ -1444,6 +1444,10 @@
             "nullable": true,
             "type": "integer"
           },
+          "rotation": {
+            "$ref": "#/components/schemas/CloudRotation",
+            "description": "Renewing this computer's identity key."
+          },
           "running": {
             "description": "The link runs in this server.",
             "type": "boolean"
@@ -1458,7 +1462,8 @@
           "running",
           "connected",
           "alarms",
-          "changes"
+          "changes",
+          "rotation"
         ],
         "type": "object"
       },
@@ -1482,6 +1487,44 @@
         },
         "required": [
           "hostname"
+        ],
+        "type": "object"
+      },
+      "CloudRotation": {
+        "description": "Renewing this computer's identity key (`docs/host-identity-rotation.md`\n§3.5, §3.7): what the local settings show.",
+        "properties": {
+          "code": {
+            "description": "For a renewal confirmed on this computer: the code to type on the\nadmin device (`XXXX-XXXX`), for ten minutes.",
+            "nullable": true,
+            "type": "string"
+          },
+          "codeExpiresMs": {
+            "description": "Until when (ms) the code is shown.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "previousFingerprint": {
+            "description": "Its fingerprint before (8 groups of 4 hex digits).",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`.",
+            "nullable": true,
+            "type": "string"
+          },
+          "renewedMs": {
+            "description": "When (ms) it took the renewed key.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "state": {
+            "description": "`idle`; `staged` (a new key waits for the renewal to be written);\n`renewed` (it took a renewed key within the last day); `refused` (the\nhub refuses its key as renewed but showed no renewal: it retries,\nnothing else changes); `foreign` (its identity key was replaced\nelsewhere — its own chain gives its id keys it does not hold, for\nexample after restoring a backup made before a renewal: the link\nstopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new\nidentity).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
         ],
         "type": "object"
       },
@@ -3467,6 +3510,24 @@
           "remainingPercent",
           "windowMinutes",
           "resetsAt"
+        ],
+        "type": "object"
+      },
+      "ReEnrollFresh": {
+        "description": "`POST /api/cloud/re-enroll-fresh`: this computer's new identity.",
+        "properties": {
+          "fingerprint": {
+            "description": "The new identity key's fingerprint (8 groups of 4 hex digits).",
+            "type": "string"
+          },
+          "state": {
+            "description": "`unenrolled`: it waits for a registration code.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "state"
         ],
         "type": "object"
       },
@@ -8391,6 +8452,40 @@
           }
         },
         "summary": "Hand back droppen.app's answer from the browser",
+        "tags": [
+          "cloud"
+        ]
+      }
+    },
+    "/api/cloud/re-enroll-fresh": {
+      "post": {
+        "deprecated": false,
+        "description": "\"Add this device again with a new identity\" (`docs/host-identity-rotation.md`\n§3.8 「只剩退役钥时」): only while this computer's identity key was replaced\nelsewhere — its own verified chain gives its id keys it does not hold, for\nexample after restoring a backup made before a renewal\n(`link.rotation.state` `foreign`; 409 `not_renewed_elsewhere` otherwise):\nit holds only a retired key, which nothing renews in place.\nIts seed is archived (`agent/machine-key.retired-<ms>.json`, never used\nagain), the old enrollment forgotten as a disconnection forgets it, and a\nfresh seed made: the computer is signed in to Droppen again like a new\none, with a registration code, under a new id.",
+        "operationId": "cloud_re_enroll_fresh",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReEnrollFresh"
+                }
+              }
+            },
+            "description": "The new identity's fingerprint; the computer waits for a registration code"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Local authentication is off, or this computer's identity key was not replaced elsewhere (`not_renewed_elsewhere`)"
+          }
+        },
+        "summary": "Add this computer again with a new identity",
         "tags": [
           "cloud"
         ]
