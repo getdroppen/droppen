@@ -179,8 +179,9 @@ struct KeyFile {
     seed: String,
 }
 
-/// A staged seed's file (`machine-key.next.json`): the [`KeyFile`] fields
-/// and the renewal it was made for (`docs/host-identity-rotation.md` §3.2).
+/// A staged seed's file (`machine-key.next-<nonce>.json`, one per staging):
+/// the [`KeyFile`] fields and the renewal it was made for
+/// (`docs/host-identity-rotation.md` §3.2).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NextKeyFile {
@@ -199,6 +200,10 @@ struct NextKeyFile {
     assurance: u8,
     /// When it was staged (this agent's clock).
     created_ms: u64,
+    /// When the hub said it staged it (`rotation_staged`): a staging the hub
+    /// took may be committed until it expires, so it is kept that long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accepted_ms: Option<u64>,
 }
 
 /// A machine seed and the instance identity it belongs to.
@@ -211,7 +216,8 @@ pub struct StoredSeed {
 
 /// A seed staged for an identity renewal: made on `POST /rh/rotate`, kept
 /// beside the current one until the chain names its keys
-/// ([`SeedStore::promote`]).
+/// ([`SeedStore::promote`]) or its staging can no longer be committed.
+#[derive(Clone)]
 pub struct StagedSeed {
     /// The instance identity the seed was created for.
     pub uuid: String,
@@ -227,6 +233,8 @@ pub struct StagedSeed {
     pub assurance: rh_proto::chain::Assurance,
     /// When it was staged (this agent's clock).
     pub created_ms: u64,
+    /// When the hub said it staged it, if it did.
+    pub accepted_ms: Option<u64>,
 }
 
 impl StagedSeed {
@@ -240,10 +248,12 @@ impl StagedSeed {
 /// temporary home; nothing here touches a real keychain.
 ///
 /// An identity renewal (`docs/host-identity-rotation.md` §3.5) never writes
-/// over the seed in use: the new one is staged beside it ([`SeedStore::stage`])
-/// and takes its place in one atomic step ([`SeedStore::promote`]) only once
-/// the chain names its keys. A crash at any point leaves either the old seed
-/// alone, or the old seed and a staged one, or the new seed alone.
+/// over the seed in use: each new one is staged beside it
+/// ([`SeedStore::stage`]) — several may wait, every one the hub took being
+/// one a renewal may still name — and the one the chain names takes its
+/// place in one atomic step ([`SeedStore::promote`]). A crash at any point
+/// leaves the old seed (alone, or with staged ones) or the new seed (with,
+/// at worst, staged ones left over that are never used).
 pub trait SeedStore {
     /// Where, for a person reading the output.
     fn describe(&self) -> String;
@@ -251,16 +261,23 @@ pub trait SeedStore {
     fn load(&self) -> Result<Option<StoredSeed>, String>;
     /// Store a new seed; refuses to replace one.
     fn create(&self, seed: &StoredSeed) -> Result<(), String>;
-    /// Stage a seed for a renewal, replacing any staged before it; the seed
-    /// in use is not touched.
+    /// Stage a seed for a renewal, by its nonce: the same nonce again is
+    /// written anew, every other staging stays. The seed in use is not touched.
     fn stage(&self, staged: &StagedSeed) -> Result<(), String>;
-    /// The staged seed, if there is one.
-    fn staged(&self) -> Result<Option<StagedSeed>, String>;
-    /// Make the staged seed the one in use, atomically: the old seed is gone
-    /// once this returns, and the staged one with it.
-    fn promote(&self) -> Result<(), String>;
-    /// Forget the staged seed (no-op when there is none).
-    fn discard_staged(&self) -> Result<(), String>;
+    /// Every staged seed that reads, oldest first. One that does not read —
+    /// or that others can read — is left out (and said in the log): never used.
+    fn stagings(&self) -> Result<Vec<StagedSeed>, String>;
+    /// Make the staging of `nonce` the seed in use, atomically: the old seed
+    /// is gone once this returns, and the other stagings after it.
+    fn promote(&self, nonce: &[u8; 16]) -> Result<(), String>;
+    /// Forget the staging of `nonce` (no-op when there is none).
+    fn discard_staged(&self, nonce: &[u8; 16]) -> Result<(), String>;
+    /// Forget every staging, readable or not.
+    fn discard_all_staged(&self) -> Result<(), String>;
+    /// The newest staging, if any.
+    fn staged(&self) -> Result<Option<StagedSeed>, String> {
+        Ok(self.stagings()?.into_iter().max_by_key(|s| s.created_ms))
+    }
 }
 
 /// The seed in a 0600 file in the instance directory.
@@ -279,11 +296,66 @@ impl FileSeedStore {
         Self { path }
     }
 
-    /// Where a staged seed waits: `machine-key.next.json` beside
-    /// `machine-key.json`.
-    pub fn next_path(&self) -> PathBuf {
+    /// `machine-key.next-` — what every staging's file name starts with.
+    fn staging_prefix(&self) -> String {
         let stem = self.path.file_stem().and_then(|s| s.to_str()).unwrap_or("machine-key");
-        self.path.with_file_name(format!("{stem}.next.json"))
+        format!("{stem}.next-")
+    }
+
+    /// Where the staging of `nonce` waits: `machine-key.next-<nonce hex>.json`
+    /// beside `machine-key.json`.
+    pub fn staging_path(&self, nonce: &[u8; 16]) -> PathBuf {
+        self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), hub::hex(nonce)))
+    }
+
+    /// Every staging's file, readable or not.
+    fn staging_files(&self) -> Vec<PathBuf> {
+        let prefix = self.staging_prefix();
+        let Some(Ok(entries)) = self.path.parent().map(std::fs::read_dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".json")))
+            .map(|e| e.path())
+            .collect()
+    }
+
+    fn read_staging(path: &Path) -> Result<StagedSeed, String> {
+        let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?);
+        check_private(path)?;
+        let file: NextKeyFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bad = |what: &str| format!("{}: {what}", path.display());
+        if file.version != 1 {
+            return Err(bad(&format!("unsupported key file version {}", file.version)));
+        }
+        let seed = decode_seed(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let nonce = link::unhex(&file.nonce)
+            .and_then(|n| <[u8; 16]>::try_from(n).ok())
+            .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
+        let chain_head = hub::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
+        let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
+        Ok(StagedSeed {
+            uuid: file.uuid,
+            seed: Zeroizing::new(seed),
+            nonce,
+            chain_seq: file.chain_seq,
+            chain_head,
+            assurance,
+            created_ms: file.created_ms,
+            accepted_ms: file.accepted_ms,
+        })
+    }
+
+    fn remove(path: &Path) -> Result<(), String> {
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                sync_dir(path);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("{}: {e}", path.display())),
+        }
     }
 }
 
@@ -334,66 +406,53 @@ impl SeedStore for FileSeedStore {
                 chain_head: hub::hex(&staged.chain_head),
                 assurance: staged.assurance.to_byte(),
                 created_ms: staged.created_ms,
+                accepted_ms: staged.accepted_ms,
             })
             .map_err(|e| e.to_string())?,
         );
         // Written whole beside the seed in use, then renamed into place: a
         // half-written staged seed is never what the next run finds, and the
         // seed in use is never touched.
-        write_private(&self.next_path(), &file)
+        write_private(&self.staging_path(&staged.nonce), &file)
     }
 
-    fn staged(&self) -> Result<Option<StagedSeed>, String> {
-        let path = self.next_path();
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => Zeroizing::new(bytes),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
-        check_private(&path)?;
-        let file: NextKeyFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        let bad = |what: &str| format!("{}: {what}", path.display());
-        if file.version != 1 {
-            return Err(bad(&format!("unsupported key file version {}", file.version)));
-        }
-        let seed = decode_seed(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
-        let nonce = link::unhex(&file.nonce)
-            .and_then(|n| <[u8; 16]>::try_from(n).ok())
-            .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
-        let chain_head = hub::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
-        let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
-        Ok(Some(StagedSeed {
-            uuid: file.uuid,
-            seed: Zeroizing::new(seed),
-            nonce,
-            chain_seq: file.chain_seq,
-            chain_head,
-            assurance,
-            created_ms: file.created_ms,
-        }))
+    fn stagings(&self) -> Result<Vec<StagedSeed>, String> {
+        let mut out: Vec<StagedSeed> = self
+            .staging_files()
+            .iter()
+            .filter_map(|path| match Self::read_staging(path) {
+                Ok(staged) => Some(staged),
+                Err(error) => {
+                    tracing::warn!(%error, "a staged identity key that does not read: not used");
+                    None
+                }
+            })
+            .collect();
+        out.sort_by_key(|s| (s.created_ms, s.nonce));
+        Ok(out)
     }
 
-    fn promote(&self) -> Result<(), String> {
-        let next = self.next_path();
+    fn promote(&self, nonce: &[u8; 16]) -> Result<(), String> {
+        let next = self.staging_path(nonce);
         // Only a staged seed that reads as one (and is private) takes the place.
-        if self.staged()?.is_none() {
-            return Err(format!("{}: nothing staged", next.display()));
-        }
+        Self::read_staging(&next)?;
         std::fs::rename(&next, &self.path).map_err(|e| format!("{} → {}: {e}", next.display(), self.path.display()))?;
         sync_dir(&self.path);
+        // The others can never be named now (an id is renewed to one key at a time).
+        for other in self.staging_files() {
+            if let Err(error) = Self::remove(&other) {
+                tracing::warn!(%error, "cannot delete a staged identity key no renewal will take");
+            }
+        }
         Ok(())
     }
 
-    fn discard_staged(&self) -> Result<(), String> {
-        let next = self.next_path();
-        match std::fs::remove_file(&next) {
-            Ok(()) => {
-                sync_dir(&next);
-                Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("{}: {e}", next.display())),
-        }
+    fn discard_staged(&self, nonce: &[u8; 16]) -> Result<(), String> {
+        Self::remove(&self.staging_path(nonce))
+    }
+
+    fn discard_all_staged(&self) -> Result<(), String> {
+        self.staging_files().iter().try_for_each(|p| Self::remove(p))
     }
 }
 
@@ -971,65 +1030,81 @@ mod tests {
     }
 
     /// Host identity renewal (`docs/host-identity-rotation.md` §3.2, §3.5):
-    /// a staged seed waits beside the one in use — 0600, never over it, the
-    /// next staging replacing it — and takes its place in one rename. At
-    /// every point in between the store holds the old seed (alone, or with a
-    /// staged one) or the new one alone: what a crash leaves.
+    /// staged seeds wait beside the one in use — one 0600 file each, by
+    /// nonce, never over it, several at once — and the one a renewal names
+    /// takes its place in one rename, the others going after it. At every
+    /// point in between the store holds the old seed (alone, or with staged
+    /// ones) or the new one (at worst with staged ones never used): what a
+    /// crash leaves.
     #[test]
-    fn a_staged_seed_never_touches_the_one_in_use_until_promoted() {
+    fn staged_seeds_never_touch_the_one_in_use_until_one_is_promoted() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         let (old, _) = load_or_create(&paths).unwrap();
         let store = FileSeedStore::for_instance(&paths);
-        assert_eq!(store.next_path(), key_path(&paths).with_file_name("machine-key.next.json"));
-        assert!(store.staged().unwrap().is_none());
-        assert!(store.promote().is_err(), "nothing staged, nothing promoted");
+        assert_eq!(
+            store.staging_path(&[1; 16]),
+            key_path(&paths).with_file_name(format!("machine-key.next-{}.json", hub::hex(&[1; 16])))
+        );
+        assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
+        assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");
         let uuid = crate::identity::ensure(&paths).unwrap().uuid;
-        let staged = |seed: u8, nonce: u8| StagedSeed {
+        let staged = |seed: u8, nonce: u8, created_ms: u64| StagedSeed {
             uuid: uuid.clone(),
             seed: Zeroizing::new([seed; 32]),
             nonce: [nonce; 16],
             chain_seq: 4,
             chain_head: [5; 32],
             assurance: rh_proto::chain::Assurance::OnDevice,
-            created_ms: 6,
+            created_ms,
+            accepted_ms: None,
         };
-        store.stage(&staged(7, 1)).unwrap();
+        store.stage(&staged(7, 1, 6)).unwrap();
         // Crash here: the old seed is the one in use.
         assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
         let read = store.staged().unwrap().unwrap();
-        assert_eq!((read.nonce, read.chain_seq, read.chain_head, read.created_ms), ([1; 16], 4, [5; 32], 6));
+        assert_eq!((read.nonce, read.chain_seq, read.chain_head, read.created_ms, read.accepted_ms), ([1; 16], 4, [5; 32], 6, None));
         assert_eq!(read.assurance, rh_proto::chain::Assurance::OnDevice);
         assert_eq!(read.identity().sign_public(), MachineIdentity::from_seed(&[7; 32]).sign_public());
-        let file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.next_path()).unwrap()).unwrap();
+        let file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.staging_path(&[1; 16])).unwrap()).unwrap();
         for field in ["version", "uuid", "seed", "nonce", "chainSeq", "chainHead", "assurance", "createdMs"] {
             assert!(file.get(field).is_some(), "{field}: {file}");
         }
+        // Taken by the hub: noted in the same file.
+        store.stage(&StagedSeed { accepted_ms: Some(9), ..staged(7, 1, 6) }).unwrap();
+        assert_eq!(store.stagings().unwrap().len(), 1, "the same nonce again: the same staging");
+        assert_eq!(store.staged().unwrap().unwrap().accepted_ms, Some(9));
+        // A second staging waits beside the first: neither replaces the other.
+        store.stage(&staged(8, 2, 7)).unwrap();
+        let both: Vec<[u8; 16]> = store.stagings().unwrap().iter().map(|s| s.nonce).collect();
+        assert_eq!(both, vec![[1; 16], [2; 16]], "oldest first");
+        assert_eq!(store.staged().unwrap().unwrap().nonce, [2; 16], "the newest");
+        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(store.next_path()).unwrap().permissions().mode() & 0o777, 0o600);
-            std::fs::set_permissions(store.next_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
-            assert!(store.staged().err().is_some_and(|e| e.contains("readable by others")));
-            assert!(store.promote().is_err(), "a staged seed others can read is not taken");
-            std::fs::set_permissions(store.next_path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+            let first = store.staging_path(&[1; 16]);
+            assert_eq!(std::fs::metadata(&first).unwrap().permissions().mode() & 0o777, 0o600);
+            std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(store.stagings().unwrap().len(), 1, "one others can read is not used");
+            assert!(store.promote(&[1; 16]).is_err(), "nor taken");
+            std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
-        // A new request replaces the staged seed, never the one in use.
-        store.stage(&staged(8, 2)).unwrap();
-        assert_eq!(store.staged().unwrap().unwrap().nonce, [2; 16]);
-        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
-        // Promoted: the new seed alone; a crash after it starts with it.
-        store.promote().unwrap();
-        assert!(store.staged().unwrap().is_none());
+        // The FIRST is the one a renewal names: promoted; the other goes.
+        store.promote(&[1; 16]).unwrap();
+        assert!(store.stagings().unwrap().is_empty());
         let (now, created) = load_or_create(&paths).unwrap();
         assert!(!created);
-        assert_eq!(now.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public());
+        assert_eq!(now.sign_public(), MachineIdentity::from_seed(&[7; 32]).sign_public());
         assert_eq!(store.load().unwrap().unwrap().uuid, uuid, "the same instance");
-        // Forgetting a staged seed leaves the one in use.
-        store.stage(&staged(9, 3)).unwrap();
-        store.discard_staged().unwrap();
-        store.discard_staged().unwrap();
-        assert!(store.staged().unwrap().is_none());
+        // Forgetting staged seeds leaves the one in use.
+        store.stage(&staged(9, 3, 8)).unwrap();
+        store.stage(&staged(10, 4, 9)).unwrap();
+        store.discard_staged(&[3; 16]).unwrap();
+        store.discard_staged(&[3; 16]).unwrap();
+        assert_eq!(store.stagings().unwrap().len(), 1);
+        store.discard_all_staged().unwrap();
+        assert!(store.stagings().unwrap().is_empty());
         assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), now.sign_public());
     }
 
