@@ -65,6 +65,14 @@ pub fn acked(row: &Row) -> bool {
     row.next_seq > 0 || row.manifest_upto.is_some()
 }
 
+/// Whether `row` is a name from before epoch `current` the hub never held:
+/// nothing acknowledged, nothing written ahead. A newer epoch overtaking a
+/// migration skips such a name (host identity renewal right after a
+/// removal: two epochs in a row) instead of filling it only to move it again.
+pub fn never_written(row: &Row, first: u32, current: u32) -> bool {
+    name_epoch(row, first) < current && !acked(row) && row.pending.is_none()
+}
+
 /// The session streams by `source/id`: one, or an old name and its successor while one migrates.
 pub fn by_session(rows: &[Row]) -> HashMap<String, Vec<&Row>> {
     let mut out: HashMap<String, Vec<&Row>> = HashMap::new();
@@ -294,6 +302,38 @@ mod tests {
         assert_eq!(entry_epoch(&[&old, &acked_new], 0, 3), 3);
         assert_eq!(entry_epoch(&[], 0, 3), 3, "a new session: where it will be created");
         assert_eq!(name_epoch(&old, 2), 2, "no name epoch: the first one held");
+    }
+
+    /// Host identity renewal (`docs/host-identity-rotation.md` §5.4): a
+    /// removal's epoch, then the renewal's, back to back. A migration to the
+    /// first that did not get to write a name is redirected to the newest:
+    /// the name the hub never held is skipped; one it holds, or one with a
+    /// write in flight, is moved as any other.
+    #[test]
+    fn a_name_the_hub_never_held_is_skipped_for_the_newest_epoch() {
+        let old = row(1, Kind::Session, "a", None, 5);
+        let unwritten = row(2, Kind::Session, "a", Some(1), 0);
+        let written = row(3, Kind::Session, "b", Some(1), 2);
+        let newest = row(4, Kind::Session, "c", Some(2), 0);
+        assert!(!never_written(&old, 0, 2), "on the hub: it moves");
+        assert!(never_written(&unwritten, 0, 2), "never written: skipped");
+        assert!(!never_written(&written, 0, 2));
+        assert!(!never_written(&newest, 0, 2), "the newest epoch's own new name stays");
+        let mut checkpointed = unwritten.clone();
+        checkpointed.manifest_upto = Some(0);
+        assert!(!never_written(&checkpointed, 0, 2), "a checkpoint the hub took");
+        let mut in_flight = unwritten.clone();
+        in_flight.pending = Some(super::super::store::Pending {
+            expect_seq: 0,
+            records: Vec::new(),
+            next_seq: 1,
+            link: [0; 32],
+            cursor: String::new(),
+            diff: None,
+            bytes: 0,
+        });
+        assert!(!never_written(&in_flight, 0, 2), "a write ahead may have landed");
+        assert!(!never_written(&unwritten, 0, 1), "not before the epoch it was named in");
     }
 
     #[test]
