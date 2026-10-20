@@ -170,6 +170,9 @@ pub struct Env {
     /// before this computer's chain heard (`docs/host-identity-rotation.md`
     /// §5.4) — the chain moving makes it read again under the new key.
     pub resync: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Whether the device role may sign in now ([`super::SignInGate`]);
+    /// `None`: always.
+    pub may_sign_in: Option<super::SignInGate>,
 }
 
 /// A host followed now.
@@ -865,6 +868,13 @@ impl Copies {
             self.session = None;
             self.set_status(|s| s.error = Some("waiting for this device's renewed identity key".into()));
             return IDLE_EVERY;
+        }
+        // A staged identity key is kept and the link has not shown the key in
+        // use is still current: the chain here may be stale.
+        if self.env.may_sign_in.as_ref().is_some_and(|may| !may()) {
+            self.session = None;
+            self.set_status(|s| s.error = Some("waiting for the link to sign in (an identity key renewal is staged)".into()));
+            return IDLE_EVERY.min(Duration::from_secs(5));
         }
         let hub = match HubUrl::parse(&view.hub) {
             Ok(hub) => hub,
@@ -1694,6 +1704,7 @@ mod tests {
             status: Arc::default(),
             live: LiveCopies::new(),
             resync: None,
+            may_sign_in: None,
         };
         env.live.set_hosts(&hosts.iter().map(|h| h.to_string()).collect::<Vec<_>>());
         let c = Copies {

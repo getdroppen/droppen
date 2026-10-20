@@ -134,9 +134,6 @@ struct Inner {
     /// The stagings the hub took this run, by nonce, with the `ready_ms` it
     /// said: what the same nonce is answered with again.
     taken: HashMap<[u8; 16], Option<u64>>,
-    /// Sign in with the staged key first: at start, after the chain renewed
-    /// this device to it, after a 4005.
-    try_new: bool,
     /// The connection signed in with the old key is to end, so the next
     /// signs in with the staged one (the chain names it now).
     switch: bool,
@@ -147,6 +144,16 @@ struct Inner {
     /// again — a sign-in with it is the hub's evidence against this very
     /// device (`docs/host-identity-rotation.md` §3.8).
     committed: bool,
+}
+
+/// Ends a hub connection's [`HubSession`] when dropped, however the
+/// connection ends.
+pub struct SessionGuard<'a>(pub &'a Rotation);
+
+impl Drop for SessionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.disconnected();
+    }
 }
 
 /// What a running link keeps about renewals.
@@ -165,13 +172,10 @@ impl Default for Rotation {
 }
 
 impl Rotation {
-    /// At start, a staged seed is tried first.
+    /// Nothing known yet.
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(Inner {
-                try_new: true,
-                ..Inner::default()
-            }),
+            inner: Mutex::new(Inner::default()),
             gate: tokio::sync::Mutex::new(()),
             wake: tokio::sync::Notify::new(),
         }
@@ -200,14 +204,12 @@ impl Rotation {
         self.lock().session
     }
 
-    /// Whether the next sign-in tries the staged key first.
-    pub fn try_new(&self) -> bool {
-        self.lock().try_new
-    }
-
-    /// Set whether the next sign-in tries the staged key first.
-    pub fn set_try_new(&self, on: bool) {
-        self.lock().try_new = on;
+    /// Whether the link is signed in to the hub with the key in use now — the
+    /// hub took it, so no renewal has retired it: only then may this
+    /// computer's device role sign in while a staged seed is kept
+    /// ([`device_role_may_sign_in`]).
+    pub fn key_in_use_confirmed(&self) -> bool {
+        self.lock().session.is_some_and(|s| !s.staged_key)
     }
 
     /// Whether the connection signed in with the old key should end now (and
@@ -225,7 +227,6 @@ impl Rotation {
     /// a staged seed, sign in with it next, at once.
     pub fn renewed_by_hub(&self) {
         let mut inner = self.lock();
-        inner.try_new = true;
         inner.again = true;
         inner.committed = true;
     }
@@ -400,8 +401,8 @@ pub(super) fn drop_expired(paths: &Paths, current: &MachineIdentity, since: u64)
 /// newSig, mac, stagedSeq, stagedHead, readyMs}`; 400 `bad_request`; 403
 /// `forbidden`/`limited_device`; 412 `stale`; 409 `not_current_host`,
 /// `not_on_chain`, `hub_not_ready`, `hub_refused {reason}`; 504
-/// `hub_timeout` (the hub said nothing in [`STAGE_WAIT`]: the seed stays
-/// staged, and a new request replaces it).
+/// `hub_timeout` (the hub said nothing in [`STAGE_WAIT`]: the new seed is
+/// forgotten, as after a refusal — only a staging the hub took is kept).
 pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (u16, Value) {
     let req = match Request::parse(body) {
         Ok(req) => req,
@@ -547,10 +548,21 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
                 json!({"error": "hub_refused", "reason": reason, "message": "the hub refused to stage this renewal"}),
             )
         }
-        Ok(Err(_)) | Err(_) => (
-            504,
-            json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}),
-        ),
+        Ok(Err(_)) | Err(_) => {
+            // Not taken in time: the page withdraws the attempt and asks
+            // again; a late `rotation_staged` for this nonce finds nobody
+            // waiting and is ignored. One the hub took before stays.
+            if staged.accepted_ms.is_none() {
+                tracing::warn!("the hub did not answer the staging in time; forgetting the staged key");
+                if let Err(error) = store.discard_staged(&req.nonce) {
+                    tracing::error!(%error, "cannot forget the staged identity key");
+                }
+            }
+            (
+                504,
+                json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}),
+            )
+        }
     }
 }
 
@@ -698,7 +710,6 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
         Verdict::Unchanged => {}
         Verdict::Renewed => {
             let mut inner = shared.rotation.lock();
-            inner.try_new = true;
             inner.committed = true;
             if inner.session.is_some_and(|s| !s.staged_key) && !inner.switch {
                 tracing::info!("the device chain renewed this device's identity key to the staged one: signing in with it");
@@ -747,6 +758,18 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
         .as_ref()
         .and_then(|c| c.device_record(&st.machine))
         .is_some_and(|d| (d.info.sign_key, d.info.dh_key) != (identity.sign_public(), identity.dh_public()))
+}
+
+/// Whether this computer's device role (and its relay connections) may sign
+/// in with the key in use now (`docs/host-identity-rotation.md` §3.5
+/// 「不拿旧钥误伤自己」): always while no staged seed is kept; while one is,
+/// only once the link signed in with the key in use on its connection now
+/// — a renewal committed while this device slept, its chain still stale,
+/// would make that key retired, and the hub keeps a retired key's sign-in
+/// as evidence against this very device.
+pub fn device_role_may_sign_in(shared: &Shared) -> bool {
+    let staged = FileSeedStore::for_instance(&shared.paths).stagings().is_ok_and(|s| !s.is_empty());
+    !staged || shared.rotation.key_in_use_confirmed()
 }
 
 /// Whether `identity` is a seed this device must never use again: one a
@@ -863,9 +886,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
     }
     shared.save();
     {
-        let mut inner = shared.rotation.lock();
-        inner.taken.clear();
-        inner.try_new = false;
+        shared.rotation.lock().taken.clear();
     }
     tracing::warn!(
         %previous,
