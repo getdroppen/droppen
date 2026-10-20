@@ -165,6 +165,11 @@ pub struct Env {
     pub status: Arc<Mutex<Status>>,
     /// Where the copies are published for the local gateway (S1-7).
     pub live: Arc<LiveCopies>,
+    /// Asks the link to sync the chain from the hub once: a stream that
+    /// stops being readable may be one whose host renewed its identity key
+    /// before this computer's chain heard (`docs/host-identity-rotation.md`
+    /// §5.4) — the chain moving makes it read again under the new key.
+    pub resync: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// A host followed now.
@@ -172,8 +177,13 @@ pub struct Env {
 pub(super) struct Host {
     /// Its id.
     pub id: String,
-    /// Its Ed25519 key (what signs its heads).
+    /// Its Ed25519 key now (what signs its heads): the only key anything from
+    /// the network is taken under.
     pub machine_key: [u8; 32],
+    /// The Ed25519 keys it renewed away from (`RotateHostKey`), oldest first:
+    /// a position stored here, verified when it was stored, may carry one
+    /// (`docs/host-identity-rotation.md` §5.4).
+    pub retired: Vec<[u8; 32]>,
     /// Its epochs held.
     pub keys: Keys,
 }
@@ -189,6 +199,7 @@ pub(super) fn followed(view: &View, ring: &KeyRing) -> Vec<Host> {
             Some(Host {
                 id: h.info.id.clone(),
                 machine_key: h.info.sign_key,
+                retired: h.retired.iter().map(|r| r.sign_key).collect(),
                 keys: keys.clone(),
             })
         })
@@ -343,6 +354,8 @@ struct Task {
     want: Want,
     /// The host's Ed25519 key.
     machine_key: [u8; 32],
+    /// The keys it renewed away from: a stored cursor may carry one.
+    retired: Vec<[u8; 32]>,
     keys: Keys,
     start: Start,
     link: Arc<Link>,
@@ -361,6 +374,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
     let Task {
         want,
         machine_key,
+        retired,
         keys,
         start,
         link,
@@ -373,9 +387,12 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
     let (mut follower, fold) = match start {
         Start::Fresh { floor } => fresh(floor),
         Start::Resume { head, state } => {
-            let floor = head.verify(&machine_key).then(|| Floor::of(&head));
+            // Stored here, verified when it was: under any key the host held
+            // (`keys_at`) — it may have renewed its identity key since.
+            let held = std::iter::once(&machine_key).chain(&retired).any(|k| head.verify(k));
+            let floor = held.then(|| Floor::of(&head));
             match (
-                Follower::resume(want.stream, machine_key, &keys.0, head),
+                Follower::resume_stored(want.stream, machine_key, &retired, &keys.0, head),
                 Fold::restore(want.kind, &state),
             ) {
                 (Ok(f), Some(fold)) => (f, fold),
@@ -1266,7 +1283,7 @@ impl Live {
                 continue;
             }
             let Some(host) = self.host(&want.host) else { continue };
-            let (machine_key, keys) = (host.machine_key, host.keys.clone());
+            let (machine_key, retired, keys) = (host.machine_key, host.retired.clone(), host.keys.clone());
             // A failed stream is read again from the start; any other from its cursor.
             let key = (want.host.clone(), want.kind, want.name.clone());
             let stored = self.stored.get(&key).filter(|s| s.stream == want.stream && !s.too_large);
@@ -1292,6 +1309,7 @@ impl Live {
                 Task {
                     want: want.clone(),
                     machine_key,
+                    retired,
                     keys,
                     start,
                     link: self.link.clone(),
@@ -1426,6 +1444,13 @@ impl Live {
                     self.subs.remove(&want.stream);
                 }
                 let (_, tries) = c.failures.get(&want.stream).copied().unwrap_or((0, 0));
+                if tries == 0 {
+                    // Its host may have renewed its identity key: the chain
+                    // is synced once, and the stream read again under it.
+                    if let Some(resync) = &c.env.resync {
+                        resync();
+                    }
+                }
                 let wait = (REBUILD_MIN * 2u32.saturating_pow(tries.min(10))).min(REBUILD_MAX);
                 c.failures.insert(want.stream, (now_ms() + wait.as_millis() as u64, tries + 1));
                 tracing::warn!(host = %want.host, kind = want.kind.as_str(), %error, "a copy stopped; reading it again in {wait:?}");
@@ -1660,6 +1685,7 @@ mod tests {
             cancel: CancellationToken::new(),
             status: Arc::default(),
             live: LiveCopies::new(),
+            resync: None,
         };
         env.live.set_hosts(&hosts.iter().map(|h| h.to_string()).collect::<Vec<_>>());
         let c = Copies {
@@ -1691,6 +1717,7 @@ mod tests {
                 .map(|id| Host {
                     id: id.to_string(),
                     machine_key: [7; 32],
+                    retired: Vec::new(),
                     keys: Keys(vec![(0, [8; 32])]),
                 })
                 .collect(),

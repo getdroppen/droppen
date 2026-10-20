@@ -81,6 +81,9 @@ pub const CHANNEL_STALE: u16 = 4412;
 /// lapse again: its deadline is wall-clock time, and a timer may sleep
 /// through a suspended computer.
 const LAPSE_POLL: Duration = Duration::from_secs(10 * 60);
+/// The hub's close once it committed a renewal of this device's identity key
+/// (`docs/host-identity-rotation.md` §3.5): sign in with the new key.
+pub const ROTATED: u16 = 4005;
 /// The heartbeat (architecture doc §5).
 const HEARTBEAT: Duration = Duration::from_secs(20);
 /// Silence from the hub after which the connection is presumed dead.
@@ -129,6 +132,10 @@ pub(super) struct Shared {
     /// Whether the hub connection is up, since when, and why it last failed
     /// (the local API's `GET /api/cloud`).
     pub(super) health: Mutex<Health>,
+    /// Renewing this device's identity key ([`super::rotation`]).
+    pub(super) rotation: super::rotation::Rotation,
+    /// Restarts the link in this process once a renewed key is in place.
+    pub(super) restart: super::rotation::Restart,
 }
 
 /// The hub connection as the local API reports it.
@@ -250,8 +257,14 @@ pub fn enabled() -> bool {
 /// Start the link for this instance's saved agent state (an enrollment in
 /// progress, or complete). An error, and nothing started, when there is no
 /// state, it does not load, the machine key is missing, or the state says
-/// this machine was removed.
-pub fn start(paths: &Paths, env: &LinkEnv, live: Arc<crate::aggregator::live::LiveCopies>) -> Result<Running, String> {
+/// this machine was removed. `restart` starts it again in this process once
+/// it has taken a renewed identity key ([`super::rotation`]).
+pub fn start(
+    paths: &Paths,
+    env: &LinkEnv,
+    live: Arc<crate::aggregator::live::LiveCopies>,
+    restart: super::rotation::Restart,
+) -> Result<Running, String> {
     let loaded = startable(paths)?;
     let identity = match super::load_or_create(paths)? {
         (identity, false) => identity,
@@ -297,6 +310,8 @@ pub fn start(paths: &Paths, env: &LinkEnv, live: Arc<crate::aggregator::live::Li
         hub_text: Mutex::new(None),
         relays: Mutex::new(None),
         health: Mutex::new(Health::default()),
+        rotation: super::rotation::Rotation::new(),
+        restart,
     });
     if !shared.direct {
         tracing::info!("direct paths are off (DROPPEN_AGENT_DIRECT=0): devices reach this machine through relays only");
@@ -335,6 +350,7 @@ pub fn start(paths: &Paths, env: &LinkEnv, live: Arc<crate::aggregator::live::Li
             cancel: shared.cancel.child_token(),
             status: copies_status.clone(),
             live,
+            resync: Some(chain_resync(&shared)),
         }));
         (controller, copies)
     });
@@ -348,6 +364,70 @@ pub fn start(paths: &Paths, env: &LinkEnv, live: Arc<crate::aggregator::live::Li
         control_status,
         copies,
         copies_status,
+    })
+}
+
+/// A link's shared state for tests elsewhere in the agent: `st` for this
+/// machine running with `identity`, its streams' events to `sync`, no
+/// relays and no direct paths, its restarts to `restart`.
+#[cfg(test)]
+pub(super) fn test_shared(
+    paths: &Paths,
+    st: AgentState,
+    identity: MachineIdentity,
+    sync: super::streams::Handle,
+    restart: super::rotation::Restart,
+) -> Arc<Shared> {
+    let guard = st.replay_guard(now_ms());
+    Arc::new(Shared {
+        paths: paths.clone(),
+        deferred_mail: Mutex::new(Vec::new()),
+        identity: Arc::new(identity),
+        loopback: Arc::new(Loopback::new("127.0.0.1:9".parse().expect("an address"), "test".into())),
+        sync,
+        state: Arc::new(Mutex::new(st)),
+        guard: Mutex::new(guard),
+        cancel: CancellationToken::new(),
+        direct: false,
+        peers: Arc::new(Semaphore::new(1)),
+        held_until: Mutex::new(None),
+        alerts: Mutex::new(Vec::new()),
+        chain_version: tokio::sync::watch::channel(0).0,
+        lapses: Mutex::new(Vec::new()),
+        after_admission: Mutex::new(None),
+        hub_text: Mutex::new(None),
+        relays: Mutex::new(None),
+        health: Mutex::new(Health::default()),
+        rotation: super::rotation::Rotation::new(),
+        restart,
+    })
+}
+
+/// How often [`chain_resync`] asks the hub for the chain again, at most.
+const RESYNC_EVERY: Duration = Duration::from_secs(60);
+
+/// Ask the hub for the chain past this agent's head again, on its connection
+/// when it is up — at most every [`RESYNC_EVERY`]: what a reader of the other
+/// devices' copies does when one stops being readable, which a renewal of
+/// that device's identity key it has not heard of yet would explain.
+fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Send + Sync> {
+    let shared = Arc::downgrade(shared);
+    let last: Mutex<Option<Instant>> = Mutex::new(None);
+    Arc::new(move || {
+        let Some(shared) = shared.upgrade() else { return };
+        {
+            let mut last = last.lock().expect("resync");
+            if last.is_some_and(|at| at.elapsed() < RESYNC_EVERY) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
+        let from = shared.state.lock().expect("agent state").seq().map_or(0, |s| s + 1);
+        let text = shared.hub_text.lock().expect("hub text").clone();
+        if let Some(text) = text {
+            tracing::info!(from, "a copy stopped being readable: asking the hub for the chain again");
+            let _ = text.send(json!({"t": "chain_sub", "from": from}).to_string());
+        }
     })
 }
 
@@ -382,7 +462,7 @@ fn controllers_view(state: Arc<Mutex<AgentState>>) -> super::streams::Controller
     Arc::new(move || state.lock().expect("agent state").controllers())
 }
 
-async fn run(shared: Arc<Shared>) {
+pub(super) async fn run(shared: Arc<Shared>) {
     let mut backoff = BACKOFF_MIN;
     loop {
         let started = Instant::now();
@@ -402,9 +482,16 @@ async fn run(shared: Arc<Shared>) {
             shared.cancel.cancel();
             return;
         }
+        if shared.cancel.is_cancelled() {
+            return;
+        }
         match result {
             Ok(()) => tracing::info!("hub connection closed; reconnecting"),
             Err(error) => tracing::warn!(%error, "hub connection failed; reconnecting"),
+        }
+        // A renewal of this device's identity key: the staged key signs in now.
+        if shared.rotation.take_again() {
+            continue;
         }
         if started.elapsed() > STABLE {
             backoff = BACKOFF_MIN;
@@ -465,8 +552,9 @@ fn on_removed(shared: &Arc<Shared>, why: &str) {
     shared.cancel.cancel();
 }
 
-/// Open channels: `ch` → (the device it was authorised for, its inbound frames).
-pub(super) type Routes = HashMap<u32, (String, mpsc::UnboundedSender<Frame>)>;
+/// Open channels: `ch` → (the device it was authorised for, the static key
+/// it opened the channel with, its inbound frames).
+pub(super) type Routes = HashMap<u32, (String, [u8; 32], mpsc::UnboundedSender<Frame>)>;
 
 /// Channels opened and waiting for the device's first message: `ch` → (the
 /// device, when it opened). Per connection, and bounded: a relay is not
@@ -487,21 +575,100 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
             st.chain.as_ref().map_or(0, |c| c.seq() + 1),
         )
     };
-    let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
-    match hub::login(&mut sink, &mut source, &shared.identity, &account, &machine, &origin, nonce).await {
-        Ok(_) => {}
-        Err(hub::LoginError::Removed(message)) => {
-            // The hub's word, not the chain's: a failure, retried with
-            // backoff and said in the settings — never a removal. Only this
-            // machine's verified chain removes it ([`chain_advanced`]).
-            let why = format!("the hub refused this device: {message}");
-            tracing::warn!("{why}; trying again later");
-            shared.health.lock().expect("health").refused = Some(why.clone());
-            return Err(why);
-        }
-        Err(hub::LoginError::Other(error)) => return Err(error),
+    // What its own chain says about its keys first: a renewal it slept
+    // through is taken with the staged key below; one by somebody else
+    // stops the link here ([`super::rotation`]).
+    if matches!(super::rotation::on_chain(shared), super::rotation::Verdict::Foreign { .. }) {
+        return Err("this device's identity key was replaced elsewhere: not connecting".into());
     }
-    let mut features: Vec<&str> = vec![super::CHAIN_V3_FEATURE, super::POLICY_FEATURE];
+    let staged = {
+        let st = shared.state.lock().expect("agent state");
+        super::rotation::staged_seed(&shared.paths, &st, &shared.identity, now_ms())
+    };
+    // A staged identity key signs in first (a renewal may have been committed
+    // while this device was away); a hub that does not take it yet gets the
+    // key in use.
+    let has_staged = staged.is_some();
+    let mut staged_key = staged.filter(|_| shared.rotation.try_new()).map(|s| s.identity());
+    // Whether the hub just refused the staged key on this attempt.
+    let mut staged_refused = false;
+    let (mut sink, mut source, nonce, welcome) = loop {
+        let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
+        let identity = staged_key.as_ref().unwrap_or(&shared.identity);
+        match hub::login(&mut sink, &mut source, identity, &account, &machine, &origin, nonce).await {
+            Ok(welcome) => break (sink, source, nonce, welcome),
+            Err(hub::LoginError::Removed(_) | hub::LoginError::Refused { .. }) if staged_key.is_some() => {
+                tracing::info!("the hub does not take the staged identity key (no renewal committed): signing in with the key in use");
+                shared.rotation.set_try_new(false);
+                staged_key = None;
+                staged_refused = true;
+            }
+            Err(hub::LoginError::Refused { code, message }) if code == "rotated" => {
+                // Not evidence (contract §10): the hub's word that the key in
+                // use was renewed means "read the chain first". It serves the
+                // chain up to the renewal on this same socket; only what
+                // verifies on this device's own chain counts.
+                tracing::info!("the hub says the identity key in use was renewed: reading the chain it serves");
+                rotated_sync(shared, &mut sink, &mut source).await;
+                if shared.cancel.is_cancelled() {
+                    return Err("this device's identity key was replaced elsewhere: not connecting".into());
+                }
+                let renewed = super::rotation::on_chain(shared) == super::rotation::Verdict::Renewed;
+                if renewed || (has_staged && !staged_refused) {
+                    // Its own renewal (or a staged key not tried yet): the
+                    // staged key signs in next — at once, unless the hub
+                    // just refused it too (then after the back-off).
+                    if staged_refused {
+                        shared.rotation.set_try_new(true);
+                    } else {
+                        shared.rotation.renewed_by_hub();
+                    }
+                    return Err("the hub says this device's identity key was renewed: signing in with the staged key".into());
+                }
+                // No renewal to show for it: refused, retried with backoff.
+                let why = format!("the hub refuses this device's identity key as renewed, and showed no renewal: {message}");
+                tracing::warn!("{why}; trying again later");
+                shared.health.lock().expect("health").refused = Some(why.clone());
+                let news = {
+                    let mut st = shared.state.lock().expect("agent state");
+                    let news = st.rotation.refused_ms.is_none();
+                    st.rotation.refused_ms = Some(now_ms());
+                    news
+                };
+                if news {
+                    shared.save();
+                }
+                return Err(why);
+            }
+            Err(hub::LoginError::Removed(message)) => {
+                // The hub's word, not the chain's: a failure, retried with
+                // backoff and said in the settings — never a removal. Only this
+                // machine's verified chain removes it ([`chain_advanced`]).
+                let why = format!("the hub refused this device: {message}");
+                tracing::warn!("{why}; trying again later");
+                shared.health.lock().expect("health").refused = Some(why.clone());
+                return Err(why);
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    if staged_key.is_none() {
+        // Signed in with the key in use: a hub that refused it as `rotated`
+        // before takes it again.
+        let mut st = shared.state.lock().expect("agent state");
+        if st.rotation.refused_ms.take().is_some() {
+            tracing::info!("the hub takes this device's identity key again");
+            drop(st);
+            shared.save();
+        }
+    }
+    let session = super::rotation::HubSession {
+        offered: hub::offers(&welcome, super::ROTATE_FEATURE),
+        nonce,
+        staged_key: staged_key.is_some(),
+    };
+    shared.rotation.connected(session);
+    let mut features: Vec<&str> = vec![super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE];
     if shared.relays.lock().expect("relays").is_some() {
         features.push(super::relays::FEATURE);
     }
@@ -511,7 +678,13 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     )
     .await?;
     hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": from})).await?;
-    tracing::info!(%origin, %machine, "signed in to the hub");
+    if session.staged_key {
+        let result = staged_key_connection(shared, &mut source).await;
+        shared.rotation.disconnected();
+        let _ = sink.close().await;
+        return result;
+    }
+    tracing::info!(%origin, %machine, rotate = session.offered, "signed in to the hub");
     shared.set_health(true, None);
 
     // One writer for the socket: frames from every channel, and control text.
@@ -571,9 +744,20 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 if writer.is_finished() {
                     break Err("the connection's writer stopped".to_string());
                 }
+                if shared.rotation.take_switch() {
+                    break Ok(());
+                }
                 ask_again_for_held(shared, &text_tx);
                 expire_pending(&mut pending, &frames_tx, Instant::now());
                 drop_ended(&mut routes);
+                continue;
+            }
+            // The chain renewed this device to its staged key: this
+            // connection, signed in with the old one, makes way.
+            () = shared.rotation.wake.notified() => {
+                if shared.rotation.take_switch() {
+                    break Ok(());
+                }
                 continue;
             }
         };
@@ -599,11 +783,22 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
             Message::Close(frame) => {
                 let code = frame.as_ref().map(|f| u16::from(f.code));
                 tracing::info!(?code, "the hub closed the connection");
+                if code == Some(ROTATED) {
+                    // The hub committed a renewal of this device: a staged
+                    // key signs in next, and promotes once the chain it then
+                    // reads names it (the hub's word alone moves nothing).
+                    tracing::info!("the hub says this device's identity key was renewed: signing in with the staged key, if any");
+                    shared.rotation.renewed_by_hub();
+                }
                 break Ok(());
             }
             _ => {}
         }
+        if shared.rotation.take_switch() {
+            break Ok(());
+        }
     };
+    shared.rotation.disconnected();
     shared.sync.send(super::streams::Event::Disconnected);
     *shared.hub_text.lock().expect("hub text") = None;
     if let Some(relays) = shared.relays.lock().expect("relays").as_ref() {
@@ -615,6 +810,101 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     drop(text_tx);
     writer.abort();
     result
+}
+
+/// How long a hub that refused the key in use as `rotated` has to serve the
+/// chain on that socket (contract §10: it keeps it open 10 s).
+const ROTATED_SYNC: Duration = Duration::from_secs(10);
+
+/// A sign-in the hub refused as `rotated` (contract §10): ask for the chain
+/// past this device's head on that same socket and take what verifies —
+/// the hub serves it up to the renewal that retired the key and its machine
+/// key epoch, then closes. What the entries say is judged by the caller
+/// ([`super::rotation::on_chain`]): a hub's word alone changes nothing.
+async fn rotated_sync(shared: &Arc<Shared>, sink: &mut hub::Sink, source: &mut hub::Source) {
+    let from = shared.state.lock().expect("agent state").seq().map_or(0, |s| s + 1);
+    if hub::send_json(sink, &json!({"t": "chain_sub", "from": from})).await.is_err() {
+        return;
+    }
+    // Frames go nowhere: nothing else happens on this socket.
+    let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
+    let (text, _text_rx) = mpsc::unbounded_channel::<String>();
+    let deadline = tokio::time::Instant::now() + ROTATED_SYNC;
+    loop {
+        let message = tokio::select! {
+            m = source.next() => m,
+            () = tokio::time::sleep_until(deadline) => return,
+            () = shared.cancel.cancelled() => return,
+        };
+        match message {
+            Some(Ok(Message::Binary(bytes))) => {
+                if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
+                    on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
+                }
+            }
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+            Some(Ok(_)) => {}
+        }
+    }
+}
+
+/// A connection signed in with the staged identity key: the hub took it, so
+/// it committed a renewal of this device (or lies). It only reads the chain:
+/// once its own verified chain names exactly the staged keys, the staged
+/// seed is promoted and the link restarted with it
+/// ([`super::rotation::promote`]); if the chain does not within
+/// [`super::rotation::NEW_KEY_GRACE`], the next connection signs in with the
+/// key in use again. Nothing else — no channel, no stream write, no relay —
+/// runs on it: the link still holds the old key.
+async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source) -> Result<(), String> {
+    tracing::info!("signed in to the hub with the staged identity key; reading the chain");
+    let promoted = || {
+        let named = {
+            let st = shared.state.lock().expect("agent state");
+            super::rotation::staged_seed(&shared.paths, &st, &shared.identity, now_ms())
+                .is_some_and(|s| super::rotation::verdict(&st, &shared.identity, Some(&s.identity())) == super::rotation::Verdict::Renewed)
+        };
+        named
+            && match super::rotation::promote(shared) {
+                Ok(()) => {
+                    // The link restarts with the new key; this one is done.
+                    shared.cancel.cancel();
+                    true
+                }
+                Err(error) => {
+                    tracing::error!(%error, "cannot take the renewed identity key");
+                    false
+                }
+            }
+    };
+    if promoted() {
+        return Ok(());
+    }
+    // Frames go nowhere: nothing is sent on this connection.
+    let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
+    let (text, _text_rx) = mpsc::unbounded_channel::<String>();
+    let deadline = tokio::time::Instant::now() + super::rotation::NEW_KEY_GRACE;
+    loop {
+        let message = tokio::select! {
+            m = source.next() => m,
+            () = tokio::time::sleep_until(deadline) => break,
+            () = shared.cancel.cancelled() => return Ok(()),
+        };
+        match message {
+            Some(Ok(Message::Binary(bytes))) => {
+                if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
+                    on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
+                    if shared.cancel.is_cancelled() || promoted() {
+                        return Ok(());
+                    }
+                }
+            }
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+            Some(Ok(_)) => {}
+        }
+    }
+    shared.rotation.set_try_new(false);
+    Err("the hub took the staged identity key but the device chain does not name it: signing in with the key in use".into())
 }
 
 /// Give the streams' writer this connection while this machine runs AI in
@@ -636,7 +926,7 @@ fn sync_streams(shared: &Shared, writing: &mut bool, frames: &mpsc::UnboundedSen
     }
 }
 
-fn on_control(shared: &Arc<Shared>, value: &Value, text: &mpsc::UnboundedSender<String>) {
+pub(super) fn on_control(shared: &Arc<Shared>, value: &Value, text: &mpsc::UnboundedSender<String>) {
     match value["t"].as_str() {
         Some("mail") => match open_mail(shared, value) {
             MailVerdict::Ack => {
@@ -664,6 +954,15 @@ fn on_control(shared: &Arc<Shared>, value: &Value, text: &mpsc::UnboundedSender<
                 relays.send(super::relays::Event::Hub(value.clone()));
             }
         }
+        // Renewing this device's identity key (`docs/host-identity-rotation.md`
+        // §3.3): the hub's answer to a staging `POST /rh/rotate` waits for,
+        // and its request to confirm a staging with the new key.
+        Some("rotation_staged" | "rotation_refused") => {
+            if !shared.rotation.answer(value) {
+                tracing::info!(t = %value["t"], "a staging answer nobody waits for (any more)");
+            }
+        }
+        Some("rotation_pending") => super::rotation::on_pending(shared, value, text),
         _ => {}
     }
 }
@@ -1018,7 +1317,7 @@ fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
 /// in the encrypted status stream and `/rh/info`, which every device of the
 /// account reads), and pushed (Web Push and Bark). The same alarm is raised
 /// again at most hourly. M2 re-review: a fork used to be logged only.
-fn raise_alarm(shared: &Arc<Shared>, what: String) {
+pub(super) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     tracing::error!("ALARM: {what}");
     let alarms = {
         let mut st = shared.state.lock().expect("agent state");
@@ -1068,25 +1367,47 @@ fn is_conflict(error: &ChainError) -> bool {
 /// an admin took off this host's accept list — and every channel at all once
 /// this machine stops running AI (`SetHost false`): "who may control me" holds
 /// for open channels, not only new ones ([`rh_proto::chain::ChainState::may_control`]).
+///
+/// Host identity renewal (`docs/host-identity-rotation.md` §3.5, §8 item 8):
+/// also every channel whose device's static key is not the one the chain
+/// names for it now — a host that renewed its identity key opened it with
+/// the old one, which somebody else may hold. The device opens it again
+/// with its new key.
 pub(super) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, out: &mpsc::UnboundedSender<Frame>) {
-    let gone: Vec<(u32, String, bool)> = {
+    let gone: Vec<(u32, String, Gone)> = {
         let st = shared.state.lock().expect("agent state");
         let Some(chain) = st.chain.as_ref() else { return };
         routes
             .iter()
-            .filter(|(_, (device, _))| chain.may_control(device, &st.machine).is_err())
-            .map(|(ch, (device, _))| (*ch, device.clone(), chain.device(device).is_none()))
+            .filter_map(|(ch, (device, key, _))| {
+                let why = if chain.device(device).is_none() {
+                    Gone::Removed
+                } else if chain.may_control(device, &st.machine).is_err() {
+                    Gone::NotAccepted
+                } else if !holds_named_key(chain, device, key) {
+                    Gone::Renewed
+                } else {
+                    return None;
+                };
+                Some((*ch, device.clone(), why))
+            })
             .collect()
     };
-    for (ch, device, removed) in gone {
-        if removed {
-            tracing::info!(%device, ch, "closing the channel of a device the chain no longer lists");
-            routes.remove(&ch);
-            refuse(out, ch, 4403, "this device was removed from the account");
-        } else {
-            tracing::info!(%device, ch, "closing the channel of a device this machine no longer accepts control from");
-            routes.remove(&ch);
-            refuse(out, ch, 4403, "the device you reach no longer accepts control from this one");
+    for (ch, device, why) in gone {
+        routes.remove(&ch);
+        match why {
+            Gone::Removed => {
+                tracing::info!(%device, ch, "closing the channel of a device the chain no longer lists");
+                refuse(out, ch, 4403, "this device was removed from the account");
+            }
+            Gone::NotAccepted => {
+                tracing::info!(%device, ch, "closing the channel of a device this machine no longer accepts control from");
+                refuse(out, ch, 4403, "the device you reach no longer accepts control from this one");
+            }
+            Gone::Renewed => {
+                tracing::info!(%device, ch, "closing a channel opened with an identity key the chain no longer names");
+                refuse(out, ch, 4403, "this device's identity key was renewed: connect again with the new one");
+            }
         }
     }
 }
@@ -1280,7 +1601,20 @@ fn close_lapsed(channel: &Channel, device: &str, ch: u32) {
 /// Forget the routes of channels that ended here (a lapse, a protocol
 /// error): neither the hub nor a relay echoes the `CLOSE` this agent sent.
 pub(super) fn drop_ended(routes: &mut Routes) {
-    routes.retain(|_, (_, route)| !route.is_closed());
+    routes.retain(|_, (_, _, route)| !route.is_closed());
+}
+
+/// Why [`drop_removed`] closes a channel.
+enum Gone {
+    Removed,
+    NotAccepted,
+    Renewed,
+}
+
+/// Whether `key` — the static key a channel of `device` was opened with — is
+/// the DH key the chain names for `device` now.
+pub(super) fn holds_named_key(chain: &rh_proto::chain::ChainState, device: &str, key: &[u8; 32]) -> bool {
+    chain.device_record(device).is_some_and(|d| d.info.dh_key == *key)
 }
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
@@ -1295,6 +1629,8 @@ pub(super) fn drop_ended(routes: &mut Routes) {
 ///   key the chain committed for that epoch (409 `uncommitted` /
 ///   `key_mismatch` otherwise). The current key again with `reencrypt` starts
 ///   the re-encryption a mailed key could not ask for.
+/// - `POST /rh/rotate {nonce, eph, chainSeq, chainHead, assurance}` — renew
+///   this device's identity key ([`super::rotation::rotate`]).
 struct AgentLocal {
     shared: Arc<Shared>,
     /// The channel's control lapse, shared with the channel's own task: what
@@ -1308,34 +1644,60 @@ impl AgentLocal {
     }
 }
 
+/// Where `device` stands for the admin-only routes, as this agent's own
+/// chain and the attestations it holds say now — what a route answered in
+/// the agent itself checks again after waiting (`/rh/rotate`). `controls`:
+/// the chain lets it control this machine; the channel's control lapse
+/// (seven days without an admin's word) was checked by the bridge moments
+/// before, and an admin-only route needs a view vouched for within twelve
+/// hours anyway.
+pub(super) fn standing_of(shared: &Shared, device: &str) -> bridge::Standing {
+    let controls = {
+        let st = shared.state.lock().expect("agent state");
+        st.chain.as_ref().is_some_and(|c| c.may_control(device, &st.machine).is_ok())
+    };
+    standing_with(shared, device, controls)
+}
+
+/// [`standing_of`], with `controls` as judged by the caller.
+fn standing_with(shared: &Shared, device: &str, controls: bool) -> bridge::Standing {
+    let st = shared.state.lock().expect("agent state");
+    let Some(chain) = st.chain.as_ref() else {
+        return bridge::Standing {
+            admin: false,
+            view: bridge::View::Stale,
+            controls: false,
+        };
+    };
+    use rh_proto::chain::Freshness;
+    let view = match chain.freshness(device, &st.attestation_list(), now_ms(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
+        Ok(Freshness::Fresh) => bridge::View::Fresh,
+        Ok(Freshness::Stale { .. }) => bridge::View::Stale,
+        Ok(Freshness::Behind { .. }) => bridge::View::Behind,
+        Err(ChainError::Fork { .. }) => bridge::View::Fork,
+        Err(_) => bridge::View::Stale,
+    };
+    bridge::Standing {
+        admin: chain.admin(device).is_some(),
+        view,
+        controls,
+    }
+}
+
 impl bridge::Local for AgentLocal {
     fn standing(&self, device: &str) -> bridge::Standing {
+        // The channel's own control lapse (local-aggregator §3.4).
         let controls = still_controls(&self.shared, &self.lapse, now_ms());
-        let st = self.shared.state.lock().expect("agent state");
-        let Some(chain) = st.chain.as_ref() else {
-            return bridge::Standing {
-                admin: false,
-                view: bridge::View::Stale,
-                controls: false,
-            };
-        };
-        use rh_proto::chain::Freshness;
-        let view = match chain.freshness(device, &st.attestation_list(), now_ms(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
-            Ok(Freshness::Fresh) => bridge::View::Fresh,
-            Ok(Freshness::Stale { .. }) => bridge::View::Stale,
-            Ok(Freshness::Behind { .. }) => bridge::View::Behind,
-            Err(ChainError::Fork { .. }) => bridge::View::Fork,
-            Err(_) => bridge::View::Stale,
-        };
-        bridge::Standing {
-            admin: chain.admin(device).is_some(),
-            view,
-            controls,
-        }
+        standing_with(&self.shared, device, controls)
     }
 
     fn handle<'a>(&'a self, device: &'a str, method: &'a str, path: &'a str, body: &'a [u8]) -> futures_util::future::BoxFuture<'a, (u16, Value)> {
-        Box::pin(async move { self.route(device, method, path, body) })
+        Box::pin(async move {
+            if (method, path) == ("POST", "/rh/rotate") {
+                return super::rotation::rotate(&self.shared, device, body).await;
+            }
+            self.route(device, method, path, body)
+        })
     }
 }
 
@@ -1447,7 +1809,7 @@ impl AgentLocal {
     }
 }
 
-fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }
@@ -1644,6 +2006,11 @@ fn chain_moved(shared: &Arc<Shared>, entries: &[Entry], text: Option<&mpsc::Unbo
         on_removed(shared, "its device chain says so");
         return false;
     }
+    // A renewal of this device's own identity key: to its staged seed (the
+    // next sign-in takes it), or to keys it does not hold (the link stops).
+    if matches!(super::rotation::on_chain(shared), super::rotation::Verdict::Foreign { .. }) {
+        return false;
+    }
     let hub = shared.hub_text.lock().expect("hub text").clone();
     if let Some(text) = text.or(hub.as_ref()) {
         retry_mail(shared, text);
@@ -1672,7 +2039,7 @@ fn check_enrolled_keys(shared: &Arc<Shared>) -> bool {
     false
 }
 
-fn on_frame(
+pub(super) fn on_frame(
     shared: &Arc<Shared>,
     frame: Frame,
     routes: &mut Routes,
@@ -1777,20 +2144,20 @@ pub(super) fn on_channel_frame(
             }
         }
         Frame::Data { ch, payload } => {
-            if let Some((_, route)) = routes.get(&ch) {
+            if let Some((_, _, route)) = routes.get(&ch) {
                 let _ = route.send(Frame::Data { ch, payload });
             } else if let Some((device, _)) = pending.remove(&ch) {
                 accept(shared, ch, device, &payload, routes, out, text);
             }
         }
         Frame::Credit { ch, bytes } => {
-            if let Some((_, route)) = routes.get(&ch) {
+            if let Some((_, _, route)) = routes.get(&ch) {
                 let _ = route.send(Frame::Credit { ch, bytes });
             }
         }
         Frame::Close { ch, code, reason } => {
             pending.remove(&ch);
-            if let Some((_, route)) = routes.remove(&ch) {
+            if let Some((_, _, route)) = routes.remove(&ch) {
                 let _ = route.send(Frame::Close { ch, code, reason });
             }
         }
@@ -1889,7 +2256,10 @@ fn accept(
             }
             let _ = out.send(Frame::Data { ch, payload: reply });
             let (tx, rx) = mpsc::unbounded_channel();
-            routes.insert(ch, (device.clone(), tx));
+            // The key it opened with: a renewal of the device's identity
+            // closes the channel ([`drop_removed`]).
+            let key = transport.remote_static();
+            routes.insert(ch, (device.clone(), key, tx));
             // A device that speaks sequenced frames gets them (and may ask
             // for a direct path); an older one gets the plain channel.
             let paths = path::client_wants_paths(&hello.client);
@@ -1975,10 +2345,15 @@ fn accept(
                     // Chain v3: and that this machine still accepts control
                     // from it (an accept list changed, an admin demoted,
                     // this machine stopped running AI). And that its control
-                    // has not lapsed, on the chain as it is now.
+                    // has not lapsed, on the chain as it is now. Host
+                    // identity renewal: and that the key it opened with is
+                    // still the one the chain names for it.
                     let (current, fresh) = {
                         let st = shared.state.lock().expect("agent state");
-                        let current = st.chain.as_ref().is_some_and(|c| c.may_control(&device, &st.machine).is_ok());
+                        let current = st
+                            .chain
+                            .as_ref()
+                            .is_some_and(|c| c.may_control(&device, &st.machine).is_ok() && holds_named_key(c, &device, &key));
                         (current, lapse.lock().expect("channel lapse").holds(&st, now_ms()))
                     };
                     if !current {
@@ -2111,6 +2486,8 @@ mod tests {
             hub_text: Mutex::new(None),
             relays: Mutex::new(None),
             health: Mutex::new(Health::default()),
+            rotation: super::super::rotation::Rotation::new(),
+            restart: super::super::rotation::no_restart(),
         });
         Account {
             d1,
@@ -2172,7 +2549,7 @@ mod tests {
     fn routes_with_d2() -> Routes {
         let (tx, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
-        HashMap::from([(7, ("d-2".to_string(), tx))])
+        HashMap::from([(7, ("d-2".to_string(), d2().dh_public(), tx))])
     }
 
     // ---- the policy's wiring (chain v3 review, finding 8) ----------------
@@ -2277,7 +2654,7 @@ mod tests {
                 }
             }
         });
-        let agent = routes.get(&ch).unwrap().1.clone();
+        let agent = routes.get(&ch).unwrap().2.clone();
         tokio::spawn(async move {
             while let Some(frame) = device_frames.recv().await {
                 if agent.send(frame).is_err() {
@@ -2739,9 +3116,9 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
         let mut routes: Routes = HashMap::from([
-            (1, ("d-1".to_string(), tx.clone())),
-            (2, ("d-2".to_string(), tx.clone())),
-            (3, ("d-3".to_string(), tx)),
+            (1, ("d-1".to_string(), a.d1.dh_public(), tx.clone())),
+            (2, ("d-2".to_string(), d2().dh_public(), tx.clone())),
+            (3, ("d-3".to_string(), d3().dh_public(), tx)),
         ]);
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         drop_removed(&a.shared, &mut routes, &out_tx);
@@ -3221,7 +3598,7 @@ mod tests {
         drop(rx);
         let (open, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
-        let mut routes: Routes = HashMap::from([(1, ("d-1".to_string(), ended)), (2, ("d-2".to_string(), open))]);
+        let mut routes: Routes = HashMap::from([(1, ("d-1".to_string(), [1; 32], ended)), (2, ("d-2".to_string(), [2; 32], open))]);
         drop_ended(&mut routes);
         assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![2]);
     }

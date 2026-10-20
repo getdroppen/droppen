@@ -379,6 +379,7 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("POST", "/api/cloud/link/return", Never),
         ("POST", "/api/cloud/aggregator", Never),
         ("POST", "/api/cloud/unlink", Never),
+        ("POST", "/api/cloud/re-enroll-fresh", Never),
         ("PUT", "/api/cloud/access", Never),
         ("POST", "/api/cloud/claim", Never),
         ("GET", "/api/agg/ws", Never),
@@ -386,6 +387,9 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("GET", "/rh/info", Use),
         ("POST", "/rh/display-name", Posture),
         ("POST", "/rh/machine-key", Posture),
+        // Renewing this device's identity key changes who it is
+        // (`docs/host-identity-rotation.md` §3.2).
+        ("POST", "/rh/rotate", Posture),
     ]
 };
 
@@ -921,6 +925,8 @@ mod tests {
             ("GET", "/api/push/vapid"),
             ("POST", "/rh/machine-key"),
             ("POST", "/rh/display-name"),
+            ("POST", "/rh/rotate"),
+            ("post", "/rh/rotate?x=1"),
             // Switching a plugin changes what this computer runs.
             ("PUT", "/api/plugins/tasks/enabled"),
         ] {
@@ -959,6 +965,8 @@ mod tests {
             ("POST", "/api/server/self%2Dupgrade"),
             ("POST", "/rh/direct"),
             ("GET", "/rh/nope"),
+            ("GET", "/rh/rotate"),
+            ("POST", "/rh/%72otate"),
             // The Tasks routes went into a plugin; an encoded slash adds no
             // segment outside a document's name.
             ("GET", "/api/tasks/state"),
@@ -1133,6 +1141,9 @@ mod tests {
         assert!(!allowed(StreamClass::Blob, "/api/sessions"));
         assert!(allowed(StreamClass::Rpc, "/rh/machine-key"));
         assert!(!allowed(StreamClass::Blob, "/rh/machine-key"));
+        assert!(allowed(StreamClass::Rpc, "/rh/rotate"));
+        assert!(!allowed(StreamClass::Mux, "/rh/rotate"));
+        assert!(!allowed(StreamClass::Term, "/rh/rotate"));
         assert!(!allowed(StreamClass::Mux, "/rh/info"));
         assert!(!allowed(StreamClass::Rpc, "/rh/../api/x"));
         // Percent-encoded dot segments and slashes (M2 review).
