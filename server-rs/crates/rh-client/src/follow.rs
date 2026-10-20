@@ -221,10 +221,32 @@ impl Follower {
     /// Carry on after `head`, a head this reader released up to before
     /// (checked again here: it must be `stream`'s, signed by the machine).
     pub fn resume(stream: StreamId, machine_key: [u8; 32], keys: &[(u32, [u8; 32])], head: SignedHead) -> Result<Self, FollowError> {
+        Self::resume_stored(stream, machine_key, &[], keys, head)
+    }
+
+    /// [`Follower::resume`] from a position this device stored, after the
+    /// machine may have renewed its identity key
+    /// (`docs/host-identity-rotation.md` §5.4): `head` is checked under the
+    /// machine's key now or any key it held before (`retired`: the chain's
+    /// `retired_keys`, what `keys_at` reads) — this device verified it when
+    /// it stored it. Everything that comes from the network after it is
+    /// checked under `machine_key` only: nothing a retired key signs anew is
+    /// taken.
+    pub fn resume_stored(
+        stream: StreamId,
+        machine_key: [u8; 32],
+        retired: &[[u8; 32]],
+        keys: &[(u32, [u8; 32])],
+        head: SignedHead,
+    ) -> Result<Self, FollowError> {
         if head.head.stream != stream {
             return Err(broken("a cursor of another stream"));
         }
-        let reader = LogReader::from_head(machine_key, &head).map_err(broken)?;
+        let signer = std::iter::once(&machine_key)
+            .chain(retired)
+            .find(|k| head.verify(k))
+            .ok_or_else(|| broken("a cursor no key of the machine signed"))?;
+        let reader = LogReader::from_stored_head(machine_key, signer, &head).map_err(broken)?;
         let mut f = Self::new(stream, machine_key, keys);
         f.reader = reader;
         f.add_keys();
@@ -543,6 +565,55 @@ mod tests {
         assert!(Follower::resume(stream(), key, &[(0, MK)], bad).is_err());
         let other = rh_proto::stream::status_stream(&MK);
         assert!(Follower::resume(other, key, &[(0, MK)], cursor).is_err());
+    }
+
+    /// Host identity renewal (`docs/host-identity-rotation.md` §5.4, §8
+    /// item 9): a head or manifest from the network is taken under the
+    /// machine's current key only — one its retired key signs is refused,
+    /// even where it would link — while a position this device stored, signed
+    /// by the retired key when it was current, still resumes (the chain's
+    /// `keys_at`), and what follows it must be the new key's.
+    #[test]
+    fn after_a_renewal_only_the_new_key_signs_what_comes_from_the_network() {
+        let old = machine();
+        let new = ed25519_dalek::SigningKey::from_bytes(&[8; 32]);
+        let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
+        let mut m = Machine::new();
+        // Stored before the renewal: a head the old key signed.
+        let mut f = Follower::new(stream(), old_key, &[(0, MK)]);
+        f.on_frame(recs(m.write(2))).unwrap();
+        f.on_frame(head(&m.head())).unwrap();
+        let cursor = f.head().cloned().unwrap();
+        // From the network, under the new key: the old key's head is refused…
+        let more = m.write(2);
+        let mut fresh = Follower::new(stream(), new_key, &[(0, MK)]);
+        fresh.on_frame(recs(m.records.clone())).unwrap();
+        assert!(fresh.on_frame(head(&m.writer.head(&old, 5_000))).is_err(), "a retired key's head");
+        // …and so is a manifest it signs (before any page is fetched).
+        let stale = Manifest::sign(m.writer.head(&old, 5_000), vec![], &old).unwrap();
+        let mut g = Follower::new(stream(), new_key, &[(0, MK)]);
+        let checkpoint = |manifest: &Manifest| Frame::Checkpoint {
+            ch: 1,
+            stream: stream(),
+            upto_seq: 4,
+            manifest: manifest.encode(),
+        };
+        assert!(g.on_frame(checkpoint(&stale)).is_err(), "a retired key's manifest");
+        let signed = Manifest::sign(m.writer.head(&new, 5_000), vec![], &new).unwrap();
+        assert!(matches!(g.on_frame(checkpoint(&signed)), Ok(Step::Checkpoint(_))), "the new key's");
+        // The stored position: not under the new key alone…
+        assert!(Follower::resume(stream(), new_key, &[(0, MK)], cursor.clone()).is_err());
+        // …but under a key the machine held (keys_at), and on from there under the new one only.
+        let mut r = Follower::resume_stored(stream(), new_key, &[old_key], &[(0, MK)], cursor.clone()).unwrap();
+        assert_eq!(r.from_seq(), 2);
+        r.on_frame(recs(more.clone())).unwrap();
+        assert!(r.on_frame(head(&m.writer.head(&old, 6_000))).is_err(), "nothing new under the retired key");
+        let mut r = Follower::resume_stored(stream(), new_key, &[old_key], &[(0, MK)], cursor.clone()).unwrap();
+        r.on_frame(recs(more)).unwrap();
+        assert_eq!(released(r.on_frame(head(&m.writer.head(&new, 6_000))).unwrap()), (false, vec![2, 3]));
+        // A position no key of the machine signed is still refused.
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[9; 32]).verifying_key().to_bytes();
+        assert!(Follower::resume_stored(stream(), new_key, &[stranger], &[(0, MK)], cursor).is_err());
     }
 
     #[test]

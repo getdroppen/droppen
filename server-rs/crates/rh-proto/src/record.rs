@@ -573,6 +573,17 @@ impl LogReader {
         })
     }
 
+    /// From a head this reader released before and kept, checked under
+    /// `signer` — a key the machine held when it signed that head, which may
+    /// be one it renewed away from since (`docs/host-identity-rotation.md`
+    /// §5.4) — and from then on checking every head under `machine_key`, the
+    /// machine's key now.
+    pub fn from_stored_head(machine_key: [u8; 32], signer: &[u8; 32], head: &SignedHead) -> Result<Self, RecordError> {
+        let mut reader = Self::from_head(*signer, head)?;
+        reader.machine_key = machine_key;
+        Ok(reader)
+    }
+
     /// Learn `MK` for one epoch.
     pub fn add_epoch(&mut self, epoch: u32, mk: &[u8; 32]) {
         self.keys.insert(epoch, stream_key(mk, &self.stream));
