@@ -572,14 +572,19 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     let (status, refused) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
     assert_eq!((status, refused["error"].as_str(), refused["reason"].as_str()), (409, Some("hub_refused"), Some("conflict")));
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
-    // One the hub never answered (504) is kept until the next request replaces it.
+    // One the hub did not answer in time (504) is forgotten at once: no dead
+    // "staged" (or code) left, nothing for a sign-in to try.
     hub.script.lock().unwrap().stage = StageAnswer::Silent;
     let (status, lost) = rotate(&shared, &a.request([10; 16], &eph, 0)).await;
     assert_eq!((status, lost["error"].as_str()), (504, Some("hub_timeout")));
-    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16]]);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
+    // A late answer for it finds nobody waiting and changes nothing.
+    hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([10u8; 16])), "ready_ms": 1}));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
     hub.script.lock().unwrap().stage = StageAnswer::Staged;
     assert_eq!(rotate(&shared, &a.request([11; 16], &eph, 0)).await.0, 200);
-    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [11; 16]], "the unanswered one made room");
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [11; 16]]);
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     shared.cancel.cancel();
@@ -996,8 +1001,9 @@ async fn at_start_a_staged_key_the_chain_names_is_taken() {
 }
 
 /// Promotion only on a verified entry: a hub that takes the staged key but
-/// serves no renewal of this device gets nothing — after the grace the key
-/// in use signs in again, and the seed in use stays.
+/// serves no renewal of this device gets nothing promoted — and since it
+/// holds a renewal to that key, the key in use is never tried: the staged
+/// key signs in (and reads the chain) again, and the seed in use stays.
 #[tokio::test]
 async fn a_hub_taking_the_staged_key_without_the_entry_promotes_nothing() {
     let a = Account::new();
@@ -1007,18 +1013,71 @@ async fn a_hub_taking_the_staged_key_without_the_entry_promotes_nothing() {
     let restarts = Arc::new(AtomicUsize::new(0));
     let shared = a.shared(&hub.url, &restarts);
     let task = tokio::spawn(link::run(shared.clone()));
-    until("the key in use signing in again", || {
-        shared.rotation.session().is_some_and(|s| !s.staged_key)
-    })
-    .await;
+    until("the staged key signing in again", || hub.logins().len() >= 2).await;
     let logins = hub.logins();
-    assert!(logins[0].by(&new, &hub.url) && logins[0].welcomed);
-    assert!(logins.last().unwrap().by(&old, &hub.url));
+    assert!(logins.iter().all(|l| l.by(&new, &hub.url) && l.welcomed), "never the key in use: {logins:?}");
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "no promotion on the hub's word");
     assert!(a.staged().is_some());
+    assert!(!rotation::device_role_may_sign_in(&shared), "the device role waits too");
     shared.cancel.cancel();
     let _ = task.await;
+}
+
+/// §3.5 「不拿旧钥误伤自己」: a host asleep through the commit of its own
+/// renewal comes back with a stale chain. EVERY sign-in — not only the first
+/// after start — tries the staged keys first, so its first sign-in after
+/// waking is the staged key's, never the retired one's; and the device role
+/// waits for the link meanwhile.
+#[tokio::test]
+async fn a_host_asleep_through_its_renewal_never_signs_in_with_the_retired_key() {
+    let mut a = Account::new();
+    let old = machine();
+    let new = a.stage([77; 32], [7; 16]);
+    let answer = a.staged_answer(&new, [7; 16]);
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = a.shared(&hub.url, &restarts);
+    // Awake: the staged key is not known yet (denied), the key in use signs in.
+    let task = signed_in(&shared).await;
+    assert!(rotation::device_role_may_sign_in(&shared), "the link showed the key in use is current");
+    let awake = hub.logins().len();
+    assert_eq!(awake, 2);
+    // Asleep: the connection goes; the hub commits the renewal meanwhile — its
+    // chain serves it, it takes only the new key — and this device heard nothing.
+    let entries = a.renew(&answer, [7; 16], Assurance::Auto);
+    hub.chain.lock().unwrap().extend(entries);
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept = vec![new.sign_public()];
+        script.rotated = vec![old.sign_public()];
+    }
+    hub.send(Message::Close(Some(CloseFrame {
+        code: 1012.into(),
+        reason: "restart".into(),
+    })));
+    until("the restart with the renewed key", || restarts.load(Ordering::SeqCst) == 1).await;
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
+    let after: Vec<Login> = hub.logins()[awake..].to_vec();
+    assert!(!after.is_empty() && after.iter().all(|l| l.by(&new, &hub.url)), "never the retired key: {after:?}");
+    assert_eq!(a.seed_in_use().sign_public(), new.sign_public());
+}
+
+/// The device role's gate (§3.5): open while no staged seed is kept; while
+/// one is, only once the link is signed in with the key in use.
+#[tokio::test]
+async fn the_device_role_waits_for_the_link_while_a_staged_seed_is_kept() {
+    let a = Account::new();
+    let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    assert!(rotation::device_role_may_sign_in(&shared), "nothing staged");
+    a.stage([77; 32], [7; 16]);
+    assert!(!rotation::device_role_may_sign_in(&shared), "staged, and the link has not signed in");
+    let task = signed_in(&shared).await;
+    assert!(rotation::device_role_may_sign_in(&shared), "the hub took the key in use");
+    shared.cancel.cancel();
+    let _ = task.await;
+    assert!(!rotation::device_role_may_sign_in(&shared), "the connection went");
 }
 
 /// §3.5 / §3.8: an entry renewing this device to keys it never staged —

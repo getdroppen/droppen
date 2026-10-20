@@ -170,6 +170,9 @@ pub struct Env {
     pub keys_out: watch::Sender<Option<Arc<super::copies::KeyRing>>>,
     /// Woken when mail for this device was pushed (the copies task hears it).
     pub nudge: Arc<tokio::sync::Notify>,
+    /// Whether the device role may sign in now ([`super::SignInGate`]);
+    /// `None`: always.
+    pub may_sign_in: Option<super::SignInGate>,
 }
 
 /// What a round sees of the agent state.
@@ -488,6 +491,12 @@ impl Controller {
         // retired key (`docs/host-identity-rotation.md` §3.8).
         if !super::holds_named_keys(&view.chain, &view.me, &self.env.identity) {
             tracing::info!(device = %view.me, "the chain names a renewed identity key for this device: the device role waits for the link to take it");
+            return Ok(false);
+        }
+        // A staged identity key is kept and the link has not shown the key
+        // in use is still current: the chain here may be stale.
+        if self.env.may_sign_in.as_ref().is_some_and(|may| !may()) {
+            tracing::debug!(device = %view.me, "a staged identity key is kept: the device role waits for the link's sign-in");
             return Ok(false);
         }
         self.publish(view);
@@ -1136,6 +1145,7 @@ mod tests {
             timing,
             keys_out,
             nudge: Arc::default(),
+            may_sign_in: None,
         }));
         let covers = |epochs: &[u32]| {
             let s = status.lock().unwrap();
@@ -1222,6 +1232,11 @@ mod tests {
 
     /// [`start`], the device role running with `identity`.
     fn start_as(a: &Account, origin: &str, identity: MachineIdentity) -> Running {
+        start_gated(a, origin, identity, None)
+    }
+
+    /// [`start_as`], its sign-ins gated by `may_sign_in`.
+    fn start_gated(a: &Account, origin: &str, identity: MachineIdentity, may_sign_in: Option<super::super::SignInGate>) -> Running {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
@@ -1246,6 +1261,7 @@ mod tests {
             },
             keys_out: watch::channel(None).0,
             nudge: Arc::default(),
+            may_sign_in,
         }));
         Running {
             paths,
@@ -1424,8 +1440,21 @@ mod tests {
         assert!(!r.status.lock().unwrap().signed_in);
         r.cancel.cancel();
         r.task.await.unwrap();
-        // With the keys the chain names, it signs in as before.
-        let r = start(&a, &origin);
+        // The keys the chain names, but a staged identity key is kept and the
+        // link has not signed in with the key in use (§3.5 「不拿旧钥误伤自己」):
+        // the chain here may be stale — still no sign-in.
+        let open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = open.clone();
+        let r = start_gated(
+            &a,
+            &origin,
+            MachineIdentity::from_seed(&[9; 32]),
+            Some(Arc::new(move || gate.load(std::sync::atomic::Ordering::SeqCst))),
+        );
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(hub.lock().unwrap().attempts, 0, "no session minted with a key that may be retired");
+        // The link signed in with the key in use: it is current.
+        open.store(true, std::sync::atomic::Ordering::SeqCst);
         until(Duration::from_secs(10), "a sign-in", || hub.lock().unwrap().sessions > 0).await;
         r.cancel.cancel();
         r.task.await.unwrap();

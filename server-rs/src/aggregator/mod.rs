@@ -101,6 +101,13 @@ pub fn wanted(paths: &Paths) -> bool {
     file["aggregate"] == true || file["linkedAt"].is_null()
 }
 
+/// Whether this computer's device role may sign in to the hub now, as its
+/// link says (`docs/host-identity-rotation.md` §3.5 「不拿旧钥误伤自己」):
+/// not while a staged identity key is kept and the link has not signed in
+/// with the key in use — a renewal committed while this computer slept would
+/// make that key retired, and its sign-in evidence against this computer.
+pub type SignInGate = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// Whether `chain` names `me` with exactly `identity`'s keys: this computer's
 /// device role signs in to the hub (a device session, `/v1/client`) only
 /// then. Once a renewal of its identity key is on the chain, the process
