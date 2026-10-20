@@ -572,19 +572,18 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     let (status, refused) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
     assert_eq!((status, refused["error"].as_str(), refused["reason"].as_str()), (409, Some("hub_refused"), Some("conflict")));
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
-    // One the hub did not answer in time (504) is forgotten at once: no dead
-    // "staged" (or code) left, nothing for a sign-in to try.
+    // One the hub did not answer in time (504) is kept for the attempt's ten
+    // minutes, unanswered; its late answer makes it one the hub took.
     hub.script.lock().unwrap().stage = StageAnswer::Silent;
     let (status, lost) = rotate(&shared, &a.request([10; 16], &eph, 0)).await;
     assert_eq!((status, lost["error"].as_str()), (504, Some("hub_timeout")));
-    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
-    // A late answer for it finds nobody waiting and changes nothing.
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16]]);
+    assert!(a.staged().unwrap().accepted_ms.is_none());
     hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([10u8; 16])), "ready_ms": 1}));
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
+    until("the late answer", || a.staged().is_some_and(|s| s.accepted_ms.is_some())).await;
     hub.script.lock().unwrap().stage = StageAnswer::Staged;
     assert_eq!(rotate(&shared, &a.request([11; 16], &eph, 0)).await.0, 200);
-    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [11; 16]]);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16], [11; 16]]);
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     shared.cancel.cancel();
@@ -1075,9 +1074,77 @@ async fn the_device_role_waits_for_the_link_while_a_staged_seed_is_kept() {
     assert!(!rotation::device_role_may_sign_in(&shared), "staged, and the link has not signed in");
     let task = signed_in(&shared).await;
     assert!(rotation::device_role_may_sign_in(&shared), "the hub took the key in use");
+    // A laptop asleep: the wall clock jumps, the dead socket still looks open
+    // and nothing was heard since — the connection vouches for nothing.
+    let woke = now_ms() + rotation::LIVE_MS + 60_000;
+    assert!(shared.rotation.session().is_some(), "the connection still looks up");
+    assert!(!rotation::device_role_may_sign_in_at(&shared, woke), "stale: no device-role sign-in");
+    // Heard from the hub again (its answer to the link's ping): it vouches again.
+    shared.rotation.heard();
+    assert!(rotation::device_role_may_sign_in(&shared));
     shared.cancel.cancel();
     let _ = task.await;
     assert!(!rotation::device_role_may_sign_in(&shared), "the connection went");
+}
+
+/// The cross-review's residual: the hub answers a staging after the agent
+/// stopped waiting (and the page's withdrawal is lost), so it holds a
+/// staging of this device. The seed is kept — unshown, no code — for the
+/// attempt's ten minutes: a sign-in asked to confirm it can (no false
+/// `rotation_unknown`), and its late `rotation_staged` makes it one the hub
+/// took; a late refusal forgets it, and so does the end of the attempt.
+#[tokio::test]
+async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_with_its_attempt() {
+    let a = Account::new();
+    let mut script = Script::rotating(vec![machine().sign_public()]);
+    script.stage = StageAnswer::Silent;
+    let hub = FakeHub::start(script, a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    let eph = DhKeypair::from_secret([5; 32]);
+    let (status, _) = rotate(&shared, &a.request([7; 16], &eph, 1)).await;
+    assert_eq!(status, 504);
+    let kept = a.staged().expect("kept for the attempt");
+    assert!(kept.accepted_ms.is_none());
+    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let shown = rotation::status(&a.paths, Some(&st), now_ms());
+    assert_eq!((shown.state.as_str(), shown.code), ("idle", None), "not shown, no code");
+    // Asked to confirm it on this connection: confirmed, not unknown.
+    let new = kept.identity();
+    hub.send_json(json!({
+        "t": "rotation_pending",
+        "sign_key": hex(&new.sign_public()),
+        "dh_key": hex(&new.dh_public()),
+        "nonce_hash": hex(&Sha256::digest([7u8; 16])),
+    }));
+    until("the ack", || !hub.heard("rotation_ack").is_empty()).await;
+    assert!(hub.heard("rotation_unknown").is_empty());
+    // The late answer: one the hub took now, shown with its code.
+    hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([7u8; 16])), "ready_ms": 5}));
+    until("the late answer", || a.staged().is_some_and(|s| s.accepted_ms.is_some())).await;
+    let shown = rotation::status(&a.paths, Some(&st), now_ms());
+    assert_eq!(shown.state, "staged");
+    assert!(shown.code.is_some(), "high assurance: its code now");
+    // A late refusal forgets one never answered.
+    let (status, _) = rotate(&shared, &a.request([8; 16], &eph, 0)).await;
+    assert_eq!(status, 504);
+    assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
+    hub.send_json(json!({"t": "rotation_refused", "nonce_hash": hex(&Sha256::digest([8u8; 16])), "reason": "no_attempt"}));
+    until("the late refusal", || a.nonces() == vec![[7; 16]]).await;
+    // One never answered goes when its attempt is over; the taken one stays.
+    let (status, _) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
+    assert_eq!(status, 504);
+    let made = FileSeedStore::for_instance(&a.paths)
+        .stagings()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.nonce == [9; 16])
+        .unwrap()
+        .created_ms;
+    rotation::drop_expired(&a.paths, &machine(), made + rotation::ATTEMPT_MS + 1);
+    assert_eq!(a.nonces(), vec![[7; 16]]);
+    shared.cancel.cancel();
+    let _ = task.await;
 }
 
 /// §3.5 / §3.8: an entry renewing this device to keys it never staged —

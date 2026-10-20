@@ -14,8 +14,9 @@
 //!   MAC. The same nonce gets the same answer. A new nonce adds a staging:
 //!   every staging the hub took is kept until it expires (at most
 //!   [`MAX_STAGINGS`]) — a page whose answer was lost asks again, and the hub
-//!   may still commit the first — while one it refused or never answered
-//!   makes room.
+//!   may still commit the first. One it refused is forgotten at once; one it
+//!   did not answer in time is kept, unshown, for the attempt's ten minutes
+//!   ([`ATTEMPT_MS`]), and becomes one it took if its answer comes late.
 //! - **The staging** — the proof goes to the hub as `rotation_stage` on this
 //!   agent's own hub connection, signed in with the old key, and only on a
 //!   connection whose `welcome` offered `rotate/1` (an older hub closes on a
@@ -93,6 +94,10 @@ pub const STAGED_FOR_MS: u64 = 24 * 60 * 60 * 1000;
 /// the hub may still commit the earlier staging: each one it took stays
 /// until it expires, so that renewal is this device's, never "elsewhere".
 pub const MAX_STAGINGS: usize = 4;
+/// How long an attempt the page registered on the hub lives (contract §1):
+/// a staging the hub did not answer within [`STAGE_WAIT`] is kept — unshown —
+/// this long from when it was made, in case the hub staged it after all.
+pub const ATTEMPT_MS: u64 = 10 * 60 * 1000;
 /// How long a connection signed in with the staged key waits for the chain
 /// to name it before it signs in with the old key again.
 #[cfg(not(test))]
@@ -144,7 +149,15 @@ struct Inner {
     /// again — a sign-in with it is the hub's evidence against this very
     /// device (`docs/host-identity-rotation.md` §3.8).
     committed: bool,
+    /// When (wall clock, ms) the hub connection last heard from the hub.
+    heard_ms: u64,
 }
+
+/// How recently (wall clock: a computer's sleep counts) the hub connection
+/// must have heard from the hub for it to vouch that the key in use is
+/// still current ([`Rotation::key_in_use_confirmed`]). The link pings every
+/// 20 s, so a live hub is heard at least that often.
+pub const LIVE_MS: u64 = 25_000;
 
 /// Ends a hub connection's [`HubSession`] when dropped, however the
 /// connection ends.
@@ -190,6 +203,12 @@ impl Rotation {
         let mut inner = self.lock();
         inner.session = Some(session);
         inner.switch = false;
+        inner.heard_ms = now_ms();
+    }
+
+    /// The hub connection heard from the hub just now.
+    pub fn heard(&self) {
+        self.lock().heard_ms = now_ms();
     }
 
     /// It went: whatever waited for it gets no answer.
@@ -204,12 +223,16 @@ impl Rotation {
         self.lock().session
     }
 
-    /// Whether the link is signed in to the hub with the key in use now — the
-    /// hub took it, so no renewal has retired it: only then may this
-    /// computer's device role sign in while a staged seed is kept
-    /// ([`device_role_may_sign_in`]).
-    pub fn key_in_use_confirmed(&self) -> bool {
-        self.lock().session.is_some_and(|s| !s.staged_key)
+    /// Whether the link is signed in to the hub with the key in use and has
+    /// heard from the hub within [`LIVE_MS`] by the wall clock at `now` — the
+    /// hub took the key and still talks on that connection, so no renewal has
+    /// retired it: only then may this computer's device role sign in while a
+    /// staged seed is kept ([`device_role_may_sign_in`]). A connection that
+    /// merely looks open — a laptop waking from sleep, its socket dead and
+    /// not yet noticed — vouches for nothing.
+    pub fn key_in_use_confirmed(&self, now: u64) -> bool {
+        let inner = self.lock();
+        inner.session.is_some_and(|s| !s.staged_key) && now.saturating_sub(inner.heard_ms) <= LIVE_MS
     }
 
     /// Whether the connection signed in with the old key should end now (and
@@ -376,10 +399,14 @@ pub(super) fn identities(stagings: &[StagedSeed]) -> Vec<MachineIdentity> {
     stagings.iter().map(StagedSeed::identity).collect()
 }
 
-/// When the hub forgets `staged` (24 h after it took it — or after it was
-/// made, for one it never confirmed): no renewal can name it after that.
+/// When no renewal can name `staged` any more: 24 h after the hub took it
+/// (the hub's staging expires) — or, for one the hub never confirmed, once
+/// the attempt it was made for is over ([`ATTEMPT_MS`]).
 fn expiry(staged: &StagedSeed) -> u64 {
-    staged.accepted_ms.unwrap_or(staged.created_ms).saturating_add(STAGED_FOR_MS)
+    match staged.accepted_ms {
+        Some(at) => at.saturating_add(STAGED_FOR_MS),
+        None => staged.created_ms.saturating_add(ATTEMPT_MS),
+    }
 }
 
 /// The key in use signed in at `since`: the hub had not retired it then — a
@@ -402,7 +429,8 @@ pub(super) fn drop_expired(paths: &Paths, current: &MachineIdentity, since: u64)
 /// `forbidden`/`limited_device`; 412 `stale`; 409 `not_current_host`,
 /// `not_on_chain`, `hub_not_ready`, `hub_refused {reason}`; 504
 /// `hub_timeout` (the hub said nothing in [`STAGE_WAIT`]: the new seed is
-/// forgotten, as after a refusal — only a staging the hub took is kept).
+/// kept, unshown, for the attempt's ten minutes in case the hub staged it
+/// after all — [`late_answer`]).
 pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (u16, Value) {
     let req = match Request::parse(body) {
         Ok(req) => req,
@@ -484,7 +512,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         return (200, answer(ready_ms));
     }
     if is_new {
-        make_room(&store, &stagings, session.since_ms);
+        make_room(&store, &stagings, session.since_ms, now_ms());
     }
     // On disk before the hub hears of it: a renewal the hub stages is one
     // this device can always finish.
@@ -549,14 +577,13 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             )
         }
         Ok(Err(_)) | Err(_) => {
-            // Not taken in time: the page withdraws the attempt and asks
-            // again; a late `rotation_staged` for this nonce finds nobody
-            // waiting and is ignored. One the hub took before stays.
+            // Not answered in time — but the hub may still have staged it
+            // (its answer late, the page's withdrawal lost): kept, unshown,
+            // for the attempt's ten minutes, so a later sign-in asked to
+            // confirm it still can; a late `rotation_staged` makes it one the
+            // hub took ([`late_answer`]).
             if staged.accepted_ms.is_none() {
-                tracing::warn!("the hub did not answer the staging in time; forgetting the staged key");
-                if let Err(error) = store.discard_staged(&req.nonce) {
-                    tracing::error!(%error, "cannot forget the staged identity key");
-                }
+                tracing::warn!("the hub did not answer the staging in time; keeping the staged key for the attempt's ten minutes");
             }
             (
                 504,
@@ -566,14 +593,59 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     }
 }
 
-/// Room for a new staging among `stagings`: one the hub refused or never
-/// answered goes (no renewal can name it); one it took stays until it
-/// expired before `since` — when the key in use signed in, so nothing
+/// A `rotation_staged` / `rotation_refused` nobody waits for any more: the
+/// answer to a staging whose wait timed out. Taken: the staging is kept as
+/// one the hub took (it may be committed); refused: forgotten. An answer
+/// for a staging no longer kept is ignored.
+pub(super) fn late_answer(shared: &Shared, value: &Value) {
+    let hash = value["nonce_hash"].as_str().and_then(unhex32);
+    let staged = hash.and_then(|hash| {
+        staged_seeds(&shared.paths, &shared.identity)
+            .into_iter()
+            .find(|s| nonce_hash(&s.nonce) == hash && s.accepted_ms.is_none())
+    });
+    let Some(staged) = staged else {
+        tracing::info!(t = %value["t"], nonce_hash = %value["nonce_hash"], "a staging answer for no staged key waiting for one: ignored");
+        return;
+    };
+    let store = FileSeedStore::for_instance(&shared.paths);
+    match value["t"].as_str() {
+        Some("rotation_staged") => {
+            tracing::info!("the hub's late answer: it staged the renewal; keeping the staged key");
+            let nonce = staged.nonce;
+            let accepted = StagedSeed {
+                accepted_ms: Some(now_ms()),
+                ..staged
+            };
+            if let Err(error) = store.stage(&accepted) {
+                tracing::error!(%error, "cannot note that the hub staged the renewal");
+            }
+            shared.rotation.lock().taken.insert(nonce, value["ready_ms"].as_u64());
+        }
+        _ => {
+            tracing::info!(reason = %value["reason"], "the hub's late answer: it refused the staging; forgetting the staged key");
+            if let Err(error) = store.discard_staged(&staged.nonce) {
+                tracing::error!(%error, "cannot forget the staged identity key");
+            }
+        }
+    }
+}
+
+/// Room for a new staging among `stagings`: one the hub never answered goes
+/// once its attempt's ten minutes are over by `now`; one it took stays until
+/// it expired before `since` — when the key in use signed in, so nothing
 /// committed it — and beyond [`MAX_STAGINGS`] the oldest the hub took goes.
-fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64) {
+fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u64) {
     let mut kept: Vec<&StagedSeed> = Vec::new();
     for staged in stagings {
-        if staged.accepted_ms.is_none() || expiry(staged) < since {
+        let expired = match staged.accepted_ms {
+            None => expiry(staged) < now,
+            Some(_) => expiry(staged) < since,
+        };
+        if staged.accepted_ms.is_none() && !expired {
+            continue;
+        }
+        if expired {
             if let Err(error) = store.discard_staged(&staged.nonce) {
                 tracing::error!(%error, "cannot forget a staged identity key");
             }
@@ -763,13 +835,19 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
 /// Whether this computer's device role (and its relay connections) may sign
 /// in with the key in use now (`docs/host-identity-rotation.md` §3.5
 /// 「不拿旧钥误伤自己」): always while no staged seed is kept; while one is,
-/// only once the link signed in with the key in use on its connection now
-/// — a renewal committed while this device slept, its chain still stale,
-/// would make that key retired, and the hub keeps a retired key's sign-in
-/// as evidence against this very device.
+/// only while the link is signed in with the key in use on a connection that
+/// heard from the hub within [`LIVE_MS`] by the wall clock — a renewal
+/// committed while this device slept, its chain still stale, would make
+/// that key retired, and the hub keeps a retired key's sign-in as evidence
+/// against this very device.
 pub fn device_role_may_sign_in(shared: &Shared) -> bool {
+    device_role_may_sign_in_at(shared, now_ms())
+}
+
+/// [`device_role_may_sign_in`] at wall-clock time `now`.
+pub fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
     let staged = FileSeedStore::for_instance(&shared.paths).stagings().is_ok_and(|s| !s.is_empty());
-    !staged || shared.rotation.key_in_use_confirmed()
+    !staged || shared.rotation.key_in_use_confirmed(now)
 }
 
 /// Whether `identity` is a seed this device must never use again: one a
@@ -957,7 +1035,12 @@ pub fn status(paths: &Paths, st: Option<&AgentState>, now: u64) -> Status {
             .filter(|s| s.uuid == seed.uuid && s.identity().sign_public() != current.sign_public())
             .collect();
         let named = named(st, &stagings).map(|s| s.nonce);
-        let waiting: Vec<&StagedSeed> = stagings.iter().filter(|s| now <= expiry(s) || Some(s.nonce) == named).collect();
+        // Only one the hub took (or the chain names): one it never answered
+        // is kept in case, not shown — nor its code.
+        let waiting: Vec<&StagedSeed> = stagings
+            .iter()
+            .filter(|s| (s.accepted_ms.is_some() && now <= expiry(s)) || Some(s.nonce) == named)
+            .collect();
         if !waiting.is_empty() {
             // The code of the newest high-assurance renewal, for ten minutes.
             let code = waiting
@@ -1003,7 +1086,8 @@ mod tests {
             chain_head: [4; 32],
             assurance,
             created_ms,
-            accepted_ms: None,
+            // Taken by the hub as it was made.
+            accepted_ms: Some(created_ms),
         }
     }
 
@@ -1011,7 +1095,8 @@ mod tests {
     /// again with a new nonce. A staging the hub took stays — the hub may
     /// still commit it — until it expires (only judged once the key in use
     /// signed in after it, which no commit allows), at most
-    /// [`MAX_STAGINGS`]; one the hub refused or never answered makes room.
+    /// [`MAX_STAGINGS`]; one the hub never answered stays, unshown, for its
+    /// attempt's ten minutes ([`ATTEMPT_MS`]).
     #[test]
     fn stagings_the_hub_took_stay_until_they_expire() {
         let dir = tempfile::tempdir().unwrap();
@@ -1026,13 +1111,17 @@ mod tests {
         let now = 100 * STAGED_FOR_MS;
         let nonces = |store: &FileSeedStore| -> Vec<u8> { store.stagings().unwrap().iter().map(|s| s.nonce[0]).collect() };
         store.stage(&at(10, 1, now - 10, Some(now - 9))).unwrap(); // taken
-        store.stage(&at(11, 2, now - 8, None)).unwrap(); // never answered
+        store.stage(&at(11, 2, now - 8, None)).unwrap(); // not answered yet: within its attempt
+        store.stage(&at(13, 4, now - ATTEMPT_MS - 1, None)).unwrap(); // never answered, its attempt over
         store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap(); // taken, expired
-        make_room(&store, &staged_seeds(&paths, &current), now);
-        assert_eq!(nonces(&store), vec![1], "the unanswered and the expired make room; the taken one stays");
+        make_room(&store, &staged_seeds(&paths, &current), now, now);
+        assert_eq!(nonces(&store), vec![1, 2], "the expired ones make room; the taken one and the young unanswered one stay");
+        // The unanswered one goes once its attempt is over.
+        drop_expired(&paths, &current, now - 8 + ATTEMPT_MS + 1);
+        assert_eq!(nonces(&store), vec![1]);
         // Expired, but the key in use last signed in before it expired: kept.
         store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap();
-        make_room(&store, &staged_seeds(&paths, &current), now - 2 * STAGED_FOR_MS);
+        make_room(&store, &staged_seeds(&paths, &current), now - 2 * STAGED_FOR_MS, now);
         assert_eq!(nonces(&store), vec![3, 1]);
         drop_expired(&paths, &current, now - STAGED_FOR_MS - 1);
         assert_eq!(nonces(&store), vec![3, 1], "not expired then");
@@ -1043,7 +1132,7 @@ mod tests {
             store.stage(&at(20 + n, n, now + u64::from(n), Some(now + u64::from(n)))).unwrap();
         }
         assert_eq!(nonces(&store).len(), 4);
-        make_room(&store, &staged_seeds(&paths, &current), now);
+        make_room(&store, &staged_seeds(&paths, &current), now, now);
         assert_eq!(nonces(&store), vec![4, 5, 6], "room for one more, the oldest gone");
         // A staging of the key in use, or of another instance, is not one.
         let in_use = store.load().unwrap().unwrap().seed;
