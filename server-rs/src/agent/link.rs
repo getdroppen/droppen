@@ -813,6 +813,9 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
             None => break Ok(()),
         };
         last_heard = Instant::now();
+        // By the wall clock too: what lets the device role sign in while a
+        // staged key is kept ([`super::rotation::device_role_may_sign_in`]).
+        shared.rotation.heard();
         match message {
             Message::Text(text) => {
                 if let Ok(value) = serde_json::from_str::<Value>(super::traffic::agent_in(text.as_str())) {
@@ -1011,7 +1014,8 @@ pub(super) fn on_control(shared: &Arc<Shared>, value: &Value, text: &mpsc::Unbou
         // and its request to confirm a staging with the new key.
         Some("rotation_staged" | "rotation_refused") => {
             if !shared.rotation.answer(value) {
-                tracing::info!(t = %value["t"], nonce_hash = %value["nonce_hash"], "a staging answer nobody waits for any more (its staged key was forgotten): ignored");
+                // Its wait timed out: taken late (kept), or refused late (forgotten).
+                super::rotation::late_answer(shared, value);
             }
         }
         Some("rotation_pending") => super::rotation::on_pending(shared, value, text),
