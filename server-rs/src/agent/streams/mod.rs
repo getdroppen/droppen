@@ -256,6 +256,7 @@ pub fn spawn(
     // The plan the hub last told: the window holds across a restart.
     let plan: Option<HubPlan> = store.get_kv(PLAN_KEY).and_then(|p| serde_json::from_str(&p).ok());
     let streams2 = store.get_kv(naming::STREAMS2_KEY).is_some();
+    let resign = manifests_to_resign(&store, &signing.verifying_key().to_bytes());
     let env = Scope::from_env();
     let mut sync = Sync {
         paths: paths.clone(),
@@ -294,6 +295,7 @@ pub fn spawn(
         reencrypt: HashMap::new(),
         text: None,
         compact_now: HashSet::new(),
+        resign,
     };
     sync.reencrypt = sync.writer.store.reencrypt_list().into_iter().collect();
     let task = tokio::spawn(async move { sync.run(rx, cancel).await });
@@ -384,6 +386,52 @@ struct Sync {
     streams2: bool,
     /// A rotation's session migration starts at a random moment within this.
     migrate_within: Duration,
+    /// Streams whose manifest another identity key signed — this machine
+    /// renewed its key since — to sign again ([`Writer::resign`]); kept in
+    /// `streams.db` until the hub took each.
+    resign: HashSet<StreamId>,
+}
+
+/// Where `streams.db` keeps the identity key (hex) the writer last signed with.
+const SIGNER_KEY: &str = "signer";
+/// Where it keeps [`Sync::resign`] (a JSON list of hex stream ids).
+const RESIGN_KEY: &str = "resign";
+/// At most this many manifests are signed again a round.
+const RESIGN_PER_ROUND: usize = 4;
+
+/// The manifests to sign again when the writer starts with `signer`: after
+/// an identity renewal (`docs/host-identity-rotation.md` §5.4) every stream
+/// with a manifest — readers take one from the hub only under the
+/// machine's current key — plus whatever an earlier run left unsigned.
+/// Remembers `signer` as the key in use.
+fn manifests_to_resign(store: &Store, signer: &[u8; 32]) -> HashSet<StreamId> {
+    let mut resign: HashSet<StreamId> = store
+        .get_kv(RESIGN_KEY)
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| crate::agent::hub::unhex32(s).map(StreamId))
+        .collect();
+    let signer_hex = crate::agent::hub::hex(signer);
+    match store.get_kv(SIGNER_KEY) {
+        Some(before) if before != signer_hex => {
+            let manifests: Vec<StreamId> = store.all().into_iter().filter(|r| r.manifest_upto.is_some()).map(|r| r.stream).collect();
+            tracing::info!(
+                streams = manifests.len(),
+                "this machine's identity key was renewed: signing every stream's manifest again with the new one"
+            );
+            resign.extend(manifests);
+            save_resign(store, &resign);
+        }
+        _ => {}
+    }
+    store.set_kv(SIGNER_KEY, &signer_hex);
+    resign
+}
+
+fn save_resign(store: &Store, resign: &HashSet<StreamId>) {
+    let list: Vec<String> = resign.iter().map(|s| crate::agent::hub::hex(&s.0)).collect();
+    store.set_kv(RESIGN_KEY, &serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()));
 }
 
 impl Sync {
@@ -541,6 +589,9 @@ impl Sync {
                         };
                         if !matches!(code, "rate" | "unavailable") {
                             tracing::warn!(stream = %short(&stream), code, "the hub refused a stream write");
+                            // A manifest signed again that the hub will not
+                            // take: the next checkpoint signs one anyway.
+                            self.resigned(&stream);
                         }
                         self.retry_at.insert(stream, Instant::now() + wait);
                     }
@@ -626,7 +677,19 @@ impl Sync {
                     }
                 }
             }
+            Answer::Resigned { stream } => {
+                self.retry_at.remove(&stream);
+                self.resigned(&stream);
+                if let Some(row) = self.writer.store.get(&stream) {
+                    if let Some(head) = self.writer.head(&row, now_ms()) {
+                        self.send(head);
+                        self.beats.insert(stream, Instant::now());
+                    }
+                }
+            }
             Answer::Conflict { stream, head } => {
+                // A rebuild signs its manifest with the key in use anyway.
+                self.resigned(&stream);
                 tracing::info!(stream = %short(&stream), head, "the hub's stream is not where this agent left it; rebuilding it");
                 self.seen_sig.remove(&stream);
                 if let Err(error) = self.rebuild(&stream, head).await {
@@ -769,6 +832,23 @@ impl Sync {
     fn schedule_migration(&mut self, immediate: bool) {
         let Some(current) = self.epoch() else { return };
         let first = self.first_epoch();
+        // A migration a newer epoch overtakes goes straight to the newest
+        // (host identity renewal, §5.4: a removal's epoch, then the
+        // renewal's): a name of an epoch in between that the hub never
+        // held — nothing acknowledged, nothing written ahead — is forgotten
+        // rather than filled, so nothing is moved twice.
+        let never: Vec<StreamId> = self
+            .writer
+            .store
+            .all()
+            .iter()
+            .filter(|r| naming::never_written(r, first, current) && !self.writer.busy(&r.stream))
+            .map(|r| r.stream)
+            .collect();
+        for stream in never {
+            tracing::info!(stream = %short(&stream), epoch = current, "a name the hub never held: skipped for the newest epoch's");
+            self.forget(&stream);
+        }
         let behind: Vec<StreamId> = self
             .writer
             .store
@@ -824,6 +904,60 @@ impl Sync {
         self.resend_refused();
         self.heartbeats();
         self.compactions().await;
+        self.resign_round();
+    }
+
+    /// Sign again, a few at a time, the manifests another identity key
+    /// signed ([`Sync::resign`]): the same position and pages, the new key's
+    /// signatures — the pages are not sent again. A stream with records past
+    /// its manifest gets a checkpoint instead (signed with the key in use),
+    /// one without a manifest nothing (its heads are signed anew by the
+    /// heartbeat).
+    fn resign_round(&mut self) {
+        if self.resign.is_empty() {
+            return;
+        }
+        let mut sent = 0;
+        let mut done = Vec::new();
+        for stream in self.resign.iter().copied().collect::<Vec<_>>() {
+            if sent >= RESIGN_PER_ROUND || self.writer.in_flight() >= MAX_IN_FLIGHT {
+                break;
+            }
+            let Some(row) = self.writer.store.get(&stream) else {
+                done.push(stream);
+                continue;
+            };
+            if !self.ready(&row) {
+                continue;
+            }
+            if row.manifest_upto != Some(row.next_seq) {
+                if row.manifest_upto.is_some() {
+                    self.compact_now.insert(stream);
+                }
+                done.push(stream);
+                continue;
+            }
+            match self.writer.resign(&row, now_ms()) {
+                Some(frame) => {
+                    self.send(frame);
+                    sent += 1;
+                }
+                None => done.push(stream),
+            }
+        }
+        for stream in done {
+            self.resigned(&stream);
+        }
+    }
+
+    /// `stream`'s manifest needs no signing again (any more).
+    fn resigned(&mut self, stream: &StreamId) {
+        if self.resign.remove(stream) {
+            save_resign(&self.writer.store, &self.resign);
+            if self.resign.is_empty() {
+                tracing::info!("every stream's manifest is signed with this machine's identity key now");
+            }
+        }
     }
 
     /// Written-ahead appends the hub refused for now (`rate`, `unavailable`:
@@ -1361,7 +1495,13 @@ impl Sync {
         if let Some(text) = &self.text {
             let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": crate::agent::hub::hex(&stream.0)}).to_string());
         }
+        self.forget(stream);
+    }
+
+    /// Forget `stream` here (what [`Sync::delete_on_hub`] does after telling the hub).
+    fn forget(&mut self, stream: &StreamId) {
         self.reencrypt.remove(stream);
+        self.resigned(stream);
         self.seen_sig.remove(stream);
         self.retry_at.remove(stream);
         self.compact_now.remove(stream);
@@ -1788,6 +1928,29 @@ fn short(stream: &StreamId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Host identity renewal (§5.4): the writer remembers which key it signs
+    /// with; started with another — a renewed key — every stream with a
+    /// manifest is to be signed again, and that list outlives a restart
+    /// until each is done.
+    #[test]
+    fn a_renewed_signing_key_marks_every_manifest_to_be_signed_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(&dir.path().join("streams.db"));
+        let with = StreamId([1; 32]);
+        let without = StreamId([2; 32]);
+        store.create(&with, Kind::Session, "claude", "a", 0, None, 1);
+        store.create(&without, Kind::Session, "claude", "b", 0, None, 1);
+        store.commit_checkpoint(&with, 0, 2, &[0; 32], "c", &[], 0, None, 1).unwrap();
+        let (old, new) = ([7; 32], [8; 32]);
+        assert!(manifests_to_resign(&store, &old).is_empty(), "the first key it signs with");
+        assert!(manifests_to_resign(&store, &old).is_empty(), "the same key again");
+        let marked = manifests_to_resign(&store, &new);
+        assert_eq!(marked, HashSet::from([with]), "only the stream with a manifest");
+        assert_eq!(manifests_to_resign(&store, &new), marked, "kept across a restart");
+        save_resign(&store, &HashSet::new());
+        assert!(manifests_to_resign(&store, &new).is_empty(), "done");
+    }
 
     fn row(tail_records: u64, updated_ms: u64, tail_since_ms: Option<u64>, checkpoint_ms: Option<u64>) -> Row {
         Row {

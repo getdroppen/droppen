@@ -102,6 +102,10 @@ enum InFlight {
         state_bytes: i64,
         rows: Option<Vec<(String, String)>>,
     },
+    /// The stream's manifest as it stands, signed again ([`Writer::resign`]).
+    Resign {
+        stream: StreamId,
+    },
 }
 
 /// What an answer from the hub came to.
@@ -109,6 +113,8 @@ enum InFlight {
 pub enum Answer {
     /// An append or a checkpoint is committed; the head frame to send follows.
     Committed { stream: StreamId, checkpoint: bool },
+    /// A re-signed manifest is committed: nothing of the stream moved.
+    Resigned { stream: StreamId },
     /// The hub's stream is elsewhere (`head`): rebuild it.
     Conflict { stream: StreamId, head: u64 },
     /// Not ours (an old request from a connection that has gone).
@@ -358,10 +364,43 @@ impl Writer {
         Ok(frames)
     }
 
+    /// A `CHECKPOINT` that signs `row`'s manifest again under this writer's
+    /// key — the same position, link and pages, only the signatures new — for
+    /// a stream whose manifest stands at its position (no record after it).
+    /// After an identity renewal (`docs/host-identity-rotation.md` §5.4)
+    /// readers take a manifest from the hub only under the machine's current
+    /// key; this keeps a copy nothing rewrites (outside the sync window,
+    /// waiting for retention) readable. `None` when there is nothing to sign
+    /// so, or a request for it is in flight.
+    pub fn resign(&mut self, row: &Row, now_ms: u64) -> Option<Frame> {
+        if self.busy(&row.stream) || row.manifest_upto != Some(row.next_seq) {
+            return None;
+        }
+        let mk = self.key(row.epoch).or_else(|| self.current().map(|(_, k)| k))?;
+        let head = LogWriter::new(mk, row.epoch, row.stream, row.next_seq, row.link).head(&self.signing, now_ms);
+        let hashes = row
+            .pages
+            .iter()
+            .map(|r| crate::agent::hub::unhex32(&r.hash))
+            .collect::<Option<Vec<_>>>()?;
+        let manifest = Manifest::sign(head, hashes, &self.signing).ok()?;
+        let ch = self.request(row.stream, InFlight::Resign { stream: row.stream });
+        Some(Frame::Checkpoint {
+            ch,
+            stream: row.stream,
+            upto_seq: row.next_seq,
+            manifest: manifest.encode(),
+        })
+    }
+
     /// `ACK {ch, head}`.
     pub fn on_ack(&mut self, ch: u32, head: u64, now_ms: u64) -> Answer {
         let Some(what) = self.inflight.remove(&ch) else { return Answer::Unknown };
         match what {
+            InFlight::Resign { stream } => {
+                self.busy.remove(&stream);
+                Answer::Resigned { stream }
+            }
             InFlight::Append { stream } => {
                 self.busy.remove(&stream);
                 let Some(row) = self.store.get(&stream) else { return Answer::Unknown };
@@ -414,7 +453,7 @@ impl Writer {
                 self.store.drop_pending(&stream);
                 stream
             }
-            InFlight::Checkpoint { stream, .. } => stream,
+            InFlight::Checkpoint { stream, .. } | InFlight::Resign { stream } => stream,
         };
         self.busy.remove(&stream);
         Answer::Conflict { stream, head }
@@ -425,7 +464,7 @@ impl Writer {
     pub fn on_refused(&mut self, ch: u32) -> Option<StreamId> {
         let what = self.inflight.remove(&ch)?;
         let stream = match what {
-            InFlight::Append { stream } | InFlight::Checkpoint { stream, .. } => stream,
+            InFlight::Append { stream } | InFlight::Checkpoint { stream, .. } | InFlight::Resign { stream } => stream,
         };
         self.busy.remove(&stream);
         Some(stream)
@@ -453,9 +492,17 @@ mod tests {
         head: HashMap<StreamId, SignedHead>,
         /// Commit, then lose the answer (the connection drops).
         lose_next_answer: bool,
+        /// The machine renewed its identity key to this one: the hub (and a
+        /// reader) take its signatures only.
+        renewed: Option<[u8; 32]>,
     }
 
     impl FakeHub {
+        /// The machine's key as the hub has it.
+        fn machine_key(&self) -> [u8; 32] {
+            self.renewed.unwrap_or_else(|| signing().verifying_key().to_bytes())
+        }
+
         fn take(&mut self, frame: Frame) -> Option<Frame> {
             let answer = match frame {
                 Frame::Append {
@@ -491,7 +538,7 @@ mod tests {
                     manifest,
                 } => {
                     let m = Manifest::decode(&manifest).unwrap();
-                    assert!(m.verify(&signing().verifying_key().to_bytes()));
+                    assert!(m.verify(&self.machine_key()));
                     assert!(m.pages.iter().all(|p| self.pages.contains_key(p)), "pages before the checkpoint");
                     let next = *self.next.get(&stream).unwrap_or(&0);
                     if upto_seq > next {
@@ -524,7 +571,7 @@ mod tests {
         /// What a fresh device reads: the manifest's pages, then the records,
         /// released only under the newest head.
         fn read(&self, stream: StreamId) -> Vec<Vec<u8>> {
-            let key_pub = signing().verifying_key().to_bytes();
+            let key_pub = self.machine_key();
             let mut bodies = Vec::new();
             let mut reader = match self.manifest.get(&stream) {
                 Some(m) => {
@@ -670,6 +717,63 @@ mod tests {
         let f = w.append(&row, &[step("three", "c3")]).unwrap().unwrap();
         exchange(&mut w, &mut hub, vec![f]);
         assert_eq!(hub.read(stream), vec![b"state: one two".to_vec(), b"three".to_vec()]);
+    }
+
+    /// Host identity renewal (`docs/host-identity-rotation.md` §5.4): readers
+    /// take a manifest from the hub under the machine's current key only, so
+    /// after a renewal a stream nothing rewrites (outside the sync window)
+    /// gets its manifest signed again — the same position, link and pages,
+    /// no page sent again — and reads as before under the new key.
+    #[test]
+    fn a_manifest_is_signed_again_with_a_renewed_key_without_its_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let stream = record::stream_id(&MK, "claude", "old").unwrap();
+        let mut hub = FakeHub::default();
+        let mut w = writer(dir.path());
+        let row = w.store.create(&stream, Kind::Session, "claude", "old", 0, None, 1);
+        let f = w.append(&row, &[step("one", "c1"), step("two", "c2")]).unwrap().unwrap();
+        exchange(&mut w, &mut hub, vec![f]);
+        let row = w.store.get(&stream).unwrap();
+        let plan = Plan {
+            fmt: record::FMT_FEED_V1,
+            pages: vec![PageSpec::body(b"state: one two".to_vec())],
+            upto: row.next_seq,
+            fresh_link: false,
+            cursor: "c2".into(),
+            state_bytes: 14,
+            rows: None,
+        };
+        let frames = w.checkpoint(&row, plan, 5).unwrap();
+        exchange(&mut w, &mut hub, frames);
+        let before = w.store.get(&stream).unwrap();
+        assert_eq!(before.manifest_upto, Some(before.next_seq));
+        let pages = hub.pages.len();
+        drop(w);
+        // Renewed: the writer starts again with the new key.
+        let renewed = SigningKey::from_bytes(&[0x78; 32]);
+        hub.renewed = Some(renewed.verifying_key().to_bytes());
+        assert!(!hub.manifest[&stream].verify(&renewed.verifying_key().to_bytes()), "the old key signed it");
+        let mut w = Writer::new(Store::at(&dir.path().join("streams.db")), renewed.clone());
+        w.add_key(0, Zeroizing::new(MK));
+        let frame = w.resign(&before, 20).expect("a manifest to sign again");
+        assert!(matches!(&frame, Frame::Checkpoint { upto_seq, .. } if *upto_seq == before.next_seq));
+        assert!(w.resign(&before, 20).is_none(), "one request in flight");
+        assert_eq!(exchange(&mut w, &mut hub, vec![frame]), vec![Answer::Resigned { stream }]);
+        assert_eq!(hub.pages.len(), pages, "no page sent again");
+        let m = &hub.manifest[&stream];
+        assert!(m.verify(&renewed.verifying_key().to_bytes()));
+        assert_eq!(m.pages, before.pages.iter().map(|p| crate::agent::hub::unhex32(&p.hash).unwrap()).collect::<Vec<_>>());
+        let after = w.store.get(&stream).unwrap();
+        assert_eq!(
+            (after.next_seq, after.link, after.manifest_upto, after.pages.len(), after.updated_ms),
+            (before.next_seq, before.link, before.manifest_upto, before.pages.len(), before.updated_ms),
+            "nothing of the stream moved"
+        );
+        assert_eq!(hub.read(stream), vec![b"state: one two".to_vec()], "readable under the new key");
+        // Records past the manifest: no re-signing (a checkpoint does it).
+        let f = w.append(&after, &[step("three", "c3")]).unwrap().unwrap();
+        exchange(&mut w, &mut hub, vec![f]);
+        assert!(w.resign(&w.store.get(&stream).unwrap(), 30).is_none());
     }
 
     #[test]
