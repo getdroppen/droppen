@@ -4,7 +4,8 @@ import { DOWNLOAD_PATH } from "./get-droppen";
 /*
  * Cloud mode's public pages have no router: the landing page at `/` (signed
  * in or not), the download page at `/download`, the pricing page at
- * `/pricing` and the privacy notice at `/privacy` (each signed in or not), sign-in /
+ * `/pricing`, the privacy notice at `/privacy` and the security design at
+ * `/security` (each signed in or not), sign-in /
  * sign-up at their own paths, and `/verify`, where the verification mail's
  * link lands (signed in or not). The app's router only
  * mounts once a machine is open (`features/cloud/cloud-app.tsx`), so these
@@ -24,6 +25,8 @@ export const VERIFY_PATH = "/verify";
 export const PRICING_PATH = "/pricing";
 /** The privacy notice. */
 export const PRIVACY_PATH = "/privacy";
+/** How the encryption works (`security/security.tsx`). */
+export const SECURITY_PATH = "/security";
 /** The waitlist's form, on the pricing page. */
 export const WAITLIST_HREF = `${PRICING_PATH}#waitlist`;
 
@@ -36,7 +39,7 @@ export const WAITLIST_HREF = `${PRICING_PATH}#waitlist`;
 export const APP_PATH = "/sessions";
 
 /** What a signed-out visitor sees at `pathname`. */
-export type PublicPage = "landing" | "download" | "pricing" | "privacy" | "signin" | "signup" | "verify";
+export type PublicPage = "landing" | "download" | "pricing" | "privacy" | "security" | "signin" | "signup" | "verify";
 
 /**
  * Only the bare root is the landing page. Sign-in and sign-up have their own
@@ -50,6 +53,7 @@ export function publicPage(pathname: string): PublicPage {
   if (path === DOWNLOAD_PATH) return "download";
   if (path === PRICING_PATH) return "pricing";
   if (path === PRIVACY_PATH) return "privacy";
+  if (path === SECURITY_PATH) return "security";
   if (path === SIGN_UP_PATH) return "signup";
   if (path === VERIFY_PATH) return "verify";
   return "signin";
@@ -61,9 +65,9 @@ export function isLandingPath(pathname: string): boolean {
 }
 
 /** The pages that are pages of their own whether or not this browser is signed in. */
-export type FrontPage = "landing" | "download" | "pricing" | "privacy";
+export type FrontPage = "landing" | "download" | "pricing" | "privacy" | "security";
 
-const FRONT_PAGES: readonly PublicPage[] = ["landing", "download", "pricing", "privacy"];
+const FRONT_PAGES: readonly PublicPage[] = ["landing", "download", "pricing", "privacy", "security"];
 
 /** `pathname`'s page if it is one of the {@link FrontPage}s. */
 export function frontPage(pathname: string): FrontPage | null {
@@ -73,9 +77,9 @@ export function frontPage(pathname: string): FrontPage | null {
 
 /**
  * Whether `pathname` is a page of its own whether or not this browser is
- * signed in — the landing page, the download page, the pricing page or the
- * privacy notice — which starts nothing of the app until the visitor goes on
- * into it.
+ * signed in — the landing page, the download page, the pricing page, the
+ * privacy notice or the security design — which starts nothing of the app
+ * until the visitor goes on into it.
  */
 export function isFrontPath(pathname: string): boolean {
   return frontPage(pathname) !== null;
@@ -83,8 +87,9 @@ export function isFrontPath(pathname: string): boolean {
 
 /**
  * What a page loading at `pathname` shows: the landing page at `/`, the
- * download page at `/download`, the pricing page at `/pricing` and the
- * privacy notice at `/privacy` whether or not a device session is kept here;
+ * download page at `/download`, the pricing page at `/pricing`, the privacy
+ * notice at `/privacy` and the security design at `/security` whether or not
+ * a device session is kept here;
  * signed out, the sign-in / sign-up forms (in place on a deep link); signed
  * in, the app — from its start rather than from a sign-in page (`replace`),
  * and from a deep link where it points. The verification link's page shows

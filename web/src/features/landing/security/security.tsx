@@ -1,0 +1,852 @@
+import { type ReactNode, useEffect } from "react";
+import i18n from "i18next";
+import { useTranslation } from "react-i18next";
+import { Info } from "lucide-react";
+import { CapsLabel } from "@/components/ui/caps-label";
+import { cn } from "@/lib/cn";
+import { landingBundles } from "../copy";
+import { FooterLine, PublicHeader, Section, SectionHead } from "../page-kit";
+import { PRIVACY_EMAIL } from "../waitlist";
+import { securityBundles } from "./security-copy";
+
+/*
+ * droppen.app/security: how the end-to-end encryption works, for a technical
+ * reader — the overview and what Droppen Hub sees, the signed device chain,
+ * the keys, the channels and relays, the offline copies, the identity renewal
+ * of a device that runs AI (rolling out: described as designed, marked so),
+ * the threat model, and how to check all of it. Signed in or not; its own
+ * lazy chunk with its own words (`security-copy.ts`), drawn like the other
+ * public pages (design/DESIGN.md): numbered sections with an on-page table of
+ * contents, each mechanism in a section of its own with an anchor.
+ *
+ * Only what main ships is described as live; every claim traces to the
+ * protocol code (`server-rs/crates/rh-proto`, `web/src/lib/e2e`) or the
+ * public design notes (docs/cross-machine-architecture.md, docs/local-
+ * aggregator.md §3, docs/web-integrity.md, docs/relay-and-plans.md §2,
+ * docs/hub-api/, SECURITY.md, the README's "What the Hub sees"); the
+ * renewal section follows docs/host-identity-rotation.md. The labels and
+ * formulas in the mono blocks are the code's own bytes, quoted, so they are
+ * not translated. Product words as elsewhere: a device, a device that runs AI
+ * (the chain's host), a full device (its admin), the content key (`MK`).
+ */
+
+// Added, never overwriting: a key the app already translates keeps its wording.
+for (const bundles of [landingBundles, securityBundles]) {
+  for (const [lng, bundle] of Object.entries(bundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
+}
+
+/** When the page last changed, as the page says it. */
+export const SECURITY_UPDATED = "2026-10-22";
+
+/**
+ * Where to report a vulnerability until the repository is public (then:
+ * GitHub's private vulnerability reporting, SECURITY.md).
+ * TODO(owner): a security contact of its own; the privacy address until then.
+ */
+export const SECURITY_EMAIL = PRIVACY_EMAIL;
+
+/** The page's sections, in order: the table of contents and the anchors. */
+export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offline", "renewal", "threats", "verify"] as const;
+/** The identity renewal's parts, each with an anchor of its own. */
+export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging", "renewal-policy", "renewal-disputes", "renewal-groups", "renewal-hub"] as const;
+
+const prose = "max-w-[46em] text-[13px] leading-[21px] text-muted";
+
+/** A paragraph of a topic. */
+function P({ children }: { children: ReactNode }) {
+  return <p className={prose}>{children}</p>;
+}
+
+/** A topic's list: an ink square per item, as on the other public pages, in the topic's reading size. */
+function List({ items }: { items: ReactNode[] }) {
+  return (
+    <ul className="flex max-w-[46em] flex-col gap-2">
+      {items.map((item, i) => (
+        <li key={i} className="flex gap-2.5 text-[13px] leading-[21px] text-muted">
+          <span className="mt-2 size-1.5 shrink-0 bg-fg" />
+          <span className="min-w-0">{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The code's own bytes: labels and formulas, quoted, never translated. */
+function Spec({ children }: { children: ReactNode }) {
+  return <div className="flex max-w-[46em] flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
+}
+
+function Line({ children }: { children: ReactNode }) {
+  return <code className="block">{children}</code>;
+}
+
+/** A small caps chip: what is not live yet. */
+function Chip({ children }: { children: ReactNode }) {
+  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 font-mono text-[10px] leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
+}
+
+/** One mechanism: its number and name on the left (above, when narrow), what it does on the right. */
+function Topic({ id, n, title, children }: { id?: string; n: string; title: string; children: ReactNode }) {
+  return (
+    <div id={id} className="grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]">
+      <div className="flex gap-3 px-6 pt-6 max-md:px-4 max-md:pt-5 lg:pb-6">
+        <span className="w-7 shrink-0 font-mono text-2xs leading-5 text-faint tabular-nums">{n}</span>
+        <h3 className="text-[13px] leading-5 font-semibold text-balance text-fg">{title}</h3>
+      </div>
+      <div className="flex min-w-0 flex-col gap-4 px-6 pt-3 pb-6 max-md:px-4 max-md:pb-5 lg:border-l lg:border-border lg:pt-6">{children}</div>
+    </div>
+  );
+}
+
+/** Two lists side by side (one above the other when narrow). */
+function Pair({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
+  return (
+    <div className="grid max-w-[60em] gap-6 md:grid-cols-2">
+      {[left, right].map((side) => (
+        <div key={side.title} className="flex min-w-0 flex-col gap-3">
+          <span className="text-xs leading-5 font-semibold text-fg">{side.title}</span>
+          <List items={side.items} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A table that reads row by row: a grid from 768px, each row's cells stacked under its name below. */
+function Table({ label, heads, rows }: { label: string; heads: string[]; rows: string[][] }) {
+  const cols = heads.length;
+  const grid = cols === 3 ? "md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.6fr)]" : "md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_minmax(0,1fr)]";
+  return (
+    <div role="table" aria-label={label} className="border-t border-border">
+      <div role="row" className={cn("grid border-b border-border max-md:hidden", grid)}>
+        {heads.map((h, i) => (
+          <span key={h} role="columnheader" className={cn("px-6 py-3", i > 0 && "border-l border-border")}>
+            <CapsLabel className="text-fg">{h}</CapsLabel>
+          </span>
+        ))}
+      </div>
+      {rows.map((cells) => (
+        <div key={cells[0]} role="row" className={cn("grid border-b border-border last:border-b-0", grid)}>
+          {cells.map((cell, i) => (
+            <span
+              key={i}
+              role={i === 0 ? "rowheader" : "cell"}
+              className={cn(
+                "min-w-0 px-6 text-xs leading-5 max-md:px-4",
+                i === 0 ? "pt-3.5 font-semibold text-fg md:pb-3.5" : "py-3.5 text-muted max-md:pt-1 max-md:pb-0 max-md:last:pb-3.5",
+                i > 0 && "md:border-l md:border-border",
+              )}
+            >
+              {i > 0 && (
+                <CapsLabel size="xs" className="block pb-0.5 md:hidden">
+                  {heads[i]}
+                </CapsLabel>
+              )}
+              {cell}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A line for what the page leaves out on purpose, or what is not done. */
+function Note({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
+      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
+      <p className="max-w-[60em] text-xs leading-5 text-muted">{children}</p>
+    </div>
+  );
+}
+
+function Hero() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
+      <CapsLabel>{t("Security")}</CapsLabel>
+      <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
+        {t("How Droppen's end-to-end encryption works.")}
+      </h1>
+      <p className="max-w-[44em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
+        {t("A technical description for anyone who wants to check our claims: who holds which key, how your devices agree on who belongs to your account, what our servers can and cannot see, and what each of them could still do if it turned against you. It describes what Droppen does today; the one part that is still rolling out is marked as such.")}
+      </p>
+      <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
+    </div>
+  );
+}
+
+function Contents() {
+  const { t } = useTranslation();
+  const entries: { id: (typeof SECURITY_SECTIONS)[number]; title: string; line: string; chip?: string }[] = [
+    { id: "overview", title: t("Overview"), line: t("What Droppen Hub and the relays see, and what they never see.") },
+    { id: "chain", title: t("The device chain"), line: t("The signed list every device checks for itself.") },
+    { id: "keys", title: t("Keys"), line: t("Every key, where it lives, how it is delivered, and the recovery words.") },
+    { id: "channels", title: t("Channels and relays"), line: t("Noise end to end, through a relay or on a direct path.") },
+    { id: "offline", title: t("Offline copies"), line: t("Encrypted streams with signed heads, readable while a device is off.") },
+    { id: "renewal", title: t("Identity renewal"), line: t("Replacing the identity key of a device that runs AI."), chip: t("Rolling out") },
+    { id: "threats", title: t("Threat model"), line: t("What a hostile Hub, a thief or the network can and cannot do.") },
+    { id: "verify", title: t("Verify it yourself"), line: t("Algorithms, labels, code, test vectors, and how to report a flaw.") },
+  ];
+  return (
+    <Section id="contents">
+      <nav aria-label={t("On this page")}>
+        <ol data-testid="security-contents" className="grid sm:grid-cols-2 lg:grid-cols-4">
+          {entries.map((e, i) => (
+            <li
+              key={e.id}
+              className={cn(
+                "border-border",
+                i > 0 && "max-sm:border-t",
+                i % 2 === 1 && "sm:max-lg:border-l",
+                i > 1 && "sm:max-lg:border-t",
+                i % 4 > 0 && "lg:border-l",
+                i > 3 && "lg:border-t",
+              )}
+            >
+              <a href={`#${e.id}`} className="group flex h-full flex-col gap-1.5 px-6 py-5 hover:bg-hover max-md:px-4">
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-2xs leading-4 text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="text-[13px] leading-5 font-semibold text-fg group-hover:underline group-hover:underline-offset-4">{e.title}</span>
+                  {e.chip && <Chip>{e.chip}</Chip>}
+                </span>
+                <span className="text-xs leading-5 text-muted">{e.line}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    </Section>
+  );
+}
+
+/** Who holds what, and where the ciphertext goes: from 768px a figure; below it, the same four boxes in a column. */
+function Overview() {
+  const { t } = useTranslation();
+  const devices = { title: t("Your browsers and phones"), lines: [t("device key · user key"), t("encrypt and decrypt here")] };
+  const relay = { title: t("Droppen relay"), lines: [t("copies frames, keeps nothing"), t("no keys")] };
+  const host = { title: t("A device that runs AI"), lines: [t("identity key · content keys"), t("the AI and its transcripts")] };
+  const hub = { title: "Droppen Hub", lines: [t("device chain · mail · encrypted copies"), t("no keys")] };
+  const wire = t("Noise ciphertext");
+  const e2e = t("one end-to-end channel: Noise IK");
+  const sealed = t("sealed records · signed heads");
+  const copy = t("encrypted copy");
+  const card = (x: number, y: number, w: number, h: number, c: { title: string; lines: string[] }) => (
+    <g key={c.title}>
+      <rect x={x + 0.5} y={y + 0.5} width={w} height={h} className="fill-bg stroke-border-strong" strokeWidth={1} />
+      <text x={x + 14} y={y + 26} className="fill-fg text-[13px] font-semibold">
+        {c.title}
+      </text>
+      {c.lines.map((line, i) => (
+        <text key={line} x={x + 14} y={y + 50 + i * 18} className="fill-muted font-mono text-[11px]">
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+  return (
+    <div className="border-t border-border" data-diagram="security-overview">
+      <svg viewBox="0 0 1040 300" role="img" aria-label={t("Your browsers and phones and a device that runs AI share one end-to-end channel through a Droppen relay; the device that runs AI also leaves sealed records with Droppen Hub, which your browsers and phones read back as an encrypted copy. Neither server holds a key.")} className="block w-full max-md:hidden">
+        {/* The end-to-end span over the three. */}
+        <path d="M140.5 34v8M900.5 34v8M140.5 34.5H900.5" className="stroke-muted" strokeWidth={1} fill="none" />
+        <text x={520} y={26} textAnchor="middle" className="fill-fg font-mono text-[11px]">
+          {e2e}
+        </text>
+        {/* The channel: ink, 2px, through the relay. */}
+        <path d="M256 92H404M636 92H784" className="stroke-fg" strokeWidth={2} fill="none" />
+        <text x={330} y={84} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          {wire}
+        </text>
+        <text x={710} y={84} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          {wire}
+        </text>
+        {/* The copy: dashed, 1.5px, an L each way. */}
+        <path d="M900 136V242.75H636M404 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
+        <text x={768} y={232} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          {sealed}
+        </text>
+        <text x={272} y={232} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          {copy}
+        </text>
+        {card(24, 48, 232, 88, devices)}
+        {card(404, 48, 232, 88, relay)}
+        {card(784, 48, 232, 88, host)}
+        {card(404, 200, 232, 86, hub)}
+      </svg>
+      <ol className="flex flex-col gap-0 px-4 py-5 md:hidden" aria-label={e2e}>
+        {[
+          { c: devices, next: wire },
+          { c: relay, next: wire },
+          { c: host, next: sealed },
+          { c: hub, next: copy },
+        ].map(({ c, next }, i) => (
+          <li key={c.title} className="flex flex-col">
+            <div className="flex flex-col gap-1 border border-border-strong px-3 py-2.5">
+              <span className="text-[13px] leading-5 font-semibold text-fg">{c.title}</span>
+              {c.lines.map((line) => (
+                <span key={line} className="font-mono text-2xs leading-4 text-muted">
+                  {line}
+                </span>
+              ))}
+            </div>
+            <span className="py-1.5 pl-3 font-mono text-[10px] leading-4 text-muted">
+              {i < 3 ? "↓ " : "↑ "}
+              {next}
+              {i === 3 ? ` → ${devices.title}` : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function OverviewSection() {
+  const { t } = useTranslation();
+  return (
+    <Section id="overview">
+      <SectionHead
+        label={`01 · ${t("Overview")}`}
+        title={t("Your devices hold the keys. Our servers carry ciphertext.")}
+        lead={t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies; Droppen relays pass a channel's ciphertext on. Neither holds a key that can decrypt anything.")}
+      />
+      <Overview />
+      <Topic n="1.1" title={t("What Droppen Hub sees, and what it never sees")}>
+        <Pair
+          left={{
+            title: t("What it sees"),
+            items: [
+              t("Your account: the e-mail address and whether it is verified, a password hash or your passkeys' public keys, the plan, and the usage it is counted on (bytes stored and transferred)."),
+              t("The IP address of every request and connection."),
+              t("What kind of device each browser or phone is, as a short name such as “iPhone · Safari” made from its User-Agent; never the User-Agent itself."),
+              t("Each device's random id and public keys, when it joined and was last seen, when a device that runs AI went online or offline and on which relays, and the version and protocol features it declares."),
+              t("The device chain: which devices belong to the account, which of them run AI, and which device added which."),
+              t("For what it stores encrypted (session streams and their pages, sealed key mail, keyring entries): how many, how large, when written, which device wrote each, and which device each piece of mail is for."),
+              t("Which device opens a channel to which device that runs AI, through which relay, and the sizes and timing of that traffic: so, roughly when you are working."),
+            ],
+          }}
+          right={{
+            title: t("What it never sees"),
+            items: [
+              t("A key that can decrypt anything: there is no server-side master key, no key escrow and no recovery service."),
+              t("What is said in a session, typed or shown in a terminal, and the names and contents of your files."),
+              t("Session titles, folders, repositories and branches; model names, which AI tool, your AI accounts and their quotas."),
+              t("The names of your devices."),
+            ],
+          }}
+        />
+        <P>{t("Records are padded to fixed sizes before they are encrypted, and compressed only where no attacker-influenced text shares a record with a secret, so a size says little; when you work still shows.")}</P>
+      </Topic>
+      <Topic n="1.2" title={t("With no account")}>
+        <P>{t("On one device with no account, the local program talks to no Droppen service at all: it serves the app itself, and nothing goes through our servers. Everything below is about using Droppen with an account, across devices.")}</P>
+      </Topic>
+      <Note>{t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}</Note>
+    </Section>
+  );
+}
+
+/** The chain as it starts for a new account and as a removal continues it: each entry names the one before by its hash. */
+function ChainFigure() {
+  const { t } = useTranslation();
+  const entries = [
+    { kind: "Genesis3", by: t("signed by the account key, then discarded"), what: t("the first full device") },
+    { kind: "KeyEpochs", by: t("signed by a full device"), what: t("commits user key epoch 0") },
+    { kind: "AddDevice3", by: t("signed by a full device"), what: t("a device that runs AI, its two public keys") },
+    { kind: "KeyEpochs", by: t("signed by a full device"), what: t("commits its first content key") },
+    { kind: "RemoveDevice3", by: t("signed by a full device"), what: t("a lost phone") },
+    { kind: "KeyEpochs", by: t("signed by a full device"), what: t("commits the new epochs, before any is sent") },
+  ];
+  return (
+    <ol data-diagram="security-chain" aria-label={t("A device chain: six entries, each naming the one before by its hash")} className="grid grid-cols-2 border-t border-border md:grid-cols-3 lg:grid-cols-6">
+      {entries.map((e, i) => (
+        <li
+          key={i}
+          className={cn(
+            "flex min-w-0 flex-col gap-1.5 border-border px-6 py-4 max-md:px-4",
+            i % 2 === 1 && "max-md:border-l",
+            i > 1 && "max-md:border-t",
+            i % 3 > 0 && "md:max-lg:border-l",
+            i > 2 && "md:max-lg:border-t",
+            i > 0 && "lg:border-l",
+          )}
+        >
+          <span className="font-mono text-2xs leading-4 text-faint tabular-nums">#{i}</span>
+          <span className="font-mono text-xs leading-4 font-semibold text-fg [overflow-wrap:anywhere]">{e.kind}</span>
+          <span className="text-2xs leading-4 text-muted">{e.what}</span>
+          <span className="text-2xs leading-4 text-muted">{e.by}</span>
+          <span className="mt-auto pt-1 font-mono text-[10px] leading-[14px] text-faint">{i === 0 ? t("prev: none") : `prev: H(#${i - 1})`}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ChainSection() {
+  const { t } = useTranslation();
+  return (
+    <Section id="chain">
+      <SectionHead
+        label={`02 · ${t("The device chain")}`}
+        title={t("One signed list decides who is in your account.")}
+        lead={t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules written twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot write to it.")}
+      />
+      <ChainFigure />
+      <Topic n="2.1" title={t("Entries")}>
+        <P>{t("Each entry carries its sequence number, the hash of the entry before it, the time, who signed it and one action. The signature covers that fixed binary structure behind a fixed label, so it can never be read as any other signature in the protocol. Ids are never reused, and every public key must be canonical, on the curve and not of small order.")}</P>
+        <Spec>
+          <Line>{"entry = version | account | seq | prev | time | signer | kind | action | signature"}</Line>
+          <Line>{"signature = Ed25519(signer, \"rh/v1 chain-entry\\0\" ‖ version | account | seq | prev | time | signer | kind | action)"}</Line>
+          <Line>{"next.prev = SHA-256(\"rh/v1 chain-hash\\0\" ‖ entry)"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="2.2" title={t("The genesis and the account key")}>
+        <P>{t("The first browser makes the account key AK (Ed25519), signs the genesis entry with it, and throws the private key away: it is never stored and signs nothing else. Its fingerprint is the account's root identity. Each device that runs AI pins it when it joins; a new browser pins the genesis only once a pairing secret or the recovery words tie it to the real account, so Droppen Hub cannot hand it a chain of its own making. A new account starts on chain v3: the genesis names the first full device, and the entry after it commits the first user key.")}</P>
+      </Topic>
+      <Topic n="2.3" title={t("Chain v3: devices, AI and full devices")}>
+        <P>{t("Every device on the chain has two flags: host (it runs AI) and admin (a full device: it signs entries, holds the user key and vouches for the chain). Every browser and phone you pair is a full device. A device that runs AI is never one, and both verifiers refuse any entry that would make it one. Entries that change the account are signed by a current, active full device; the account key signs only the genesis, and the recovery key only a recovery join and its activation. The last full device cannot be removed.")}</P>
+      </Topic>
+      <Topic n="2.4" title={t("Who may control which device")}>
+        <P>{t("Each device that runs AI has an accept list on the chain (SetAccept). By default only full devices may control it; another device that runs AI, or a limited device, only if a full device lists it there. The device that runs AI enforces the list when it admits a channel and on channels already open; Droppen Hub also trims relay tickets by it, as defence in depth. Narrowing a list requires a new content key for that device in the very next entry.")}</P>
+      </Topic>
+      <Topic n="2.5" title={t("Forks and rollbacks")}>
+        <P>{t("Every verifier keeps the highest sequence number and hash it has seen, and refuses a chain that goes back or branches. A channel handshake carries both sides' views and their latest entries, so a removal Droppen Hub holds back reaches the other side at the next connection, and any conflict raises a fork alarm: on the device, in its encrypted status, and by push.")}</P>
+        <P>{t("In a browser, every tab of the account shares one record of the newest head it has seen, written under a Web Lock and only ever moved forward. A tab that sees a conflicting head latches the alarm, and from then on attests nothing, opens no channel, signs no entry and seals no key. The limit: a record lowered while no tab that holds the newer view is open is trusted at the next load.")}</P>
+      </Topic>
+      <Topic n="2.6" title={t("Freshness and attestations")}>
+        <P>{t("A Hub that withholds a removal could let the removed device keep control. So full devices sign an attestation of the chain head they see when they connect, whenever the chain changes, and every 3 hours while open. A device that runs AI admits control only from a view that a full device vouched for within 7 days, and management requests (handing over content keys, renaming, re-encrypting) only within 12 hours. A channel already open closes once its last valid attestation is 7 days old.")}</P>
+        <P>{t("An honest Hub revokes a removed device's sessions and relay tickets at once; the 7 days bound only a Hub that is itself compromised. The documented limit: if the Hub freezes every other full device on the same head, the bound holds only once those devices notice they are frozen; a new channel needs an attestation of exactly the current head, with the same limit.")}</P>
+        <Spec>
+          <Line>{"attest = Ed25519(admin, \"rh/v1 chain-attest\\0\" ‖ account | device | seq | head | time)"}</Line>
+          <Line>{"CONTROL_FRESHNESS_MS = 7 d · MANAGE_FRESHNESS_MS = 12 h · ATTEST_EVERY_MS = 3 h"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="2.7" title={t("Every change is announced")}>
+        <P>{t("Adding or removing a device, a recovery join, an activation, an approval, new recovery words and a key epoch written on its own all raise an alert on every device (a banner to confirm that it was you) and on every device that runs AI (its log and a push). They read it from their own copy of the chain, so Droppen Hub can delay it, not hide it.")}</P>
+      </Topic>
+      <Topic n="2.8" title={t("Removal and key rotation")}>
+        <List
+          items={[
+            t("A full device signs the removal. Droppen Hub closes the removed device's connections and revokes its sessions and relay tickets; every device that runs AI drops its channels as soon as it sees the entry, and refuses its handshakes from then on."),
+            t("Then new keys: a new user key if the removed device ever held one, and a new content key for every device that runs AI. Each new epoch is committed on the chain first, always exactly one up, and sealed only to the devices that remain."),
+            t("Optionally, each device that runs AI re-encrypts its history under the new key from its own transcripts, and the old ciphertext is deleted from Droppen Hub."),
+            t("What the removed device already read cannot be taken back. A device that could control a device that runs AI may also have copied that device's identity key: today you remove and add that device again; identity renewal (section 06) is rolling out to do this in place."),
+          ]}
+        />
+      </Topic>
+    </Section>
+  );
+}
+
+function KeysSection() {
+  const { t } = useTranslation();
+  const heads = [t("Key"), t("Kind"), t("Held by"), t("Used for"), t("Replaced")];
+  const rows = [
+    [t("Device key"), "Ed25519 + X25519", t("Each browser or phone: made by WebCrypto, used as a non-extractable key, stored sealed under a key of this browser"), t("The device's identity: signs chain entries, attestations and sign-ins; its Noise static key; receives sealed keys"), t("A new device, a new key")],
+    [t("Identity key of a device that runs AI"), t("Ed25519 + X25519 from one random 32-byte seed"), t("That device only, in a file only its user can read"), t("Signs in to Droppen Hub and signs stream heads; its Noise static key"), t("When it is added again (renewal is rolling out)")],
+    [t("Account key AK"), "Ed25519", t("Nobody: discarded after the genesis"), t("Signs the genesis only; its fingerprint is the account's root"), t("Only if the account starts over")],
+    [t("User key UK"), t("256-bit symmetric, by epoch"), t("Full devices"), t("Wraps every content key in the account's keyring"), t("When a device that held it is removed")],
+    [t("Content key MK"), t("Symmetric, by epoch, one per device that runs AI"), t("That device; your devices get it wrapped or sealed"), t("Only an input to HKDF: stream names and stream keys"), t("On a removal, and when its accept list narrows")],
+    [t("Stream key SK"), t("HKDF of the content key and the stream id"), t("Nobody: derived when needed"), t("Encrypts one stream's records and pages"), t("With the content key")],
+    [t("Channel keys"), t("Noise ephemeral keys"), t("Memory only"), t("A live channel, with forward secrecy"), t("Every hour or 2^20 messages")],
+    [t("Recovery key RK"), t("128 random bits, shown as 12 words"), t("You only: no device stores it"), t("Derives a recovery signing key and a wrap key; opens the user keys sealed to it"), t("When you make new words")],
+  ];
+  return (
+    <Section id="keys">
+      <SectionHead
+        label={`03 · ${t("Keys")}`}
+        title={t("Every key, where it lives, and what it opens.")}
+        lead={t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every device and have no recovery words, your history is gone for good, for us too.")}
+      />
+      <Table label={t("The keys")} heads={heads} rows={rows} />
+      <Topic n="3.1" title={t("Delivering a key")}>
+        <P>{t("A key sent to one device is sealed to its X25519 key with sender authentication, in the manner of HPKE's Auth mode: the key-encryption key depends on the sender's static key as well as a fresh one, and the context (purpose, account, sender, recipient, epoch) is both an input to the KDF and the AAD. A key goes through Droppen Hub's mailbox, or straight over the end-to-end channel when the recipient is online.")}</P>
+        <P>{t("A recipient takes a key only if it is addressed to itself, in this account, from a current full device, and matches the hash the chain committed for that epoch. So neither Droppen Hub nor a removed device can slip in a key of its own choosing, or push an epoch forward.")}</P>
+        <Spec>
+          <Line>{"kek = HKDF-SHA256(salt = \"rh/v1 seal-auth\", X25519(e, R) ‖ X25519(S, R), info = e ‖ S ‖ R ‖ ctx)"}</Line>
+          <Line>{"ctx = \"rh/v1 seal\\0\" | purpose | account | sender | recipient | epoch;  AES-256-GCM(kek, AAD = ctx)"}</Line>
+          <Line>{"commit = SHA-256(\"rh/v1 key-commit\\0\" ‖ kind | account | id | epoch | key)"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="3.2" title={t("Adding a device")}>
+        <List
+          items={[
+            t("A new browser or phone shows a QR code, or text to paste, with its public keys and a one-time secret. A device you already have reads it, you compare fingerprints, and it signs the addition and delivers the keys under a MAC made with that secret."),
+            t("Without a camera, an 8-digit code instead runs CPace over X25519 through Droppen Hub: one guess per run, enforced at both ends, and the code is spent after one try."),
+            t("A device that runs AI joins with a one-time code from a full device. It proves it knows the code's secret over its own two public keys, and the full device signs exactly those keys into the chain. Droppen Hub only ever sees a token derived from the secret, so it cannot enroll a device of its own."),
+          ]}
+        />
+      </Topic>
+      <Topic n="3.3" title={t("Keys in the browser")}>
+        <P>{t("The device key is used as a non-extractable WebCrypto key and stored as PKCS #8 sealed under a non-extractable AES-GCM key of this browser (WebKit cannot store non-extractable X25519 keys). User keys are stored only encrypted under that local key; content keys are never stored in the clear; offline copies are encrypted too and cleared when you sign out. This keeps keys out of storage in the clear. It does not stop code running on the page itself, which can unseal them just as the page does: see the threat model.")}</P>
+      </Topic>
+      <Topic n="3.4" title={t("Recovery words")}>
+        <List
+          items={[
+            t("Offered when you create the account, and optional: 12 words that encode 128 random bits (only the BIP-39 encoding, with no passphrase stretching), shown once, three of them typed back. You can make new ones from a full device at any time."),
+            t("They derive a recovery signing key and a wrap key, and every user key epoch is sealed to them in the keyring. A signature of the recovery key over the account key is on the chain, so Droppen Hub cannot wrap your real recovery key into a chain of its own."),
+            t("A device that comes back with the words can decrypt the history at once, but joins as pending: it can neither sign entries nor open a channel until a full device approves it, or until 24 hours after each verifier itself first saw it join, by that verifier's own clock. Meanwhile every device and every device that runs AI warns you, and any full device can veto by removing it. The delay holds back control, not reading."),
+            t("If Droppen Hub itself holds the words, it can order the activation before any veto: then veto, make new words, and, if you suspect the Hub, add your devices that run AI again on the devices themselves."),
+          ]}
+        />
+      </Topic>
+      <Topic n="3.5" title={t("Losing every device")}>
+        <P>{t("With every device lost and no recovery words, nobody can decrypt the history, us included. Your e-mail gets you back into the account, but only with a new genesis; each device that runs AI pinned the old account key, so it must be added again on the device itself, and a stolen mailbox cannot take one over.")}</P>
+      </Topic>
+      <Topic n="3.6" title={t("Passkeys, today")}>
+        <P>{t("A passkey signs you in to Droppen Hub and does nothing more: it gives the same short sign-in session a password does (15 minutes, enough to register a device and read the chain). Everything else needs a device session, signed by the device key. A passkey holds no encryption key and unlocks none.")}</P>
+      </Topic>
+      <Note>{t("Being worked on, not live: adding a device with a passkey, and renewing the identity key of a device that runs AI in place (section 06).")}</Note>
+    </Section>
+  );
+}
+
+function ChannelsSection() {
+  const { t } = useTranslation();
+  return (
+    <Section id="channels">
+      <SectionHead
+        label={`04 · ${t("Channels and relays")}`}
+        title={t("Every channel is end to end, whichever way it goes.")}
+        lead={t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay, or Droppen Hub where no relay carries the channel, only forwards its frames; when the two ends can reach each other, the same channel can also take a direct path.")}
+      />
+      <Topic n="4.1" title={t("The handshake")}>
+        <P>{t("Noise IK with X25519, AES-256-GCM and SHA-256: WebCrypto in the browser, snow in Rust. The browser starts it with the other side's static key taken from the chain, and the other side admits the browser by its own copy of the chain. The prologue binds the account and both ids, so neither a relay nor Droppen Hub can splice two sessions together. Keys are renewed every hour or every 2^20 messages, whichever comes first.")}</P>
+        <Spec>
+          <Line>{"Noise_IK_25519_AESGCM_SHA256"}</Line>
+          <Line>{"prologue = \"rh/v1\\0\" | account | device | host"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="4.2" title={t("The first message asks for nothing")}>
+        <P>{t("An IK first message can be replayed, and whoever holds the responder's static key could forge one in any device's name. So it carries only the device's view of the chain and its latest entries; anything that changes state waits for the first transport message, which needs the device's own private key. The device that runs AI merges the entries first (a conflict is a fork alarm), then checks that the device is current, on its accept list and fresh, and only then the replay window: 10 minutes back, 60 seconds ahead. Its reply carries its own view and the entries the device lacks.")}</P>
+      </Topic>
+      <Topic n="4.3" title={t("Droppen relays")}>
+        <P>{t("A relay pairs a device's channel with the other end's on tickets that Droppen Hub signs, valid for 15 minutes; the holder must also sign the relay's own challenge with the ticket's key, so a stolen ticket is useless. The relay copies frames without parsing them, has no database and no keys, and forgets everything when it restarts. A relay that misreports who is who only gets a failed handshake. Each account is kept on one relay, with an optional standby, and moves at once when its relay goes away.")}</P>
+        <Pair
+          left={{ title: t("A relay sees"), items: [t("Random account and device ids, and both ends' IP addresses."), t("When connections and channels open and close, the sizes and timing of frames, and the bytes per account.")] }}
+          right={{ title: t("A relay never sees"), items: [t("Your e-mail address, the device chain, mail, the keyring or the stored streams."), t("Any content, and the signalling of a direct path.")] }}
+        />
+      </Topic>
+      <Topic n="4.4" title={t("Direct paths")}>
+        <P>{t("When both ends can reach each other, the channel adds a WebRTC DataChannel. Its signalling (offers, candidates, DTLS fingerprints) travels inside the Noise channel, and a fresh Noise IK handshake runs over the DataChannel, bound to both DTLS fingerprints and to the relayed channel's handshake, with the same admission rules. It closes with its channel. STUN servers (Cloudflare, Google) see each end's public address; there is no TURN. Turn off “Allow direct connections” and your devices never learn each other's IP address.")}</P>
+        <Spec>
+          <Line>{"prologue = \"rh/v1 direct\\0\" | account | device | host | channel_hash | nonce | device_fp | host_fp"}</Line>
+        </Spec>
+      </Topic>
+    </Section>
+  );
+}
+
+function OfflineSection() {
+  const { t } = useTranslation();
+  return (
+    <Section id="offline">
+      <SectionHead
+        label={`05 · ${t("Offline copies")}`}
+        title={t("History you can read while the device is off, and only you.")}
+        lead={t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and check every record against that device's own signature.")}
+      />
+      <Topic n="5.1" title={t("Records")}>
+        <P>{t("Each record is sealed with AES-256-GCM under a stream key derived from the content key. The AAD binds the stream, the sequence number and the epoch, so Droppen Hub cannot move or reorder records, and each record's plaintext carries a hash link to the one before. Records are padded to fixed sizes. A stream's name is an HMAC under a key derived from the content key, so it cannot be matched to a session.")}</P>
+        <Spec>
+          <Line>{"SK = HKDF-SHA256(salt = \"rh/v1 stream-key\", MK_e, info = stream_id)"}</Line>
+          <Line>{"AAD = \"rh/v1 record\\0\" ‖ stream ‖ seq ‖ epoch"}</Line>
+          <Line>{"link_n = SHA-256(\"rh/v1 record-link\\0\" ‖ stream ‖ link_n−1 ‖ record_n)"}</Line>
+          <Line>{"BUCKETS = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 61440]"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="5.2" title={t("Signed stream heads")}>
+        <P>{t("After every append, and as a heartbeat every 5 minutes, the device that runs AI signs the head of the stream: how many records it holds, the epoch, the link value and the time. Readers release only records a signed head covers. A head beyond the records received means Droppen Hub is holding some back; a link that does not match means a record was forged or replaced; the newest head's time is how current the copy is, shown as “as of”. A removed device that still holds an old stream key can seal a record, but not sign a head, so nobody accepts what it writes.")}</P>
+        <Spec>
+          <Line>{"head = Ed25519(host, \"rh/v1 stream-head\\0\" ‖ stream | next_seq | epoch | link | time)"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="5.3" title={t("Snapshots and rollback")}>
+        <P>{t("Older history is compacted into immutable pages named by their SHA-256 and listed in a manifest, which the device that runs AI signs once more over a signed head. A reader starts only from a signed head and checks every page against the manifest. A browser keeps its copy together with the signed head it accepted, in one IndexedDB transaction, and checks that signature again when it loads; the local program's reader also keeps the newest head it accepted as a floor, and refuses a Droppen Hub that replays the device's own older heads.")}</P>
+        <Spec>
+          <Line>{"page = AES-256-GCM(SK, AAD = \"rh/v1 page\\0\" ‖ stream ‖ epoch);  name = SHA-256(page)"}</Line>
+          <Line>{"manifest = Ed25519(host, \"rh/v1 stream-manifest\\0\" ‖ head | count | pages[])"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="5.4" title={t("When keys change")}>
+        <P>{t("Each content key epoch has its own stream names. With re-encryption the device that runs AI rebuilds its streams from its own transcripts under the new key, and Droppen Hub deletes the old ciphertext. Drafts still being written are sent only to live readers, never stored, signed by the device that runs AI and accepted only under the current epoch.")}</P>
+      </Topic>
+    </Section>
+  );
+}
+
+function RenewalSection() {
+  const { t } = useTranslation();
+  return (
+    <Section id="renewal">
+      <SectionHead
+        label={`06 · ${t("Identity renewal")}`}
+        title={t("Renewing the identity key of a device that runs AI.")}
+        lead={
+          <span className="flex flex-col items-start gap-3">
+            <Chip>{t("Rolling out")}</Chip>
+            <span>{t("Not switched on yet. This section describes the design as it is being built and reviewed, not as live; parts of it may still change. Until it is on, a device that runs AI whose identity key may have been copied is removed and added again.")}</span>
+          </span>
+        }
+      />
+      <Topic id="renewal-why" n="6.1" title={t("Why renew")}>
+        <P>{t("Being allowed to control a device that runs AI means being able to read its files, including the one that holds its identity seed. So when a device that could control it is removed, loses its full rights, or is taken off its accept list, that device may hold a copy of the identity key. New content keys do not help against that: the copy could still sign in as the device that runs AI, answer handshakes and receive keys sealed to it. Renewal replaces the identity key in place and keeps the device's id, its accept list and everything else kept by id. It runs for every device that runs AI the lost device could reach, directly or through other devices that run AI that let it in.")}</P>
+      </Topic>
+      <Topic id="renewal-entry" n="6.2" title={t("The signed RotateHostKey entry")}>
+        <P>{t("A renewal is chain v3 entry 20, RotateHostKey, signed by a full device and followed at once by that device's next content key commitment. It carries a proof that both the old and the new identity key sign: the account, the device, the chain position it was made against (a sequence number and that entry's hash), all four public keys, a nonce and the assurance level. So neither a stolen full device alone nor whoever holds the old key alone can move the id to another key.")}</P>
+        <P>{t("Both verifiers check that the device is a current device that runs AI, that neither new key has ever appeared on the chain, that the hash matches the chain at that position, and both signatures. Retired keys stay on the chain and can never join or be activated again. The verifiers already read this entry; Droppen Hub refuses to store it until renewal is switched on.")}</P>
+        <Spec>
+          <Line>{"proof = account | host | staged_seq | staged_head | old_sign | old_dh | new_sign | new_dh | nonce | assurance"}</Line>
+          <Line>{"old_sig = Ed25519(old, \"rh/v1 host-rotate\\0\" ‖ proof)"}</Line>
+          <Line>{"new_sig = Ed25519(new, \"rh/v1 host-rotate\\0\" ‖ proof)"}</Line>
+          <Line>{"[RotateHostKey{host, new_sign, new_dh, …, old_sig, new_sig}, KeyEpochs{host: next}] ← admin, \"rh/v1 chain-entry\\0\""}</Line>
+        </Spec>
+      </Topic>
+      <Topic id="renewal-staging" n="6.3" title={t("Staging on the real device, and confirming it")}>
+        <List
+          items={[
+            t("A full device asks the device that runs AI over the end-to-end channel, from a view vouched for within 12 hours, to make a new seed. The device keeps it beside the current seed, never over it, and answers with the new keys, both signatures and a MAC that proves it holds the new X25519 key."),
+            t("The device that runs AI hands the proof to Droppen Hub itself, over its own connection signed in with the old key. A copy that answered through a relay would have to sign in as the device too, pushing the real one off."),
+            t("For a window (2 minutes by default), every sign-in with the old key must confirm with the new key within 20 seconds; any sign-in that does not voids the staging. Only then does the full device write the entry. The device that runs AI switches to the new seed only after it has verified the entry on its own chain, so a lying Hub cannot make it give up its key."),
+            t("The next content key is sealed only to the new X25519 key, and readers accept stream heads from the network only under the current key."),
+          ]}
+        />
+        <Pair
+          left={{
+            title: t("Automatic"),
+            items: [
+              t("Stops a copy that is not in use at that moment: the common case of a lost phone, an old browser, or a script that copied a file."),
+              t("Cannot tell the real device from a copy that is online while the real one is off. That case is not silent: when the real device comes back, it finds out and disputes the renewal."),
+            ],
+          }}
+          right={{
+            title: t("Confirmed on the device"),
+            items: [
+              t("The device that runs AI shows an 8-character code for 10 minutes, in its own settings or in droppen agent status, and you type it on your full device, which works out the same code from the answer it received."),
+              t("A copy cannot put its code on the real device's screen, so the renewal can only go to the real device."),
+            ],
+          }}
+        />
+        <Spec>
+          <Line>{"mac = HMAC-SHA256(X25519(new_dh, eph), \"rh/v1 rotate-confirm\\0\" ‖ proof)"}</Line>
+          <Line>{"ack = Ed25519(new, \"rh/v1 rotate-ack\\0\" ‖ account | host | SHA-256(proof) | login_nonce)"}</Line>
+          <Line>{"code = base32(SHA-256(\"rh/v1 rotate-sas\\0\" ‖ proof)[0..5])  →  XXXX-XXXX"}</Line>
+        </Spec>
+      </Topic>
+      <Topic id="renewal-policy" n="6.4" title={t("“Always confirm on the device”")}>
+        <P>{t("An account-wide setting, written on the chain as entry 21 (SetRenewalPolicy) by a full device. While it is on, both verifiers refuse any renewal that was not confirmed on the device, so a colluding Hub cannot switch it off for you; turning it off is an alert on every device. No renewal runs until a full device has chosen this setting once. Each browser can also refuse, for itself, to sign any renewal not confirmed on the device.")}</P>
+      </Topic>
+      <Topic id="renewal-disputes" n="6.5" title={t("Disputes and isolation")}>
+        <List
+          items={[
+            t("If the real device that runs AI sees, on a chain it has verified, its id renewed to keys it never made, it raises an alarm (in its status and by push), stops, keeps its old seed, and signs a dispute with that now-retired key."),
+            t("The dispute names the renewal's sequence number, its entry hash and the key it installed, so it can only exist after that entry, with no clocks compared. Droppen Hub can withhold a dispute but cannot forge one."),
+            t("A device that verifies it isolates the device that runs AI: no channel and no keys for it, and renewal only with the code. Each browser keeps the disputes it has verified, so the Hub cannot undo them later; only a later renewal confirmed on the device, or removing it, ends the isolation."),
+            t("A key retired by a confirmed renewal never isolates, so a stolen old key can force at most one confirmation. If the real device holds only the retired key, it cannot recover in place: remove it, and add it again with a new identity."),
+          ]}
+        />
+        <Spec>
+          <Line>{"dispute = Ed25519(retired, \"rh/v1 rotate-dispute\\0\" ‖ account | host | seq | entry_hash | new_sign)"}</Line>
+        </Spec>
+      </Topic>
+      <Topic id="renewal-groups" n="6.6" title={t("Exposed groups: controllers first, and a pause")}>
+        <P>{t("If a lost device could control A, and A may control B, a copy of A's key reaches B as well: B is exposed too. Controllers renew first: when B lets A in, A renews before B, so by the time B renews, A's old key is already useless.")}</P>
+        <P>{t("Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first writes a pause, entry 22 (RenewalPause), that names each control edge it removes. Every verifier, and every device that runs AI on every path (Hub, relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once each device in the cycle has renewed and none is exposed any more, a second entry only marks the pause completed, and the edges come back. A pause only ever takes access away, so one left open is safe, visible, and can be ended after you confirm.")}</P>
+      </Topic>
+      <Topic id="renewal-hub" n="6.7" title={t("What a hostile Hub can and cannot do here")}>
+        <Pair
+          left={{
+            title: t("It cannot"),
+            items: [
+              t("Renew an identity without a full device's signature and the signatures of both identity keys."),
+              t("Replay an old proof, or install a key the chain has seen before."),
+              t("Make a device that runs AI switch to, or give up, a key without an entry it has verified itself."),
+              t("Switch off “always confirm on the device”, forge a dispute, or undo an isolation a device has verified."),
+            ],
+          }}
+          right={{
+            title: t("It can"),
+            items: [
+              t("Withhold a renewal from one device for a while, as it can a removal: bounded by freshness, and the chain also travels inside handshakes."),
+              t("Withhold disputes, so that a device that never receives one does not isolate."),
+              t("Together with someone holding a copy of the old key, let that copy win an automatic renewal while the real device is off, and hide the evidence. Only confirming on the device prevents this; what remains is the real device's own alarm."),
+            ],
+          }}
+        />
+        <P>{t("Renewal protects what comes after it. It cannot take back what a copy already had: that device's transcripts and files, credentials stored on it such as AI and SSH logins, earlier content keys and the ciphertext under them. Nor can it remove a backdoor left on the device, which needs checking or reinstalling. Droppen Hub sees which device renewed and when.")}</P>
+      </Topic>
+    </Section>
+  );
+}
+
+function ThreatsSection() {
+  const { t } = useTranslation();
+  const heads = [t("Who"), t("Can"), t("Cannot")];
+  const rows = [
+    [
+      t("Droppen Hub, or whoever runs or compels it"),
+      t("See the metadata in section 01; refuse service; delete data; delay the newest records or chain entries; analyse traffic."),
+      t("Decrypt content; forge commands (only devices on the chain are admitted, and the first message asks for nothing); add a device of its own; slip in keys (they are sender-authenticated and committed on the chain); forge or quietly change records (signed heads); take over a device that runs AI through e-mail recovery (it pinned the account key)."),
+    ],
+    [t("A Droppen relay"), t("See ids, IP addresses, and the sizes and timing of the channels it carries; drop them."), t("Read or change them; splice two sessions together (the prologue binds both ids).")],
+    [t("The network, or a STUN server"), t("See IP addresses, and the sizes and timing of traffic."), t("Read signalling or content; sit in the middle of a direct path (both DTLS fingerprints are bound into its handshake).")],
+    [t("A stolen phone or browser"), t("Until you remove it: read what it can read, and control what it may."), t("After removal: sign entries, open channels, read anything sealed under the new keys, or forge records with old stream keys.")],
+    [
+      t("A stolen device that runs AI, or a program running as its user"),
+      t("Anything you can do on that device, including reading its identity seed and acting as it, until it is removed or added again."),
+      t("Read streams of devices that never let it control them; sign chain entries or hold the user key (it is never a full device)."),
+    ],
+    [t("A stolen password or passkey"), t("Use the service; register devices, which cannot join without a full device."), t("Read or delete data, or take over a device: beyond a 15-minute sign-in session, everything needs a device's signature.")],
+    [
+      t("Stolen recovery words and password"),
+      t("Decrypt all history at once."),
+      t("Control a device that runs AI or sign entries for 24 hours unless a full device approves; meanwhile every device warns, and any full device can veto."),
+    ],
+    [
+      t("A modified web page"),
+      t("Served to you once, use this browser's keys to decrypt what is sent to it, and, since code on the same origin can unseal what the page stores, export the browser's private keys and user keys."),
+      t("Reach the local web app or the desktop app, which load no code from Droppen Hub."),
+    ],
+  ];
+  return (
+    <Section id="threats">
+      <SectionHead
+        label={`07 · ${t("Threat model")}`}
+        title={t("Who could attack, and what each of them can do.")}
+        lead={t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today.")}
+      />
+      <Table label={t("Threat model")} heads={heads} rows={rows} />
+      <Topic n="7.1" title={t("The web-delivery gap")}>
+        <P>{t("The app at droppen.app comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but not from a page the Hub has changed. WebCrypto's non-extractable keys do not stop code on the same origin: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
+        <List
+          items={[
+            t("Every release is a reproducible build with a hash for every file, and the page's Content-Security-Policy allows only its own scripts. A script, scripts/verify-web.mjs, compares what droppen.app serves with a release."),
+            t("A check cannot see a page served once, to one person, nor clean a browser that already cached a bad one."),
+            t("For high assurance, use the local web app that the droppen program serves (the same build, checked byte for byte at release), or the desktop app."),
+          ]}
+        />
+      </Topic>
+      <Topic n="7.2" title={t("Limits we know of")}>
+        <List
+          items={[
+            t("Metadata and traffic analysis: padding hides sizes within a bucket, not when you work."),
+            t("A Hub that withholds a removal can keep a removed device in control for up to 7 days (section 2.6)."),
+            t("On a device that runs AI, the identity seed is a file that any program running as its user can read. Keeping it in the system keychain comes later."),
+            t("The pairing code's Elligator 2 map is not constant-time; the code is single-use and spent after one try."),
+            t("Internal security reviews only; no external audit yet."),
+          ]}
+        />
+      </Topic>
+    </Section>
+  );
+}
+
+function VerifySection() {
+  const { t } = useTranslation();
+  const mail = (
+    <a href={`mailto:${SECURITY_EMAIL}`} data-testid="security-email" className="text-fg underline underline-offset-4 hover:no-underline">
+      {SECURITY_EMAIL}
+    </a>
+  );
+  const choices = [
+    [t("Signatures"), t("Ed25519, verified strictly, always behind a fixed label")],
+    [t("Key agreement"), t("X25519; small-order points refused")],
+    [t("Encryption"), "AES-256-GCM"],
+    [t("Hash and KDF"), "SHA-256, HKDF-SHA256, HMAC-SHA256"],
+    [t("Channel"), "Noise_IK_25519_AESGCM_SHA256"],
+    [t("Pairing code"), t("CPace over X25519, with SHA-512")],
+    [t("Recovery words"), t("BIP-39 encoding, 12 words")],
+  ];
+  return (
+    <Section id="verify">
+      <SectionHead
+        label={`08 · ${t("Verify it yourself")}`}
+        title={t("Don't take our word for it.")}
+        lead={t("Every statement on this page comes from the protocol's code and its design notes. Here is where to look.")}
+      />
+      <Topic n="8.1" title={t("Algorithms")}>
+        <dl className="grid max-w-[46em] grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
+          {choices.map(([name, value]) => (
+            <div key={name} className="contents">
+              <dt className="text-xs leading-5 font-semibold text-fg">{name}</dt>
+              <dd className="font-mono text-2xs leading-5 text-muted [overflow-wrap:anywhere]">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </Topic>
+      <Topic n="8.2" title={t("Labels")}>
+        <P>{t("Every signature covers a fixed binary structure behind a fixed label that ends in a NUL byte, so no label is a prefix of another; no key ever signs bytes Droppen Hub chose, and its sign-in challenge sits inside a structure of our own. The signature labels:")}</P>
+        <Spec>
+          <Line>{"rh/v1 chain-entry · rh/v1 chain-attest · rh/v1 stream-head · rh/v1 stream-manifest · rh/v1 stream-draft"}</Line>
+          <Line>{"rh/v1 hub-login · rh/v1 push · rh/v1 recovery-proof · rh/v1 passkey-proof"}</Line>
+          <Line>{"rh/v1 relay-ticket · rh/v1 relay-origin · rh/v1 host-rotate · rh/v1 rotate-ack"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="8.3" title={t("The code")}>
+        <P>{t("The protocol is written twice, independently, in Rust and in TypeScript. The app, the local program, the desktop app and the relay are licensed under the AGPL-3.0; their source code will be published at github.com/getdroppen/droppen, and until then it is available on request. Droppen Hub is not open source.")}</P>
+        <Spec>
+          <Line>{"server-rs/crates/rh-proto (Rust) · web/src/lib/e2e (TypeScript)"}</Line>
+          <Line>{"server-rs/crates/rh-relay · server-rs/crates/droppen-relay · server-rs/crates/rh-client"}</Line>
+        </Spec>
+      </Topic>
+      <Topic n="8.4" title={t("Shared test vectors")}>
+        <P>{t("Each implementation writes test vectors (vectors/rust.json, vectors/ts.json) and must read the other's: Noise transcripts through rekeys, chains in which every refusal gives the same error, key wraps, records, pages and the direct-path handshake. Attacks found in our reviews stay as regression tests on both sides.")}</P>
+      </Topic>
+      <Topic n="8.5" title={t("The page you are reading")}>
+        <P>{t("node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Signed release attestations switch on once the repository is public; until then, compare against a build of your own (docs/web-integrity.md).")}</P>
+      </Topic>
+      <Topic n="8.6" title={t("Report a vulnerability")}>
+        <P>
+          {t("Please report privately, not in a public issue. Once the repository is published, use GitHub's private vulnerability reporting there; until then, write to")} {mail}
+        </P>
+        <P>{t("The design assumes a malicious Hub: a way for Droppen Hub, a relay or the network to read or change what should be end-to-end encrypted, or for a device not on your account to act on yours, is a vulnerability. When testing droppen.app, use only accounts you own, and no load testing.")}</P>
+      </Topic>
+    </Section>
+  );
+}
+
+function useDocumentMeta() {
+  const { t, i18n: active } = useTranslation();
+  useEffect(() => {
+    const before = document.title;
+    document.title = t("How Droppen's encryption works — Droppen");
+    document.documentElement.lang = active.language;
+    const meta = document.querySelector('meta[name="description"]');
+    const description = meta?.getAttribute("content") ?? null;
+    meta?.setAttribute("content", t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."));
+    return () => {
+      document.title = before;
+      if (meta && description !== null) meta.setAttribute("content", description);
+    };
+  }, [t, active.language]);
+}
+
+/** droppen.app/security, signed in or not. */
+export default function SecurityPage({ signedIn = false }: { signedIn?: boolean }) {
+  useDocumentMeta();
+  // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
+  useEffect(() => {
+    const id = location.hash.slice(1);
+    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
+  }, []);
+  return (
+    <div data-testid="security" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+      <PublicHeader signedIn={signedIn} />
+      <div className="md:px-8">
+        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+          <Hero />
+          <Contents />
+          <OverviewSection />
+          <ChainSection />
+          <KeysSection />
+          <ChannelsSection />
+          <OfflineSection />
+          <RenewalSection />
+          <ThreatsSection />
+          <VerifySection />
+          <FooterLine />
+        </main>
+      </div>
+    </div>
+  );
+}

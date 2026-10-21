@@ -33,6 +33,7 @@ import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/download-copy.js";
 import { pricingJa, pricingZhCN, pricingZhTW } from "../src/features/landing/pricing-copy.js";
+import { securityJa, securityZhCN, securityZhTW } from "../src/features/landing/security/security-copy.js";
 import { sourceFiles, sourceTexts } from "./screen-text.js";
 
 /**
@@ -40,10 +41,11 @@ import { sourceFiles, sourceTexts } from "./screen-text.js";
  * (`features/landing/copy.ts` and the sections that draw it) is marketing the
  * user approved, about the computer the AI CLIs run on (「手机上接着用电脑上的
  * AI」), not the interface; the i18n tables are checked as tables below. The
- * download page, the pricing page with its waitlist, the privacy notice and
- * the frame around them all (`download*.ts(x)`, `pricing*.ts(x)`,
- * `waitlist.tsx`, `privacy.tsx`, `page-kit.tsx`) are the product's own words,
- * and are checked like any other interface source — their tables below.
+ * download page, the pricing page with its waitlist, the privacy notice, the
+ * security design and the frame around them all (`download*.ts(x)`,
+ * `pricing*.ts(x)`, `waitlist.tsx`, `privacy.tsx`, `security/*`,
+ * `page-kit.tsx`) are the product's own words, and are checked like any other
+ * interface source — their tables below.
  */
 const LANDING_MARKETING = ["copy.ts", "landing.tsx", "hero-a.tsx", "hero-diagram.tsx", "journey.tsx", "direct-path.tsx", "offline-copy.tsx", "kit.tsx", "motion.ts", "story.ts"];
 const NOT_INTERFACE = [...LANDING_MARKETING.map((file) => `features/landing/${file}`), "i18n/"];
@@ -67,9 +69,11 @@ const TABLES = {
 const DOWNLOAD = { "zh-CN": { table: downloadZhCN, forbidden: ZH_CN }, "zh-TW": { table: downloadZhTW, forbidden: ZH_TW }, ja: { table: downloadJa, forbidden: JA } };
 /** The pricing page's, the waitlist's and the privacy notice's (`features/landing/pricing-copy.ts`): product words too. */
 const PRICING = { "zh-CN": { table: pricingZhCN, forbidden: ZH_CN }, "zh-TW": { table: pricingZhTW, forbidden: ZH_TW }, ja: { table: pricingJa, forbidden: JA } };
+/** The security design's (`features/landing/security/security-copy.ts`): a device that runs AI, never a computer, there too. */
+const SECURITY = { "zh-CN": { table: securityZhCN, forbidden: ZH_CN }, "zh-TW": { table: securityZhTW, forbidden: ZH_TW }, ja: { table: securityJa, forbidden: JA } };
 
 test("no translation says 机器 / 电脑 / 本机, 機器 / 電腦 / 本機, or マシン / コンピューター / 端末", () => {
-  for (const tables of [TABLES, DOWNLOAD, PRICING]) {
+  for (const tables of [TABLES, DOWNLOAD, PRICING, SECURITY]) {
     for (const [lang, { table, forbidden }] of Object.entries(tables)) {
       const said = Object.entries(table).filter(([, value]) => forbidden.test(words(value)));
       assert.deepEqual(said, [], `${lang} says it`);
@@ -78,7 +82,7 @@ test("no translation says 机器 / 电脑 / 本机, 機器 / 電腦 / 本機, or
 });
 
 test('no English string says "machine", "computer" or "PC" (a key is the English text)', () => {
-  const keys = new Set([TABLES, DOWNLOAD, PRICING].flatMap((tables) => Object.values(tables).flatMap(({ table }) => Object.keys(table))));
+  const keys = new Set([TABLES, DOWNLOAD, PRICING, SECURITY].flatMap((tables) => Object.values(tables).flatMap(({ table }) => Object.keys(table))));
   const said = [...keys].filter((key) => ENGLISH.test(words(key)));
   assert.deepEqual(said, []);
 });

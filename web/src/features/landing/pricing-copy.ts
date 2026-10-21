@@ -22,6 +22,7 @@ export const pricingZhCN: Bundle = {
   // The public pages' links
   "Pricing": "定价",
   "Privacy notice": "隐私说明",
+  "How the encryption works, in detail": "加密是怎么做的：详细说明",
   "No code yet? Join the waitlist": "还没有邀请码？加入等候名单",
 
   // Page
@@ -158,6 +159,7 @@ export const pricingZhCN: Bundle = {
 export const pricingZhTW: Bundle = {
   "Pricing": "價格",
   "Privacy notice": "隱私權聲明",
+  "How the encryption works, in detail": "加密是怎麼做的：詳細說明",
   "No code yet? Join the waitlist": "還沒有邀請碼？加入等候名單",
 
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen 價格 — 免費起步，Pro 每月 ${{price}}",
@@ -288,6 +290,7 @@ export const pricingZhTW: Bundle = {
 export const pricingJa: Bundle = {
   "Pricing": "料金",
   "Privacy notice": "プライバシーについて",
+  "How the encryption works, in detail": "暗号化のしくみ（詳しく）",
   "No code yet? Join the waitlist": "招待コードがない方はウェイトリストへ",
 
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen の料金 — 無料から、Pro は月 ${{price}}",

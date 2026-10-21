@@ -1,0 +1,208 @@
+// droppen.app/security (`features/landing/security/security.tsx`): how the
+// end-to-end encryption works, for a technical reader.
+//
+// What these pin: `/security` is a public page of its own, signed in or not,
+// linked from every public page's footer, from the landing page's security
+// section and from the privacy notice; it reads in en, zh-CN, zh-TW and ja
+// with every string translated and nothing left in English; its sections come
+// in order, each with an anchor the table of contents links, and the identity
+// renewal's parts have anchors of their own; what is not live is marked so
+// (the renewal "rolling out", passkey joining "not live"), and the page says
+// the source "will be published" rather than that it is; it says plainly that
+// code on the page can export the browser's keys; it names no Hub setting.
+import * as React from "react";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import i18next from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
+import { renderToStaticMarkup } from "react-dom/server";
+import { landingBundles } from "../src/features/landing/copy.js";
+import DownloadPage from "../src/features/landing/download.js";
+import LandingPage from "../src/features/landing/landing.js";
+import PricingPage from "../src/features/landing/pricing.js";
+import PrivacyPage from "../src/features/landing/privacy.js";
+import { bootRoute, frontPage, isAuthPath, isFrontPath, publicPage, SECURITY_PATH } from "../src/features/landing/route.js";
+import SecurityPage, { RENEWAL_PARTS, SECURITY_EMAIL, SECURITY_SECTIONS, SECURITY_UPDATED } from "../src/features/landing/security/security.js";
+import { securityBundles } from "../src/features/landing/security/security-copy.js";
+import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
+import { ja } from "../src/i18n/ja.js";
+import { zhCN } from "../src/i18n/zh-CN.js";
+import { zhTW } from "../src/i18n/zh-TW.js";
+
+const app = { "zh-CN": { ...cloudDevicesZhCN, ...zhCN }, "zh-TW": { ...cloudDevicesZhTW, ...zhTW }, ja: { ...cloudDevicesJa, ...ja } };
+const LANGS = ["zh-CN", "zh-TW", "ja"] as const;
+const i18n = i18next.createInstance();
+void i18n.use(initReactI18next).init({
+  lng: "en",
+  resources: {
+    en: { translation: {} },
+    // As the page adds them: the landing tables first, then its own; the app's wording wins where both have a key.
+    ...Object.fromEntries(LANGS.map((lng) => [lng, { translation: { ...securityBundles[lng], ...landingBundles[lng], ...app[lng] } }])),
+  },
+  interpolation: { escapeValue: false },
+  keySeparator: false,
+  nsSeparator: false,
+});
+
+// The page reads `#…` off the address once mounted; the static render never does.
+Object.assign(globalThis, { location: { search: "", pathname: SECURITY_PATH, origin: "https://droppen.app", hash: "" } });
+
+function render(element: React.ReactElement, lng: string): string {
+  void i18n.changeLanguage(lng);
+  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>);
+}
+const draw = (lng: string, signedIn = false) => render(<SecurityPage signedIn={signedIn} />, lng);
+
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ");
+
+/** Every `t("…")` key in the page's source. */
+function pageKeys(): string[] {
+  const source = readFileSync(new URL("../src/features/landing/security/security.tsx", import.meta.url), "utf8");
+  return [...new Set([...source.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string))];
+}
+
+test("`/security` is a public page of its own, signed in or not", () => {
+  for (const path of [SECURITY_PATH, `${SECURITY_PATH}/`]) {
+    assert.equal(publicPage(path), "security");
+    assert.equal(frontPage(path), "security");
+    assert.deepEqual(bootRoute(path, false), { show: "security" });
+    assert.deepEqual(bootRoute(path, true), { show: "security" });
+    assert.ok(isFrontPath(path) && !isAuthPath(path));
+  }
+  assert.match(draw("en"), /data-testid="security"/);
+  // Signed in: the way back into the app instead of sign-in.
+  assert.match(draw("en", true), /href="\/sessions"[^>]*>Open app</);
+});
+
+test("every public page links it: the footer everywhere, the landing page's security section and the privacy notice", () => {
+  const pages = {
+    landing: <LandingPage />,
+    download: <DownloadPage availability={{ app: true, linux: true }} hints={{ userAgent: "" }} />,
+    pricing: <PricingPage api={{ joinWaitlist: async () => undefined }} />,
+    privacy: <PrivacyPage />,
+    security: <SecurityPage />,
+  };
+  for (const [name, element] of Object.entries(pages)) {
+    assert.match(render(element, "en"), /<a href="\/security"[^>]*data-testid="footer-security"[^>]*>Security<\/a>/, `${name}: the footer`);
+  }
+  assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works, in detail<\/a>/);
+  assert.match(render(<PrivacyPage />, "en"), /<a href="\/security"[^>]*data-testid="privacy-security"[^>]*>How the encryption works, in detail<\/a>/);
+  assert.match(render(<PrivacyPage />, "zh-CN"), /data-testid="privacy-security"[^>]*>加密是怎么做的：详细说明<\/a>/);
+  // On its own page the footer link says where you are.
+  assert.match(draw("en"), /data-testid="footer-security"/);
+});
+
+test("the sections come in order, each with an anchor the table of contents links; the renewal's parts have their own", () => {
+  const html = draw("en");
+  let at = 0;
+  for (const id of SECURITY_SECTIONS) {
+    const found = html.indexOf(`id="${id}"`);
+    assert.ok(found > at, `section ${id} after the one before`);
+    at = found;
+  }
+  const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
+  assert.deepEqual([...contents.matchAll(/href="#([a-z-]+)"/g)].map((m) => m[1]), [...SECURITY_SECTIONS]);
+  const renewal = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="threats"'));
+  for (const id of RENEWAL_PARTS) assert.match(renewal, new RegExp(`id="${id}"`), id);
+  assert.equal(RENEWAL_PARTS.length, 7);
+  // Each heading a reader can find: numbered 01–08 in the contents and on the sections.
+  const words = text(html);
+  for (const [i, title] of ["Overview", "The device chain", "Keys", "Channels and relays", "Offline copies", "Identity renewal", "Threat model", "Verify it yourself"].entries()) {
+    assert.ok(words.includes(`0${i + 1} · ${title}`), `section label: ${title}`);
+  }
+  assert.ok(words.includes(`Last updated ${SECURITY_UPDATED}`));
+});
+
+test("every string on the page is translated into zh-CN, zh-TW and ja, and the three tables say the same things", () => {
+  const keys = pageKeys();
+  assert.ok(keys.length > 200);
+  for (const lng of LANGS) {
+    const table = { ...securityBundles[lng], ...landingBundles[lng], ...app[lng] };
+    assert.deepEqual(
+      keys.filter((k) => !(k in table)),
+      [],
+      `${lng} is missing translations`,
+    );
+  }
+  assert.deepEqual(Object.keys(securityBundles["zh-TW"]).sort(), Object.keys(securityBundles["zh-CN"]).sort());
+  assert.deepEqual(Object.keys(securityBundles.ja).sort(), Object.keys(securityBundles["zh-CN"]).sort());
+  // Nothing in the tables that the page does not say.
+  assert.deepEqual(
+    Object.keys(securityBundles["zh-CN"]).filter((k) => !keys.includes(k)),
+    [],
+  );
+});
+
+test("the page reads in each language, with nothing left in English but the code it quotes", () => {
+  const lines = {
+    en: ["How Droppen's end-to-end encryption works.", "Your devices hold the keys. Our servers carry ciphertext.", "One signed list decides who is in your account.", "Renewing the identity key of a device that runs AI.", "Don't take our word for it."],
+    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "即将启用"],
+    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "即將啟用"],
+    ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "まもなく有効化"],
+  };
+  for (const [lng, want] of Object.entries(lines)) {
+    const words = text(draw(lng));
+    for (const line of want) assert.ok(words.includes(line), `${lng} missing: ${line}`);
+  }
+  for (const lng of LANGS) {
+    const words = text(draw(lng));
+    assert.doesNotMatch(words, /Your devices hold the keys|What it never sees|Rolling out|Threat model|Verify it yourself|Report a vulnerability|devices? that runs? AI/, lng);
+  }
+});
+
+test("only what ships is described as live: the renewal is rolling out, passkey joining is not live, the source will be published", () => {
+  for (const lng of ["en", ...LANGS]) {
+    const html = draw(lng);
+    // The renewal's head carries the chip, in the reader's language.
+    const head = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="renewal-why"'));
+    const chip = { en: "Rolling out", "zh-CN": "即将启用", "zh-TW": "即將啟用", ja: "まもなく有効化" }[lng]!;
+    assert.ok(text(head).includes(chip), `${lng}: the renewal is marked`);
+    // So does its line in the table of contents.
+    const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
+    assert.ok(text(contents).includes(chip), `${lng}: the contents mark it too`);
+  }
+  const words = text(draw("en"));
+  assert.ok(words.includes("Not switched on yet."));
+  assert.ok(words.includes("Being worked on, not live: adding a device with a passkey"));
+  assert.ok(words.includes("A passkey holds no encryption key and unlocks none."));
+  assert.ok(words.includes("their source code will be published at github.com/getdroppen/droppen, and until then it is available on request"));
+  assert.ok(words.includes("Internal security reviews only; no external audit yet."));
+  for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i, /is open[- ]source/i, /are open[- ]source/i]) assert.doesNotMatch(words, claim);
+});
+
+test("the web-delivery gap is said plainly: code on the page can export the browser's keys", () => {
+  const words = text(draw("en"));
+  assert.ok(words.includes("WebCrypto's non-extractable keys do not stop code on the same origin"));
+  assert.ok(words.includes("export the browser's private keys and user keys"));
+  assert.ok(words.includes("use the local web app that the droppen program serves"));
+  // The 7-day control bound and its documented limit.
+  assert.ok(words.includes("if the Hub freezes every other full device on the same head, the bound holds only once those devices notice they are frozen"));
+});
+
+test("the labels it quotes are the protocol's own, and it names no Hub setting or private path", () => {
+  const html = draw("en");
+  const words = text(html);
+  for (const label of ["rh/v1 chain-entry", "rh/v1 chain-attest", "rh/v1 stream-head", "rh/v1 stream-manifest", "rh/v1 host-rotate", "rh/v1 rotate-ack", "rh/v1 seal-auth", "rh/v1 key-commit", "Noise_IK_25519_AESGCM_SHA256"]) {
+    assert.ok(words.includes(label), label);
+  }
+  // The same labels the Rust code signs under.
+  const sig = readFileSync(new URL("../../server-rs/crates/rh-proto/src/sig.rs", import.meta.url), "utf8");
+  for (const m of words.matchAll(/rh\/v1 ([a-z-]+)(?= ·| rh\/v1|$)/g)) assert.ok(sig.includes(`b"rh/v1 ${m[1]}\\0"`), `sig.rs signs under rh/v1 ${m[1]}`);
+  // No Hub setting and no path into the Hub's code (spelled so the open-boundary check does not take the test for one).
+  assert.doesNotMatch(html, /(?:DROPPEN|RH)_HUB_|rh[-_]hub/);
+});
+
+test("a vulnerability report has somewhere to go", () => {
+  const html = draw("en");
+  assert.match(html, new RegExp(`<a href="mailto:${SECURITY_EMAIL}"[^>]*data-testid="security-email"`));
+  assert.ok(text(html).includes("GitHub's private vulnerability reporting"));
+});

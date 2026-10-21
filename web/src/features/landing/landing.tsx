@@ -12,7 +12,7 @@ import { HeroDiagram } from "./hero-diagram";
 import { Journey } from "./journey";
 import { OfflineCopy } from "./offline-copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
-import { APP_PATH, onPublicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, onPublicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -211,7 +211,10 @@ function Security() {
       <div className="flex items-start gap-3 border-t border-border px-6 py-5 max-md:px-4">
         <Info className="mt-0.5 size-4 shrink-0 text-muted" />
         <p className="max-w-[60em] text-xs leading-5 text-muted">
-          {t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}
+          {t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}{" "}
+          <a href={SECURITY_PATH} onClick={onPublicLink(SECURITY_PATH)} data-testid="landing-security" className="text-fg underline underline-offset-4 hover:no-underline">
+            {t("How the encryption works, in detail")}
+          </a>
         </p>
       </div>
     </Section>

@@ -4,13 +4,15 @@ import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { landingBundles } from "./copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { onPublicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
  * for how long and how to be taken off it, and what Droppen's servers can and
  * cannot see of an account (docs/cross-machine-architecture.md §2, the
- * landing page's security section). Signed in or not; drawn like the other
+ * landing page's security section; the security design at `/security` says
+ * how). Signed in or not; drawn like the other
  * public pages. The contact address is a placeholder for the user to confirm.
  */
 
@@ -116,6 +118,11 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 />
               </div>
             </div>
+            <p className="border-t border-border px-6 py-4 text-xs leading-5 max-md:px-4">
+              <a href={SECURITY_PATH} onClick={onPublicLink(SECURITY_PATH)} data-testid="privacy-security" className="text-fg underline underline-offset-4 hover:no-underline">
+                {t("How the encryption works, in detail")}
+              </a>
+            </p>
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">

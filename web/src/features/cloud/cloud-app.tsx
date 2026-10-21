@@ -44,6 +44,8 @@ const DownloadPage = lazy(() => import("@/features/landing/download"));
 /** The pricing page with the waitlist (`/pricing`) and the privacy notice (`/privacy`), signed in or not: chunks of their own. */
 const PricingPage = lazy(() => import("@/features/landing/pricing"));
 const PrivacyPage = lazy(() => import("@/features/landing/privacy"));
+/** How the encryption works (`/security`), signed in or not: its own chunk, with its own words. */
+const SecurityPage = lazy(() => import("@/features/landing/security/security"));
 
 /** One of the pages that are pages of their own, signed in or not. */
 function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
@@ -55,6 +57,8 @@ function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boo
         <PricingPage signedIn={signedIn} api={api} />
       ) : page === "privacy" ? (
         <PrivacyPage signedIn={signedIn} />
+      ) : page === "security" ? (
+        <SecurityPage signedIn={signedIn} />
       ) : (
         <LandingPage signedIn={signedIn} />
       )}
@@ -270,8 +274,8 @@ export function CloudApp({ children }: { children: ReactNode }) {
     booted.current = true;
     const session = loadSession();
     const route = bootRoute(location.pathname, session !== null);
-    // `/`, `/download`, `/pricing` and `/privacy` are pages of their own, signed in or not; signed in, they start nothing until "Open app".
-    if (route.show === "landing" || route.show === "download" || route.show === "pricing" || route.show === "privacy") setPhase(session ? { kind: "front", session } : { kind: "auth" });
+    // `/`, `/download`, `/pricing`, `/privacy` and `/security` are pages of their own, signed in or not; signed in, they start nothing until "Open app".
+    if (route.show === "landing" || route.show === "download" || route.show === "pricing" || route.show === "privacy" || route.show === "security") setPhase(session ? { kind: "front", session } : { kind: "auth" });
     // The verification link: the same page signed in or not (signed out, it is one of the public pages).
     else if (route.show === "verify") setPhase(session ? { kind: "verify", session } : { kind: "auth" });
     else if (route.show === "auth" || !session) setPhase({ kind: "auth" });
@@ -293,7 +297,7 @@ export function CloudApp({ children }: { children: ReactNode }) {
   // Back (or forward) to `/` once signed in: the landing page, from a clean
   // load. The app's router would send `/` on to the sessions (and back would
   // never get past it); a navigation started here outlives that redirect.
-  // The download, pricing and privacy pages likewise.
+  // The download, pricing, privacy and security pages likewise.
   const signedIn = phase.kind !== "auth" && phase.kind !== "front";
   useEffect(() => {
     if (!signedIn) return;
@@ -322,7 +326,7 @@ export function CloudApp({ children }: { children: ReactNode }) {
         />
       );
     case "auth": {
-      // Signed out: the landing, download, pricing and privacy pages at their
+      // Signed out: the landing, download, pricing, privacy and security pages at their
       // paths, sign-in and sign-up at their own, the verification link's page
       // at `/verify`, and any other path (a deep link into the app) the
       // sign-in form in place, so the link still opens once the visitor is in.
