@@ -782,6 +782,37 @@ async function hostRotationVectors() {
       RULES.keyRetired,
     );
   }
+  // The account's renewal policy (§3.4 rule 9): on (twice: setting it again is allowed), an assured renewal and its
+  // key, off, an automatic renewal and its key.
+  const policy = await (async () => {
+    const st = await ChainState.verify(base, undefined, ChainClock.history());
+    const es = [...base];
+    const steps: { label: string; seq: number; alwaysAssured: boolean; renewalPolicySeq: number | null }[] = [];
+    const step = async (label: string, action: Action) => {
+      const entry = await signDraft(st.draft(byAdmin, action, 3_000 + st.seq), admin.key);
+      await st.apply(entry, ChainClock.history());
+      es.push(entry);
+      steps.push({ label, seq: st.seq, alwaysAssured: st.alwaysAssured, renewalPolicySeq: st.renewalPolicySeq });
+    };
+    await step("policyOn", { type: "setRenewalPolicy", alwaysAssured: true });
+    await step("policyOnAgain", { type: "setRenewalPolicy", alwaysAssured: true });
+    await step("assuredRenewal", { type: "rotateHostKey", rotation: await renewal(st, host.id, host.key, renewed[0], st.seq, nonce(0x51), ASSURANCE_ON_DEVICE) });
+    await step("assuredRenewalKey", await mk(host.id, st.machineKeyEpochs(host.id)));
+    await step("policyOff", { type: "setRenewalPolicy", alwaysAssured: false });
+    await step("autoRenewal", { type: "rotateHostKey", rotation: await renewal(st, host.id, renewed[0].key, renewed[1], st.seq, nonce(0x52), ASSURANCE_AUTO) });
+    await step("autoRenewalKey", await mk(host.id, st.machineKeyEpochs(host.id)));
+    if (st.alwaysAssured || st.retiredKeys(host.id).length !== 2) throw new Error("the policy chain ends off, renewed twice");
+    return { entries: es, steps };
+  })();
+  const policyOn = policy.entries.slice(0, base.length + 1);
+  await bad(
+    "a renewal without assurance while the account asks for it",
+    policyOn,
+    async (st) => ({ type: "rotateHostKey", rotation: await renewal(st, host.id, host.key, fresh, st.seq, nonce(9), ASSURANCE_AUTO) }),
+    "notAllowed",
+    RULES.rotateNeedsAssurance,
+  );
+  await bad("a renewal policy set by a device that is not an admin", base, async () => ({ type: "setRenewalPolicy", alwaysAssured: true }), "notAllowed", RULES.onlyAdminSigns, plain);
   // Bytes that do not decode: an assurance other than 0 or 1, kind 20 in a v2 entry.
   const rotateBytes = encodeEntry(entries[rotate]!);
   for (const [name, at, value] of [
@@ -797,6 +828,24 @@ async function hostRotationVectors() {
       if (!(e instanceof ChainError) || e.kind !== "decode") throw new Error(`${name}: ${e}`);
     }
     invalid.push({ name, entries: [...entries.slice(0, rotate).map((e) => hex(encodeEntry(e))), hex(b)], error: "decode", rule: null });
+  }
+  // Kind 21 with a byte other than 0 or 1, and under version 2: neither decodes.
+  const policyBytes = encodeEntry(policyOn[policyOn.length - 1]!);
+  const policyAt = policyBytes.length - 64 - 1;
+  if (policyBytes[policyAt - 1] !== 21 || policyBytes[policyAt] !== 1) throw new Error("kind 21, then its byte");
+  for (const [name, at, value] of [
+    ["a renewal policy with an unknown byte", policyAt, 2],
+    ["a renewal policy inside a v2 entry", 0, CHAIN_VERSION],
+  ] as [string, number, number][]) {
+    const b = copy(policyBytes);
+    b[at] = value;
+    try {
+      decodeEntry(b);
+      throw new Error(`${name}: decoded`);
+    } catch (e) {
+      if (!(e instanceof ChainError) || e.kind !== "decode") throw new Error(`${name}: ${e}`);
+    }
+    invalid.push({ name, entries: [...base.map((e) => hex(encodeEntry(e))), hex(b)], error: "decode", rule: null });
   }
 
   // Disputes (§3.8): each renewal's statement by the key it retired, and statements that must not verify.
@@ -868,6 +917,11 @@ async function hostRotationVectors() {
     everNamed,
     invalid,
     disputes,
+    policy: {
+      entries: policy.entries.map((e) => hex(encodeEntry(e))),
+      steps: policy.steps,
+      encoding: { on: hex(encodeEntry(policy.entries[base.length]!)), off: hex(encodeEntry(policy.entries[base.length + 4]!)) },
+    },
   };
 }
 

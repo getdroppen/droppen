@@ -2762,3 +2762,85 @@ fn r1c_a_dispute_names_the_renewal_by_its_hash() {
     };
     assert!(!state.verify_rotate_dispute("h-2", rotate, &r.old_sig));
 }
+
+/// §3.4 rule 9 (R1d): the account's renewal policy is on the chain. Only an
+/// active admin sets it; while it is on, a renewal that was not confirmed on
+/// the device is refused, an assured one goes through; turned off, automatic
+/// renewals go through again. Kind 21 exists in v3 only, its byte is 0 or 1.
+#[test]
+fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
+    let f = fixture();
+    let (_, entries, steps) = rotation_chain(&f);
+    let k0 = &f.devices[0].0;
+    let mut state = upto(&entries, &steps, "removalKeys");
+    assert!(!state.always_assured() && state.renewal_policy_seq().is_none(), "off until an admin turns it on");
+    let policy = |on: bool| Action::SetRenewalPolicy { always_assured: on };
+    // Only an active admin sets it: not a plain device, not the host, not the recovery words.
+    let seq = state.seq() + 1;
+    assert_eq!(
+        try_push(&state, Signer::Device("dev-2".into()), &f.devices[2].0, policy(true)),
+        rule(seq, rules::ONLY_ADMIN_SIGNS)
+    );
+    assert_eq!(
+        try_push(&state, Signer::Device("h-2".into()), &extra(0).0, policy(true)),
+        rule(seq, rules::ONLY_ADMIN_SIGNS)
+    );
+    assert!(matches!(
+        try_push(&state, Signer::Recovery, &f.recovery.signing, policy(true)),
+        Err(ChainError::NotAllowed { .. })
+    ));
+    let on = push(&mut state, by0(), k0, policy(true)).unwrap();
+    assert!(state.always_assured() && state.renewal_policy_seq() == Some(on.seq()));
+    let again = push(&mut state, by0(), k0, policy(true)).expect("setting it again is allowed");
+    assert_eq!(state.renewal_policy_seq(), Some(again.seq()));
+    // While on: assurance 0 refused, for that reason alone; assurance 1 taken.
+    let auto = renewal(&state, "h-2", &extra(0).0, &extra(RENEWED[0]), state.seq(), [9; 16], Assurance::Auto);
+    assert_eq!(
+        try_push(&state, by0(), k0, Action::RotateHostKey(auto.clone())),
+        rule(state.seq() + 1, rules::ROTATE_NEEDS_ASSURANCE)
+    );
+    let mut off_view = state.clone();
+    push(&mut off_view, by0(), k0, policy(false)).unwrap();
+    let auto_later = renewal(&off_view, "h-2", &extra(0).0, &extra(RENEWED[0]), off_view.seq(), [9; 16], Assurance::Auto);
+    try_push(&off_view, by0(), k0, Action::RotateHostKey(auto_later)).expect("off again: automatic renewals go through");
+    let assured = renewal(&state, "h-2", &extra(0).0, &extra(RENEWED[0]), state.seq(), [9; 16], Assurance::OnDevice);
+    push(&mut state, by0(), k0, Action::RotateHostKey(assured)).unwrap();
+    let epoch = state.machine_key_epochs("h-2");
+    push(&mut state, by0(), k0, Action::KeyEpochs(mk_commit("h-2", epoch, &[0x27; 32]))).unwrap();
+    assert!(state.retired_keys("h-2")[0].by_assured);
+    // The other rules still come first: a bad proof is refused as one.
+    let mut bad_proof = renewal(&state, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), state.seq(), [9; 16], Assurance::Auto);
+    bad_proof.old_sig = [0; 64];
+    assert_eq!(
+        try_push(&state, by0(), k0, Action::RotateHostKey(bad_proof)),
+        rule(state.seq() + 1, rules::ROTATE_PROOF)
+    );
+    // Off: automatic renewals again.
+    let off = push(&mut state, by0(), k0, policy(false)).unwrap();
+    assert!(!state.always_assured() && state.renewal_policy_seq() == Some(off.seq()));
+    let auto = renewal(&state, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), state.seq(), [9; 16], Assurance::Auto);
+    push(&mut state, by0(), k0, Action::RotateHostKey(auto)).unwrap();
+    // Encoding: kind 21, one byte 0 or 1; nothing else decodes, nor kind 21 under v2.
+    for (e, byte) in [(&on, 1u8), (&off, 0u8)] {
+        let bytes = e.encode();
+        assert_eq!((e.draft.version, e.draft.action.kind()), (VERSION_3, 21));
+        assert_eq!(&bytes[bytes.len() - 66..bytes.len() - 64], &[21, byte]);
+        assert_eq!(&Entry::decode(&bytes).unwrap(), e);
+        for bad in [2u8, 0x80, 0xff] {
+            let mut b = bytes.clone();
+            let at = b.len() - 65;
+            b[at] = bad;
+            assert!(matches!(Entry::decode(&b), Err(ChainError::Decode(_))), "{bad}");
+        }
+        let mut b = bytes.clone();
+        b[0] = VERSION;
+        assert!(matches!(Entry::decode(&b), Err(ChainError::Decode(_))), "kind 21 under version 2");
+    }
+    // A draft that says v2 is refused for its version; replay gives the same state.
+    let base = upto(&entries, &steps, "removalKeys");
+    let mut v2 = base.draft(by0(), policy(true), 1);
+    assert_eq!(v2.version, VERSION_3);
+    v2.version = VERSION;
+    assert_eq!(base.clone().apply(&v2.sign(k0), &mut h()), Err(ChainError::Version(VERSION)));
+    assert_eq!(ChainState::verify(state.entries(), None, &mut h()).unwrap(), state);
+}

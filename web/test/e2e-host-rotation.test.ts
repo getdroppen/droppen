@@ -180,7 +180,14 @@ test("renewals: the confirmation MAC, the code and the ack are Rust's, from eith
     [R.labels.hostRotate, R.labels.rotateAck, R.labels.rotateConfirm, R.labels.rotateSas, R.labels.rotateDispute],
   );
   assert.deepEqual(
-    { rotateNotHost: RULES.rotateNotHost, rotateKeyReused: RULES.rotateKeyReused, rotateStaged: RULES.rotateStaged, rotateProof: RULES.rotateProof, keyRetired: RULES.keyRetired },
+    {
+      rotateNotHost: RULES.rotateNotHost,
+      rotateKeyReused: RULES.rotateKeyReused,
+      rotateStaged: RULES.rotateStaged,
+      rotateProof: RULES.rotateProof,
+      keyRetired: RULES.keyRetired,
+      rotateNeedsAssurance: RULES.rotateNeedsAssurance,
+    },
     R.rules,
   );
   for (const [i, x] of LABELS.entries()) {
@@ -395,6 +402,69 @@ test("R1c: a dispute names the renewal by its hash, signed by the key that renew
   assert.equal(await state.verifyRotateDispute("h-2", rotate, a.rotation.oldSig), false);
   assert.throws(() => rotateDisputeBody("acct-1", "h-2", rotate, new Uint8Array(31), first.signKey), /32-byte/);
   assert.throws(() => rotateDisputeBody("acct-1", "h-2", rotate, hashOf(rotate), new Uint8Array(33)), /32-byte/);
+});
+
+test("R1d: Rust's renewal policy chain verifies here step by step, and says what the policy is", async () => {
+  const p = R.policy;
+  const entries = entriesOf(p.entries);
+  entries.forEach((e, i) => assert.equal(hex(encodeEntry(e)), p.entries[i], `entry ${i} round-trips`));
+  const k0 = (await dev0()).key;
+  for (const e of entries) {
+    if (e.draft.signer.type === "device" && e.draft.signer.id === "dev-0") assert.equal(hex(encodeEntry(await signDraft(e.draft, k0))), hex(encodeEntry(e)), `entry ${e.draft.seq} re-signed`);
+  }
+  for (const step of p.steps) {
+    const st = await ChainState.verify(entries.slice(0, step.seq + 1), undefined, hist());
+    assert.deepEqual({ alwaysAssured: st.alwaysAssured, renewalPolicySeq: st.renewalPolicySeq }, { alwaysAssured: step.alwaysAssured, renewalPolicySeq: step.renewalPolicySeq }, step.label);
+  }
+  for (const which of ["on", "off"]) assert.deepEqual(decodeEntry(h(p.encoding[which])).draft.action, { type: "setRenewalPolicy", alwaysAssured: which === "on" });
+});
+
+test("R1d: while the account asks for it, only renewals confirmed on the device go through; only an admin sets it", async () => {
+  const st = await upto("removalKeys");
+  assert.equal(st.alwaysAssured, false, "off until an admin turns it on");
+  assert.equal(st.renewalPolicySeq, null);
+  const oldHost = await fixtureKeys(R.hostKeys[0]);
+  const [first, second] = await Promise.all(R.hostKeys.slice(1, 3).map(fixtureKeys));
+  const policy = (on: boolean): Action => ({ type: "setRenewalPolicy", alwaysAssured: on });
+  await assert.rejects(tryPush(st, policy(true), { type: "device", id: "dev-2" }, (await fixtureKeys(V.chain.devices[2])).key), rule(RULES.onlyAdminSigns));
+  await assert.rejects(tryPush(st, policy(true), { type: "device", id: "h-2" }, oldHost.key), rule(RULES.onlyAdminSigns), "the host itself");
+  const on = await tryPush(st, policy(true));
+  assert.equal(on.alwaysAssured, true);
+  assert.equal(on.renewalPolicySeq, st.seq + 1);
+  assert.equal(st.alwaysAssured, false, "the view it was tried on is untouched");
+  const again = await tryPush(on, policy(true));
+  assert.equal(again.renewalPolicySeq, on.seq + 1, "setting it again is allowed");
+  // assurance 0: refused for that reason; assurance 1: taken.
+  await assert.rejects(tryPush(on, { type: "rotateHostKey", rotation: await renewal(on, "h-2", oldHost.key, first) }), rule(RULES.rotateNeedsAssurance));
+  const assured = await tryPush(on, { type: "rotateHostKey", rotation: await renewal(on, "h-2", oldHost.key, first, ASSURANCE_ON_DEVICE) });
+  assert.equal(assured.retiredKeys("h-2")[0]!.byAssured, true);
+  // A bad proof is still refused as one.
+  const bare = await renewal(on, "h-2", oldHost.key, first);
+  await assert.rejects(tryPush(on, { type: "rotateHostKey", rotation: { ...bare, oldSig: new Uint8Array(64) } }), rule(RULES.rotateProof));
+  // Off: automatic renewals again.
+  const keyed = await tryPush(assured, { type: "keyEpochs", user: null, machines: [{ machine: "h-2", epoch: assured.machineKeyEpochs("h-2"), hash: await machineKeyCommit("acct-1", "h-2", assured.machineKeyEpochs("h-2"), new Uint8Array(32)) }] });
+  const off = await tryPush(keyed, policy(false));
+  assert.equal(off.alwaysAssured, false);
+  await tryPush(off, { type: "rotateHostKey", rotation: await renewal(off, "h-2", first.key, second) });
+  // Encoding: kind 21, then one byte 0 or 1; nothing else decodes, nor kind 21 under v2.
+  for (const [view, byte] of [
+    [on, 1],
+    [off, 0],
+  ] as [ChainState, number][]) {
+    const e = view.entryAt(view.renewalPolicySeq!)!;
+    const bytes = encodeEntry(e);
+    assert.deepEqual([...bytes.slice(bytes.length - 66, bytes.length - 64)], [21, byte]);
+    for (const bad of [2, 0x80, 0xff]) {
+      const b = Uint8Array.from(bytes);
+      b[b.length - 65] = bad;
+      assert.throws(() => decodeEntry(b), kind("decode"), `byte ${bad}`);
+    }
+    const v2 = Uint8Array.from(bytes);
+    v2[0] = CHAIN_VERSION;
+    assert.throws(() => decodeEntry(v2), kind("decode"), "kind 21 under version 2");
+  }
+  // clone() keeps the policy.
+  assert.equal(on.clone().alwaysAssured, true);
 });
 
 test("R1b: a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {
