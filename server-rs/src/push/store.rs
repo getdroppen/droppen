@@ -341,6 +341,29 @@ pub async fn subscriptions(paths: &Paths) -> Vec<Subscription> {
     read(paths).await.subscriptions
 }
 
+/// A new VAPID keypair, and every stored subscription forgotten — in one
+/// transaction — once this computer renewed its identity key
+/// (`docs/host-identity-rotation.md` §2.2, R6 review W4): whoever copied the
+/// old VAPID key and the endpoints can no longer reach a device that
+/// subscribes again, against the new key (`GET /api/push/vapid`). The one
+/// rotation [`vapid_key`] refuses to do by accident. An install that never
+/// had a key still has none (it is made on first use). How many
+/// subscriptions were forgotten.
+pub async fn renew_vapid(paths: &Paths) -> std::io::Result<usize> {
+    let _guard = WRITE_LOCK.lock().await;
+    let db = store(paths).await;
+    let key = SigningKey::random(&mut rand::rngs::OsRng);
+    db.write(|tx| {
+        let forgotten = tx.execute("DELETE FROM push_subscriptions", [])?;
+        tx.execute(
+            "UPDATE kv SET value = ?3, updated_at = unixepoch() WHERE scope = ?1 AND key = ?2",
+            (scope::PUSH, VAPID_PRIVATE, ece::b64url(&key.to_bytes())),
+        )?;
+        Ok(forgotten)
+    })
+    .map_err(std::io::Error::other)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +447,31 @@ mod tests {
         // The private half stays in the store and never appears in what is handed out.
         let stored = read(&paths).await.vapid_private.expect("stored");
         assert_ne!(stored, first);
+    }
+
+    /// R6 review W4: once the identity key is renewed, the VAPID key is new
+    /// and every subscription made against the old one is gone — a copy of
+    /// the old key and endpoints is useless once the pages subscribe again.
+    #[tokio::test]
+    async fn renewing_the_vapid_key_forgets_every_subscription() {
+        let (_dir, paths) = paths();
+        // An install that never turned notifications on still has no key.
+        assert_eq!(renew_vapid(&paths).await.expect("renew"), 0);
+        assert!(read(&paths).await.vapid_private.is_none());
+        let old = vapid_public(&paths).await.expect("mint");
+        for endpoint in ["https://push.example/a", "https://push.example/b"] {
+            let (p256dh, auth) = valid_keys();
+            upsert(&paths, endpoint.into(), p256dh, auth, None).await.expect("upsert");
+        }
+        assert_eq!(renew_vapid(&paths).await.expect("renew"), 2);
+        let new = vapid_public(&paths).await.expect("the new key");
+        assert_ne!(new, old, "a new keypair");
+        assert_eq!(vapid_public(&paths).await.expect("reuse"), new, "kept from then on");
+        assert!(subscriptions(&paths).await.is_empty(), "every subscription forgotten");
+        // A page subscribing again against the new key is kept as before.
+        let (p256dh, auth) = valid_keys();
+        upsert(&paths, "https://push.example/a".into(), p256dh, auth, None).await.expect("again");
+        assert_eq!(subscriptions(&paths).await.len(), 1);
     }
 
     #[tokio::test]
