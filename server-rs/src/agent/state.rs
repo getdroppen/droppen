@@ -113,10 +113,9 @@ pub struct RotationNote {
     /// to show for it (not evidence: it waits to sync, and retries).
     #[serde(default)]
     pub refused_ms: Option<u64>,
-    /// When the key in use last signed in to the hub once its chain had
-    /// renewed this machine to keys it does not hold — answered `rotated`,
-    /// which leaves the hub the evidence of a dispute (R6 review A3): one
-    /// such sign-in is made on purpose ([`super::rotation`]), never more.
+    /// When the hub took this machine's dispute statement — its retired
+    /// key's signature over the renewal that replaced it elsewhere
+    /// (contract §12 #6, [`super::dispute`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ms: Option<u64>,
     /// When its own verified chain renewed this machine to keys only a staged

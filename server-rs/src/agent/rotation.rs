@@ -52,9 +52,10 @@
 //!   this device's id to keys it did not stage (waiting or set aside): this
 //!   computer came back from a backup made before a renewal, or another copy
 //!   of its old key renewed it. A `foreign_rotation` alarm (logged, in the
-//!   status stream every device reads, pushed with Bark), ONE sign-in with
-//!   the old key on purpose so the hub answers `rotated` and keeps the
-//!   evidence, the link stops and the old seed stays ([`Verdict::Foreign`])
+//!   status stream every device reads, pushed with Bark), a dispute
+//!   statement the retired key signs over that renewal, kept and delivered
+//!   to the hub until it takes it ([`super::dispute`]), and the link stops;
+//!   the old seed stays ([`Verdict::Foreign`])
 //!   until a person adds this device again under a new identity
 //!   ([`re_enroll_fresh`]); every sign-up after it uses a fresh seed
 //!   ([`identity_for_enrolling`]). Its own renewal (to a key it staged) is
@@ -891,20 +892,19 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
 /// device reads, pushed — Web Push and Bark), noted for the local settings
 /// (which offer to add this device again under a new identity,
 /// [`re_enroll_fresh`]), and the link stops; the old seed stays until then.
+///
+/// The evidence (contract §12 #6): a statement the retired key signs over
+/// the hash of the renewal that retired it, kept here and delivered to the
+/// hub until it takes it ([`super::dispute`]). No sign-in with the retired
+/// key is made for it.
 fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
-    let evidence = {
+    let statement = {
         let mut st = shared.state.lock().expect("agent state");
         st.rotation.foreign_ms.get_or_insert(now_ms());
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.to_string());
         st.rotation.refused_ms = None;
         st.rotation.unreadable_ms = None;
-        // R6 review A3: once, on purpose, the key in use signs in (unless a
-        // sign-in of it was answered `rotated` already).
-        let first = st.rotation.evidence_ms.is_none();
-        if first {
-            st.rotation.evidence_ms = Some(now_ms());
-        }
-        first.then(|| (st.hub.clone(), st.account.clone(), st.machine.clone()))
+        super::dispute::statement(&st, &shared.identity, now_ms())
     };
     tracing::warn!(
         alarm = "foreign_rotation",
@@ -915,52 +915,16 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     super::link::raise_alarm(shared, REPLACED_ELSEWHERE.to_string());
     shared.save();
     shared.cancel.cancel();
-    if let Some((origin, account, machine)) = evidence {
-        match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => {
-                runtime.spawn(leave_evidence(origin, account, machine, shared.identity.clone()));
+    match statement {
+        Some(statement) => {
+            match super::dispute::keep(&shared.paths, &statement) {
+                Ok(true) => tracing::warn!(seq = statement.seq, "signed a dispute of that renewal with the retired key; delivering it to the hub"),
+                Ok(false) => {}
+                Err(error) => tracing::error!(%error, "cannot keep the dispute statement"),
             }
-            Err(_) => tracing::warn!("no runtime to sign in with the retired key once: the hub keeps no evidence of it"),
+            super::dispute::deliver(&shared.paths);
         }
-    }
-}
-
-/// How long the one sign-in that leaves evidence may take, every try.
-const EVIDENCE_WAIT: Duration = Duration::from_secs(20);
-/// How often it is tried when the hub cannot be reached at all.
-const EVIDENCE_TRIES: u32 = 3;
-
-/// R6 review A3: this device's own verified chain renewed it to keys it does
-/// not hold — whoever else held its key won, and without a sign-in with the
-/// old key the hub would keep no evidence of it. One sign-in with the key in
-/// use, on purpose: an honest hub answers `rotated` and records the dispute
-/// (graded evidence, §3.8). Nothing is done on that connection; it closes.
-/// Tried again (a few times) only when no hub answered at all.
-async fn leave_evidence(origin: String, account: String, machine: String, identity: Arc<MachineIdentity>) {
-    for attempt in 1..=EVIDENCE_TRIES {
-        let once = async {
-            let (mut sink, mut source, nonce) = super::hub::dial(&origin).await?;
-            let answer = super::hub::login(&mut sink, &mut source, &identity, &account, &machine, &origin, nonce).await;
-            let _ = futures_util::SinkExt::close(&mut sink).await;
-            Ok::<_, String>(answer)
-        };
-        match tokio::time::timeout(EVIDENCE_WAIT, once).await {
-            Ok(Ok(Err(super::hub::LoginError::Refused { code, .. }))) if code == REFUSED_ROTATED => {
-                tracing::info!("signed in once with the retired identity key: the hub answered `rotated` and keeps the evidence");
-                return;
-            }
-            Ok(Ok(Ok(_))) => {
-                tracing::warn!("signed in once with the retired identity key, and the hub took it: it does not show the renewal");
-                return;
-            }
-            Ok(Ok(Err(error))) => {
-                tracing::warn!(%error, "signed in once with the retired identity key: the hub refused it otherwise");
-                return;
-            }
-            Ok(Err(error)) => tracing::warn!(%error, attempt, "cannot reach the hub to sign in once with the retired identity key"),
-            Err(_) => tracing::warn!(attempt, "the hub did not answer the one sign-in with the retired identity key in time"),
-        }
-        tokio::time::sleep(Duration::from_secs(5 * u64::from(attempt))).await;
+        None => tracing::warn!("the device chain retired no key this device holds: no dispute statement to sign"),
     }
 }
 
