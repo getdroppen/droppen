@@ -19,7 +19,9 @@
  *   exposed host it lets control it has, so that one's old key is dead by
  *   then. Where no order works — a cycle of exposed hosts letting each other
  *   in — the cycle's lists are narrowed against each other first, in one
- *   batch, and restored in one batch once the whole cycle renewed. A host an
+ *   batch that a `RenewalPause` start opens (§3.4 rule 10), and once the whole
+ *   cycle renewed the lists still the pause's own are restored in one batch
+ *   that completes it. Nothing else is ever restored automatically. A host an
  *   exposed one that cannot renew controls is not renewed at all (`blocked`:
  *   narrow its list, or add that one again).
  * - **Failures** (§4.2): an old agent is not tried again (re-enrolling is the
@@ -35,7 +37,7 @@
  * The page reads it all through {@link RenewalRunner.status}; the account is
  * told what the chain does not say (`noteRenewals`).
  */
-import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, type LoginRole, Serial, verifyHubLogin } from "@/lib/e2e";
+import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, type LoginRole, PAUSE_COMPLETED, PAUSE_START, Serial, verifyHubLogin } from "@/lib/e2e";
 import {
   assuredRenewalAfter,
   type CloudAccount,
@@ -43,7 +45,7 @@ import {
   type Exposure,
   exposedControllers,
   groupNarrowing,
-  groupStanding,
+  pauseStanding,
   hostsToRotate,
   type KeptDispute,
   RenewalError,
@@ -381,11 +383,13 @@ export class RenewalRunner {
   }
 
   /**
-   * Narrow, in ONE batch, every exposed host's list against the other exposed
-   * hosts it lets control it (§4.1), before any of them renews — read off the
+   * Narrow, in ONE batch, a cycle of exposed hosts that let each other control
+   * them (§4.1, one cycle a batch) before any of them renews: a
+   * `RenewalPause` start naming the cycle (§3.4 rule 10), then each member's
+   * list without the others, each with its next key epoch — read off the
    * newest chain, so a page that finds it done already writes nothing.
    * `written`: the chain changed (the next look goes on); `failed`: not
-   * written, and nothing of that group renews until it is; `none`: nothing to
+   * written, and nothing of that cycle renews until it is; `none`: nothing to
    * narrow.
    */
   private async narrowGroup(): Promise<"none" | "written" | "failed"> {
@@ -393,8 +397,13 @@ export class RenewalRunner {
     const chain = account.chain;
     const renews = (h: string) => account.renews(h);
     if (!chain || !groupNarrowing(chain, account.hostsToRotate(), renews).length) return "none";
+    const op = crypto.getRandomValues(new Uint8Array(16));
     try {
-      const written = await account.setAccepts((c) => groupNarrowing(c, hostsToRotate(c, renews), renews), this.opts.courier());
+      const written = await account.setAccepts((c) => {
+        const cycle = groupNarrowing(c, hostsToRotate(c, renews), renews)[0];
+        if (!cycle) return [];
+        return { before: [{ type: "renewalPause", op, phase: PAUSE_START, hosts: cycle.hosts }], lists: cycle.lists };
+      }, this.opts.courier());
       return written.length ? "written" : "none";
     } catch (error) {
       console.warn("cloud: narrowing the lists of devices renewing together:", error);
@@ -403,24 +412,31 @@ export class RenewalRunner {
   }
 
   /**
-   * Restore, in ONE batch, the lists a group's narrowing wrote (§4.1) — only
-   * once every member renewed (or is gone), only the lists still as it wrote
-   * them, and never letting in a host that must renew first. Whether it wrote.
+   * End an open renewal pause (§3.4 rule 10) once every host it named renewed
+   * (or is gone), in ONE batch: each list whose latest `SetAccept` is still the
+   * pause's own back to what it was just before it, then the pause's
+   * completion. Nothing else is ever restored — a list changed since, by
+   * anyone, stays as it is — and never a list that would let in a host that
+   * must renew first. Whether it wrote.
    */
   private async restoreGroups(): Promise<boolean> {
     const { account } = this.opts;
     const chain = account.chain;
     if (!chain) return false;
-    for (const group of account.narrowedGroups()) {
-      const standing = groupStanding(chain, group);
-      if (!standing.open.length || standing.waiting.length) continue;
+    for (const pause of chain.openPauses()) {
+      const standing = pauseStanding(chain, pause, account.hostsToRotate());
+      if (standing.waiting.length) continue;
       if (standing.restore.some((r) => r.from.type !== "admins" && this.wouldLetIn(r.host, r.from))) continue;
+      const before = chain.seq;
       try {
-        const written = await account.setAccepts((c) => {
-          const now = groupStanding(c, group);
-          return now.waiting.length ? [] : now.restore;
+        await account.setAccepts((c) => {
+          const now = c.openPauses().find((x) => equal(x.op, pause.op));
+          if (!now) return [];
+          const standing = pauseStanding(c, now, hostsToRotate(c, (h) => account.renews(h)));
+          if (standing.waiting.length) return [];
+          return { lists: standing.restore, after: [{ type: "renewalPause", op: now.op, phase: PAUSE_COMPLETED, hosts: [] }] };
         }, this.opts.courier());
-        if (written.length) return true;
+        if ((account.chain?.seq ?? before) !== before) return true;
       } catch (error) {
         console.warn("cloud: restoring the lists of devices renewed together:", error);
       }
@@ -439,16 +455,15 @@ export class RenewalRunner {
 
   /**
    * The devices whose control of each other is paused while their identity
-   * keys are renewed (§4.1), when `host` is one of them: the members of a group
-   * whose narrowing still stands. Empty otherwise.
+   * keys are renewed (§4.1), when `host` is one of them: the hosts an open
+   * renewal pause names, while a list it wrote still stands. Empty otherwise.
    */
   pausedWith(host: string): string[] {
-    const { account } = this.opts;
-    const chain = account.chain;
+    const chain = this.opts.account.chain;
     if (!chain) return [];
-    for (const group of account.narrowedGroups()) {
-      if (!group.members.includes(host) || !groupStanding(chain, group).open.length) continue;
-      return group.members.filter((m) => chain.device(m));
+    for (const pause of chain.openPauses()) {
+      if (!pause.hosts.includes(host) || !pauseStanding(chain, pause, this.opts.account.hostsToRotate()).open.length) continue;
+      return pause.hosts.filter((m) => chain.device(m));
     }
     return [];
   }

@@ -72,6 +72,7 @@ import {
   type Accept,
   type Action,
   ASSURANCE_ON_DEVICE,
+  type OpenPause,
   PAUSE_COMPLETED,
   PAUSE_START,
   type Assurance,
@@ -1063,7 +1064,7 @@ export class CloudAccount {
   private keptMemory: KeptDispute[] = [];
   private readonly crossTab: CrossTab | null;
   /** {@link hostsToRotate} for the chain as it was last asked, by its head (and the narrowed groups it read). */
-  private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure>; groups: NarrowedGroup[] } | null = null;
+  private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure> } | null = null;
   private held: HeldBack | null = null;
   /** Set (for good, in this page) once this view conflicted with the chain this browser verified: why. */
   private forkedWhy: string | null = null;
@@ -3872,16 +3873,9 @@ export class CloudAccount {
     const cached = this.exposureCache;
     if (cached && cached.chain === chain && cached.seq === chain.seq) return cached.exposed;
     // Which hosts can renew decides what a renewal fixes (§4.1): an exposed host that cannot is a pass no renewal takes away.
-    const groups: NarrowedGroup[] = [];
-    const exposed = hostsToRotate(chain, (h) => this.renews(h), groups);
-    this.exposureCache = { chain, seq: chain.seq, exposed, groups };
+    const exposed = hostsToRotate(chain, (h) => this.renews(h));
+    this.exposureCache = { chain, seq: chain.seq, exposed };
     return exposed;
-  }
-
-  /** The groups whose lists were narrowed against each other on this chain (§4.1), oldest first. */
-  narrowedGroups(): NarrowedGroup[] {
-    this.hostsToRotate();
-    return this.exposureCache?.groups ?? [];
   }
 
   /**
@@ -3894,7 +3888,7 @@ export class CloudAccount {
    * let in nowhere. Returns the lists written — none when `changes` has
    * nothing to change on the newest head (another page did it).
    */
-  async setAccepts(changes: (chain: ChainState) => { host: string; from: Accept }[], courier: MachineKeyCourier): Promise<{ host: string; from: Accept }[]> {
+  async setAccepts(changes: (chain: ChainState) => AcceptPlan, courier: MachineKeyCourier): Promise<{ host: string; from: Accept }[]> {
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     const stale = userKeyStale(chain0);
@@ -3916,7 +3910,9 @@ export class CloudAccount {
           zero();
           written = [];
           const actions: Action[] = [];
-          for (const c of changes(chain)) {
+          const plan = changes(chain);
+          const { lists, before = [], after = [] } = Array.isArray(plan) ? { lists: plan } : plan;
+          for (const c of lists) {
             if (!chain.machine(c.host)) continue;
             let from = c.from;
             if (from.type === "devices") {
@@ -3947,8 +3943,9 @@ export class CloudAccount {
             const epoch = chain.machineKeyEpochs(c.host);
             actions.push({ type: "keyEpochs", user: carried, machines: [{ machine: c.host, epoch, hash: await machineKeyCommit(this.account, c.host, epoch, mk) }] });
           }
-          if (!actions.length) throw new NothingToWrite();
-          return actions;
+          // A start marker goes only before lists it narrows; an ending one may go alone (nothing left to restore).
+          if (!actions.length && !after.length) throw new NothingToWrite();
+          return [...(actions.length ? before : []), ...actions, ...after];
         });
       } catch (error) {
         if (error instanceof NothingToWrite) return [];
@@ -5457,16 +5454,11 @@ export interface Exposure {
 }
 
 /**
- * A group of exposed hosts whose lists were narrowed against each other in
- * one batch (§4.1 「互相放行的一组：先收窄，再换，最后恢复」), as read off the chain:
- * its members (the hosts exposed then), its last entry, and per host whose list
- * it narrowed the list before and the one it wrote.
+ * What `CloudAccount.setAccepts` writes for the chain as it stands: the lists,
+ * or the lists with markers around them — a renewal pause's start before
+ * them (§3.4 rule 10: they are attributed to it), its completion after.
  */
-export interface NarrowedGroup {
-  members: string[];
-  seq: number;
-  lists: Map<string, { before: Accept; narrowed: Accept }>;
-}
+export type AcceptPlan = { host: string; from: Accept }[] | { lists: { host: string; from: Accept }[]; before?: Action[]; after?: Action[] };
 
 /** Whether two accept lists say the same. */
 export function sameAccept(x: Accept, y: Accept): boolean {
@@ -5475,23 +5467,41 @@ export function sameAccept(x: Accept, y: Accept): boolean {
   return [...x.ids].sort().join("\n") === [...y.ids].sort().join("\n");
 }
 
+/** `host`'s accept list as it was just before entry `seq` (`admins` where none was set, or it stopped running AI since). */
+export function acceptBefore(chain: ChainState, host: string, seq: number): Accept {
+  let from: Accept = { type: "admins" };
+  for (let s = 0; s < seq; s++) {
+    const a = chain.entryAt(s)?.draft.action;
+    if (a?.type === "setAccept" && a.host === host) from = a.from;
+    else if (a?.type === "setHost" && a.id === host && !a.host) from = { type: "admins" };
+  }
+  return from;
+}
+
 /**
- * Where `group` stands on `chain` (§4.1): the lists still as it narrowed them
- * (`open`: one changed since, by a restore or a person, is left as it is); the
- * members still to renew (none: every one renewed after it, or is gone); and
- * the list each open one goes back to — `All` where it was `All`, an explicit
- * one without the devices no longer in the account.
+ * Where an open renewal pause stands on `chain` (§3.4 rule 10, §4.1 「链上标记」):
+ * the hosts whose latest `SetAccept` is still this pause's own (`open`: only
+ * those are ever restored — a list changed since, by anyone, is left as it
+ * is); its hosts still to renew (`waiting`: still exposed and not renewed
+ * since it started; one removed, or no longer exposed, waits no more); and the
+ * list each open one goes back to — its list from just before the pause, `All`
+ * where it was `All`, an explicit one without the devices no longer in the
+ * account.
  */
-export function groupStanding(chain: ChainState, group: NarrowedGroup): { open: string[]; waiting: string[]; restore: { host: string; from: Accept }[] } {
-  const open = [...group.lists.keys()].filter((h) => chain.machine(h) && sameAccept(chain.acceptPolicy(h), group.lists.get(h)!.narrowed)).sort();
-  const waiting = group.members.filter((m) => chain.machine(m) && (chain.deviceRecord(m)?.rotatedSeq ?? -1) <= group.seq);
+export function pauseStanding(chain: ChainState, pause: OpenPause, exposed: ReadonlyMap<string, Exposure>): { open: string[]; waiting: string[]; restore: { host: string; from: Accept }[] } {
+  const open = pause.hosts.filter((h) => chain.machine(h) && sameOp(chain.acceptOp(h), pause.op)).sort();
+  const waiting = pause.hosts.filter((m) => chain.machine(m) && exposed.has(m) && (chain.deviceRecord(m)?.rotatedSeq ?? -1) <= pause.startSeq);
   const restore = open.map((host) => {
-    const before = group.lists.get(host)!.before;
+    const before = acceptBefore(chain, host, pause.startSeq);
     if (before.type !== "devices") return { host, from: before };
     const ids = before.ids.filter((id) => id !== host && chain.device(id));
     return { host, from: ids.length ? ({ type: "devices", ids } as Accept) : ({ type: "admins" } as Accept) };
   });
   return { open, waiting, restore };
+}
+
+function sameOp(x: Uint8Array | null, y: Uint8Array): boolean {
+  return x !== null && x.length === y.length && x.every((b, i) => b === y[i]);
 }
 
 /**
@@ -5552,10 +5562,12 @@ export function exposedCycles(chain: ChainState, exposed: ReadonlyMap<string, Ex
  * are never narrowed: the order of renewals takes care of them
  * (`exposedControllers`). Empty: no such cycle.
  */
-export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, renews: (host: string) => boolean): { host: string; from: Accept }[] {
-  const out: { host: string; from: Accept }[] = [];
+export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, renews: (host: string) => boolean): { hosts: string[]; lists: { host: string; from: Accept }[] }[] {
+  const all: { hosts: string[]; lists: { host: string; from: Accept }[] }[] = [];
   for (const cycle of exposedCycles(chain, exposed)) {
     if (!cycle.some(renews)) continue;
+    const out: { host: string; from: Accept }[] = [];
+    all.push({ hosts: cycle, lists: out });
     const drop = new Set(cycle);
     for (const host of cycle) {
       const policy = chain.acceptPolicy(host);
@@ -5569,7 +5581,7 @@ export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, E
       out.push({ host, from: keep.length ? { type: "devices", ids: keep } : { type: "admins" } });
     }
   }
-  return out;
+  return all;
 }
 
 /** Whether renewing a host's identity key ends its exposure: something renewing fixes, and nothing that it does not. */
@@ -5604,15 +5616,8 @@ export function renewalHelps(x: Exposure): boolean {
  * host out: a renewal is cheap, and a device that did connect could have
  * edited that record.
  */
-export function hostsToRotate(chain: ChainState, renews: (host: string) => boolean = () => true, groups?: NarrowedGroup[]): Map<string, Exposure> {
+export function hostsToRotate(chain: ChainState, renews: (host: string) => boolean = () => true): Map<string, Exposure> {
   type Dev = { admin: boolean; active: boolean; host: boolean; addedSeq: number };
-  /** A run of narrowings being read (§4.1 「互相放行的一组」): its members, the lists it wrote, its last entry. */
-  let run: { members: Set<string>; lists: Map<string, { before: Accept; narrowed: Accept }>; lastSeq: number; signer: string; count: number; removed: Set<string> } | null = null;
-  /** Who signed an entry, as one string (a run is one signer's). */
-  const signerOf = (e: Entry) => {
-    const sg = e.draft.signer;
-    return sg.type === "device" ? `device:${sg.id}` : sg.type === "passkey" ? `passkey:${sg.slot}` : sg.type;
-  };
   const devs = new Map<string, Dev>();
   const accept = new Map<string, Accept>();
   /** Per host, since when its list has named each device (`*`: since it let every device in). */
@@ -5645,35 +5650,10 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       entry(h, seq).lost.set(device, seq);
     }
   };
-  /** A run of narrowings ends: it is a group's when it left no member letting another one control it. */
-  /**
-   * A run of narrowings ends. Without a marker on the chain, the runner's own
-   * group narrowing is told by its shape alone (§4.1, the lead's rule): ONE
-   * uninterrupted run by ONE signer of SetAccept and its KeyEpochs entries, at
-   * least two SetAccepts, after which no member lets another one control it.
-   * Anything else — one list changed by hand (following "narrow who can control
-   * it", say), narrowings split across runs or signers — is a person's, and is
-   * never restored: restoring re-grants control.
-   */
-  const closeRun = () => {
-    if (!run) return;
-    const r = run;
-    run = null;
-    if (r.count < 2) return;
-    // The cycle(s) it cut: the hosts whose lists it narrowed — every one it shut out among them — none letting another in after.
-    const members = new Set(r.lists.keys());
-    if (![...r.removed].every((d) => members.has(d))) return;
-    const complete = [...members].every((h) => [...members].every((e) => e === h || !acceptNames(policy(h), e)));
-    if (complete && groups) groups.push({ members: [...members].sort(), seq: r.lastSeq, lists: r.lists });
-  };
   for (const e of chain.allEntries()) {
     const seq = e.draft.seq;
     const signer = e.draft.signer;
     const a = e.draft.action;
-    // A narrowing's own key epoch keeps its run open; anything else but another narrowing ends it.
-    // Only the run's own signer's next KeyEpochs (or SetAccept) keeps it open; any other entry, or signer, ends it.
-    if (run && (signerOf(e) !== run.signer || !((a.type === "keyEpochs" || a.type === "setAccept") && run.lastSeq === seq - 1))) closeRun();
-    if (run && a.type === "keyEpochs") run.lastSeq = seq;
     switch (a.type) {
       case "genesis":
       case "addDevice":
@@ -5710,33 +5690,6 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       }
       case "setAccept": {
         const before = policy(a.host);
-        // Part of a group's narrowing (§4.1)? An exposed host's list losing only exposed hosts, gaining none.
-        const exposedNow: Set<string> = run && run.lastSeq === seq - 1 ? run.members : new Set(exposed.keys());
-        let removed = 0;
-        const shut: string[] = [];
-        let narrowing = exposedNow.has(a.host);
-        for (const [d, r] of devs) {
-          if (!r.active || r.admin || d === a.host) continue;
-          const was = acceptNames(before, d);
-          const is = acceptNames(a.from, d);
-          if (is && !was) narrowing = false;
-          if (was && !is) {
-            removed++;
-            shut.push(d);
-            if (!exposedNow.has(d)) narrowing = false;
-          }
-        }
-        if (narrowing && removed > 0) {
-          if (!run || run.lastSeq !== seq - 1 || run.signer !== signerOf(e)) {
-            closeRun();
-            run = { members: new Set(exposedNow), lists: new Map(), lastSeq: seq, signer: signerOf(e), count: 0, removed: new Set() };
-          }
-          if (!run.lists.has(a.host)) run.lists.set(a.host, { before, narrowed: a.from });
-          else run.lists.get(a.host)!.narrowed = a.from;
-          run.lastSeq = seq;
-          run.count++;
-          for (const d of shut) run.removed.add(d);
-        } else closeRun();
         for (const [d, r] of devs) {
           if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) lost(seq, d, (h) => h === a.host);
         }
@@ -5809,7 +5762,6 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       }
     }
   }
-  closeRun();
   // What no renewal helps: letting an exposed host that cannot renew control it — or a host in that state (§4.1 case 3).
   const blocked = new Map<string, Map<string, number>>();
   const stuck = new Set([...exposed.keys()].filter((h) => !renews(h)));

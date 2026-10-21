@@ -238,6 +238,7 @@ test("after its renewal a host is exposed again only by a new loss, or an expose
 const writtenAfter = (a: CloudAccount, from: number) =>
   a.chain!.allEntries().slice(from + 1).map((e) => {
     const x = e.draft.action;
+    if (x.type === "renewalPause") return x.phase === 0 ? `pause start ${x.hosts.join(",")}` : x.phase === 1 ? "pause completed" : "pause cancelled";
     return x.type === "setAccept" ? `setAccept ${x.host}` : x.type === "keyEpochs" ? `keyEpochs ${x.machines.map((m) => m.machine).join(",")}` : x.type === "rotateHostKey" ? `rotate ${x.rotation.host}` : x.type;
   });
 const admitsOn = (chain: ChainState, host: string, id: string) => {
@@ -269,8 +270,8 @@ test("§4.1 two hosts that let each other control one another: narrowed in one b
   await runner.idle();
   // Narrowed first, in one batch, before either renewed: on the chain, neither lets the other in (whatever carries it).
   const written = writtenAfter(a, removedAt);
-  assert.deepEqual(written.slice(0, 4), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
-  assert.equal(written.indexOf("rotate m-1") > 3, true);
+  assert.deepEqual(written.slice(0, 5), ["pause start m-1,m-2", "setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
+  assert.equal(written.indexOf("rotate m-1") > 4, true);
   assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "m-1 does not let m-2 in");
   assert.equal(admitsOn(a.chain!, "m-2", "m-1"), false, "nor m-2 m-1");
   // m-1 renewed, m-2 not yet: still narrowed — never restored early — and the rows say so.
@@ -285,6 +286,8 @@ test("§4.1 two hosts that let each other control one another: narrowed in one b
   const all = writtenAfter(a, removedAt);
   const restore = all.slice(all.indexOf("rotate m-2"));
   assert.deepEqual(restore.filter((k) => k.startsWith("setAccept")), ["setAccept m-1", "setAccept m-2"], "one restoring batch");
+  assert.equal(all.at(-1), "pause completed", "and the pause completes with it");
+  assert.deepEqual(a.chain!.openPauses(), []);
   assert.deepEqual(rotated(a).sort(), ["m-1", "m-2"], "each exactly once");
   assert.equal(sameAcceptText(a.chain!.acceptPolicy("m-2")), sameAcceptText(before.m2));
   assert.deepEqual(exposedIds(a.chain!), [], "narrowing and restoring exposed nothing of their own");
@@ -449,7 +452,7 @@ test("§4.1 a cycle of three is narrowed as one run and restored once all three 
   await until(() => rotated(a).length === 3 && admitsOn(a.chain!, "m-1", "m-3"));
   await runner.idle();
   const written = writtenAfter(a, removedAt);
-  assert.deepEqual(written.slice(0, 6), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2", "setAccept m-3", "keyEpochs m-3"], written.join(" | "));
+  assert.deepEqual(written.slice(0, 7), ["pause start m-1,m-2,m-3", "setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2", "setAccept m-3", "keyEpochs m-3"], written.join(" | "));
   const lastRenewal = Math.max(written.indexOf("rotate m-1"), written.indexOf("rotate m-2"), written.indexOf("rotate m-3"));
   assert.deepEqual(written.slice(lastRenewal + 1).filter((k) => k.startsWith("setAccept")), ["setAccept m-1", "setAccept m-2", "setAccept m-3"], "one restoring run, after the last renewal");
   assert.ok(admitsOn(a.chain!, "m-2", "m-1") && admitsOn(a.chain!, "m-3", "m-2"));
@@ -472,7 +475,7 @@ test("§4.1 a cycle inside an acyclic part: only the cycle is narrowed; the host
   await until(() => rotated(a).length === 3 && admitsOn(a.chain!, "m-2", "m-1"));
   await runner.idle();
   const written = writtenAfter(a, removedAt);
-  assert.deepEqual(written.slice(0, 4), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
+  assert.deepEqual(written.slice(0, 5), ["pause start m-1,m-2", "setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
   assert.ok(!written.includes("setAccept m-3"), "m-3's list is never narrowed");
   assert.ok(written.indexOf("rotate m-3") > written.indexOf("rotate m-1"), "m-3 renews after m-1, which it lets control it");
   assert.equal(admitsOn(a.chain!, "m-3", "m-1"), true);
@@ -524,7 +527,7 @@ test("§4.1 a narrowing made by hand is never restored: one list, or lists split
     await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
     await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
     assert.deepEqual(exposedIds(a.chain!), []);
-    assert.deepEqual(a.narrowedGroups(), [], "not a group's narrowing");
+    assert.deepEqual(a.chain!.openPauses(), [], "no pause: a person's narrowing");
     const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
     runner.start();
     await runner.idle();
@@ -544,7 +547,7 @@ test("§4.1 a narrowing made by hand is never restored: one list, or lists split
     await a.sync();
     await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
     await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
-    assert.deepEqual(a.narrowedGroups(), []);
+    assert.deepEqual(a.chain!.openPauses(), []);
     const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
     runner.start();
     await runner.idle();
@@ -553,6 +556,78 @@ test("§4.1 a narrowing made by hand is never restored: one list, or lists split
     assert.equal(a.chain!.acceptPolicy("m-1").type, "admins");
     assert.equal(a.chain!.acceptPolicy("m-2").type, "admins");
   }
+});
+
+test("§4.1 marker (decision A): the narrowing starts a RenewalPause naming the cycle; only lists whose latest SetAccept is still the pause's are restored, then it completes", async () => {
+  const { a, agents, x } = await account();
+  // m-1 lets X, m-2 and m-3 in; m-2 lets m-1 in: m-1 ⇄ m-2.
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2", "m-3"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "offline");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).includes("m-1"));
+  await runner.idle();
+  const pauses = a.chain!.openPauses();
+  assert.equal(pauses.length, 1);
+  const pause = pauses[0]!;
+  assert.deepEqual(pause.hosts, ["m-1", "m-2"]);
+  assert.equal(hex(a.chain!.acceptOp("m-1")!), hex(pause.op), "m-1's list is the pause's");
+  assert.equal(hex(a.chain!.acceptOp("m-2")!), hex(pause.op), "and m-2's");
+  // A person changes m-2's list meanwhile: no longer the pause's — never restored.
+  await a.setAccept("m-2", { type: "devices", ids: ["m-3"] }, new FakeCourier());
+  assert.equal(a.chain!.acceptOp("m-2"), null);
+  link.set("m-2", "online");
+  await until(() => rotated(a).includes("m-2") && a.chain!.openPauses().length === 0);
+  await runner.idle();
+  assert.equal(sameAcceptText(a.chain!.acceptPolicy("m-1")), sameAcceptText({ type: "devices", ids: ["m-2", "m-3"] }), "m-1's list back as it was (without X)");
+  assert.equal(sameAcceptText(a.chain!.acceptPolicy("m-2")), sameAcceptText({ type: "devices", ids: ["m-3"] }), "m-2's stays as the person set it");
+  assert.equal(a.chain!.pause(pause.op)?.end?.phase, 1, "completed");
+  assert.deepEqual(runner.pausedWith("m-1"), []);
+  runner.stop();
+});
+
+test("§4.1 decision A: two back-to-back hand edits by one admin that narrow a whole cycle are never restored — no marker, no restore", async () => {
+  const { a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  // One admin, two consecutive entries each shutting the other out: what a runner's narrowing looked like without a marker.
+  await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
+  await a.setAccept("m-2", { type: "admins" }, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  runner.stop();
+  assert.equal(a.chain!.acceptPolicy("m-1").type, "admins", "the person's edits stand");
+  assert.equal(a.chain!.acceptPolicy("m-2").type, "admins");
+});
+
+test("§4.1 decision A (Codex 2): a later single restriction that matches an old, completed narrowing is never restored", async () => {
+  const { a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length === 2 && a.chain!.openPauses().length === 0 && admitsOn(a.chain!, "m-1", "m-2"));
+  await runner.idle();
+  // Later, a person restricts m-1 to exactly what the narrowing once wrote: it stays restricted.
+  await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
+  await until(() => rotated(a).length === 3);
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  runner.stop();
+  assert.equal(a.chain!.acceptPolicy("m-1").type, "admins", "not given back");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false);
 });
 
 test("renewIdentity: requested with a nonce's hash, the answer checked, written with the next machine key epoch, the key handed over re-encrypting", async () => {
