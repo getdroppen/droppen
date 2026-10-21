@@ -2129,6 +2129,58 @@ fn host_rotation_vectors() -> Value {
         assert_eq!(not_allowed_reason(es), rule, "{name}");
     }
 
+    // Disputes (§3.8 「证据：退役钥签的争议声明」): each renewal's statement by the key it retired, and statements that
+    // must not verify against this chain.
+    let disputes = {
+        let hash = |seq: u64| state.hash_at(seq).unwrap();
+        let new_sign_of = |seq: u64| match &entries[seq as usize].draft.action {
+            Action::RotateHostKey(r) => r.sign_key,
+            _ => [0; 32],
+        };
+        let statement = |key: &SigningKey, host: &str, seq: u64, entry_hash: [u8; 32], new_sign: [u8; 32]| {
+            crate::chain::sign_rotate_dispute(key, "acct-1", host, seq, &entry_hash, &new_sign)
+        };
+        let retired = [(rotate, extra(0)), (again, extra(RENEWED[0]))];
+        let valid: Vec<Value> = retired
+            .iter()
+            .map(|(seq, key)| {
+                let sig = statement(&key.0, "h-2", *seq, hash(*seq), new_sign_of(*seq));
+                assert!(state.verify_rotate_dispute("h-2", *seq, &sig));
+                json!({
+                    "host": "h-2", "seq": seq, "entryHash": h(&hash(*seq)), "newSign": h(&new_sign_of(*seq)),
+                    "body": h(&crate::chain::rotate_dispute_body("acct-1", "h-2", *seq, &hash(*seq), &new_sign_of(*seq))),
+                    "signerSeed": h(key.0.as_bytes()), "signature": h(&sig),
+                })
+            })
+            .collect();
+        let first = statement(&old.0, "h-2", rotate, hash(rotate), new_sign_of(rotate));
+        let not_renewal = rotate + 1;
+        let cases: Vec<(&str, &str, u64, [u8; 64])> = vec![
+            ("the statement of one renewal for another", "h-2", again, first),
+            (
+                "an entry that is not a renewal",
+                "h-2",
+                not_renewal,
+                statement(&new.0, "h-2", not_renewal, hash(not_renewal), new_sign_of(rotate)),
+            ),
+            ("signed by the new key", "h-2", rotate, statement(&new.0, "h-2", rotate, hash(rotate), new_sign_of(rotate))),
+            ("signed by another device", "h-2", rotate, statement(k0, "h-2", rotate, hash(rotate), new_sign_of(rotate))),
+            ("for another host", "m-1", rotate, statement(&old.0, "m-1", rotate, hash(rotate), new_sign_of(rotate))),
+            ("over a hash that is not the entry's", "h-2", rotate, statement(&old.0, "h-2", rotate, [7; 32], new_sign_of(rotate))),
+            ("over another new key", "h-2", rotate, statement(&old.0, "h-2", rotate, hash(rotate), [7; 32])),
+            ("past this view", "h-2", state.seq() + 1, first),
+            ("the genesis", "h-2", 0, first),
+        ];
+        let invalid: Vec<Value> = cases
+            .iter()
+            .map(|(name, host, seq, sig)| {
+                assert!(!state.verify_rotate_dispute(host, *seq, sig), "{name}");
+                json!({"name": name, "host": host, "seq": seq, "signature": h(sig)})
+            })
+            .collect();
+        json!({"valid": valid, "invalid": invalid})
+    };
+
     let key_json = |i: u64| {
         let (s, d) = extra(i);
         json!({"signSeed": h(s.as_bytes()), "signKey": h(&s.verifying_key().to_bytes()), "dhSecret": h(d.secret()), "dhKey": h(&d.public())})
@@ -2154,12 +2206,14 @@ fn host_rotation_vectors() -> Value {
         },
         "keysAt": keys_at,
         "everNamed": named,
+        "disputes": disputes,
         "invalid": invalid.iter().map(|(name, es, error)| json!({"name": name, "entries": es, "error": error, "rule": not_allowed_reason(es)})).collect::<Vec<_>>(),
         "labels": {
             "hostRotate": String::from_utf8_lossy(crate::sig::HOST_ROTATE),
             "rotateAck": String::from_utf8_lossy(crate::sig::ROTATE_ACK),
             "rotateConfirm": String::from_utf8_lossy(crate::chain::ROTATE_CONFIRM_LABEL),
             "rotateSas": String::from_utf8_lossy(crate::chain::ROTATE_SAS_LABEL),
+            "rotateDispute": String::from_utf8_lossy(crate::sig::ROTATE_DISPUTE),
         },
         "rules": {
             "rotateNotHost": rules::ROTATE_NOT_HOST,
@@ -3088,6 +3142,29 @@ fn ts_vectors_verify_in_rust() {
             ruled += usize::from(case["rule"].is_string());
         }
         assert!(ruled >= 12, "TS names the rule of its refusals ({ruled})");
+        // Disputes signed in WebCrypto verify here; the ones that must not, do not.
+        let d = &r["disputes"];
+        let account = state.account().to_string();
+        for case in d["valid"].as_array().unwrap() {
+            let (host, seq) = (case["host"].as_str().unwrap(), case["seq"].as_u64().unwrap());
+            let (entry_hash, new_sign) = (arr32(&case["entryHash"]), arr32(&case["newSign"]));
+            assert_eq!(state.hash_at(seq), Some(entry_hash), "the entry's hash");
+            assert_eq!(h(&crate::chain::rotate_dispute_body(&account, host, seq, &entry_hash, &new_sign)), case["body"]);
+            let key = SigningKey::from_bytes(&arr32(&case["signerSeed"]));
+            let sig = crate::chain::sign_rotate_dispute(&key, &account, host, seq, &entry_hash, &new_sign);
+            assert_eq!(h(&sig), case["signature"], "Ed25519 is deterministic");
+            assert!(state.verify_rotate_dispute(host, seq, &sig), "a TS dispute verifies");
+        }
+        assert!(d["valid"].as_array().unwrap().len() >= 2);
+        for case in d["invalid"].as_array().unwrap() {
+            let sig: [u8; 64] = hexv(&case["signature"]).try_into().unwrap();
+            assert!(
+                !state.verify_rotate_dispute(case["host"].as_str().unwrap(), case["seq"].as_u64().unwrap(), &sig),
+                "{}",
+                case["name"]
+            );
+        }
+        assert!(d["invalid"].as_array().unwrap().len() >= 7);
     }
 
     // A handshake the TS initiator and TS responder ran with fixed ephemerals:

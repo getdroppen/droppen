@@ -108,8 +108,10 @@ import {
   importX25519Private,
   rotateAckBody,
   rotateConfirmFor,
+  rotateDisputeBody,
   rotateSas,
   signHostRotate,
+  signRotateDispute,
   signRotateAck,
   verifyRotateConfirm,
 } from "../src/lib/e2e/index";
@@ -797,6 +799,52 @@ async function hostRotationVectors() {
     invalid.push({ name, entries: [...entries.slice(0, rotate).map((e) => hex(encodeEntry(e))), hex(b)], error: "decode", rule: null });
   }
 
+  // Disputes (§3.8): each renewal's statement by the key it retired, and statements that must not verify.
+  const disputes = await (async () => {
+    const hashOf = (seq: number) => state.hashAt(seq)!;
+    const newSignOf = (seq: number) => {
+      const a = entries[seq]!.draft.action;
+      return a.type === "rotateHostKey" ? a.rotation.signKey : new Uint8Array(32);
+    };
+    const statement = (key: CryptoKey, hostId: string, seq: number, entryHash: Uint8Array, newSign: Uint8Array) => signRotateDispute(key, account, hostId, seq, entryHash, newSign);
+    const valid: Record<string, unknown>[] = [];
+    for (const [seq, key] of [
+      [rotate, host],
+      [again, renewed[0]],
+    ] as [number, Member][]) {
+      const signature = await statement(key.key, host.id, seq, hashOf(seq), newSignOf(seq));
+      if (!(await state.verifyRotateDispute(host.id, seq, signature))) throw new Error("a renewal's dispute verifies");
+      valid.push({
+        host: host.id,
+        seq,
+        entryHash: hex(hashOf(seq)),
+        newSign: hex(newSignOf(seq)),
+        body: hex(rotateDisputeBody(account, host.id, seq, hashOf(seq), newSignOf(seq))),
+        signerSeed: hex(key.signSeed),
+        signature: hex(signature),
+      });
+    }
+    const first = await statement(host.key, host.id, rotate, hashOf(rotate), newSignOf(rotate));
+    const notRenewal = rotate + 1;
+    const cases: [string, string, number, Uint8Array][] = [
+      ["the statement of one renewal for another", host.id, again, first],
+      ["an entry that is not a renewal", host.id, notRenewal, await statement(renewed[0].key, host.id, notRenewal, hashOf(notRenewal), newSignOf(rotate))],
+      ["signed by the new key", host.id, rotate, await statement(renewed[0].key, host.id, rotate, hashOf(rotate), newSignOf(rotate))],
+      ["signed by another device", host.id, rotate, await statement(admin.key, host.id, rotate, hashOf(rotate), newSignOf(rotate))],
+      ["for another host", other.id, rotate, await statement(host.key, other.id, rotate, hashOf(rotate), newSignOf(rotate))],
+      ["over a hash that is not the entry's", host.id, rotate, await statement(host.key, host.id, rotate, new Uint8Array(32).fill(7), newSignOf(rotate))],
+      ["over another new key", host.id, rotate, await statement(host.key, host.id, rotate, hashOf(rotate), new Uint8Array(32).fill(7))],
+      ["past this view", host.id, state.seq + 1, first],
+      ["the genesis", host.id, 0, first],
+    ];
+    const invalid: Record<string, unknown>[] = [];
+    for (const [name, hostId, seq, signature] of cases) {
+      if (await state.verifyRotateDispute(hostId, seq, signature)) throw new Error(`${name}: verified`);
+      invalid.push({ name, host: hostId, seq, signature: hex(signature) });
+    }
+    return { valid, invalid };
+  })();
+
   return {
     account,
     accountFingerprint: hex(await fingerprint(akPublic)),
@@ -819,6 +867,7 @@ async function hostRotationVectors() {
     keysAt,
     everNamed,
     invalid,
+    disputes,
   };
 }
 

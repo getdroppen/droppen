@@ -2704,3 +2704,61 @@ fn r1b_a_retired_key_never_activates_a_device() {
     .unwrap();
     try_push(&other, by0(), k0, Action::ApproveDevice("d-ok".into())).expect("fresh keys are approved");
 }
+
+/// §3.8 「证据：退役钥签的争议声明」 (R1c): the key a renewal retired signs a
+/// statement bound to that renewal's hash, and a verifier checks it against
+/// its own chain — no clocks to compare. Only that entry, that hash, that new
+/// key, and the key that entry retired make one that verifies.
+#[test]
+fn r1c_a_dispute_names_the_renewal_by_its_hash() {
+    let f = fixture();
+    let (state, entries, steps) = rotation_chain(&f);
+    let (rotate, again) = (seq_of(&steps, "rotate"), seq_of(&steps, "rotateAgain"));
+    let (old, first, second) = (extra(0), extra(RENEWED[0]), extra(RENEWED[1]));
+    let hash = |seq: u64| entries[seq as usize].hash();
+    let sign = |key: &SigningKey, host: &str, seq: u64, entry_hash: [u8; 32], new_sign: [u8; 32]| {
+        sign_rotate_dispute(key, "acct-1", host, seq, &entry_hash, &new_sign)
+    };
+    let new_of = |k: &(SigningKey, DhKeypair)| k.0.verifying_key().to_bytes();
+    let body = rotate_dispute_body("acct-1", "h-2", rotate, &hash(rotate), &new_of(&first));
+    assert_eq!(body.len(), (2 + 6) + (2 + 3) + 8 + 32 + 32);
+    let honest = sign(&old.0, "h-2", rotate, hash(rotate), new_of(&first));
+    assert!(state.verify_rotate_dispute("h-2", rotate, &honest));
+    // The second renewal is disputed by the key it retired (the first renewal's), and only by it.
+    let second_stmt = sign(&first.0, "h-2", again, hash(again), new_of(&second));
+    assert!(state.verify_rotate_dispute("h-2", again, &second_stmt));
+    assert!(!state.verify_rotate_dispute("h-2", again, &sign(&old.0, "h-2", again, hash(again), new_of(&second))));
+    assert!(!state.verify_rotate_dispute("h-2", again, &honest), "one renewal's statement for another");
+    assert!(!state.verify_rotate_dispute("h-2", rotate, &second_stmt));
+    // By the new key, another device, for another host, over another hash or new key, elsewhere in the chain.
+    let k0 = &f.devices[0].0;
+    for (what, sig) in [
+        ("the new key", sign(&first.0, "h-2", rotate, hash(rotate), new_of(&first))),
+        ("another device", sign(k0, "h-2", rotate, hash(rotate), new_of(&first))),
+        ("another hash", sign(&old.0, "h-2", rotate, [7; 32], new_of(&first))),
+        ("another new key", sign(&old.0, "h-2", rotate, hash(rotate), [7; 32])),
+        ("another account", sign_rotate_dispute(&old.0, "acct-2", "h-2", rotate, &hash(rotate), &new_of(&first))),
+        ("another seq in the body", sign(&old.0, "h-2", rotate + 1, hash(rotate), new_of(&first))),
+    ] {
+        assert!(!state.verify_rotate_dispute("h-2", rotate, &sig), "{what}");
+    }
+    assert!(!state.verify_rotate_dispute("m-1", rotate, &sign(&old.0, "m-1", rotate, hash(rotate), new_of(&first))), "another host");
+    let keys = seq_of(&steps, "rotateKey");
+    assert!(
+        !state.verify_rotate_dispute("h-2", keys, &sign(&first.0, "h-2", keys, hash(keys), new_of(&first))),
+        "an entry that is not a renewal"
+    );
+    for seq in [0, state.seq() + 1, u64::MAX] {
+        assert!(!state.verify_rotate_dispute("h-2", seq, &honest), "seq {seq}");
+    }
+    // A view without the renewal cannot check it; one with it can, however far it went on.
+    let before = upto(&entries, &steps, "removalKeys");
+    assert!(!before.verify_rotate_dispute("h-2", rotate, &honest));
+    assert!(upto(&entries, &steps, "rotate").verify_rotate_dispute("h-2", rotate, &honest));
+    // A statement is no other signature, and no other signature is a statement.
+    assert!(!crate::sig::verify(&new_of(&old), crate::sig::HOST_ROTATE, &body, &honest));
+    let Action::RotateHostKey(r) = &entries[rotate as usize].draft.action else {
+        panic!("a renewal")
+    };
+    assert!(!state.verify_rotate_dispute("h-2", rotate, &r.old_sig));
+}

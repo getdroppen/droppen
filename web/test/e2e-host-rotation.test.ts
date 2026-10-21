@@ -41,9 +41,11 @@ import {
   RENEWAL_NONCE_LEN,
   ROTATE_ACK,
   ROTATE_CONFIRM_LABEL,
+  ROTATE_DISPUTE,
   ROTATE_SAS_LABEL,
   rotateAckBody,
   rotateConfirmFor,
+  rotateDisputeBody,
   rotateSas,
   RULES,
   sha256,
@@ -51,6 +53,7 @@ import {
   type Signer,
   signHostRotate,
   signRotateAck,
+  signRotateDispute,
   utf8,
   verifyHostRotation,
   verifyRotateAck,
@@ -173,8 +176,8 @@ test("renewals: the confirmation MAC, the code and the ack are Rust's, from eith
   await assert.rejects(rotateAckBody(a.account, a.host, h(a.body), new Uint8Array(16)), /32 bytes/);
   // The labels and the rules are Rust's, word for word; every signature label stays prefix-free.
   assert.deepEqual(
-    [HOST_ROTATE, ROTATE_ACK, ROTATE_CONFIRM_LABEL, ROTATE_SAS_LABEL].map((l) => new TextDecoder().decode(l)),
-    [R.labels.hostRotate, R.labels.rotateAck, R.labels.rotateConfirm, R.labels.rotateSas],
+    [HOST_ROTATE, ROTATE_ACK, ROTATE_CONFIRM_LABEL, ROTATE_SAS_LABEL, ROTATE_DISPUTE].map((l) => new TextDecoder().decode(l)),
+    [R.labels.hostRotate, R.labels.rotateAck, R.labels.rotateConfirm, R.labels.rotateSas, R.labels.rotateDispute],
   );
   assert.deepEqual(
     { rotateNotHost: RULES.rotateNotHost, rotateKeyReused: RULES.rotateKeyReused, rotateStaged: RULES.rotateStaged, rotateProof: RULES.rotateProof, keyRetired: RULES.keyRetired },
@@ -347,6 +350,51 @@ test("R1b: a pending join made with a host's key before its renewal is neither a
   const ok = await freshKeys("r1b ok");
   await push(other, { type: "recoveryJoin3", device: { id: "d-ok", signKey: ok.signKey, dhKey: ok.dhKey, flags: { host: false, admin: true } } }, recovery, rk.signing);
   await tryPush(other, { type: "approveDevice", id: "d-ok" });
+});
+
+test("R1c: Rust's disputes verify here and re-sign to the same bytes; the ones that must not, do not", async () => {
+  const state = await ChainState.verify(entriesOf(R.entries), undefined, hist());
+  const d = R.disputes;
+  assert.ok(d.valid.length >= 2 && d.invalid.length >= 7);
+  for (const c of d.valid) {
+    assert.equal(hex(state.hashAt(c.seq)!), c.entryHash, "the entry's hash");
+    assert.equal(hex(rotateDisputeBody(state.account, c.host, c.seq, h(c.entryHash), h(c.newSign))), c.body);
+    const sig = await signRotateDispute(await importEd25519Private(h(c.signerSeed)), state.account, c.host, c.seq, h(c.entryHash), h(c.newSign));
+    assert.equal(hex(sig), c.signature, "Ed25519 is deterministic");
+    assert.ok(await state.verifyRotateDispute(c.host, c.seq, h(c.signature)), `seq ${c.seq}`);
+  }
+  for (const c of d.invalid) assert.equal(await state.verifyRotateDispute(c.host, c.seq, h(c.signature)), false, c.name);
+});
+
+test("R1c: a dispute names the renewal by its hash, signed by the key that renewal retired", async () => {
+  const entries = entriesOf(R.entries);
+  const state = await ChainState.verify(entries, undefined, hist());
+  const [old, first] = await Promise.all(R.hostKeys.slice(0, 2).map(fixtureKeys));
+  const rotate = seqOf("rotate");
+  const hashOf = (seq: number) => state.hashAt(seq)!;
+  const sign = (key: CryptoKey, host: string, seq: number, entryHash: Uint8Array, newSign: Uint8Array) => signRotateDispute(key, "acct-1", host, seq, entryHash, newSign);
+  const honest = await sign(old.key, "h-2", rotate, hashOf(rotate), first.signKey);
+  assert.ok(await state.verifyRotateDispute("h-2", rotate, honest));
+  assert.equal(rotateDisputeBody("acct-1", "h-2", rotate, hashOf(rotate), first.signKey).length, 2 + 6 + 2 + 3 + 8 + 32 + 32);
+  const k0 = (await dev0()).key;
+  for (const [what, sig] of [
+    ["the new key", await sign(first.key, "h-2", rotate, hashOf(rotate), first.signKey)],
+    ["another device", await sign(k0, "h-2", rotate, hashOf(rotate), first.signKey)],
+    ["another hash", await sign(old.key, "h-2", rotate, new Uint8Array(32).fill(7), first.signKey)],
+    ["another new key", await sign(old.key, "h-2", rotate, hashOf(rotate), new Uint8Array(32).fill(7))],
+    ["another account", await signRotateDispute(old.key, "acct-2", "h-2", rotate, hashOf(rotate), first.signKey)],
+  ] as [string, Uint8Array][]) {
+    assert.equal(await state.verifyRotateDispute("h-2", rotate, sig), false, what);
+  }
+  assert.equal(await state.verifyRotateDispute("m-1", rotate, await sign(old.key, "m-1", rotate, hashOf(rotate), first.signKey)), false, "another host");
+  for (const seq of [0, -1, 1.5, state.seq + 1, rotate + 1]) assert.equal(await state.verifyRotateDispute("h-2", seq, honest), false, `seq ${seq}`);
+  // A view without the renewal cannot check it; the renewal's own proof signature is no statement.
+  assert.equal(await (await upto("removalKeys")).verifyRotateDispute("h-2", rotate, honest), false);
+  const a = entries[rotate]!.draft.action;
+  assert.ok(a.type === "rotateHostKey");
+  assert.equal(await state.verifyRotateDispute("h-2", rotate, a.rotation.oldSig), false);
+  assert.throws(() => rotateDisputeBody("acct-1", "h-2", rotate, new Uint8Array(31), first.signKey), /32-byte/);
+  assert.throws(() => rotateDisputeBody("acct-1", "h-2", rotate, hashOf(rotate), new Uint8Array(33)), /32-byte/);
 });
 
 test("R1b: a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {

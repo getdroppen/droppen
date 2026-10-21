@@ -2075,7 +2075,85 @@
         "error": "decode",
         "rule": null
       }
-    ]
+    ],
+    "disputes": {
+      "valid": [
+        {
+          "host": "ts-r-host",
+          "seq": 10,
+          "entryHash": "c41b7d189a0409e60b34159f6e3c8d05ebb799d4c6065826b3da60f90a292377",
+          "newSign": "c105214fdcde3dd1122082fa7918451d3fd7fad42599b2bce3abc9099763e4c5",
+          "body": "000974732d616363742d72000974732d722d686f7374000000000000000ac41b7d189a0409e60b34159f6e3c8d05ebb799d4c6065826b3da60f90a292377c105214fdcde3dd1122082fa7918451d3fd7fad42599b2bce3abc9099763e4c5",
+          "signerSeed": "f6ccc5b8e79d3dbc409514e50cc6e21af21c2f6d7eb43be24e966275d1c99922",
+          "signature": "0750dc803ed15ed8bb4abaed36fbbb513019ac6c3f2a35f6f9cdbdf3cf12466119beabdf8a3d0ce384688c1c899be1d8dfc0fa0a0ab6bb3104a01d2d41a6f70f"
+        },
+        {
+          "host": "ts-r-host",
+          "seq": 12,
+          "entryHash": "d074af96ed4e504b7fbae9e551115cecca81a2cbb2d0ea0b5fdee7d57688f686",
+          "newSign": "75d9448653aba01c8d6c67715b91ebfb3e16e1819e13e1bdd73cb21d532d08d7",
+          "body": "000974732d616363742d72000974732d722d686f7374000000000000000cd074af96ed4e504b7fbae9e551115cecca81a2cbb2d0ea0b5fdee7d57688f68675d9448653aba01c8d6c67715b91ebfb3e16e1819e13e1bdd73cb21d532d08d7",
+          "signerSeed": "c5082d26f630c72d9d3531f78015f5ff2b321e3f88ca201fea2aca81aba017f7",
+          "signature": "46570fec36dfc386a0fe64f014fc4acecb7f7d39e427a12d96617608555b77f43af851b50722530c09a49e5e6e7059e9dabeed54c0bb832c738e13f55dbc4906"
+        }
+      ],
+      "invalid": [
+        {
+          "name": "the statement of one renewal for another",
+          "host": "ts-r-host",
+          "seq": 12,
+          "signature": "0750dc803ed15ed8bb4abaed36fbbb513019ac6c3f2a35f6f9cdbdf3cf12466119beabdf8a3d0ce384688c1c899be1d8dfc0fa0a0ab6bb3104a01d2d41a6f70f"
+        },
+        {
+          "name": "an entry that is not a renewal",
+          "host": "ts-r-host",
+          "seq": 11,
+          "signature": "56f2f50520abdebef75e2f44cafd0d93e4d769ee67d5a6b938bb0d30a19b7241574325aac81af90b49dd99cdc5bb65e276ebd2aa109098fe1a739dce82612902"
+        },
+        {
+          "name": "signed by the new key",
+          "host": "ts-r-host",
+          "seq": 10,
+          "signature": "0290bed05bf2ced589e3dbd1985ab79978eb3ce19467f5f2aa6c2b63a8e4219e4d515b664c70dfaa9c5de71de1ce00d67265f2e2a615236667b800194206d404"
+        },
+        {
+          "name": "signed by another device",
+          "host": "ts-r-host",
+          "seq": 10,
+          "signature": "d4aecd02c18876b5823166d2a2deb943e2c325771b712379948669b7a44ffe380795ae1cc8d000e3f0e21f63b540d06c8c730747eb2a58aaff5d93f2ace79509"
+        },
+        {
+          "name": "for another host",
+          "host": "ts-r-other",
+          "seq": 10,
+          "signature": "54a584606b7bd800e348df8d1039acdeb937696687004f203d2b60d9a20290667479106ddb8ddd738342aea1d20c25278bc399d308e5b777c103d1dde78a8003"
+        },
+        {
+          "name": "over a hash that is not the entry's",
+          "host": "ts-r-host",
+          "seq": 10,
+          "signature": "3570611639f3ad41e08ae28daca6c183adb5f3eacc7a567f03e7407dc3b33fa2d2a93a7b7be54a744de826a3bbc2895d2d79619a12fcf9ed659d47cba6bde808"
+        },
+        {
+          "name": "over another new key",
+          "host": "ts-r-host",
+          "seq": 10,
+          "signature": "77e975f817507900bb0956f22a3fdb892b5b86e3e8bef95dd148ebdba1c94808d1905cee5e0839391fd87b1ac36cb2297c501b1323a05e28acb385cccb58cc0f"
+        },
+        {
+          "name": "past this view",
+          "host": "ts-r-host",
+          "seq": 14,
+          "signature": "0750dc803ed15ed8bb4abaed36fbbb513019ac6c3f2a35f6f9cdbdf3cf12466119beabdf8a3d0ce384688c1c899be1d8dfc0fa0a0ab6bb3104a01d2d41a6f70f"
+        },
+        {
+          "name": "the genesis",
+          "host": "ts-r-host",
+          "seq": 0,
+          "signature": "0750dc803ed15ed8bb4abaed36fbbb513019ac6c3f2a35f6f9cdbdf3cf12466119beabdf8a3d0ce384688c1c899be1d8dfc0fa0a0ab6bb3104a01d2d41a6f70f"
+        }
+      ]
+    }
   },
   "noise": {
     "binding": {

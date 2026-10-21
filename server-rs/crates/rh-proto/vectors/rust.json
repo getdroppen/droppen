@@ -2339,6 +2339,84 @@
       "signKey": "2eb1621d40f9decf587a780b8b2e106f26e043590daa605965fd1ded8d44448b",
       "signSeed": "37f8921708c54b8dcea646d56bca9de1012851e2fabb47229bfb6c40b802ae34"
     },
+    "disputes": {
+      "invalid": [
+        {
+          "host": "h-2",
+          "name": "the statement of one renewal for another",
+          "seq": 13,
+          "signature": "c4a164562849143b5a7aa55cbca39a7d9d051b1bcb268f5ef0c9fd700c82f8065f850164102ce946acd287d65974ef929d6621909e9e636297664053f4adab02"
+        },
+        {
+          "host": "h-2",
+          "name": "an entry that is not a renewal",
+          "seq": 12,
+          "signature": "7d20ac7eb0ef2edc175743a3af549be72e2c180bfd43dc60ee28a1fbeff5ff8bbd29060f2ddf283ce452be33a0a92bbcb7c72bf351e9b8a0ee9bdb7cb8312a02"
+        },
+        {
+          "host": "h-2",
+          "name": "signed by the new key",
+          "seq": 11,
+          "signature": "5f6ba014ef87967b3c627cfd6fbf942f693665ce3d657d46a1200dd97d9b8d4f3189ee8622bd258023f5e999eeb9fa1ce13742d1da7b90a14315552eb0affc04"
+        },
+        {
+          "host": "h-2",
+          "name": "signed by another device",
+          "seq": 11,
+          "signature": "5068a3395050c79628b117f7b53371de456975299861f7593acef2036e61b8c2bbe4d274c1195511b12ac89eb8a6a42c60d5ddf6c96539743b65ee5ec971910e"
+        },
+        {
+          "host": "m-1",
+          "name": "for another host",
+          "seq": 11,
+          "signature": "fb629afe6eaa0fcae2b4076c908d4a3276381fef38cde1e2b910806f4a0492fdd76688af6156e9c105a2ba5ee1b72b9c365c92e56d714c8e8e17c57717168d08"
+        },
+        {
+          "host": "h-2",
+          "name": "over a hash that is not the entry's",
+          "seq": 11,
+          "signature": "83342a1c58972ea9b4d470193c95cd7096023e0daf01c6e32ef828f65003d3e4a6a0ea8d6a9a9e4069711626530b96268a14a505b99d6bf7bebfdebc48ab9d08"
+        },
+        {
+          "host": "h-2",
+          "name": "over another new key",
+          "seq": 11,
+          "signature": "7c8b0cbd2e4499bd4be5c3503c9036c6c0cb7fcd1e8f64a2f7cdc288a5443a4420a7c7c0737c68965a7d78823cbff9eb9a30e6cdcdde41f55763d77ac52d4a06"
+        },
+        {
+          "host": "h-2",
+          "name": "past this view",
+          "seq": 15,
+          "signature": "c4a164562849143b5a7aa55cbca39a7d9d051b1bcb268f5ef0c9fd700c82f8065f850164102ce946acd287d65974ef929d6621909e9e636297664053f4adab02"
+        },
+        {
+          "host": "h-2",
+          "name": "the genesis",
+          "seq": 0,
+          "signature": "c4a164562849143b5a7aa55cbca39a7d9d051b1bcb268f5ef0c9fd700c82f8065f850164102ce946acd287d65974ef929d6621909e9e636297664053f4adab02"
+        }
+      ],
+      "valid": [
+        {
+          "body": "0006616363742d310003682d32000000000000000b37aaabb3a420f37c8abe6cb3fb8ac083dacb971343c541c307a838085c65223f1ef75ae2bd42f7d982d3fef52a3bc25dd1440daff521ba6c058c3f9cd013ad64",
+          "entryHash": "37aaabb3a420f37c8abe6cb3fb8ac083dacb971343c541c307a838085c65223f",
+          "host": "h-2",
+          "newSign": "1ef75ae2bd42f7d982d3fef52a3bc25dd1440daff521ba6c058c3f9cd013ad64",
+          "seq": 11,
+          "signature": "c4a164562849143b5a7aa55cbca39a7d9d051b1bcb268f5ef0c9fd700c82f8065f850164102ce946acd287d65974ef929d6621909e9e636297664053f4adab02",
+          "signerSeed": "47197af389585262d9fad1ee06f972284c3f061a7c974a0bb2477f2675f889f3"
+        },
+        {
+          "body": "0006616363742d310003682d32000000000000000d7c215244fb8acd71712480614567c9404d4b51d3d6b73c3baf370eff2505706c04a54fea093d1c12ff68119f0cf0ec8b7d738788ddaab4caa9ef99069a1ccdf8",
+          "entryHash": "7c215244fb8acd71712480614567c9404d4b51d3d6b73c3baf370eff2505706c",
+          "host": "h-2",
+          "newSign": "04a54fea093d1c12ff68119f0cf0ec8b7d738788ddaab4caa9ef99069a1ccdf8",
+          "seq": 13,
+          "signature": "3d118a5f87b59ca75a248df9465649a4e82982d8e56891055e9a0a10d4523863623c8cd99efbe9446c22ba9faa9cbec9f2e6305b357fceb00b73b695dff6420a",
+          "signerSeed": "03b3f78e97a24526a489b9c77af3137e2aae130f1826f7a212c6ca7357ab72fa"
+        }
+      ]
+    },
     "entries": [
       "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
       "020006616363742d310000000000000001161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb700000000000007d00100056465762d300200056465762d31d268a4af153f506e2f4a27eed0cfd5ec26e4427cfaa905f18fc79cae1dbb651001a2146013c327652668b6e612239930929981e01041e6c21e7b91a79fda0d6e012aa9bb8e500cf1c1cd6aaed21f629048f803a08142f6fe4df46ba14cf2adc47bc1d140a7f29445deb4ed0dbc81cb48efa17fb352ea202de2d4846e304a667c0a",
@@ -3058,6 +3136,7 @@
       "hostRotate": "rh/v1 host-rotate\u0000",
       "rotateAck": "rh/v1 rotate-ack\u0000",
       "rotateConfirm": "rh/v1 rotate-confirm\u0000",
+      "rotateDispute": "rh/v1 rotate-dispute\u0000",
       "rotateSas": "rh/v1 rotate-sas\u0000"
     },
     "renewals": [
