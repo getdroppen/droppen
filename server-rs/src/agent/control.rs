@@ -263,6 +263,9 @@ impl Control {
         if let Err(error) = super::rotation::finish_re_enroll(&self.paths) {
             tracing::error!(%error, "cannot finish adding this device again under a new identity");
         }
+        // A dispute statement the hub has not taken yet: delivered again
+        // (it outlives the enrollment it disputes: contract §12 #6).
+        super::dispute::deliver(&self.paths);
         let _ = self.env.set(env);
     }
 

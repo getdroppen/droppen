@@ -696,12 +696,6 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 // chain up to the renewal on this same socket; only what
                 // verifies on this device's own chain counts.
                 tracing::info!("the hub says the identity key in use was renewed: reading the chain it serves");
-                // This sign-in left the hub its evidence already: no other
-                // is made on purpose if the chain shows a renewal elsewhere
-                // (R6 review A3).
-                {
-                    shared.state.lock().expect("agent state").rotation.evidence_ms.get_or_insert(now_ms());
-                }
                 rotated_sync(shared, &mut sink, &mut source).await;
                 if shared.cancel.is_cancelled() {
                     return Err("this device's identity key was replaced elsewhere: not connecting".into());

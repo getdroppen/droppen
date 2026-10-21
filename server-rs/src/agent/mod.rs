@@ -66,6 +66,7 @@ pub const ROTATE_FEATURE: &str = "rotate/1";
 pub mod bridge;
 pub mod control;
 pub mod direct;
+pub mod dispute;
 pub mod enroll;
 pub mod hub;
 pub mod link;

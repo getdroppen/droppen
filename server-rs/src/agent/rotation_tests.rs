@@ -267,6 +267,8 @@ struct Script {
     /// (its database), whatever the key (contract §11).
     unavailable: Vec<[u8; 32]>,
     stage: StageAnswer,
+    /// What `POST /v1/rotations/{host}/disputes` answers, in turn (then 200).
+    dispute_answers: Vec<u16>,
 }
 
 impl Script {
@@ -277,6 +279,7 @@ impl Script {
             rotated: Vec::new(),
             unavailable: Vec::new(),
             stage: StageAnswer::Staged,
+            dispute_answers: Vec::new(),
         }
     }
 }
@@ -316,6 +319,8 @@ struct FakeHub {
     current: Arc<Mutex<Option<mpsc::UnboundedSender<Message>>>>,
     /// The chain it serves.
     chain: Arc<Mutex<Vec<Entry>>>,
+    /// Every dispute statement delivered to it: the path and the body.
+    disputes: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
 impl FakeHub {
@@ -329,11 +334,18 @@ impl FakeHub {
             heard: Arc::default(),
             current: Arc::default(),
             chain: Arc::new(Mutex::new(chain)),
+            disputes: Arc::default(),
         };
         let (script, logins, heard, current) = (hub.script.clone(), hub.logins.clone(), hub.heard.clone(), hub.current.clone());
+        let disputes = hub.disputes.clone();
         let chain = hub.chain.clone();
         tokio::spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
+                // The hub's plain HTTP on the same origin: a dispute statement.
+                if starts_with_post(&tcp).await {
+                    tokio::spawn(serve_dispute(tcp, script.clone(), disputes.clone()));
+                    continue;
+                }
                 let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else { continue };
                 let (mut sink, mut source) = ws.split();
                 let mut nonce = [0u8; 32];
@@ -479,6 +491,11 @@ impl FakeHub {
         self.send(Message::Binary(frame.encode().unwrap().into()));
     }
 
+    /// The dispute statements delivered so far.
+    fn disputes(&self) -> Vec<(String, Value)> {
+        self.disputes.lock().unwrap().clone()
+    }
+
     /// What the agent sent with `t`.
     fn heard(&self, t: &str) -> Vec<Value> {
         self.heard.lock().unwrap().iter().filter(|v| v["t"] == t).cloned().collect()
@@ -487,6 +504,71 @@ impl FakeHub {
     fn logins(&self) -> Vec<Login> {
         self.logins.lock().unwrap().clone()
     }
+}
+
+/// Whether the connection opens with `POST ` (an HTTP request, not a
+/// websocket's `GET`).
+async fn starts_with_post(tcp: &tokio::net::TcpStream) -> bool {
+    let mut first = [0u8; 5];
+    for _ in 0..50 {
+        match tcp.peek(&mut first).await {
+            Ok(5) => return &first == b"POST ",
+            Ok(0) | Err(_) => return false,
+            Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+        }
+    }
+    false
+}
+
+/// `POST /v1/rotations/{host}/disputes`, as the hub answers it (contract
+/// §12 #6): the next scripted status (then 200), the body kept.
+async fn serve_dispute(mut tcp: tokio::net::TcpStream, script: Arc<Mutex<Script>>, disputes: Arc<Mutex<Vec<(String, Value)>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 2048];
+    let head_end = loop {
+        let n = tcp.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i + 4;
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    let path = head.split_whitespace().nth(1).unwrap_or_default().to_string();
+    let len = head
+        .lines()
+        .find_map(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())
+        })
+        .unwrap_or(0);
+    while buf.len() < head_end + len {
+        let n = tcp.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let body: Value = serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or_default();
+    disputes.lock().unwrap().push((path, body));
+    let status = {
+        let mut script = script.lock().unwrap();
+        if script.dispute_answers.is_empty() {
+            200
+        } else {
+            script.dispute_answers.remove(0)
+        }
+    };
+    let text = if status == 200 { r#"{"ok":true}"# } else { r#"{"error":"unavailable"}"# };
+    let answer = format!(
+        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+        text.len()
+    );
+    let _ = tcp.write_all(answer.as_bytes()).await;
+    let _ = tcp.shutdown().await;
 }
 
 /// Wait until `f` holds (15 s at most).
@@ -1195,15 +1277,30 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert!(shared.cancel.is_cancelled());
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "the old seed stays");
     assert_eq!(restarts.load(Ordering::SeqCst), 0, "nothing promoted");
-    // R6 review A3: ONE sign-in with the old key, on purpose, so the hub
-    // answers `rotated` and keeps the evidence of the dispute.
-    until("the one sign-in that leaves evidence", || hub.logins().len() == before + 1).await;
-    let evidence = hub.logins()[before].clone();
-    assert!(evidence.by(&old, &hub.url) && !evidence.welcomed, "{evidence:?}");
+    // Contract §12 #6: the evidence is the retired key's dispute statement
+    // over that renewal, kept and delivered to the hub — no sign-in with the
+    // retired key is made for it.
+    until("the dispute statement", || !hub.disputes().is_empty()).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(hub.logins().len(), before + 1, "only one");
+    assert_eq!(hub.logins().len(), before, "no sign-in with the retired key on purpose");
+    let disputes = hub.disputes();
+    assert_eq!(disputes.len(), 1, "{disputes:?}");
+    let (path, body) = &disputes[0];
+    assert_eq!(path, "/v1/rotations/m-1/disputes");
+    let seq = entries[0].seq();
+    assert_eq!(body["seq"].as_u64(), Some(seq));
+    assert_eq!(body["entry_hash"].as_str(), Some(hex(&a.hub.hash_at(seq).unwrap()).as_str()));
+    let sig = unhex64(body["sig"].as_str().unwrap());
+    assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with rh-proto on the chain");
+    let kept = super::dispute::kept(&a.paths);
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].0.ends_with(format!("agent/rotation-dispute-{seq}.json")));
+    until("the hub's 200 noted", || {
+        AgentState::load(&a.paths).unwrap().unwrap().rotation.evidence_ms.is_some()
+    })
+    .await;
+    assert!(super::dispute::kept(&a.paths)[0].1.acked_ms.is_some());
     let st = AgentState::load(&a.paths).unwrap().unwrap();
-    assert!(st.rotation.evidence_ms.is_some());
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
@@ -1214,13 +1311,15 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
             fingerprint: rh_proto::identity::device_fingerprint_text(&thief().sign_public(), &thief().dh_public()),
         }
     );
-    // Started again, it does not connect — nor sign in on purpose again.
+    // Started again, it does not connect, and the statement the hub took is
+    // not delivered again.
     let again = link::test_shared(&a.paths, st, old, super::streams::Handle::detached(), rotation::no_restart());
     let before = hub.logins().len();
     let task = tokio::spawn(link::run(again.clone()));
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("it stops at once").unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), before, "no sign-in with a key the chain retired");
+    assert_eq!(hub.disputes().len(), 1);
 }
 
 /// Contract §10: a hub refusing the key in use as `rotated` is not
@@ -1282,9 +1381,12 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     let st = shared.state.lock().unwrap();
     assert_eq!(st.rotation.foreign_reason.as_deref(), Some(rotation::FOREIGN_RENEWED_ELSEWHERE));
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
-    assert!(st.rotation.evidence_ms.is_some(), "that sign-in, answered `rotated`, left the evidence");
     drop(st);
-    // No second sign-in on purpose (R6 review A3): that one was it.
+    // That refused sign-in is no evidence; the retired key's dispute
+    // statement is, delivered on its own — no other sign-in (contract §12 #6).
+    until("the dispute statement", || !hub.disputes().is_empty()).await;
+    let (_, body) = hub.disputes()[0].clone();
+    assert!(b.hub.verify_rotate_dispute("m-1", renewal[0].seq(), &unhex64(body["sig"].as_str().unwrap())));
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), 1);
     assert_eq!(b.seed_in_use().sign_public(), old.sign_public(), "the seed stays until a person adds it again");
