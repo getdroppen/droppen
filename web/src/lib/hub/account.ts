@@ -597,12 +597,12 @@ export interface HeldChange {
 export interface ChainAlert {
   seq: number;
   /** `upgrade`: the account's first chain v3 entry (a new user key written as v3: review D4). */
-  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey";
+  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy";
   /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
   by: string | null;
   /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」). */
   flags?: { host: boolean; admin: boolean };
-  /** `setAdmin` / `setHost`: what it was set to. */
+  /** `setAdmin` / `setHost`: what it was set to; `renewalPolicy`: whether every renewal must now be confirmed on the device. */
   on?: boolean;
   /** `setAccept`: whom the host accepts control from now. */
   accept?: Accept;
@@ -1788,6 +1788,10 @@ export class CloudAccount {
           break;
         case "setAccept":
           out.push({ alert: { seq, kind: "setAccept", by, subject: action.host, accept: action.from, atMs, remove: null }, pending: false });
+          break;
+        case "setRenewalPolicy":
+          // The account's renewal policy (host identity rotation §3.4 rule 9): a note.
+          out.push({ alert: { seq, kind: "renewalPolicy", by, subject: null, on: action.alwaysAssured, atMs, remove: null }, pending: false });
           break;
         case "rotateHostKey": {
           // A note with the new fingerprint (host identity rotation §3.4): the renewal took the host's old key's

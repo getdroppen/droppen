@@ -80,7 +80,8 @@
 //!   its next machine key epoch comes in the very next entry. The id and
 //!   everything the chain says about it stay; the old keys are kept as
 //!   [`RetiredKeys`] ([`ChainState::keys_at`]) and never name a device again
-//!   ([`rules::KEY_RETIRED`]).
+//!   ([`rules::KEY_RETIRED`]). An admin may set the account to take only
+//!   renewals confirmed on the device ([`Action::SetRenewalPolicy`]).
 //!
 //! # Rollback and freezing
 //!
@@ -634,6 +635,12 @@ pub enum Action {
     /// Kind 20: a current host renews its identity key
     /// (`docs/host-identity-rotation.md` §3.4).
     RotateHostKey(HostRotation),
+    /// Kind 21: the account's renewal policy (§3.4 rule 9): while
+    /// `always_assured` is on, every renewal must be confirmed on the device
+    /// (`assurance = 1`). Byte 0 or 1.
+    SetRenewalPolicy {
+        always_assured: bool,
+    },
 }
 
 impl Action {
@@ -659,6 +666,7 @@ impl Action {
             Action::PasskeyActivate(_) => 18,
             Action::SetAccept { .. } => 19,
             Action::RotateHostKey(_) => 20,
+            Action::SetRenewalPolicy { .. } => 21,
         }
     }
 
@@ -1058,6 +1066,7 @@ impl Draft {
                 put_accept(&mut out, from);
             }
             Action::RotateHostKey(r) => put_rotation(&mut out, r),
+            Action::SetRenewalPolicy { always_assured } => out.push(u8::from(*always_assured)),
         }
         out
     }
@@ -1146,6 +1155,9 @@ impl Entry {
                 from: get_accept(&mut r)?,
             },
             (true, 20) => Action::RotateHostKey(get_rotation(&mut r)?),
+            (true, 21) => Action::SetRenewalPolicy {
+                always_assured: get_bool(&mut r, "renewal policy")?,
+            },
             (_, other) => {
                 return Err(DecodeError::Unknown {
                     what: "chain action",
@@ -1562,6 +1574,10 @@ pub struct ChainState {
     /// A host that joined or restarted hosting in the last entry: the next
     /// entry must commit its next machine key epoch.
     host_key_due: Option<String>,
+    /// The account's renewal policy (`SetRenewalPolicy`): every renewal
+    /// confirmed on the device, and the entry that last set it.
+    always_assured: bool,
+    renewal_policy_seq: Option<u64>,
 }
 
 /// Who signed an entry, as [`ChainState::apply`] established.
@@ -1610,6 +1626,9 @@ pub mod rules {
     /// a new id. (A key a current device holds is not refused: chains from
     /// before may name one twice.)
     pub const KEY_RETIRED: &str = "a retired identity key never comes back";
+    /// `SetRenewalPolicy` (§3.4 rule 9): while the account's policy is on,
+    /// a renewal not confirmed on the device (`assurance = 0`) is refused.
+    pub const ROTATE_NEEDS_ASSURANCE: &str = "the account asks for every renewal to be confirmed on the device";
 }
 
 /// Which removal voids the recovery key: v2's `RemoveDevice` (unchanged, so
@@ -1720,6 +1739,8 @@ impl ChainState {
             accept: BTreeMap::new(),
             v3_from: (d.version == VERSION_3).then_some(0),
             host_key_due: flags.host.then(|| keys.id.clone()),
+            always_assured: false,
+            renewal_policy_seq: None,
         };
         state.check_new(0, &keys)?;
         state.devices.insert(
@@ -2224,6 +2245,11 @@ impl ChainState {
                 if !r.verify(&self.account, &old.0, &old.1) {
                     return Err(not_allowed(seq, rules::ROTATE_PROOF));
                 }
+                // Rule 9: the account's policy may ask for every renewal to
+                // be confirmed on the device.
+                if self.always_assured && r.assurance != Assurance::OnDevice {
+                    return Err(not_allowed(seq, rules::ROTATE_NEEDS_ASSURANCE));
+                }
                 // Rule 6: its next machine key epoch — sealed to the new key
                 // only — comes in the very next entry.
                 host_key_due = Some(r.host.clone());
@@ -2237,6 +2263,12 @@ impl ChainState {
                 record.info.sign_key = r.sign_key;
                 record.info.dh_key = r.dh_key;
                 record.rotated_seq = Some(seq);
+            }
+            Action::SetRenewalPolicy { always_assured } => {
+                // §3.4 rule 9. An active admin signs it (checked above, as
+                // for every entry); setting what is already set is allowed.
+                self.always_assured = *always_assured;
+                self.renewal_policy_seq = Some(seq);
             }
         }
         self.host_key_due = host_key_due;
@@ -2433,6 +2465,17 @@ impl ChainState {
     /// awaits its machine key epoch: a batch must not end here.
     pub fn host_key_due(&self) -> Option<&str> {
         self.host_key_due.as_deref()
+    }
+
+    /// Whether the account asks for every renewal to be confirmed on the
+    /// device (`SetRenewalPolicy`; off until an admin turns it on).
+    pub fn always_assured(&self) -> bool {
+        self.always_assured
+    }
+
+    /// The entry that last set the renewal policy, if any did.
+    pub fn renewal_policy_seq(&self) -> Option<u64> {
+        self.renewal_policy_seq
     }
 
     /// How many user key epochs are committed (the next one's number).

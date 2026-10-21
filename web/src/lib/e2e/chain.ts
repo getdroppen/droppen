@@ -432,7 +432,9 @@ export type Action =
   | { type: "passkeyActivate"; id: string }
   | { type: "setAccept"; host: string; from: Accept }
   /** Kind 20: a current host renews its identity key (`docs/host-identity-rotation.md` §3.4). */
-  | { type: "rotateHostKey"; rotation: HostRotation };
+  | { type: "rotateHostKey"; rotation: HostRotation }
+  /** Kind 21: the account's renewal policy (§3.4 rule 9) — while on, every renewal must be confirmed on the device. Byte 0 or 1. */
+  | { type: "setRenewalPolicy"; alwaysAssured: boolean };
 
 /** `passkey` (v3 only): a passkey slot's `PAK`, for its own pending join and activation. */
 export type Signer = { type: "account" } | { type: "device"; id: string } | { type: "recovery" } | { type: "passkey"; slot: string };
@@ -516,6 +518,8 @@ export const RULES = {
   rotateProof: "the renewal is not signed by both the old and the new identity key",
   /** A key a renewal retired never names a device again — not added, not joining, no pending device holding it approved or activated (a key a current device holds is not refused: chains from before may name one twice). */
   keyRetired: "a retired identity key never comes back",
+  /** `setRenewalPolicy` (§3.4 rule 9): while the account's policy is on, a renewal not confirmed on the device is refused. */
+  rotateNeedsAssurance: "the account asks for every renewal to be confirmed on the device",
 } as const;
 
 export class ChainError extends Error {
@@ -551,6 +555,7 @@ const KIND: Record<Action["type"], number> = {
   passkeyActivate: 18,
   setAccept: 19,
   rotateHostKey: 20,
+  setRenewalPolicy: 21,
 };
 
 /**
@@ -789,6 +794,9 @@ export function encodeDraft(d: Draft): Bytes {
     case "rotateHostKey":
       putRotation(w, a.rotation);
       break;
+    case "setRenewalPolicy":
+      w.u8(a.alwaysAssured ? 1 : 0);
+      break;
   }
   return w.finish();
 }
@@ -889,6 +897,9 @@ export function decodeEntry(data: Uint8Array): Entry {
         break;
       case "3:20":
         action = { type: "rotateHostKey", rotation: getRotation(r) };
+        break;
+      case "3:21":
+        action = { type: "setRenewalPolicy", alwaysAssured: getBool(r, "renewal policy") };
         break;
       default:
         throw new DecodeError(`unknown chain action ${kind}`);
@@ -1169,6 +1180,9 @@ export class ChainState {
   private v3FromSeq: number | null;
   /** A host that joined or restarted hosting in the last entry: the next entry must commit its next machine key epoch. */
   private hostKeyDueId: string | null;
+  /** The account's renewal policy (`setRenewalPolicy`), and the entry that last set it. */
+  private alwaysAssuredOn = false;
+  private renewalPolicySeqValue: number | null = null;
 
   private constructor(
     readonly account: string,
@@ -1587,6 +1601,8 @@ export class ChainState {
         if (!staged || !equal(staged, r.stagedHead)) throw notAllowed(RULES.rotateStaged);
         const old = record.info;
         if (!(await verifyHostRotation(this.account, r, old.signKey, old.dhKey))) throw notAllowed(RULES.rotateProof);
+        // Rule 9: the account's policy may ask for every renewal to be confirmed on the device.
+        if (this.alwaysAssuredOn && r.assurance !== ASSURANCE_ON_DEVICE) throw notAllowed(RULES.rotateNeedsAssurance);
         // Rule 6: its next machine key epoch — sealed to the new key only — comes in the very next entry.
         hostKeyDue = r.host;
         record.retired = [...record.retired, { signKey: old.signKey, dhKey: old.dhKey, untilSeq: seq, byAssured: r.assurance === ASSURANCE_ON_DEVICE }];
@@ -1594,6 +1610,11 @@ export class ChainState {
         record.rotatedSeq = seq;
         break;
       }
+      case "setRenewalPolicy":
+        // As in Rust (§3.4 rule 9): an active admin signs it (checked above); setting what is already set is allowed.
+        this.alwaysAssuredOn = a.alwaysAssured;
+        this.renewalPolicySeqValue = seq;
+        break;
     }
     this.hostKeyDueId = hostKeyDue;
     if (d.version === CHAIN_VERSION_3 && this.v3FromSeq === null) this.v3FromSeq = seq;
@@ -1736,6 +1757,8 @@ export class ChainState {
   clone(): ChainState {
     const c = new ChainState(this.account, this.accountKey, this.recoveryKey, [...this.entries], [...this.hashes], this.v3FromSeq, this.hostKeyDueId);
     c.recoverySetBy = this.recoverySetBy;
+    c.alwaysAssuredOn = this.alwaysAssuredOn;
+    c.renewalPolicySeqValue = this.renewalPolicySeqValue;
     c.userKeys.push(...this.userKeys);
     for (const [m, keys] of this.machineKeys) c.machineKeys.set(m, [...keys]);
     for (const [id, d] of this.devices) c.devices.set(id, { ...d, status: { ...d.status }, retired: [...d.retired] });
@@ -1774,6 +1797,16 @@ export class ChainState {
   /** A host that joined or restarted hosting in the last entry and still awaits its machine key epoch: a batch must not end here. */
   get hostKeyDue(): string | null {
     return this.hostKeyDueId;
+  }
+
+  /** Whether the account asks for every renewal to be confirmed on the device (`setRenewalPolicy`; off until an admin turns it on). A getter, as Rust's `always_assured()`. */
+  get alwaysAssured(): boolean {
+    return this.alwaysAssuredOn;
+  }
+
+  /** The entry that last set the renewal policy, if any did (Rust's `renewal_policy_seq()`). */
+  get renewalPolicySeq(): number | null {
+    return this.renewalPolicySeqValue;
   }
 
   /** How many user key epochs are committed (the next one's number). */
