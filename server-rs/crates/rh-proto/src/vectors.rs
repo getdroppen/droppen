@@ -2110,6 +2110,52 @@ fn host_rotation_vectors() -> Value {
             Some(rules::KEY_RETIRED),
         );
     }
+    // The account's renewal policy (§3.4 rule 9): on (twice: setting it again is allowed), an assured renewal and
+    // its key, off, an automatic renewal and its key.
+    let (policy_entries, policy_steps) = {
+        let mut st = ChainState::verify(&base, None, &mut hist()).unwrap();
+        let mut es = base.clone();
+        let mut steps: Vec<Value> = Vec::new();
+        let mut step = |st: &mut ChainState, es: &mut Vec<Entry>, label: &str, action: Action| {
+            let e = st.draft(dev0(), action, 30_000 + st.seq()).sign(k0);
+            st.apply(&e, &mut hist()).unwrap_or_else(|err| panic!("{label}: {err}"));
+            es.push(e);
+            steps.push(json!({"label": label, "seq": st.seq(), "alwaysAssured": st.always_assured(), "renewalPolicySeq": st.renewal_policy_seq()}));
+        };
+        let key = |st: &ChainState, k: u8| Action::KeyEpochs(crate::v3_regressions::mk_commit("h-2", st.machine_key_epochs("h-2"), &[k; 32]));
+        step(&mut st, &mut es, "policyOn", Action::SetRenewalPolicy { always_assured: true });
+        step(&mut st, &mut es, "policyOnAgain", Action::SetRenewalPolicy { always_assured: true });
+        let r = renewal(&st, "h-2", &o.0, &extra(RENEWED[0]), st.seq(), [0x51; 16], Assurance::OnDevice);
+        step(&mut st, &mut es, "assuredRenewal", Action::RotateHostKey(r));
+        let k = key(&st, 0x27);
+        step(&mut st, &mut es, "assuredRenewalKey", k);
+        step(&mut st, &mut es, "policyOff", Action::SetRenewalPolicy { always_assured: false });
+        let r = renewal(&st, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), st.seq(), [0x52; 16], Assurance::Auto);
+        step(&mut st, &mut es, "autoRenewal", Action::RotateHostKey(r));
+        let k = key(&st, 0x28);
+        step(&mut st, &mut es, "autoRenewalKey", k);
+        assert!(!st.always_assured() && st.retired_keys("h-2").len() == 2);
+        (es, steps)
+    };
+    let policy_on = policy_entries[..=base.len()].to_vec();
+    bad(
+        "a renewal without assurance while the account asks for it",
+        policy_on.clone(),
+        dev0(),
+        k0,
+        &|st| Action::RotateHostKey(renewal(st, "h-2", &o.0, &extra(21), st.seq(), [9; 16], Assurance::Auto)),
+        not_allowed,
+        Some(rules::ROTATE_NEEDS_ASSURANCE),
+    );
+    bad(
+        "a renewal policy set by a device that is not an admin",
+        base.clone(),
+        Signer::Device("dev-2".into()),
+        &f.devices[2].0,
+        &|_| Action::SetRenewalPolicy { always_assured: true },
+        not_allowed,
+        Some(rules::ONLY_ADMIN_SIGNS),
+    );
     // Bytes that do not decode: an assurance other than 0 or 1, kind 20 in a v2 entry.
     let rotate_bytes = entries[rotate as usize].encode();
     let at = rotate_bytes.len() - 64 * 3 - 1;
@@ -2120,6 +2166,20 @@ fn host_rotation_vectors() -> Value {
         let mut b = rotate_bytes.clone();
         b[at] = value;
         let mut es = entries_json(&entries[..rotate as usize]).as_array().unwrap().clone();
+        es.push(h(&b));
+        invalid.push((name.into(), es, "decode"));
+    }
+    // Kind 21 with a byte other than 0 or 1, and under version 2: neither decodes.
+    let policy_bytes = policy_on.last().unwrap().encode();
+    let policy_at = policy_bytes.len() - 64 - 1;
+    assert_eq!((policy_bytes[policy_at - 1], policy_bytes[policy_at]), (21, 1), "kind 21, then its byte");
+    for (name, at, value) in [
+        ("a renewal policy with an unknown byte", policy_at, 2),
+        ("a renewal policy inside a v2 entry", 0, crate::chain::VERSION),
+    ] {
+        let mut b = policy_bytes.clone();
+        b[at] = value;
+        let mut es = entries_json(&base).as_array().unwrap().clone();
         es.push(h(&b));
         invalid.push((name.into(), es, "decode"));
     }
@@ -2207,6 +2267,14 @@ fn host_rotation_vectors() -> Value {
         "keysAt": keys_at,
         "everNamed": named,
         "disputes": disputes,
+        "policy": {
+            "entries": entries_json(&policy_entries),
+            "steps": policy_steps,
+            "encoding": {
+                "on": h(&policy_entries[base.len()].encode()),
+                "off": h(&policy_entries[base.len() + 4].encode()),
+            },
+        },
         "invalid": invalid.iter().map(|(name, es, error)| json!({"name": name, "entries": es, "error": error, "rule": not_allowed_reason(es)})).collect::<Vec<_>>(),
         "labels": {
             "hostRotate": String::from_utf8_lossy(crate::sig::HOST_ROTATE),
@@ -2221,6 +2289,7 @@ fn host_rotation_vectors() -> Value {
             "rotateStaged": rules::ROTATE_STAGED,
             "rotateProof": rules::ROTATE_PROOF,
             "keyRetired": rules::KEY_RETIRED,
+            "rotateNeedsAssurance": rules::ROTATE_NEEDS_ASSURANCE,
         },
     })
 }
@@ -3165,6 +3234,36 @@ fn ts_vectors_verify_in_rust() {
             );
         }
         assert!(d["invalid"].as_array().unwrap().len() >= 7);
+        // The renewal policy TS wrote: every step verifies, and says what the policy is.
+        let p = &r["policy"];
+        let policy: Vec<Entry> = p["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| Entry::decode(&hexv(e)).expect("a TS policy entry decodes"))
+            .collect();
+        for (entry, hex_entry) in policy.iter().zip(p["entries"].as_array().unwrap()) {
+            assert_eq!(h(&entry.encode()), *hex_entry);
+        }
+        for step in p["steps"].as_array().unwrap() {
+            let seq = step["seq"].as_u64().unwrap() as usize;
+            let st = ChainState::verify(&policy[..=seq], None, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{}: {e}", step["label"]));
+            assert_eq!(
+                json!({"alwaysAssured": st.always_assured(), "renewalPolicySeq": st.renewal_policy_seq()}),
+                json!({"alwaysAssured": step["alwaysAssured"], "renewalPolicySeq": step["renewalPolicySeq"]}),
+                "{}",
+                step["label"]
+            );
+        }
+        for which in ["on", "off"] {
+            let e = Entry::decode(&hexv(&p["encoding"][which])).unwrap();
+            assert_eq!(
+                e.draft.action,
+                Action::SetRenewalPolicy {
+                    always_assured: which == "on"
+                }
+            );
+        }
     }
 
     // A handshake the TS initiator and TS responder ran with fixed ephemerals:

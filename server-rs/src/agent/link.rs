@@ -3535,6 +3535,20 @@ mod tests {
             )
             .sign(dev.signing_key());
         assert!(account_change(&assured, None).is_some_and(|s| s.contains("confirmed on the device")));
+        // The account's renewal policy (kind 21) is a note too, each way.
+        let policy = |on: bool| {
+            state
+                .draft(Signer::Device("d-1".into()), Action::SetRenewalPolicy { always_assured: on }, 9_001)
+                .sign(dev.signing_key())
+        };
+        assert_eq!(
+            account_change(&policy(true), None).as_deref(),
+            Some("identity key renewals must now be confirmed on the device (set by d-1)")
+        );
+        assert_eq!(
+            account_change(&policy(false), None).as_deref(),
+            Some("identity key renewals may be automatic again (set by d-1)")
+        );
         // The renewed host is h-2 with its new keys, here as everywhere.
         assert_eq!(state.machine("h-2").map(|d| d.info.sign_key), Some(new.sign_public()));
         assert_eq!(state.keys_at("h-2", rotate.seq() - 1).map(|k| k.sign_key), Some(old.sign_public()));

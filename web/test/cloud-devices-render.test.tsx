@@ -603,6 +603,18 @@ test("a host renewing its identity key is a note, with the new fingerprint once 
   assert.equal(cloudDevicesZhTW["{{device}} renewed its identity key, confirmed on the device"], "{{device}} 更換了身分金鑰（已在那台裝置上確認）");
 });
 
+test("R1d: the account's renewal policy on the chain is a note, each way", () => {
+  const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
+  const policy = (on: boolean) => ({ seq: 14, by: "d-1", atMs: 0, remove: null, kind: "renewalPolicy", subject: null, on }) as const;
+  assert.equal(alertLevel(policy(true)), "info");
+  assert.equal(alertText(policy(true), t), "identity key renewals must now be confirmed on the device (set by d-1)");
+  assert.equal(alertText(policy(false), t), "identity key renewals may be automatic again (set by d-1)");
+  const account = { alerts: () => [policy(true)], onChange: () => () => undefined } as unknown as CloudAccount;
+  assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "zh-CN").includes("更换身份密钥现在都要在那台设备上确认（由 d-1 设置）"));
+  assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "ja").includes("ID 鍵の更新は、今後そのデバイスでの確認が必要です（d-1 が設定）"));
+  assert.equal(cloudDevicesZhTW["identity key renewals may be automatic again (set by {{by}})"], "更換身分金鑰又可以自動進行了（由 {{by}} 設定）");
+});
+
 test("14: stopping AI is asked first", () => {
   const stop = draw(<StopHost device="m-1" busy={false} onConfirm={() => undefined} onCancel={() => undefined} />);
   assert.match(stop, /role="alertdialog"[^>]*data-testid="stop-host"/);
