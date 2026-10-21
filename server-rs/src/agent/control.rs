@@ -624,20 +624,48 @@ fn forget_enrollment(paths: &Paths) -> Result<(), String> {
     }
 }
 
-/// Delete `agent/` and everything in it (no-op when it is not there). The
+/// Delete `agent/` and everything in it (no-op when it is not there) — but
+/// a dispute statement the hub has not taken yet ([`super::dispute`]): the
+/// only evidence that this device's key was replaced elsewhere, signed and
+/// holding no secret, kept and still delivered until the hub has it. The
 /// link — and with it the streams' writer — must be stopped first; the
 /// process's connection to `streams.db` is dropped here, before the file.
 pub fn unenroll_files(paths: &Paths) -> Result<(), String> {
     crate::db::forget(&super::streams::store::path(paths));
     let dir = paths.instance_dir().join("agent");
-    match std::fs::remove_dir_all(&dir) {
-        Ok(()) => {
-            tracing::info!(dir = %dir.display(), "unenrolled: the agent's files are gone");
-            Ok(())
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
+    let mut kept = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = entry.path();
+        let is_dir = entry.file_type().map_err(|e| format!("{}: {e}", path.display()))?.is_dir();
+        if !is_dir && super::dispute::is_pending_statement(&path) {
+            kept += 1;
+            continue;
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("{}: {e}", dir.display())),
+        let removed = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        match removed {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        }
     }
+    if kept == 0 {
+        match std::fs::remove_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
+        }
+        tracing::info!(dir = %dir.display(), "unenrolled: the agent's files are gone");
+    } else {
+        super::sync_dir(&dir.join("."));
+        tracing::warn!(dir = %dir.display(), kept, "unenrolled: the agent's files are gone but the dispute statements the hub does not have yet");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
