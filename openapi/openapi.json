@@ -1509,7 +1509,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`.",
+            "description": "Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,\n`staged_key_unreadable` for `unreadable`.",
             "nullable": true,
             "type": "string"
           },
@@ -1519,7 +1519,7 @@
             "type": "integer"
           },
           "state": {
-            "description": "`idle`; `staged` (a new key waits for the renewal to be written);\n`renewed` (it took a renewed key within the last day); `refused` (the\nhub refuses its key as renewed but showed no renewal: it retries,\nnothing else changes); `foreign` (its identity key was replaced\nelsewhere — its own chain gives its id keys it does not hold, for\nexample after restoring a backup made before a renewal: the link\nstopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new\nidentity).",
+            "description": "`idle`; `staged` (a new key waits for the renewal to be written);\n`renewed` (it took a renewed key within the last day); `refused` (the\nhub refuses its key as renewed but showed no renewal: it retries,\nnothing else changes); `foreign` (its identity key was replaced\nelsewhere — its own chain gives its id keys it does not hold, for\nexample after restoring a backup made before a renewal: the link\nstopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new\nidentity); `unreadable` (renewed, and a staged key it may have been\nrenewed to does not read: the link stopped until the file beside its\nkey is put right — never taken for `foreign`).",
             "type": "string"
           }
         },
