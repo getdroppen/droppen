@@ -33,22 +33,33 @@
 //!   in with the staged keys and read the chain), it signs in with that key,
 //!   sees the entry on the chain it verified, renames that staged seed into
 //!   place (the others go), and restarts its link — relays, control end and
-//!   the streams' writer with it — in this process ([`promote`]). AI
-//!   sessions and terminals do not notice. A lying hub cannot make it give
+//!   the streams' writer with it — in this process ([`promote`]), which then
+//!   renews the push keys too (a new VAPID keypair, every subscription
+//!   forgotten: R6 review W4). AI sessions and terminals do not notice. A lying hub cannot make it give
 //!   up its seed: only its own verified chain promotes.
 //! - **Crash safety** — at start, staged seeds sign in first (the one the
-//!   chain names, then the newest); a hub that takes none of them
-//!   (`denied`) gets the old one — never once a renewal is committed. Every
-//!   step leaves one of: the old seed (alone or with staged ones); the new
-//!   seed (at worst with staged ones never used).
+//!   chain names, then the newest); a hub that takes none of them — its
+//!   `denied`, nothing else: `unavailable` is its own trouble, retried —
+//!   gets the old one, never once a renewal is committed. Every step leaves
+//!   one of: the old seed (alone or with staged ones); the new seed (at worst
+//!   with staged ones never used). Every rename is flushed (`sync_dir`).
+//! - **Expiry** — a staging no renewal should take any more (its day over
+//!   before the old key signed in again, or more than [`MAX_STAGINGS`]) is
+//!   set aside (`machine-key.expired-<nonce>.json`), never deleted: never
+//!   tried at sign-in, and taken back and promoted if the verified chain
+//!   names it after all ([`set_aside_expired`], R6 review A2).
 //! - **Replaced elsewhere** — a verified entry on its own chain renewing
-//!   this device's id to keys it did not stage: this computer came back from
-//!   a backup made before a renewal, or another copy of its old key renewed
-//!   it. A `foreign_rotation` alarm (logged, in the status stream every
-//!   device reads, pushed with Bark), the link stops and the old seed stays
-//!   ([`Verdict::Foreign`]) until a person adds this device again under a new
-//!   identity ([`re_enroll_fresh`]); every sign-up after it uses a fresh seed
-//!   ([`identity_for_enrolling`]). A hub refusing the key as `rotated` is not
+//!   this device's id to keys it did not stage (waiting or set aside): this
+//!   computer came back from a backup made before a renewal, or another copy
+//!   of its old key renewed it. A `foreign_rotation` alarm (logged, in the
+//!   status stream every device reads, pushed with Bark), ONE sign-in with
+//!   the old key on purpose so the hub answers `rotated` and keeps the
+//!   evidence, the link stops and the old seed stays ([`Verdict::Foreign`])
+//!   until a person adds this device again under a new identity
+//!   ([`re_enroll_fresh`]); every sign-up after it uses a fresh seed
+//!   ([`identity_for_enrolling`]). Its own renewal (to a key it staged) is
+//!   never taken for it, nor one a staged file that does not read may hold
+//!   ([`Verdict::Unreadable`]). A hub refusing the key as `rotated` is not
 //!   evidence of it: the agent reads the chain the hub then serves, and
 //!   without a verified renewal it only waits and retries (`refused`).
 //! - **High assurance** — a renewal with `assurance: 1` shows its code
@@ -314,14 +325,21 @@ pub enum Verdict {
         /// The keys the chain names now, as the device list shows them.
         fingerprint: String,
     },
+    /// Renewed to keys that are neither the ones it runs with nor any staged
+    /// seed's that reads — while a staged seed's file does not read: the
+    /// renewal may be to that one. Never taken for a replacement elsewhere
+    /// (R6 review A7): alarmed, and the link stops until the file is put right.
+    Unreadable,
 }
 
 /// [`Verdict`] of `st`'s chain for a device running with `current`, with
-/// `staged` staged. Only a renewal makes a device's keys differ from what it
-/// holds (an enrollment with other keys is refused where it completes,
+/// `staged` staged (and, when `unreadable`, a staged seed whose file does not
+/// read). Only a renewal makes a device's keys differ from what it holds (an
+/// enrollment with other keys is refused where it completes,
 /// [`super::link`]), so keys after one that are neither `current` nor any
-/// staged seed's are somebody else's.
-pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: &[MachineIdentity]) -> Verdict {
+/// staged seed's are somebody else's — unless a staged seed it cannot read
+/// may hold them.
+pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: &[MachineIdentity], unreadable: bool) -> Verdict {
     let Some(record) = st.chain.as_ref().and_then(|c| c.device_record(&st.machine)) else {
         return Verdict::Unchanged;
     };
@@ -333,11 +351,58 @@ pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: &[MachineIden
         return Verdict::Renewed;
     }
     match record.rotated_seq {
+        Some(_) if unreadable => Verdict::Unreadable,
         Some(seq) => Verdict::Foreign {
             seq,
             fingerprint: rh_proto::identity::device_fingerprint_text(&named.0, &named.1),
         },
         None => Verdict::Unchanged,
+    }
+}
+
+/// Every staging of this instance this device keeps — waiting, and set aside
+/// as expired — but the key in use; read only, nothing forgotten (another
+/// process may call it).
+fn kept_stagings(store: &FileSeedStore, current: &MachineIdentity) -> Vec<StagedSeed> {
+    let uuid = store.load().ok().flatten().map(|s| s.uuid);
+    store
+        .stagings()
+        .unwrap_or_default()
+        .into_iter()
+        .chain(store.expired())
+        .filter(|s| uuid.as_deref() == Some(s.uuid.as_str()) && s.identity().sign_public() != current.sign_public())
+        .collect()
+}
+
+/// [`verdict`] from this instance's files, changing none: every staging it
+/// keeps, waiting or set aside as expired (R6 review A1, A2).
+fn stored_verdict(paths: &Paths, st: &AgentState, current: &MachineIdentity) -> Verdict {
+    let store = FileSeedStore::for_instance(paths);
+    let kept = kept_stagings(&store, current);
+    verdict(st, current, &identities(&kept), !store.unreadable().is_empty())
+}
+
+/// The keys `st`'s chain names for this device now, if it names it.
+pub(super) fn named_keys(st: &AgentState) -> Option<([u8; 32], [u8; 32])> {
+    let record = st.chain.as_ref()?.device_record(&st.machine)?;
+    Some((record.info.sign_key, record.info.dh_key))
+}
+
+/// A staging set aside as expired whose keys are the ones the chain names
+/// (`keys`) after all — a renewal committed later than this device judged
+/// possible: taken back among the stagings, to be signed in with and
+/// promoted (R6 review A2).
+fn restore_named(store: &FileSeedStore, keys: ([u8; 32], [u8; 32]), current: &MachineIdentity) {
+    let uuid = store.load().ok().flatten().map(|s| s.uuid);
+    let staged = store.expired().into_iter().find(|s| {
+        let k = s.identity();
+        uuid.as_deref() == Some(s.uuid.as_str()) && k.sign_public() != current.sign_public() && (k.sign_public(), k.dh_public()) == keys
+    });
+    if let Some(staged) = staged {
+        tracing::warn!("the device chain names a staged identity key this device had set aside as expired: taking it back");
+        if let Err(error) = store.restore(&staged.nonce) {
+            tracing::error!(%error, "cannot take back a staged identity key the device chain names");
+        }
     }
 }
 
@@ -357,6 +422,8 @@ pub const FOREIGN_RENEWED_ELSEWHERE: &str = "renewed_elsewhere";
 /// `link.rotation.reason` of state `refused`: the hub refuses the key in
 /// use as `rotated`, and no chain it served shows a renewal (yet).
 pub const REFUSED_ROTATED: &str = "rotated";
+/// `link.rotation.reason` of state `unreadable` (R6 review A7).
+pub const UNREADABLE_REASON: &str = "staged_key_unreadable";
 
 /// What this device says about holding only a retired key — in the alarm,
 /// the logs and `agent status` — worded for the likeliest case too: this
@@ -411,14 +478,19 @@ fn expiry(staged: &StagedSeed) -> u64 {
 
 /// The key in use signed in at `since`: the hub had not retired it then — a
 /// commit retires it in the same step — so no staging that expired before
-/// `since` was ever committed, nor can be any more. Those go.
-pub(super) fn drop_expired(paths: &Paths, current: &MachineIdentity, since: u64) {
+/// `since` was ever committed, nor can be by an honest hub. But that rests
+/// on the hub's word (it took the sign-in), so those are set aside, never
+/// deleted (R6 review A2): never tried at sign-in again, and taken back if
+/// this device's own verified chain names one after all ([`on_chain`]). One
+/// whose keys that chain names now (`named`, [`named_keys`]) is never set aside.
+pub(super) fn set_aside_expired(paths: &Paths, named: Option<([u8; 32], [u8; 32])>, current: &MachineIdentity, since: u64) {
     let store = FileSeedStore::for_instance(paths);
-    for staged in staged_seeds(paths, current) {
-        if expiry(&staged) < since {
-            tracing::info!("forgetting a staged identity key no renewal can take any more");
-            if let Err(error) = store.discard_staged(&staged.nonce) {
-                tracing::error!(%error, "cannot forget a staged identity key");
+    for staged in &staged_seeds(paths, current) {
+        let keys = staged.identity();
+        if expiry(staged) < since && named != Some((keys.sign_public(), keys.dh_public())) {
+            tracing::info!("setting aside a staged identity key no renewal should take any more");
+            if let Err(error) = store.expire(&staged.nonce) {
+                tracing::error!(%error, "cannot set aside a staged identity key");
             }
         }
     }
@@ -554,10 +626,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             }
             shared.rotation.lock().taken.insert(req.nonce, ready_ms);
             if staged.assurance == Assurance::OnDevice {
-                tracing::warn!(
-                    code = %chain::rotate_sas(&body),
-                    "an admin device renews this device's identity key and asks you to confirm it: type this code there (10 minutes)"
-                );
+                log_code(&chain::rotate_sas(&body));
             }
             (200, answer(ready_ms))
         }
@@ -591,6 +660,17 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             )
         }
     }
+}
+
+/// A high-assurance renewal waits for its code to be typed on the admin
+/// device: said at WARN without the code — the code is in the local settings
+/// and `droppen agent status` ([`status`]) — and the code itself at DEBUG at
+/// most (R6 review: logs are kept, and read by more than the person here).
+fn log_code(code: &str) {
+    tracing::warn!(
+        "an admin device renews this device's identity key and asks you to confirm it: its code is in this computer's Droppen settings (and `droppen agent status`) for 10 minutes"
+    );
+    tracing::debug!(%code, "the renewal's confirmation code");
 }
 
 /// A `rotation_staged` / `rotation_refused` nobody waits for any more: the
@@ -635,6 +715,8 @@ pub(super) fn late_answer(shared: &Shared, value: &Value) {
 /// once its attempt's ten minutes are over by `now`; one it took stays until
 /// it expired before `since` — when the key in use signed in, so nothing
 /// committed it — and beyond [`MAX_STAGINGS`] the oldest the hub took goes.
+/// "Goes" is set aside, never deleted (R6 review A2, [`set_aside_expired`]):
+/// only asked while the chain names the key in use, so it names none of them.
 fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u64) {
     let mut kept: Vec<&StagedSeed> = Vec::new();
     for staged in stagings {
@@ -646,8 +728,8 @@ fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u6
             continue;
         }
         if expired {
-            if let Err(error) = store.discard_staged(&staged.nonce) {
-                tracing::error!(%error, "cannot forget a staged identity key");
+            if let Err(error) = store.expire(&staged.nonce) {
+                tracing::error!(%error, "cannot set aside a staged identity key");
             }
         } else {
             kept.push(staged);
@@ -656,9 +738,9 @@ fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u6
     kept.sort_by_key(|s| s.accepted_ms);
     while kept.len() >= MAX_STAGINGS {
         let oldest = kept.remove(0);
-        tracing::warn!("more renewals staged on the hub than kept: forgetting the oldest staged identity key");
-        if let Err(error) = store.discard_staged(&oldest.nonce) {
-            tracing::error!(%error, "cannot forget a staged identity key");
+        tracing::warn!("more renewals staged on the hub than kept: setting aside the oldest staged identity key");
+        if let Err(error) = store.expire(&oldest.nonce) {
+            tracing::error!(%error, "cannot set aside a staged identity key");
         }
     }
 }
@@ -773,13 +855,19 @@ pub(super) fn on_pending(shared: &Shared, value: &Value, text: &mpsc::UnboundedS
 /// the next signs in with the new one, to promote; renewed to keys it does
 /// not hold — [`foreign`].
 pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
-    let verdict = {
-        let staged = identities(&staged_seeds(&shared.paths, &shared.identity));
-        let st = shared.state.lock().expect("agent state");
-        verdict(&st, &shared.identity, &staged)
-    };
+    let store = FileSeedStore::for_instance(&shared.paths);
+    // One set aside as expired that the chain names after all: back among
+    // the stagings first, to be signed in with and promoted.
+    let keys = named_keys(&shared.state.lock().expect("agent state"));
+    if let Some(keys) = keys.filter(|k| *k != (shared.identity.sign_public(), shared.identity.dh_public())) {
+        restore_named(&store, keys, &shared.identity);
+    }
+    let staged = identities(&staged_seeds(&shared.paths, &shared.identity));
+    let any_unreadable = !store.unreadable().is_empty();
+    let verdict = verdict(&shared.state.lock().expect("agent state"), &shared.identity, &staged, any_unreadable);
     match &verdict {
         Verdict::Unchanged => {}
+        Verdict::Unreadable => unreadable(shared, &store),
         Verdict::Renewed => {
             let mut inner = shared.rotation.lock();
             inner.committed = true;
@@ -804,12 +892,20 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
 /// (which offer to add this device again under a new identity,
 /// [`re_enroll_fresh`]), and the link stops; the old seed stays until then.
 fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
-    {
+    let evidence = {
         let mut st = shared.state.lock().expect("agent state");
         st.rotation.foreign_ms.get_or_insert(now_ms());
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.to_string());
         st.rotation.refused_ms = None;
-    }
+        st.rotation.unreadable_ms = None;
+        // R6 review A3: once, on purpose, the key in use signs in (unless a
+        // sign-in of it was answered `rotated` already).
+        let first = st.rotation.evidence_ms.is_none();
+        if first {
+            st.rotation.evidence_ms = Some(now_ms());
+        }
+        first.then(|| (st.hub.clone(), st.account.clone(), st.machine.clone()))
+    };
     tracing::warn!(
         alarm = "foreign_rotation",
         seq,
@@ -819,7 +915,85 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     super::link::raise_alarm(shared, REPLACED_ELSEWHERE.to_string());
     shared.save();
     shared.cancel.cancel();
+    if let Some((origin, account, machine)) = evidence {
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(leave_evidence(origin, account, machine, shared.identity.clone()));
+            }
+            Err(_) => tracing::warn!("no runtime to sign in with the retired key once: the hub keeps no evidence of it"),
+        }
+    }
 }
+
+/// How long the one sign-in that leaves evidence may take, every try.
+const EVIDENCE_WAIT: Duration = Duration::from_secs(20);
+/// How often it is tried when the hub cannot be reached at all.
+const EVIDENCE_TRIES: u32 = 3;
+
+/// R6 review A3: this device's own verified chain renewed it to keys it does
+/// not hold — whoever else held its key won, and without a sign-in with the
+/// old key the hub would keep no evidence of it. One sign-in with the key in
+/// use, on purpose: an honest hub answers `rotated` and records the dispute
+/// (graded evidence, §3.8). Nothing is done on that connection; it closes.
+/// Tried again (a few times) only when no hub answered at all.
+async fn leave_evidence(origin: String, account: String, machine: String, identity: Arc<MachineIdentity>) {
+    for attempt in 1..=EVIDENCE_TRIES {
+        let once = async {
+            let (mut sink, mut source, nonce) = super::hub::dial(&origin).await?;
+            let answer = super::hub::login(&mut sink, &mut source, &identity, &account, &machine, &origin, nonce).await;
+            let _ = futures_util::SinkExt::close(&mut sink).await;
+            Ok::<_, String>(answer)
+        };
+        match tokio::time::timeout(EVIDENCE_WAIT, once).await {
+            Ok(Ok(Err(super::hub::LoginError::Refused { code, .. }))) if code == REFUSED_ROTATED => {
+                tracing::info!("signed in once with the retired identity key: the hub answered `rotated` and keeps the evidence");
+                return;
+            }
+            Ok(Ok(Ok(_))) => {
+                tracing::warn!("signed in once with the retired identity key, and the hub took it: it does not show the renewal");
+                return;
+            }
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(%error, "signed in once with the retired identity key: the hub refused it otherwise");
+                return;
+            }
+            Ok(Err(error)) => tracing::warn!(%error, attempt, "cannot reach the hub to sign in once with the retired identity key"),
+            Err(_) => tracing::warn!(attempt, "the hub did not answer the one sign-in with the retired identity key in time"),
+        }
+        tokio::time::sleep(Duration::from_secs(5 * u64::from(attempt))).await;
+    }
+}
+
+/// R6 review A7: the chain renewed this device to keys it does not hold
+/// while a staged seed's file does not read — the renewal may be to that
+/// one. Not "replaced elsewhere": nothing archived, nothing offered; alarmed
+/// ("staged key unreadable", the files named in the log), noted for the
+/// settings, and the link stops until the file is put right.
+fn unreadable(shared: &Arc<Shared>, store: &FileSeedStore) {
+    let files: Vec<String> = store.unreadable().iter().map(|p| p.display().to_string()).collect();
+    tracing::error!(
+        alarm = "staged_key_unreadable",
+        ?files,
+        "the device chain renewed this device to keys only a staged identity key that does not read may hold; the link stops"
+    );
+    let news = {
+        let mut st = shared.state.lock().expect("agent state");
+        let news = st.rotation.unreadable_ms.is_none();
+        st.rotation.unreadable_ms.get_or_insert(now_ms());
+        news
+    };
+    if news {
+        super::link::raise_alarm(shared, STAGED_KEY_UNREADABLE.to_string());
+    }
+    shared.save();
+    shared.cancel.cancel();
+}
+
+/// What this device says when a staged key it may have been renewed to does
+/// not read (R6 review A7).
+pub const STAGED_KEY_UNREADABLE: &str = "Staged key unreadable: this device's identity key was renewed, and the staged key it may \
+     have been renewed to does not read (a damaged file beside its key). It stopped connecting: put the file right, or remove \
+     this device and add it again.";
 
 /// Whether `st`'s chain names this device with other keys than `identity`
 /// (a renewal the link has not taken yet, or one made elsewhere): nothing
@@ -840,26 +1014,28 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
 /// committed while this device slept, its chain still stale, would make
 /// that key retired, and the hub keeps a retired key's sign-in as evidence
 /// against this very device.
-pub fn device_role_may_sign_in(shared: &Shared) -> bool {
+pub(super) fn device_role_may_sign_in(shared: &Shared) -> bool {
     device_role_may_sign_in_at(shared, now_ms())
 }
 
 /// [`device_role_may_sign_in`] at wall-clock time `now`.
-pub fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
+pub(super) fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
     let staged = FileSeedStore::for_instance(&shared.paths).stagings().is_ok_and(|s| !s.is_empty());
     !staged || shared.rotation.key_in_use_confirmed(now)
 }
 
-/// Whether `identity` is a seed this device must never use again: one a
-/// renewal retired on the chain it knows (`state.json`'s), or one it
-/// archived ([`re_enroll_fresh`]).
+/// Whether `identity` is a seed this device must never use again: one it
+/// archived ([`re_enroll_fresh`]), or one the chain it knows (`state.json`'s)
+/// renewed away to keys it holds in no staging, waiting or set aside
+/// ([`Verdict::Foreign`]). Never one the chain renewed to a key it staged —
+/// its own renewal, to be taken, not wiped (R6 review A1) — nor one whose
+/// renewal a staged seed that does not read may hold ([`Verdict::Unreadable`]).
 pub fn seed_retired(paths: &Paths, identity: &MachineIdentity) -> bool {
-    let on_chain = AgentState::load(paths)
-        .ok()
-        .flatten()
-        .and_then(|st| st.chain)
-        .is_some_and(|c| c.is_retired_key(&identity.sign_public()) || c.is_retired_key(&identity.dh_public()));
-    on_chain || archived(paths, identity)
+    if archived(paths, identity) {
+        return true;
+    }
+    let Ok(Some(st)) = AgentState::load(paths) else { return false };
+    matches!(stored_verdict(paths, &st, identity), Verdict::Foreign { .. })
 }
 
 /// Whether `identity`'s seed is one [`re_enroll_fresh`] archived.
@@ -878,51 +1054,124 @@ pub fn archived(paths: &Paths, identity: &MachineIdentity) -> bool {
 }
 
 /// The identity an enrollment signs up with (every path: `agent enroll`, the
-/// local settings' sign-in): the seed in use — or, when it is retired on
-/// the chain this device knows or one it archived, a fresh one, the old
+/// local settings' sign-in): the seed in use — or, when it is one this
+/// device must never use again ([`seed_retired`]), a fresh one, the old
 /// archived and its enrollment forgotten ([`re_enroll_fresh`]). A retired key
 /// never joins again (the chain refuses it, `KEY_RETIRED`).
 pub fn identity_for_enrolling(paths: &Paths) -> Result<MachineIdentity, String> {
+    if let Some(identity) = finish_re_enroll(paths)? {
+        return Ok(identity);
+    }
     if let Some(stored) = FileSeedStore::for_instance(paths).load()? {
         let current = MachineIdentity::from_seed(&stored.seed);
         if seed_retired(paths, &current) {
-            tracing::warn!("the identity key in use was retired by a renewal: this enrollment uses a fresh one");
+            tracing::warn!("the identity key in use was replaced elsewhere (or archived): this enrollment uses a fresh one");
             return re_enroll_fresh(paths, now_ms());
         }
     }
     super::load_or_create(paths).map(|(identity, _)| identity)
 }
 
+/// `<instance dir>/agent/re-enroll-fresh.json`: [`re_enroll_fresh`] began and
+/// has not finished (R6 review, Info): whatever start comes next finishes it
+/// ([`finish_re_enroll`]).
+fn re_enroll_marker(paths: &Paths) -> std::path::PathBuf {
+    super::key_path(paths).with_file_name("re-enroll-fresh.json")
+}
+
 /// "Add this device again with a new identity" (§3.8 「只剩退役钥时」): for a
 /// device left holding only a retired key, which no rule lets renew in
 /// place. The link must be stopped first ([`super::control::Control::re_enroll_fresh`]).
 ///
-/// The seed in use is archived as `machine-key.retired-<ms>.json` — kept,
-/// never loaded again — and a staged one dropped; the old enrollment is
-/// forgotten (`state.json`, the machine keys, the streams' store, the other
-/// devices' keys); and a fresh seed is made: the instance is back at "enter
-/// a registration code", and joins under a new id. Archived first, so a
-/// crash anywhere never leaves the old seed in use without its enrollment.
+/// Refused when this device's own chain renewed it to a key it staged
+/// (waiting, or set aside as expired) — that is its own renewal, which it
+/// takes; nothing is archived or forgotten — or when a staged key that does
+/// not read may be the one (R6 review A1, A7).
+///
+/// Otherwise the seed in use is archived as `machine-key.retired-<ms>.json` —
+/// kept, never loaded again — and the staged ones dropped; the old enrollment
+/// is forgotten (the other devices' keys and copies, the machine keys, the
+/// streams' store, `state.json` last); and a fresh seed is made: the instance
+/// is back at "enter a registration code", and joins under a new id. A
+/// marker is written first and removed last, so a crash anywhere in between
+/// is finished at the next start ([`finish_re_enroll`]) — never the old seed
+/// in use without its enrollment, never an enrollment without its seed.
 pub fn re_enroll_fresh(paths: &Paths, now: u64) -> Result<MachineIdentity, String> {
+    if let Some(identity) = finish_re_enroll(paths)? {
+        return Ok(identity);
+    }
+    let store = FileSeedStore::for_instance(paths);
+    if let (Ok(Some(seed)), Ok(Some(st))) = (store.load(), AgentState::load(paths)) {
+        match stored_verdict(paths, &st, &MachineIdentity::from_seed(&seed.seed)) {
+            Verdict::Renewed => {
+                return Err(
+                    "this device's own chain renewed it to an identity key it staged: it takes that key, and is not added again"
+                        .into(),
+                )
+            }
+            Verdict::Unreadable => {
+                return Err(
+                    "a staged identity key of this device does not read, and may be the one its chain renewed it to: put the file right first"
+                        .into(),
+                )
+            }
+            Verdict::Unchanged | Verdict::Foreign { .. } => {}
+        }
+    }
+    let marker = re_enroll_marker(paths);
+    super::write_private(&marker, b"{}")?;
+    super::sync_dir(&marker);
+    forget_for_a_fresh_identity(paths, now)
+}
+
+/// A [`re_enroll_fresh`] a crash interrupted, finished (at the link's start,
+/// the control's, and before any sign-up): the new identity, or `None` when
+/// none was interrupted.
+pub fn finish_re_enroll(paths: &Paths) -> Result<Option<MachineIdentity>, String> {
+    if !re_enroll_marker(paths).exists() {
+        return Ok(None);
+    }
+    tracing::warn!("adding this device again under a new identity was interrupted: finishing it");
+    forget_for_a_fresh_identity(paths, now_ms()).map(Some)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: [`forget_for_a_fresh_identity`] stops right after archiving, as
+    /// a crash there would.
+    static CRASH_AFTER_ARCHIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`re_enroll_fresh`]'s steps after its marker; each may run again.
+fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentity, String> {
     let current = super::key_path(paths);
     if current.exists() {
-        let archived = archived_key_path(paths, now);
+        // Whatever seed is in place: the old one, or (a crash after the
+        // fresh one was made) one never enrolled anywhere.
+        let archived = free_archive_path(paths, now);
         std::fs::rename(&current, &archived).map_err(|e| format!("{} → {}: {e}", current.display(), archived.display()))?;
         super::sync_dir(&current);
         tracing::warn!(archived = %archived.display(), "archived this device's retired identity key; it is never used again");
     }
+    #[cfg(test)]
+    if CRASH_AFTER_ARCHIVE.with(|c| c.replace(false)) {
+        return Err("crashed after archiving (test)".into());
+    }
     FileSeedStore::for_instance(paths).discard_all_staged()?;
     super::state::forget_enrollment_leftovers(paths)?;
+    crate::aggregator::forget_all(paths)?;
     match std::fs::remove_file(super::state::state_path(paths)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.to_string()),
     }
-    crate::aggregator::forget_all(paths)?;
     let (identity, created) = super::load_or_create(paths)?;
     if !created {
         return Err("a seed was in place after the old one was archived".into());
     }
+    let marker = re_enroll_marker(paths);
+    std::fs::remove_file(&marker).map_err(|e| format!("{}: {e}", marker.display()))?;
+    super::sync_dir(&marker);
     tracing::warn!(
         fingerprint = %super::control::machine_fingerprint(&identity),
         "made a fresh identity for this device: add it to the account again with a new registration code"
@@ -934,6 +1183,19 @@ pub fn re_enroll_fresh(paths: &Paths, now: u64) -> Result<MachineIdentity, Strin
 /// `<instance dir>/agent/machine-key.retired-<ms>.json`.
 pub fn archived_key_path(paths: &Paths, now: u64) -> std::path::PathBuf {
     super::key_path(paths).with_file_name(format!("machine-key.retired-{now}.json"))
+}
+
+/// [`archived_key_path`], or beside it when that is taken (an archive is
+/// never written over: it is what keeps its seed from being used again).
+fn free_archive_path(paths: &Paths, now: u64) -> std::path::PathBuf {
+    let first = archived_key_path(paths, now);
+    if !first.exists() {
+        return first;
+    }
+    (1u32..)
+        .map(|n| first.with_file_name(format!("machine-key.retired-{now}-{n}.json")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
 }
 
 /// Take the staged seed the chain names (see the module docs): only once
@@ -953,6 +1215,12 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
         staged.clone()
     };
     let previous = super::control::machine_fingerprint(&shared.identity);
+    // The push keys follow the identity key (R6 review W4): noted before the
+    // rename, so a crash after it still renews them at the next start.
+    {
+        shared.state.lock().expect("agent state").rotation.push_renew = true;
+    }
+    shared.save();
     store.promote(&new.nonce)?;
     let new = new.identity();
     {
@@ -961,6 +1229,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
         st.rotation.previous_fingerprint = Some(previous.clone());
         st.rotation.foreign_ms = None;
         st.rotation.foreign_reason = None;
+        st.rotation.unreadable_ms = None;
     }
     shared.save();
     {
@@ -984,7 +1253,9 @@ pub struct Status {
     /// `renewed` (within the last day); `refused` (the hub refuses the key in
     /// use as renewed but showed no renewal: it retries, nothing else
     /// changes); `foreign` (its own chain gave its id keys it does not hold:
-    /// the link stopped, and it may be added again under a new identity).
+    /// the link stopped, and it may be added again under a new identity);
+    /// `unreadable` (renewed, and a staged key it may have been renewed to
+    /// does not read: the link stopped until the file is put right).
     pub state: String,
     /// The code to type on the admin device (`XXXX-XXXX`), while a
     /// high-assurance renewal waits.
@@ -995,7 +1266,8 @@ pub struct Status {
     pub renewed_ms: Option<u64>,
     /// The fingerprint it had before.
     pub previous_fingerprint: Option<String>,
-    /// Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`.
+    /// Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,
+    /// `staged_key_unreadable` for `unreadable`.
     pub reason: Option<String>,
 }
 
@@ -1012,6 +1284,13 @@ pub fn status(paths: &Paths, st: Option<&AgentState>, now: u64) -> Status {
         return Status {
             state: "foreign".into(),
             reason: st.rotation.foreign_reason.clone(),
+            ..Status::default()
+        };
+    }
+    if st.rotation.unreadable_ms.is_some() {
+        return Status {
+            state: "unreadable".into(),
+            reason: Some(UNREADABLE_REASON.into()),
             ..Status::default()
         };
     }
@@ -1109,23 +1388,34 @@ mod tests {
             ..staged(&paths, seed, Assurance::Auto, created)
         };
         let now = 100 * STAGED_FOR_MS;
+        let st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
         let nonces = |store: &FileSeedStore| -> Vec<u8> { store.stagings().unwrap().iter().map(|s| s.nonce[0]).collect() };
+        // What "goes" is set aside, never deleted (R6 review A2).
+        let aside = |store: &FileSeedStore| -> Vec<u8> {
+            let mut n: Vec<u8> = store.expired().iter().map(|s| s.nonce[0]).collect();
+            n.sort_unstable();
+            n
+        };
         store.stage(&at(10, 1, now - 10, Some(now - 9))).unwrap(); // taken
         store.stage(&at(11, 2, now - 8, None)).unwrap(); // not answered yet: within its attempt
         store.stage(&at(13, 4, now - ATTEMPT_MS - 1, None)).unwrap(); // never answered, its attempt over
         store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap(); // taken, expired
         make_room(&store, &staged_seeds(&paths, &current), now, now);
         assert_eq!(nonces(&store), vec![1, 2], "the expired ones make room; the taken one and the young unanswered one stay");
+        assert_eq!(aside(&store), vec![3, 4], "set aside, not deleted");
+        assert!(store.expired_path(&[3; 16]).exists() && !store.staging_path(&[3; 16]).exists());
+        assert!(staged_seeds(&paths, &current).iter().all(|s| s.nonce[0] != 3), "never tried at sign-in again");
         // The unanswered one goes once its attempt is over.
-        drop_expired(&paths, &current, now - 8 + ATTEMPT_MS + 1);
+        set_aside_expired(&paths, named_keys(&st), &current, now - 8 + ATTEMPT_MS + 1);
         assert_eq!(nonces(&store), vec![1]);
+        assert_eq!(aside(&store), vec![2, 3, 4]);
         // Expired, but the key in use last signed in before it expired: kept.
-        store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap();
+        store.restore(&[3; 16]).unwrap();
         make_room(&store, &staged_seeds(&paths, &current), now - 2 * STAGED_FOR_MS, now);
         assert_eq!(nonces(&store), vec![3, 1]);
-        drop_expired(&paths, &current, now - STAGED_FOR_MS - 1);
+        set_aside_expired(&paths, named_keys(&st), &current, now - STAGED_FOR_MS - 1);
         assert_eq!(nonces(&store), vec![3, 1], "not expired then");
-        drop_expired(&paths, &current, now);
+        set_aside_expired(&paths, named_keys(&st), &current, now);
         assert_eq!(nonces(&store), vec![1], "the key in use signed in after it expired: never committed");
         // At most four the hub took: the oldest goes for a fifth.
         for n in 4..7u8 {
@@ -1134,6 +1424,7 @@ mod tests {
         assert_eq!(nonces(&store).len(), 4);
         make_room(&store, &staged_seeds(&paths, &current), now, now);
         assert_eq!(nonces(&store), vec![4, 5, 6], "room for one more, the oldest gone");
+        assert!(aside(&store).contains(&1), "set aside too");
         // A staging of the key in use, or of another instance, is not one.
         let in_use = store.load().unwrap().unwrap().seed;
         store.stage(&StagedSeed { seed: in_use, ..at(0, 9, now, None) }).unwrap();
@@ -1202,6 +1493,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotenrol2");
         let (current, _) = super::super::load_or_create(&paths).unwrap();
+        renewed_to(&current, &MachineIdentity::from_seed(&[66; 32])).save(&paths).unwrap();
+        assert!(seed_retired(&paths, &current), "retired on the chain it knows");
+        let fresh = identity_for_enrolling(&paths).unwrap();
+        assert_ne!(fresh.sign_public(), current.sign_public());
+        assert!(archived(&paths, &current), "the retired seed is archived, kept");
+        assert!(AgentState::load(&paths).unwrap().is_none(), "the old enrollment is forgotten");
+        assert_eq!(identity_for_enrolling(&paths).unwrap().sign_public(), fresh.sign_public(), "and the fresh one stays");
+    }
+
+    /// m-1's state with a v3 chain that added it with `current`'s keys, then
+    /// renewed it to `to`'s.
+    fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let d1 = MachineIdentity::from_seed(&[2; 32]);
         let genesis = chain::genesis_draft(
@@ -1240,11 +1543,10 @@ mod tests {
             }),
         );
         push(&mut hub, epoch(0));
-        let other = MachineIdentity::from_seed(&[66; 32]);
         let mut r = chain::HostRotation {
             host: "m-1".into(),
-            sign_key: other.sign_public(),
-            dh_key: other.dh_public(),
+            sign_key: to.sign_public(),
+            dh_key: to.dh_public(),
             staged_seq: hub.seq(),
             staged_head: hub.head(),
             nonce: [1; 16],
@@ -1254,18 +1556,165 @@ mod tests {
         };
         let body = r.body("a-1", &current.sign_public(), &current.dh_public());
         r.old_sig = sig::sign(current.signing_key(), sig::HOST_ROTATE, &body);
-        r.new_sig = sig::sign(other.signing_key(), sig::HOST_ROTATE, &body);
+        r.new_sig = sig::sign(to.signing_key(), sig::HOST_ROTATE, &body);
         push(&mut hub, chain::Action::RotateHostKey(r));
         push(&mut hub, epoch(1));
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
         assert!(st.absorb(&entries, now_ms()).error.is_none());
+        st
+    }
+
+    /// R6 review A1: an honest host whose own renewal was committed — its
+    /// chain names a key it staged, waiting or set aside as expired — is
+    /// never taken for one replaced elsewhere: no sign-in path (the local
+    /// settings' sign-in, `agent enroll`) and no "add again" wipes it.
+    #[tokio::test]
+    async fn an_honest_hosts_own_renewal_is_never_wiped_for_a_fresh_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "rothonest");
+        let (current, _) = super::super::load_or_create(&paths).unwrap();
+        let store = FileSeedStore::for_instance(&paths);
+        let mine = staged(&paths, 8, Assurance::Auto, 5);
+        store.stage(&mine).unwrap();
+        renewed_to(&current, &mine.identity()).save(&paths).unwrap();
+        let untouched = |why: &str| {
+            assert!(!seed_retired(&paths, &current), "{why}: its own renewal");
+            assert!(!archived(&paths, &current), "{why}: nothing archived");
+            assert!(crate::agent::state::exists(&paths), "{why}: the enrollment stays");
+            assert_eq!(
+                MachineIdentity::from_seed(&store.load().unwrap().unwrap().seed).sign_public(),
+                current.sign_public(),
+                "{why}: the seed in use stays (the link promotes the staged one)"
+            );
+            assert_eq!(kept_stagings(&store, &current).len(), 1, "{why}: the staged seed stays");
+        };
+        let st = AgentState::load(&paths).unwrap().unwrap();
+        assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Renewed);
+        assert_eq!(identity_for_enrolling(&paths).unwrap().sign_public(), current.sign_public());
+        untouched("signing up");
+        let refused = re_enroll_fresh(&paths, 77).err().expect("refused");
+        assert!(refused.contains("staged"), "{refused}");
+        untouched("adding it again");
+        let control = super::super::control::Control::new(paths.clone());
+        assert!(!control.renew_retired_seed().await.unwrap(), "the local settings' sign-in");
+        untouched("the local settings' sign-in");
+        // However long ago it expired, one the chain names is never set aside (A2).
+        set_aside_expired(&paths, named_keys(&st), &current, u64::MAX);
+        assert_eq!(store.stagings().unwrap().len(), 1);
+        // Set aside as expired: still its own.
+        store.expire(&mine.nonce).unwrap();
+        assert!(store.stagings().unwrap().is_empty());
+        assert!(identity_for_enrolling(&paths).is_ok() && re_enroll_fresh(&paths, 78).is_err());
+        assert!(!control.renew_retired_seed().await.unwrap());
+        untouched("set aside");
+        // No staging of it at all: replaced elsewhere — only then a fresh one.
+        store.discard_all_staged().unwrap();
+        assert!(seed_retired(&paths, &current));
+        assert!(control.renew_retired_seed().await.unwrap());
+        assert!(archived(&paths, &current));
+    }
+
+    /// R6 review A7: a staged seed whose file does not read, while the chain
+    /// renewed this device to keys it holds in no other: its own verdict,
+    /// never "replaced elsewhere" — the seed in use is not retired, and
+    /// adding the device again is refused until the file is put right.
+    #[test]
+    fn an_unreadable_staging_is_never_taken_for_a_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "rotunread");
+        let (current, _) = super::super::load_or_create(&paths).unwrap();
+        let store = FileSeedStore::for_instance(&paths);
+        let mine = staged(&paths, 8, Assurance::Auto, 5);
+        let st = renewed_to(&current, &mine.identity());
         st.save(&paths).unwrap();
-        assert!(seed_retired(&paths, &current), "retired on the chain it knows");
-        let fresh = identity_for_enrolling(&paths).unwrap();
-        assert_ne!(fresh.sign_public(), current.sign_public());
-        assert!(archived(&paths, &current), "the retired seed is archived, kept");
-        assert!(AgentState::load(&paths).unwrap().is_none(), "the old enrollment is forgotten");
-        assert_eq!(identity_for_enrolling(&paths).unwrap().sign_public(), fresh.sign_public(), "and the fresh one stays");
+        // The staged file is damaged.
+        super::super::write_private(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
+        assert_eq!(store.unreadable().len(), 1);
+        assert_eq!(verdict(&st, &current, &[], true), Verdict::Unreadable);
+        assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Unreadable);
+        assert!(!seed_retired(&paths, &current));
+        assert!(re_enroll_fresh(&paths, 5).err().is_some_and(|e| e.contains("does not read")));
+        assert!(!archived(&paths, &current) && crate::agent::state::exists(&paths));
+        // One set aside as expired that does not read counts the same.
+        std::fs::rename(store.staging_path(&mine.nonce), store.expired_path(&mine.nonce)).unwrap();
+        assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Unreadable);
+        // Put right: its own renewal.
+        std::fs::remove_file(store.expired_path(&mine.nonce)).unwrap();
+        store.stage(&mine).unwrap();
+        assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Renewed);
+    }
+
+    /// R6 review, Info: a crash inside "add this device again" — the seed
+    /// archived, `state.json` still there — is finished at the next start
+    /// (or sign-up): never the old enrollment without its seed.
+    #[test]
+    fn adding_again_cut_short_by_a_crash_is_finished_at_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "rotcrash");
+        let (old, _) = super::super::load_or_create(&paths).unwrap();
+        renewed_to(&old, &MachineIdentity::from_seed(&[66; 32])).save(&paths).unwrap();
+        crate::agent::state::store_machine_key(&paths, 0, &[7; 32]).unwrap();
+        FileSeedStore::for_instance(&paths).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
+        CRASH_AFTER_ARCHIVE.with(|c| c.set(true));
+        assert!(re_enroll_fresh(&paths, 1234).is_err(), "crashed");
+        // What the crash left: the seed archived, the enrollment still there.
+        assert!(!super::super::key_path(&paths).exists());
+        assert!(archived(&paths, &old));
+        assert!(crate::agent::state::exists(&paths));
+        assert!(re_enroll_marker(&paths).exists());
+        // The next start finishes it.
+        let fresh = finish_re_enroll(&paths).unwrap().expect("finished");
+        assert_ne!(fresh.sign_public(), old.sign_public());
+        assert!(!crate::agent::state::exists(&paths), "the old enrollment is forgotten");
+        assert!(!crate::agent::state::keys_path(&paths).exists());
+        assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
+        assert!(!re_enroll_marker(&paths).exists());
+        assert_eq!(super::super::load_or_create(&paths).unwrap().0.sign_public(), fresh.sign_public());
+        assert!(finish_re_enroll(&paths).unwrap().is_none(), "nothing left to finish");
+        // Cut short again, and a sign-up comes first: it finishes it too.
+        renewed_to(&fresh, &MachineIdentity::from_seed(&[67; 32])).save(&paths).unwrap();
+        CRASH_AFTER_ARCHIVE.with(|c| c.set(true));
+        assert!(re_enroll_fresh(&paths, 1235).is_err());
+        let again = identity_for_enrolling(&paths).unwrap();
+        assert!(again.sign_public() != fresh.sign_public() && again.sign_public() != old.sign_public());
+        assert!(!crate::agent::state::exists(&paths) && !re_enroll_marker(&paths).exists());
+        assert!(archived(&paths, &old) && archived(&paths, &fresh), "both archived, neither written over");
+    }
+
+    /// A log line, kept for a test.
+    #[derive(Clone, Default)]
+    struct Logs(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Logs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// R6 review, Info: the confirmation code is never logged at WARN (nor
+    /// INFO) — the person reads it in the settings — only at DEBUG.
+    #[test]
+    fn the_confirmation_code_is_logged_at_debug_at_most() {
+        let at = |level: tracing::Level| {
+            let logs = Logs::default();
+            let writer = logs.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .with_max_level(level)
+                .finish();
+            tracing::subscriber::with_default(subscriber, || log_code("ABCD-1234"));
+            let text = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+            text
+        };
+        let info = at(tracing::Level::INFO);
+        assert!(info.contains("asks you to confirm it"), "{info}");
+        assert!(!info.contains("ABCD-1234"), "{info}");
+        assert!(at(tracing::Level::DEBUG).contains("ABCD-1234"));
     }
 
     /// `link.rotation` from the files: idle; staged (a code only for high
@@ -1291,10 +1740,11 @@ mod tests {
         assert_eq!(shown.code_expires_ms, Some(now - 1_000 + CODE_FOR_MS));
         // A staged seed older than any staging the hub keeps (and not on the chain) is not shown…
         assert_eq!(status(&paths, Some(&st), now + STAGED_FOR_MS).state, "idle");
-        // …and is forgotten once the key in use signed in after it expired.
+        // …and is set aside once the key in use signed in after it expired.
         assert_eq!(staged_seeds(&paths, &current).len(), 1, "not on reading alone");
-        drop_expired(&paths, &current, now + STAGED_FOR_MS);
+        set_aside_expired(&paths, named_keys(&st), &current, now + STAGED_FOR_MS);
         assert!(store.staged().unwrap().is_none());
+        assert_eq!(status(&paths, Some(&st), now).state, "idle", "one set aside is not shown");
         st.rotation = RotationNote {
             renewed_ms: Some(now),
             previous_fingerprint: Some("aaaa".into()),
@@ -1309,6 +1759,9 @@ mod tests {
         st.rotation.refused_ms = Some(now);
         let shown = status(&paths, Some(&st), now + 1);
         assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("refused", Some(REFUSED_ROTATED)));
+        st.rotation.unreadable_ms = Some(now);
+        let shown = status(&paths, Some(&st), now + 1);
+        assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("unreadable", Some(UNREADABLE_REASON)));
         st.rotation.foreign_ms = Some(now);
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.into());
         let shown = status(&paths, Some(&st), now + 1);

@@ -261,8 +261,11 @@ struct Script {
     features: Vec<&'static str>,
     /// The sign keys it signs in; any other gets `error denied` and 4401…
     accept: Vec<[u8; 32]>,
-    /// …but these get `error rotated`.
+    /// …but these get `error rotated`…
     rotated: Vec<[u8; 32]>,
+    /// …and these `error unavailable` and close 1011: the hub's own trouble
+    /// (its database), whatever the key (contract §11).
+    unavailable: Vec<[u8; 32]>,
     stage: StageAnswer,
 }
 
@@ -272,6 +275,7 @@ impl Script {
             features: vec!["rotate/1"],
             accept,
             rotated: Vec::new(),
+            unavailable: Vec::new(),
             stage: StageAnswer::Staged,
         }
     }
@@ -358,6 +362,18 @@ impl FakeHub {
                     }
                     .verify(key, &seen.sig)
                 };
+                if now.unavailable.iter().any(signed) {
+                    logins.lock().unwrap().push(seen);
+                    let error = json!({"t": "error", "code": "unavailable", "message": "the hub cannot sign anyone in now"});
+                    let _ = sink.send(Message::Text(error.to_string().into())).await;
+                    let _ = sink
+                        .send(Message::Close(Some(CloseFrame {
+                            code: 1011.into(),
+                            reason: "unavailable".into(),
+                        })))
+                        .await;
+                    continue;
+                }
                 if !now.accept.iter().any(signed) {
                     let code = if now.rotated.iter().any(signed) { "rotated" } else { "denied" };
                     logins.lock().unwrap().push(seen);
@@ -766,6 +782,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(logins[0].by(&old, &hub.url));
     let st = AgentState::load(&a.paths).unwrap().unwrap();
     assert!(st.rotation.renewed_ms.is_some());
+    assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review W4)");
     assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!(shown.state, "renewed");
@@ -985,7 +1002,7 @@ async fn at_start_a_staged_key_the_chain_names_is_taken() {
     let restarts = Arc::new(AtomicUsize::new(0));
     let shared = a.shared(&hub.url, &restarts);
     assert_eq!(
-        rotation::verdict(&shared.state.lock().unwrap(), &old, std::slice::from_ref(&new)),
+        rotation::verdict(&shared.state.lock().unwrap(), &old, std::slice::from_ref(&new), false),
         Verdict::Renewed,
         "the saved chain names the staged key"
     );
@@ -1141,8 +1158,11 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
         .find(|s| s.nonce == [9; 16])
         .unwrap()
         .created_ms;
-    rotation::drop_expired(&a.paths, &machine(), made + rotation::ATTEMPT_MS + 1);
+    let named = rotation::named_keys(&shared.state.lock().unwrap());
+    rotation::set_aside_expired(&a.paths, named, &machine(), made + rotation::ATTEMPT_MS + 1);
     assert_eq!(a.nonces(), vec![[7; 16]]);
+    let aside: Vec<[u8; 16]> = FileSeedStore::for_instance(&a.paths).expired().iter().map(|s| s.nonce).collect();
+    assert_eq!(aside, vec![[9; 16]], "set aside, never deleted (R6 review A2)");
     shared.cancel.cancel();
     let _ = task.await;
 }
@@ -1162,28 +1182,44 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // It staged a key of its own, too.
     let eph = DhKeypair::from_secret([5; 32]);
     assert_eq!(rotate(&shared, &a.request([7; 16], &eph, 0)).await.0, 200);
+    // The hub committed the thief's renewal: the old key is retired there.
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept = vec![thief().sign_public()];
+        script.rotated = vec![old.sign_public()];
+    }
+    let before = hub.logins().len();
     let entries = a.renew_to(&thief());
     hub.send_entries(&entries);
     tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
     assert!(shared.cancel.is_cancelled());
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "the old seed stays");
     assert_eq!(restarts.load(Ordering::SeqCst), 0, "nothing promoted");
+    // R6 review A3: ONE sign-in with the old key, on purpose, so the hub
+    // answers `rotated` and keeps the evidence of the dispute.
+    until("the one sign-in that leaves evidence", || hub.logins().len() == before + 1).await;
+    let evidence = hub.logins()[before].clone();
+    assert!(evidence.by(&old, &hub.url) && !evidence.welcomed, "{evidence:?}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(hub.logins().len(), before + 1, "only one");
     let st = AgentState::load(&a.paths).unwrap().unwrap();
+    assert!(st.rotation.evidence_ms.is_some());
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
     assert_eq!(
-        rotation::verdict(&st, &old, &[]),
+        rotation::verdict(&st, &old, &[], false),
         Verdict::Foreign {
             seq: entries[0].seq(),
             fingerprint: rh_proto::identity::device_fingerprint_text(&thief().sign_public(), &thief().dh_public()),
         }
     );
-    // Started again, it does not connect.
+    // Started again, it does not connect — nor sign in on purpose again.
     let again = link::test_shared(&a.paths, st, old, super::streams::Handle::detached(), rotation::no_restart());
     let before = hub.logins().len();
     let task = tokio::spawn(link::run(again.clone()));
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("it stops at once").unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), before, "no sign-in with a key the chain retired");
 }
 
@@ -1246,7 +1282,10 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     let st = shared.state.lock().unwrap();
     assert_eq!(st.rotation.foreign_reason.as_deref(), Some(rotation::FOREIGN_RENEWED_ELSEWHERE));
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
+    assert!(st.rotation.evidence_ms.is_some(), "that sign-in, answered `rotated`, left the evidence");
     drop(st);
+    // No second sign-in on purpose (R6 review A3): that one was it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), 1);
     assert_eq!(b.seed_in_use().sign_public(), old.sign_public(), "the seed stays until a person adds it again");
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
@@ -1308,4 +1347,108 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// R6 review A2: a staging set aside as expired — judged on the hub's word
+/// (it took the key in use after the staging's day was over) — is never
+/// tried at sign-in; but when this device's own verified chain names it
+/// after all (a hub that committed it late), it is taken back, signed in
+/// with and promoted: never "replaced elsewhere".
+#[tokio::test]
+async fn a_staging_set_aside_as_expired_is_taken_back_when_the_chain_names_it() {
+    let mut a = Account::new();
+    let old = machine();
+    let new = a.stage([77; 32], [7; 16]);
+    let answer = a.staged_answer(&new, [7; 16]);
+    let store = FileSeedStore::for_instance(&a.paths);
+    store.expire(&[7; 16]).unwrap();
+    let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = a.shared(&hub.url, &restarts);
+    let task = signed_in(&shared).await;
+    let logins = hub.logins();
+    assert_eq!(logins.len(), 1, "set aside: never tried at sign-in: {logins:?}");
+    assert!(logins[0].by(&old, &hub.url));
+    assert!(a.nonces().is_empty());
+    assert_eq!(store.expired().len(), 1, "kept");
+    // The hub commits it late: the chain names it.
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept = vec![new.sign_public()];
+        script.rotated = vec![old.sign_public()];
+    }
+    let entries = a.renew(&answer, [7; 16], Assurance::Auto);
+    hub.send_entries(&entries);
+    until("the restart", || restarts.load(Ordering::SeqCst) == 1).await;
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
+    assert_eq!(a.seed_in_use().sign_public(), new.sign_public(), "promoted from the staging set aside");
+    assert!(store.expired().is_empty() && a.nonces().is_empty());
+    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    assert!(st.rotation.foreign_ms.is_none() && st.alarms.is_empty(), "never replaced elsewhere");
+    let logins = hub.logins();
+    assert!(logins[1..].iter().all(|l| l.by(&new, &hub.url)), "{logins:?}");
+}
+
+/// R6 review A5 (contract §11): the hub's own trouble — `error
+/// unavailable`, close 1011 — is transient: the staged key is tried again
+/// after the back-off, and the key in use never signs in on it. Only the
+/// hub's `denied` (it does not know the staged key) lets the key in use try.
+#[tokio::test]
+async fn a_hub_in_trouble_never_makes_the_key_in_use_sign_in() {
+    let a = Account::new();
+    let old = machine();
+    let new = a.stage([77; 32], [7; 16]);
+    let mut script = Script::rotating(vec![old.sign_public()]);
+    script.unavailable = vec![new.sign_public()];
+    let hub = FakeHub::start(script, a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = tokio::spawn(link::run(shared.clone()));
+    until("a second try", || hub.logins().len() >= 2).await;
+    let logins = hub.logins();
+    assert!(logins.iter().all(|l| l.by(&new, &hub.url) && !l.welcomed), "never the key in use: {logins:?}");
+    assert!(shared.rotation.session().is_none());
+    assert!(a.staged().is_some(), "still staged");
+    // The hub is well again and does not know the staged key: `denied`, then the key in use.
+    hub.script.lock().unwrap().unavailable.clear();
+    until("the key in use", || shared.rotation.session().is_some_and(|s| !s.staged_key)).await;
+    let logins = hub.logins();
+    let (denied, taken) = (&logins[logins.len() - 2], &logins[logins.len() - 1]);
+    assert!(denied.by(&new, &hub.url) && !denied.welcomed, "the staged key first: {logins:?}");
+    assert!(taken.by(&old, &hub.url) && taken.welcomed, "then the key in use, on a denial");
+    shared.cancel.cancel();
+    let _ = task.await;
+}
+
+/// R6 review A7: the chain renews this device to keys it holds in no
+/// staging that reads, while a staged file does not read. Not "replaced
+/// elsewhere" — no such alarm, nothing offered, no sign-in on purpose with
+/// the old key — but "staged key unreadable": alarmed, and the link stops
+/// without signing in at all.
+#[tokio::test]
+async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacement() {
+    let mut a = Account::new();
+    let old = machine();
+    let new = a.stage([77; 32], [7; 16]);
+    let answer = a.staged_answer(&new, [7; 16]);
+    a.renew(&answer, [7; 16], Assurance::Auto);
+    let store = FileSeedStore::for_instance(&a.paths);
+    super::write_private(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
+    let mut script = Script::rotating(vec![new.sign_public()]);
+    script.rotated = vec![old.sign_public()];
+    let hub = FakeHub::start(script, a.entries.clone()).await;
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = a.shared(&hub.url, &restarts);
+    let task = tokio::spawn(link::run(shared.clone()));
+    tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link stops").unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(hub.logins().is_empty(), "no sign-in at all");
+    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    assert!(st.rotation.unreadable_ms.is_some());
+    assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
+    assert!(st.alarms.iter().any(|al| al.what.contains("Staged key unreadable")), "{:?}", st.alarms);
+    assert!(!st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")));
+    assert_eq!(rotation::status(&a.paths, Some(&st), now_ms()).state, "unreadable");
+    assert!(!rotation::seed_retired(&a.paths, &old));
+    assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
+    assert_eq!(restarts.load(Ordering::SeqCst), 0);
 }

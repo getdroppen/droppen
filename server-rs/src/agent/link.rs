@@ -265,6 +265,9 @@ pub fn start(
     live: Arc<crate::aggregator::live::LiveCopies>,
     restart: super::rotation::Restart,
 ) -> Result<Running, String> {
+    // Adding this device again under a new identity, interrupted by a crash:
+    // finished first — it never starts as the old enrollment.
+    super::rotation::finish_re_enroll(paths)?;
     let loaded = startable(paths)?;
     let identity = match super::load_or_create(paths)? {
         (identity, false) => identity,
@@ -321,6 +324,10 @@ pub fn start(
     } else {
         tracing::warn!("relays are off (DROPPEN_AGENT_RELAYS=0): devices cannot reach this machine live, only its offline copy");
     }
+    // A renewed identity key was promoted: the push keys follow it.
+    if shared.state.lock().expect("agent state").rotation.push_renew {
+        tokio::spawn(renew_push(shared.clone()));
+    }
     let control_status = Arc::new(Mutex::new(crate::aggregator::controller::Status::default()));
     let copies_status = Arc::new(Mutex::new(crate::aggregator::copies::Status::default()));
     // This computer as a device controlling the others (S1-4) and following
@@ -367,6 +374,25 @@ pub fn start(
         copies,
         copies_status,
     })
+}
+
+/// R6 review W4: once a renewed identity key was promoted, a new VAPID
+/// keypair and every stored push subscription forgotten
+/// ([`crate::push::store::renew_vapid`]) — whoever copied the old VAPID key
+/// and endpoints reaches no device that subscribes again. Noted done only
+/// once it is (and by this link only while it runs: else the next start
+/// does it again, which is harmless).
+async fn renew_push(shared: Arc<Shared>) {
+    match crate::push::store::renew_vapid(&shared.paths).await {
+        Ok(forgotten) => {
+            tracing::warn!(forgotten, "renewed the push keys with the identity key: every device subscribes again");
+            if !shared.cancel.is_cancelled() {
+                shared.state.lock().expect("agent state").rotation.push_renew = false;
+                shared.save();
+            }
+        }
+        Err(error) => tracing::error!(%error, "cannot renew the push keys with the identity key; trying again at the next start"),
+    }
 }
 
 /// A link's shared state for tests elsewhere in the agent: `st` for this
@@ -587,8 +613,12 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     // What its own chain says about its keys first: a renewal it slept
     // through is taken with the staged key below; one by somebody else
     // stops the link here ([`super::rotation`]).
-    if matches!(super::rotation::on_chain(shared), super::rotation::Verdict::Foreign { .. }) {
-        return Err("this device's identity key was replaced elsewhere: not connecting".into());
+    match super::rotation::on_chain(shared) {
+        super::rotation::Verdict::Foreign { .. } => return Err("this device's identity key was replaced elsewhere: not connecting".into()),
+        super::rotation::Verdict::Unreadable => {
+            return Err("this device was renewed to a staged identity key that does not read: not connecting".into())
+        }
+        super::rotation::Verdict::Unchanged | super::rotation::Verdict::Renewed => {}
     }
     let stagings = super::rotation::staged_seeds(&shared.paths, &shared.identity);
     // While any staged seed is kept, EVERY sign-in tries the staged keys first
@@ -627,7 +657,23 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 }
                 return Err("the hub refuses a staged identity key as renewed: not signing in with the key in use".into());
             }
-            Err(error @ (hub::LoginError::Removed(_) | hub::LoginError::Refused { .. })) if staged_key.is_some() => {
+            Err(hub::LoginError::Refused { code, message }) if staged_key.is_some() && code != "denied" => {
+                // R6 review A5: only the hub's `denied` — it does not know the
+                // staged key — lets the next key try. Anything else
+                // (`unavailable`: its own trouble) is transient: retried
+                // with the back-off, the key in use never tried on it.
+                let why = format!("the hub could not take a staged identity key now ({code}): {message}");
+                tracing::warn!("{why}; trying again later");
+                return Err(why);
+            }
+            Err(hub::LoginError::Removed(message)) if staged_key.is_some() => {
+                // The hub's word, as below: retried, never a fallback.
+                let why = format!("the hub refused this device: {message}");
+                tracing::warn!("{why}; trying again later");
+                shared.health.lock().expect("health").refused = Some(why.clone());
+                return Err(why);
+            }
+            Err(error @ hub::LoginError::Refused { .. }) if staged_key.is_some() => {
                 staged_refused = true;
                 if let Some(next) = candidates.pop() {
                     staged_key = Some(next);
@@ -650,6 +696,12 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 // chain up to the renewal on this same socket; only what
                 // verifies on this device's own chain counts.
                 tracing::info!("the hub says the identity key in use was renewed: reading the chain it serves");
+                // This sign-in left the hub its evidence already: no other
+                // is made on purpose if the chain shows a renewal elsewhere
+                // (R6 review A3).
+                {
+                    shared.state.lock().expect("agent state").rotation.evidence_ms.get_or_insert(now_ms());
+                }
                 rotated_sync(shared, &mut sink, &mut source).await;
                 if shared.cancel.is_cancelled() {
                     return Err("this device's identity key was replaced elsewhere: not connecting".into());
@@ -694,8 +746,9 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     if staged_key.is_none() {
         // Signed in with the key in use: a hub that refused it as `rotated`
         // before takes it again — and no staging that expired before now was
-        // committed, or ever will be.
-        super::rotation::drop_expired(&shared.paths, &shared.identity, since);
+        // committed, nor should be (set aside, not deleted: R6 review A2).
+        let named = super::rotation::named_keys(&shared.state.lock().expect("agent state"));
+        super::rotation::set_aside_expired(&shared.paths, named, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
         if st.rotation.refused_ms.take().is_some() {
             tracing::info!("the hub takes this device's identity key again");
@@ -2063,8 +2116,12 @@ fn chain_moved(shared: &Arc<Shared>, entries: &[Entry], text: Option<&mpsc::Unbo
         return false;
     }
     // A renewal of this device's own identity key: to its staged seed (the
-    // next sign-in takes it), or to keys it does not hold (the link stops).
-    if matches!(super::rotation::on_chain(shared), super::rotation::Verdict::Foreign { .. }) {
+    // next sign-in takes it), or to keys it does not hold, or may hold only
+    // in a staged file that does not read (the link stops).
+    if matches!(
+        super::rotation::on_chain(shared),
+        super::rotation::Verdict::Foreign { .. } | super::rotation::Verdict::Unreadable
+    ) {
         return false;
     }
     let hub = shared.hub_text.lock().expect("hub text").clone();
