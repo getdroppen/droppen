@@ -244,7 +244,9 @@ impl Rotation {
     /// not yet noticed — vouches for nothing.
     pub fn key_in_use_confirmed(&self, now: u64) -> bool {
         let inner = self.lock();
-        inner.session.is_some_and(|s| !s.staged_key) && now.saturating_sub(inner.heard_ms) <= LIVE_MS
+        // A renewal committed (the chain names a staged key, or the hub closed
+        // with 4005) retired the key in use, whatever that connection says.
+        !inner.committed && inner.session.is_some_and(|s| !s.staged_key) && now.saturating_sub(inner.heard_ms) <= LIVE_MS
     }
 
     /// Whether the connection signed in with the old key should end now (and
@@ -500,7 +502,8 @@ pub(super) fn set_aside_expired(paths: &Paths, named: Option<([u8; 32], [u8; 32]
 /// `POST /rh/rotate` (see the module docs). 200 `{signKey, dhKey, oldSig,
 /// newSig, mac, stagedSeq, stagedHead, readyMs}`; 400 `bad_request`; 403
 /// `forbidden`/`limited_device`; 412 `stale`; 409 `not_current_host`,
-/// `not_on_chain`, `hub_not_ready`, `hub_refused {reason}`; 504
+/// `not_v3`, `not_on_chain`, `assurance_required`, `hub_not_ready`,
+/// `hub_refused {reason}`; 504
 /// `hub_timeout` (the hub said nothing in [`STAGE_WAIT`]: the new seed is
 /// kept, unshown, for the attempt's ten minutes in case the hub staged it
 /// after all — [`late_answer`]).
@@ -776,6 +779,15 @@ fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16,
             json!({"error": "not_on_chain", "message": "that chain view is not on this device's chain: sync and retry", "chainSeq": chain.seq()}),
         ));
     }
+    // The account's renewal policy (`SetRenewalPolicy`, §3.4 rule 9): every
+    // renewal confirmed on the device. The chain would never take another
+    // (R6 re-review N2): nothing is staged for one.
+    if chain.always_assured() && req.assurance != Assurance::OnDevice {
+        return Err((
+            409,
+            json!({"error": "assurance_required", "message": "this account renews identity keys only when confirmed on the device (assurance 1)"}),
+        ));
+    }
     Ok((st.account.clone(), st.machine.clone()))
 }
 
@@ -983,13 +995,18 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
 /// heard from the hub within [`LIVE_MS`] by the wall clock — a renewal
 /// committed while this device slept, its chain still stale, would make
 /// that key retired, and the hub keeps a retired key's sign-in as evidence
-/// against this very device.
+/// against this very device. Never once its own chain names other keys for
+/// it ([`renewed_away`]: a renewal the link has not taken yet, or one made
+/// elsewhere) — R6 re-review N1.
 pub(super) fn device_role_may_sign_in(shared: &Shared) -> bool {
     device_role_may_sign_in_at(shared, now_ms())
 }
 
 /// [`device_role_may_sign_in`] at wall-clock time `now`.
 pub(super) fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
+    if renewed_away(&shared.state.lock().expect("agent state"), &shared.identity) {
+        return false;
+    }
     let staged = FileSeedStore::for_instance(&shared.paths).stagings().is_ok_and(|s| !s.is_empty());
     !staged || shared.rotation.key_in_use_confirmed(now)
 }

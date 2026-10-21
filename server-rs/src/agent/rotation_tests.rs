@@ -689,13 +689,30 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
 }
 
 /// The checks before anything is staged: a view not on this device's chain
-/// (409 `not_on_chain`), a device that is not an admin (403
-/// `limited_device`), an admin whose view nobody vouched for (412 `stale`),
-/// a request that does not parse (400) — and, with high assurance, the
-/// code it shows here for ten minutes (`link.rotation`).
+/// (409 `not_on_chain`), a device that may not control this machine (412
+/// `stale` `lapsed`), one that is not an admin (403 `limited_device`), an
+/// admin whose view nobody vouched for (412 `stale`), a request that does
+/// not parse (400) — and, with high assurance, the code it shows here for
+/// ten minutes (`link.rotation`). The order is the bridge's
+/// ([`super::bridge::refusal`]): whether the device may control this machine
+/// at all, then whether it is an admin, then the twelve-hour view — and only
+/// then what the chain says about the request (R6 re-review).
 #[tokio::test]
 async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() {
-    let a = Account::new();
+    let mut a = Account::new();
+    // h-2 runs AI too and may control m-1, but is no admin.
+    let h2 = MachineIdentity::from_seed(&[20; 32]);
+    a.push(Action::AddDevice3(DeviceV3 {
+        id: "h-2".into(),
+        sign_key: h2.sign_public(),
+        dh_key: h2.dh_public(),
+        flags: Flags { host: true, admin: false },
+    }));
+    a.push(key_epoch("h-2", 0));
+    a.push(Action::SetAccept {
+        host: "m-1".into(),
+        from: rh_proto::chain::Accept::Devices(vec!["h-2".into()]),
+    });
     let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), a.entries.clone()).await;
     let shared = a.shared(&hub.url, &Arc::default());
     let task = signed_in(&shared).await;
@@ -708,11 +725,21 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
     for bad in [&b"nope"[..], br#"{"nonce":"00"}"#, br#"{"nonce":"07070707070707070707070707070707","eph":"00","chainSeq":1,"chainHead":"00","assurance":2}"#] {
         assert_eq!(rotate(&shared, bad).await.0, 400);
     }
-    let (status, body) = rotation::rotate(&shared, "d-9", &a.request([7; 16], &eph, 0)).await;
-    assert_eq!((status, body["error"].as_str()), (403, Some("limited_device")), "not an admin");
+    let refused = |answer: &(u16, Value)| (answer.0, answer.1["error"].as_str().map(str::to_string), answer.1["reason"].as_str().map(str::to_string));
+    let lapsed = (412, Some("stale".to_string()), Some("lapsed".to_string()));
+    let limited = (403, Some("limited_device".to_string()), None);
+    let stale = (412, Some("stale".to_string()), Some("stale".to_string()));
+    // Not a device that may control this machine: refused first, whatever else.
+    let off_chain_too = json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq(), "chainHead": hex(&[3; 32]), "assurance": 0});
+    assert_eq!(refused(&rotation::rotate(&shared, "d-9", off_chain_too.to_string().as_bytes()).await), lapsed, "not of the account");
+    // May control it, no admin: 403 — before the chain view is judged.
+    assert_eq!(refused(&rotation::rotate(&shared, "h-2", off_chain_too.to_string().as_bytes()).await), limited, "not an admin");
     let vouched = std::mem::take(&mut shared.state.lock().unwrap().attestations);
-    let (status, body) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
-    assert_eq!((status, body["error"].as_str()), (412, Some("stale")));
+    assert_eq!(refused(&rotation::rotate(&shared, "d-9", &a.request([7; 16], &eph, 0)).await), lapsed, "lapsed before stale");
+    assert_eq!(refused(&rotation::rotate(&shared, "h-2", &a.request([7; 16], &eph, 0)).await), limited, "no admin before stale");
+    // The admin, its view vouched for by nobody: 412 stale — before the chain says anything.
+    assert_eq!(refused(&rotate(&shared, &a.request([7; 16], &eph, 0)).await), stale);
+    assert_eq!(refused(&rotate(&shared, off_chain_too.to_string().as_bytes()).await), stale, "stale before not_on_chain");
     shared.state.lock().unwrap().attestations = vouched;
     assert!(a.staged().is_none() && hub.heard("rotation_stage").is_empty(), "nothing staged on a refusal");
     // High assurance: the code is the R1 SAS of the proof, shown for ten minutes.
@@ -869,6 +896,66 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
+    // R6 re-review N3: its own renewal is disputed by nobody — no statement
+    // signed, kept or delivered, and the promoted key has none to make.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
+    assert!(super::dispute::kept(&a.paths).is_empty());
+    assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
+    assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
+}
+
+/// R6 re-review N1: the device role never signs in once this computer's own
+/// chain names other keys for it (a renewal not taken yet, or made
+/// elsewhere) — even with no staged seed at all — nor once a renewal is
+/// committed while the connection with the key in use still looks up.
+#[tokio::test]
+async fn the_device_role_never_signs_in_with_a_key_renewed_away_or_committed() {
+    // Renewed elsewhere, nothing staged.
+    let mut a = Account::new();
+    let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    assert!(rotation::device_role_may_sign_in(&shared), "nothing renewed, nothing staged");
+    let entries = a.renew_to(&thief());
+    assert!(shared.state.lock().unwrap().absorb(&entries, now_ms()).error.is_none());
+    assert!(a.staged().is_none());
+    assert!(!rotation::device_role_may_sign_in(&shared), "renewed away: closed");
+    drop(hub);
+    // Committed (the hub closed with 4005) while the connection with the key
+    // in use still looks up.
+    let b = Account::new();
+    b.stage([77; 32], [7; 16]);
+    let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), b.entries.clone()).await;
+    let shared = b.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    assert!(rotation::device_role_may_sign_in(&shared), "the link vouches for the key in use");
+    shared.rotation.renewed_by_hub();
+    assert!(!rotation::device_role_may_sign_in(&shared), "committed: the key in use is retired");
+    shared.cancel.cancel();
+    let _ = task.await;
+}
+
+/// R6 re-review N2: with the account's renewal policy on
+/// (`SetRenewalPolicy { always_assured: true }`), a renewal that would not
+/// be confirmed on the device is refused before anything is staged (409
+/// `assurance_required`) — the chain would never take it; one that would be
+/// is staged.
+#[tokio::test]
+async fn with_the_renewal_policy_on_only_a_renewal_confirmed_on_the_device_is_staged() {
+    let mut a = Account::new();
+    a.push(Action::SetRenewalPolicy { always_assured: true });
+    let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    let eph = DhKeypair::from_secret([5; 32]);
+    let (status, body) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
+    assert_eq!((status, body["error"].as_str()), (409, Some("assurance_required")), "{body}");
+    assert!(a.staged().is_none() && hub.heard("rotation_stage").is_empty(), "nothing staged");
+    let (status, body) = rotate(&shared, &a.request([8; 16], &eph, 1)).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(a.staged().is_some());
+    shared.cancel.cancel();
+    let _ = task.await;
 }
 
 /// Contract §5: a 4005 alone (the entry not seen on this connection) also
@@ -1283,8 +1370,10 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
-    let file = super::dispute::path(&a.paths, entries[0].seq());
-    assert!(file.ends_with(format!("agent/rotation-dispute-{}.json", entries[0].seq())));
+    let file = super::dispute::path(&a.paths, "a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
+    let name = file.file_name().unwrap().to_str().unwrap().to_string();
+    assert!(name.starts_with(&format!("rotation-dispute-{}-", entries[0].seq())) && name.ends_with(".json"), "{name}");
+    assert!(file.parent().unwrap().ends_with("agent"));
     assert!(file.exists(), "kept until the hub has it");
     until("the hub's 200", || hub.disputes().len() == 3).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1348,7 +1437,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     hub.send_entries(&entries);
     tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
     let seq = entries[0].seq();
-    let file = super::dispute::path(&a.paths, seq);
+    let file = super::dispute::path(&a.paths, "a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
     until("a first delivery", || !hub.disputes().is_empty()).await;
     assert!(file.exists());
     // Disconnect before the hub has it.
