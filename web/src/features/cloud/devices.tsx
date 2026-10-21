@@ -1672,7 +1672,7 @@ function RotateKeys({ account, link, due }: { account: CloudAccount; link: HubLi
 /** How loudly an alert speaks (local-aggregator §3.2): "is this you?", louder for a device made a full device (it gets the account's keys), a note for the rest. */
 export function alertLevel(alert: ChainAlert): "confirm" | "high" | "info" {
   if (alert.kind === "setAdmin") return alert.on ? "high" : "info";
-  if (alert.kind === "setHost" || alert.kind === "setAccept" || alert.kind === "removeDevice" || alert.kind === "keyEpochs" || alert.kind === "upgrade" || alert.kind === "rotateHostKey" || alert.kind === "renewalPolicy") return "info";
+  if (alert.kind === "setHost" || alert.kind === "setAccept" || alert.kind === "removeDevice" || alert.kind === "keyEpochs" || alert.kind === "upgrade" || alert.kind === "rotateHostKey" || alert.kind === "renewalPolicy" || alert.kind === "renewalPause") return "info";
   if (alert.kind === "passkey") return alert.passkey === "join" || alert.passkey === "slotSet" ? "confirm" : "info";
   return "confirm";
 }
@@ -1720,6 +1720,13 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
         default:
           return t("{{device}} activated itself with a passkey", { device });
       }
+    case "renewalPause": {
+      // Host identity rotation §3.4 rule 10: control paused over hosts while identity keys are renewed, a note.
+      const edges = (alert.pause?.removals ?? []).map((r) => t("{{ids}} over {{host}}", { ids: r.ids.join(", "), host: r.host })).join("; ") || "?";
+      if (alert.pause?.phase === "completed") return t("control by {{edges}} resumes (by {{by}})", { edges, by });
+      if (alert.pause?.phase === "cancelled") return t("the pause of control by {{edges}} was ended (by {{by}})", { edges, by });
+      return t("control by {{edges}} is paused while identity keys are renewed (by {{by}})", { edges, by });
+    }
     case "renewalPolicy":
       // Host identity rotation §3.4 rule 9: the account's renewal policy, a note.
       return alert.on

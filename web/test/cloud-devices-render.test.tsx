@@ -615,6 +615,23 @@ test("R1d: the account's renewal policy on the chain is a note, each way", () =>
   assert.equal(cloudDevicesZhTW["identity key renewals may be automatic again (set by {{by}})"], "更換身分金鑰又可以自動進行了（由 {{by}} 設定）");
 });
 
+test("R1e: control paused over hosts while identity keys are renewed is a note — paused, resumes, ended", () => {
+  const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
+  const removals = [
+    { host: "m-1", ids: ["m-2", "d-3"] },
+    { host: "m-2", ids: ["m-1"] },
+  ];
+  const pause = (phase: "start" | "completed" | "cancelled") => ({ seq: 15, by: "d-1", atMs: 0, remove: null, kind: "renewalPause", subject: null, pause: { phase, removals } }) as const;
+  assert.equal(alertLevel(pause("start")), "info");
+  assert.equal(alertText(pause("start"), t), "control by m-2, d-3 over m-1; m-1 over m-2 is paused while identity keys are renewed (by d-1)");
+  assert.equal(alertText(pause("completed"), t), "control by m-2, d-3 over m-1; m-1 over m-2 resumes (by d-1)");
+  assert.equal(alertText(pause("cancelled"), t), "the pause of control by m-2, d-3 over m-1; m-1 over m-2 was ended (by d-1)");
+  const account = { alerts: () => [pause("start")], onChange: () => () => undefined } as unknown as CloudAccount;
+  assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "zh-CN").includes("m-2, d-3 对 m-1; m-1 对 m-2 的控制已暂停，正在更换身份密钥（d-1）"));
+  assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "ja").includes("m-2, d-3 から m-1 への操作; m-1 から m-2 への操作を一時停止しました。ID 鍵を更新しています（d-1）"));
+  assert.equal(cloudDevicesZhTW["control by {{edges}} resumes (by {{by}})"], "{{edges}} 的控制已恢復（{{by}}）");
+});
+
 test("14: stopping AI is asked first", () => {
   const stop = draw(<StopHost device="m-1" busy={false} onConfirm={() => undefined} onCancel={() => undefined} />);
   assert.match(stop, /role="alertdialog"[^>]*data-testid="stop-host"/);

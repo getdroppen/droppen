@@ -813,6 +813,13 @@ fn retry_mail(shared: &Arc<Shared>, text: &mpsc::UnboundedSender<String>) {
 /// (`docs/host-identity-rotation.md` §3.4 "告警") is a note with the new
 /// fingerprint, as the device list shows it.
 fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
+    account_change_in(entry, prev, None)
+}
+
+/// [`account_change`], with the removals of the renewal pause an ending
+/// marker closes (`paused`, from this agent's chain), so it names them as
+/// the start did.
+fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Option<&[(String, Vec<String>)]>) -> Option<String> {
     let signer = match &entry.draft.signer {
         Signer::Device(id) => id.clone(),
         Signer::Recovery => "the recovery words".into(),
@@ -862,6 +869,29 @@ fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
             format!("identity key renewals must now be confirmed on the device (set by {signer})")
         }
         Action::SetRenewalPolicy { always_assured: false } => format!("identity key renewals may be automatic again (set by {signer})"),
+        Action::RenewalPause { phase, removals, .. } => {
+            // §3.4 rule 10: "control by {ids} over {host}", per host.
+            let edges = |removals: &[(String, Vec<String>)]| {
+                if removals.is_empty() {
+                    "the paused devices".to_string()
+                } else {
+                    removals
+                        .iter()
+                        .map(|(host, ids)| format!("{} over {host}", ids.join(", ")))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+            };
+            match phase {
+                rh_proto::chain::PausePhase::Start => {
+                    format!("control by {} is paused while identity keys are renewed (by {signer})", edges(removals))
+                }
+                rh_proto::chain::PausePhase::Completed => format!("control by {} resumes (by {signer})", edges(paused.unwrap_or(&[]))),
+                rh_proto::chain::PausePhase::Cancelled => {
+                    format!("the pause of control by {} was ended (by {signer})", edges(paused.unwrap_or(&[])))
+                }
+            }
+        }
         Action::ApproveDevice(id) if v3 => format!("device {id} was approved by {signer}"),
         Action::AddDevice(d) => format!("device {} was added by {signer}", d.id),
         Action::RemoveDevice(id) => format!("device {id} was removed by {signer}"),
@@ -924,14 +954,25 @@ fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
             })
             .collect()
     };
+    // An ending renewal pause marker names no removals: its start did.
+    let paused: Vec<Option<Vec<(String, Vec<String>)>>> = {
+        let st = shared.state.lock().expect("agent state");
+        entries
+            .iter()
+            .map(|e| match &e.draft.action {
+                Action::RenewalPause { op, .. } => st.chain.as_ref()?.pause(op).map(|p| p.removals.clone()),
+                _ => None,
+            })
+            .collect()
+    };
     let me = shared.state.lock().expect("agent state").machine.clone();
     let mut noted = false;
-    for (entry, prev) in entries.iter().zip(&prevs) {
+    for ((entry, prev), paused) in entries.iter().zip(&prevs).zip(&paused) {
         // This machine's own addition is its enrollment completing, not news to it.
         if matches!(&entry.draft.action, Action::AddMachine(m) if m.id == me) || matches!(&entry.draft.action, Action::AddDevice3(d) if d.id == me) {
             continue;
         }
-        let Some(what) = account_change(entry, prev.as_ref()) else { continue };
+        let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref()) else { continue };
         tracing::warn!(seq = entry.seq(), "account change: {what}");
         {
             let mut log = shared.alerts.lock().expect("alerts");
@@ -3548,6 +3589,39 @@ mod tests {
         assert_eq!(
             account_change(&policy(false), None).as_deref(),
             Some("identity key renewals may be automatic again (set by d-1)")
+        );
+        // A renewal pause (kind 22): its start names the control it pauses;
+        // an end names the start's, from this agent's chain.
+        let marker = |phase: rh_proto::chain::PausePhase, removals: &[(&str, &[&str])]| {
+            state
+                .draft(
+                    Signer::Device("d-1".into()),
+                    Action::RenewalPause {
+                        op: [7; 16],
+                        phase,
+                        removals: removals.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect(),
+                    },
+                    9_002,
+                )
+                .sign(dev.signing_key())
+        };
+        use rh_proto::chain::PausePhase::{Cancelled, Completed, Start};
+        assert_eq!(
+            account_change(&marker(Start, &[("h-2", &["m-1", "d-2"][..]), ("m-1", &["h-2"][..])]), None).as_deref(),
+            Some("control by m-1, d-2 over h-2; h-2 over m-1 is paused while identity keys are renewed (by d-1)")
+        );
+        let started = vec![("h-2".to_string(), vec!["m-1".to_string()])];
+        assert_eq!(
+            account_change_in(&marker(Completed, &[]), None, Some(&started)).as_deref(),
+            Some("control by m-1 over h-2 resumes (by d-1)")
+        );
+        assert_eq!(
+            account_change_in(&marker(Cancelled, &[]), None, Some(&started)).as_deref(),
+            Some("the pause of control by m-1 over h-2 was ended (by d-1)")
+        );
+        assert_eq!(
+            account_change(&marker(Completed, &[]), None).as_deref(),
+            Some("control by the paused devices resumes (by d-1)")
         );
         // The renewed host is h-2 with its new keys, here as everywhere.
         assert_eq!(state.machine("h-2").map(|d| d.info.sign_key), Some(new.sign_public()));
