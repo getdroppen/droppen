@@ -1551,3 +1551,46 @@ test("#178 L2: nothing renews until an admin chose the account's renewal policy,
   assert.deepEqual(rotated(a), ["m-1", "m-2"]);
   runner.stop();
 });
+
+/** Latch `a`'s fork alarm as a racing page's record would (another head at this very height), through main's own check. */
+async function latchFork(a: CloudAccount): Promise<void> {
+  const seq = a.chain!.seq;
+  browserStorage(a.store).setItem(`rh.hub.seen.${a.account}`, JSON.stringify({ v: 1, seenThrough: seq, head: "ff".repeat(32), heads: [[seq, "ff".repeat(32)]], firstSeen: [] }));
+  await assert.rejects(a.completeHandshake(async () => "open"), (e: unknown) => e instanceof AccountError && e.kind === "fork");
+  assert.ok(a.forked);
+}
+
+test("main's fork latch holds renewals too: a forked page asks nothing of the host, and one forked while a renewal waits writes nothing", async () => {
+  {
+    const { hub, a, agents, x } = await account();
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    await latchFork(a);
+    await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), (e: unknown) => e instanceof AccountError && e.kind === "fork");
+    assert.deepEqual(agents.rotateCalls, [], "nothing reached the host");
+    assert.deepEqual(hub.rotationPuts.filter((p) => p.startsWith("m-1 ")), [], "nothing asked of the hub");
+  }
+  {
+    const { hub, a, agents, x } = await account();
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    hub.windowRefusals = [Date.now() + 30];
+    let latched = false;
+    const sleep = async (ms: number) => {
+      if (!latched) {
+        latched = true;
+        await latchFork(a);
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+    };
+    await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), (e: unknown) => e instanceof AccountError && e.kind === "fork");
+    assert.deepEqual(rotated(a), [], "not written from a forked view");
+  }
+  // The courier the runner hands in is wrapped: its `/rh/rotate` is refused once forked, whoever calls it.
+  {
+    const { a, agents, x } = await account();
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    await latchFork(a);
+    const guarded = (a as unknown as { guardedRenewal(c: typeof agents): typeof agents }).guardedRenewal(agents);
+    assert.throws(() => guarded.rotate("m-1", { nonce: "00", eph: "00", chainSeq: 0, chainHead: "00", assurance: 0 }), (e: unknown) => e instanceof AccountError && e.kind === "fork");
+    assert.deepEqual(agents.rotateCalls, []);
+  }
+});
