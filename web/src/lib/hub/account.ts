@@ -3062,6 +3062,25 @@ export class CloudAccount {
     };
   }
 
+  /**
+   * {@link guarded} for a renewal (host identity rotation §3.2): its
+   * `/rh/rotate` and its word on the head go out only from a page whose view
+   * has not forked — the fork latch holds them as it holds every key.
+   */
+  private guardedRenewal(courier: RenewalCourier): RenewalCourier {
+    return {
+      ...this.guarded(courier),
+      rotate: (machine, body) => {
+        this.assertNotForked();
+        return courier.rotate(machine, body);
+      },
+      attest: () => {
+        this.assertNotForked();
+        return courier.attest();
+      },
+    };
+  }
+
   private async newestMachineKeyBlob(id: string, mkEpoch: number): Promise<Bytes | null> {
     try {
       await this.keyring.refresh();
@@ -4156,7 +4175,10 @@ export class CloudAccount {
   }
 
   /** One try of {@link renewIdentity}: anything that does not check out withdraws it. */
-  private async renewOnce(host: string, courier: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
+  private async renewOnce(host: string, unguarded: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
+    // Nothing of a renewal leaves a page whose view forked: every call to the host and every key goes through the latch.
+    this.assertNotForked();
+    const courier = this.guardedRenewal(unguarded);
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     if (!chain0.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
@@ -4322,6 +4344,8 @@ export class CloudAccount {
       try {
         res = await courier.rotate(host, body);
       } catch (error) {
+        // The fork alarm stands as it is: not a failure to reach the host.
+        if (error instanceof AccountError && error.kind === "fork") throw error;
         if (error instanceof ChannelUnavailable && error.reason === "offline") throw new RenewalError("offline", `${host} is offline`);
         throw new RenewalError("failed", error instanceof Error ? error.message : String(error), error instanceof ChannelUnavailable ? error.reason : undefined);
       }
