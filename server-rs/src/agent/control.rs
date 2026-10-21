@@ -258,6 +258,11 @@ impl Control {
     /// ([`crate::aggregator::sweep_deleted`]).
     pub fn attach(&self, env: LinkEnv) {
         crate::aggregator::sweep_deleted(&self.paths);
+        // Adding this device again under a new identity, cut short by a
+        // crash: finished before anything starts (R6 review, Info).
+        if let Err(error) = super::rotation::finish_re_enroll(&self.paths) {
+            tracing::error!(%error, "cannot finish adding this device again under a new identity");
+        }
         let _ = self.env.set(env);
     }
 
@@ -481,10 +486,11 @@ impl Control {
     }
 
     /// Before a sign-in shows this computer's keys: when the seed in use is
-    /// one a renewal retired (on the chain it knows) or one it archived, it
-    /// never signs up again — the link stops, the seed is archived, the old
-    /// enrollment forgotten and a fresh seed made ([`Control::re_enroll_fresh`]).
-    /// `true` when that happened.
+    /// one it must never use again — archived, or replaced elsewhere on the
+    /// chain it knows ([`super::rotation::seed_retired`]: never its own
+    /// renewal to a key it staged, R6 review A1) — it never signs up again:
+    /// the link stops, the seed is archived, the old enrollment forgotten and
+    /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
     pub async fn renew_retired_seed(&self) -> Result<bool, ControlError> {
         let _gate = self.gate.lock().await;
         use super::SeedStore as _;
@@ -882,18 +888,67 @@ mod tests {
             .unwrap();
         store.promote(&[1; 16]).unwrap();
         let new = MachineIdentity::from_seed(&[9; 32]);
+        // R6 review W4: the promotion noted that the push keys follow; a
+        // device subscribed against the old VAPID key.
+        let old_vapid = crate::push::store::vapid_public(&paths).await.unwrap();
+        let point = {
+            use p256::elliptic_curve::sec1::ToEncodedPoint as _;
+            let device = p256::SecretKey::random(&mut rand::rngs::OsRng);
+            crate::push::ece::b64url(device.public_key().to_encoded_point(false).as_bytes())
+        };
+        crate::push::store::upsert(&paths, "https://push.example/a".into(), point, crate::push::ece::b64url(&[9; 16]), None)
+            .await
+            .unwrap();
+        {
+            let running = control.running.lock().unwrap();
+            let shared = &running.as_ref().unwrap().shared;
+            shared.state.lock().unwrap().rotation.push_renew = true;
+            shared.save();
+        }
         (control.restart_hook())();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while key_in_use(&control) != Some(new.sign_public()) {
             assert!(std::time::Instant::now() < deadline, "the link restarts with the new key");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while AgentState::load(&paths).unwrap().unwrap().rotation.push_renew {
+            assert!(std::time::Instant::now() < deadline, "the restarted link renews the push keys");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(crate::push::store::subscriptions(&paths).await.is_empty(), "every push subscription forgotten");
+        assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old_vapid, "a new VAPID keypair");
         assert!(control.status().running);
         assert!(!server.is_cancelled() && !session.is_cancelled(), "the server and what runs under it go on");
         control.restart().await.unwrap();
         assert_eq!(key_in_use(&control), Some(new.sign_public()));
         control.stop().await;
         assert!(!server.is_cancelled() && !session.is_cancelled());
+    }
+
+    /// R6 review, Info: "add this device again" cut short by a crash after
+    /// the seed was archived (its `state.json` still there) is finished when
+    /// the control comes up: the instance is not enrolled, with a fresh seed,
+    /// and the link does not start as the old enrollment.
+    #[tokio::test]
+    async fn adding_again_cut_short_by_a_crash_is_finished_when_the_control_comes_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlfresh");
+        let control = Control::new(paths.clone());
+        let old = control.identity().unwrap();
+        AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
+        // What the crash left: the marker, the seed archived, the state kept.
+        let agent = super::super::key_path(&paths).parent().unwrap().to_path_buf();
+        crate::agent::write_private(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
+        std::fs::rename(super::super::key_path(&paths), super::super::rotation::archived_key_path(&paths, 5)).unwrap();
+        control.attach(link_env(&paths));
+        assert!(!crate::agent::state::exists(&paths), "the old enrollment is forgotten");
+        assert!(!agent.join("re-enroll-fresh.json").exists());
+        let fresh = control.identity().unwrap();
+        assert_ne!(fresh.sign_public(), old.sign_public());
+        assert!(super::super::rotation::archived(&paths, &old));
+        assert!(!control.start_if_enrolled().await, "nothing to start");
+        assert_eq!(control.status().state, Standing::None);
     }
 
     #[tokio::test]

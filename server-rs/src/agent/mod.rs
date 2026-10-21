@@ -308,17 +308,83 @@ impl FileSeedStore {
         self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), hub::hex(nonce)))
     }
 
-    /// Every staging's file, readable or not.
-    fn staging_files(&self) -> Vec<PathBuf> {
-        let prefix = self.staging_prefix();
+    /// `machine-key.expired-` — what a staging set aside as expired is
+    /// renamed to start with ([`FileSeedStore::expire`]).
+    fn expired_prefix(&self) -> String {
+        let stem = self.path.file_stem().and_then(|s| s.to_str()).unwrap_or("machine-key");
+        format!("{stem}.expired-")
+    }
+
+    /// Where the staging of `nonce` is kept once set aside as expired:
+    /// `machine-key.expired-<nonce hex>.json` beside `machine-key.json`.
+    pub fn expired_path(&self, nonce: &[u8; 16]) -> PathBuf {
+        self.path.with_file_name(format!("{}{}.json", self.expired_prefix(), hub::hex(nonce)))
+    }
+
+    /// The files beside the seed whose names start with `prefix`.
+    fn files_with(&self, prefix: &str) -> Vec<PathBuf> {
         let Some(Ok(entries)) = self.path.parent().map(std::fs::read_dir) else {
             return Vec::new();
         };
         entries
             .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".json")))
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(prefix) && n.ends_with(".json")))
             .map(|e| e.path())
             .collect()
+    }
+
+    /// Every staging's file, readable or not.
+    fn staging_files(&self) -> Vec<PathBuf> {
+        self.files_with(&self.staging_prefix())
+    }
+
+    /// Every file of a staging set aside as expired, readable or not.
+    fn expired_files(&self) -> Vec<PathBuf> {
+        self.files_with(&self.expired_prefix())
+    }
+
+    /// Set the staging of `nonce` aside as expired (R6 review A2): what this
+    /// device saw says no renewal can take it any more — but a hub's word is
+    /// part of that, so it is renamed, never deleted: never tried at sign-in
+    /// again, and taken back ([`FileSeedStore::restore`]) if this device's own
+    /// verified chain names it after all. No-op when there is none.
+    pub fn expire(&self, nonce: &[u8; 16]) -> Result<(), String> {
+        let (from, to) = (self.staging_path(nonce), self.expired_path(nonce));
+        match std::fs::rename(&from, &to) {
+            Ok(()) => {
+                sync_dir(&to);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("{} → {}: {e}", from.display(), to.display())),
+        }
+    }
+
+    /// Every staging set aside as expired that reads, oldest first.
+    pub fn expired(&self) -> Vec<StagedSeed> {
+        let mut out: Vec<StagedSeed> = self.expired_files().iter().filter_map(|p| Self::read_staging(p).ok()).collect();
+        out.sort_by_key(|s| (s.created_ms, s.nonce));
+        out
+    }
+
+    /// Take the staging of `nonce` set aside as expired back among the
+    /// stagings: the verified chain names it.
+    pub fn restore(&self, nonce: &[u8; 16]) -> Result<(), String> {
+        let (from, to) = (self.expired_path(nonce), self.staging_path(nonce));
+        Self::read_staging(&from)?;
+        std::fs::rename(&from, &to).map_err(|e| format!("{} → {}: {e}", from.display(), to.display()))?;
+        sync_dir(&to);
+        Ok(())
+    }
+
+    /// The staging files — waiting, or set aside as expired — that do not
+    /// read (or that others can read): never used, and never taken for
+    /// proof that this device holds no staged key (R6 review A7).
+    pub fn unreadable(&self) -> Vec<PathBuf> {
+        let mut files = self.staging_files();
+        files.extend(self.expired_files());
+        files.retain(|p| Self::read_staging(p).is_err());
+        files
     }
 
     fn read_staging(path: &Path) -> Result<StagedSeed, String> {
@@ -412,8 +478,12 @@ impl SeedStore for FileSeedStore {
         );
         // Written whole beside the seed in use, then renamed into place: a
         // half-written staged seed is never what the next run finds, and the
-        // seed in use is never touched.
-        write_private(&self.staging_path(&staged.nonce), &file)
+        // seed in use is never touched. The rename is flushed before the hub
+        // hears of it (R6 review A6): a staging the hub takes survives a crash.
+        let path = self.staging_path(&staged.nonce);
+        write_private(&path, &file)?;
+        sync_dir(&path);
+        Ok(())
     }
 
     fn stagings(&self) -> Result<Vec<StagedSeed>, String> {
@@ -438,8 +508,10 @@ impl SeedStore for FileSeedStore {
         Self::read_staging(&next)?;
         std::fs::rename(&next, &self.path).map_err(|e| format!("{} → {}: {e}", next.display(), self.path.display()))?;
         sync_dir(&self.path);
-        // The others can never be named now (an id is renewed to one key at a time).
-        for other in self.staging_files() {
+        // The others can never be named now (an id is renewed to one key at
+        // a time, and only from the key it holds): neither the waiting ones
+        // nor those set aside as expired.
+        for other in self.staging_files().into_iter().chain(self.expired_files()) {
             if let Err(error) = Self::remove(&other) {
                 tracing::warn!(%error, "cannot delete a staged identity key no renewal will take");
             }
@@ -452,13 +524,30 @@ impl SeedStore for FileSeedStore {
     }
 
     fn discard_all_staged(&self) -> Result<(), String> {
-        self.staging_files().iter().try_for_each(|p| Self::remove(p))
+        self.staging_files()
+            .iter()
+            .chain(&self.expired_files())
+            .try_for_each(|p| Self::remove(p))
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How often this thread flushed a directory ([`sync_dir`]).
+    static DIR_SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How often this thread flushed a directory (tests: R6 review A6).
+#[cfg(test)]
+pub(crate) fn dir_syncs() -> usize {
+    DIR_SYNCS.with(std::cell::Cell::get)
 }
 
 /// Flush the directory holding `path`, so a rename in it survives a crash
 /// (best effort: not every platform lets a directory be opened).
 fn sync_dir(path: &Path) {
+    #[cfg(test)]
+    DIR_SYNCS.with(|n| n.set(n.get() + 1));
     #[cfg(unix)]
     if let Some(dir) = path.parent() {
         if let Ok(dir) = std::fs::File::open(dir) {
@@ -687,6 +776,7 @@ fn rotation_lines(rotation: &rotation::Status, now: u64) -> Vec<String> {
         "refused" => vec![
             "renewal      the hub refuses this device's identity key as renewed but showed no renewal; it tries again".to_string(),
         ],
+        "unreadable" => vec![format!("renewal      {}", rotation::STAGED_KEY_UNREADABLE)],
         _ => Vec::new(),
     }
 }
@@ -1036,6 +1126,49 @@ mod tests {
     /// point in between the store holds the old seed (alone, or with staged
     /// ones) or the new one (at worst with staged ones never used): what a
     /// crash leaves.
+    /// R6 review A6: every write or rename of a staging — staging it, setting
+    /// it aside, taking it back, promoting it — flushes the directory, so a
+    /// crash right after never loses it (nor brings an old one back). A2:
+    /// one set aside is never among the stagings; a promotion forgets it.
+    #[test]
+    fn every_staging_rename_is_flushed_and_one_set_aside_is_kept_apart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentsync");
+        let (old, _) = load_or_create(&paths).unwrap();
+        let store = FileSeedStore::for_instance(&paths);
+        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let staged = |seed: u8, nonce: u8| StagedSeed {
+            uuid: uuid.clone(),
+            seed: Zeroizing::new([seed; 32]),
+            nonce: [nonce; 16],
+            chain_seq: 4,
+            chain_head: [5; 32],
+            assurance: rh_proto::chain::Assurance::Auto,
+            created_ms: u64::from(nonce),
+            accepted_ms: Some(1),
+        };
+        let flushed = |what: &str, f: &dyn Fn()| {
+            let before = dir_syncs();
+            f();
+            assert!(dir_syncs() > before, "{what} flushes the directory");
+        };
+        flushed("staging", &|| store.stage(&staged(7, 1)).unwrap());
+        flushed("staging another", &|| store.stage(&staged(8, 2)).unwrap());
+        flushed("setting one aside", &|| store.expire(&[1; 16]).unwrap());
+        assert!(store.expired_path(&[1; 16]).ends_with(format!("agent/machine-key.expired-{}.json", hub::hex(&[1; 16]))));
+        assert_eq!(store.stagings().unwrap().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[2; 16]]);
+        assert_eq!(store.expired().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[1; 16]]);
+        assert!(store.expire(&[1; 16]).is_ok(), "none left to set aside: nothing to do");
+        flushed("taking it back", &|| store.restore(&[1; 16]).unwrap());
+        assert_eq!(store.stagings().unwrap().len(), 2);
+        store.expire(&[1; 16]).unwrap();
+        flushed("promoting", &|| store.promote(&[2; 16]).unwrap());
+        assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public());
+        assert_ne!(old.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public());
+        assert!(store.stagings().unwrap().is_empty() && store.expired().is_empty(), "a promotion forgets those set aside too");
+        assert!(store.unreadable().is_empty());
+    }
+
     #[test]
     fn staged_seeds_never_touch_the_one_in_use_until_one_is_promoted() {
         let dir = tempfile::tempdir().expect("tempdir");

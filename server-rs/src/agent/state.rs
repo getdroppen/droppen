@@ -113,6 +113,22 @@ pub struct RotationNote {
     /// to show for it (not evidence: it waits to sync, and retries).
     #[serde(default)]
     pub refused_ms: Option<u64>,
+    /// When the key in use last signed in to the hub once its chain had
+    /// renewed this machine to keys it does not hold — answered `rotated`,
+    /// which leaves the hub the evidence of a dispute (R6 review A3): one
+    /// such sign-in is made on purpose ([`super::rotation`]), never more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ms: Option<u64>,
+    /// When its own verified chain renewed this machine to keys only a staged
+    /// seed that does not read may hold (R6 review A7): never taken for a
+    /// replacement elsewhere; the link stops until the file is put right.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable_ms: Option<u64>,
+    /// A renewed key was promoted and the push keys have not been renewed
+    /// with it yet (R6 review W4): the next link start makes a new VAPID
+    /// keypair and forgets every stored push subscription.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub push_renew: bool,
 }
 
 /// What [`AgentState::absorb`] did with a batch of chain entries.

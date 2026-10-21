@@ -661,7 +661,9 @@ pub struct CloudRotation {
     /// elsewhere — its own chain gives its id keys it does not hold, for
     /// example after restoring a backup made before a renewal: the link
     /// stopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new
-    /// identity).
+    /// identity); `unreadable` (renewed, and a staged key it may have been
+    /// renewed to does not read: the link stopped until the file beside its
+    /// key is put right — never taken for `foreign`).
     pub state: String,
     /// For a renewal confirmed on this computer: the code to type on the
     /// admin device (`XXXX-XXXX`), for ten minutes.
@@ -672,7 +674,8 @@ pub struct CloudRotation {
     pub renewed_ms: Option<u64>,
     /// Its fingerprint before (8 groups of 4 hex digits).
     pub previous_fingerprint: Option<String>,
-    /// Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`.
+    /// Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,
+    /// `staged_key_unreadable` for `unreadable`.
     pub reason: Option<String>,
 }
 
