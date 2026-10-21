@@ -54,7 +54,7 @@
 import { base32, type Bytes, bytes, concat, copy, DecodeError, equal, Reader, utf8, Writer } from "./bytes";
 import { dh, fingerprint, importEd25519Private, importX25519Private, isValidEd25519Key, isValidX25519, LowOrderKeyError, publicFromSecret, sha256 } from "./keys";
 import { Serial } from "./serial";
-import { CHAIN_ATTEST, CHAIN_ENTRY, HOST_ROTATE, PASSKEY_PROOF, RECOVERY_PROOF, ROTATE_ACK, signLabelled, verifyLabelled } from "./sig";
+import { CHAIN_ATTEST, CHAIN_ENTRY, HOST_ROTATE, PASSKEY_PROOF, RECOVERY_PROOF, ROTATE_ACK, ROTATE_DISPUTE, signLabelled, verifyLabelled } from "./sig";
 
 /** The v2 entry encoding's version byte (recovery keys carry their proof, and key epochs are committed). */
 export const CHAIN_VERSION = 2;
@@ -296,6 +296,22 @@ export async function rotateAckBody(account: string, host: string, proofBody: Ui
 /** The new key's `rotateAckBody` signature. */
 export async function signRotateAck(newKey: CryptoKey, account: string, host: string, proofBody: Uint8Array, loginNonce: Uint8Array): Promise<Bytes> {
   return signLabelled(newKey, ROTATE_ACK, await rotateAckBody(account, host, proofBody, loginNonce));
+}
+
+/**
+ * What a host's retired sign key signs to dispute the renewal that retired it (`rh/v1 rotate-dispute`, §3.8
+ * 「证据：退役钥签的争议声明」): `str16 account | str16 host | u64 seq | entry_hash 32 | new_sign 32` — `seq` the disputed
+ * `rotateHostKey`, `entryHash` its chain hash (`entryHash`), `newSign` the sign key it put in. Bound to the entry's
+ * hash, a statement can only be signed once that entry exists: no clocks to compare.
+ */
+export function rotateDisputeBody(account: string, host: string, seq: number, entryHash: Uint8Array, newSign: Uint8Array): Bytes {
+  if (entryHash.length !== 32 || newSign.length !== 32) throw new Error("a dispute names a 32-byte entry hash and sign key");
+  return new Writer().str16(account).str16(host).u64(seq).raw(entryHash).raw(newSign).finish();
+}
+
+/** The retired key's `rotateDisputeBody` signature (`key`: the sign key the renewal at `seq` retired, `keysAt(host, seq - 1)`). */
+export function signRotateDispute(key: CryptoKey, account: string, host: string, seq: number, entryHash: Uint8Array, newSign: Uint8Array): Promise<Bytes> {
+  return signLabelled(key, ROTATE_DISPUTE, rotateDisputeBody(account, host, seq, entryHash, newSign));
 }
 
 /** Whether `signature` is `newSign`'s `rotateAckBody` signature. */
@@ -1848,6 +1864,22 @@ export class ChainState {
     if (!d || !Number.isSafeInteger(seq) || seq < d.addedSeq || seq > this.seq) return undefined;
     const r = d.retired.find((k) => seq < k.untilSeq);
     return r ? { id, signKey: r.signKey, dhKey: r.dhKey } : { id, signKey: d.info.signKey, dhKey: d.info.dhKey };
+  }
+
+  /**
+   * Whether `signature` disputes the renewal at `seq` of `host` (Rust's `verify_rotate_dispute`): entry `seq` of this
+   * view is a `rotateHostKey` for `host`, the statement is over that entry's hash and the sign key it put in, and it is
+   * signed by the sign key that entry retired (`keysAt(host, seq - 1)`). A hub cannot forge one; it can only withhold it.
+   */
+  async verifyRotateDispute(host: string, seq: number, signature: Uint8Array): Promise<boolean> {
+    if (!Number.isSafeInteger(seq) || seq < 1) return false;
+    const entry = this.entries[seq];
+    const a = entry?.draft.action;
+    if (a?.type !== "rotateHostKey" || a.rotation.host !== host) return false;
+    const hash = this.hashAt(seq);
+    const retired = this.keysAt(host, seq - 1);
+    if (!hash || !retired) return false;
+    return verifyLabelled(retired.signKey, ROTATE_DISPUTE, rotateDisputeBody(this.account, host, seq, hash, a.rotation.signKey), signature);
   }
 
   /** Whether `key` is one a renewal retired — any device's, sign or DH: such a key never names a device again (`RULES.keyRetired`). */

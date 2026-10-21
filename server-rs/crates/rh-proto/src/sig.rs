@@ -20,6 +20,7 @@
 //! | `rh/v1 passkey-proof` | a passkey slot's `PAK` | [`crate::chain::passkey_proof_body`] |
 //! | `rh/v1 host-rotate` | a host's current and its new identity key | [`crate::chain::host_rotate_body`] |
 //! | `rh/v1 rotate-ack` | a host's new identity key | [`crate::chain::rotate_ack_body`] |
+//! | `rh/v1 rotate-dispute` | the sign key a renewal retired | [`crate::chain::rotate_dispute_body`] |
 //!
 //! Every label ends in NUL and has none before it, so no label is a prefix of
 //! another and no structure can be mistaken for a different label's.
@@ -46,9 +47,12 @@ pub const HOST_ROTATE: &[u8] = b"rh/v1 host-rotate\0";
 /// A host's new identity key confirming a staged renewal on a connection that
 /// signed in with the old one (§3.3).
 pub const ROTATE_ACK: &[u8] = b"rh/v1 rotate-ack\0";
+/// The sign key a renewal retired, disputing that renewal by its hash
+/// (`docs/host-identity-rotation.md` §3.8 「证据：退役钥签的争议声明」).
+pub const ROTATE_DISPUTE: &[u8] = b"rh/v1 rotate-dispute\0";
 
 /// Every label; [`sign`] refuses anything else.
-pub const LABELS: [&[u8]; 13] = [
+pub const LABELS: [&[u8]; 14] = [
     CHAIN_ENTRY,
     CHAIN_ATTEST,
     STREAM_HEAD,
@@ -62,6 +66,7 @@ pub const LABELS: [&[u8]; 13] = [
     PASSKEY_PROOF,
     HOST_ROTATE,
     ROTATE_ACK,
+    ROTATE_DISPUTE,
 ];
 
 fn message(label: &[u8], body: &[u8]) -> Vec<u8> {
@@ -182,6 +187,7 @@ mod tests {
             PASSKEY_PROOF,
             HOST_ROTATE,
             ROTATE_ACK,
+            ROTATE_DISPUTE,
         ] {
             assert!(!verify(&public, label, body, &sig));
         }

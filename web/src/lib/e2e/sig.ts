@@ -27,6 +27,8 @@ export const PASSKEY_PROOF = utf8("rh/v1 passkey-proof\0");
 export const HOST_ROTATE = utf8("rh/v1 host-rotate\0");
 /** A host's new identity key confirming a staged renewal on a connection signed in with the old one (`chain.ts` `rotateAckBody`, §3.3). */
 export const ROTATE_ACK = utf8("rh/v1 rotate-ack\0");
+/** The sign key a renewal retired, disputing that renewal by its hash (`chain.ts` `rotateDisputeBody`, §3.8). */
+export const ROTATE_DISPUTE = utf8("rh/v1 rotate-dispute\0");
 export const LABELS = [
   CHAIN_ENTRY,
   CHAIN_ATTEST,
@@ -41,6 +43,7 @@ export const LABELS = [
   PASSKEY_PROOF,
   HOST_ROTATE,
   ROTATE_ACK,
+  ROTATE_DISPUTE,
 ] as const;
 
 export function signLabelled(key: CryptoKey, label: Uint8Array, body: Uint8Array): Promise<Bytes> {

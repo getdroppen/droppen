@@ -437,6 +437,32 @@ pub fn verify_rotate_ack(new_sign: &[u8; 32], account: &str, host: &str, proof_b
     sig::verify(new_sign, sig::ROTATE_ACK, &rotate_ack_body(account, host, proof_body, login_nonce), signature)
 }
 
+/// What a host's retired sign key signs to dispute the renewal that retired
+/// it (`rh/v1 rotate-dispute`, `docs/host-identity-rotation.md` §3.8
+/// 「证据：退役钥签的争议声明」): `str16 account | str16 host | u64 seq |
+/// entry_hash 32 | new_sign 32` — `seq` the disputed `RotateHostKey`,
+/// `entry_hash` its chain hash ([`Entry::hash`]), `new_sign` the sign key it
+/// put in.
+///
+/// Bound to the entry's hash, a statement can only be signed once that entry
+/// exists: no comparing of two parties' clocks, and nothing signed before the
+/// renewal (a login, say) can be passed off as one.
+pub fn rotate_dispute_body(account: &str, host: &str, seq: u64, entry_hash: &[u8; 32], new_sign: &[u8; 32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + account.len() + host.len() + 8 + 64);
+    put_str16(&mut out, account);
+    put_str16(&mut out, host);
+    out.extend_from_slice(&seq.to_be_bytes());
+    out.extend_from_slice(entry_hash);
+    out.extend_from_slice(new_sign);
+    out
+}
+
+/// The retired key's [`rotate_dispute_body`] signature (`key`: the sign key
+/// the renewal at `seq` retired, `keys_at(host, seq - 1)`).
+pub fn sign_rotate_dispute(key: &SigningKey, account: &str, host: &str, seq: u64, entry_hash: &[u8; 32], new_sign: &[u8; 32]) -> [u8; 64] {
+    sig::sign(key, sig::ROTATE_DISPUTE, &rotate_dispute_body(account, host, seq, entry_hash, new_sign))
+}
+
 /// One key epoch committed in the chain: the epoch and its key's hash
 /// ([`user_key_commit`], [`machine_key_commit`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2541,6 +2567,33 @@ impl ChainState {
             sign_key,
             dh_key,
         })
+    }
+
+    /// Whether `signature` disputes the renewal at `seq` of `host`
+    /// ([`rotate_dispute_body`]): entry `seq` of this view is a
+    /// `RotateHostKey` for `host`, the statement is over that entry's hash and
+    /// the sign key it put in, and it is signed by the sign key that entry
+    /// retired (`keys_at(host, seq - 1)`). A hub cannot forge one; it can only
+    /// withhold it.
+    pub fn verify_rotate_dispute(&self, host: &str, seq: u64, signature: &[u8; 64]) -> bool {
+        let Some(entry) = usize::try_from(seq).ok().and_then(|i| self.entries.get(i)) else {
+            return false;
+        };
+        let Action::RotateHostKey(r) = &entry.draft.action else {
+            return false;
+        };
+        if r.host != host {
+            return false;
+        }
+        let (Some(hash), Some(retired)) = (self.hash_at(seq), seq.checked_sub(1).and_then(|s| self.keys_at(host, s))) else {
+            return false;
+        };
+        sig::verify(
+            &retired.sign_key,
+            sig::ROTATE_DISPUTE,
+            &rotate_dispute_body(&self.account, host, seq, &hash, &r.sign_key),
+            signature,
+        )
     }
 
     /// Whether `key` is one a renewal retired — any device's, sign or DH
