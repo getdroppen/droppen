@@ -12,7 +12,7 @@
 //! - **Made** from the chain: the entry that retired the key this device
 //!   holds, its hash and the sign key it installed, signed with that key
 //!   ([`statement`]).
-//! - **Kept** before anything is sent: `agent/rotation-dispute-<seq>.json`,
+//! - **Kept** before anything is sent: `agent/rotation-dispute-<seq>-<id>.json`,
 //!   written whole and flushed ([`keep`]). It needs no seed and holds no
 //!   secret, so it outlives "add this device again with a new identity" and
 //!   "disconnect" alike, until the hub has it.
@@ -89,11 +89,34 @@ impl Statement {
     pub fn pending(&self) -> bool {
         self.acked_ms.is_none() && self.stopped.is_none()
     }
+
+    /// Where it is kept ([`path`]).
+    pub fn path(&self, paths: &Paths) -> PathBuf {
+        path(paths, &self.account, &self.host, self.seq, &self.entry_hash)
+    }
+
+    /// Whether `other` is this very statement: the same renewal of the same
+    /// host in the same account, signed alike (when it was made, and whether
+    /// it was delivered, aside).
+    fn same(&self, other: &Statement) -> bool {
+        (&self.account, &self.host, self.seq, &self.entry_hash, &self.new_sign, &self.sig)
+            == (&other.account, &other.host, other.seq, &other.entry_hash, &other.new_sign, &other.sig)
+    }
 }
 
-/// `<instance dir>/agent/rotation-dispute-<seq>.json`.
-pub fn path(paths: &Paths, seq: u64) -> PathBuf {
-    super::key_path(paths).with_file_name(format!("rotation-dispute-{seq}.json"))
+/// `<instance dir>/agent/rotation-dispute-<seq>-<id>.json`, `<id>` naming the
+/// account, the host and the disputed entry's hash (Codex review 7): a seq is
+/// only a place on one account's chain, and this instance may have disputed
+/// renewals in more than one enrollment (added again, signed up elsewhere).
+pub fn path(paths: &Paths, account: &str, host: &str, seq: u64, entry_hash: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut id = Sha256::new();
+    for part in [account.as_bytes(), host.as_bytes(), &seq.to_be_bytes(), entry_hash.as_bytes()] {
+        id.update((part.len() as u32).to_be_bytes());
+        id.update(part);
+    }
+    let id = id.finalize();
+    super::key_path(paths).with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
 }
 
 /// The statement this device makes against the renewal that retired
@@ -131,12 +154,19 @@ pub fn statement(st: &AgentState, current: &MachineIdentity, now: u64) -> Option
     })
 }
 
-/// Keep `s` (0600, written whole, the directory flushed) unless one for its
-/// entry is kept already: `true` when it was written now.
+/// Keep `s` (0600, written whole, the directory flushed) unless this very
+/// statement is kept already: `true` when it was written now. What is in its
+/// place is read and compared, never taken for it by its name alone (Codex
+/// review 7); one that does not read, or is another statement, gives way.
 pub fn keep(paths: &Paths, s: &Statement) -> Result<bool, String> {
-    let path = path(paths, s.seq);
-    if path.exists() {
-        return Ok(false);
+    let path = s.path(paths);
+    match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<Statement>(&bytes) {
+            Ok(kept) if kept.same(s) => return Ok(false),
+            _ => tracing::warn!(path = %path.display(), "another (or unreadable) dispute statement where this one goes: replaced"),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", path.display())),
     }
     write(&path, s)?;
     Ok(true)
@@ -379,10 +409,15 @@ mod tests {
     /// m-1's state: a chain that added it with `keys[0]` and renewed it to
     /// each of the others in turn (whoever held the key before signing).
     fn renewed(keys: &[&MachineIdentity], hub: &str) -> AgentState {
+        renewed_in("a-1", keys, hub)
+    }
+
+    /// [`renewed`] in account `account`.
+    fn renewed_in(account: &str, keys: &[&MachineIdentity], hub: &str) -> AgentState {
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let d1 = MachineIdentity::from_seed(&[2; 32]);
         let genesis = chain::genesis_draft(
-            "a-1",
+            account,
             ak.sign_public(),
             DeviceInfo {
                 id: "d-1".into(),
@@ -430,13 +465,13 @@ mod tests {
                 old_sig: [0; 64],
                 new_sig: [0; 64],
             };
-            let body = r.body("a-1", &from.sign_public(), &from.dh_public());
+            let body = r.body(account, &from.sign_public(), &from.dh_public());
             r.old_sig = rh_proto::sig::sign(from.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
             r.new_sig = rh_proto::sig::sign(to.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
             push(&mut chain, Action::RotateHostKey(r));
             push(&mut chain, epoch(n as u32 + 1));
         }
-        let mut st = AgentState::enrolling(hub, "a-1", "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
+        let mut st = AgentState::enrolling(hub, account, "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
         assert!(st.absorb(&entries, now_ms()).error.is_none());
         st.rotation.foreign_ms = Some(6);
         st
@@ -544,6 +579,36 @@ mod tests {
         assert!(statement(&AgentState::enrolling("wss://hub.example", "a-1", "m-1", [0; 16], 5), &k0, 77).is_none());
     }
 
+    /// Codex review 7: a statement with the same seq from another enrollment
+    /// (another account, or this instance added again) is another statement —
+    /// kept beside the first and delivered too, never dropped as a duplicate
+    /// by its seq; the very same statement again is one; a file in its place
+    /// that is not it gives way.
+    #[tokio::test]
+    async fn statements_of_two_enrollments_with_the_same_seq_are_both_kept_and_delivered() {
+        let (k0, k1) = (MachineIdentity::from_seed(&[4; 32]), MachineIdentity::from_seed(&[5; 32]));
+        let (k2, k3) = (MachineIdentity::from_seed(&[14; 32]), MachineIdentity::from_seed(&[15; 32]));
+        let (fake, origin) = hub(Vec::new()).await;
+        let first = renewed_in("a-1", &[&k0, &k1], &origin);
+        let (_dir, paths) = instance("disputetwo", [4; 32], &first);
+        let a = statement(&first, &k0, now_ms()).unwrap();
+        let b = statement(&renewed_in("a-2", &[&k2, &k3], &origin), &k2, now_ms()).unwrap();
+        assert_eq!(a.seq, b.seq, "the same place on two chains");
+        assert_ne!(a.entry_hash, b.entry_hash);
+        assert!(keep(&paths, &a).unwrap());
+        assert!(keep(&paths, &b).unwrap(), "another statement with the same seq: kept too");
+        assert!(!keep(&paths, &a).unwrap() && !keep(&paths, &b).unwrap(), "the very same ones again: duplicates");
+        assert_eq!(kept(&paths).len(), 2);
+        // Something in its place that is not it (damaged here) gives way.
+        crate::agent::write_private(&a.path(&paths), b"{}").unwrap();
+        assert!(keep(&paths, &a).unwrap());
+        assert_eq!(kept(&paths).len(), 2);
+        deliver(&paths);
+        until("both delivered", || kept(&paths).is_empty()).await;
+        let sigs: Vec<String> = fake.lock().unwrap().posts.iter().map(|(_, b, _)| b["sig"].as_str().unwrap().to_string()).collect();
+        assert!(sigs.contains(&a.sig) && sigs.contains(&b.sig), "{sigs:?}");
+    }
+
     /// Kept before anything is sent, once per renewal; delivered — no session
     /// — again after the hub's 5xx and after a timeout, 30 s doubling (here
     /// shortened), until it says 200; then noted as `evidence_ms`, the file
@@ -562,10 +627,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(path(&paths, s.seq)).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(s.path(&paths)).unwrap().permissions().mode() & 0o777, 0o600);
         }
         deliver(&paths);
-        until("taken, and then deleted", || !path(&paths, s.seq).exists()).await;
+        until("taken, and then deleted", || !s.path(&paths).exists()).await;
         assert!(kept(&paths).is_empty());
         let posts: Vec<(String, Value, Instant)> = fake.lock().unwrap().posts.clone();
         assert_eq!(posts.len(), 4, "503, a timeout, 500, then 200");
@@ -635,7 +700,7 @@ mod tests {
         let fresh = crate::agent::rotation::re_enroll_fresh(&paths, 99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());
         assert!(!crate::agent::state::exists(&paths), "the enrollment is forgotten");
-        assert_eq!(kept(&paths), vec![(path(&paths, s.seq), s.clone())], "the statement is not");
+        assert_eq!(kept(&paths), vec![(s.path(&paths), s.clone())], "the statement is not");
         fake.lock().unwrap().answers.clear();
         deliver(&paths);
         until("taken", || kept(&paths).is_empty()).await;
