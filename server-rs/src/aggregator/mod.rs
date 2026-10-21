@@ -376,6 +376,7 @@ mod tests {
                 head: None,
                 state: Some(r#"{"items":["SCRUB-PLAINTEXT-CANARY"]}"#.into()),
                 too_large: false,
+                head_key: None,
                 updated_ms: 1,
             })
             .unwrap();
