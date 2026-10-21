@@ -13,7 +13,8 @@
  *   (`MK`, per key epoch: relay-and-plans §5), subscribes over the page's hub
  *   link (`streams.ts`), opens and checks every record, and says where a copy
  *   stands as the head the machine signed — so a copy read back from the
- *   device is trusted only while the machine's signature on it still checks.
+ *   device is trusted only while the machine's signature on it still checks
+ *   (under any key it held: a renewal does not lose the copy).
  * - A gateway source (S1-7) will follow the same names through the local
  *   install, which has already opened and checked them.
  *
@@ -23,8 +24,34 @@
  * as before the source was its own thing, so every copy already on a device
  * still opens.
  */
-import { type Bytes, decodeSignedHead, encodeSignedHead, epochsNewestFirst, fromHex, hex, indexStream, type MachineKey, namingKey, sessionNamingKey, type SignedHead, statusStream, streamId, verifyStreamHead } from "@/lib/e2e";
+import {
+  type Bytes,
+  type ChainState,
+  decodeSignedHead,
+  encodeSignedHead,
+  epochsNewestFirst,
+  fromHex,
+  hex,
+  indexStream,
+  type MachineKey,
+  namingKey,
+  sessionNamingKey,
+  type SignedHead,
+  statusStream,
+  streamId,
+} from "@/lib/e2e";
 import { feedFold, indexFold, type NamedStream, NewestStream, type SavedStream, statusFold, StreamClient, type StreamClientOptions, type StreamFold, type StreamSubscription } from "./streams";
+
+/** What {@link HubCopySource.following} asks of the account (`CloudAccount` is one). */
+export interface CopyAccount {
+  /** A current machine of the account and its current sign key (`undefined`: not one now). */
+  machine(id: string): { signKey: Uint8Array } | undefined;
+  onChange(fn: () => void): () => void;
+  /** The account's chain: a machine's key at the seq a copy kept on the device was verified at (`keysAt`), and its seq now. */
+  readonly chain?: Pick<ChainState, "keysAt" | "deviceRecord" | "seq"> | null;
+  /** Sync the account's chain: a head from the hub did not verify, and the machine may have renewed its key. */
+  sync?(): Promise<unknown>;
+}
 
 /** A copy, by what it is rather than where it is. */
 export type CopyName =
@@ -185,11 +212,27 @@ export class StreamBudget {
 export const STREAM_BUDGET = 192;
 
 /** A hub stream's mark: its signed head, encoded only when it is kept. */
+/**
+ * Machine `host`'s sign key as `chain` had it at `seq` (`keysAt`) — at `null`,
+ * its first (a position kept before positions carried a seq: from before any
+ * renewal). `null` when the chain does not say.
+ */
+export function signKeyAt(chain: Pick<ChainState, "keysAt" | "deviceRecord"> | null | undefined, host: string, seq: number | null): Uint8Array | null {
+  if (!chain) return null;
+  const at = seq ?? chain.deviceRecord(host)?.addedSeq;
+  return at === undefined ? null : (chain.keysAt(host, at)?.signKey ?? null);
+}
+
 class HeadMark implements CopyMark {
   private encoded: string | null = null;
-  constructor(readonly head: SignedHead) {}
+  /** `keySeq`: the account chain's seq when this device verified `head` (its key then: `keysAt`). */
+  constructor(
+    readonly head: SignedHead,
+    readonly keySeq: number | null = null,
+  ) {}
+  /** The signed head, encoded, hex — and `@<keySeq>` when known. */
   get mark(): string {
-    this.encoded ??= hex(encodeSignedHead(this.head));
+    this.encoded ??= hex(encodeSignedHead(this.head)) + (this.keySeq === null ? "" : `@${this.keySeq}`);
     return this.encoded;
   }
   get seq(): number {
@@ -200,9 +243,17 @@ class HeadMark implements CopyMark {
   }
 }
 
-/** The signed head behind a mark this source made (or kept, as hex). */
-function headOf(at: CopyMark): SignedHead {
-  return at instanceof HeadMark ? at.head : decodeSignedHead(fromHex(at.mark));
+/** A kept mark: the signed head (hex) and, after `@`, the chain seq it was verified at (absent in marks from before). */
+function parseMark(mark: string): { head: SignedHead; keySeq: number | null } {
+  const [encoded, seq] = mark.split("@");
+  const keySeq = seq !== undefined && /^\d{1,15}$/.test(seq) ? Number(seq) : null;
+  if (seq !== undefined && keySeq === null) throw new Error("not a mark");
+  return { head: decodeSignedHead(fromHex(encoded!)), keySeq };
+}
+
+/** The signed head behind a mark this source made (or kept), with the seq it was verified at. */
+function headOf(at: CopyMark): { head: SignedHead; keySeq: number | null } {
+  return at instanceof HeadMark ? { head: at.head, keySeq: at.keySeq } : parseMark(at.mark);
 }
 
 const FOLDS: Record<CopyKind, StreamFold<unknown>> = {
@@ -265,9 +316,15 @@ export class HubCopySource implements CopySource {
    * page, whose first key went into the keyring after its chain entry — is
    * looked for again a few times (`refresh`: the keyring, then the account
    * tells its listeners), at {@link KEY_RETRY_MS}, until its key is there.
+   *
+   * The machine's sign key follows the account too (a renewal,
+   * `docs/host-identity-rotation.md` §5.4): heads and manifests from the hub
+   * are held to the key the account's chain gives now, a refused one has the
+   * chain synced once (`account.sync`) before it stands, and a copy kept on
+   * the device resumes under any key the machine held (`chain.retiredKeys`).
    */
   static following(opts: {
-    account: { machine(id: string): { signKey: Uint8Array } | undefined; onChange(fn: () => void): () => void };
+    account: CopyAccount;
     machine: string;
     keys: () => Promise<ReadonlyMap<number, MachineKey>>;
     client: Omit<StreamClientOptions, "machineSignKey" | "epochs">;
@@ -284,6 +341,8 @@ export class HubCopySource implements CopySource {
         running = running.then(async () => {
           try {
             const info = opts.account.machine(opts.machine);
+            // The machine renewed its identity key: what the hub sends from now on must carry the new one.
+            if (info && source.keys && !source.closed) source.keys.client.setMachineSignKey(info.signKey);
             const epochs = info ? await opts.keys() : new Map<number, MachineKey>();
             if (source.closed) return;
             if (source.keys) {
@@ -300,7 +359,20 @@ export class HubCopySource implements CopySource {
               }, KEY_RETRY_MS[retries++]);
             }
             if (!info || !mk) return;
-            const client = new StreamClient({ ...opts.client, machineSignKey: info.signKey, epochs });
+            const { account, machine } = opts;
+            const client = new StreamClient({
+              ...opts.client,
+              machineSignKey: info.signKey,
+              epochs,
+              signKeyAt: opts.client.signKeyAt ?? ((seq) => signKeyAt(account.chain, machine, seq)),
+              chainSeq: opts.client.chainSeq ?? (() => account.chain?.seq ?? null),
+              resyncSignKey:
+                opts.client.resyncSignKey ??
+                (async () => {
+                  await account.sync?.();
+                  return account.machine(machine)?.signKey ?? null;
+                }),
+            });
             source.keys = { mk, client };
             source.ownsClient = true;
             source.emitKeys();
@@ -383,8 +455,9 @@ export class HubCopySource implements CopySource {
     const keys = this.keys;
     if (!keys) return null;
     try {
-      const head = decodeSignedHead(fromHex(mark));
-      return (await verifyStreamHead(head, keys.client.opts.machineSignKey)) ? new HeadMark(head) : null;
+      const { head, keySeq } = parseMark(mark);
+      // A mark this device kept: under the machine's key of the seq it was verified at (`keysAt`), or its current one.
+      return (await keys.client.verifyKept(head, keySeq)) ? new HeadMark(head, keySeq) : null;
     } catch {
       return null;
     }
@@ -394,9 +467,10 @@ export class HubCopySource implements CopySource {
     const keys = this.keys;
     if (!keys || this.closed || !places.length) return null;
     const fold = FOLDS[name.kind] as StreamFold<S>;
-    const saved: SavedStream<S> | null = start.from ? { head: headOf(start.from.at), state: start.from.state } : null;
-    const onState = (state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; freshestMs: number | null }) =>
-      events.onState({ state, at: new HeadMark(change.head), reset: change.reset, bodies: change.bodies, freshestMs: change.freshestMs ?? change.head.head.timeMs });
+    const kept = start.from ? headOf(start.from.at) : null;
+    const saved: SavedStream<S> | null = start.from && kept ? { head: kept.head, state: start.from.state, keySeq: kept.keySeq } : null;
+    const onState = (state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; freshestMs: number | null; keySeq: number | null }) =>
+      events.onState({ state, at: new HeadMark(change.head, change.keySeq), reset: change.reset, bodies: change.bodies, freshestMs: change.freshestMs ?? change.head.head.timeMs });
     if (name.kind === "session") {
       // Only while the page has room for another stream (`StreamBudget`).
       const release = this.budget ? this.budget.take() : () => undefined;

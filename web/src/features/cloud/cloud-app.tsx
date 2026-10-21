@@ -21,8 +21,11 @@ import { HubLink } from "@/lib/hub/link";
 import { rememberPasskeySignIn } from "@/lib/hub/passkey-join";
 import { ChainFollower } from "@/lib/hub/follow";
 import { RelayPool } from "@/lib/hub/relays";
+import { meStore } from "@/lib/hub/me";
+import { RenewalRunner, setRenewalRunner } from "@/lib/hub/renewal";
+import { followPushRenewals } from "@/lib/push";
 import { useStore } from "@/lib/machines/store";
-import { HubShell, hubShell, setHubShell } from "./hub-shell";
+import { HubShell, hubShell, setHubShell, shellCourier } from "./hub-shell";
 import { AccountScreen } from "./account-settings";
 import { isAccountPath } from "./devices-route";
 import { MyDevicesScreen } from "./my-devices";
@@ -154,6 +157,7 @@ export function CloudApp({ children }: { children: ReactNode }) {
       clearSession();
       hubShell()?.stop();
       setHubShell(null);
+      setRenewalRunner(null);
       setPhase({ kind: "refused", reason: account.refusal ?? "denied" });
     },
     [store],
@@ -245,6 +249,13 @@ export function CloudApp({ children }: { children: ReactNode }) {
         hubShell()?.stop();
         const shell = new HubShell({ api, account, link, relays, store, queryClient });
         setHubShell(shell);
+        // Every admin page renews the identity keys of the devices that run AI a removed device could control
+        // (docs/host-identity-rotation.md §4.2); every page shows where they stand.
+        const renewals = new RenewalRunner({ account, link: live, courier: () => shellCourier(live, account), me: meStore(account, live) });
+        setRenewalRunner(renewals);
+        renewals.start();
+        // This browser's push subscription follows its device's renewed key (§2.2 推送).
+        followPushRenewals(account);
         // The sign-in popup (`/link`) opens no machine: it adds one.
         if (!isLinkPath(location.pathname)) shell.start();
         // For diagnostics (and the acceptance harness's latency probe): the
@@ -606,6 +617,7 @@ async function wipeRemoved(account: CloudAccount, link: HubLink | null, store: K
   link?.stop();
   hubShell()?.stop();
   setHubShell(null);
+  setRenewalRunner(null);
   clearSession();
   const failures: string[] = [];
   const [wiped, copies] = await Promise.allSettled([account.wipe(), clearDeviceCopies(store)]);

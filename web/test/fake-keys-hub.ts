@@ -19,17 +19,21 @@ import {
   fromHex,
   generateDeviceKeys,
   hex,
+  hostRotateBody,
   type KeyStore,
   MemoryKeyStore,
   type NoiseKeyPair,
   PASSKEY_DELAY_MS,
   passkeySlotProof,
+  rotateConfirmFor,
+  rotateSas,
   signDraft,
+  signHostRotate,
   verifyHubLogin,
 } from "../src/lib/e2e/index.js";
 import { type AccountStorage, CloudAccount } from "../src/lib/hub/account.js";
 import { HubApi } from "../src/lib/hub/api.js";
-import type { MachineKeyCourier } from "../src/lib/hub/deliver.js";
+import type { MachineKeyCourier, RenewalCourier, RotateRequest } from "../src/lib/hub/deliver.js";
 import { MemorySeenStore } from "../src/lib/hub/seen-store.js";
 
 /** The hub origin the tests' pages dialled (what device-session signatures name). */
@@ -158,6 +162,44 @@ export class FakeKeysHub {
    * them — before, it is a 400.
    */
   hostDevices = new Set<string>();
+  /**
+   * Identity key renewals as rh-hub keeps them (docs/host-identity-rotation.md
+   * §3.3; contract §1): `DROPPEN_HUB_HOST_ROTATION`, the window T, the
+   * account's 「总在设备上确认」, the hosts whose agents declared `rotate/1`,
+   * each host's row (as `GET /v1/rotations` answers it) and the disputes.
+   */
+  rotationEnabled = true;
+  rotationWindowMs = 0;
+  rotates = new Set<string>();
+  rotationRows = new Map<string, Record<string, unknown>>();
+  disputes: Record<string, unknown>[] = [];
+  /** Answer the next renewal batches 409 `window` with these `ready_ms` (one each). */
+  windowRefusals: number[] = [];
+  /** Every `PUT /v1/rotations/{host}` taken or refused: `host attempt|pending assurance`. */
+  rotationPuts: string[] = [];
+  /** Every `DELETE /v1/rotations/{host}`. */
+  rotationDeletes: string[] = [];
+  /** How far the hub's `now_ms` is off this test's clock (its other clocks stay). */
+  nowMsOffset = 0;
+  /** Answer `GET /v1/rotations` 404 (a hub that withholds what it showed before). */
+  rotationsGone = false;
+
+  /**
+   * The host's agent staging a renewal on its hub connection
+   * (`rotation_stage`), checked as rh-hub checks the nonce: its `ready_ms`,
+   * or `null` when no open attempt has that nonce.
+   */
+  async stageRotation(host: string, s: { nonce: Uint8Array; signKey: Uint8Array; dhKey: Uint8Array; stagedSeq: number }): Promise<number | null> {
+    const row = this.rotationRows.get(host);
+    if (!row || row.state !== "attempt" || row.nonce_hash !== hex(new Uint8Array(await crypto.subtle.digest("SHA-256", s.nonce)))) return null;
+    const readyMs = this.now() + this.rotationWindowMs;
+    Object.assign(row, { state: "staged", staged_ms: this.now(), ready_ms: readyMs, sign_key: hex(s.signKey), dh_key: hex(s.dhKey), staged_seq: s.stagedSeq });
+    return readyMs;
+  }
+
+  private renewalNotReady(reason: string, extra: Record<string, unknown> = {}): Response {
+    return this.json(409, { error: "rotation_not_ready", reason, message: `the renewal is not ready: ${reason}`, ...extra });
+  }
 
   json(status: number, value: unknown): Response {
     return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -219,6 +261,17 @@ export class FakeKeysHub {
     const decoded = entries.map((e) => decodeEntry(fromHex(e)));
     const notReady = this.chainV3Refusal(decoded);
     if (notReady) return notReady;
+    // As rh-hub (§3.3 提交): a renewal only as staged, its window passed.
+    const renewals = decoded.flatMap((e) => (e.draft.action.type === "rotateHostKey" ? [{ seq: e.draft.seq, r: e.draft.action.rotation }] : []));
+    for (const { r } of renewals) {
+      if (!this.rotationEnabled) return this.renewalNotReady("disabled");
+      const row = this.rotationRows.get(r.host);
+      if (!row || row.state !== "staged") return this.renewalNotReady("not_staged");
+      if (row.sign_key !== hex(r.signKey) || row.dh_key !== hex(r.dhKey) || row.staged_seq !== r.stagedSeq) return this.renewalNotReady("mismatch");
+      const early = this.windowRefusals.shift();
+      if (early !== undefined) return this.renewalNotReady("window", { ready_ms: early });
+      if (this.now() < (row.ready_ms as number)) return this.renewalNotReady("window", { ready_ms: row.ready_ms });
+    }
     // As rh-hub: a batch never ends with a host still owed its next machine key epoch (a new or restarted host, a narrowed accept list).
     if (this.state && decoded.every((e) => e.draft.seq > this.state!.seq)) {
       const probe = this.state.clone();
@@ -268,6 +321,7 @@ export class FakeKeysHub {
       this.chain.push(e);
     }
     this.revokeRemoved();
+    for (const { seq, r } of renewals) Object.assign(this.rotationRows.get(r.host)!, { state: "committed", committed_ms: this.now(), committed_seq: seq, failure: null });
     this.applyEffects(entries);
     await this.afterAppend?.(entries);
     return this.json(200, { seq: this.chain.length - 1 });
@@ -456,6 +510,37 @@ export class FakeKeysHub {
     const me = who.device;
 
     if (path === "/v1/chain" && method === "POST") return this.append(body.entries as string[]);
+    if (path === "/v1/rotations" && method === "GET") {
+      // A hub that stopped saying (or never said): 404, as one from before renewals.
+      if (this.rotationsGone) return this.json(404, { error: "not_found" });
+      return this.json(200, { enabled: this.rotationEnabled, window_ms: this.rotationWindowMs, hosts: [...this.rotationRows.values()], disputes: this.disputes, now_ms: this.now() + this.nowMsOffset });
+    }
+    if (path.startsWith("/v1/rotations/")) {
+      const host = decodeURIComponent(path.slice("/v1/rotations/".length));
+      if (!this.full(me)) return this.json(403, { error: "not_a_full_device", message: "only a full device renews" });
+      const row = this.rotationRows.get(host);
+      if (method === "DELETE") {
+        this.rotationDeletes.push(host);
+        if (row && row.state !== "committed") this.rotationRows.delete(host);
+        return this.json(200, {});
+      }
+      if (method !== "PUT") return this.json(405, { error: "method" });
+      this.rotationPuts.push(`${host} ${body.nonce_hash ? "attempt" : "pending"} ${body.assurance}`);
+      if (!this.state?.machine(host)) return this.json(409, { error: "not_a_host", message: "not a current host" });
+      if (!this.rotationEnabled) return this.renewalNotReady("disabled");
+      if (!this.rotates.has(host)) return this.renewalNotReady("agent_too_old");
+      // As rh-hub (`rotations.rs`): a live attempt or staging — whoever made it — is never replaced by another nonce; only withdrawn (DELETE).
+      const live = row && ((row.state === "attempt" && (row.attempt_expires_ms as number) > this.now()) || row.state === "staged");
+      if (body.nonce_hash && live && row.nonce_hash !== body.nonce_hash) return this.json(409, { error: "rotation_in_progress", message: "another renewal of it is running" });
+      const kept = { needs_assurance: row?.needs_assurance === true, isolated: row?.isolated === true, failure: row?.failure ?? null };
+      const next: Record<string, unknown> = body.nonce_hash
+        ? { host, state: "attempt", assurance: body.assurance, requested_ms: this.now(), requested_by: me, nonce_hash: body.nonce_hash, attempt_expires_ms: this.now() + 600_000, ...kept }
+        : row && row.state !== "committed"
+          ? row
+          : { host, state: "pending", assurance: body.assurance, requested_ms: this.now(), requested_by: me, ...kept };
+      this.rotationRows.set(host, next);
+      return this.json(200, next);
+    }
     if (path === "/v1/enrollments") {
       this.enrollments.set(body.token, { device: body.device });
       return this.json(200, { expires_ms: Date.now() + 600_000 });
@@ -656,7 +741,7 @@ export class FakeKeysHub {
     account: CloudAccount,
     id = "m-1",
     opts?: Parameters<CloudAccount["completeEnrollment"]>[4],
-  ): Promise<{ id: string; dh: NoiseKeyPair; sign: Uint8Array }> {
+  ): Promise<{ id: string; dh: NoiseKeyPair; sign: Uint8Array; signPrivate: CryptoKey }> {
     const keys = await generateDeviceKeys();
     this.machines.set(id, { sign: hex(keys.signPublic), dh: hex(keys.dhPublic) });
     const code: EnrollCode = await account.startEnrollment();
@@ -664,7 +749,7 @@ export class FakeKeysHub {
     const proof = await enrollProof(code, account.account, id, keys.signPublic, keys.dhPublic);
     this.enrollments.set(token, { device: account.deviceId, machine: id, sign: keys.signPublic, dh: keys.dhPublic, proof });
     await account.completeEnrollment(code, undefined, 1, undefined, opts);
-    return { id, dh: { privateKey: keys.dh.privateKey, publicKey: keys.dhPublic }, sign: keys.signPublic };
+    return { id, dh: { privateKey: keys.dh.privateKey, publicKey: keys.dhPublic }, sign: keys.signPublic, signPrivate: keys.sign.privateKey };
   }
 }
 
@@ -780,5 +865,122 @@ export class RecordingKeyStore extends MemoryKeyStore {
   override async put(name: string, value: unknown): Promise<void> {
     this.puts.push({ name, value });
     return super.put(name, value);
+  }
+}
+
+/** A host's identity as its agent holds it: the sign key that signs, and both public keys. */
+export interface AgentIdentity {
+  sign: CryptoKey;
+  signPublic: Uint8Array;
+  dhPublic: Uint8Array;
+}
+
+/**
+ * The account's agents as a courier sees them (`RenewalCourier`): machine
+ * keys as {@link FakeCourier} takes them, and `POST /rh/rotate` answered as
+ * R3's agent answers it (docs/host-identity-rotation.md §3.2; contract §4) —
+ * a new seed's keys, both keys' signatures over the proof, the MAC under the
+ * new DH key and the admin's ephemeral one, the staging at the hub — or
+ * however a test makes it misbehave. A staged identity becomes the host's
+ * own once the chain names it.
+ */
+export class FakeAgents extends FakeCourier implements RenewalCourier {
+  /** Each host's identity now. */
+  readonly identities = new Map<string, AgentIdentity>();
+  /** What each host staged last, until the chain names it. */
+  readonly staged = new Map<string, AgentIdentity>();
+  /** The code each host's screen shows for its last renewal confirmed on the device. */
+  readonly sas = new Map<string, string>();
+  /** Every `POST /rh/rotate`, by host. */
+  readonly rotateCalls: string[] = [];
+  attests = 0;
+  /** At most this many `POST /rh/rotate` were running at once. */
+  maxActive = 0;
+  private active = 0;
+  /** Answer with this status (and `{error}`) instead (404: an older agent). */
+  rotateStatus: { status: number; error?: string; reason?: string } | null = null;
+  /** Throw this instead (the channel failed). */
+  rotateError: Error | null = null;
+  /** Spoil the answer: a signature, the MAC, or the view. */
+  tamper: "oldSig" | "newSig" | "mac" | "view" | null = null;
+  /** Answer with these keys as the "new" ones (a key the chain named before). */
+  reuse: { signPublic: Uint8Array; dhPublic: Uint8Array } | null = null;
+  /** Stage at the hub (`rotation_stage`) before answering; tell `readyMs`. */
+  stageAtHub = true;
+  tellReady = true;
+
+  constructor(
+    private readonly hub: FakeKeysHub,
+    private readonly chainOf: () => ChainState | null,
+  ) {
+    super();
+  }
+
+  /** Host `id`'s identity, as its enrollment made it. */
+  hold(id: string, identity: AgentIdentity): void {
+    this.identities.set(id, identity);
+  }
+
+  /** What host `id` signs with now: its staged identity once the chain names it (the agent's promotion, §3.5). */
+  current(id: string): AgentIdentity | undefined {
+    const staged = this.staged.get(id);
+    const onChain = this.chainOf()?.machine(id)?.info.signKey;
+    if (staged && onChain && hex(onChain) === hex(staged.signPublic)) {
+      this.identities.set(id, staged);
+      this.staged.delete(id);
+    }
+    return this.identities.get(id);
+  }
+
+  async attest(): Promise<void> {
+    this.attests++;
+  }
+
+  async rotate(machine: string, body: RotateRequest): Promise<{ status: number; body: unknown }> {
+    this.rotateCalls.push(machine);
+    this.active++;
+    this.maxActive = Math.max(this.maxActive, this.active);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (this.rotateError) throw this.rotateError;
+      if (this.rotateStatus) return { status: this.rotateStatus.status, body: { error: this.rotateStatus.error ?? "error", reason: this.rotateStatus.reason, message: "refused" } };
+      const old = this.current(machine);
+      const chain = this.chainOf();
+      if (!old || !chain) return { status: 409, body: { error: "not_current_host", message: "not a current host" } };
+      const fresh = await generateDeviceKeys();
+      const next: AgentIdentity = { sign: fresh.sign.privateKey, signPublic: this.reuse?.signPublic ?? fresh.signPublic, dhPublic: this.reuse?.dhPublic ?? fresh.dhPublic };
+      const nonce = fromHex(body.nonce);
+      const head = fromHex(body.chainHead);
+      const proof = hostRotateBody(chain.account, machine, body.chainSeq, head, old.signPublic, old.dhPublic, next.signPublic, next.dhPublic, nonce, body.assurance);
+      const flip = (b: Uint8Array) => {
+        const c = new Uint8Array(b);
+        c[0] = c[0]! ^ 1;
+        return c;
+      };
+      let oldSig = await signHostRotate(old.sign, proof);
+      let newSig = await signHostRotate(fresh.sign.privateKey, proof);
+      let mac = await rotateConfirmFor(fresh.dh.privateKey, fromHex(body.eph), proof);
+      if (this.tamper === "oldSig") oldSig = flip(oldSig);
+      if (this.tamper === "newSig") newSig = flip(newSig);
+      if (this.tamper === "mac") mac = flip(mac);
+      this.sas.set(machine, await rotateSas(proof));
+      const readyMs = this.stageAtHub ? await this.hub.stageRotation(machine, { nonce, signKey: next.signPublic, dhKey: next.dhPublic, stagedSeq: body.chainSeq }) : null;
+      this.staged.set(machine, next);
+      return {
+        status: 200,
+        body: {
+          signKey: hex(next.signPublic),
+          dhKey: hex(next.dhPublic),
+          oldSig: hex(oldSig),
+          newSig: hex(newSig),
+          mac: hex(mac),
+          stagedSeq: this.tamper === "view" ? Math.max(0, body.chainSeq - 1) : body.chainSeq,
+          stagedHead: body.chainHead,
+          ...(this.tellReady && readyMs !== null ? { readyMs } : {}),
+        },
+      };
+    } finally {
+      this.active--;
+    }
   }
 }

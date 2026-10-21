@@ -243,7 +243,12 @@ export function manifestUpto(m: Manifest): number {
   return m.head.head.nextSeq;
 }
 
-/** A reader starting from a manifest (its pages, in order, are the starting state). */
+/**
+ * A reader starting from a manifest (its pages, in order, are the starting
+ * state). A manifest only ever comes from the network, so `machineKey` is the
+ * host's current key alone, never one it renewed away from
+ * (`docs/host-identity-rotation.md` §5.4).
+ */
 export async function readerFromManifest(machineKey: Uint8Array, m: Manifest): Promise<LogReader> {
   if (!(await verifyManifest(m, machineKey))) throw new RecordError("badHead", "the manifest is not signed by the machine");
   return LogReader.fromHead(machineKey, m.head);

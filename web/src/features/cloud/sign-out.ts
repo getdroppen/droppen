@@ -3,6 +3,7 @@ import type { CloudAccount } from "@/lib/hub/account";
 import { clearSession, type HubApi } from "@/lib/hub/api";
 import { deviceMirrorStore, forgetMirrorKey } from "@/lib/hub/mirror";
 import { forgetPasskeySignIn } from "@/lib/hub/passkey-join";
+import { setRenewalRunner } from "@/lib/hub/renewal";
 import { cacheWipe } from "@/lib/local-cache";
 import { SIGN_IN_PATH } from "@/features/landing/route";
 import { hubShell } from "./hub-shell";
@@ -77,6 +78,7 @@ export async function signOut(from?: CloudAccount, held?: HeldSession): Promise<
   const account = shell?.account ?? from;
   // Every machine's copy stops following (nothing is saved after this), and its channel goes.
   shell?.stop();
+  setRenewalRunner(null);
   account?.stopSession?.();
   // Which passkey this tab signed in with is the signed-in person's: not kept past them.
   forgetPasskeySignIn();

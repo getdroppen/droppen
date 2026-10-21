@@ -10,6 +10,10 @@
  * - `link_n = SHA-256("rh/v1 record-link\0" ‖ stream ‖ link_{n-1} ‖ record_n)`.
  * - Records are released only under a stream head the machine signed, which
  *   also says how current the view is (`LogReader.confirm`, `freshestMs`).
+ * - A host that renewed its identity key (`docs/host-identity-rotation.md`
+ *   §5.4): a head from the network counts under its current key only; a
+ *   position this device verified and kept, under any key it ever held
+ *   (`LogReader.fromHead`'s `storedKeys`, `verifyStreamHeadUnder`).
  *
  * `MK` is a non-extractable HKDF `CryptoKey`; the stream-id HMAC key and every
  * stream key are derived from it straight into non-extractable keys.
@@ -261,6 +265,17 @@ export function verifyStreamHead(head: SignedHead, machineKey: Uint8Array): Prom
 }
 
 /**
+ * Whether any of `keys` signed `head`: for a position this device verified
+ * and kept itself, which may carry a key the host has renewed away from since
+ * (`docs/host-identity-rotation.md` §5.4). Never for a head from the network:
+ * that is held to the host's current key alone.
+ */
+export async function verifyStreamHeadUnder(head: SignedHead, keys: readonly Uint8Array[]): Promise<boolean> {
+  for (const key of keys) if (await verifyStreamHead(head, key)) return true;
+  return false;
+}
+
+/**
  * Every record, in order, linked to the last — and none released until a
  * machine-signed head covers it. The same rules as the Rust `LogReader`, check
  * for check, including what happens on a refusal: a head that says records are
@@ -283,7 +298,7 @@ export class LogReader {
 
   private constructor(
     readonly stream: Bytes,
-    private readonly machineKey: Bytes,
+    private signKey: Bytes,
     start: { nextSeq: number; link: Bytes; epoch: number; timeMs: number | null; anchor: SignedHead | null },
   ) {
     this.confirmedNext = start.nextSeq;
@@ -300,11 +315,28 @@ export class LogReader {
     return new LogReader(copy(stream), copy(machineKey), { nextSeq: 0, link: bytes(32), epoch: 0, timeMs: null, anchor: null });
   }
 
-  /** Start from a signed head (older records compacted away, or a reader saved at it). */
-  static async fromHead(machineKey: Uint8Array, head: SignedHead): Promise<LogReader> {
-    if (!(await verifyStreamHead(head, machineKey))) throw new RecordError("badHead", "the stream head's signature is not the machine's");
+  /**
+   * Start from a signed head (older records compacted away, or a reader saved
+   * at it). Every head after it is held to `machineKey`, the host's current
+   * key; `head` itself may instead carry one of `storedKeys` — keys the host
+   * renewed away from — when it is a position this device verified and kept
+   * (a saved copy, a restart from the confirmed head), never one just
+   * received.
+   */
+  static async fromHead(machineKey: Uint8Array, head: SignedHead, storedKeys: readonly Uint8Array[] = []): Promise<LogReader> {
+    if (!(await verifyStreamHeadUnder(head, [machineKey, ...storedKeys]))) throw new RecordError("badHead", "the stream head's signature is not the machine's");
     const h = head.head;
     return new LogReader(copy(h.stream), copy(machineKey), { nextSeq: h.nextSeq, link: copy(h.link), epoch: h.epoch, timeMs: h.timeMs, anchor: head });
+  }
+
+  /** The key every head it is given must carry: the host's current one. */
+  get machineKey(): Bytes {
+    return copy(this.signKey);
+  }
+
+  /** The host renewed its identity key: heads from now on are held to `key` (the chain's current one), not the old. */
+  setMachineKey(key: Uint8Array): void {
+    this.signKey = copy(key);
   }
 
   async addEpoch(epoch: number, mk: MachineKey): Promise<void> {
@@ -356,7 +388,7 @@ export class LogReader {
   /** Release what a signed head covers (see the Rust side for each refusal). Serialised. */
   confirm(head: SignedHead): Promise<OpenedRecord[]> {
     return this.serial.run(async () => {
-      if (!equal(head.head.stream, this.stream) || !(await verifyStreamHead(head, this.machineKey))) {
+      if (!equal(head.head.stream, this.stream) || !(await verifyStreamHead(head, this.signKey))) {
         throw new RecordError("badHead", "the stream head's signature is not the machine's");
       }
       const h = head.head;

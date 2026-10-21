@@ -36,17 +36,29 @@
  * (`lib/transport/p2p.ts`) when this channel was made with `direct` and the
  * device is not set to hub only. An older agent gets exactly what it got
  * before.
+ *
+ * A machine that renews its identity key (`docs/host-identity-rotation.md`
+ * §3.5, §5.1): a channel is only ever opened to the DH key the chain gives the
+ * machine now ({@link MachineChannel.responderKey} says which), and one the
+ * chain has since replaced is closed — direct paths with it — the moment the
+ * account hears; the next pipe opens a channel to the new key. A handshake
+ * that fails other than by the agent's refusal (the agent could not open the
+ * hello, or its reply does not open: it may hold a key this device has not
+ * heard of yet) syncs the chain and is tried once more.
  */
 import {
   type Binding,
+  type Bytes,
   bridgeMessage,
   CLIENT_FEATURE,
   ChannelDriver,
   type ChannelStream,
+  copy,
   decodeResponseHead,
   DEFAULT_REKEY,
   DIRECT_FEATURE,
   encodeRequestHead,
+  equal,
   finishHandshake,
   type Frame,
   fromUtf8,
@@ -88,6 +100,14 @@ export type ChannelRefusal = { kind: "notAccepted"; by: "hub" | "relay"; why: st
  */
 export const AGENT_UNSAVED = 4507;
 
+/**
+ * The agent's close for a hello it could not take (`refuse(.., 4401, "handshake
+ * refused")` in `server-rs/src/agent/link.rs`) — among other reasons, one
+ * sealed to a key it does not hold: it renewed its identity key and this
+ * device has not heard yet.
+ */
+export const AGENT_HANDSHAKE_REFUSED = 4401;
+
 /** A relay's close for a refused `OPEN`: not a machine this ticket names (`rh-relay/src/route.rs`). */
 const RELAY_FORBIDDEN = 4403;
 /** The hub's closes for a refused `OPEN` (`rh-relay/src/route.rs`, as the hub runs it). */
@@ -105,6 +125,15 @@ export interface MachineChannelOptions {
   directEnv?: Partial<DirectEnv>;
   /** The relays to open the channel through (none: the hub, as before relays). */
   relays?: RelayPool;
+  /**
+   * The one channel an isolated host may be reached on (docs/host-identity-rotation.md
+   * §3.8): opened for a renewal confirmed on the device, for its `/rh/rotate`
+   * call alone — no key goes on it, nothing else is asked, and it is closed
+   * after. The hub routes it only while that host has an open
+   * `assurance = 1` attempt. Every other channel to an isolated host is
+   * refused ({@link ChannelIsolated}).
+   */
+  isolatedRenewal?: boolean;
 }
 
 /**
@@ -127,6 +156,19 @@ export class ChannelBlocked extends Error {
   constructor(readonly kind: "noRelay" | "agentTooOld") {
     super(kind === "noRelay" ? "no relay available" : "the device's agent is too old to be reached");
     this.name = "ChannelBlocked";
+  }
+}
+
+/**
+ * The machine is isolated (docs/host-identity-rotation.md §3.8): a key it
+ * renewed away from signed in again, and nothing since confirmed its
+ * identity on the device itself — its identity may be someone else's. No
+ * channel opens to it until it is renewed with the code its screen shows.
+ */
+export class ChannelIsolated extends Error {
+  constructor(readonly machine: string) {
+    super(`${machine} is isolated: renew its identity key on the device first`);
+    this.name = "ChannelIsolated";
   }
 }
 
@@ -181,6 +223,8 @@ interface OpenedChannel {
   direct: DirectPaths | null;
   route: ChannelRoute;
   off: () => void;
+  /** The machine's DH key the handshake went to. */
+  responder: Bytes;
 }
 
 /** Frames for one `ch`, awaited one at a time until a driver takes over. */
@@ -336,6 +380,10 @@ export class MachineChannel implements PipeOpener {
    */
   private readonly directHistory = new DirectHistory();
   private connecting: Promise<ChannelDriver> | null = null;
+  /** The machine's DH key the installed channel's handshake went to. */
+  private responder: Bytes | null = null;
+  /** Listening to the account while a channel is installed (only then): a renewal of the machine's key closes it. */
+  private offAccount: (() => void) | null = null;
   private readonly listeners = new Set<(status: MachineStatus) => void>();
   private readonly pathListeners = new Set<(paths: PathStats | null) => void>();
   private readonly openListeners = new Set<() => void>();
@@ -372,6 +420,15 @@ export class MachineChannel implements PipeOpener {
     return this.direct;
   }
 
+  /**
+   * The machine's static DH key the open channel was handshaken to — what the
+   * chain gave it then, and still gives it: a channel whose key the chain has
+   * replaced since is closed at once. `null` while no channel is open.
+   */
+  get responderKey(): Uint8Array | null {
+    return this.live() && this.responder ? copy(this.responder) : null;
+  }
+
   private setPaths(paths: PathStats | null): void {
     if (this.paths === paths) return;
     this.paths = paths;
@@ -401,6 +458,9 @@ export class MachineChannel implements PipeOpener {
 
   /** The running channel, opening one if there is none. */
   ensure(): Promise<ChannelDriver> {
+    // Never reused to a host isolated meanwhile — another tab may have kept the dispute (Codex round 1) — nor to a key renewed away.
+    this.checkKey();
+    if (this.account.isolated?.(this.machine) && !this.options.isolatedRenewal) return Promise.reject(new ChannelIsolated(this.machine));
     const driver = this.live();
     if (driver) return Promise.resolve(driver);
     this.connecting ??= this.connect().finally(() => {
@@ -428,6 +488,8 @@ export class MachineChannel implements PipeOpener {
     this.direct = null;
     this.driver?.close(1000, "done");
     this.driver = null;
+    this.responder = null;
+    this.unwatchKey();
     this.carrierOff?.();
     this.carrierOff = null;
     this.setPaths(null);
@@ -453,6 +515,7 @@ export class MachineChannel implements PipeOpener {
         const oldOff = this.carrierOff;
         const next = await this.openChannel(exclude);
         this.install(next);
+        this.checkKey();
         // The old channel lives on a moment for what is in flight on it, then goes.
         setTimeout(() => {
           oldDirect?.close();
@@ -572,6 +635,8 @@ export class MachineChannel implements PipeOpener {
       this.blocked = null;
       this.install(opened);
       this.setStatus("open");
+      // The chain may have moved on while it opened (the listener is only on now).
+      this.checkKey();
       return opened.driver;
     } catch (error) {
       this.blocked = error instanceof ChannelBlocked ? error.kind : null;
@@ -588,6 +653,8 @@ export class MachineChannel implements PipeOpener {
     this.driver = driver;
     this.direct = opened.direct;
     this.carrierOff = opened.off;
+    this.responder = opened.responder;
+    this.watchKey();
     this.setPaths(driver.paths);
     this.setRoute(opened.route);
     if (opened.direct) opened.direct.start();
@@ -603,9 +670,14 @@ export class MachineChannel implements PipeOpener {
     const skip = new Set(exclude);
     this.lastRefusal = null;
     this.refusedThisTry = false;
+    // A handshake that failed other than by the agent's refusal has had the chain synced and been tried again.
+    let resynced = false;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       // A view that forked from what this browser verified opens nothing.
       this.account.assertNotForked();
+      // An isolated host is not connected to at all (§3.8): not even a handshake goes to it — but for the one
+      // `/rh/rotate` of a renewal confirmed on the device (`isolatedRenewal`).
+      if (this.account.isolated?.(this.machine) && !this.options.isolatedRenewal) throw new ChannelIsolated(this.machine);
       const chain = this.account.chain;
       if (!chain) throw new Error("this device has no account chain");
       if (!chain.machine(this.machine)) await this.account.sync();
@@ -633,6 +705,13 @@ export class MachineChannel implements PipeOpener {
         if (first.code === AGENT_UNSAVED) {
           this.refuse({ kind: "unsaved" });
           throw new Error("the device could not save its record of who connects to it");
+        }
+        if (first.code === AGENT_HANDSHAKE_REFUSED && !resynced) {
+          // The agent could not open the hello: it may have renewed its key
+          // before this device heard. The chain says, then one more try.
+          resynced = true;
+          await this.resync();
+          continue;
         }
         if (relay) {
           if (first.code === RELAY_OFFLINE || first.code === LINK_LOST) {
@@ -662,12 +741,21 @@ export class MachineChannel implements PipeOpener {
       if (first.type !== "data") continue;
       try {
         // Entries the agent has that this device lacks (a removal, a
-        // pending recovery) are merged into a copy of the account's chain,
+        // pending recovery, its renewal) are merged into a copy of the account's chain,
         // which becomes its view once held against what this browser
         // verified — on a refusal too. A fork either shows is latched.
         const { transport, reply } = await this.account.completeHandshake((merged) =>
           finishHandshake(initiator, merged.chain, merged.clock, first.payload, DEFAULT_REKEY, Date.now()),
         );
+        const responder = copy(transport.remoteStatic);
+        if (!this.isCurrentKey(responder)) {
+          // The reply taught this device that the machine renewed its key
+          // (its entries were merged just now): no channel to the old key.
+          // It is closed, and the next try goes to the new one.
+          carrier.send({ type: "close", ch, code: 1000, reason: "a renewed key" });
+          carrier.release(ch);
+          continue;
+        }
         this.handshakeMs = performance.now() - started;
         this.lastRefusal = null;
         this.refusal = null;
@@ -695,6 +783,8 @@ export class MachineChannel implements PipeOpener {
           if (this.direct === direct) this.direct = null;
           if (this.driver === driver) {
             this.driver = null;
+            this.responder = null;
+            this.unwatchKey();
             this.setPaths(null);
             this.setRoute(null);
             // Unless a successor is already opening (a pipe came while this
@@ -706,7 +796,7 @@ export class MachineChannel implements PipeOpener {
           direct = this.directPathsFor(driver, { account: chain.account, device: this.account.deviceId, machine: this.machine });
         }
         if (relay) this.options.relays?.noteSuccess(relay);
-        return { driver, direct, route, off: () => offGoaway?.() };
+        return { driver, direct, route, off: () => offGoaway?.(), responder };
       } catch (error) {
         carrier.release(ch);
         if (error instanceof HandshakeError && error.kind === "refused") {
@@ -717,11 +807,70 @@ export class MachineChannel implements PipeOpener {
           await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
           continue;
         }
+        if (!resynced) {
+          // Any other failure — the reply does not open, say: the machine may
+          // have renewed its key before this device heard. The chain says,
+          // then one more try.
+          resynced = true;
+          await this.resync();
+          continue;
+        }
         throw error;
       }
     }
     if (this.lastRefusal === "stale") this.refuse({ kind: "unconfirmed" });
     throw new Error("the device refused the channel");
+  }
+
+  /** Sync the account's chain before a retry; one that cannot be had now leaves the retry to what the chain says already. */
+  private async resync(): Promise<void> {
+    try {
+      await this.account.sync();
+    } catch {
+      // the retry goes on what this device has
+    }
+  }
+
+  /** Whether `key` is the machine's DH key as the chain gives it now (one the chain does not name a key for is left to the agent). */
+  private isCurrentKey(key: Uint8Array): boolean {
+    const now = this.account.chain?.deviceRecord(this.machine)?.info.dhKey;
+    return !now || equal(now, key);
+  }
+
+  /** Listen to the account while a channel is installed. */
+  private watchKey(): void {
+    this.offAccount ??= this.account.onChange(() => this.checkKey());
+  }
+
+  private unwatchKey(): void {
+    this.offAccount?.();
+    this.offAccount = null;
+  }
+
+  /**
+   * The chain gives the machine another DH key than the installed channel was
+   * handshaken to — it renewed its identity key (§3.5 "关通道"): that channel
+   * and its direct paths are closed now, and the next pipe opens one to the
+   * new key. What was in flight on it fails as it would on a lost channel.
+   * So is one to a machine that became isolated (§3.8): nothing stays
+   * connected to it.
+   */
+  private checkKey(): void {
+    const driver = this.driver;
+    const isolated = this.account.isolated?.(this.machine) === true && !this.options.isolatedRenewal;
+    if (!driver || !this.responder || (this.isCurrentKey(this.responder) && !isolated)) return;
+    this.ending.add(driver);
+    this.direct?.close();
+    this.direct = null;
+    this.driver = null;
+    this.responder = null;
+    this.unwatchKey();
+    this.carrierOff?.();
+    this.carrierOff = null;
+    driver.close(1000, "the device renewed its key");
+    this.setPaths(null);
+    this.setRoute(null);
+    if (this.status === "open") this.setStatus("idle");
   }
 
   /** Note how this try was refused; a refusal by the hub or a relay is not the agent's `stale` any more. */
@@ -734,6 +883,8 @@ export class MachineChannel implements PipeOpener {
   /** A direct path for `driver`'s channel: the same handshake as the hub's, under the direct binding. */
   private directPathsFor(driver: ChannelDriver, binding: Binding): DirectPaths {
     const account = this.account;
+    // A direct handshake that failed other than by the agent's refusal has had the chain synced (once a channel).
+    let resynced = false;
     return new DirectPaths({
       driver,
       binding,
@@ -746,8 +897,20 @@ export class MachineChannel implements PipeOpener {
           if (!chain) throw new Error("this device has no account chain");
           return startDirectHandshake(chain, account.noiseKeys, binding, Date.now(), utf8(CLIENT_INFO));
         },
-        finish: async (initiator, reply) =>
-          (await account.completeHandshake((merged) => finishHandshake(initiator, merged.chain, merged.clock, reply, DEFAULT_REKEY, Date.now()))).transport,
+        finish: async (initiator, reply) => {
+          try {
+            return (await account.completeHandshake((merged) => finishHandshake(initiator, merged.chain, merged.clock, reply, DEFAULT_REKEY, Date.now()))).transport;
+          } catch (error) {
+            // As on the hub path: a reply that does not open may be the
+            // machine's renewed key. The chain is synced (a renewal closes
+            // this channel), and the next attempt is the retry.
+            if (!(error instanceof HandshakeError && error.kind === "refused") && !resynced && account.forked === null) {
+              resynced = true;
+              await this.resync();
+            }
+            throw error;
+          }
+        },
         // As on the hub path: the agent is behind, or our attestation had not reached it.
         refused: async () => {
           await account.sync();

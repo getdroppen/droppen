@@ -107,6 +107,19 @@ export const linkZhCN: Record<string, string> = {
     "这个页面是经网络以未加密的 http:// 打开的：同一网络上的人能看到页面上显示的内容，包括你其它设备的会话。",
   "sees your other devices": "能看到你的其它设备",
   "missing: {{ids}} · asked the account's full devices at {{when}}": "缺少：{{ids}}；已在 {{when}} 向账户里的完整设备索取",
+  // This device's identity key renewal on its own settings (docs/host-identity-rotation.md §3.7, §3.8; link-settings.tsx `RotationNote`).
+  "a device is renewing this device's identity key": "有设备正在更换这台设备的身份密钥",
+  "Type this code on the device that asked, to confirm it is renewing this one. Valid until {{time}}.": "在发起请求的设备上输入这串代码，确认它更换的正是这台设备。{{time}} 前有效。",
+  "Type this code on the device that asked, to confirm it is renewing this one.": "在发起请求的设备上输入这串代码，确认它更换的正是这台设备。",
+  "identity key renewed · {{time}}": "已更换身份密钥 · {{time}}",
+  "identity key renewed": "已更换身份密钥",
+  "previous fingerprint {{fp}}": "之前的指纹 {{fp}}",
+  "making a new identity…": "正在生成新身份…",
+  "add this device again with a new identity": "以新身份重新添加这台设备",
+  "this device's identity key was replaced elsewhere": "这台设备的身份密钥已在别处更换",
+  "This device's identity key was replaced elsewhere (for example, it was restored from a backup made before a renewal, or another copy of its old key renewed it). To keep using it here, add it again under a new identity.": "这台设备的身份密钥已在别处更换（例如它从更换之前的备份恢复，或旧密钥的另一份副本做了更换）。要继续在这里使用，请以新身份重新添加。",
+  "Its key here is put aside for good, a new one is made, and you sign it in with a new registration code. Remove its old entry on droppen.app too.": "这里的旧密钥会留档、不再使用，并生成一把新的，你再用新的注册码让它登录。也请在 droppen.app 上移除它的旧条目。",
+  "the hub refused this device's sign-in · syncing the account before trying again": "Hub 拒绝了这台设备的登录 · 正在同步账户，之后再试",
 };
 
 export const linkZhTW: Record<string, string> = {
@@ -207,6 +220,19 @@ export const linkZhTW: Record<string, string> = {
     "這個頁面是經網路以未加密的 http:// 開啟的：同一網路上的人能看到頁面上顯示的內容，包括你其他裝置的工作階段。",
   "sees your other devices": "能看到你的其他裝置",
   "missing: {{ids}} · asked the account's full devices at {{when}}": "缺少：{{ids}}；已在 {{when}} 向帳戶裡的完整裝置索取",
+  // This device's identity key renewal on its own settings (docs/host-identity-rotation.md §3.7, §3.8; link-settings.tsx `RotationNote`).
+  "a device is renewing this device's identity key": "有裝置正在更換這台裝置的身分金鑰",
+  "Type this code on the device that asked, to confirm it is renewing this one. Valid until {{time}}.": "在發起請求的裝置上輸入這串代碼，確認它更換的正是這台裝置。{{time}} 前有效。",
+  "Type this code on the device that asked, to confirm it is renewing this one.": "在發起請求的裝置上輸入這串代碼，確認它更換的正是這台裝置。",
+  "identity key renewed · {{time}}": "已更換身分金鑰 · {{time}}",
+  "identity key renewed": "已更換身分金鑰",
+  "previous fingerprint {{fp}}": "之前的指紋 {{fp}}",
+  "making a new identity…": "正在產生新身分…",
+  "add this device again with a new identity": "以新身分重新新增這台裝置",
+  "this device's identity key was replaced elsewhere": "這台裝置的身分金鑰已在別處更換",
+  "This device's identity key was replaced elsewhere (for example, it was restored from a backup made before a renewal, or another copy of its old key renewed it). To keep using it here, add it again under a new identity.": "這台裝置的身分金鑰已在別處更換（例如它從更換之前的備份還原，或舊金鑰的另一份副本做了更換）。要繼續在這裡使用，請以新身分重新新增。",
+  "Its key here is put aside for good, a new one is made, and you sign it in with a new registration code. Remove its old entry on droppen.app too.": "這裡的舊金鑰會留檔、不再使用，並產生一把新的，你再用新的註冊碼讓它登入。也請在 droppen.app 上移除它的舊項目。",
+  "the hub refused this device's sign-in · syncing the account before trying again": "Hub 拒絕了這台裝置的登入 · 正在同步帳戶，之後再試",
 };
 
 export const linkJa: Record<string, string> = {
@@ -307,4 +333,17 @@ export const linkJa: Record<string, string> = {
     "このページはネットワーク越しに暗号化なし（http://）で開かれています。同じネットワーク上の人は、他のデバイスのセッションを含め、表示内容を読み取れます。",
   "sees your other devices": "他のデバイスを見られる",
   "missing: {{ids}} · asked the account's full devices at {{when}}": "不足：{{ids}}・{{when}} にアカウントのフルデバイスへ要求しました",
+  // This device's identity key renewal on its own settings (docs/host-identity-rotation.md §3.7, §3.8; link-settings.tsx `RotationNote`).
+  "a device is renewing this device's identity key": "別のデバイスがこのデバイスの ID 鍵を更新しています",
+  "Type this code on the device that asked, to confirm it is renewing this one. Valid until {{time}}.": "依頼したデバイスでこのコードを入力し、更新しているのがこのデバイスだと確認してください。{{time}} まで有効です。",
+  "Type this code on the device that asked, to confirm it is renewing this one.": "依頼したデバイスでこのコードを入力し、更新しているのがこのデバイスだと確認してください。",
+  "identity key renewed · {{time}}": "ID 鍵を更新済み · {{time}}",
+  "identity key renewed": "ID 鍵を更新済み",
+  "previous fingerprint {{fp}}": "以前のフィンガープリント {{fp}}",
+  "making a new identity…": "新しい ID を作成しています…",
+  "add this device again with a new identity": "新しい ID でこのデバイスを追加し直す",
+  "this device's identity key was replaced elsewhere": "このデバイスの ID 鍵は別の場所で置き換えられました",
+  "This device's identity key was replaced elsewhere (for example, it was restored from a backup made before a renewal, or another copy of its old key renewed it). To keep using it here, add it again under a new identity.": "このデバイスの ID 鍵は別の場所で置き換えられました（たとえば更新前のバックアップから復元された、または古い鍵の別のコピーが更新した）。ここで使い続けるには、新しい ID で追加し直してください。",
+  "Its key here is put aside for good, a new one is made, and you sign it in with a new registration code. Remove its old entry on droppen.app too.": "ここの鍵は保管されて二度と使われず、新しい鍵が作られます。新しい登録コードでサインインしてください。droppen.app 上の古い項目も削除してください。",
+  "the hub refused this device's sign-in · syncing the account before trying again": "Hub がこのデバイスのサインインを拒否しました · アカウントを同期してから再試行します",
 };

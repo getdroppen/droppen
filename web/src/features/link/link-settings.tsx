@@ -123,6 +123,22 @@ export function DroppenSection({ onOpenSecurity }: { onOpenSecurity?: () => void
     onSuccess: (data) => queryClient.setQueryData(cloudKey(machine), data),
   });
 
+  // Its identity key renewed elsewhere, and only the retired key left here (docs/host-identity-rotation.md §3.8
+  // 「只剩退役钥时」): its key put aside for good, a fresh one made, and it signs in again under a new id.
+  const fresh = useMutation({
+    mutationFn: async () => {
+      // Read as R3's agent serves it until the generated API types name it.
+      const post = api as unknown as { POST(path: string, init: { body: unknown }): Promise<{ data?: unknown; error?: unknown; response: Response }> };
+      const res = await post.POST("/api/cloud/re-enroll-fresh", { body: {} });
+      if (!res.data) throw await failure(res);
+      return res.data;
+    },
+    onSuccess: () => {
+      setFlow({ kind: "idle" });
+      void queryClient.invalidateQueries({ queryKey: cloudKey(machine) });
+    },
+  });
+
   const typedHub = advanced && hubInput.trim() ? hubWebOrigin(hubInput) : null;
   const hubWeb = typedHub ?? status?.hubWeb ?? null;
   const signIn = () => {
@@ -176,6 +192,15 @@ export function DroppenSection({ onOpenSecurity }: { onOpenSecurity?: () => void
               setHubInput={setHubInput}
               hubValid={!advanced || !hubInput.trim() || typedHub !== null}
               onSignIn={signIn}
+            />
+          )}
+          {linkRotation(status) && (
+            <RotationNote
+              rotation={linkRotation(status)!}
+              canManage={status.canManage}
+              busy={fresh.isPending}
+              error={fresh.isError ? fresh.error.message : null}
+              onFresh={() => fresh.mutate()}
             />
           )}
         </div>
@@ -595,6 +620,121 @@ export function AggregatorLine({
         </span>
       )}
       {aggregator.enabled && canManage && <span className="text-2xs text-faint">{t("turning it off deletes the other devices' content keys here")}</span>}
+    </div>
+  );
+}
+
+/**
+ * `GET /api/cloud`'s `link.rotation` (the agent, R3; docs/host-identity-rotation.md
+ * §3.5, §3.7, §3.8 and contract §4, §10): `staged` with the code a renewal
+ * confirmed on the device shows while it lasts, `renewed` after one, `foreign`
+ * once a verified renewal of its own id names keys it never made (`reason`
+ * `renewed_elsewhere`: its own backup from before a renewal looks the same), and
+ * `refused` while the hub refuses its sign-in and it syncs the chain to see why.
+ * Read as the agent serves it until the generated API types name it.
+ */
+export interface LinkRotation {
+  state: "idle" | "staged" | "renewed" | "foreign" | "refused";
+  code?: string | null;
+  codeExpiresMs?: number | null;
+  renewedMs?: number | null;
+  previousFingerprint?: string | null;
+  reason?: string | null;
+}
+
+/** This device's renewal as its link reports it, when there is anything to say. */
+export function linkRotation(status: Pick<CloudStatus, "link">): LinkRotation | null {
+  const r = (status.link as { rotation?: unknown } | null | undefined)?.rotation as Partial<LinkRotation> | null | undefined;
+  if (!r || typeof r !== "object" || (r.state !== "staged" && r.state !== "renewed" && r.state !== "foreign" && r.state !== "refused")) return null;
+  return r as LinkRotation;
+}
+
+/**
+ * This device's identity key renewal, on its own Droppen settings: the code to
+ * type on the device that asked (a renewal confirmed on the device, §3.7), when
+ * it last renewed, that the hub refused its sign-in while it syncs (no alarm:
+ * nothing is known yet), or — in red — that its identity key was replaced
+ * elsewhere, with the way back: put its key aside for good and sign it in
+ * again under a new identity (§3.8 「只剩退役钥时」). Worded so as not to alarm:
+ * restoring this device's own backup from before a renewal ends here too.
+ */
+export function RotationNote({
+  rotation,
+  canManage,
+  busy,
+  error,
+  onFresh,
+  now = Date.now(),
+}: {
+  rotation: LinkRotation;
+  canManage: boolean;
+  busy: boolean;
+  error: string | null;
+  onFresh: () => void;
+  now?: number;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const when = (ms: number) => formatTime(new Date(ms).toISOString());
+  if (rotation.state === "staged") {
+    const live = !!rotation.code && (rotation.codeExpiresMs == null || rotation.codeExpiresMs > now);
+    if (!live) return null;
+    return (
+      <div data-testid="droppen-rotation" data-state="staged" data-signal="warn" className="flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-warn)]">
+        <span className="font-mono text-2xs text-fg">{t("a device is renewing this device's identity key")}</span>
+        <span data-testid="droppen-rotation-code" className="font-mono text-2xl tracking-[0.2em] text-fg select-all">
+          {rotation.code}
+        </span>
+        <span className="text-2xs text-muted">
+          {rotation.codeExpiresMs != null
+            ? t("Type this code on the device that asked, to confirm it is renewing this one. Valid until {{time}}.", { time: when(rotation.codeExpiresMs) })
+            : t("Type this code on the device that asked, to confirm it is renewing this one.")}
+        </span>
+      </div>
+    );
+  }
+  if (rotation.state === "renewed") {
+    return (
+      <div data-testid="droppen-rotation" data-state="renewed" className="flex flex-col gap-0.5 text-2xs text-muted">
+        <span className="font-mono">{rotation.renewedMs != null ? t("identity key renewed · {{time}}", { time: when(rotation.renewedMs) }) : t("identity key renewed")}</span>
+        {rotation.previousFingerprint && <span className="font-mono text-faint">{t("previous fingerprint {{fp}}", { fp: rotation.previousFingerprint })}</span>}
+      </div>
+    );
+  }
+  if (rotation.state === "refused") {
+    return (
+      <p data-testid="droppen-rotation" data-state="refused" className="font-mono text-2xs text-muted">
+        {t("the hub refused this device's sign-in · syncing the account before trying again")}
+      </p>
+    );
+  }
+  return (
+    <div data-testid="droppen-rotation" data-state="foreign" data-signal="failed" className="flex flex-col gap-2 border border-border bg-danger/4 p-3 shadow-[inset_2px_0_0_var(--color-danger)]">
+      <span className="font-mono text-xs text-danger">{t("this device's identity key was replaced elsewhere")}</span>
+      <span className="text-2xs leading-4 text-muted">
+        {t("This device's identity key was replaced elsewhere (for example, it was restored from a backup made before a renewal, or another copy of its old key renewed it). To keep using it here, add it again under a new identity.")}
+      </span>
+      <span className="text-2xs leading-4 text-muted">
+        {t("Its key here is put aside for good, a new one is made, and you sign it in with a new registration code. Remove its old entry on droppen.app too.")}
+      </span>
+      {canManage &&
+        (confirming ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" data-variant="primary" data-testid="droppen-fresh-confirm" className={primary} disabled={busy} onClick={onFresh}>
+              {busy ? t("making a new identity…") : t("add this device again with a new identity")}
+            </button>
+            <button type="button" className={quiet} disabled={busy} onClick={() => setConfirming(false)}>
+              {t("cancel")}
+            </button>
+          </div>
+        ) : (
+          <div>
+            <button type="button" data-testid="droppen-fresh" className={quiet} onClick={() => setConfirming(true)}>
+              {t("add this device again with a new identity")}
+            </button>
+          </div>
+        ))}
+      {error && <div data-signal="failed" className="font-mono text-2xs break-words text-danger">{error}</div>}
     </div>
   );
 }

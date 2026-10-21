@@ -25,7 +25,7 @@ import type { CloudAccount } from "@/lib/hub/account";
 import type { HubLink, PresenceState } from "@/lib/hub/link";
 import { MachineChannel } from "@/lib/hub/machine";
 import type { RelayPool } from "@/lib/hub/relays";
-import { HubCopySource } from "@/lib/hub/copy-source";
+import { HubCopySource, signKeyAt } from "@/lib/hub/copy-source";
 import { MachineStatusReader } from "@/lib/hub/machine-status";
 import { type MachineMirror, mirrorSeal, type Transact } from "@/lib/hub/mirror";
 import { DISPLAY_NAME_MAX, machineDisplayName, recentAlarms, type StatusState, StreamClient } from "@/lib/hub/streams";
@@ -198,7 +198,7 @@ export function useMirrorStatus(mirror: MachineMirror | null | undefined): Statu
 }
 
 /** What a status reader needs of the account (`CloudAccount` is one). */
-export type StatusAccount = Pick<CloudAccount, "account" | "api" | "session" | "machine" | "machineKeys" | "onChange">;
+export type StatusAccount = Pick<CloudAccount, "account" | "api" | "session" | "machine" | "machineKeys" | "onChange"> & Partial<Pick<CloudAccount, "chain" | "sync">>;
 
 /** Which key epochs a reader was opened with: a different set is a different reader. */
 const epochsOf = (epochs: ReadonlyMap<number, MachineKey>) => [...epochs.keys()].sort((a, b) => a - b).join(",");
@@ -222,7 +222,20 @@ export async function openStatusReader(
   const mk = namingKey(epochs);
   const client =
     info && mk
-      ? new StreamClient({ link, machineSignKey: info.signKey, epochs, fetchPage: (stream, page) => account.api.streamPage(account.session.token, stream, page) })
+      ? new StreamClient({
+          link,
+          machineSignKey: info.signKey,
+          epochs,
+          fetchPage: (stream, page) => account.api.streamPage(account.session.token, stream, page),
+          // A copy kept from before the device renewed its identity key still resumes, under the key of the seq it was
+          // verified at; what comes from the hub is checked under its current key, once more after a sync (§5.4).
+          signKeyAt: (seq) => signKeyAt(account.chain, machine, seq),
+          chainSeq: () => account.chain?.seq ?? null,
+          resyncSignKey: async () => {
+            await account.sync?.();
+            return account.machine(machine)?.signKey ?? null;
+          },
+        })
       : null;
   const reader = new MachineStatusReader({ account: account.account, machine, source: HubCopySource.over(mk && client ? { mk, client } : null), transact, seal: mirrorSeal(store) });
   return { reader, client, epochs: epochsOf(epochs) };

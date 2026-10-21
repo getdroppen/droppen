@@ -1,0 +1,1478 @@
+// Renewing a host's identity key from the browser (docs/host-identity-rotation.md
+// §3.1–§3.8, §4.1–§4.3; contract §1, §4, §6), against the fake hub and fake agents.
+//
+// What these pin: which hosts must renew (`hostsToRotate`: the losses, and
+// transitively every host that let an exposed one control it — X → H → H2 —
+// cleared only by a later renewal of that host); `renewIdentity` checks the
+// host's answer before anything is written (both signatures, the DH
+// confirmation, a key the chain never named, the view asked about, the code
+// typed for a renewal confirmed on the device) and waits for the hub's window;
+// a dispute signed by a retired key isolates the host until a renewal
+// confirmed on the device (or its removal); a host waiting to renew or isolated
+// is sealed no host keys and let control no other host; the runner renews one
+// host at a time, the ones a waiting host depends on first, retries after 1, 5
+// and 30 minutes and then asks, and waits for an offline host to come back;
+// PR #117's re-enroll warning stays only for hosts that cannot renew.
+import assert from "node:assert/strict";
+import test from "node:test";
+import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, fromHex, hex, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
+import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal } from "../src/lib/hub/account.js";
+import { type AccountView, hostDispute, HubApiError, rotationPush } from "../src/lib/hub/api.js";
+import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
+import { followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
+import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
+import { browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
+
+const rotated = (a: CloudAccount): string[] =>
+  a.chain!.allEntries().flatMap((e) => (e.draft.action.type === "rotateHostKey" ? [e.draft.action.rotation.host] : []));
+const exposedIds = (chain: ChainState): string[] => [...hostsToRotate(chain).keys()].sort();
+const renewal = (kind: RenewalError["kind"], detail?: string) => (e: unknown) => {
+  assert.ok(e instanceof RenewalError, String(e));
+  assert.equal(e.kind, kind, e.message);
+  if (detail !== undefined) assert.equal(e.detail, detail);
+  return true;
+};
+const quick = { pollMs: 1, hostKeysWait: { forMs: 0, everyMs: 1 } };
+
+/** A new browser paired from `a` (QR), as an admin or not. */
+async function pairAs(hub: FakeKeysHub, a: CloudAccount, opts: { admin: boolean }): Promise<CloudAccount> {
+  const b = await hub.device("tok", new RecordingKeyStore());
+  const r = new PairingResponder({
+    api: b.api,
+    token: b.session.token,
+    account: b.account,
+    device: b.deviceId,
+    signPublic: b.keys.signPublic,
+    noise: b.noiseKeys,
+    chain: async () => (await b.sync(), b.chain),
+    storeUserKeys: (keys) => b.storeUserKeys(keys),
+    pollMs: 1,
+  });
+  try {
+    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
+    await a.pairDevice(c, opts);
+    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
+    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
+  } finally {
+    r.stop();
+  }
+  await b.sync();
+  return b;
+}
+
+/**
+ * A v3 account: admin `a`, hosts m-1, m-2 and m-3 (each declared `rotate/1`),
+ * the agents that answer for them, and browser X (not an admin) that m-1 lets
+ * control it. m-2 lets m-1 control it (`chain`: true). The account chose its
+ * renewal policy — automatic — unless `policy` is false (§5.6 「打开的顺序」).
+ */
+async function account(opts: { chain?: boolean; policy?: boolean } = {}) {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  const agents = new FakeAgents(hub, () => a.chain);
+  const h1 = await hub.enroll(a, "m-1");
+  await a.upgradeToV3({ writable: true });
+  const h2 = await hub.enroll(a, "m-2", { writable: true });
+  const h3 = await hub.enroll(a, "m-3", { writable: true });
+  for (const h of [h1, h2, h3]) {
+    agents.hold(h.id, { sign: h.signPrivate, signPublic: h.sign, dhPublic: h.dh.publicKey });
+    hub.rotates.add(h.id);
+  }
+  if (opts.policy !== false) await a.setRenewalPolicy(false);
+  const x = await pairAs(hub, a, { admin: false });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId] });
+  if (opts.chain !== false) await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
+  return { hub, a, agents, x, h1, h2, h3 };
+}
+
+/** The page's hub link, as the runner hears it. */
+class FakeLink {
+  readonly presence = new Map<string, { state: "online" | "offline" | "unknown"; sinceMs: number; via: never[] }>();
+  private readonly presenceFns = new Set<(p: Map<string, unknown>) => void>();
+  private readonly controlFns = new Set<(m: Record<string, unknown>) => void>();
+  onPresence(fn: (p: Map<string, unknown>) => void) {
+    this.presenceFns.add(fn);
+    return () => this.presenceFns.delete(fn);
+  }
+  onControl(fn: (m: Record<string, unknown>) => void) {
+    this.controlFns.add(fn);
+    return () => this.controlFns.delete(fn);
+  }
+  onState() {
+    return () => undefined;
+  }
+  set(id: string, state: "online" | "offline") {
+    this.presence.set(id, { state, sinceMs: 0, via: [] });
+    for (const fn of this.presenceFns) fn(this.presence);
+  }
+  push(message: Record<string, unknown>) {
+    for (const fn of this.controlFns) fn(message);
+  }
+}
+
+/** `/v1/me` as the runner reads it: which hosts declared `rotate/1`. */
+const meOf = (rotates: Record<string, boolean>, chainSeq: number | null = null) => ({
+  view: { chainSeq, machines: Object.entries(rotates).map(([id, r]) => ({ id, rotates: r })) } as unknown as AccountView,
+  onChange: () => () => undefined,
+});
+
+async function until(what: () => boolean, ms = 4000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!what()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting");
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
+/**
+ * The dispute statement of `host`'s renewal at `seq` (its latest when not given), as the hub hands it on (§3.8):
+ * `rh/v1 rotate-dispute` over that entry's hash and the key it put in, signed with `key` — honestly the key it retired.
+ */
+async function statementJson(a: CloudAccount, host: string, key: CryptoKey, seq = a.chain!.deviceRecord(host)!.rotatedSeq!) {
+  const entry = a.chain!.entryAt(seq)!.draft.action;
+  assert.ok(entry.type === "rotateHostKey");
+  const hash = a.chain!.hashAt(seq)!;
+  const sig = await signRotateDispute(key, a.account, host, seq, hash, entry.rotation.signKey);
+  return { host, kind: "disputed", seen_ms: Date.now(), seq, entry_hash: hex(hash), sig: hex(sig) };
+}
+
+/** What isolates `host` after its last (automatic) renewal: the statement its retired key signs. */
+async function isolatingEvidence(a: CloudAccount, host: string, h: { signPrivate: CryptoKey }) {
+  return statementJson(a, host, h.signPrivate);
+}
+
+/** A retired key's sign-in as the hub records it (§3.8): `HubLogin` signed by `key`, for `host`, retired at `retiredSeq`. */
+async function disputeJson(a: CloudAccount, host: string, key: CryptoKey, signKey: Uint8Array, retiredSeq: number, timeMs?: number) {
+  // Signed after the renewal, past the clock skew allowed (R6 W2) — unless a test says when.
+  const after = (a.chain!.entryAt(retiredSeq)?.draft.createdMs ?? Date.now()) + 6 * 60_000;
+  const login = { role: "agent" as const, account: a.account, id: host, hub: HUB_ORIGIN, nonce: crypto.getRandomValues(new Uint8Array(32)), timeMs: timeMs ?? after };
+  const sig = await signHubLogin(login, key);
+  return {
+    host,
+    kind: "retired_login",
+    seen_ms: Date.now(),
+    retired_seq: retiredSeq,
+    role: "agent",
+    login: { account: login.account, id: login.id, hub: login.hub, nonce: hex(login.nonce), time_ms: login.timeMs },
+    sig: hex(sig),
+    sign_key: hex(signKey),
+  };
+}
+
+test("exposure is transitive: X → m-1 → m-2, and a host let control another while exposed exposes it too", async () => {
+  const { a, x } = await account();
+  assert.deepEqual(exposedIds(a.chain!), [], "nothing lost yet");
+  // What the removal's confirmation says before it is written.
+  assert.deepEqual(hostsExposedBy(a.chain!, x.deviceId), ["m-1", "m-2"]);
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const exposed = hostsToRotate(a.chain!);
+  assert.deepEqual([...exposed.keys()].sort(), ["m-1", "m-2"]);
+  assert.deepEqual([...exposed.get("m-1")!.lost.keys()], [x.deviceId]);
+  assert.deepEqual([...exposed.get("m-2")!.via.keys()], ["m-1"], "m-2 through m-1, whose copy is a pass to it");
+  // Let in while m-1 is exposed (no renewal here yet: the guard is off): m-3 is exposed as well.
+  await a.setAccept("m-3", { type: "devices", ids: ["m-1"] });
+  assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2", "m-3"]);
+  assert.deepEqual([...hostsToRotate(a.chain!).get("m-3")!.via.keys()], ["m-1"]);
+});
+
+test("a renewal clears that host only; what it let in stays exposed until each renews — controllers first: renewIdentity refuses one ahead of an exposed host it lets in (§4.1)", async () => {
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  // m-1 first: m-2 stays exposed (m-1's renewal does not unexpose what m-2 may have been copied), then m-2.
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(exposedIds(a.chain!), ["m-2"]);
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(exposedIds(a.chain!), []);
+  // m-1 renewed: letting it control m-3 now exposes nothing.
+  await a.setAccept("m-3", { type: "devices", ids: ["m-1"] });
+  assert.deepEqual(exposedIds(a.chain!), []);
+
+  // The other order is refused (§4.1 「次序先于收窄」): m-2 lets m-1 (exposed, not renewed yet) control it — whoever asks,
+  // automatic or confirmed on the device, nothing is asked of m-2 or staged at the hub.
+  const other = await account();
+  await other.a.removeDevice(other.x.deviceId, new FakeCourier());
+  assert.deepEqual(other.a.renewFirst("m-2"), ["m-1"]);
+  assert.deepEqual(other.a.renewFirst("m-1"), []);
+  for (const assurance of [ASSURANCE_AUTO, ASSURANCE_ON_DEVICE]) {
+    await assert.rejects(other.a.renewIdentity("m-2", other.agents, { assurance, askCode: async () => "", ...quick }), (e: unknown) => {
+      assert.ok(e instanceof RenewalError && e.kind === "renewFirst", String(e));
+      assert.deepEqual(e.hosts, ["m-1"]);
+      return true;
+    });
+  }
+  assert.deepEqual(other.agents.rotateCalls, [], "m-2 was not asked");
+  assert.deepEqual(other.hub.rotationPuts.filter((p) => p.startsWith("m-2 ")), [], "nothing staged for m-2");
+  await other.a.renewIdentity("m-1", other.agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(other.a.renewFirst("m-2"), []);
+  await other.a.renewIdentity("m-2", other.agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(exposedIds(other.a.chain!), []);
+  assert.deepEqual(rotated(other.a), ["m-1", "m-2"], "each once, the controller first");
+  // A host that is not exposed is never held back (a renewal nobody asked for).
+  await other.a.setAccept("m-3", { type: "devices", ids: ["m-2"] });
+  assert.deepEqual(other.a.renewFirst("m-3"), []);
+  await other.a.renewIdentity("m-3", other.agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(rotated(other.a), ["m-1", "m-2", "m-3"]);
+  const x0 = (via: [string, number][] = []) => ({ sinceSeq: 5, lost: new Map(), via: new Map(via), blockedBy: new Map() });
+  assert.deepEqual(renewalOrder(["m-2", "m-1"], new Map([["m-1", x0()], ["m-2", x0([["m-1", 5]])]]), () => true), ["m-1"], "the one depended on first");
+});
+
+test("after its renewal a host is exposed again only by a new loss, or an exposed host added to its list afterwards (§4.1)", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const y = await pairAs(hub, a, { admin: false });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, y.deviceId] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(exposedIds(a.chain!), []);
+  // (1) A new loss after the renewal.
+  await a.removeDevice(y.deviceId, new FakeCourier());
+  assert.deepEqual(exposedIds(a.chain!), ["m-1"]);
+  assert.deepEqual([...hostsToRotate(a.chain!).get("m-1")!.lost.keys()], [y.deviceId]);
+  // (2) m-3 renewed, then an exposed host (m-1) added to its list after that (an older page could write it).
+  await a.renewIdentity("m-3", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  await a.setAccept("m-3", { type: "devices", ids: ["m-1"] });
+  assert.deepEqual([...hostsToRotate(a.chain!).get("m-3")!.via.keys()], ["m-1"]);
+});
+
+/** The kinds of the entries after `from`, with the host each is about. */
+const writtenAfter = (a: CloudAccount, from: number) =>
+  a.chain!.allEntries().slice(from + 1).map((e) => {
+    const x = e.draft.action;
+    return x.type === "setAccept" ? `setAccept ${x.host}` : x.type === "keyEpochs" ? `keyEpochs ${x.machines.map((m) => m.machine).join(",")}` : x.type === "rotateHostKey" ? `rotate ${x.rotation.host}` : x.type;
+  });
+const admitsOn = (chain: ChainState, host: string, id: string) => {
+  try {
+    chain.mayControl(id, host);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("§4.1 two hosts that let each other control one another: narrowed in one batch, each renews once, restored in one batch only after both did", async () => {
+  const { a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  const before = { m1: a.chain!.acceptPolicy("m-1"), m2: a.chain!.acceptPolicy("m-2") };
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  const exposed = hostsToRotate(a.chain!);
+  assert.deepEqual([...exposed.keys()].sort(), ["m-1", "m-2"]);
+  assert.deepEqual([...exposed.get("m-1")!.via.keys()], ["m-2"], "m-1 lets m-2 control it");
+  assert.deepEqual([...exposed.get("m-2")!.via.keys()], ["m-1"], "and m-2 lets m-1");
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "offline");
+  const me = meOf({ "m-1": true, "m-2": true, "m-3": true });
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me, renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).includes("m-1"));
+  await runner.idle();
+  // Narrowed first, in one batch, before either renewed: on the chain, neither lets the other in (whatever carries it).
+  const written = writtenAfter(a, removedAt);
+  assert.deepEqual(written.slice(0, 4), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
+  assert.equal(written.indexOf("rotate m-1") > 3, true);
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "m-1 does not let m-2 in");
+  assert.equal(admitsOn(a.chain!, "m-2", "m-1"), false, "nor m-2 m-1");
+  // m-1 renewed, m-2 not yet: still narrowed — never restored early — and the rows say so.
+  assert.deepEqual(runner.pausedWith("m-1"), ["m-1", "m-2"]);
+  assert.deepEqual(runner.pausedWith("m-2"), ["m-1", "m-2"]);
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false);
+  // m-2 back: it renews, then both lists come back in one batch, and nothing is exposed by it.
+  link.set("m-2", "online");
+  // (X is gone: m-1's list comes back without it.)
+  await until(() => rotated(a).includes("m-2") && sameAcceptText(a.chain!.acceptPolicy("m-1")) === sameAcceptText({ type: "devices", ids: ["m-2"] }));
+  await runner.idle();
+  const all = writtenAfter(a, removedAt);
+  const restore = all.slice(all.indexOf("rotate m-2"));
+  assert.deepEqual(restore.filter((k) => k.startsWith("setAccept")), ["setAccept m-1", "setAccept m-2"], "one restoring batch");
+  assert.deepEqual(rotated(a).sort(), ["m-1", "m-2"], "each exactly once");
+  assert.equal(sameAcceptText(a.chain!.acceptPolicy("m-2")), sameAcceptText(before.m2));
+  assert.deepEqual(exposedIds(a.chain!), [], "narrowing and restoring exposed nothing of their own");
+  assert.deepEqual(runner.pausedWith("m-1"), []);
+  runner.stop();
+});
+
+const sameAcceptText = (p: { type: string; ids?: string[] }) => `${p.type}:${[...(p.ids ?? [])].sort().join(",")}`;
+
+test("§4.1 a list that let every device in is narrowed to an explicit one without the group, and is `All` again after", async () => {
+  const { a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "all" });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2"]);
+  const link = new FakeLink();
+  for (const h of ["m-1", "m-2", "m-3"]) link.set(h, "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length === 1);
+  const narrowed = a.chain!.acceptPolicy("m-1");
+  assert.equal(narrowed.type, "devices", "an explicit list while they renew");
+  assert.ok(narrowed.type === "devices" && narrowed.ids.includes("m-3") && !narrowed.ids.includes("m-2"), JSON.stringify(narrowed));
+  await until(() => rotated(a).length === 2 && a.chain!.acceptPolicy("m-1").type === "all");
+  await runner.idle();
+  assert.deepEqual(exposedIds(a.chain!), []);
+  runner.stop();
+});
+
+test("§4.1 a host that cannot renew: in an acyclic part it blocks the hosts that let it in (never renewed out of order); in a cycle it keeps its peers narrowed", async () => {
+  // Acyclic: m-1 lets m-3 (an older agent, exposed) control it — m-1 waits, blocked, and nothing is narrowed.
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    hub.rotates.delete("m-3");
+    await a.setAccept("m-3", { type: "devices", ids: [x.deviceId] });
+    await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-3"] });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const removedAt = a.chain!.seq;
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    link.set("m-3", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": false }), renewOptions: quick });
+    runner.start();
+    await runner.idle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runner.idle();
+    assert.deepEqual(runner.status("m-1"), { kind: "blocked", by: ["m-3"] });
+    assert.deepEqual(agents.rotateCalls, [], "not renewed before m-3, which never renews");
+    assert.deepEqual(writtenAfter(a, removedAt).filter((k) => k.startsWith("setAccept")), [], "acyclic: nothing narrowed");
+    runner.stop();
+  }
+  // A cycle: m-1 and m-3 let each other in. Narrowed; m-1 renews; restored never, while m-3 is exposed.
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    hub.rotates.delete("m-3");
+    await a.setAccept("m-3", { type: "devices", ids: [x.deviceId, "m-1"] });
+    await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-3"] });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    link.set("m-3", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": false }), renewOptions: quick });
+    runner.start();
+    await until(() => rotated(a).includes("m-1"));
+    await runner.idle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runner.idle();
+    assert.equal(admitsOn(a.chain!, "m-1", "m-3"), false, "m-3 no longer controls m-1");
+    assert.deepEqual(agents.rotateCalls, ["m-1"]);
+    assert.deepEqual(runner.status("m-3"), { kind: "tooOld" });
+    assert.equal(admitsOn(a.chain!, "m-1", "m-3"), false, "and stays narrowed while m-3 is exposed");
+    assert.deepEqual(runner.pausedWith("m-1"), ["m-1", "m-3"]);
+    runner.stop();
+  }
+});
+
+test("§4.1 order before narrowing: a one-directional pair renews the controller first and narrows nothing; a host never renews before an exposed host it lets in", async () => {
+  // account(): m-2 lets m-1 control it. m-1 is away at first: m-2 waits for it.
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2"]);
+  const link = new FakeLink();
+  link.set("m-1", "offline");
+  link.set("m-2", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  assert.deepEqual(agents.rotateCalls, [], "m-2 does not renew before m-1, which it lets control it");
+  assert.deepEqual(runner.status("m-2"), { kind: "queued", after: ["m-1"], stuck: [{ host: "m-1", why: "offline" }] }, "and says why m-1 is not renewing");
+  // The person's "renew identity key" of m-2 does not renew it ahead of m-1 either.
+  await assert.rejects(runner.renew("m-2", { assurance: ASSURANCE_AUTO }), (e: unknown) => e instanceof RenewalError && e.kind === "renewFirst" && e.hosts?.join() === "m-1");
+  await runner.idle();
+  assert.deepEqual(agents.rotateCalls, [], "still nothing renewed");
+  link.set("m-1", "online");
+  await until(() => rotated(a).length === 2);
+  await runner.idle();
+  assert.deepEqual(rotated(a), ["m-1", "m-2"], "the controller first");
+  assert.deepEqual(writtenAfter(a, removedAt).filter((k) => k.startsWith("setAccept")), [], "ordered, not narrowed");
+  assert.equal(admitsOn(a.chain!, "m-2", "m-1"), true, "m-2 still lets m-1 in");
+  assert.deepEqual(exposedIds(a.chain!), []);
+  runner.stop();
+});
+
+test("§4.1 a queued host's row says why the host it waits for is not renewing: it needs the code, is offline, or is blocked", async () => {
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "online");
+  // This device signs only renewals confirmed on the device: m-1 waits for its code, so m-2 waits for m-1.
+  a.setLocalAssured(true);
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "needsCode", why: "device" });
+  assert.deepEqual(runner.status("m-2"), { kind: "queued", after: ["m-1"], stuck: [{ host: "m-1", why: "needsCode" }] });
+  assert.deepEqual(agents.rotateCalls, []);
+  // Offline instead.
+  a.setLocalAssured(false);
+  link.set("m-1", "offline");
+  await runner.idle();
+  assert.deepEqual(runner.status("m-2"), { kind: "queued", after: ["m-1"], stuck: [{ host: "m-1", why: "offline" }] });
+  runner.stop();
+  // Blocked: m-1 lets m-3 (an older agent, exposed) control it; m-2 waits for m-1.
+  {
+    const b = await account();
+    b.hub.rotates.delete("m-3");
+    await b.a.setAccept("m-3", { type: "devices", ids: [b.x.deviceId] });
+    await b.a.setAccept("m-1", { type: "devices", ids: [b.x.deviceId, "m-3"] });
+    await b.a.removeDevice(b.x.deviceId, new FakeCourier());
+    const link2 = new FakeLink();
+    for (const h of ["m-1", "m-2", "m-3"]) link2.set(h, "online");
+    const r2 = new RenewalRunner({ account: b.a, link: link2 as never, courier: () => b.agents, me: meOf({ "m-1": true, "m-2": true, "m-3": false }), renewOptions: quick });
+    r2.start();
+    await r2.idle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await r2.idle();
+    assert.deepEqual(r2.status("m-1"), { kind: "blocked", by: ["m-3"] });
+    assert.deepEqual(r2.status("m-2"), { kind: "queued", after: ["m-1"], stuck: [{ host: "m-1", why: "blocked" }] });
+    assert.deepEqual(b.agents.rotateCalls, []);
+    r2.stop();
+  }
+});
+
+test("§4.1 a cycle of three is narrowed as one run and restored once all three renewed", async () => {
+  const { a, agents, x } = await account({ chain: false });
+  // m-1 lets X and m-3 in; m-3 lets m-2 in; m-2 lets m-1 in: X → m-1 → m-2 → m-3 → m-1.
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-3"] });
+  await a.setAccept("m-3", { type: "devices", ids: ["m-2"] });
+  await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2", "m-3"]);
+  const link = new FakeLink();
+  for (const h of ["m-1", "m-2", "m-3"]) link.set(h, "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length === 3 && admitsOn(a.chain!, "m-1", "m-3"));
+  await runner.idle();
+  const written = writtenAfter(a, removedAt);
+  assert.deepEqual(written.slice(0, 6), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2", "setAccept m-3", "keyEpochs m-3"], written.join(" | "));
+  const lastRenewal = Math.max(written.indexOf("rotate m-1"), written.indexOf("rotate m-2"), written.indexOf("rotate m-3"));
+  assert.deepEqual(written.slice(lastRenewal + 1).filter((k) => k.startsWith("setAccept")), ["setAccept m-1", "setAccept m-2", "setAccept m-3"], "one restoring run, after the last renewal");
+  assert.ok(admitsOn(a.chain!, "m-2", "m-1") && admitsOn(a.chain!, "m-3", "m-2"));
+  assert.deepEqual(exposedIds(a.chain!), []);
+  runner.stop();
+});
+
+test("§4.1 a cycle inside an acyclic part: only the cycle is narrowed; the host it controls renews after it", async () => {
+  const { a, agents, x } = await account();
+  // m-1 ⇄ m-2 (a cycle), and m-3 lets m-1 control it (acyclic).
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.setAccept("m-3", { type: "devices", ids: ["m-1"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2", "m-3"]);
+  const link = new FakeLink();
+  for (const h of ["m-1", "m-2", "m-3"]) link.set(h, "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length === 3 && admitsOn(a.chain!, "m-2", "m-1"));
+  await runner.idle();
+  const written = writtenAfter(a, removedAt);
+  assert.deepEqual(written.slice(0, 4), ["setAccept m-1", "keyEpochs m-1", "setAccept m-2", "keyEpochs m-2"], written.join(" | "));
+  assert.ok(!written.includes("setAccept m-3"), "m-3's list is never narrowed");
+  assert.ok(written.indexOf("rotate m-3") > written.indexOf("rotate m-1"), "m-3 renews after m-1, which it lets control it");
+  assert.equal(admitsOn(a.chain!, "m-3", "m-1"), true);
+  assert.deepEqual(exposedIds(a.chain!), []);
+  runner.stop();
+});
+
+test("§4.1 another admin page joining mid-group reads the chain: it does not narrow again, and restores once, after the last renewal", async () => {
+  const { hub, a, agents, x } = await account();
+  const b = await pairAs(hub, a, { admin: true });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  // Page A: narrows, renews m-1 (m-2 is away), and closes.
+  const linkA = new FakeLink();
+  linkA.set("m-1", "online");
+  linkA.set("m-2", "offline");
+  const pageA = new RenewalRunner({ account: a, link: linkA as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  pageA.start();
+  await until(() => rotated(a).includes("m-1"));
+  await pageA.idle();
+  pageA.stop();
+  const narrowings = writtenAfter(a, removedAt).filter((k) => k.startsWith("setAccept")).length;
+  assert.equal(narrowings, 2, "one batch: m-1's and m-2's lists");
+  // Page B, on another browser: m-2 comes back while it is open.
+  await b.sync();
+  const linkB = new FakeLink();
+  linkB.set("m-1", "online");
+  linkB.set("m-2", "online");
+  const pageB = new RenewalRunner({ account: b, link: linkB as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  pageB.start();
+  await until(() => rotated(b).includes("m-2") && admitsOn(b.chain!, "m-1", "m-2"));
+  await pageB.idle();
+  pageB.stop();
+  const after = writtenAfter(b, removedAt);
+  assert.equal(after.filter((k) => k.startsWith("setAccept")).length, 4, `narrowed once, restored once: ${after.join(" | ")}`);
+  assert.ok(after.lastIndexOf("setAccept m-1") > after.indexOf("rotate m-2"), "restored only after the last renewal");
+  assert.deepEqual(exposedIds(b.chain!), []);
+});
+
+test("§4.1 a narrowing made by hand is never restored: one list, or lists split across signers, stay narrowed after the renewals", async () => {
+  // One list, by hand (say, following "narrow who can control it"): m-2 stops letting m-1 (exposed) control it.
+  {
+    const { a, agents, x } = await account();
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    assert.deepEqual(exposedIds(a.chain!), ["m-1", "m-2"]);
+    await a.setAccept("m-2", { type: "admins" }, new FakeCourier());
+    assert.equal(admitsOn(a.chain!, "m-2", "m-1"), false);
+    await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+    await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+    assert.deepEqual(exposedIds(a.chain!), []);
+    assert.deepEqual(a.narrowedGroups(), [], "not a group's narrowing");
+    const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+    runner.start();
+    await runner.idle();
+    await runner.idle();
+    runner.stop();
+    assert.equal(a.chain!.acceptPolicy("m-2").type, "admins", "the person's narrowing stands");
+  }
+  // Two lists, narrowed by two admins: two runs, two signers — neither restored.
+  {
+    const { hub, a, agents, x } = await account();
+    const b = await pairAs(hub, a, { admin: true });
+    await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
+    await b.sync();
+    await b.setAccept("m-2", { type: "admins" }, new FakeCourier());
+    await a.sync();
+    await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+    await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+    assert.deepEqual(a.narrowedGroups(), []);
+    const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+    runner.start();
+    await runner.idle();
+    await runner.idle();
+    runner.stop();
+    assert.equal(a.chain!.acceptPolicy("m-1").type, "admins");
+    assert.equal(a.chain!.acceptPolicy("m-2").type, "admins");
+  }
+});
+
+test("renewIdentity: requested with a nonce's hash, the answer checked, written with the next machine key epoch, the key handed over re-encrypting", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const before = a.chain!.machine("m-1")!.info;
+  const epochs = a.chain!.machineKeyEpochs("m-1");
+  const report = await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const record = a.chain!.machine("m-1")!;
+  assert.notEqual(hex(record.info.signKey), hex(before.signKey));
+  assert.equal(hex(record.info.signKey), hex(report.signKey));
+  assert.equal(record.retired.length, 1);
+  assert.equal(hex(record.retired[0]!.signKey), hex(before.signKey));
+  assert.equal(record.retired[0]!.byAssured, false);
+  // [rotateHostKey, keyEpochs{m-1: next}] in one call.
+  const entries = a.chain!.allEntries();
+  const at = entries.findIndex((e) => e.draft.action.type === "rotateHostKey");
+  const next = entries[at + 1]!.draft.action;
+  assert.ok(next.type === "keyEpochs" && next.machines.some((m) => m.machine === "m-1" && m.epoch === epochs));
+  assert.equal(report.mkEpoch, epochs);
+  const handed = agents.posted.at(-1)!;
+  assert.deepEqual([handed.machine, handed.epoch, handed.reencrypt], ["m-1", epochs, true]);
+  assert.equal(hub.rotationRows.get("m-1")!.state, "committed");
+  assert.ok(hub.rotationPuts.includes("m-1 attempt 0"));
+  assert.ok(agents.attests >= 1, "the new head is vouched for");
+  assert.match(report.fingerprint, /^[A-Z2-7]{4}(-[A-Z2-7]{4})+$/);
+  assert.deepEqual(exposedIds(a.chain!), []);
+});
+
+test("renewIdentity refuses an answer that does not check out, and withdraws the attempt: nothing is written", async () => {
+  const cases: [FakeAgents["tamper"] | "reuse", string][] = [
+    ["oldSig", "signature"],
+    ["newSig", "signature"],
+    ["mac", "mac"],
+    ["view", "view"],
+    ["reuse", "reused"],
+  ];
+  for (const [how, detail] of cases) {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    if (how === "reuse") agents.reuse = { signPublic: a.keys.signPublic, dhPublic: a.keys.dhPublic };
+    else agents.tamper = how;
+    await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("badAnswer", detail), String(how));
+    assert.deepEqual(rotated(a), [], `${how}: nothing written`);
+    assert.deepEqual(hub.rotationDeletes, ["m-1"], `${how}: the attempt withdrawn`);
+    assert.deepEqual(exposedIds(a.chain!), ["m-1"], `${how}: still exposed`);
+  }
+});
+
+test("confirmed on the device: the code must be typed, and be the one its screen shows", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  let asked = 0;
+  await assert.rejects(
+    a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async () => (asked++, "AAAA-AAAA"), ...quick }),
+    renewal("wrongCode"),
+  );
+  assert.equal(asked, 1);
+  assert.ok(hub.rotationDeletes.includes("m-1"), "a wrong code withdraws the attempt (R6 L1)");
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async () => null, ...quick }), renewal("cancelled"));
+  assert.deepEqual(rotated(a), []);
+  // Typed as people type it (lower case, no dash): it goes, as assurance 1.
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)!.toLowerCase().replace("-", " "), ...quick });
+  const last = a.chain!.allEntries().find((e) => e.draft.action.type === "rotateHostKey")!.draft.action;
+  assert.ok(last.type === "rotateHostKey" && last.rotation.assurance === ASSURANCE_ON_DEVICE);
+  assert.equal(a.chain!.machine("m-1")!.retired[0]!.byAssured, true);
+});
+
+test("renewIdentity waits for the hub's window (409 rotation_not_ready window → its ready_ms), and says why it cannot go otherwise", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.windowRefusals = [Date.now() + 30];
+  const slept: number[] = [];
+  const sleep = (ms: number) => (slept.push(ms), new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 50))));
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep });
+  assert.deepEqual(hub.windowRefusals, [], "refused once for the window");
+  assert.ok(slept.some((ms) => ms > 0), `it waited for ready_ms (${slept})`);
+  assert.deepEqual(rotated(a), ["m-1"]);
+
+  // An older agent: no `/rh/rotate` (404), or never declared rotate/1 (the hub says so).
+  const old = await account({ chain: false });
+  await old.a.removeDevice(old.x.deviceId, new FakeCourier());
+  old.agents.rotateStatus = { status: 404 };
+  await assert.rejects(old.a.renewIdentity("m-1", old.agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("tooOld"));
+  old.hub.rotates.delete("m-1");
+  await assert.rejects(old.a.renewIdentity("m-1", old.agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("tooOld", "agent_too_old"));
+  old.hub.rotationEnabled = false;
+  await assert.rejects(old.a.renewIdentity("m-2", old.agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("disabled"));
+});
+
+test("a staging the hub voided (another holder of the old key: not_acked) is not written, and asks for a renewal confirmed on the device", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const answer = agents.rotate.bind(agents);
+  agents.rotate = async (m, b) => {
+    const r = await answer(m, b);
+    // A sign-in with the old key that could not confirm with the new one, within the window: voided, and recorded.
+    Object.assign(hub.rotationRows.get(m)!, { state: "pending", failure: { reason: "not_acked", at_ms: Date.now() }, needs_assurance: true });
+    hub.disputes.push({ host: m, kind: "not_acked", seen_ms: Date.now() });
+    return r;
+  };
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("voided", "not_acked"));
+  assert.deepEqual(rotated(a), []);
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "needsCode", why: "evidence" });
+  runner.stop();
+});
+
+test("#6: a dispute statement signed by the retired key isolates the host — checked on this page's chain, not taken on the hub's word — until a renewal confirmed on the device, or its removal", async () => {
+  const { hub, a, agents, x, h1 } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const seq = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const json = await statementJson(a, "m-1", h1.signPrivate);
+  const checked = await checkStatement(a.chain!, hostDispute(json)!);
+  assert.deepEqual(checked, { host: "m-1", seq });
+  assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], ["m-1"]);
+  // Signed by the new key, by another device, about another entry, or not a signature: nothing.
+  const current = agents.current("m-1")!;
+  assert.equal(await checkStatement(a.chain!, hostDispute(await statementJson(a, "m-1", current.sign))!), null, "the new key");
+  assert.equal(await checkStatement(a.chain!, hostDispute(await statementJson(a, "m-1", a.keys.sign.privateKey))!), null, "another device");
+  assert.equal(await checkStatement(a.chain!, hostDispute({ ...json, seq: seq - 1 })!), null, "not a renewal");
+  assert.equal(await checkStatement(a.chain!, hostDispute({ ...json, sig: hex(new Uint8Array(64).fill(7)) })!), null, "not its signature");
+  assert.equal(await checkStatement(a.chain!, hostDispute({ ...json, host: "m-2" })!), null, "another host");
+
+  // The runner: isolated on every page that reads it — no keys, no other host's list, renewal only with the code.
+  hub.disputes.push(json);
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true);
+  assert.equal(a.keysWithheldFrom("m-1"), true);
+  assert.deepEqual(runner.status("m-1"), { kind: "isolated" });
+  await assert.rejects(a.setAccept("m-3", { type: "devices", ids: ["m-1"] }), (e: unknown) => e instanceof AccountError && e.kind === "exposed");
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("needsAssurance"));
+  const issued = await a.issueMachineKey("m-1", agents);
+  assert.equal(issued.result.via, "refused", "an isolated host is handed no key");
+
+  // Confirmed on the device: released.
+  await runner.renew("m-1", { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)! });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), false);
+  assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], [], "an assurance-1 renewal after the disputed one");
+  // A statement disputing that renewal (confirmed on the device) isolates nothing (R6 M1).
+  const assured = await checkStatement(a.chain!, hostDispute(await statementJson(a, "m-1", current.sign))!);
+  assert.deepEqual(assured, { host: "m-1", seq: a.chain!.deviceRecord("m-1")!.rotatedSeq! });
+  assert.deepEqual([...isolatedHosts(a.chain!, [assured!])], []);
+  // Removal ends it too, whatever the hub says.
+  await a.removeDevice("m-1", new FakeCourier());
+  assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], []);
+  runner.stop();
+});
+
+test("#6: a sign-in with a retired key is information only — never isolation, whenever it was signed", async () => {
+  const { hub, a, agents, x, h1 } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const retiredSeq = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const renewedAt = a.chain!.entryAt(retiredSeq)!.draft.createdMs;
+  // No time rule any more: before or after the renewal, its signature is all that is checked — and it isolates nothing.
+  for (const t of [renewedAt - 60_000, renewedAt + 3_600_000]) {
+    assert.deepEqual(await checkRetiredLogin(a.chain!, hostDispute(await disputeJson(a, "m-1", h1.signPrivate, h1.sign, retiredSeq, t))!), { host: "m-1", retiredSeq, timeMs: t });
+  }
+  assert.equal(await checkRetiredLogin(a.chain!, hostDispute({ ...(await disputeJson(a, "m-1", h1.signPrivate, h1.sign, retiredSeq)), sig: hex(new Uint8Array(64)) })!), null);
+  hub.disputes.push(await disputeJson(a, "m-1", h1.signPrivate, h1.sign, retiredSeq, renewedAt + 3_600_000));
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), false, "a sign-in never isolates");
+  assert.deepEqual(a.keptDisputes(), [], "nor is it kept as evidence");
+  assert.equal(runner.retiredLoginAt("m-1"), renewedAt + 3_600_000, "shown as information");
+  assert.notEqual(runner.status("m-1").kind, "isolated");
+  runner.stop();
+});
+
+test("a host waiting to renew, or isolated, is sealed no host keys (purpose 5, no answer to purpose 4); one that cannot renew still is", async () => {
+  const { hub, a, x } = await account();
+  hub.signInHost("m-1");
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  // Not renewable here (the runner said nothing): m-1 still gets m-2's keys.
+  assert.deepEqual(a.hostKeyRecipients("m-2").map((d) => d.info.id), ["m-1"]);
+  // Renewable and exposed: none.
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set() });
+  assert.equal(a.keysWithheldFrom("m-1"), true);
+  assert.deepEqual(a.hostKeyRecipients("m-2"), []);
+  const mailed = hub.mailLog.length;
+  await a.issueMachineKey("m-2", new FakeCourier());
+  assert.equal(hub.mailLog.slice(mailed).filter((m) => m.recipient === "m-1" && m.purpose === 5).length, 0);
+  assert.equal(await a.answerHostKeyRequest("m-1"), 0);
+  // Pending at the hub alone is enough.
+  a.noteRenewals({ renews: new Set(), pending: new Set(["m-1"]), isolated: new Set() });
+  assert.equal(a.keysWithheldFrom("m-1"), true);
+});
+
+test("an exposed host that can renew is let control no other host until it did; PR #117's warning stays only for hosts that cannot renew", async () => {
+  const { a, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  assert.deepEqual([...a.reEnrollWarnings().keys()], ["m-1"], "the re-enroll warning while it cannot renew");
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set() });
+  assert.deepEqual([...a.reEnrollWarnings().keys()], [], "it renews instead");
+  assert.equal(a.mustRenewFirst("m-1"), true);
+  await assert.rejects(a.setAccept("m-2", { type: "devices", ids: ["m-1"] }), (e: unknown) => {
+    assert.ok(e instanceof AccountError && e.kind === "exposed", String(e));
+    assert.equal(e.vars?.ids, "m-1");
+    return true;
+  });
+  assert.equal(a.chain!.acceptPolicy("m-2").type, "admins", "nothing written");
+  // Another host that is not exposed goes.
+  await a.setAccept("m-2", { type: "devices", ids: ["m-3"] });
+});
+
+test("the runner: marks each exposed host pending, renews one at a time — the one others depend on first", async () => {
+  const { hub, a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "online");
+  link.set("m-3", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length === 2);
+  await runner.idle();
+  assert.deepEqual(rotated(a), ["m-1", "m-2"], "m-1 first: m-2 lets it control it");
+  assert.deepEqual(agents.rotateCalls, ["m-1", "m-2"]);
+  assert.equal(agents.maxActive, 1, "one at a time");
+  assert.ok(hub.rotationPuts.indexOf("m-1 pending 0") < hub.rotationPuts.indexOf("m-1 attempt 0"));
+  assert.ok(hub.rotationPuts.includes("m-2 pending 0"), "every exposed host marked first");
+  assert.deepEqual(exposedIds(a.chain!), []);
+  assert.equal(runner.status("m-1").kind, "renewed");
+  assert.equal(runner.status("m-3").kind, "none");
+  runner.stop();
+});
+
+test("the runner: an offline host is renewed once it is back; a failing one is tried again after each delay, then the person is asked", async () => {
+  const { a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "offline");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick, retryMs: [5, 10, 15] });
+  runner.start();
+  await runner.idle();
+  await runner.idle();
+  assert.deepEqual(agents.rotateCalls, [], "not while offline");
+  assert.deepEqual(runner.status("m-1"), { kind: "offline" });
+  assert.deepEqual(runner.notice(), { renewing: ["m-1"], needYou: [] });
+  // Back, but its channel fails: 1 + 3 tries, then it asks.
+  agents.rotateError = new Error("the device did not answer");
+  link.set("m-1", "online");
+  await until(() => runner.status("m-1").kind === "stuck");
+  assert.equal(agents.rotateCalls.length, 4);
+  assert.deepEqual(runner.notice(), { renewing: [], needYou: ["m-1"] });
+  // The person tries again, and it goes.
+  agents.rotateError = null;
+  await runner.renew("m-1", { assurance: ASSURANCE_AUTO });
+  assert.deepEqual(rotated(a), ["m-1"]);
+  assert.equal(runner.status("m-1").kind, "renewed");
+  runner.stop();
+});
+
+test("the runner: an older agent is not tried again; the account's setting asks for the code; a v2 account keeps the re-enroll path", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  agents.rotateStatus = { status: 404 };
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await until(() => runner.status("m-1").kind === "tooOld");
+  await runner.idle();
+  runner.stop();
+  assert.equal(agents.rotateCalls.length, 1);
+  // Declared nothing: too old, and it is never asked.
+  const declared = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": false }), renewOptions: quick });
+  await declared.refresh();
+  assert.deepEqual(declared.status("m-1"), { kind: "tooOld" });
+  assert.equal(agents.rotateCalls.length, 1);
+  assert.ok(!hub.rotationPuts.some((p) => p.startsWith("m-1") && p.endsWith("pending 1")));
+  // 「总在设备上确认」: nothing goes on its own.
+  const other = await account({ chain: false });
+  await other.a.removeDevice(other.x.deviceId, new FakeCourier());
+  // The account's policy, on the chain (R1d's setRenewalPolicy).
+  await other.a.setRenewalPolicy(true);
+  const l2 = new FakeLink();
+  l2.set("m-1", "online");
+  const r2 = new RenewalRunner({ account: other.a, link: l2 as never, courier: () => other.agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  r2.start();
+  await r2.idle();
+  await r2.idle();
+  assert.deepEqual(other.agents.rotateCalls, []);
+  assert.deepEqual(r2.status("m-1"), { kind: "needsCode", why: "policy" });
+  assert.ok(other.hub.rotationPuts.includes("m-1 pending 1"), "marked, as a renewal confirmed on the device");
+  await r2.setAlwaysAssured(false);
+  await until(() => rotated(other.a).length === 1);
+  r2.stop();
+});
+
+test("a v2 account renews nothing: the re-enroll warning stays", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  await hub.enroll(a, "m-1");
+  hub.rotates.add("m-1");
+  a.noteRenewals({ renews: new Set(["m-1"]), pending: new Set(), isolated: new Set() });
+  assert.equal(a.renews("m-1"), false, "never on a v2 chain");
+  await assert.rejects(a.renewIdentity("m-1", new FakeAgents(hub, () => a.chain), { assurance: ASSURANCE_AUTO, ...quick }), (e: unknown) => e instanceof AccountError && e.kind === "notUpgraded");
+});
+
+/** A row another admin page left at the hub (its tab closed in the window, or its withdrawal never arrived). */
+const leftBehind = (host: string, state: "staged" | "attempt", ageMs: number) => {
+  const now = Date.now();
+  return state === "staged"
+    ? { host, state, assurance: 0, requested_ms: now - ageMs - 120_000, requested_by: "d-gone", nonce_hash: "00".repeat(32), staged_ms: now - ageMs - 120_000, ready_ms: now - ageMs, sign_key: "11".repeat(32), dh_key: "22".repeat(32), staged_seq: 1, needs_assurance: false, isolated: false, failure: null }
+    : { host, state, assurance: 0, requested_ms: now - 600_000 - ageMs, requested_by: "d-gone", nonce_hash: "00".repeat(32), attempt_expires_ms: now - ageMs, needs_assurance: false, isolated: false, failure: null };
+};
+
+test("an attempt or staging nobody will finish is withdrawn and the renewal started again; one still live elsewhere is left alone (§4.2)", async () => {
+  // Abandoned: a staging whose window closed more than ABANDONED_MS ago — the hub refuses any new nonce while it stands.
+  for (const row of [leftBehind("m-1", "staged", ABANDONED_MS + 60_000), leftBehind("m-1", "attempt", 1_000)]) {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    hub.rotationRows.set("m-1", { ...row });
+    if (row.state === "staged") await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("inProgress"));
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+    runner.start();
+    await until(() => rotated(a).includes("m-1"));
+    await runner.idle();
+    assert.ok(hub.rotationDeletes.includes("m-1"), `${row.state}: withdrawn first`);
+    assert.equal(runner.status("m-1").kind, "renewed");
+    runner.stop();
+  }
+  // Live: another page's staging still in (or just past) its window — renewing elsewhere, not touched.
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.rotationRows.set("m-1", leftBehind("m-1", "staged", 60_000));
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "renewing", elsewhere: true });
+  assert.deepEqual(agents.rotateCalls, []);
+  assert.deepEqual(hub.rotationDeletes, []);
+  runner.stop();
+});
+
+test("a renewal the hub committed that this page's chain lacks: synced first, the host never marked again", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const b = await pairAs(hub, a, { admin: true });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await b.sync();
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  // b has not heard yet: on its chain m-1 is still exposed.
+  assert.deepEqual(exposedIds(b.chain!), ["m-1"]);
+  const before = hub.rotationPuts.length;
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: b, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await runner.idle();
+  assert.deepEqual(exposedIds(b.chain!), [], "synced");
+  assert.deepEqual(hub.rotationPuts.slice(before), [], "never marked: it would have been set back to pending");
+  assert.equal(hub.rotationRows.get("m-1")!.state, "committed");
+  assert.equal(runner.status("m-1").kind, "renewed");
+  runner.stop();
+});
+
+test("a row pending at the hub for a host nothing exposes any more is withdrawn — judged on the hub's head read just then, never on a lagging chain", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const b = await pairAs(hub, a, { admin: true });
+  const pending = () => ({ host: "m-2", state: "pending", assurance: 0, requested_ms: Date.now(), requested_by: a.deviceId, needs_assurance: false, isolated: false, failure: null });
+  // Another page marked m-2 for an exposure b has not seen: X, which m-2 lets control it, removed after b last synced.
+  await a.setAccept("m-2", { type: "devices", ids: [x.deviceId] });
+  await b.sync();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.rotationRows.set("m-2", pending());
+  // Whatever an old /v1/me said (as new as b's chain), the hub is read again: b lags, so the mark stays.
+  const stale = new RenewalRunner({ account: b, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-2": true }, b.chain!.seq), renewOptions: quick });
+  stale.start();
+  await stale.idle();
+  await stale.idle();
+  assert.deepEqual(hub.rotationDeletes, [], "another page's mark for a newer exposure is left alone");
+  assert.equal(hub.rotationRows.get("m-2")!.state, "pending");
+  stale.stop();
+  // A host nothing exposes, on a chain as new as the hub's: withdrawn, its device role back.
+  hub.rotationRows.set("m-3", { ...pending(), host: "m-3" });
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => hub.rotationDeletes.includes("m-3"));
+  await runner.idle();
+  assert.deepEqual(hub.rotationDeletes, ["m-3"], "m-2 stays: it is exposed");
+  assert.equal(hub.rotationRows.has("m-3"), false);
+  runner.stop();
+});
+
+test("an attempt withdrawn while it waits to be staged fails at once (no ten-minute wait), and is tried again with the usual backoff", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  // The agent answers but stages nothing; meanwhile the attempt is withdrawn (another page, the hub).
+  agents.stageAtHub = false;
+  const answer = agents.rotate.bind(agents);
+  agents.rotate = async (m, body) => {
+    const r = await answer(m, body);
+    hub.rotationRows.delete(m);
+    return r;
+  };
+  const slept: number[] = [];
+  const sleep = async (ms: number) => void slept.push(ms);
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, pollMs: 60_000, sleep }), renewal("voided", "withdrawn"));
+  assert.deepEqual(slept, [], "not polled for");
+  assert.deepEqual(rotated(a), []);
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: { ...quick, sleep }, retryMs: [60_000, 60_000, 60_000] });
+  runner.start();
+  await until(() => runner.status("m-1").kind === "retrying");
+  await runner.idle();
+  assert.equal(agents.rotateCalls.length, 2, "one more try, then the wait");
+  runner.stop();
+});
+
+test("the hub's refusals of a renewal: conflict and window are tried again later, v2 goes the re-enroll way, disabled is disabled", async () => {
+  const refusal = (reason: string) => renewalRefusal(new HubApiError(409, "rotation_not_ready", "no", { reason })) as RenewalError;
+  assert.deepEqual([refusal("conflict").kind, refusal("conflict").detail], ["refused", "conflict"]);
+  assert.deepEqual([refusal("window").kind, refusal("window").detail], ["refused", "window"]);
+  assert.deepEqual([refusal("v2").kind, refusal("v2").detail], ["refused", "v2"]);
+  assert.equal(refusal("disabled").kind, "disabled");
+  assert.equal(refusal("agent_too_old").kind, "tooOld");
+  // The window refused past the page's tries: a later retry, not a new staged seed at once.
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.windowRefusals = Array.from({ length: 6 }, () => Date.now() + 1);
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: { ...quick, sleep: async () => undefined }, retryMs: [60_000, 60_000, 60_000] });
+  runner.start();
+  await until(() => runner.status("m-1").kind === "retrying");
+  await runner.idle();
+  assert.equal(agents.rotateCalls.length, 1, "one staged seed, then the wait");
+  runner.stop();
+  // A `rotation` push saying `none` (a withdrawal) is one too.
+  assert.deepEqual(rotationPush({ t: "rotation", host: "m-1", state: "none" }), { host: "m-1", state: "none", reason: null });
+});
+
+// ------------------------------------------------------------ the R6 security review (contract §11)
+
+test("R6 W1: the hub's isolated flag alone isolates nothing — keys are withheld and only the code renews it, but no “remove it first”", async () => {
+  const { hub, a, agents } = await account({ chain: false });
+  // The hub says m-1 is isolated, and shows no evidence this page can check.
+  hub.rotationRows.set("m-1", { host: "m-1", state: "committed", assurance: 0, requested_ms: Date.now(), requested_by: "d-gone", committed_ms: Date.now(), committed_seq: null, needs_assurance: false, isolated: true, failure: null });
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), false, "no evidence checked here");
+  assert.equal(a.flagged("m-1"), true);
+  assert.equal(a.keysWithheldFrom("m-1"), true, "withholding keys from it is fine");
+  assert.equal(a.mustRenewFirst("m-1"), false);
+  assert.notEqual(runner.status("m-1").kind, "isolated", "not the isolated state, with its removal first");
+  assert.equal(runner.needsCode("m-1"), "evidence", "renewed only confirmed on the device");
+  runner.stop();
+});
+
+test("R6 W3: rows' ages are judged by the hub's clock (now_ms), never the page's", async () => {
+  // The page's clock two hours ahead: another page's staging still live by the hub is not abandoned.
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    hub.rotationRows.set("m-1", leftBehind("m-1", "staged", 60_000));
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick, now: () => Date.now() + 2 * 3_600_000 });
+    runner.start();
+    await runner.idle();
+    await runner.idle();
+    assert.deepEqual(runner.status("m-1"), { kind: "renewing", elsewhere: true });
+    assert.deepEqual(hub.rotationDeletes, []);
+    runner.stop();
+  }
+  // The hub's clock past the abandon margin while the page's says it is fresh: abandoned, withdrawn, renewed.
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    hub.rotationRows.set("m-1", leftBehind("m-1", "staged", 60_000));
+    hub.nowMsOffset = ABANDONED_MS + 120_000;
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+    runner.start();
+    await until(() => rotated(a).includes("m-1"));
+    assert.ok(hub.rotationDeletes.includes("m-1"));
+    runner.stop();
+  }
+});
+
+test("R6 #8: a staging voided as interrupted or replaced is tried again with a fresh nonce — never the code; not_acked still asks for it", async () => {
+  for (const reason of ["interrupted", "replaced"]) {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const answer = agents.rotate.bind(agents);
+    let voids = 1;
+    agents.rotate = async (m, body) => {
+      const r = await answer(m, body);
+      if (voids-- > 0) Object.assign(hub.rotationRows.get(m)!, { state: "pending", failure: { reason, at_ms: Date.now() } });
+      return r;
+    };
+    const link = new FakeLink();
+    link.set("m-1", "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick, retryMs: [5, 5, 5] });
+    runner.start();
+    await until(() => rotated(a).includes("m-1"));
+    await runner.idle();
+    assert.equal(agents.rotateCalls.length, 2, `${reason}: once more, with a fresh nonce`);
+    assert.equal(new Set(hub.rotationPuts.filter((p) => p.startsWith("m-1 attempt"))).size >= 1, true);
+    assert.equal(runner.needsCode("m-1"), null, `${reason}: never the code`);
+    runner.stop();
+  }
+});
+
+test("R6 info: a host that lets an isolated host control it says to remove that one first", async () => {
+  const { hub, a, agents, x, h1 } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  hub.disputes.push(await isolatingEvidence(a, "m-1", h1));
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true);
+  assert.deepEqual(runner.isolatedControllers("m-2"), ["m-1"], "m-2 lets m-1 control it");
+  assert.deepEqual(runner.isolatedControllers("m-3"), []);
+  runner.stop();
+});
+
+/** A browser's push side, played: its worker's subscription, the permission, its storage, and the device's push routes. */
+function pushEnv(over: { permission?: NotificationPermission; vapid?: string; subscribeFails?: boolean } = {}) {
+  const values = new Map<string, string>();
+  const log: string[] = [];
+  let vapid = over.vapid ?? "BBBB";
+  const sub = (endpoint: string) => ({
+    endpoint,
+    unsubscribe: async () => (log.push(`unsubscribe ${endpoint}`), true),
+    toJSON: () => ({ endpoint, keys: { p256dh: "p", auth: "a" } }),
+  });
+  let current: ReturnType<typeof sub> | null = sub("https://push.example/old");
+  const env: PushEnv = {
+    ready: async () =>
+      ({
+        pushManager: {
+          getSubscription: async () => current,
+          subscribe: async () => {
+            if (over.subscribeFails) throw new DOMException("needs a user gesture", "NotAllowedError");
+            current = sub("https://push.example/new");
+            log.push("subscribe");
+            return current;
+          },
+        },
+      }) as never,
+    permission: () => over.permission ?? "granted",
+    storage: { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => void values.set(k, v), removeItem: (k) => void values.delete(k) },
+    api: () => ({
+      GET: async () => ({ data: { publicKey: vapid } }),
+      POST: async (_path, init) => (log.push(`post ${init.body.endpoint}`), {}),
+    }),
+  };
+  return { env, log, values, setVapid: (v: string) => void (vapid = v) };
+}
+
+test("R6 W4: a renewal of the device this browser's notifications come from drops the old subscription and subscribes again against its new VAPID key", async () => {
+  const subscribed = (seq: number | null = null) => JSON.stringify({ machine: "m-1", vapid: "AAAA", seq });
+  // Notifications allowed: no prompt, no tap.
+  const ok = pushEnv();
+  ok.values.set("rh.hub.push.subscribed", subscribed());
+  assert.equal(await followRenewedKey("m-1", 12, ok.env), "renewed");
+  assert.deepEqual(ok.log, ["unsubscribe https://push.example/old", "subscribe", "post https://push.example/new"]);
+  assert.deepEqual(readPushRecord(ok.env), { machine: "m-1", vapid: "BBBB", seq: 12 });
+  assert.equal(await followRenewedKey("m-1", 12, ok.env), "none", "once per renewal");
+  // Another device's renewal, or the same VAPID key: nothing dropped.
+  const other = pushEnv({ vapid: "AAAA" });
+  other.values.set("rh.hub.push.subscribed", subscribed());
+  assert.equal(await followRenewedKey("m-2", 12, other.env), "none");
+  assert.equal(await followRenewedKey("m-1", 12, other.env), "current");
+  assert.deepEqual(other.log, []);
+  // Not allowed now, or the browser wants a tap to subscribe: the old one goes all the same, and a tap is asked for.
+  for (const env of [pushEnv({ permission: "default" }), pushEnv({ subscribeFails: true })]) {
+    env.values.set("rh.hub.push.subscribed", subscribed());
+    assert.equal(await followRenewedKey("m-1", 12, env.env), "needsTap");
+    assert.ok(env.log.includes("unsubscribe https://push.example/old"), "the push service drops the old endpoint");
+    assert.equal(pushRenewalNeeded(env.env), "m-1");
+    assert.equal(readPushRecord(env.env), null);
+  }
+  // Followed from the account's chain: a renewal it learns of is acted on.
+  const watched = pushEnv();
+  watched.values.set("rh.hub.push.subscribed", subscribed(5));
+  let rotatedSeq: number | null = 5;
+  const listeners = new Set<() => void>();
+  const off = followPushRenewals({ chain: { machine: () => ({ rotatedSeq }) }, onChange: (fn) => (listeners.add(fn), () => listeners.delete(fn)) }, watched.env);
+  assert.deepEqual(watched.log, [], "nothing new at 5");
+  rotatedSeq = 9;
+  for (const fn of listeners) fn();
+  await until(() => watched.log.includes("subscribe"));
+  assert.equal(readPushRecord(watched.env)?.seq, 9);
+  off();
+});
+
+test("#7: isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {
+  const { hub, a, agents, x, h1 } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  hub.disputes.push(await isolatingEvidence(a, "m-1", h1));
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true, "verified here");
+  // The hub drops the evidence, then answers 404: still isolated, and still sealed nothing.
+  hub.disputes = [];
+  for (const row of hub.rotationRows.values()) row.isolated = false;
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true, "the hub omitting it does not clear it");
+  hub.rotationsGone = true;
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true, "nor a 404");
+  assert.equal(a.keysWithheldFrom("m-1"), true);
+  runner.stop();
+  // A reload of the same browser: isolated before any runner has read the hub.
+  const again = await hub.reload(a);
+  assert.equal(again.isolated("m-1"), true, "known before a channel or a key");
+  // A stale tab — another page of this browser that never saw the evidence — refreshing on a hub that withholds it.
+  hub.rotationsGone = false;
+  const stale = await hub.reload(a);
+  const staleRunner = new RenewalRunner({ account: stale, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await staleRunner.refresh();
+  await staleRunner.idle();
+  staleRunner.stop();
+  assert.equal((await hub.reload(a)).isolated("m-1"), true, "a stale tab does not erase it");
+  // Only a renewal confirmed on the device, after the disputed one, on this page's own chain clears it.
+  const confirm = new RenewalRunner({ account: again, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true }) });
+  await confirm.refresh();
+  await confirm.renew("m-1", { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)! });
+  confirm.stop();
+  assert.equal(again.isolated("m-1"), false);
+  assert.equal((await hub.reload(a)).isolated("m-1"), false, "and stays cleared after a reload");
+});
+
+test("R1d: the account's policy lives on the chain — written as setRenewalPolicy, read back from the verified chain, and while on no automatic renewal is signed", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  assert.equal(a.alwaysAssured, false, "off until an admin turns it on");
+  await a.setRenewalPolicy(true);
+  const last = a.chain!.allEntries().at(-1)!.draft.action;
+  assert.deepEqual(last, { type: "setRenewalPolicy", alwaysAssured: true });
+  // Another page of the account reads it off its own verified chain — not from the hub.
+  const other = await hub.reload(a);
+  assert.equal(other.alwaysAssured, true);
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("needsAssurance", "policy"));
+  assert.deepEqual(rotated(a), []);
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)!, ...quick });
+  assert.deepEqual(rotated(a), ["m-1"], "confirmed on the device, it goes");
+  // Off again: automatic renewals are signed again.
+  await a.setRenewalPolicy(false);
+  assert.equal(a.alwaysAssured, false);
+  await a.setRenewalPolicy(false);
+  // The first choice (automatic, made with the account), on, off: setting it to what it is writes nothing.
+  assert.equal(a.chain!.allEntries().filter((e) => e.draft.action.type === "setRenewalPolicy").length, 3, "setting it to what it is writes nothing");
+});
+
+test("R1d: this device's own guard — on it, no automatic renewal is signed here, whatever the chain or the hub says", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  a.setLocalAssured(true);
+  assert.equal(a.alwaysAssured, false, "the account's policy is off");
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("needsAssurance", "local"));
+  // Kept in this browser: a reload holds to it; another browser of the account does not.
+  assert.equal((await hub.reload(a)).localAssured(), true);
+  const b = await pairAs(hub, a, { admin: true });
+  assert.equal(b.localAssured(), false);
+  // The runner here waits for the code, and marks the host as a renewal confirmed on the device.
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "needsCode", why: "device" });
+  assert.deepEqual(agents.rotateCalls, []);
+  assert.ok(hub.rotationPuts.includes("m-1 pending 1"));
+  runner.stop();
+  a.setLocalAssured(false);
+  assert.equal(a.localAssured(), false);
+});
+
+test("hub JSON: rows, disputes and pushes parse as the contract says; anything else is left out", () => {
+  const d = hostDispute({ host: "m-1", kind: "retired_login", seen_ms: 5, retired_seq: 9, role: "device", login: { account: "a", id: "m-1", hub: "h", nonce: "00".repeat(32), time_ms: 3 }, sig: "11".repeat(64), sign_key: "22".repeat(32) })!;
+  assert.equal(d.retiredSeq, 9);
+  assert.equal(d.role, "device");
+  assert.equal(hex(d.login!.nonce), "00".repeat(32));
+  assert.equal(hex(d.signKey!), "22".repeat(32));
+  assert.equal(hostDispute({ host: "m-1", kind: "who knows" }), null);
+  const statement = hostDispute({ host: "m-1", kind: "disputed", seen_ms: 7, seq: 12, entry_hash: "33".repeat(32), sig: "44".repeat(64) })!;
+  assert.deepEqual([statement.kind, statement.seq, hex(statement.entryHash!), hex(statement.sig!)], ["disputed", 12, "33".repeat(32), "44".repeat(64)]);
+  assert.deepEqual(fromHex(hex(d.sig!)).length, 64);
+});
+
+/** Another tab of the same browser as `a`: its storage (`storage` to fail writes in), the same device, its own cross-tab end. */
+async function tabOf(a: CloudAccount, crossTab: CrossTab | null, storage = browserStorage(a.store)) {
+  const tab = await CloudAccount.open(a.api, a.session, a.store, { origin: HUB_ORIGIN, storage, crossTab });
+  await tab.sync();
+  return tab;
+}
+
+/** A BroadcastChannel among tabs: what one posts, the others hear (never itself). */
+function tabsBus() {
+  const ends = new Set<(m: unknown) => void>();
+  return (): CrossTab => {
+    let mine: ((m: unknown) => void) | null = null;
+    return {
+      post: (m) => {
+        for (const fn of [...ends]) if (fn !== mine) fn(structuredClone(m));
+      },
+      subscribe: (fn) => {
+        mine = fn;
+        ends.add(fn);
+        return () => ends.delete(fn);
+      },
+    };
+  };
+}
+
+/** Storage that refuses to write the kept disputes (full, or not allowed). */
+function refusingDisputes(base: ReturnType<typeof browserStorage>) {
+  return {
+    getItem: (k: string) => base.getItem(k),
+    setItem: (k: string, v: string) => {
+      if (k.startsWith("rh.hub.renewal.disputes.")) throw new Error("QuotaExceededError");
+      base.setItem(k, v);
+    },
+    removeItem: (k: string) => base.removeItem(k),
+  };
+}
+
+test("Codex 1: kept disputes are one per renewal; copies, or many others, never evict one that still isolates; a failed write or another tab loses none", async () => {
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const s2 = a.chain!.deviceRecord("m-2")!.rotatedSeq!;
+  a.keepDisputes([{ host: "m-1", seq: s1 }]);
+  // 600 copies of one valid statement for m-2 (a hub may repeat it): one kept, m-1's stays.
+  a.keepDisputes(Array.from({ length: 600 }, () => ({ host: "m-2", seq: s2 })));
+  assert.deepEqual(a.keptDisputes(), [{ host: "m-1", seq: s1 }, { host: "m-2", seq: s2 }]);
+  assert.equal(a.isolated("m-1"), true);
+  // Many resolved ones (hosts long gone): only those are dropped past the cap, the oldest first.
+  a.keepDisputes(Array.from({ length: 600 }, (_, i) => ({ host: `gone-${i}`, seq: 1 })));
+  const kept = a.keptDisputes();
+  assert.ok(kept.length <= 512, String(kept.length));
+  assert.ok(kept.some((d) => d.host === "m-1") && kept.some((d) => d.host === "m-2"), "the isolating ones stay");
+  assert.equal(a.isolated("m-1"), true);
+  assert.equal(a.isolated("m-2"), true);
+
+  // Storage that cannot be written: kept in memory all the same.
+  const { a: b, agents: bAgents, x: bx } = await account();
+  await b.removeDevice(bx.deviceId, new FakeCourier());
+  await b.renewIdentity("m-1", bAgents, { assurance: ASSURANCE_AUTO, ...quick });
+  const b1 = b.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const bus = tabsBus();
+  const tab1 = await tabOf(b, bus(), refusingDisputes(browserStorage(b.store)));
+  const tab2 = await tabOf(b, bus(), refusingDisputes(browserStorage(b.store)));
+  let heard = 0;
+  tab2.onChange(() => heard++);
+  tab1.keepDisputes([{ host: "m-1", seq: b1 }]);
+  assert.equal(tab1.isolated("m-1"), true, "the write failed; memory keeps it");
+  // Another tab hears of it at once — and tells its listeners (its channels among them).
+  assert.equal(tab2.isolated("m-1"), true, "the other tab heard of it");
+  assert.ok(heard > 0, "and told its listeners");
+});
+
+test("Codex 1: the runner's evidence from the hub now never stands in for what this page kept", async () => {
+  const { hub, a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  a.keepDisputes([{ host: "m-1", seq: s1 }]);
+  // The hub flags it isolated but hands no statement on now: what this page kept still isolates it — not a mere flag.
+  hub.rotationRows.set("m-1", { host: "m-1", state: "committed", committed_seq: s1, isolated: true });
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }) });
+  await runner.refresh();
+  await runner.idle();
+  assert.equal(a.isolated("m-1"), true);
+  assert.equal(a.flagged("m-1"), false, "isolated by evidence kept here, not flagged on the hub's word");
+  runner.stop();
+});
+
+test("Codex 3: a 409 and a newer head never let a renewal ahead of an exposed host it lets in — checked on the very chain each build signs on", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  // m-2 lets m-1 control it; nothing is exposed yet, so m-2 may renew.
+  await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
+  const other = await tabOf(a, null);
+  hub.windowRefusals = [Date.now() + 30];
+  let removed = false;
+  const sleep = async (ms: number) => {
+    // While m-2's renewal waits for the window, another page removes X: m-1 is exposed, so m-2 must wait for it.
+    if (!removed) {
+      removed = true;
+      await other.removeDevice(x.deviceId, new FakeCourier());
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+  };
+  await assert.rejects(a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), (e: unknown) => {
+    assert.ok(e instanceof RenewalError && e.kind === "renewFirst", String(e));
+    assert.deepEqual(e.hosts, ["m-1"]);
+    return true;
+  });
+  assert.ok(removed);
+  assert.deepEqual(rotated(a), [], "m-2 not written on the newer head");
+  assert.ok(hub.rotationDeletes.includes("m-2"), "the attempt withdrawn");
+});
+
+test("Codex 4: a loss after the view a renewal was staged on is not remedied by it — the page starts again with a fresh nonce and seed; an entry an older page wrote leaves it exposed", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const y = await pairAs(hub, a, { admin: false });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, y.deviceId] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.windowRefusals = [Date.now() + 30];
+  let removed = false;
+  const sleep = async (ms: number) => {
+    if (!removed) {
+      removed = true;
+      await a.removeDevice(y.deviceId, new FakeCourier());
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+  };
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep });
+  assert.deepEqual(agents.rotateCalls, ["m-1", "m-1"], "asked again, with a fresh nonce");
+  assert.deepEqual(rotated(a), ["m-1"], "written once, the second time");
+  const r = a.chain!.entryAt(a.chain!.deviceRecord("m-1")!.rotatedSeq!)!.draft.action;
+  assert.ok(r.type === "rotateHostKey");
+  assert.ok(r.rotation.stagedSeq >= a.chain!.seq - 2, "staged on a view with Y's removal");
+  assert.deepEqual(exposedIds(a.chain!), []);
+
+  // An older page wrote a renewal staged before a loss (it did not check): that loss stays — the host is still exposed by it.
+  const old = await account({ chain: false });
+  const z = await pairAs(old.hub, old.a, { admin: false });
+  await old.a.setAccept("m-1", { type: "devices", ids: [old.x.deviceId, z.deviceId] });
+  await old.a.removeDevice(old.x.deviceId, new FakeCourier());
+  (old.a as unknown as { checkRenewalOn: () => void }).checkRenewalOn = () => undefined;
+  old.hub.windowRefusals = [Date.now() + 30];
+  let gone = false;
+  await old.a.renewIdentity("m-1", old.agents, {
+    assurance: ASSURANCE_AUTO,
+    ...quick,
+    sleep: async (ms: number) => {
+      if (!gone) {
+        gone = true;
+        await old.a.removeDevice(z.deviceId, new FakeCourier());
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+    },
+  });
+  assert.deepEqual(rotated(old.a), ["m-1"]);
+  const left = hostsToRotate(old.a.chain!).get("m-1");
+  assert.ok(left, "still exposed");
+  assert.deepEqual([...left.lost.keys()], [z.deviceId], "by the loss after its staged view only");
+});
+
+test("Codex 5: this device's guard, or isolation learned while a renewal waits, refuses it at the commit", async () => {
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    hub.windowRefusals = [Date.now() + 30];
+    const sleep = async (ms: number) => {
+      a.setLocalAssured(true);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+    };
+    await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), renewal("needsAssurance", "local"));
+    assert.deepEqual(rotated(a), []);
+  }
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+    const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+    hub.windowRefusals = [Date.now() + 30];
+    const sleep = async (ms: number) => {
+      // Its retired key's dispute arrives meanwhile: isolated now.
+      a.keepDisputes([{ host: "m-1", seq: s1 }]);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+    };
+    await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), renewal("needsAssurance"));
+    assert.deepEqual(rotated(a), ["m-1"], "only the first renewal");
+  }
+});
+
+test("#178 L2: nothing renews until an admin chose the account's renewal policy, either way", async () => {
+  const { a, agents, x } = await account({ policy: false });
+  assert.equal(a.chain!.renewalPolicySeq, null);
+  assert.equal(a.renewalPolicyChosen, false);
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("policyUnset"));
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  assert.deepEqual(agents.rotateCalls, [], "not renewed before the choice");
+  assert.deepEqual(runner.status("m-1"), { kind: "policyUnset" });
+  // Chosen — automatic, the value it would have had — is written all the same, and renewals start.
+  await runner.setAlwaysAssured(false);
+  assert.notEqual(a.chain!.renewalPolicySeq, null, "written on the chain");
+  await until(() => rotated(a).length === 2);
+  await runner.idle();
+  assert.deepEqual(rotated(a), ["m-1", "m-2"]);
+  runner.stop();
+});

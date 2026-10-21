@@ -74,6 +74,7 @@ import {
   ASSURANCE_ON_DEVICE,
   PAUSE_COMPLETED,
   PAUSE_START,
+  type Assurance,
   type Attestation,
   base32,
   type Bytes,
@@ -100,6 +101,7 @@ import {
   type Entry,
   entryHash,
   equal,
+  exportPublic,
   fingerprint,
   fixedVersion,
   forgetDeviceKeys,
@@ -109,6 +111,10 @@ import {
   genesisDraft,
   HandshakeError,
   hex,
+  type HostRotation,
+  hostRotationBody,
+  isValidEd25519Key,
+  isValidX25519,
   type KeyStore,
   loadDeviceKeys,
   credentialHash,
@@ -130,10 +136,12 @@ import {
   RECOVERY_RECIPIENT,
   recoveryKeyFor,
   recoveryKeys,
+  rotateSas,
   RULES,
   sealForRecovery,
   sealHostKey,
   sealTo,
+  sha256,
   signDraft,
   signHubLogin,
   type SlotRecord,
@@ -142,11 +150,24 @@ import {
   utf8,
   verifyEnrollProof,
   verifyPasskeySlot,
+  verifyHostRotation,
+  verifyRotateConfirm,
   WrapError,
 } from "@/lib/e2e";
 import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HubApi, HubApiError, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
 import { hubOrigin } from "./config";
-import { deliverMachineKey, type DeliveryResult, forgetPendingReencrypts, type MachineKeyCourier, notePendingReencrypt, type PendingReencrypt } from "./deliver";
+import {
+  ChannelUnavailable,
+  deliverMachineKey,
+  type DeliveryResult,
+  forgetPendingReencrypts,
+  type MachineKeyCourier,
+  notePendingReencrypt,
+  type PendingReencrypt,
+  type RenewalCourier,
+  type RotateRequest,
+  STALE_GRACE_MS,
+} from "./deliver";
 import {
   forgetLocalWrapKey,
   HostKeyVault,
@@ -217,6 +238,72 @@ const reEnrollDismissedKey = (account: string) => `rh.hub.reenroll.dismissed.${a
  * A host's list goes only with the host's own removal from the account.
  */
 const reEnrollConnectedKey = (account: string) => `rh.hub.reenroll.connected.${account}`;
+/**
+ * Renewals this browser verified a dispute of (docs/host-identity-rotation.md
+ * §3.8), per account: only ever added to — another tab's are merged, never
+ * dropped — and cleared by nothing but this page's own verified chain (an
+ * assured renewal after it, or the host's removal: `disputeIsolates`).
+ */
+const keptDisputesKey = (account: string) => `rh.hub.renewal.disputes.${account}`;
+/** This admin device's own 「这台设备只签在设备上确认的换钥」 (§4.4): set, it signs no automatic renewal, whatever the chain or the hub says. */
+const localAssuredKey = (account: string) => `rh.hub.renewal.localAssured.${account}`;
+/** A renewal superseded by a loss after it staged is started again at most this many times in all (§4.1 「清除」). */
+const RENEW_RESTARTS = 3;
+
+/**
+ * At most this many RESOLVED disputes kept (Codex round 1): a dispute that
+ * still isolates its host on this page's chain is never evicted, however many
+ * come — an alarm is logged instead — so copies of one statement, or many of
+ * another host's, cannot push out the one that isolates a host.
+ */
+const MAX_KEPT_DISPUTES = 512;
+
+/**
+ * How the tabs of this browser tell each other of disputes one of them
+ * verified (§3.8, the Codex round): what one tab keeps reaches the others at
+ * once — their channels to a host isolated now close — even where storage
+ * cannot be written. `null`: no other tab to tell.
+ */
+export interface CrossTab {
+  post(message: unknown): void;
+  subscribe(fn: (message: unknown) => void): () => void;
+}
+
+/** A `BroadcastChannel` and the `storage` event, in a browser whose `localStorage` the account keeps to; else none. */
+function defaultCrossTab(storage: AccountStorage): CrossTab | null {
+  let local: Storage | undefined;
+  try {
+    local = globalThis.localStorage;
+  } catch {
+    return null;
+  }
+  if (!local || storage !== local) return null;
+  const Channel = (globalThis as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
+  const channel = Channel ? new Channel("rh.hub.renewal") : null;
+  const target = globalThis as unknown as { addEventListener?: (type: string, fn: (e: unknown) => void) => void; removeEventListener?: (type: string, fn: (e: unknown) => void) => void };
+  return {
+    post: (message) => {
+      try {
+        channel?.postMessage(message);
+      } catch {
+        // the others read storage when they look
+      }
+    },
+    subscribe: (fn) => {
+      const onMessage = (e: MessageEvent) => fn(e.data);
+      const onStorage = (e: unknown) => {
+        const key = (e as { key?: string | null }).key;
+        if (key === null || key === undefined || key.startsWith("rh.hub.renewal.disputes.")) fn({ storage: key ?? null });
+      };
+      channel?.addEventListener("message", onMessage);
+      target.addEventListener?.("storage", onStorage);
+      return () => {
+        channel?.removeEventListener("message", onMessage);
+        target.removeEventListener?.("storage", onStorage);
+      };
+    },
+  };
+}
 
 /** Renew the device session this long before it expires. */
 export const RENEW_MARGIN_MS = 5 * 60 * 1000;
@@ -376,7 +463,13 @@ export type AccountErrorKind =
   /** The keys the pairing checked are not the ones the device waiting to join was added with. */
   | "joinMismatch"
   /** The account has as many passkey slots as it may. */
-  | "tooManySlots";
+  | "tooManySlots"
+  /**
+   * A host that may have had its identity key copied (`hostsToRotate`) or is
+   * isolated would be let control another one: renew its identity key first
+   * (docs/host-identity-rotation.md §4.1, §7 decision 8).
+   */
+  | "exposed";
 
 export class AccountError extends Error {
   /** The message as an i18n key (the English, with `{{name}}` where `vars` go). */
@@ -416,6 +509,113 @@ class MovingCheckpoint extends AccountError {
   constructor(message: string) {
     super("fork", message);
   }
+}
+
+/**
+ * Why a host's identity key renewal did not go through
+ * (`CloudAccount.renewIdentity`; docs/host-identity-rotation.md §4.2):
+ *
+ * - `tooOld`: its Droppen has no `/rh/rotate` (404), or never declared
+ *   `rotate/1` — re-enrolling it is the way; not tried again.
+ * - `disabled`: the hub takes no renewal (`DROPPEN_HUB_HOST_ROTATION` off, or
+ *   a hub from before renewals).
+ * - `needsAssurance`: only a renewal confirmed on the device itself goes (clone
+ *   evidence, an isolated host, the account's setting).
+ * - `inProgress`: another page's attempt is running.
+ * - `offline`: no channel to it.
+ * - `hubNotReady`: its own hub connection cannot stage a renewal yet.
+ * - `waiting`: the hub waits for other hosts to declare `rotate/1` (`hosts`).
+ * - `renewFirst`: it is exposed and lets exposed hosts that have not renewed
+ *   yet control it (`hosts`): those renew first (§4.1 「次序先于收窄」) — their
+ *   old keys would still reach its new seed. Not tried; nothing to withdraw.
+ * - `superseded`: a device that could control it was lost after the view its
+ *   new key was staged on (§4.1 「清除」): that seed is no remedy for it. The
+ *   attempt is withdrawn and started again with a fresh nonce and seed a few
+ *   times; this is what is left when those ran out.
+ * - `policyUnset`: the account has not chosen how renewals are confirmed yet
+ *   (§5.6 「打开的顺序」): an admin writes a `SetRenewalPolicy` first.
+ * - `refused`: it, or the hub, would not (`detail` says why).
+ * - `badAnswer`: its answer does not check out (a signature, the DH
+ *   confirmation, a key the chain named before, another chain view) —
+ *   possibly not the computer itself answering.
+ * - `wrongCode` / `cancelled`: the code typed is not the one the device shows,
+ *   or none was typed.
+ * - `voided`: the hub voided the staging (`detail`: `not_acked`, `conflict` —
+ *   another holder of its old key showed up — or `expired`).
+ * - `rate`: the hub's rate for renewals of this host.
+ * - `failed`: anything else (`detail`).
+ */
+export type RenewalFailure =
+  | "tooOld"
+  | "disabled"
+  | "needsAssurance"
+  | "inProgress"
+  | "offline"
+  | "hubNotReady"
+  | "waiting"
+  | "renewFirst"
+  | "superseded"
+  | "policyUnset"
+  | "refused"
+  | "badAnswer"
+  | "wrongCode"
+  | "cancelled"
+  | "voided"
+  | "rate"
+  | "failed";
+
+export class RenewalError extends Error {
+  constructor(
+    readonly kind: RenewalFailure,
+    message: string,
+    /** The hub's or the agent's own reason, when it gave one. */
+    readonly detail?: string,
+    /** `waiting`: the hosts the hub waits for. */
+    readonly hosts?: string[],
+  ) {
+    super(message);
+    this.name = "RenewalError";
+  }
+}
+
+/** What one completed identity key renewal did (`CloudAccount.renewIdentity`). */
+export interface RenewalReport {
+  host: string;
+  /** The chain seq of its `rotateHostKey`. */
+  seq: number;
+  assurance: Assurance;
+  signKey: Bytes;
+  dhKey: Bytes;
+  /** The new keys as people compare them ({@link deviceFingerprint}). */
+  fingerprint: string;
+  /** Its next machine key epoch, sealed to the new key only. */
+  mkEpoch: number;
+  result: DeliveryResult;
+  /** How many of the hosts' keys its device role was sealed again (`null`: it has not signed in with the new key yet; it asks). */
+  hostKeys: number | null;
+  /** A new user key the batch carried (the newest was stale). */
+  userKey?: FreshUserKey;
+}
+
+/** How `renewIdentity` goes (`assurance`), and what it may ask of the page. */
+export interface RenewOptions {
+  assurance: Assurance;
+  /**
+   * A renewal confirmed on the device (`ASSURANCE_ON_DEVICE`): ask the person
+   * to type the code the device shows (`null`: they gave up). The page is
+   * never told the code: it must be typed (§3.7).
+   */
+  askCode?: (host: string) => Promise<string | null>;
+  /** Where it is, for the page. */
+  onStep?: (step: "requesting" | "confirming" | "waiting" | "writing" | "handing") => void;
+  /** How often to look at the hub's staging, and for how long at most (the window and a margin). */
+  pollMs?: number;
+  maxWaitMs?: number;
+  /** How long the host's device role is waited for to seal it the hosts' keys again (`handHostKeys`). */
+  hostKeysWait?: { forMs: number; everyMs: number };
+  /** Timers, for tests. */
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
 }
 
 /**
@@ -797,6 +997,8 @@ export interface AccountOptions {
   replaceUnreadableKeys?: boolean;
   /** The waits between reads of a key store that did not give the device keys (`DEVICE_KEYS_RETRY_MS`; tests). */
   keyReadRetryMs?: readonly number[];
+  /** How this browser's other tabs hear of disputes this one verified ({@link CrossTab}; `null`: none). Defaults to a `BroadcastChannel` with `localStorage`. */
+  crossTab?: CrossTab | null;
 }
 
 type Listener = () => void;
@@ -848,6 +1050,20 @@ export class CloudAccount {
   missingUserKey: number | null = null;
   /** (Not an admin.) The current hosts whose newest committed key epoch this device cannot open; kept by `checkHostKeys`. */
   missingHostKeys: string[] = [];
+  /** What the renewal runner last said of the hosts (`noteRenewals`; docs/host-identity-rotation.md §4.2–§4.3, §3.8). */
+  private renewal: RenewalNote = { renews: new Set(), pending: new Set(), isolated: new Set(), flagged: new Set() };
+  /** {@link keptDisputes} as last read, by its stored text. */
+  private keptRaw: string | null | undefined = undefined;
+  private keptParsed: KeptDispute[] = [];
+  /**
+   * Every dispute this page kept or heard of from another tab, in memory too
+   * (Codex round 1): a storage write that fails — full, or not allowed — never
+   * loses one, nor does another tab writing over it.
+   */
+  private keptMemory: KeptDispute[] = [];
+  private readonly crossTab: CrossTab | null;
+  /** {@link hostsToRotate} for the chain as it was last asked, by its head (and the narrowed groups it read). */
+  private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure>; groups: NarrowedGroup[] } | null = null;
   private held: HeldBack | null = null;
   /** Set (for good, in this page) once this view conflicted with the chain this browser verified: why. */
   private forkedWhy: string | null = null;
@@ -884,6 +1100,9 @@ export class CloudAccount {
     this.storage = opts.storage ?? defaultStorage();
     this.seen = opts.seen ?? pageSeenStore(this.storage);
     this.locks = opts.locks === undefined ? defaultLocks() : opts.locks;
+    this.crossTab = opts.crossTab === undefined ? defaultCrossTab(this.storage) : opts.crossTab;
+    // Another tab kept disputes: merged here, and every listener (each channel among them) looks again at once.
+    this.crossTab?.subscribe((message) => this.heardDisputes(message));
     this.vault = new UserKeyVault(store, session.account);
     this.hostKeys = new HostKeyVault(store, session.account);
     this.keyring = new Keyring(
@@ -1959,8 +2178,16 @@ export class CloudAccount {
         );
       } catch (error) {
         // A newer head is worth one more try; a used-up limit (409 `limit`)
-        // is not, nor a hub that takes no v3 entry yet (`chain_v3_not_ready`).
-        if (attempt === 0 && error instanceof HubApiError && error.status === 409 && error.code !== "limit" && error.code !== "chain_v3_not_ready") {
+        // is not, nor a hub that takes no v3 entry yet (`chain_v3_not_ready`),
+        // nor a renewal it does not take yet (`rotation_not_ready`: its caller waits).
+        if (
+          attempt === 0 &&
+          error instanceof HubApiError &&
+          error.status === 409 &&
+          error.code !== "limit" &&
+          error.code !== "chain_v3_not_ready" &&
+          error.code !== "rotation_not_ready"
+        ) {
           await this.sync();
           continue;
         }
@@ -2846,6 +3073,8 @@ export class CloudAccount {
   /** Hand `mk` to the agent (`deliver.ts`); a re-encryption that could only go by mailbox is noted, pinned to this very key, to ask again. */
   private async handOver(id: string, mkEpoch: number, ukEpoch: number, mk: Uint8Array, courier: MachineKeyCourier, reencrypt: boolean): Promise<DeliveryResult> {
     this.assertNotForked();
+    // An isolated host is handed no key at all (§3.8): its identity may be someone else's now. It gets one with its next renewal.
+    if (this.isolated(id)) return { via: "refused", status: 0, message: "isolated: renew its identity key on the device first", code: "isolated" };
     const result = await deliverMachineKey(this.guarded(courier), id, mkEpoch, mk, reencrypt);
     if (result.via === "mailbox" && reencrypt) {
       // The mailbox carries no re-encryption request: ask again in the next channel.
@@ -3046,11 +3275,14 @@ export class CloudAccount {
    * among them (S1-4: a local install controls with its one identity; its
    * device role takes them) — and not this device. None by default: a host
    * accepts admins only until an admin lets others in. Empty on a v2 chain
-   * (no accept policy there).
+   * (no accept policy there). Never a host waiting to renew its identity
+   * key, nor an isolated one ({@link keysWithheldFrom}).
    */
   hostKeyRecipients(host: string, chain: ChainState | null = this.state): DeviceRecord[] {
     if (!chain) return [];
-    return chain.allDevices().filter((d) => d.status.type === "active" && !d.admin && d.info.id !== this.deviceId && admits(chain, host, d.info.id));
+    return chain
+      .allDevices()
+      .filter((d) => d.status.type === "active" && !d.admin && d.info.id !== this.deviceId && admits(chain, host, d.info.id) && !this.keysWithheldFrom(d.info.id));
   }
 
   /** Seal host `host`'s key epoch `epoch` from this (admin) device for device `to` and mail it (purpose 5). */
@@ -3132,6 +3364,8 @@ export class CloudAccount {
     const to = chain.device(id);
     if (!to || id === this.deviceId) throw new AccountError("notInChain", `${id} is not a current device of the account`);
     if (to.admin) throw new AccountError("notAdmin", `${id} manages the account: it reads the hosts' keys with the user key`);
+    // A host waiting to renew its identity key, or isolated, is sealed nothing (§4.3): whoever holds its old key would read them.
+    if (this.keysWithheldFrom(id)) return [];
     const wanted = chain
       .hosts()
       .filter((h) => h.status.type === "active" && (opts.only === undefined || h.info.id === opts.only) && admits(chain, h.info.id, id))
@@ -3485,7 +3719,9 @@ export class CloudAccount {
    * machine key epoch in the same call (`[setAccept, keyEpochs]`, the
    * chain's `hostKeyNext` rule): the new key is put into the keyring, sealed
    * to the devices still let in and handed to the agent (`courier`) — and the
-   * host should be re-enrolled for a new identity (`hostsToReEnroll`).
+   * host renews its identity key (`hostsToRotate`; an older agent: it should
+   * be re-enrolled, `hostsToReEnroll`). A host that must renew its own first
+   * is never let in ({@link mustRenewFirst}).
    */
   async setAccept(host: string, from: Accept, courier: MachineKeyCourier = NO_COURIER): Promise<AcceptChange> {
     const chain = this.requireAdmin();
@@ -3502,6 +3738,14 @@ export class CloudAccount {
       return { narrowed: false, admitted: [], shutOut: [] };
     }
     const { admitted, shutOut } = acceptChange(chain, host, accept);
+    // A host that may have had its identity key copied, or is isolated, is let control no other one until it renewed it (§4.1, §7
+    // decision 8). One that cannot renew (an older agent, the hub not taking renewals yet) stays under the re-enroll warning instead.
+    const exposed = admitted.filter((id) => this.mustRenewFirst(id));
+    if (exposed.length) {
+      throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
+        ids: exposed.join(", "),
+      });
+    }
     const setAccept: Action = { type: "setAccept", host, from: accept };
     if (shutOut.length) {
       if (courier === NO_COURIER) throw new AccountError("invalidEntry", "shutting a device out hands the device that runs AI a new key: say how", undefined, RULES.hostKeyNext);
@@ -3596,11 +3840,637 @@ export class CloudAccount {
     return chain.hosts().some((h) => h.status.type === "active" && h.info.id !== id && admits(chain, h.info.id, id));
   }
 
+  // ------------------------------------------------------------ identity key renewal (docs/host-identity-rotation.md)
+
+  /**
+   * What the renewal runner (`renewal.ts`) knows that the chain does not say:
+   * which hosts renew their identity key here at all (`renews`: the account
+   * is on chain v3, the hub takes renewals, and their agents declared
+   * `rotate/1`), which the hub has `pending` (their device role suspended,
+   * §4.3), and which are isolated (§3.8, checked evidence). Told whenever it
+   * changes; the page re-renders.
+   */
+  noteRenewals(note: RenewalNote): void {
+    const same = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((x) => b.has(x));
+    const was = this.renewal;
+    const flagged = note.flagged ?? new Set<string>();
+    if (same(was.renews, note.renews) && same(was.pending, note.pending) && same(was.isolated, note.isolated) && same(was.flagged ?? new Set(), flagged)) return;
+    this.renewal = { renews: new Set(note.renews), pending: new Set(note.pending), isolated: new Set(note.isolated), flagged: new Set(flagged) };
+    // What can renew changes what is exposed (`hostsToRotate`).
+    this.exposureCache = null;
+    this.emit();
+  }
+
+  /**
+   * The current hosts that should renew their identity key now, each with
+   * why ({@link hostsToRotate}: the chain's losses, transitively), for the
+   * chain this device holds.
+   */
+  hostsToRotate(): Map<string, Exposure> {
+    const chain = this.state;
+    if (!chain) return new Map();
+    const cached = this.exposureCache;
+    if (cached && cached.chain === chain && cached.seq === chain.seq) return cached.exposed;
+    // Which hosts can renew decides what a renewal fixes (§4.1): an exposed host that cannot is a pass no renewal takes away.
+    const groups: NarrowedGroup[] = [];
+    const exposed = hostsToRotate(chain, (h) => this.renews(h), groups);
+    this.exposureCache = { chain, seq: chain.seq, exposed, groups };
+    return exposed;
+  }
+
+  /** The groups whose lists were narrowed against each other on this chain (§4.1), oldest first. */
+  narrowedGroups(): NarrowedGroup[] {
+    this.hostsToRotate();
+    return this.exposureCache?.groups ?? [];
+  }
+
+  /**
+   * Write the accept lists `changes` makes for the chain as it stands (built
+   * again on a newer head) in ONE batch (§4.1: a group's narrowing, or its
+   * restoring): each list that shuts a device out followed by that host's
+   * next machine key epoch (`hostKeyNext`), which is put in the keyring,
+   * sealed to the devices still let in and handed to the agent; a list that
+   * lets a device in seals it the host's keys. A host that must renew first is
+   * let in nowhere. Returns the lists written — none when `changes` has
+   * nothing to change on the newest head (another page did it).
+   */
+  async setAccepts(changes: (chain: ChainState) => { host: string; from: Accept }[], courier: MachineKeyCourier): Promise<{ host: string; from: Accept }[]> {
+    const chain0 = this.requireAdmin();
+    this.requireUpgraded(chain0);
+    const stale = userKeyStale(chain0);
+    const wrapEpoch = stale ? null : await this.ensureUserKey();
+    if (!stale && wrapEpoch === null) throw this.noUserKey();
+    const mks = new Map<string, Bytes>();
+    const fresh: { uk: Bytes | null } = { uk: null };
+    let written: { host: string; from: Accept; admitted: string[] }[] = [];
+    const zero = () => {
+      for (const mk of mks.values()) mk.fill(0);
+      mks.clear();
+      fresh.uk?.fill(0);
+      fresh.uk = null;
+    };
+    try {
+      let entries: Entry[];
+      try {
+        entries = await this.appendBatch(async (chain) => {
+          zero();
+          written = [];
+          const actions: Action[] = [];
+          for (const c of changes(chain)) {
+            if (!chain.machine(c.host)) continue;
+            let from = c.from;
+            if (from.type === "devices") {
+              const ids = [...new Set(from.ids)].filter((id) => id !== c.host && chain.device(id)).sort((x, y) => compareBytes(utf8(x), utf8(y)));
+              from = ids.length ? { type: "devices", ids } : { type: "admins" };
+            }
+            if (sameAccept(chain.acceptPolicy(c.host), from)) continue;
+            const { admitted, shutOut } = acceptChange(chain, c.host, from);
+            const risky = admitted.filter((id) => this.mustRenewFirst(id));
+            if (risky.length) {
+              throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
+                ids: risky.join(", "),
+              });
+            }
+            actions.push({ type: "setAccept", host: c.host, from });
+            written.push({ host: c.host, from, admitted });
+            if (!shutOut.length) continue;
+            // Shutting a device out: its next key epoch in the very next entry (review D2), sealed only to who is still let in.
+            // The batch's first key epoch carries a new user key when the newest is stale (as `commitHostKey`).
+            let carried: { epoch: number; hash: Bytes } | null = null;
+            if (mks.size === 0 && (userKeyStale(chain) || wrapEpoch === null || chain.latestUserEpoch() !== wrapEpoch)) {
+              fresh.uk = random32();
+              const ukEpoch = chain.userKeyEpochs();
+              carried = { epoch: ukEpoch, hash: await userKeyCommit(this.account, ukEpoch, fresh.uk) };
+            }
+            const mk = random32();
+            mks.set(c.host, mk);
+            const epoch = chain.machineKeyEpochs(c.host);
+            actions.push({ type: "keyEpochs", user: carried, machines: [{ machine: c.host, epoch, hash: await machineKeyCommit(this.account, c.host, epoch, mk) }] });
+          }
+          if (!actions.length) throw new NothingToWrite();
+          return actions;
+        });
+      } catch (error) {
+        if (error instanceof NothingToWrite) return [];
+        throw error;
+      }
+      const committed = entries.flatMap((e) => (e.draft.action.type === "keyEpochs" ? [e.draft.action] : []));
+      const freshEpoch = committed.find((a) => a.user)?.user?.epoch ?? null;
+      const newUk = freshEpoch !== null ? fresh.uk : null;
+      const recovery = newUk ? await this.keepUserKey(freshEpoch!, newUk) : false;
+      const ukEpoch = freshEpoch ?? wrapEpoch!;
+      if (newUk) await this.mailUserKey(freshEpoch!, newUk);
+      void recovery;
+      for (const [host, mk] of mks) {
+        const mkEpoch = committed.flatMap((a) => a.machines).find((m) => m.machine === host)?.epoch ?? this.state!.latestMachineEpoch(host)!;
+        try {
+          await this.keyring.put(keyName.machine(host, mkEpoch, ukEpoch), await wrapMachineKey(await this.vault.key(ukEpoch), this.account, host, mkEpoch, ukEpoch, mk));
+        } catch (error) {
+          console.error(`cloud account: the keyring did not take ${host}'s new key; handing it over all the same:`, error);
+        }
+        await this.mailHostKey(host, mkEpoch, mk);
+        try {
+          await this.handOver(host, mkEpoch, ukEpoch, mk, courier, false);
+        } catch (error) {
+          console.warn(`cloud account: could not hand ${host} its new key (it asks again):`, error);
+        }
+      }
+      // Let in: the host's committed keys, so it reads what the host wrote.
+      for (const w of written) {
+        for (const id of w.admitted) {
+          try {
+            await this.sendHostKeys(id, w.host);
+          } catch (error) {
+            const to = this.state?.device(id);
+            if (!to || !noDeviceRoleYet(to, error)) console.warn(`cloud account: could not send ${id} ${w.host}'s keys (it asks again):`, error);
+          }
+        }
+      }
+      this.emit();
+      return written.map(({ host, from }) => ({ host, from }));
+    } finally {
+      zero();
+    }
+  }
+
+  /** Whether host `id` renews its identity key (rather than being re-enrolled): see {@link noteRenewals}. Never on a v2 chain. */
+  renews(id: string): boolean {
+    return this.state?.isV3 === true && this.renewal.renews.has(id);
+  }
+
+  /**
+   * Whether host `id` is isolated (§3.8): a key it renewed away from by an
+   * automatic renewal signed in again, and nothing since confirmed it on the
+   * device. No channel is opened to it, no key sealed to it, and it renews
+   * only with the code its screen shows.
+   */
+  isolated(id: string): boolean {
+    return this.renewal.isolated.has(id) || this.isolatedByKept(id);
+  }
+
+  /**
+   * Keep disputes this page verified (§3.8, the second-opinion review #7), so
+   * that what isolated a host here stays isolating it — whatever the hub says
+   * or omits later, across reloads and tabs: read, merged, written, never
+   * shrunk here. Isolation follows from them on this page's own chain
+   * ({@link disputeIsolates}), before any channel is opened or key sealed.
+   */
+  keepDisputes(found: readonly KeptDispute[]): void {
+    const kept = this.keptDisputes();
+    const fresh = disputesNotIn(kept, found);
+    if (!fresh.length) return;
+    // Memory holds what storage is told: if the write fails, nothing is lost here.
+    this.keptMemory = capDisputes(this.state, mergeDisputes(kept, fresh));
+    this.write(keptDisputesKey(this.account), JSON.stringify(this.keptMemory));
+    this.crossTab?.post({ account: this.account, disputes: fresh });
+    this.exposureCache = null;
+    this.emit();
+  }
+
+  /** Another tab's disputes (or its storage write): kept in memory here too, and everyone told. */
+  private heardDisputes(message: unknown): void {
+    const m = (message && typeof message === "object" ? message : {}) as { account?: unknown; disputes?: unknown; storage?: unknown };
+    if (m.account === this.account) {
+      const heard = parseDisputes(m.disputes);
+      const fresh = disputesNotIn(this.keptDisputes(), heard);
+      if (fresh.length) this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptDisputes(), fresh));
+    } else if (!("storage" in m)) return;
+    this.exposureCache = null;
+    this.emit();
+  }
+
+  /**
+   * The disputes this browser verified for the account, as kept
+   * ({@link keepDisputes}): what storage holds, and what this page kept or
+   * heard of in memory — one each, by host and renewal.
+   */
+  keptDisputes(): KeptDispute[] {
+    const raw = this.read(keptDisputesKey(this.account));
+    if (raw !== this.keptRaw) {
+      let parsed: KeptDispute[] = [];
+      try {
+        parsed = parseDisputes(JSON.parse(raw ?? "[]") as unknown);
+      } catch {
+        parsed = [];
+      }
+      this.keptRaw = raw;
+      this.keptParsed = parsed;
+    }
+    return this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
+  }
+
+  /** Whether a kept dispute isolates host `id` on this page's chain. */
+  private isolatedByKept(id: string): boolean {
+    const chain = this.state;
+    if (!chain) return false;
+    return this.keptDisputes().some((d) => d.host === id && disputeIsolates(chain, d));
+  }
+
+  /**
+   * Whether the hub flags host `id` isolated with no evidence this page checked
+   * (R6 W1): an unverified note — keys are withheld from it and it renews only
+   * confirmed on the device, but nothing here treats it as isolated.
+   */
+  flagged(id: string): boolean {
+    return this.renewal.flagged?.has(id) === true;
+  }
+
+  /**
+   * Whether this device seals host `id`'s device role none of the hosts' keys
+   * (purpose 5, and no answer to its purpose-4 request: §4.3, §8 item 11):
+   * it is isolated, or waiting to renew — `pending` at the hub, or exposed
+   * on the chain and able to renew. One that cannot renew (an older agent)
+   * keeps getting them: it would never get them back.
+   */
+  keysWithheldFrom(id: string): boolean {
+    const record = this.state?.device(id);
+    if (!record?.host) return false;
+    if (this.isolated(id) || this.flagged(id) || this.renewal.pending.has(id)) return true;
+    return this.renews(id) && this.hostsToRotate().has(id);
+  }
+
+  /**
+   * Renew host `host`'s identity key (docs/host-identity-rotation.md §3.1–§3.7):
+   *
+   * 1. register an attempt at the hub with the hash of a fresh nonce
+   *    (`PUT /v1/rotations/{host}`; only one at a time per host, across pages);
+   * 2. ask the host over the end-to-end channel (`POST /rh/rotate`, to the
+   *    DH key the chain has now) with the nonce, an ephemeral X25519 key and
+   *    this device's chain view: it stages a new seed and answers with its new
+   *    keys, both keys' signatures over the proof and a MAC under the new DH
+   *    key and the ephemeral one;
+   * 3. check all of it here: the view is the one asked about, the new keys are
+   *    valid and ones the chain never named, the old key and the new one
+   *    signed the proof, the MAC proves the new DH key; and, confirmed on the
+   *    device (`ASSURANCE_ON_DEVICE`), the code the person typed is the proof's
+   *    (`rotateSas`) — the page never shows it;
+   * 4. wait until the hub staged it and its window passed (the host's every
+   *    sign-in with the old key had to confirm with the new one);
+   * 5. write `[rotateHostKey, keyEpochs]` — its next machine key epoch in the
+   *    same call, sealed to the new key only — and hand that key over with a
+   *    re-encryption (channel to the new key, else its mailbox), seal its
+   *    device role the hosts' keys again, and vouch for the new head.
+   *
+   * Anything that does not check out withdraws the attempt and throws a
+   * {@link RenewalError}; the host stays exposed and is tried again by the
+   * runner as `renewal.ts` decides. Only a current admin, on chain v3.
+   */
+  async renewIdentity(host: string, courier: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
+    for (let tries = 1; ; tries++) {
+      try {
+        return await this.renewOnce(host, courier, opts);
+      } catch (error) {
+        // A loss after it staged (§4.1 「清除」): withdrawn already — again, with a fresh nonce and seed.
+        if (error instanceof RenewalError && error.kind === "superseded" && tries < RENEW_RESTARTS) continue;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Whether `host`'s renewal may be written on `chain` — the very chain the
+   * batch is signed on, on each build and every try on a newer head (Codex
+   * rounds 3–5): still a host; never ahead of an exposed host it lets control
+   * it; no device that could control it lost after the view its new key was
+   * staged on (`superseded`: started again); and, unless it is confirmed on
+   * the device, not isolated and not refused by the account's policy or this
+   * device's own guard — whatever was learned while it waited.
+   */
+  private checkRenewalOn(chain: ChainState, host: string, rotation: HostRotation, assurance: Assurance): void {
+    if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+    const exposed = hostsToRotate(chain, (h) => this.renews(h));
+    const x = exposed.get(host);
+    if (x) {
+      const first = exposedControllers(chain, exposed, host);
+      if (first.length) {
+        throw new RenewalError("renewFirst", `renew the identity key of ${first.join(", ")} first: ${host} lets ${first.length > 1 ? "them" : "it"} control it`, undefined, first);
+      }
+      if ([...x.lost.values(), ...x.via.values()].some((at) => at > rotation.stagedSeq)) {
+        throw new RenewalError("superseded", `a device that could control ${host} was lost after its new key was staged: starting again`);
+      }
+    }
+    if (assurance === ASSURANCE_ON_DEVICE) return;
+    if (this.renewal.isolated.has(host) || this.keptDisputes().some((d) => d.host === host && disputeIsolates(chain, d))) {
+      throw new RenewalError("needsAssurance", `${host} is isolated: renew its identity key with the code its screen shows`);
+    }
+    if (chain.alwaysAssured || this.localAssured()) {
+      throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
+    }
+  }
+
+  /** One try of {@link renewIdentity}: anything that does not check out withdraws it. */
+  private async renewOnce(host: string, courier: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
+    const chain0 = this.requireAdmin();
+    this.requireUpgraded(chain0);
+    if (!chain0.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+    // Controllers first (§4.1): never ahead of an exposed host it lets control it — whoever asks, the runner or a person.
+    this.requireRenewFirst(host);
+    // The account chose how renewals are confirmed first (§5.6 「打开的顺序」).
+    if (chain0.renewalPolicySeq === null) throw new RenewalError("policyUnset", "choose how identity key renewals are confirmed first");
+    const assurance = opts.assurance;
+    if (assurance !== ASSURANCE_ON_DEVICE && this.isolated(host)) {
+      throw new RenewalError("needsAssurance", `${host} is isolated: renew its identity key with the code its screen shows`);
+    }
+    // The account's policy, or this device's own guard (§4.4): no automatic renewal is signed here.
+    if (assurance !== ASSURANCE_ON_DEVICE && this.renewalsAssured) {
+      throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
+    }
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const now = opts.now ?? Date.now;
+    const nonce = crypto.getRandomValues(new Uint8Array(16));
+    const eph = (await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
+    const ephPublic = await exportPublic(eph.publicKey);
+    opts.onStep?.("requesting");
+    try {
+      await this.api.putRotation(this.session.token, host, { nonceHash: await sha256(nonce), assurance });
+    } catch (error) {
+      throw renewalRefusal(error);
+    }
+    let committed = false;
+    try {
+      try {
+        await this.sync();
+      } catch (error) {
+        console.warn("cloud account: sync before renewing:", error);
+      }
+      const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now);
+      const chain = this.state!;
+      const old = chain.machine(host)?.info;
+      if (!old) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+      const rotation = await checkRotateAnswer(chain, host, old, answer, view, nonce, assurance);
+      const body = hostRotationBody(this.account, rotation, old.signKey, old.dhKey);
+      if (!(await verifyRotateConfirm(eph.privateKey, rotation.dhKey, body, answer.mac))) {
+        throw new RenewalError("badAnswer", `${host}'s answer does not prove it holds its new key`, "mac");
+      }
+      if (assurance === ASSURANCE_ON_DEVICE) {
+        opts.onStep?.("confirming");
+        const typed = opts.askCode ? await opts.askCode(host) : null;
+        if (typed === null) throw new RenewalError("cancelled", "no code was typed");
+        const want = (await rotateSas(body)).replace("-", "");
+        if (typed.toUpperCase().replace(/[^A-Z2-7]/g, "") !== want) {
+          throw new RenewalError("wrongCode", `the code typed is not the one ${host} shows: something else may be answering as it`);
+        }
+      }
+      opts.onStep?.("waiting");
+      let readyMs = await this.waitStaged(host, rotation, answer.readyMs, sleep, now, opts);
+      opts.onStep?.("writing");
+      const mk = random32();
+      try {
+        let issued: { mkEpoch: number; ukEpoch: number; userKey: FreshUserKey | null } | null = null;
+        for (let tries = 0; issued === null; tries++) {
+          const wait = readyMs - now();
+          if (wait > 0) await sleep(Math.min(wait + 250, opts.maxWaitMs ?? 10 * 60_000));
+          try {
+            // Checked on the chain it is built on — after any wait, and again on a newer head after a 409.
+            issued = await this.commitHostKey(
+              host,
+              mk,
+              (chain) => {
+                this.checkRenewalOn(chain, host, rotation, assurance);
+                return [{ type: "rotateHostKey", rotation }];
+              },
+              (build) => this.appendBatch(build),
+            );
+          } catch (error) {
+            // Early by the hub's clock: its `ready_ms` says when (a few times; the window is short).
+            if (error instanceof HubApiError && error.code === "rotation_not_ready" && error.reason === "window" && tries < 5) {
+              readyMs = Math.max(error.readyMs ?? 0, now() + 1000);
+              continue;
+            }
+            // Not staged any more: the hub voided it in the window — and says why (graded evidence, §3.3).
+            if (error instanceof HubApiError && error.code === "rotation_not_ready" && (error.reason === "not_staged" || error.reason === "mismatch")) {
+              const row = await this.api.rotations(this.session.token).then((v) => v.hosts.find((r) => r.host === host), () => undefined);
+              if (row?.failure) throw new RenewalError("voided", `the hub voided ${host}'s renewal: ${row.failure.reason}`, row.failure.reason);
+            }
+            throw renewalRefusal(error);
+          }
+        }
+        committed = true;
+        const { mkEpoch, ukEpoch, userKey } = issued;
+        const seq = this.state!.deviceRecord(host)?.rotatedSeq ?? this.state!.seq;
+        // No longer waiting: the hosts' keys go to its new key from here on. Confirmed on the device, it is no longer isolated either (§3.8).
+        const pending = new Set(this.renewal.pending);
+        pending.delete(host);
+        const isolated = new Set(this.renewal.isolated);
+        if (assurance === ASSURANCE_ON_DEVICE) isolated.delete(host);
+        this.noteRenewals({ ...this.renewal, pending, isolated });
+        opts.onStep?.("handing");
+        // Its keys to the devices it lets control it (purpose 5), then the key to it — sealed to the new DH key only — with a re-encryption.
+        await this.mailHostKey(host, mkEpoch, mk);
+        let result: DeliveryResult;
+        try {
+          result = await this.handOver(host, mkEpoch, ukEpoch, mk, courier, true);
+        } catch (error) {
+          result = { via: "refused", status: 0, message: error instanceof Error ? error.message : String(error) };
+        }
+        let hostKeys: number | null = null;
+        try {
+          hostKeys = await this.handHostKeys(host, opts.hostKeysWait ?? HOST_KEYS_WAIT);
+        } catch (error) {
+          console.warn(`cloud account: could not seal ${host}'s device role the hosts' keys again (it asks):`, error);
+        }
+        try {
+          await courier.attest();
+        } catch (error) {
+          console.warn("cloud account: attesting after a renewal:", error);
+        }
+        this.emit();
+        return {
+          host,
+          seq,
+          assurance,
+          signKey: rotation.signKey,
+          dhKey: rotation.dhKey,
+          fingerprint: await deviceFingerprint(rotation.signKey, rotation.dhKey),
+          mkEpoch,
+          result,
+          hostKeys,
+          ...(userKey ? { userKey } : {}),
+        };
+      } finally {
+        mk.fill(0);
+      }
+    } finally {
+      if (!committed) {
+        // Withdrawn: a staging nobody will write is void (an answer that did not check out may not have been the computer's).
+        try {
+          await this.api.deleteRotation(this.session.token, host);
+        } catch {
+          // the attempt lapses in 10 minutes anyway
+        }
+      }
+    }
+  }
+
+  /**
+   * `POST /rh/rotate` to `host` with this device's chain view: again after
+   * vouching for the head while the host finds no fresh word on it (412
+   * `stale`, for {@link STALE_GRACE_MS}), and once more after a sync when
+   * the view is not on its chain (409 `not_on_chain`).
+   */
+  private async askRotate(
+    host: string,
+    courier: RenewalCourier,
+    req: { nonce: Uint8Array; eph: Uint8Array; assurance: Assurance },
+    sleep: (ms: number) => Promise<void>,
+    now: () => number,
+  ): Promise<{ view: { seq: number; head: Bytes }; answer: RotateAnswer }> {
+    const deadline = now() + STALE_GRACE_MS;
+    let resynced = false;
+    for (;;) {
+      const chain = this.state!;
+      const view = { seq: chain.seq, head: copy(chain.head) };
+      const body: RotateRequest = { nonce: hex(req.nonce), eph: hex(req.eph), chainSeq: view.seq, chainHead: hex(view.head), assurance: req.assurance };
+      let res: { status: number; body: unknown };
+      try {
+        res = await courier.rotate(host, body);
+      } catch (error) {
+        if (error instanceof ChannelUnavailable && error.reason === "offline") throw new RenewalError("offline", `${host} is offline`);
+        throw new RenewalError("failed", error instanceof Error ? error.message : String(error), error instanceof ChannelUnavailable ? error.reason : undefined);
+      }
+      const answer = res.body as { error?: unknown; message?: unknown; reason?: unknown } | null;
+      const code = typeof answer?.error === "string" ? answer.error : "";
+      const said = typeof answer?.message === "string" ? answer.message : `${res.status}`;
+      if (res.status === 200) return { view, answer: parseRotateAnswer(res.body) };
+      if (res.status === 404) throw new RenewalError("tooOld", `${host}'s Droppen does not renew its identity key`);
+      if (res.status === 412 && now() < deadline) {
+        // No fresh word on its head from an admin yet (Posture): vouch for it, and ask again.
+        await courier.attest().catch(() => undefined);
+        await sleep(2000);
+        continue;
+      }
+      if (res.status === 409 && code === "not_on_chain" && !resynced) {
+        resynced = true;
+        await this.sync().catch(() => undefined);
+        continue;
+      }
+      if (res.status === 409 && code === "hub_not_ready") throw new RenewalError("hubNotReady", `${host} cannot stage a renewal at the hub yet`, code);
+      if (res.status === 409 && code === "hub_refused") {
+        const reason = typeof answer?.reason === "string" ? answer.reason : "refused";
+        if (reason === "conflict") throw new RenewalError("voided", `the hub saw another renewal of ${host}`, reason);
+        if (reason === "disabled") throw new RenewalError("disabled", "the hub takes no identity key renewal now", reason);
+        throw new RenewalError("refused", `the hub would not stage ${host}'s renewal: ${reason}`, reason);
+      }
+      if (res.status === 412) throw new RenewalError("failed", `${host} found no recent word on its chain head`, "stale");
+      throw new RenewalError("refused", `${host} refused: ${said}`, code || String(res.status));
+    }
+  }
+
+  /**
+   * When the hub staged `rotation` and its window closes (its `ready_ms`):
+   * from the host's answer, else from `GET /v1/rotations`, looked at until it
+   * is staged with exactly these keys. A staging voided meanwhile (another
+   * holder of the old key: `not_acked`, `conflict`) is a {@link RenewalError}
+   * `voided`; so is one staged with other keys.
+   */
+  private async waitStaged(host: string, rotation: HostRotation, answered: number | null, sleep: (ms: number) => Promise<void>, now: () => number, opts: RenewOptions): Promise<number> {
+    const deadline = now() + (opts.maxWaitMs ?? 10 * 60_000);
+    const readyMs = answered;
+    for (;;) {
+      let row;
+      try {
+        row = (await this.api.rotations(this.session.token)).hosts.find((r) => r.host === host);
+      } catch (error) {
+        throw renewalRefusal(error);
+      }
+      if (row?.failure && row.state !== "staged") throw new RenewalError("voided", `the hub voided ${host}'s renewal: ${row.failure.reason}`, row.failure.reason);
+      if (row?.state === "staged") {
+        if (!row.signKey || !equal(row.signKey, rotation.signKey) || (row.dhKey && !equal(row.dhKey, rotation.dhKey))) {
+          throw new RenewalError("voided", `the hub staged other keys for ${host}`, "mismatch");
+        }
+        return row.readyMs ?? readyMs ?? now();
+      }
+      if (row?.state === "committed") throw new RenewalError("voided", `${host} renewed elsewhere meanwhile`, "committed");
+      // No row (or a bare mark) after this page opened its attempt: it was withdrawn — by another page, or the hub. Not
+      // waited for: tried again with the usual backoff.
+      if (!row || row.state === "pending") throw new RenewalError("voided", `${host}'s renewal was withdrawn`, "withdrawn");
+      if (now() >= deadline) throw new RenewalError("failed", `the hub did not stage ${host}'s renewal in time`, "timeout");
+      await sleep(opts.pollMs ?? 2000);
+    }
+  }
+
+  /**
+   * The account's 「更换身份密钥时总在设备上确认」 (§3.4 rule 9, §4.4), as this
+   * page's verified chain has it (`setRenewalPolicy`; off until an admin turns
+   * it on): every renewal then confirmed on the device — the chain refuses any
+   * other (`RULES.rotateNeedsAssurance`).
+   */
+  get alwaysAssured(): boolean {
+    return this.state?.alwaysAssured === true;
+  }
+
+  /** Whether an admin chose the account's renewal policy (a `SetRenewalPolicy` on the chain): nothing renews on its own before (§5.6 「打开的顺序」). */
+  get renewalPolicyChosen(): boolean {
+    return this.state?.renewalPolicySeq !== null && this.state?.renewalPolicySeq !== undefined;
+  }
+
+  /** Set the account's renewal policy: a `setRenewalPolicy` entry, through the chain (an admin, chain v3). */
+  async setRenewalPolicy(alwaysAssured: boolean): Promise<void> {
+    const chain = this.requireAdmin();
+    this.requireUpgraded(chain);
+    // Chosen already, and the same: nothing to write. Never chosen: either choice is written (§5.6 「打开的顺序」).
+    if (chain.renewalPolicySeq !== null && chain.alwaysAssured === alwaysAssured) return;
+    await this.append({ type: "setRenewalPolicy", alwaysAssured });
+  }
+
+  /**
+   * This device's own 「这台设备只签在设备上确认的换钥」 (§4.4): while set, it signs
+   * no renewal that is not confirmed on the device — whatever the hub or the
+   * chain says. Kept in this browser only.
+   */
+  localAssured(): boolean {
+    return this.read(localAssuredKey(this.account)) === "1";
+  }
+
+  setLocalAssured(on: boolean): void {
+    if (on) this.write(localAssuredKey(this.account), "1");
+    else this.forget(localAssuredKey(this.account));
+    this.emit();
+  }
+
+  /** Whether renewals signed here must be confirmed on the device: the account's policy, or this device's own guard. */
+  get renewalsAssured(): boolean {
+    return this.alwaysAssured || this.localAssured();
+  }
+
+  /**
+   * Whether device `id` is a host no other host may be made to accept until
+   * it renewed its identity key (§4.1, §7 decision 8): isolated, or exposed
+   * ({@link hostsToRotate}) and able to renew. `HostControl` says so before
+   * Save; `setAccept` refuses it.
+   */
+  mustRenewFirst(id: string): boolean {
+    if (!this.state?.device(id)?.host) return false;
+    return this.isolated(id) || (this.renews(id) && this.hostsToRotate().has(id));
+  }
+
+  /**
+   * The exposed hosts that must renew their identity key before `host` does
+   * (§4.1 「次序先于收窄」): those it lets control it that have not renewed
+   * since. Empty when `host` is not exposed — a renewal nobody asked for is
+   * never held back.
+   */
+  renewFirst(host: string): string[] {
+    const chain = this.state;
+    if (!chain?.machine(host)) return [];
+    const exposed = this.hostsToRotate();
+    return exposed.has(host) ? exposedControllers(chain, exposed, host) : [];
+  }
+
+  /** {@link renewFirst}, as a refusal (`RenewalError` `renewFirst`). */
+  private requireRenewFirst(host: string): void {
+    const first = this.renewFirst(host);
+    if (first.length) {
+      throw new RenewalError("renewFirst", `renew the identity key of ${first.join(", ")} first: ${host} lets ${first.length > 1 ? "them" : "it"} control it`, undefined, first);
+    }
+  }
+
   /**
    * The current hosts to re-enroll for a new identity (review D3; see
    * {@link hostsToReEnroll}): those with a warning this browser was not told
    * to drop ({@link reEnrollWarnings}, {@link dismissReEnroll}), what the
-   * hosts' statuses say now (`controllersOf`) taken in.
+   * hosts' statuses say now (`controllersOf`) taken in. A host that renews
+   * its identity key instead ({@link renews}) is none of them.
    */
   reEnrollDue(controllersOf?: (host: string) => ControllersRecord | undefined): Set<string> {
     const due = new Set<string>();
@@ -3618,12 +4488,17 @@ export class CloudAccount {
    * Only a person's "I'm sure it never connected" drops one, and not when a
    * record ever named the device (kept here, so a later record that leaves
    * it out cannot unsay it).
+   *
+   * Only for the hosts that cannot renew their identity key (an agent without
+   * `rotate/1`, a v2 account: docs/host-identity-rotation.md §4.1, §7
+   * decision 3): one that can ({@link renews}) renews whatever a record says.
    */
   reEnrollWarnings(controllersOf?: (host: string) => ControllersRecord | undefined): Map<string, ReEnrollLine[]> {
     const chain = this.state;
     const out = new Map<string, ReEnrollLine[]>();
     if (!chain) return out;
     const culprits = reEnrollCulprits(chain);
+    for (const host of [...culprits.keys()]) if (this.renews(host)) culprits.delete(host);
     const records = new Map<string, ControllersRecord>();
     for (const h of chain.hosts()) {
       const record = h.status.type === "active" ? controllersOf?.(h.info.id) : undefined;
@@ -4328,6 +5203,8 @@ export class CloudAccount {
     await this.forgetSeen();
     this.forget(reEnrollDismissedKey(this.account));
     this.forget(reEnrollConnectedKey(this.account));
+    this.forget(keptDisputesKey(this.account));
+    this.forget(localAssuredKey(this.account));
   }
 
   /** This device's signed statement of the chain head it sees now. */
@@ -4463,6 +5340,10 @@ export function rotationDueIn(chain: ChainState): boolean {
  * that computer, and each new machine key is handed to that identity.
  * Re-enrolling the computer (remove it, then add it again) gives it a new
  * identity (a new device id); nothing is done automatically.
+ *
+ * Kept for the hosts that cannot renew their identity key (an agent without
+ * `rotate/1`, a v2 account: docs/host-identity-rotation.md §7 decision 7):
+ * the others renew it instead ({@link hostsToRotate}).
  */
 export function hostsToReEnroll(chain: ChainState): Set<string> {
   return new Set(reEnrollCulprits(chain).keys());
@@ -4556,6 +5437,634 @@ export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, num
   }
   for (const [host, devices] of [...culprits]) if (devices.size === 0) culprits.delete(host);
   return culprits;
+}
+
+/** Why a current host should renew its identity key ({@link hostsToRotate}). */
+export interface Exposure {
+  /** The entry it became exposed at: the earliest cause still standing. */
+  sinceSeq: number;
+  /** Devices that could control it and no longer can (removed, demoted, shut out of its list), with the seq each lost that. */
+  lost: Map<string, number>;
+  /** Exposed hosts it let control it while they were exposed (transitive, §4.1), with the seq it first did. */
+  via: Map<string, number>;
+  /**
+   * Exposed hosts that cannot renew their identity key (an older agent, a v2
+   * account) — or hosts in that state themselves — it lets control it now:
+   * renewing it would not help while it does (§4.1 case 3). Narrowing its
+   * list, or adding that host again, does.
+   */
+  blockedBy: Map<string, number>;
+}
+
+/**
+ * A group of exposed hosts whose lists were narrowed against each other in
+ * one batch (§4.1 「互相放行的一组：先收窄，再换，最后恢复」), as read off the chain:
+ * its members (the hosts exposed then), its last entry, and per host whose list
+ * it narrowed the list before and the one it wrote.
+ */
+export interface NarrowedGroup {
+  members: string[];
+  seq: number;
+  lists: Map<string, { before: Accept; narrowed: Accept }>;
+}
+
+/** Whether two accept lists say the same. */
+export function sameAccept(x: Accept, y: Accept): boolean {
+  if (x.type !== y.type) return false;
+  if (x.type !== "devices" || y.type !== "devices") return true;
+  return [...x.ids].sort().join("\n") === [...y.ids].sort().join("\n");
+}
+
+/**
+ * Where `group` stands on `chain` (§4.1): the lists still as it narrowed them
+ * (`open`: one changed since, by a restore or a person, is left as it is); the
+ * members still to renew (none: every one renewed after it, or is gone); and
+ * the list each open one goes back to — `All` where it was `All`, an explicit
+ * one without the devices no longer in the account.
+ */
+export function groupStanding(chain: ChainState, group: NarrowedGroup): { open: string[]; waiting: string[]; restore: { host: string; from: Accept }[] } {
+  const open = [...group.lists.keys()].filter((h) => chain.machine(h) && sameAccept(chain.acceptPolicy(h), group.lists.get(h)!.narrowed)).sort();
+  const waiting = group.members.filter((m) => chain.machine(m) && (chain.deviceRecord(m)?.rotatedSeq ?? -1) <= group.seq);
+  const restore = open.map((host) => {
+    const before = group.lists.get(host)!.before;
+    if (before.type !== "devices") return { host, from: before };
+    const ids = before.ids.filter((id) => id !== host && chain.device(id));
+    return { host, from: ids.length ? ({ type: "devices", ids } as Accept) : ({ type: "admins" } as Accept) };
+  });
+  return { open, waiting, restore };
+}
+
+/**
+ * The exposed hosts `host` lets control it (§4.1 「次序先于收窄」): each must have
+ * renewed before `host` does — its old key is dead by then. Not `host` itself.
+ */
+export function exposedControllers(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, host: string): string[] {
+  const policy = chain.acceptPolicy(host);
+  return [...exposed.keys()].filter((e) => e !== host && chain.machine(e) && acceptNames(policy, e)).sort();
+}
+
+/**
+ * The strongly connected sets of the exposed hosts' admission graph (an edge E → H
+ * where H lets E control it), Tarjan's way: a set of two or more is a cycle, where
+ * no order of renewals works (§4.1). Sorted, for a stable batch.
+ */
+export function exposedCycles(chain: ChainState, exposed: ReadonlyMap<string, Exposure>): string[][] {
+  const ids = [...exposed.keys()].filter((h) => chain.machine(h)).sort();
+  const next = (v: string) => ids.filter((h) => h !== v && acceptNames(chain.acceptPolicy(h), v));
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const on = new Set<string>();
+  const out: string[][] = [];
+  let i = 0;
+  const visit = (v: string) => {
+    index.set(v, i);
+    low.set(v, i);
+    i++;
+    stack.push(v);
+    on.add(v);
+    for (const w of next(v)) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (on.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+    }
+    if (low.get(v) === index.get(v)) {
+      const set: string[] = [];
+      for (let w = stack.pop()!; ; w = stack.pop()!) {
+        on.delete(w);
+        set.push(w);
+        if (w === v) break;
+      }
+      if (set.length >= 2) out.push(set.sort());
+    }
+  };
+  for (const v of ids) if (!index.has(v)) visit(v);
+  return out.sort((x, y) => (x[0]! < y[0]! ? -1 : 1));
+}
+
+/**
+ * The narrowing §4.1 calls for, before any of them renews — only where no
+ * order of renewals works: in each cycle of exposed hosts that let each other
+ * control them (`exposedCycles`, two or more, one of them able to renew), every
+ * member's list without the other members — `All` as an explicit list of
+ * everyone else, `admins` untouched (a host is never an admin). Acyclic parts
+ * are never narrowed: the order of renewals takes care of them
+ * (`exposedControllers`). Empty: no such cycle.
+ */
+export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, renews: (host: string) => boolean): { host: string; from: Accept }[] {
+  const out: { host: string; from: Accept }[] = [];
+  for (const cycle of exposedCycles(chain, exposed)) {
+    if (!cycle.some(renews)) continue;
+    const drop = new Set(cycle);
+    for (const host of cycle) {
+      const policy = chain.acceptPolicy(host);
+      if (!cycle.some((e) => e !== host && acceptNames(policy, e))) continue;
+      const keep =
+        policy.type === "all"
+          ? chain.allDevices().filter((d) => d.status.type === "active" && !d.admin && d.info.id !== host && !drop.has(d.info.id)).map((d) => d.info.id)
+          : policy.type === "devices"
+            ? policy.ids.filter((id) => !drop.has(id) && chain.device(id))
+            : [];
+      out.push({ host, from: keep.length ? { type: "devices", ids: keep } : { type: "admins" } });
+    }
+  }
+  return out;
+}
+
+/** Whether renewing a host's identity key ends its exposure: something renewing fixes, and nothing that it does not. */
+export function renewalHelps(x: Exposure): boolean {
+  return x.blockedBy.size === 0 && (x.lost.size > 0 || x.via.size > 0);
+}
+
+/**
+ * The current hosts whose identity key may have been copied, each with why
+ * (docs/host-identity-rotation.md §4.1, §7 decisions 3 and 8):
+ *
+ * - the losses {@link hostsToReEnroll} counts — after the host joined, a
+ *   device that could control it (an admin, or one its list named) was
+ *   removed, demoted without being named, or shut out of its list; a device
+ *   let back in is not lost any more;
+ * - transitively: while a host E that can renew (`renews`) is exposed, a host
+ *   that lets E control it is exposed too — E's copy is a pass to it (X → H →
+ *   H2: H2 as well, through H);
+ * - cleared only by a later `rotateHostKey` of that very host. After it, only
+ *   three things expose it again (§4.1 「换完之后什么会让它再暴露」): a new
+ *   loss after that renewal (and what a new loss exposes transitively); an
+ *   exposed host added to its list after it; and letting an exposed host that
+ *   cannot renew control it (`blockedBy`: no renewal helps then — narrow the
+ *   list or add that host again). An exposed host that can renew, and that it
+ *   let in before its renewal, does not expose it again: every exposed host
+ *   is marked to renew right after the loss, and the hub suspends its device
+ *   role meanwhile (§4.3). So two hosts that let each other control one
+ *   another renew once each.
+ *
+ * `renews` says which hosts can renew (every one when not given: the chain
+ * alone). Nothing a host's own record says (PR #117's `controllers`) takes a
+ * host out: a renewal is cheap, and a device that did connect could have
+ * edited that record.
+ */
+export function hostsToRotate(chain: ChainState, renews: (host: string) => boolean = () => true, groups?: NarrowedGroup[]): Map<string, Exposure> {
+  type Dev = { admin: boolean; active: boolean; host: boolean; addedSeq: number };
+  /** A run of narrowings being read (§4.1 「互相放行的一组」): its members, the lists it wrote, its last entry. */
+  let run: { members: Set<string>; lists: Map<string, { before: Accept; narrowed: Accept }>; lastSeq: number; signer: string; count: number; removed: Set<string> } | null = null;
+  /** Who signed an entry, as one string (a run is one signer's). */
+  const signerOf = (e: Entry) => {
+    const sg = e.draft.signer;
+    return sg.type === "device" ? `device:${sg.id}` : sg.type === "passkey" ? `passkey:${sg.slot}` : sg.type;
+  };
+  const devs = new Map<string, Dev>();
+  const accept = new Map<string, Accept>();
+  /** Per host, since when its list has named each device (`*`: since it let every device in). */
+  const admitted = new Map<string, Map<string, number>>();
+  /** Per host, its latest renewal. */
+  const renewedAt = new Map<string, number>();
+  const exposed = new Map<string, { since: number; lost: Map<string, number>; via: Map<string, number> }>();
+  const policy = (host: string) => accept.get(host) ?? ({ type: "admins" } as Accept);
+  const could = (d: string, host: string) => {
+    const r = devs.get(d);
+    return !!r && r.active && d !== host && (r.admin || acceptNames(policy(host), d));
+  };
+  /** Since when `host`'s list has let `id` in (`undefined`: it does not). */
+  const admittedSince = (host: string, id: string): number | undefined => {
+    if (!acceptNames(policy(host), id)) return undefined;
+    const since = admitted.get(host);
+    const named = since?.get(id);
+    if (named !== undefined) return named;
+    const all = since?.get("*");
+    return all === undefined ? undefined : Math.max(all, devs.get(id)?.addedSeq ?? 0);
+  };
+  const entry = (host: string, seq: number) => {
+    let x = exposed.get(host);
+    if (!x) exposed.set(host, (x = { since: seq, lost: new Map(), via: new Map() }));
+    return x;
+  };
+  const lost = (seq: number, device: string, who: (host: string) => boolean) => {
+    for (const [h, r] of devs) {
+      if (!r.active || !r.host || h === device || !who(h)) continue;
+      entry(h, seq).lost.set(device, seq);
+    }
+  };
+  /** A run of narrowings ends: it is a group's when it left no member letting another one control it. */
+  /**
+   * A run of narrowings ends. Without a marker on the chain, the runner's own
+   * group narrowing is told by its shape alone (§4.1, the lead's rule): ONE
+   * uninterrupted run by ONE signer of SetAccept and its KeyEpochs entries, at
+   * least two SetAccepts, after which no member lets another one control it.
+   * Anything else — one list changed by hand (following "narrow who can control
+   * it", say), narrowings split across runs or signers — is a person's, and is
+   * never restored: restoring re-grants control.
+   */
+  const closeRun = () => {
+    if (!run) return;
+    const r = run;
+    run = null;
+    if (r.count < 2) return;
+    // The cycle(s) it cut: the hosts whose lists it narrowed — every one it shut out among them — none letting another in after.
+    const members = new Set(r.lists.keys());
+    if (![...r.removed].every((d) => members.has(d))) return;
+    const complete = [...members].every((h) => [...members].every((e) => e === h || !acceptNames(policy(h), e)));
+    if (complete && groups) groups.push({ members: [...members].sort(), seq: r.lastSeq, lists: r.lists });
+  };
+  for (const e of chain.allEntries()) {
+    const seq = e.draft.seq;
+    const signer = e.draft.signer;
+    const a = e.draft.action;
+    // A narrowing's own key epoch keeps its run open; anything else but another narrowing ends it.
+    // Only the run's own signer's next KeyEpochs (or SetAccept) keeps it open; any other entry, or signer, ends it.
+    if (run && (signerOf(e) !== run.signer || !((a.type === "keyEpochs" || a.type === "setAccept") && run.lastSeq === seq - 1))) closeRun();
+    if (run && a.type === "keyEpochs") run.lastSeq = seq;
+    switch (a.type) {
+      case "genesis":
+      case "addDevice":
+        devs.set(a.device.id, { admin: a.device.full, active: true, host: false, addedSeq: seq });
+        break;
+      case "genesis3":
+        devs.set(a.device.id, { admin: a.device.flags.admin, active: true, host: a.device.flags.host, addedSeq: seq });
+        break;
+      case "addDevice3":
+        devs.set(a.device.id, { admin: a.device.flags.admin, active: signer.type !== "passkey", host: a.device.flags.host, addedSeq: seq });
+        break;
+      case "addMachine":
+        devs.set(a.machine.id, { admin: false, active: true, host: true, addedSeq: seq });
+        break;
+      case "recoveryJoin":
+        devs.set(a.device.id, { admin: true, active: false, host: false, addedSeq: seq });
+        break;
+      case "recoveryJoin3":
+        devs.set(a.device.id, { admin: a.device.flags.admin, active: false, host: a.device.flags.host, addedSeq: seq });
+        break;
+      case "approveDevice":
+      case "activateRecovered":
+      case "passkeyActivate": {
+        const r = devs.get(a.id);
+        if (r) r.active = true;
+        break;
+      }
+      case "setAdmin": {
+        const r = devs.get(a.id);
+        if (!r) break;
+        if (!a.admin) lost(seq, a.id, (h) => could(a.id, h) && !acceptNames(policy(h), a.id));
+        r.admin = a.admin;
+        break;
+      }
+      case "setAccept": {
+        const before = policy(a.host);
+        // Part of a group's narrowing (§4.1)? An exposed host's list losing only exposed hosts, gaining none.
+        const exposedNow: Set<string> = run && run.lastSeq === seq - 1 ? run.members : new Set(exposed.keys());
+        let removed = 0;
+        const shut: string[] = [];
+        let narrowing = exposedNow.has(a.host);
+        for (const [d, r] of devs) {
+          if (!r.active || r.admin || d === a.host) continue;
+          const was = acceptNames(before, d);
+          const is = acceptNames(a.from, d);
+          if (is && !was) narrowing = false;
+          if (was && !is) {
+            removed++;
+            shut.push(d);
+            if (!exposedNow.has(d)) narrowing = false;
+          }
+        }
+        if (narrowing && removed > 0) {
+          if (!run || run.lastSeq !== seq - 1 || run.signer !== signerOf(e)) {
+            closeRun();
+            run = { members: new Set(exposedNow), lists: new Map(), lastSeq: seq, signer: signerOf(e), count: 0, removed: new Set() };
+          }
+          if (!run.lists.has(a.host)) run.lists.set(a.host, { before, narrowed: a.from });
+          else run.lists.get(a.host)!.narrowed = a.from;
+          run.lastSeq = seq;
+          run.count++;
+          for (const d of shut) run.removed.add(d);
+        } else closeRun();
+        for (const [d, r] of devs) {
+          if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) lost(seq, d, (h) => h === a.host);
+        }
+        // Since when it lets each one in: kept for those it let in already, this entry for the rest.
+        const was = admitted.get(a.host) ?? new Map<string, number>();
+        const now = new Map<string, number>();
+        if (a.from.type === "all") now.set("*", before.type === "all" ? (was.get("*") ?? seq) : seq);
+        if (a.from.type === "devices") for (const id of a.from.ids) now.set(id, admittedSince(a.host, id) ?? seq);
+        admitted.set(a.host, now);
+        if (a.from.type === "admins") accept.delete(a.host);
+        else accept.set(a.host, a.from);
+        break;
+      }
+      case "setHost": {
+        const r = devs.get(a.id);
+        if (r) r.host = a.host;
+        // Its list goes with it; what it may have been copied stays (its identity key is the same when it runs AI again).
+        if (!a.host) {
+          accept.delete(a.id);
+          admitted.delete(a.id);
+        }
+        break;
+      }
+      case "removeDevice":
+      case "removeMachine":
+      case "removeDevice3": {
+        lost(seq, a.id, (h) => could(a.id, h));
+        const r = devs.get(a.id);
+        if (r) r.active = false;
+        exposed.delete(a.id);
+        break;
+      }
+      case "rotateHostKey": {
+        // A new identity: nothing anyone copied up to the view its seed was staged on is a pass to it any more. A loss
+        // after `staged_seq` is no remedy of this one (§4.1 「清除」, Codex round 4): the seed was made before it.
+        const upTo = Math.min(a.rotation.stagedSeq, seq);
+        const x = exposed.get(a.rotation.host);
+        if (x) {
+          for (const [d, at] of [...x.lost]) if (at <= upTo) x.lost.delete(d);
+          for (const [d, at] of [...x.via]) if (at <= upTo) x.via.delete(d);
+          if (x.lost.size === 0 && x.via.size === 0) exposed.delete(a.rotation.host);
+          else x.since = Math.min(...x.lost.values(), ...x.via.values());
+        }
+        renewedAt.set(a.rotation.host, upTo);
+        break;
+      }
+      default:
+        break;
+    }
+    // A device let back in is not lost any more.
+    for (const [host, x] of exposed) for (const d of [...x.lost.keys()]) if (could(d, host)) x.lost.delete(d);
+    for (const [host, x] of [...exposed]) if (x.lost.size === 0 && x.via.size === 0) exposed.delete(host);
+    // Transitively, until nothing changes: a host that lets an exposed one that can renew control it (X → H → H2 …) —
+    // unless it renewed after that one was exposed and let in already (§4.1: the copy cannot reach its new key).
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [source, sx] of [...exposed]) {
+        if (!renews(source)) continue;
+        for (const [h, r] of devs) {
+          if (!r.active || !r.host || h === source) continue;
+          const since = admittedSince(h, source);
+          if (since === undefined) continue;
+          const renewed = renewedAt.get(h);
+          if (renewed !== undefined && sx.since <= renewed && since <= renewed) continue;
+          const x = exposed.get(h);
+          if (x?.via.has(source)) continue;
+          entry(h, seq).via.set(source, seq);
+          changed = true;
+        }
+      }
+    }
+  }
+  closeRun();
+  // What no renewal helps: letting an exposed host that cannot renew control it — or a host in that state (§4.1 case 3).
+  const blocked = new Map<string, Map<string, number>>();
+  const stuck = new Set([...exposed.keys()].filter((h) => !renews(h)));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const h of chain.hosts()) {
+      const id = h.info.id;
+      if (h.status.type !== "active") continue;
+      for (const source of stuck) {
+        if (source === id || !acceptNames(chain.acceptPolicy(id), source)) continue;
+        const by = blocked.get(id) ?? new Map<string, number>();
+        if (by.has(source)) continue;
+        by.set(source, exposed.get(source)?.since ?? chain.seq);
+        blocked.set(id, by);
+        stuck.add(id);
+        changed = true;
+      }
+    }
+  }
+  const out = new Map<string, Exposure>();
+  for (const h of chain.hosts()) {
+    const id = h.info.id;
+    if (!chain.machine(id)) continue;
+    const x = exposed.get(id);
+    const by = blocked.get(id) ?? new Map<string, number>();
+    if (!x && by.size === 0) continue;
+    const lostBy = x?.lost ?? new Map<string, number>();
+    const via = x?.via ?? new Map<string, number>();
+    out.set(id, { sinceSeq: Math.min(...lostBy.values(), ...via.values(), ...by.values()), lost: lostBy, via, blockedBy: by });
+  }
+  return out;
+}
+
+/**
+ * The hosts that would renew their identity key after device `device` stops
+ * controlling the hosts `from` (all it may control now when not given) — a
+ * removal, a demotion, a narrowed list — for the confirmation to say so
+ * (§4.4): those hosts, every host that lets one of them (or one already
+ * exposed) control it, and so on. Hosts already exposed are not counted.
+ */
+export function hostsExposedBy(chain: ChainState, device: string, from?: readonly string[]): string[] {
+  const already = hostsToRotate(chain);
+  const hosts = chain.hosts().filter((h) => h.status.type === "active");
+  const out = new Set<string>(from ?? hosts.filter((h) => h.info.id !== device && admits(chain, h.info.id, device)).map((h) => h.info.id));
+  // A host with no host key yet is no host to renew (it is the device itself, for a host removed).
+  out.delete(device);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const h of hosts) {
+      const id = h.info.id;
+      if (out.has(id) || id === device) continue;
+      if ([...out].some((e) => e !== id && acceptNames(chain.acceptPolicy(id), e))) {
+        out.add(id);
+        changed = true;
+      }
+    }
+  }
+  return [...out].filter((id) => !already.has(id)).sort();
+}
+
+/** `CloudAccount.setAccepts`: nothing left to write on the newest head. */
+class NothingToWrite extends Error {}
+
+/** A renewal this page verified a dispute of: its host, and the disputed `rotateHostKey`'s seq (§3.8). */
+export interface KeptDispute {
+  host: string;
+  seq: number;
+}
+
+/** Kept disputes as stored (anything else in the list is dropped). */
+function parseDisputes(list: unknown): KeptDispute[] {
+  if (!Array.isArray(list)) return [];
+  return mergeDisputes(
+    [],
+    list.flatMap((d) => {
+      const x = (d && typeof d === "object" ? d : {}) as { host?: unknown; seq?: unknown };
+      return typeof x.host === "string" && Number.isSafeInteger(x.seq) && (x.seq as number) > 0 ? [{ host: x.host, seq: x.seq as number }] : [];
+    }),
+  );
+}
+
+/** Those of `found` not in `kept`, one each (by host and renewal). */
+function disputesNotIn(kept: readonly KeptDispute[], found: readonly KeptDispute[]): KeptDispute[] {
+  const seen = new Set(kept.map((d) => `${d.seq}@${d.host}`));
+  const out: KeptDispute[] = [];
+  for (const d of found) {
+    const id = `${d.seq}@${d.host}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ host: d.host, seq: d.seq });
+  }
+  return out;
+}
+
+/** `a` then what `b` adds, one each. */
+function mergeDisputes(a: readonly KeptDispute[], b: readonly KeptDispute[]): KeptDispute[] {
+  return [...disputesNotIn([], a), ...disputesNotIn(a, b)];
+}
+
+/**
+ * At most {@link MAX_KEPT_DISPUTES} resolved ones — the oldest resolved go
+ * first — and every one that still isolates its host on `chain` (or that
+ * `chain` cannot judge yet), whatever their number: those are never evicted.
+ */
+export function capDisputes(chain: Pick<ChainState, "seq" | "entryAt" | "machine"> | null, list: readonly KeptDispute[], max = MAX_KEPT_DISPUTES): KeptDispute[] {
+  const open = (d: KeptDispute) => !chain || disputeIsolates(chain, d);
+  const resolved = list.filter((d) => !open(d));
+  const room = Math.max(0, max - (list.length - resolved.length));
+  const drop = new Set(resolved.slice(0, Math.max(0, resolved.length - room)));
+  if (list.length - resolved.length > max) console.warn(`cloud account: ${list.length - resolved.length} unresolved disputes kept — more than ${max}; none dropped`);
+  return list.filter((d) => !drop.has(d));
+}
+
+/** Whether `chain` has a renewal of `host` confirmed on the device (`assurance = 1`) after entry `seq`. */
+export function assuredRenewalAfter(chain: Pick<ChainState, "seq" | "entryAt">, host: string, seq: number): boolean {
+  for (let s = chain.seq; s > seq; s--) {
+    const a = chain.entryAt(s)?.draft.action;
+    if (a?.type === "rotateHostKey" && a.rotation.host === host && a.rotation.assurance === ASSURANCE_ON_DEVICE) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a verified dispute of the renewal at `d.seq` isolates `d.host` on
+ * `chain` (§3.8, R6 M1): that renewal was automatic, no renewal confirmed on
+ * the device came after it, and the host is still one. A chain behind the one
+ * it was verified on (no entry at `d.seq` yet) keeps it isolated: it cannot
+ * know better.
+ */
+export function disputeIsolates(chain: Pick<ChainState, "seq" | "entryAt" | "machine">, d: KeptDispute): boolean {
+  if (!chain.machine(d.host)) return false;
+  if (d.seq > chain.seq) return true;
+  const a = chain.entryAt(d.seq)?.draft.action;
+  if (a?.type !== "rotateHostKey" || a.rotation.host !== d.host || a.rotation.assurance === ASSURANCE_ON_DEVICE) return false;
+  return !assuredRenewalAfter(chain, d.host, d.seq);
+}
+
+/** What the renewal runner tells the account (`CloudAccount.noteRenewals`). */
+export interface RenewalNote {
+  /** The hosts that renew their identity key here (chain v3, the hub takes renewals, their agents declared `rotate/1`). */
+  renews: ReadonlySet<string>;
+  /** The hosts the hub has waiting to renew (`pending`, `attempt`, `staged`): their device role is suspended (§4.3). */
+  pending: ReadonlySet<string>;
+  /** The hosts isolated after their retired key showed up again (§3.8): by evidence this page checked only. */
+  isolated: ReadonlySet<string>;
+  /** The hosts the hub flags isolated without evidence checked here (R6 W1): withheld keys, not isolated. */
+  flagged?: ReadonlySet<string>;
+}
+
+/** A host's answer to `POST /rh/rotate` (camelCase, hex), parsed. */
+export interface RotateAnswer {
+  signKey: Bytes;
+  dhKey: Bytes;
+  oldSig: Bytes;
+  newSig: Bytes;
+  mac: Bytes;
+  stagedSeq: number;
+  stagedHead: Bytes;
+  /** When its window closes by the hub's clock, if the host was told (`null`: ask the hub). */
+  readyMs: number | null;
+}
+
+/** `POST /rh/rotate`'s 200, or a {@link RenewalError} `badAnswer` if it is not of that shape. */
+export function parseRotateAnswer(raw: unknown): RotateAnswer {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const field = (name: string, bytes: number): Bytes => {
+    const v = r[name];
+    if (typeof v !== "string" || v.length !== bytes * 2 || !/^[0-9a-fA-F]+$/.test(v)) throw new RenewalError("badAnswer", `the device's answer has no valid ${name}`, name);
+    return fromHex(v.toLowerCase());
+  };
+  const stagedSeq = r.stagedSeq;
+  if (typeof stagedSeq !== "number" || !Number.isSafeInteger(stagedSeq) || stagedSeq < 0) throw new RenewalError("badAnswer", "the device's answer has no valid stagedSeq", "stagedSeq");
+  const ready = r.readyMs;
+  return {
+    signKey: field("signKey", 32),
+    dhKey: field("dhKey", 32),
+    oldSig: field("oldSig", 64),
+    newSig: field("newSig", 64),
+    mac: field("mac", 32),
+    stagedSeq,
+    stagedHead: field("stagedHead", 32),
+    readyMs: typeof ready === "number" && Number.isFinite(ready) && ready > 0 ? ready : null,
+  };
+}
+
+/**
+ * The renewal `answer` proves for `host` (whose keys on `chain` are `old`),
+ * once it checks out (§3.2 "D 再检查"): it is about exactly the view asked
+ * about, its new keys are valid and ones the chain never named — no host's
+ * identity lands on a key some device held — and the host's current key and
+ * its new one both signed the proof. Else a {@link RenewalError} `badAnswer`
+ * (the MAC is checked by the caller, which holds the ephemeral key).
+ */
+export async function checkRotateAnswer(
+  chain: ChainState,
+  host: string,
+  old: { signKey: Uint8Array; dhKey: Uint8Array },
+  answer: RotateAnswer,
+  view: { seq: number; head: Uint8Array },
+  nonce: Uint8Array,
+  assurance: Assurance,
+): Promise<HostRotation> {
+  if (answer.stagedSeq !== view.seq || !equal(answer.stagedHead, view.head)) throw new RenewalError("badAnswer", `${host} answered about another chain view`, "view");
+  if (!(await isValidEd25519Key(answer.signKey)) || !(await isValidX25519(answer.dhKey))) throw new RenewalError("badAnswer", `${host}'s new key is not a valid one`, "key");
+  if (chain.everNamed(answer.signKey) || chain.everNamed(answer.dhKey)) throw new RenewalError("badAnswer", `${host}'s new key is one the chain named before`, "reused");
+  const rotation: HostRotation = {
+    host,
+    signKey: answer.signKey,
+    dhKey: answer.dhKey,
+    stagedSeq: answer.stagedSeq,
+    stagedHead: answer.stagedHead,
+    nonce: copy(nonce),
+    assurance,
+    oldSig: answer.oldSig,
+    newSig: answer.newSig,
+  };
+  if (!(await verifyHostRotation(chain.account, rotation, old.signKey, old.dhKey))) {
+    throw new RenewalError("badAnswer", `${host}'s renewal is not signed by both its current and its new identity key`, "signature");
+  }
+  return rotation;
+}
+
+/** A hub refusal of a renewal step, as a {@link RenewalError} (anything else is thrown as it is). */
+export function renewalRefusal(error: unknown): Error {
+  if (error instanceof RenewalError || !(error instanceof HubApiError)) return error instanceof Error ? error : new Error(String(error));
+  if (error.status === 409 && error.code === "rotation_in_progress") return new RenewalError("inProgress", "another device is renewing it now", error.code);
+  if (error.status === 409 && error.code === "rotation_not_ready") {
+    switch (error.reason) {
+      case "agent_too_old":
+        return new RenewalError("tooOld", "its Droppen does not renew its identity key", error.reason);
+      case "needs_assurance":
+        return new RenewalError("needsAssurance", "only a renewal confirmed on the device goes now", error.reason);
+      case "waiting":
+        return new RenewalError("waiting", "waiting for Droppen to be updated on other devices that run AI", error.reason, error.waitingHosts ?? []);
+      case "not_staged":
+      case "mismatch":
+        return new RenewalError("voided", "the hub has no matching staged renewal", error.reason);
+      case "policy_unset":
+        return new RenewalError("policyUnset", "choose how identity key renewals are confirmed first", error.reason);
+      case "disabled":
+      case undefined:
+        return new RenewalError("disabled", "the hub takes no identity key renewal now", "disabled");
+      case "v2":
+        // A v2 account renews nothing: re-enrolling is the way (§5.6).
+        return new RenewalError("refused", "this account is on chain v2: re-enroll the device instead", "v2");
+      default:
+        // `conflict`, `window` after the page's tries, and anything newer: refused, and tried again later.
+        return new RenewalError("refused", `the hub did not take the renewal (${error.reason})`, error.reason);
+    }
+  }
+  // A hub from before renewals has no such route.
+  if (error.status === 404) return new RenewalError("disabled", "the hub takes no identity key renewal", "not_found");
+  if (error.status === 429) return new RenewalError("rate", "too many renewals of this device lately: try again later", error.code);
+  if (error.status === 409) return new RenewalError("refused", error.message, error.code);
+  return new RenewalError("failed", error.message, error.code);
 }
 
 /** What a host's own record says of a device it should be re-enrolled for ({@link reEnrollEvidence}). */
