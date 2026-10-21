@@ -858,6 +858,10 @@ fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
             },
             rh_proto::identity::device_fingerprint_text(&r.sign_key, &r.dh_key)
         ),
+        Action::SetRenewalPolicy { always_assured: true } => {
+            format!("identity key renewals must now be confirmed on the device (set by {signer})")
+        }
+        Action::SetRenewalPolicy { always_assured: false } => format!("identity key renewals may be automatic again (set by {signer})"),
         Action::ApproveDevice(id) if v3 => format!("device {id} was approved by {signer}"),
         Action::AddDevice(d) => format!("device {} was added by {signer}", d.id),
         Action::RemoveDevice(id) => format!("device {id} was removed by {signer}"),
