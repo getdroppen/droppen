@@ -6,9 +6,9 @@ import { osLabel, versionLabel } from "@/features/machines/device-facts";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { needsYou, recentSessions } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";
-import { type Accept, type ChainState, offerFromText, type DeviceRecord } from "@/lib/e2e";
+import { type Accept, type ChainState, type DeviceRecord, hex, offerFromText } from "@/lib/e2e";
 import { formatAsOf, formatExactTime, formatRelative } from "@/lib/format";
-import { type ChainAlert, type CloudAccount, deviceFingerprint, hasRunAi, type HeldChange, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
+import { type ChainAlert, type CloudAccount, deviceFingerprint, hasRunAi, type HeldChange, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
 import { hostRefusalText } from "@/api/errors";
 import { chainV3Writable, type PairingSummary, type RegisteredDevice } from "@/lib/hub/api";
 import { hubOrigin } from "@/lib/hub/config";
@@ -32,6 +32,7 @@ import { MachineNotes, noteRenamed, RenameMachineForm, renameThroughNewChannel, 
 import { addAsked } from "./onboarding";
 import { AddDeviceHint } from "./onboarding-hints";
 import { RelaySection } from "./relays";
+import { AlwaysConfirmSetting, PushRenewNotice, RenewalNotice, RenewalsAhead, RenewPanel, useRenewals } from "./renewal";
 import { LimitNote, UsageSummary, useMe } from "./plan";
 import { QrScanner } from "./qr";
 import { RecoveryWords } from "./recovery";
@@ -83,7 +84,8 @@ export function useAccountVersion(account: CloudAccount | null | undefined): num
 
 function useFingerprints(devices: DeviceRecord[]): Map<string, string> {
   const [prints, setPrints] = useState(new Map<string, string>());
-  const key = devices.map((d) => d.info.id).join(",");
+  // The ids, and the keys: a renewed identity key is a new fingerprint for the same id.
+  const key = devices.map((d) => `${d.info.id}:${d.info.signKey ? hex(d.info.signKey.slice(0, 8)) : ""}`).join(",");
   useEffect(() => {
     let live = true;
     void Promise.all(devices.map(async (d) => [d.info.id, await deviceFingerprint(d.info.signKey, d.info.dhKey)] as const)).then((list) => {
@@ -113,6 +115,8 @@ export type Section =
   | { kind: "control"; host: string }
   /** "I'm sure it never connected": a re-enroll warning about `culprit` on host `device` dropped, confirmed first (review D3). */
   | { kind: "dismissReEnroll"; device: string; culprit: string; lostSeq: number }
+  /** Renewing a host's identity key now (docs/host-identity-rotation.md §4.4); `fixed`: only confirmed on the device. */
+  | { kind: "renew"; device: string; fixed: boolean }
   | { kind: "words"; words: string[] };
 
 /** A time of day ("14:02"), with the date when it is not today. */
@@ -272,8 +276,12 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
   // What is written follows the chain (review D4): v3 only once it holds a v3 entry; the hub's say gates the upgrade and new hosts.
   const upgraded = chain?.isV3 === true;
   const writable = chainV3Writable(me?.view);
-  // Hosts whose identity a device that could control them may have kept (review D3), each device with what the host's status says of it.
+  // Hosts whose identity a device that could control them may have kept (review D3), each device with what the host's status says of it —
+  // those that cannot renew their identity key; the others renew it (docs/host-identity-rotation.md §4).
   const reEnroll = viewerAdmin ? account.reEnrollWarnings((h) => statuses.get(h)?.controllers) : new Map<string, ReEnrollLine[]>();
+  const renewals = useRenewals();
+  // The hosts no other host may be made to accept until they renewed their identity key (§7 decision 8).
+  const mustRenew = hostIds.filter((h) => account.mustRenewFirst?.(h) === true);
   // What the last confirmed change rotated, if it did (a narrowed 「谁可以控制它」: review D2).
   const [done, setDone] = useState<{ title: string; report: RotationReport } | null>(null);
   // A device made a full device whose keys were not mailed: said on its row, with "re-send keys".
@@ -359,6 +367,12 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
       limited,
       accept: d.host && chain ? chain.acceptPolicy(id) : null,
       reEnroll: d.host ? reEnroll.get(id) : undefined,
+      renewal: d.host && renewals ? renewals.status(id) : undefined,
+      renewable: d.host && upgraded && account.renews?.(id) === true,
+      renewFirst: d.host ? (account.renewFirst?.(id) ?? []) : undefined,
+      isolatedControllers: d.host && renewals ? renewals.isolatedControllers(id) : undefined,
+      retiredLoginMs: d.host && renewals ? renewals.retiredLoginAt(id) : undefined,
+      pausedWith: d.host && renewals ? renewals.pausedWith(id) : undefined,
       ...(host
         ? {
             facts: { os: osLabel(info?.os), agent: versionLabel(info?.agentVersion), agentFull: info?.agentVersion ?? null, hostname, keyEpoch: chain?.latestMachineEpoch(id) ?? null },
@@ -406,11 +420,22 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         onRename={d.host ? () => setRenaming(renaming === id ? null : id) : undefined}
         onTerminal={v.host ? () => openAt(id, "/terminals") : undefined}
         onResend={() => resend.send(id)}
+        onRenew={renewals ? () => setSection({ kind: "renew", device: id, fixed: renewals.needsCode(id) !== null || account.isolated?.(id) === true }) : undefined}
+        onRenewCode={renewals ? () => setSection({ kind: "renew", device: id, fixed: true }) : undefined}
+        onRenewRetry={renewals ? () => void run(() => renewals.renew(id, { assurance: 0 })) : undefined}
+        onAddComputer={() => setSection({ kind: "addComputer" })}
         onOpen={v.host ? () => open(id) : undefined}
         onOpenSession={v.host ? (s) => openAt(id, sessionPath(s.source, s.id)) : undefined}
         notes={v.host ? <HostNotes account={account} link={link} id={id} status={statuses.get(id) ?? null} /> : null}
         keys={<ResendLine state={resend.states.get(id)} />}
       >
+        {section.kind === "renew" && section.device === id && renewals && (
+          <div className="border-b border-border px-6 py-4 max-md:px-3">
+            <div className="max-w-xl">
+              <RenewPanel host={id} runner={renewals} fixed={section.fixed} onDone={() => setSection({ kind: "list" })} />
+            </div>
+          </div>
+        )}
         {keysNotSent?.device === id && (
           <KeysNotSent
             device={id}
@@ -432,7 +457,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
             />
           </div>
         )}
-        {"device" in section && section.device === id && <RowConfirm section={section} id={id} busy={busy} actions={acts} onCancel={() => setSection({ kind: "list" })} />}
+        {"device" in section && section.kind !== "renew" && section.device === id && <RowConfirm section={section} id={id} busy={busy} actions={acts} onCancel={() => setSection({ kind: "list" })} />}
         {section.kind === "dismissReEnroll" && section.device === id && (
           <DismissReEnroll
             host={id}
@@ -453,6 +478,9 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
               .filter((x) => x.status.type === "active" && !x.admin && x.info.id !== id)
               .map((x) => ({ id: x.info.id, host: x.host, limited: limitedDevice({ viewer: account.deviceId, viewerAdmin, device: x, upgraded, ranAi: hasRunAi(chain, x) }) !== null }))}
             upgraded={upgraded}
+            mustRenew={mustRenew}
+            renewable={upgraded && account.renews?.(id) === true}
+            renewsIfNarrowed={hostsExposedBy(chain, "", [id]).filter((h) => account.renews?.(h) === true)}
             busy={busy}
             onCancel={() => setSection({ kind: "list" })}
             onSave={(from) =>
@@ -568,6 +596,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
           {current.map(row)}
         </ul>
       </section>
+      {section.kind === "list" && viewerAdmin && upgraded && renewals?.view?.enabled && <AlwaysConfirmSetting runner={renewals} account={account} />}
       {section.kind === "list" && done && (
         <div data-testid="change-report" data-signal="ok" className="mx-6 my-4 flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:mx-4">
           <span className="font-mono text-xs text-ok">{done.title}</span>
@@ -749,6 +778,7 @@ export function AccountNotices({ account, link }: { account: CloudAccount; link:
   const upgraded = account.chain?.isV3 === true;
   const writable = chainV3Writable(me?.view);
   const blocker = v3Blocker(me?.view);
+  const renewals = useRenewals();
   return (
     <>
       {!viewerAdmin && account.standing === "active" && <LimitedDeviceNote missing={account.missingHostKeys} upgraded={upgraded} />}
@@ -756,6 +786,8 @@ export function AccountNotices({ account, link }: { account: CloudAccount; link:
       {viewerAdmin && upgraded && !writable && <V3Note blocker={blocker} waiting={me?.view?.chainV3?.waiting ?? []} />}
       {viewerAdmin && account.rotationDue && <RotateKeys account={account} link={link} due />}
       {account.missingUserKey !== null && <MissingUserKey account={account} link={link} epoch={account.missingUserKey} />}
+      {renewals && account.standing === "active" && <RenewalNotice runner={renewals} />}
+      <PushRenewNotice />
     </>
   );
 }
@@ -1114,6 +1146,8 @@ export function ControlConfirm({
   host,
   admitted,
   shutOut,
+  renewable = false,
+  renews = [],
   busy,
   onConfirm,
   onCancel,
@@ -1121,6 +1155,10 @@ export function ControlConfirm({
   host: string;
   admitted: string[];
   shutOut: string[];
+  /** It renews its identity key here (docs/host-identity-rotation.md §4): a narrowing renews it, rather than asking to re-enroll it. */
+  renewable?: boolean;
+  /** The devices that run AI a narrowing starts renewing (it, and those that let it control them). */
+  renews?: string[];
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -1131,10 +1169,18 @@ export function ControlConfirm({
       {admitted.length > 0 && (
         <span className="text-xs leading-5 text-fg">{t("Let {{ids}} control {{host}}? Each gets full access to it, its identity key included.", { ids: admitted.join(", "), host })}</span>
       )}
-      {shutOut.length > 0 && (
+      {shutOut.length > 0 && !renewable && (
         <span className="text-xs leading-5 text-muted">
           {t("{{ids}} can no longer control it: {{host}} gets a new content key now — but a device that copied its identity key can still sign in as {{host}} and receive that key. Re-enroll {{host}} afterwards: remove it, then add it again.", { ids: shutOut.join(", "), host })}
         </span>
+      )}
+      {shutOut.length > 0 && renewable && (
+        <>
+          <span className="text-xs leading-5 text-muted">
+            {t("{{ids}} can no longer control it: {{host}} gets a new content key now, and a new identity key, so a copy of the old one is no use.", { ids: shutOut.join(", "), host })}
+          </span>
+          <RenewalsAhead ids={renews} />
+        </>
       )}
       <div className="flex gap-2">
         <button type="button" className={danger} disabled={busy} onClick={onConfirm} data-testid="control-confirm-button">
@@ -1161,6 +1207,9 @@ export function HostControl({
   declaresPolicy,
   candidates,
   upgraded,
+  mustRenew,
+  renewable,
+  renewsIfNarrowed,
   busy,
   onSave,
   onCancel,
@@ -1179,6 +1228,12 @@ export function HostControl({
   candidates: { id: string; host: boolean; limited?: boolean }[];
   /** The chain holds a v3 entry (review D4): only then can this change. */
   upgraded: boolean;
+  /** Hosts that must renew their identity key before another host may let them in (`CloudAccount.mustRenewFirst`). */
+  mustRenew?: string[];
+  /** This host renews its identity key here: a narrowing renews it (else: re-enroll it). */
+  renewable?: boolean;
+  /** The devices that run AI a narrowing would start renewing. */
+  renewsIfNarrowed?: string[];
   busy: boolean;
   onSave: (from: Accept) => void;
   onCancel: () => void;
@@ -1194,6 +1249,8 @@ export function HostControl({
   // The `policy/1` gate: widening who controls an agent that has no refusal
   // list — or one not known yet (`/v1/me` still loading: security review of S1-4, N1) — is refused here.
   const outdated = declaresPolicy !== true && admitted.length > 0;
+  // A host that may have had its identity key copied is let in nowhere until it renewed it (docs/host-identity-rotation.md §7 decision 8).
+  const exposed = admitted.filter((id) => mustRenew?.includes(id));
   return (
     <div data-testid={`host-control-${host}`} className="border-b border-border px-6 py-4 max-md:px-4">
       <div className="flex max-w-xl flex-col gap-2">
@@ -1253,15 +1310,29 @@ export function HostControl({
             </p>
           )
         )}
+        {exposed.length > 0 && (
+          <p data-testid="control-exposed" data-signal="warn" className="text-2xs leading-4 text-warn-fg">
+            {t("Renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it. Until then it may control no other device.", { ids: exposed.join(", ") })}
+          </p>
+        )}
         {confirming ? (
-          <ControlConfirm host={host} admitted={admitted} shutOut={shutOut} busy={busy} onCancel={() => setConfirming(false)} onConfirm={() => onSave(from)} />
+          <ControlConfirm
+            host={host}
+            admitted={admitted}
+            shutOut={shutOut}
+            renewable={renewable}
+            renews={renewsIfNarrowed}
+            busy={busy}
+            onCancel={() => setConfirming(false)}
+            onConfirm={() => onSave(from)}
+          />
         ) : (
           <div className="flex gap-2">
             <button
               type="button"
               data-variant="primary"
               className={primary}
-              disabled={busy || !upgraded || outdated}
+              disabled={busy || !upgraded || outdated || exposed.length > 0}
               onClick={() => (controlSaveStep({ admitted, shutOut }) === "confirm" ? setConfirming(true) : onSave(from))}
             >
               {busy && <Loader2 className="size-3.5 animate-spin" />}
@@ -1501,6 +1572,8 @@ function RemoveDevice({
   // The account's recovery words go with it only when it knows the current ones (v3) — as the chain will rule.
   const voidsWords = account.chain?.voidsRecoveryWords(device, "removal") ?? false;
   const rotation: "all" | "machine" | "choice" | "none" = heldUserKey ? "all" : !v3 ? "none" : account.controlsAHost(device) ? "machine" : "choice";
+  // The devices that run AI it could control (and those that let them control them) renew their identity key after it (§4.1, §4.4).
+  const renewing = v3 && account.chain ? hostsExposedBy(account.chain, device).filter((h) => account.renews?.(h) === true) : [];
   if (report) {
     return (
       <div data-signal="ok" className="flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)]">
@@ -1541,6 +1614,7 @@ function RemoveDevice({
           {t("The account's recovery words stop working with it: it set them, or came back with them. Make new recovery words afterwards.")}
         </p>
       )}
+      <RenewalsAhead ids={renewing} />
       {rotation !== "none" && (
         <label className="flex items-start gap-2 text-2xs text-muted">
           <input
@@ -1672,7 +1746,9 @@ function RotateKeys({ account, link, due }: { account: CloudAccount; link: HubLi
 /** How loudly an alert speaks (local-aggregator §3.2): "is this you?", louder for a device made a full device (it gets the account's keys), a note for the rest. */
 export function alertLevel(alert: ChainAlert): "confirm" | "high" | "info" {
   if (alert.kind === "setAdmin") return alert.on ? "high" : "info";
-  if (alert.kind === "setHost" || alert.kind === "setAccept" || alert.kind === "removeDevice" || alert.kind === "keyEpochs" || alert.kind === "upgrade" || alert.kind === "rotateHostKey" || alert.kind === "renewalPolicy" || alert.kind === "renewalPause") return "info";
+  if (alert.kind === "setHost" || alert.kind === "setAccept" || alert.kind === "removeDevice" || alert.kind === "keyEpochs" || alert.kind === "upgrade" || alert.kind === "rotateHostKey" || alert.kind === "renewalPause") return "info";
+  // Renewals confirmed on the device turned off (or never on): "is this you?" on every device (#178 L1). Turned on: a note.
+  if (alert.kind === "renewalPolicy") return alert.on ? "info" : "confirm";
   if (alert.kind === "passkey") return alert.passkey === "join" || alert.passkey === "slotSet" ? "confirm" : "info";
   return "confirm";
 }

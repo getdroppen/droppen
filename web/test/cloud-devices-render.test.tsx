@@ -210,7 +210,7 @@ test("a machine on an old key is amber, needs-you; a refused device keeps its ke
 });
 
 test("every string these screens use is translated into zh-CN, zh-TW and ja", () => {
-  const files = ["devices.tsx", "add-computer.tsx", "pairing-screen.tsx", "recovery.tsx", "qr.tsx", "ui.tsx", "cloud-app.tsx", "cloud-bar.tsx", "machine-name.tsx", "device-row.tsx", "my-devices.tsx", "email-verify.tsx", "turnstile.tsx", "plan.tsx", "onboarding-hints.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8"));
+  const files = ["devices.tsx", "renewal.tsx", "add-computer.tsx", "pairing-screen.tsx", "recovery.tsx", "qr.tsx", "ui.tsx", "cloud-app.tsx", "cloud-bar.tsx", "machine-name.tsx", "device-row.tsx", "my-devices.tsx", "email-verify.tsx", "turnstile.tsx", "plan.tsx", "onboarding-hints.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8"));
   const keys = new Set<string>();
   for (const src of files) for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 50);
@@ -603,10 +603,11 @@ test("a host renewing its identity key is a note, with the new fingerprint once 
   assert.equal(cloudDevicesZhTW["{{device}} renewed its identity key, confirmed on the device"], "{{device}} 更換了身分金鑰（已在那台裝置上確認）");
 });
 
-test("R1d: the account's renewal policy on the chain is a note, each way", () => {
+test("R1d / #178 L1: the account's renewal policy on the chain — turned on, a note; turned off, “is this you?” on every device", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const policy = (on: boolean) => ({ seq: 14, by: "d-1", atMs: 0, remove: null, kind: "renewalPolicy", subject: null, on }) as const;
   assert.equal(alertLevel(policy(true)), "info");
+  assert.equal(alertLevel(policy(false)), "confirm");
   assert.equal(alertText(policy(true), t), "identity key renewals must now be confirmed on the device (set by d-1)");
   assert.equal(alertText(policy(false), t), "identity key renewals may be automatic again (set by d-1)");
   const account = { alerts: () => [policy(true)], onChange: () => () => undefined } as unknown as CloudAccount;

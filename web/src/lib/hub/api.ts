@@ -43,16 +43,29 @@ export class HubApiError extends Error {
   readonly retryAfterMs?: number;
   /** What a 409 `limit` says is used up. */
   readonly limit?: LimitDetail;
-  /** The hosts a 409 `chain_v3_not_ready` waits for (their agents do not read chain v3 yet). */
+  /**
+   * The hosts a 409 `chain_v3_not_ready` waits for (their agents do not read
+   * chain v3 yet) — or a 409 `rotation_not_ready`'s `waiting` (hosts after
+   * the batch that have not declared `rotate/1`).
+   */
   readonly waitingHosts?: string[];
   /** A 409 `unlock_on`'s grant: the proof was taken; with the slot off, the same removal goes through with it (two minutes, once). */
   readonly grant?: string;
+  /**
+   * Why a 409 `rotation_not_ready` (docs/host-identity-rotation.md §3.3):
+   * `disabled` (`DROPPEN_HUB_HOST_ROTATION` is off), `agent_too_old` (the
+   * host never declared `rotate/1`), `needs_assurance`, `waiting`,
+   * `not_staged`, `mismatch`, `window` (with {@link readyMs}).
+   */
+  readonly reason?: string;
+  /** When a renewal's window closes, by the hub's clock (409 `rotation_not_ready` `window`). */
+  readonly readyMs?: number;
 
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
-    extra: { retryAfterMs?: number; limit?: LimitDetail; waitingHosts?: string[]; grant?: string } = {},
+    extra: { retryAfterMs?: number; limit?: LimitDetail; waitingHosts?: string[]; grant?: string; reason?: string; readyMs?: number } = {},
   ) {
     super(message);
     this.name = "HubApiError";
@@ -60,7 +73,97 @@ export class HubApiError extends Error {
     if (extra.limit !== undefined) this.limit = extra.limit;
     if (extra.waitingHosts !== undefined) this.waitingHosts = extra.waitingHosts;
     if (extra.grant !== undefined) this.grant = extra.grant;
+    if (extra.reason !== undefined) this.reason = extra.reason;
+    if (extra.readyMs !== undefined) this.readyMs = extra.readyMs;
   }
+}
+
+/** A renewal's state at the hub (`GET /v1/rotations`, docs/host-identity-rotation.md §3.3). */
+export type RotationState = "pending" | "attempt" | "staged" | "committed";
+
+/** Why an attempt failed: the host still has to renew (its row goes back to `pending`). */
+export interface RotationFailure {
+  /** `not_acked` / `conflict`: another holder of the old key showed up (clone evidence: `assurance = 1` only from now on); `expired`; `refused`. */
+  reason: string;
+  atMs: number;
+}
+
+/** One host's renewal as the hub keeps it — a claim: what lands is checked on the chain. */
+export interface HostRotationView {
+  host: string;
+  state: RotationState;
+  assurance: 0 | 1;
+  requestedMs: number | null;
+  requestedBy: string | null;
+  attemptExpiresMs: number | null;
+  stagedMs: number | null;
+  /** When the staging's window closes (the hub's clock): the renewal may be written then. */
+  readyMs: number | null;
+  signKey: Bytes | null;
+  dhKey: Bytes | null;
+  stagedSeq: number | null;
+  committedMs: number | null;
+  committedSeq: number | null;
+  failure: RotationFailure | null;
+  /** Clone evidence within 30 days: the hub takes `assurance = 1` only. */
+  needsAssurance: boolean;
+  /** The hub's view: a key retired by an `assurance = 0` renewal signed in again, and no `assurance = 1` renewal since. */
+  isolated: boolean;
+}
+
+/**
+ * What the hub recorded against a host (§3.8): `disputed` — a statement signed by the key a renewal retired,
+ * disputing that renewal (`seq`, `entryHash`, `sig`: checked on this page's chain, it isolates); `retired_login` —
+ * a sign-in with a retired key (the signed `HubLogin`: information only, never isolation); `not_acked` / `conflict`
+ * — a staging another holder voided.
+ */
+export interface HostDispute {
+  host: string;
+  kind: "disputed" | "retired_login" | "not_acked" | "conflict";
+  seenMs: number;
+  /** The chain seq of the renewal that retired the key. */
+  retiredSeq: number | null;
+  role: "agent" | "device" | null;
+  login: { account: string; id: string; hub: string; nonce: Bytes; timeMs: number } | null;
+  sig: Bytes | null;
+  signKey: Bytes | null;
+  /** `disputed`: the disputed `rotateHostKey`'s seq, and its chain hash as the hub has it. */
+  seq: number | null;
+  entryHash: Bytes | null;
+}
+
+/** `GET /v1/rotations`: the account's renewals, disputes and policy. */
+export interface RotationsView {
+  /** `DROPPEN_HUB_HOST_ROTATION` is on: renewals are taken. */
+  enabled: boolean;
+  /** The confirmation window T. */
+  windowMs: number;
+  hosts: HostRotationView[];
+  disputes: HostDispute[];
+  /** The hub's clock when it answered (`now_ms`, else the Date header; `null`: neither): what the rows' ages are judged by, never the page's clock. */
+  nowMs: number | null;
+}
+
+/** `/v1/me`'s `rotations` summary (`null`: a hub that predates renewals). */
+export interface RotationsSummary {
+  enabled: boolean;
+  windowMs: number;
+  active: { host: string; state: RotationState }[];
+}
+
+/** The hub's `rotation` push on `/v1/client`: a host's renewal changed state (`reason`: why an attempt failed). */
+export interface RotationPush {
+  host: string;
+  /** `none`: withdrawn (`DELETE /v1/rotations/{host}`), or nothing to renew any more. */
+  state: RotationState | "none";
+  reason: string | null;
+}
+
+/** The hub's `host_dispute` push: evidence to fetch (`GET /v1/rotations`) and check. */
+export interface DisputePush {
+  host: string;
+  kind: string;
+  seenMs: number;
 }
 
 /** A plan someone may wait for on the waitlist. */
@@ -276,6 +379,8 @@ export interface AccountView {
   relayStandby: boolean | null;
   /** The account's ways to sign in changed lately (the last 30 days, oldest first; `[]` from a hub that does not say). */
   signInChanges: SignInChange[];
+  /** Identity key renewals (`null` from a hub that predates them: none are taken). */
+  rotations?: RotationsSummary | null;
 }
 
 /** What changed in how the account signs in: a passkey added, renamed or removed, the password set, changed or removed. */
@@ -397,6 +502,8 @@ export interface MachineSummary {
   copy: MachineCopy | null;
   /** Its agent declared `chain/3` and `policy/1` (`false` from a hub that does not say). */
   readsV3: boolean;
+  /** Its agent declared `rotate/1`: it renews its identity key on request (`false` from a hub that does not say). */
+  rotates: boolean;
 }
 
 /** Mailbox purposes (`POST /v1/mailbox`). */
@@ -552,7 +659,7 @@ export class HubApi {
   }
 
   private static async fail(res: Response): Promise<never> {
-    let d: { error?: string; message?: string; retry_after_ms?: unknown; key?: unknown; limit?: unknown; used?: unknown; hosts?: unknown; grant?: unknown } = {};
+    let d: { error?: string; message?: string; retry_after_ms?: unknown; key?: unknown; limit?: unknown; used?: unknown; hosts?: unknown; grant?: unknown; reason?: unknown; ready_ms?: unknown; waiting?: unknown } = {};
     try {
       d = ((await res.json()) ?? {}) as typeof d;
     } catch {
@@ -566,14 +673,18 @@ export class HubApi {
     }
     const limit: LimitDetail | undefined =
       d.error === "limit" && typeof d.key === "string" ? { key: d.key, limit: num(d.limit), used: num(d.used) ?? 0 } : undefined;
-    const waitingHosts =
-      d.error === "chain_v3_not_ready" && Array.isArray(d.hosts) ? d.hosts.filter((h): h is string => typeof h === "string") : undefined;
+    const hostList = (v: unknown) => (Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : undefined);
+    const waitingHosts = d.error === "chain_v3_not_ready" ? hostList(d.hosts) : d.error === "rotation_not_ready" ? hostList(d.waiting) : undefined;
     const grant = d.error === "unlock_on" && typeof d.grant === "string" && d.grant ? d.grant : undefined;
+    const reason = (d.error === "rotation_not_ready" || d.error === "rotation_in_progress") && typeof d.reason === "string" ? d.reason : undefined;
+    const readyMs = d.error === "rotation_not_ready" ? (num(d.ready_ms) ?? undefined) : undefined;
     throw new HubApiError(res.status, d.error ?? "error", d.message || res.statusText || `${d.error ?? "error"} (${res.status})`, {
       retryAfterMs,
       limit,
       waitingHosts,
       grant,
+      reason,
+      readyMs,
     });
   }
 
@@ -815,9 +926,11 @@ export class HubApi {
         presence: MachineSummary["presence"];
         copy?: unknown;
         reads_v3?: unknown;
+        rotates?: unknown;
       }[];
       devices?: unknown;
       chain_v3?: unknown;
+      rotations?: unknown;
       known_client?: unknown;
       relay_prefs?: { standby?: unknown } | null;
       sign_in_changes?: unknown;
@@ -842,10 +955,12 @@ export class HubApi {
         presence: m.presence,
         copy: machineCopy(m.copy),
         readsV3: m.reads_v3 === true,
+        rotates: m.rotates === true,
       })),
       devices: registeredDevices(r.devices),
       relayStandby: typeof r.relay_prefs?.standby === "boolean" ? r.relay_prefs.standby : null,
       signInChanges: Array.isArray(r.sign_in_changes) ? r.sign_in_changes.flatMap((c) => signInChange(c) ?? []) : [],
+      rotations: rotationsSummary(r.rotations),
     };
   }
 
@@ -1001,6 +1116,52 @@ export class HubApi {
   }
 
   /**
+   * The account's identity key renewals (`GET /v1/rotations`, any device
+   * session of the account; docs/host-identity-rotation.md §3.3, §3.8): each
+   * host's state, the disputes with their evidence, and the account's
+   * policy. A hub from before renewals answers 404.
+   */
+  async rotations(token: string): Promise<RotationsView> {
+    const res = await this.send("GET", "/v1/rotations", { token });
+    if (!res.ok) return HubApi.fail(res);
+    let raw: unknown = null;
+    try {
+      raw = await res.json();
+    } catch {
+      // an empty body: nothing
+    }
+    const view = rotationsView(raw);
+    // The hub's clock, for judging the rows' ages (R6 W3): `now_ms`, else the answer's Date header.
+    if (view.nowMs === null) {
+      const date = Date.parse(res.headers?.get("date") ?? "");
+      if (Number.isFinite(date)) view.nowMs = date;
+    }
+    return view;
+  }
+
+  /**
+   * Register a renewal of host `host` (`PUT /v1/rotations/{host}`, a current
+   * admin's device session): without `nonceHash`, only mark it `pending` (it
+   * renews when it can: an offline host); with one, open an attempt (valid
+   * 10 min) for the request whose nonce hashes to it. 409
+   * `rotation_in_progress` (another page's attempt is running), 409
+   * `rotation_not_ready` (`reason`: `disabled`, `agent_too_old`,
+   * `needs_assurance`), 409 `not_a_host`, 429 `rate`.
+   */
+  async putRotation(token: string, host: string, opts: { nonceHash?: Uint8Array; assurance: 0 | 1 }): Promise<HostRotationView> {
+    const body: { nonce_hash?: string; assurance: 0 | 1 } = { assurance: opts.assurance };
+    if (opts.nonceHash) body.nonce_hash = hex(opts.nonceHash);
+    const row = hostRotationView(await this.call<unknown>("PUT", `/v1/rotations/${encodeURIComponent(host)}`, { token, body }));
+    if (!row || row.host !== host) throw new HubApiError(502, "bad_rotation", "the hub answered for another renewal");
+    return row;
+  }
+
+  /** Withdraw host `host`'s renewal (`DELETE /v1/rotations/{host}`): back to none, unless a staging is committed. */
+  async deleteRotation(token: string, host: string): Promise<void> {
+    await this.call<unknown>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, { token });
+  }
+
+  /**
    * One snapshot page of a stream, as the hub stores it: sealed bytes it
    * cannot open. Unchecked here — the reader checks it against the signed
    * manifest that names it (`openManifestPage`) before using a byte of it.
@@ -1100,6 +1261,8 @@ export function hubErrorKind(
   | "notFullDevice"
   | "notAnAdmin"
   | "chainV3NotReady"
+  | "rotationNotReady"
+  | "rotationInProgress"
   | "exists"
   | "removed"
   | "emailUnverified"
@@ -1140,6 +1303,9 @@ export function hubErrorKind(
   if (error.status === 429 && error.code === "pairing_full") return "pairingFull";
   if (error.status === 403 && error.code === "not_an_admin") return "notAnAdmin";
   if (error.status === 409 && error.code === "chain_v3_not_ready") return "chainV3NotReady";
+  // Identity key renewals (docs/host-identity-rotation.md §3.3).
+  if (error.status === 409 && error.code === "rotation_not_ready") return "rotationNotReady";
+  if (error.status === 409 && error.code === "rotation_in_progress") return "rotationInProgress";
   if (error.status === 429 && error.code === "mail_rate") return "mailRate";
   if (error.status === 507 && error.code === "mailbox_full") return "mailboxFull";
   if (error.status === 507 && error.code === "keyring_full") return "keyringFull";
@@ -1339,6 +1505,105 @@ export function chainV3View(raw: unknown): ChainV3View | null {
     waiting: Array.isArray(c.waiting) ? c.waiting.filter((h): h is string => typeof h === "string") : [],
     inUse: c.in_use === true,
   };
+}
+
+const ROTATION_STATES: readonly RotationState[] = ["pending", "attempt", "staged", "committed"];
+
+/** A lower-case hex field of `bytes` bytes, or `null`. */
+function hexOf(v: unknown, bytes: number): Bytes | null {
+  if (typeof v !== "string" || v.length !== bytes * 2 || !/^[0-9a-f]+$/.test(v)) return null;
+  return fromHex(v);
+}
+
+/** One `Rotation` row (`GET /v1/rotations`, `PUT /v1/rotations/{host}`), or `null` if it is not one. */
+export function hostRotationView(raw: unknown): HostRotationView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.host !== "string" || !r.host || !ROTATION_STATES.includes(r.state as RotationState)) return null;
+  const f = r.failure && typeof r.failure === "object" ? (r.failure as Record<string, unknown>) : null;
+  return {
+    host: r.host,
+    state: r.state as RotationState,
+    assurance: r.assurance === 1 ? 1 : 0,
+    requestedMs: num(r.requested_ms),
+    requestedBy: str(r.requested_by),
+    attemptExpiresMs: num(r.attempt_expires_ms),
+    stagedMs: num(r.staged_ms),
+    readyMs: num(r.ready_ms),
+    signKey: hexOf(r.sign_key, 32),
+    dhKey: hexOf(r.dh_key, 32),
+    stagedSeq: num(r.staged_seq),
+    committedMs: num(r.committed_ms),
+    committedSeq: num(r.committed_seq),
+    failure: f && typeof f.reason === "string" ? { reason: f.reason, atMs: num(f.at_ms) ?? 0 } : null,
+    needsAssurance: r.needs_assurance === true,
+    isolated: r.isolated === true,
+  };
+}
+
+/** One `Dispute` (`GET /v1/rotations`), or `null` if it is not one. */
+export function hostDispute(raw: unknown): HostDispute | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  if (typeof d.host !== "string" || !d.host) return null;
+  if (d.kind !== "disputed" && d.kind !== "retired_login" && d.kind !== "not_acked" && d.kind !== "conflict") return null;
+  const l = d.login && typeof d.login === "object" ? (d.login as Record<string, unknown>) : null;
+  const nonce = l ? hexOf(l.nonce, 32) : null;
+  const timeMs = l ? num(l.time_ms) : null;
+  const login =
+    l && nonce && timeMs !== null && typeof l.account === "string" && typeof l.id === "string" && typeof l.hub === "string"
+      ? { account: l.account, id: l.id, hub: l.hub, nonce, timeMs }
+      : null;
+  return {
+    host: d.host,
+    kind: d.kind,
+    seenMs: num(d.seen_ms) ?? 0,
+    retiredSeq: num(d.retired_seq),
+    role: d.role === "agent" || d.role === "device" ? d.role : null,
+    login,
+    sig: hexOf(d.sig, 64),
+    signKey: hexOf(d.sign_key, 32),
+    seq: num(d.seq),
+    entryHash: hexOf(d.entry_hash, 32),
+  };
+}
+
+/** `GET /v1/rotations`' answer; anything not of its shape is left out. */
+export function rotationsView(raw: unknown): RotationsView {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    enabled: r.enabled === true,
+    windowMs: num(r.window_ms) ?? 120_000,
+    nowMs: num(r.now_ms),
+    hosts: Array.isArray(r.hosts) ? r.hosts.flatMap((h) => hostRotationView(h) ?? []) : [],
+    disputes: Array.isArray(r.disputes) ? r.disputes.flatMap((d) => hostDispute(d) ?? []) : [],
+  };
+}
+
+/** `/v1/me`'s `rotations` (`null`: a hub that predates renewals). */
+export function rotationsSummary(raw: unknown): RotationsSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const active = Array.isArray(r.active)
+    ? r.active.flatMap((a) => {
+        const x = (a && typeof a === "object" ? a : {}) as Record<string, unknown>;
+        return typeof x.host === "string" && ROTATION_STATES.includes(x.state as RotationState) ? [{ host: x.host, state: x.state as RotationState }] : [];
+      })
+    : [];
+  return { enabled: r.enabled === true, windowMs: num(r.window_ms) ?? 120_000, active };
+}
+
+/** A `rotation` push (`{t: "rotation", host, state, reason?}`), or `null` if it is not one. */
+export function rotationPush(message: Record<string, unknown>): RotationPush | null {
+  const state = message.state === "none" ? "none" : ROTATION_STATES.includes(message.state as RotationState) ? (message.state as RotationState) : null;
+  if (message.t !== "rotation" || typeof message.host !== "string" || state === null) return null;
+  return { host: message.host, state, reason: typeof message.reason === "string" ? message.reason : null };
+}
+
+/** A `host_dispute` push (`{t: "host_dispute", host, kind, seen_ms}`), or `null` if it is not one. */
+export function disputePush(message: Record<string, unknown>): DisputePush | null {
+  if (message.t !== "host_dispute" || typeof message.host !== "string") return null;
+  return { host: message.host, kind: typeof message.kind === "string" ? message.kind : "", seenMs: num(message.seen_ms) ?? 0 };
 }
 
 /** `/v1/me`'s `plan`, also what a device's `plan` control message carries as `detail` (`null`: not one). */

@@ -24,10 +24,12 @@ import type { Accept } from "@/lib/e2e";
 import { formatAsOf, formatExactTime, formatRelative } from "@/lib/format";
 import type { PromoteBlock, ReEnrollLine } from "@/lib/hub/account";
 import type { PresenceState } from "@/lib/hub/link";
+import type { RenewalStatus } from "@/lib/hub/renewal";
 import type { DeviceAttention } from "@/features/machines/needs-you";
 import { ActivityChipView, StateCountChip, UnreadPill } from "@/features/sessions/attention-badges";
 import { unreadCountOf } from "@/features/sessions/session-attention";
 import { Presence } from "./machine-name";
+import { RenewalLine } from "./renewal";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 type T = (key: string, opts?: Record<string, unknown>) => string;
@@ -77,6 +79,18 @@ export interface DeviceRowView {
    * a person dismissed (shown quietly, to undo).
    */
   reEnroll?: ReEnrollLine[];
+  /** A host that renews its identity key here: where its renewal stands (docs/host-identity-rotation.md §4.4). */
+  renewal?: RenewalStatus;
+  /** It renews its identity key here at all (v3, the hub takes renewals, its Droppen declared it): the menu's "renew identity key". */
+  renewable?: boolean;
+  /** Exposed hosts it lets control it that must renew first (§4.1): until then "renew identity key" cannot be pressed, and says so. */
+  renewFirst?: string[];
+  /** Isolated hosts it lets control it: until they are removed, whoever holds their current key may drive it (§3.8). */
+  isolatedControllers?: string[];
+  /** When a key it renewed away from was last used to sign in (checked here): information only, never isolation (§3.8). */
+  retiredLoginMs?: number | null;
+  /** The devices whose control of each other is paused while their identity keys are renewed (§4.1), it among them. */
+  pausedWith?: string[];
   /** A host's facts for 「详情」: its system, agent version, hostname, the newest content key's generation. */
   facts?: { os?: string | null; agent?: string | null; agentFull?: string | null; hostname?: string | null; keyEpoch?: number | null };
   /** A host's sessions at a glance (off its copy): `null` while there is no list of them. */
@@ -132,6 +146,10 @@ export interface RowHandlers {
   onTerminal?: () => void;
   /** Mail it every key again. */
   onResend?: () => void;
+  /** "Renew identity key" (a host that renews here): opens the choice of how (docs/host-identity-rotation.md §4.4). */
+  onRenew?: () => void;
+  /** "Remove it, then add it again": the way to a new identity (review D3; for a host that cannot renew, §7 decision 7). */
+  onReEnroll?: () => void;
 }
 
 /**
@@ -179,6 +197,17 @@ export function rowMenuItems(
     if (view.host) {
       add({ id: `control-${id}`, label: t("who can control it"), blocked: upgraded ? held : t("upgrade the account first"), busy, onSelect: ctx.onControl });
     }
+    // Its identity key, renewed now (§4.4) — never ahead of an exposed host it lets control it (§4.1): that one first, said why.
+    if (view.host && view.renewable) {
+      const first = view.renewFirst ?? [];
+      add({
+        id: `renew-${id}`,
+        label: t("renew identity key"),
+        blocked: first.length ? t("renew the identity key of {{ids}} first: it lets them control it", { ids: first.join(", ") }) : held,
+        busy,
+        onSelect: ctx.onRenew,
+      });
+    }
     if ((view.host || view.stoppedHost) && !view.self) {
       // Stopping needs the account upgraded; running AI again needs the hub to take it too (it gates a host made one again).
       const moves = upgraded && (view.host || writable);
@@ -205,6 +234,17 @@ export function rowMenuItems(
     if (!view.self) {
       add({ id: `resend-${id}`, label: t("re-send keys"), hint: t("send this device every key again (if it missed new ones)"), blocked: null, busy: ctx.resending, onSelect: ctx.onResend });
     }
+  }
+  // A new identity (§7 decision 7): for a host that cannot renew its identity key, or a fresh start — a removal, then adding it again.
+  if (viewerAdmin && status === "active" && view.host && !view.self) {
+    add({
+      id: `re-enroll-${id}`,
+      label: t("remove it, then add it again"),
+      hint: view.renewable ? t("a new identity: only if renewing its identity key is not the way") : t("a new identity: its Droppen cannot renew its identity key"),
+      blocked: held,
+      busy,
+      onSelect: ctx.onReEnroll,
+    });
   }
   if (viewerAdmin && (status === "active" || status === "pending") && !view.self) {
     add({ id: `remove-${id}`, label: t("remove"), blocked: held, busy, danger: true, onSelect: ctx.onRemove });
@@ -529,6 +569,10 @@ export function DeviceRow({
   onReEnroll,
   onDismissReEnroll,
   onWarnAgain,
+  onRenew,
+  onRenewCode,
+  onRenewRetry,
+  onAddComputer,
   notes,
   keys,
   children,
@@ -554,6 +598,12 @@ export function DeviceRow({
   onDismissReEnroll?: (device: string, lostSeq: number) => void;
   /** Warn about a device dismissed before again. */
   onWarnAgain?: (device: string) => void;
+  /** Its renewal goes only confirmed on the device: "enter the code shown on the device". */
+  onRenewCode?: () => void;
+  /** "Try again", once the automatic tries ran out. */
+  onRenewRetry?: () => void;
+  /** Where a new registration code is made (an isolated host added again with a new identity). */
+  onAddComputer?: () => void;
   notes?: ReactNode;
   /** How re-sending its keys went, said on the row. */
   keys?: ReactNode;
@@ -563,7 +613,7 @@ export function DeviceRow({
   const { t } = useTranslation();
   const { id, status } = view;
   const Icon = ICONS[view.kind];
-  const items = rowMenuItems(view, { viewerAdmin, upgraded, writable, busy, held, resending, t, onPromote, onRemove, onHost, onControl, onRename, onTerminal, onResend });
+  const items = rowMenuItems(view, { viewerAdmin, upgraded, writable, busy, held, resending, t, onPromote, onRemove, onHost, onControl, onRename, onTerminal, onResend, onRenew, onReEnroll });
   const lines = view.reEnroll && view.reEnroll.length > 0 && viewerAdmin && status === "active" ? view.reEnroll : null;
   const openWarnings = !!lines?.some((l) => !l.dismissed);
   const removed = status === "removed";
@@ -623,6 +673,33 @@ export function DeviceRow({
           {view.host && view.presence !== "online" && view.copyAsOf !== null && (
             <span data-testid="copy-as-of" className="font-mono text-2xs text-muted">
               {t("offline copy · as of {{time}}", { time: formatAsOf(view.copyAsOf) })}
+            </span>
+          )}
+          {view.renewal && view.renewal.kind !== "none" && status === "active" && (
+            <RenewalLine
+              id={id}
+              status={view.renewal}
+              viewerAdmin={viewerAdmin}
+              onCode={onRenewCode}
+              onRetry={onRenewRetry}
+              onRemove={onRemove}
+              onAddComputer={onAddComputer}
+              onNarrow={upgraded ? onControl : undefined}
+            />
+          )}
+          {view.pausedWith && view.pausedWith.length > 0 && status === "active" && (
+            <span data-testid={`paused-${id}`} className="text-2xs leading-4 text-muted">
+              {t("Control between {{ids}} is paused while their identity keys are renewed.", { ids: view.pausedWith.join(", ") })}
+            </span>
+          )}
+          {view.retiredLoginMs != null && status === "active" && (
+            <span data-testid={`retired-login-${id}`} className="font-mono text-2xs leading-4 text-muted">
+              {t("its old identity key was used to sign in at {{time}}", { time: formatAsOf(view.retiredLoginMs) })}
+            </span>
+          )}
+          {view.isolatedControllers && view.isolatedControllers.length > 0 && status === "active" && (
+            <span data-testid={`isolated-controllers-${id}`} data-signal="warn" className="text-2xs leading-4 text-warn-fg">
+              {t("It lets {{ids}} control it, which is isolated: remove {{ids}} first.", { ids: view.isolatedControllers.join(", ") })}
             </span>
           )}
           {notes}

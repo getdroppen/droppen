@@ -31,10 +31,20 @@
  * signed. A head that does not match, a record that does not open, a gap in a
  * session's items — the stream starts over from nothing (backing off if it
  * keeps happening), and until it is rebuilt the last good state stays shown.
+ *
+ * A machine that renewed its identity key (`docs/host-identity-rotation.md`
+ * §5.4): every head and manifest from the hub is held to its current key, as
+ * the account's chain gives it ({@link StreamClient.setMachineSignKey}); one
+ * that does not verify has the chain synced once and is tried again under the
+ * key the chain gives then — the machine may have renewed it before this
+ * device heard — and is refused if it still does not. A position this device
+ * verified and kept itself (a saved copy's head, the head a stream restarts
+ * from) checks under any key the machine held.
  */
 import type { components } from "@/api/schema";
 import {
   type Bytes,
+  copy,
   decodeManifest,
   decodePage,
   decodeSignedHead,
@@ -52,6 +62,7 @@ import {
   RecordError,
   Serial,
   type SignedHead,
+  verifyStreamHeadUnder,
   FMT_FEED_V1,
   FMT_INDEX_V1,
   FMT_STATUS_V1,
@@ -372,8 +383,33 @@ export class Limiter {
 
 export interface StreamClientOptions {
   link: StreamLink;
-  /** The machine's Ed25519 public key, from the device chain. */
+  /**
+   * The machine's Ed25519 public key, from the device chain: its current one,
+   * which every head, manifest and draft from the hub must carry (a renewal:
+   * {@link StreamClient.setMachineSignKey}).
+   */
   machineSignKey: Uint8Array;
+  /**
+   * The machine's sign key as the account's chain had it at `seq` (`keysAt`;
+   * `null`: its first key — a position kept before positions carried a seq).
+   * A position this device verified and kept itself — a saved copy's head,
+   * the head a stream restarts from — checks under the key of the seq it was
+   * verified at (`SavedStream.keySeq`), not under any key the machine ever
+   * held (docs/host-identity-rotation.md §5.4). Never what a head or manifest
+   * from the hub is held to.
+   */
+  signKeyAt?: (seq: number | null) => Uint8Array | null | undefined;
+  /** The account chain's seq now: what a head this device verifies is kept with (`SavedStream.keySeq`). */
+  chainSeq?: () => number | null;
+  /**
+   * A head or manifest from the hub did not verify under the machine's key:
+   * sync the account's chain and give the machine's current key then
+   * (`null`: none known). Asked once for each such refusal (refusals at the
+   * same time share it) and at most once per `resyncEveryMs` (default 10 s);
+   * without it the refusal stands.
+   */
+  resyncSignKey?: () => Promise<Uint8Array | null | undefined>;
+  resyncEveryMs?: number;
   /** Every epoch of `MK` this device holds. */
   epochs: ReadonlyMap<number, MachineKey>;
   /** `GET /v1/streams/<stream>/pages/<hash>`: the sealed page, unchecked. */
@@ -404,7 +440,7 @@ export interface StreamEvents<S> {
    * manifest's pages. `reset` when it was rebuilt from nothing (not an
    * update of the last state), `bodies` what was applied, in order.
    */
-  onState?(state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; seq: number; freshestMs: number | null }): void;
+  onState?(state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; seq: number; freshestMs: number | null; keySeq: number | null }): void;
   /** The catch-up is over; `exists: false` is a stream the hub has not got yet. */
   onSynced?(exists: boolean): void;
   /** A live draft (`EPHEMERAL`), opened. Never stored. */
@@ -417,6 +453,12 @@ export interface StreamEvents<S> {
 export interface SavedStream<S> {
   head: SignedHead;
   state: S;
+  /**
+   * The account chain's seq when this device verified `head` (`StreamClientOptions.chainSeq`):
+   * the machine's key then is the one it was checked under (`keysAt`). Absent: kept before
+   * positions carried one — the machine's first key.
+   */
+  keySeq?: number | null;
 }
 
 /** Every stream subscription of one machine, over one hub link. */
@@ -428,8 +470,13 @@ export class StreamClient {
   private readonly epochs: Map<number, MachineKey>;
   private missingAskedAt = Number.NEGATIVE_INFINITY;
   private readonly epochListeners = new Set<(epochs: ReadonlyMap<number, MachineKey>) => void>();
+  /** The machine's current key: what heads, manifests and drafts from the hub must carry. */
+  private signKey: Bytes;
+  private resyncing: Promise<void> | null = null;
+  private resyncedAt = Number.NEGATIVE_INFINITY;
 
   constructor(readonly opts: StreamClientOptions) {
+    this.signKey = copy(opts.machineSignKey);
     this.epochs = new Map(opts.epochs);
     this.limiter = new Limiter(opts.pageConcurrency ?? 4);
     this.offs = [
@@ -497,6 +544,86 @@ export class StreamClient {
     return () => this.epochListeners.delete(fn);
   }
 
+  /** The machine's current key, as this client holds it: what every head and manifest from the hub must carry. */
+  get machineSignKey(): Bytes {
+    return copy(this.signKey);
+  }
+
+  /**
+   * The machine renewed its identity key (the account's chain says so):
+   * every head, manifest and draft from the hub must carry `key` from now on,
+   * and none signed by the old one counts any more. Live readers take it at
+   * once, and a stream that stopped (on a head under the new key, say)
+   * starts again now rather than after its backoff. Returns whether it changed.
+   */
+  setMachineSignKey(key: Uint8Array): boolean {
+    if (equal(key, this.signKey)) return false;
+    this.signKey = copy(key);
+    for (const sub of [...this.subs]) sub.signKeyChanged(this.signKey);
+    return true;
+  }
+
+  /**
+   * @internal The key a position this device kept at chain seq `keySeq` was
+   * checked under (`signKeyAt`; `null`: kept before positions carried one),
+   * beside the current one: a copy stays readable across a renewal, under
+   * exactly the key it was verified with — not any key the machine held.
+   */
+  keptKeys(keySeq: number | null): Uint8Array[] {
+    let then: Uint8Array | null | undefined;
+    try {
+      then = this.opts.signKeyAt?.(keySeq);
+    } catch {
+      then = null;
+    }
+    return then && !equal(then, this.signKey) ? [then] : [];
+  }
+
+  /** @internal The account chain's seq now, kept with a head this device verifies (`null`: not known). */
+  stamp(): number | null {
+    try {
+      return this.opts.chainSeq?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Whether `head` is a position to resume from: one this device verified and
+   * kept itself at chain seq `keySeq` — signed by the machine's key of that
+   * seq (`keysAt`), or its current one. Never for a head from the hub.
+   */
+  verifyKept(head: SignedHead, keySeq: number | null = null): Promise<boolean> {
+    return verifyStreamHeadUnder(head, [this.signKey, ...this.keptKeys(keySeq)]);
+  }
+
+  /**
+   * @internal A head or manifest from the hub did not verify under `tried`:
+   * sync the account's chain (once for every refusal meanwhile, at most once
+   * per `resyncEveryMs`) and give the machine's current key if it is another
+   * one now. `null`: there is no other key to try, and the refusal stands.
+   */
+  async renewedSignKey(tried: Uint8Array): Promise<Bytes | null> {
+    const resync = this.opts.resyncSignKey;
+    if (resync && !this.resyncing && Date.now() - this.resyncedAt >= (this.opts.resyncEveryMs ?? 10_000)) {
+      this.resyncedAt = Date.now();
+      const run: Promise<void> = (async () => {
+        try {
+          const key = await resync();
+          if (key) this.setMachineSignKey(key);
+        } catch {
+          // no chain to be had now: the refusal stands
+        }
+      })();
+      this.resyncing = run;
+      void run.then(() => {
+        if (this.resyncing === run) this.resyncing = null;
+      });
+    }
+    await this.resyncing;
+    return equal(this.signKey, tried) ? null : copy(this.signKey);
+  }
+
   /** @internal A stream stalled on an epoch it has no key for: ask for keys (rate-limited). */
   missingKey(): void {
     const now = Date.now();
@@ -555,6 +682,8 @@ export class StreamSubscription<S> {
   private state: S | null = null;
   /** The signed head `state` stands at; `null` for a reader that has confirmed nothing yet. */
   private head: SignedHead | null = null;
+  /** The chain seq {@link head} was verified at (its key: `keysAt`), `null` when not known. */
+  private headSeq: number | null = null;
   /** The next state handed out replaces rather than updates (a fresh start, a `gone`). */
   private rebuilding = true;
   private ch: number | null = null;
@@ -606,10 +735,13 @@ export class StreamSubscription<S> {
       if (saved && equal(saved.head.head.stream, this.stream)) {
         try {
           // The head is checked again: nothing read back from the device is
-          // trusted for where it stands unless the machine signed it.
-          this.reader = await this.client.keyed(await LogReader.fromHead(this.client.opts.machineSignKey, saved.head));
+          // trusted for where it stands unless the machine signed it — under
+          // its key of the seq this device checked it at before keeping it.
+          const keySeq = saved.keySeq ?? null;
+          this.reader = await this.client.keyed(await LogReader.fromHead(this.client.machineSignKey, saved.head, this.client.keptKeys(keySeq)));
           this.state = saved.state;
           this.head = saved.head;
+          this.headSeq = keySeq;
           this.rebuilding = false;
         } catch {
           this.reader = null;
@@ -657,7 +789,7 @@ export class StreamSubscription<S> {
   }
 
   private async fresh(): Promise<void> {
-    this.reader = await this.client.keyed(LogReader.fromStart(this.stream, this.client.opts.machineSignKey));
+    this.reader = await this.client.keyed(LogReader.fromStart(this.stream, this.client.machineSignKey));
     this.state = this.fold.empty();
     this.head = null;
     this.rebuilding = true;
@@ -690,12 +822,43 @@ export class StreamSubscription<S> {
     if (from === "fresh" || this.state === null) await this.fresh();
     else {
       // A new reader, because the old one may hold records it took but no
-      // head released: the hub sends them again from the confirmed seq.
-      this.reader = await this.client.keyed(
-        this.head ? await LogReader.fromHead(this.client.opts.machineSignKey, this.head) : LogReader.fromStart(this.stream, this.client.opts.machineSignKey),
-      );
+      // head released: the hub sends them again from the confirmed seq. The
+      // head it stands on is one this device checked (it may carry a key the
+      // machine renewed away from since); what comes next is held to the current.
+      const key = this.client.machineSignKey;
+      this.reader = await this.client.keyed(this.head ? await LogReader.fromHead(key, this.head, this.client.keptKeys(this.headSeq)) : LogReader.fromStart(this.stream, key));
     }
     this.subscribeNow();
+  }
+
+  /** @internal The machine's key changed (`StreamClient.setMachineSignKey`): the reader holds heads to it from now on, and a stalled restart is brought forward. */
+  signKeyChanged(key: Uint8Array): void {
+    if (this.closed) return;
+    this.reader?.setMachineKey(key);
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.failures = 0;
+    const from = this.retryFrom;
+    void this.serial.run(() => this.restart(from));
+  }
+
+  /**
+   * `check` a head or manifest from the hub under `tried`, the machine's key
+   * as this stream holds it. One that does not verify (`badHead`) may be
+   * under a key the machine renewed to before this device heard: the chain
+   * is synced once and, if it gives another key now, `check` runs again under
+   * that one. Otherwise the refusal stands.
+   */
+  private async underCurrentKey<T>(tried: Uint8Array, check: (key: Uint8Array) => Promise<T>): Promise<T> {
+    try {
+      return await check(tried);
+    } catch (error) {
+      if (!(error instanceof RecordError && error.kind === "badHead")) throw error;
+      const renewed = await this.client.renewedSignKey(tried);
+      if (!renewed || this.closed) throw error;
+      return check(renewed);
+    }
   }
 
   /** @internal New epoch keys (`StreamClient.addEpochs`): into the reader, and a stalled restart brought forward. */
@@ -758,12 +921,13 @@ export class StreamSubscription<S> {
         case "ephemeral":
           if (this.reader && this.events.onDraft) {
             const reader = this.reader;
-            // Signed by the machine, and under the newest key epoch held: a
-            // draft under an older one is somebody who still holds that key.
+            // Signed by the machine (under its current key), and under the
+            // newest key epoch held: a draft under an older one is somebody
+            // who still holds that key.
             const current = this.client.newestEpoch;
             if (current === null) return;
             try {
-              const { body } = await openEphemeral((epoch) => reader.keyFor(epoch), this.stream, this.client.opts.machineSignKey, current, frame.payload);
+              const { body } = await openEphemeral((epoch) => reader.keyFor(epoch), this.stream, this.client.machineSignKey, current, frame.payload);
               this.events.onDraft(JSON.parse(fromUtf8(body)));
             } catch {
               // a draft that does not open is only a draft not shown
@@ -793,7 +957,11 @@ export class StreamSubscription<S> {
     const reader = this.reader;
     const before = this.state;
     if (!reader || before === null) throw new RecordError("outOfOrder", "a head arrived with no starting point");
-    const released = await reader.confirm(signed);
+    // A refused head leaves the reader as it was, so it can be tried again.
+    const released = await this.underCurrentKey(reader.machineKey, (key) => {
+      reader.setMachineKey(key);
+      return reader.confirm(signed);
+    });
     const head = reader.confirmedHead;
     if (!head) return;
     if (released.length === 0 && !this.rebuilding && this.head === head) return;
@@ -807,9 +975,11 @@ export class StreamSubscription<S> {
     const reset = this.rebuilding;
     this.state = state;
     this.head = head;
+    // A head from the hub: verified under the machine's key now, so kept with the chain's seq now.
+    this.headSeq = this.client.stamp();
     this.rebuilding = false;
     if (released.length > 0) this.failures = 0;
-    this.events.onState?.(state, { reset, bodies, head, seq: head.head.nextSeq, freshestMs: reader.freshestMs });
+    this.events.onState?.(state, { reset, bodies, head, seq: head.head.nextSeq, freshestMs: reader.freshestMs, keySeq: this.headSeq });
   }
 
   private async checkpoint(ch: number, encoded: Uint8Array): Promise<void> {
@@ -830,8 +1000,10 @@ export class StreamSubscription<S> {
     ) {
       return;
     }
-    const next = await this.client.keyed(await readerFromManifest(this.client.opts.machineSignKey, m));
+    const next = await this.client.keyed(await this.underCurrentKey(this.client.machineSignKey, (key) => readerFromManifest(key, m)));
     const pages = await this.client.pages(m, next, this.fold.fmt);
+    // The machine renewed its key while the pages came: the manifest is held to the new one (refused, and asked for again).
+    if (!equal(next.machineKey, this.client.machineSignKey)) throw new RecordError("badHead", "the machine renewed its key while its manifest was read");
     let state = this.fold.empty();
     const bodies: unknown[] = [];
     for (const page of pages) {
@@ -843,9 +1015,10 @@ export class StreamSubscription<S> {
     this.reader = next;
     this.state = state;
     this.head = m.head;
+    this.headSeq = this.client.stamp();
     this.rebuilding = false;
     this.failures = 0;
-    this.events.onState?.(state, { reset: true, bodies, head: m.head, seq: upto, freshestMs: next.freshestMs });
+    this.events.onState?.(state, { reset: true, bodies, head: m.head, seq: upto, freshestMs: next.freshestMs, keySeq: this.headSeq });
     // Past the catch-up, records after the manifest may already have gone by
     // on this `ch`: ask for them again from where the state now stands.
     if (this.synced && this.ch === ch) {
@@ -870,7 +1043,7 @@ export interface NewestStreamEvents<S> {
   /** The stream shown is another now: a newer epoch's that has something, or — looking — an older one. */
   onSwitch?(to: NamedStream): void;
   /** New state of the stream shown (as {@link StreamEvents.onState}). */
-  onState?(at: NamedStream, state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; seq: number; freshestMs: number | null }): void;
+  onState?(at: NamedStream, state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; seq: number; freshestMs: number | null; keySeq: number | null }): void;
   /** Every stream looked at has caught up: whether any of them is on the hub. */
   onSynced?(exists: boolean): void;
 }

@@ -52,7 +52,7 @@ import type { KeyStore } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
 import { type AccountMain, accountMain, type HubApi, HubApiError } from "@/lib/hub/api";
 import { HubCopySource, StreamBudget } from "@/lib/hub/copy-source";
-import { agentKeyEpoch, checkAgentKey, flushPendingReencrypts, linkCourier, type MachineKeyCourier, noteAgentKeyState, pendingReencrypts, postMachineKey } from "@/lib/hub/deliver";
+import { agentKeyEpoch, checkAgentKey, flushPendingReencrypts, linkCourier, noteAgentKeyState, pendingReencrypts, postMachineKey, type RenewalCourier } from "@/lib/hub/deliver";
 import type { HubLink, PresenceState } from "@/lib/hub/link";
 import { MachineChannel } from "@/lib/hub/machine";
 import { deviceTransact, MachineMirror, mirrorSeal, sweepCopies, type Transact } from "@/lib/hub/mirror";
@@ -1133,6 +1133,6 @@ const NO_MACHINES = constantStore<readonly MachineInfo[]>([]);
  * A courier for machine keys (`linkCourier`) that hands a key over in the
  * channel the page already has open to that machine, when it has one.
  */
-export function shellCourier(link: HubLink, account: CloudAccount): MachineKeyCourier {
+export function shellCourier(link: HubLink, account: CloudAccount): RenewalCourier {
   return linkCourier(link, account, (machine) => current?.machine(machine)?.channel, current?.relays);
 }

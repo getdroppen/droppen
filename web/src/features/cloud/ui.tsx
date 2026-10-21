@@ -7,9 +7,9 @@ import { RegMark } from "@/components/reg-mark";
 import { cn } from "@/lib/cn";
 import i18next from "i18next";
 import { authErrorKind, CODE_PAIRING_WINDOW_MS, HubApiError, hubErrorKind, isNetworkError } from "@/lib/hub/api";
-import { ChainError } from "@/lib/e2e/chain";
-import { AccountError } from "@/lib/hub/account";
-import { ChannelRefused } from "@/lib/hub/machine";
+import { ChainError, RULES } from "@/lib/e2e/chain";
+import { AccountError, RenewalError, renewalRefusal } from "@/lib/hub/account";
+import { ChannelIsolated, ChannelRefused } from "@/lib/hub/machine";
 import { DEVICES_KEY, HOSTS_KEY, limitOf, MACHINES_KEY, STORAGE_KEY } from "@/lib/hub/plan";
 import { limitText } from "./plan";
 
@@ -54,6 +54,10 @@ export function errorText(error: unknown): string {
       return t("the hub says this device is not a full device of the account");
     case "notAnAdmin":
       return t("only a full device of the account may receive that");
+    case "rotationInProgress":
+      return t("another of your devices is renewing it now");
+    case "rotationNotReady":
+      return renewalErrorText(renewalRefusal(error) as RenewalError, t);
     case "chainV3NotReady": {
       const waiting = (error as HubApiError).waitingHosts ?? [];
       return waiting.length
@@ -109,7 +113,15 @@ export function errorText(error: unknown): string {
   if (error instanceof HubApiError) return limitOf(error) ? error.message || error.code : t("Droppen could not do that ({{code}})", { code: error.code });
   // The page's own errors whose message is an i18n key (a channel that did
   // not open, an enrollment proof that did not check out): in words.
+  // A join or an enrollment with an identity key a renewal retired (`RULES.keyRetired`, docs/host-identity-rotation.md
+  // §3.4 rule 8): that device was renewed elsewhere, or restored from before a renewal — it comes back under a new identity.
+  if (error instanceof AccountError && error.kind === "invalidEntry" && error.rule === RULES.keyRetired) {
+    return t("That device's identity key was replaced by a renewal, so it cannot join with it again. Add it again under a new identity: on that device, choose “add this device again with a new identity”, then use a new registration code.");
+  }
   if (error instanceof AccountError && i18next.exists(error.key)) return t(error.key, error.vars);
+  // A host's identity key renewal (docs/host-identity-rotation.md §4.2), and a host isolated after one (§3.8).
+  if (error instanceof RenewalError) return renewalErrorText(error, t);
+  if (error instanceof ChannelIsolated) return t("{{id}} is isolated: confirm its identity key on the device itself first", { id: error.machine });
   // The relay's or the hub's own reason, inside the reader's sentence.
   if (error instanceof ChannelRefused) {
     if (!error.why) return t(error.by === "relay" ? "the relay refused the channel" : "the hub refused the channel");
@@ -122,6 +134,48 @@ export function errorText(error: unknown): string {
     return t("this page is older than your account: reload it to update Droppen");
   }
   return error instanceof Error ? knownText(error.message) : String(error);
+}
+
+/** Why a renewal did not go through, in words. */
+export function renewalErrorText(error: RenewalError, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  switch (error.kind) {
+    case "tooOld":
+      return t("its Droppen is too old to renew its identity key: update it");
+    case "disabled":
+      return t("Droppen does not renew identity keys yet");
+    case "needsAssurance":
+      return t("only a renewal confirmed on the device itself goes now");
+    case "inProgress":
+      return t("another of your devices is renewing it now");
+    case "offline":
+      return t("the device is offline");
+    case "hubNotReady":
+      return t("it cannot reach Droppen's hub to renew its identity key yet");
+    case "waiting":
+      return t("waiting for Droppen to be updated on {{ids}}", { ids: (error.hosts ?? []).join(", ") });
+    case "renewFirst":
+      return t("renew the identity key of {{ids}} first: it lets them control it", { ids: (error.hosts ?? []).join(", ") });
+    case "superseded":
+      return t("a device that could control it was removed while it renewed: try again");
+    case "policyUnset":
+      return t("choose how identity keys are renewed first (under my devices)");
+    case "badAnswer":
+      return t("its answer did not check out, so nothing was changed (another copy of its key may have answered)");
+    case "wrongCode":
+      return t("that is not the code the device shows, so nothing was changed");
+    case "cancelled":
+      return t("no code was typed");
+    case "voided":
+      return error.detail === "not_acked" || error.detail === "conflict"
+        ? t("another copy of its old identity key signed in meanwhile: confirm on the device itself")
+        : t("the renewal lapsed: try again");
+    case "rate":
+      return t("it renewed its identity key too often lately: try again later");
+    case "refused":
+      return t("it refused to renew its identity key ({{why}})", { why: error.detail ?? "" });
+    case "failed":
+      return t("could not reach it: {{why}}", { why: errorText(new Error(error.message)) });
+  }
 }
 
 /** `message` in the reader's language when it is one of the page's i18n keys (as the English), else as it is. */

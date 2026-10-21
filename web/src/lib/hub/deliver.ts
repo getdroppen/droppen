@@ -16,7 +16,7 @@ import { type PipeOpener, tunnelTransport } from "@/lib/transport/tunnel";
 import type { CloudAccount } from "./account";
 import { type HubApi, MAIL_MACHINE_KEY } from "./api";
 import type { HubLink } from "./link";
-import { MachineChannel } from "./machine";
+import { ChannelIsolated, MachineChannel } from "./machine";
 import type { RelayPool } from "./relays";
 
 /** How long to wait for a machine to come online before using the mailbox. */
@@ -52,6 +52,28 @@ export interface MachineKeyCourier {
   postInChannel(machine: string, body: { epoch: number; key: string; reencrypt: boolean }): Promise<{ status: number; body: unknown }>;
   /** The sealed mailbox fallback. */
   mail(machine: string, epoch: number, mk: Uint8Array): Promise<void>;
+}
+
+/**
+ * `POST /rh/rotate`'s body (docs/host-identity-rotation.md §3.2; the agent's
+ * routes are camelCase, binary as hex): the request's 16-byte nonce, the
+ * admin's ephemeral X25519 key the answer's MAC is made under, the chain view
+ * the proof is about, and how the renewal is confirmed.
+ */
+export interface RotateRequest {
+  nonce: string;
+  eph: string;
+  chainSeq: number;
+  chainHead: string;
+  assurance: 0 | 1;
+}
+
+/** A {@link MachineKeyCourier} that also asks a host to renew its identity key, and vouches for the chain head (`ATTEST`). */
+export interface RenewalCourier extends MachineKeyCourier {
+  /** `POST /rh/rotate` over the channel to `machine` (never by mailbox): its status and JSON answer. `ChannelUnavailable` when it cannot be reached. */
+  rotate(machine: string, body: RotateRequest): Promise<{ status: number; body: unknown }>;
+  /** Vouch for the head this device sees now (an agent's admin routes want a recent word on it). */
+  attest(): Promise<void>;
 }
 
 export type DeliveryResult =
@@ -121,9 +143,18 @@ export async function deliverMachineKey(
 }
 
 /** `POST /rh/machine-key` on an `rpc` pipe of the channel `opener` opens: the agent's status and JSON answer. */
-export async function postMachineKey(opener: PipeOpener, body: { epoch: number; key: string; reencrypt: boolean }): Promise<{ status: number; body: unknown }> {
+export function postMachineKey(opener: PipeOpener, body: { epoch: number; key: string; reencrypt: boolean }): Promise<{ status: number; body: unknown }> {
+  return postJson(opener, "/rh/machine-key", body);
+}
+
+/** `POST /rh/rotate` on an `rpc` pipe of the channel `opener` opens (docs/host-identity-rotation.md §3.2): the agent's status and JSON answer. */
+export function postRotate(opener: PipeOpener, body: RotateRequest): Promise<{ status: number; body: unknown }> {
+  return postJson(opener, "/rh/rotate", body);
+}
+
+async function postJson(opener: PipeOpener, path: string, body: unknown): Promise<{ status: number; body: unknown }> {
   const res = await tunnelTransport(opener).fetch(
-    new Request("http://machine/rh/machine-key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    new Request(`http://machine${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   );
   let json: unknown = null;
   try {
@@ -365,15 +396,67 @@ export async function mailMachineKey(
 
 /**
  * The real courier: presence from the page's hub link, the page's own open
- * channel to the machine if it has one (`open(machine)`), else a channel
- * opened for the delivery and closed after it, and the account's mailbox.
+ * channel to the machine if it has one (`open(machine)`) and it goes to the
+ * key the chain names now, else a channel opened for the delivery and closed
+ * after it, and the account's mailbox. It asks a host to renew its identity
+ * key the same way (never by mailbox), and vouches for the head on the link.
  */
 export function linkCourier(
   link: HubLink,
   account: CloudAccount,
   open?: (machine: string) => MachineChannel | null | undefined,
   relays?: RelayPool | null,
-): MachineKeyCourier {
+): RenewalCourier {
+  /**
+   * `post` over a channel to `machine`: the page's own if one is open to the
+   * DH key the chain has for it now, else a new one. A stale refusal right
+   * after a chain change passes once another device attests the new head:
+   * sync, attest again (the channel does), and retry for a while before
+   * giving up on the channel. A channel already open was authorised before
+   * the change and still is (the agent closes only a removed device's): it
+   * needs no new handshake, so no fresh attestation — unless the host
+   * renewed its identity key, whose old channels lead nowhere.
+   */
+  async function inChannel(machine: string, post: (opener: PipeOpener) => Promise<{ status: number; body: unknown }>, opts: { isolatedRenewal?: boolean } = {}): Promise<{ status: number; body: unknown }> {
+    const current = open?.(machine);
+    const now = account.machine(machine)?.dhKey;
+    const to = current?.responderKey;
+    if (!opts.isolatedRenewal && current && current.machine === machine && current.status === "open" && (!to || !now || equal(to, now))) {
+      try {
+        // No key leaves a page whose view forked (`CloudAccount.forked`), however long it waited to get here.
+        account.assertNotForked();
+        return await post(current);
+      } catch (error) {
+        if (account.forked !== null) throw error;
+        // it went away meanwhile: a new one, below
+      }
+    }
+    const deadline = Date.now() + STALE_GRACE_MS;
+    for (;;) {
+      const channel = new MachineChannel(link, account, machine, { relays: relays ?? undefined, isolatedRenewal: opts.isolatedRenewal });
+      try {
+        account.assertNotForked();
+        return await post(channel);
+      } catch (error) {
+        if (account.forked !== null) throw error;
+        if (channel.status === "offline") throw new ChannelUnavailable("offline", channel.error ?? "the device is offline");
+        // Isolated (§3.8): no channel goes to it but a renewal confirmed on the device's, and waiting does not change that.
+        if (error instanceof ChannelIsolated) throw new ChannelUnavailable("failed", error.message);
+        const unconfirmed = channel.lastRefusal === "stale";
+        if (Date.now() >= deadline) {
+          throw new ChannelUnavailable(unconfirmed ? "unconfirmed" : "failed", channel.error ?? (error instanceof Error ? error.message : String(error)));
+        }
+      } finally {
+        channel.close();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        await account.sync();
+      } catch {
+        // the next try
+      }
+    }
+  }
   return {
     waitOnline(machine, timeoutMs) {
       if (link.presence.get(machine)?.state === "online") return Promise.resolve(true);
@@ -390,47 +473,20 @@ export function linkCourier(
         });
       });
     },
-    async postInChannel(machine, body) {
-      // A stale refusal right after a chain change passes once another
-      // device attests the new head: sync, attest again (the channel does),
-      // and retry for a while before giving up on the channel.
-      // A channel already open was authorised before the change and still
-      // is (the agent closes only a removed device's): it needs no new
-      // handshake, so no fresh attestation.
-      const current = open?.(machine);
-      if (current && current.machine === machine && current.status === "open") {
-        try {
-          // No key leaves a page whose view forked (`CloudAccount.forked`), however long it waited to get here.
-          account.assertNotForked();
-          return await postMachineKey(current, body);
-        } catch (error) {
-          if (account.forked !== null) throw error;
-          // it went away meanwhile: a new one, below
-        }
+    postInChannel(machine, body) {
+      return inChannel(machine, (opener) => postMachineKey(opener, body));
+    },
+    rotate(machine, body) {
+      if (link.presence.get(machine)?.state === "offline") return Promise.reject(new ChannelUnavailable("offline", "the device is offline"));
+      // An isolated host is reached for a renewal confirmed on the device only — on a channel of its own, for this one call (§3.8).
+      if (account.isolated?.(machine)) {
+        if (body.assurance !== 1) return Promise.reject(new ChannelUnavailable("failed", `${machine} is isolated: only a renewal confirmed on the device reaches it`));
+        return inChannel(machine, (opener) => postRotate(opener, body), { isolatedRenewal: true });
       }
-      const deadline = Date.now() + STALE_GRACE_MS;
-      for (;;) {
-        const channel = new MachineChannel(link, account, machine, { relays: relays ?? undefined });
-        try {
-          account.assertNotForked();
-          return await postMachineKey(channel, body);
-        } catch (error) {
-          if (account.forked !== null) throw error;
-          if (channel.status === "offline") throw new ChannelUnavailable("offline", channel.error ?? "the device is offline");
-          const unconfirmed = channel.lastRefusal === "stale";
-          if (Date.now() >= deadline) {
-            throw new ChannelUnavailable(unconfirmed ? "unconfirmed" : "failed", channel.error ?? (error instanceof Error ? error.message : String(error)));
-          }
-        } finally {
-          channel.close();
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        try {
-          await account.sync();
-        } catch {
-          // the next try
-        }
-      }
+      return inChannel(machine, (opener) => postRotate(opener, body));
+    },
+    async attest() {
+      if (account.isAdmin) link.attest(await account.attestation());
     },
     async mail(machine, epoch, mk) {
       const info = account.machine(machine);
