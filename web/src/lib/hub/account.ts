@@ -73,8 +73,10 @@ import {
   type Action,
   ASSURANCE_ON_DEVICE,
   type OpenPause,
+  PAUSE_CANCELLED,
   PAUSE_COMPLETED,
   PAUSE_START,
+  type PauseRemoval,
   type Assurance,
   type Attestation,
   base32,
@@ -3931,7 +3933,7 @@ export class CloudAccount {
    * let in nowhere. Returns the lists written — none when `changes` has
    * nothing to change on the newest head (another page did it).
    */
-  async setAccepts(changes: (chain: ChainState) => AcceptPlan, courier: MachineKeyCourier): Promise<{ host: string; from: Accept }[]> {
+  async setAccepts(changes: (chain: ChainState) => { host: string; from: Accept }[], courier: MachineKeyCourier): Promise<{ host: string; from: Accept }[]> {
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     const stale = userKeyStale(chain0);
@@ -3953,9 +3955,7 @@ export class CloudAccount {
           zero();
           written = [];
           const actions: Action[] = [];
-          const plan = changes(chain);
-          const { lists, before = [], after = [] } = Array.isArray(plan) ? { lists: plan } : plan;
-          for (const c of lists) {
+          for (const c of changes(chain)) {
             if (!chain.machine(c.host)) continue;
             let from = c.from;
             if (from.type === "devices") {
@@ -3986,9 +3986,8 @@ export class CloudAccount {
             const epoch = chain.machineKeyEpochs(c.host);
             actions.push({ type: "keyEpochs", user: carried, machines: [{ machine: c.host, epoch, hash: await machineKeyCommit(this.account, c.host, epoch, mk) }] });
           }
-          // A start marker goes only before lists it narrows; an ending one may go alone (nothing left to restore).
-          if (!actions.length && !after.length) throw new NothingToWrite();
-          return [...(actions.length ? before : []), ...actions, ...after];
+          if (!actions.length) throw new NothingToWrite();
+          return actions;
         });
       } catch (error) {
         if (error instanceof NothingToWrite) return [];
@@ -4562,6 +4561,70 @@ export class CloudAccount {
     if (this.flagged(id) || this.renewal.isolated.has(id) || this.keptDisputes().some((d) => d.host === id && disputeIsolates(chain, d))) return true;
     const exposed = chain === this.state ? this.hostsToRotate() : hostsToRotate(chain, (h) => this.renews(h));
     return this.renews(id) && exposed.has(id);
+  }
+
+  /**
+   * Write the renewal-pause markers `build` makes for the chain as it stands
+   * (§3.4 rule 10; built again on a newer head): a start, an end, or an end
+   * with the start that keeps what must stay held. Whether anything was
+   * written (an empty build writes nothing).
+   */
+  async writePause(build: (chain: ChainState) => Action[]): Promise<boolean> {
+    const chain0 = this.requireAdmin();
+    this.requireUpgraded(chain0);
+    try {
+      await this.appendBatch(async (chain) => {
+        const actions = build(chain);
+        if (!actions.length) throw new NothingToWrite();
+        return actions;
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof NothingToWrite) return false;
+      throw error;
+    }
+  }
+
+  /**
+   * What ending open pause `op` now would give back, and what stops it
+   * (§4.1 「卡住的暂停」, R6 L4): the edges that come back, the hosts among
+   * them whose base lets every device in, and each edge that must stay held,
+   * with why — judged on this page's chain alone (`edgeHeld`). `null`: no
+   * such open pause.
+   */
+  pauseEnding(op: Uint8Array): { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] } | null {
+    const chain = this.state;
+    const pause = chain?.openPauses().find((p) => equal(p.op, op));
+    if (!chain || !pause) return null;
+    const { edges, all } = pauseReturns(chain, pause);
+    const exposed = hostsToRotate(chain);
+    const held = edges.flatMap((e) => {
+      const why = edgeHeld(chain, e, { exposed, isolated: (id) => this.isolated(id), flagged: (id) => this.flagged(id) });
+      return why ? [{ ...e, ...why }] : [];
+    });
+    return { edges, all, held };
+  }
+
+  /**
+   * 「结束暂停」 (§4.1): cancel open pause `op` — asked first, by a person; never
+   * on its own. Refused while an edge it gives back must stay held (the same
+   * check as a completion's), on the chain the batch is built on.
+   */
+  async endPause(op: Uint8Array): Promise<void> {
+    const opHex = hex(op);
+    const wrote = await this.writePause((chain) => {
+      const pause = chain.openPauses().find((p) => hex(p.op) === opHex);
+      if (!pause) return [];
+      const exposed = hostsToRotate(chain);
+      const held = pauseReturns(chain, pause).edges.filter((e) => edgeHeld(chain, e, { exposed, isolated: (id) => this.isolated(id), flagged: (id) => this.flagged(id) }));
+      if (held.length) {
+        throw new AccountError("exposed", "renew the identity key of {{ids}} first: ending the pause would let it control a device again", undefined, undefined, {
+          ids: [...new Set(held.flatMap((e) => [e.host, e.id]).filter((id) => exposed.has(id) || this.isolated(id) || this.flagged(id)))].sort().join(", "),
+        });
+      }
+      return [{ type: "renewalPause", op: pause.op, phase: PAUSE_CANCELLED, removals: [] }];
+    });
+    if (!wrote) throw new AccountError("notInChain", "that pause has ended already");
   }
 
   /** Refuse an accept list for `host` that lets in a host that must renew first, on `chain` (§4.1, §7 decision 8). */
@@ -5587,13 +5650,6 @@ export interface Exposure {
   blockedBy: Map<string, number>;
 }
 
-/**
- * What `CloudAccount.setAccepts` writes for the chain as it stands: the lists,
- * or the lists with markers around them — a renewal pause's start before
- * them (§3.4 rule 10: they are attributed to it), its completion after.
- */
-export type AcceptPlan = { host: string; from: Accept }[] | { lists: { host: string; from: Accept }[]; before?: Action[]; after?: Action[] };
-
 /** Whether two accept lists say the same. */
 export function sameAccept(x: Accept, y: Accept): boolean {
   if (x.type !== y.type) return false;
@@ -5601,50 +5657,13 @@ export function sameAccept(x: Accept, y: Accept): boolean {
   return [...x.ids].sort().join("\n") === [...y.ids].sort().join("\n");
 }
 
-/** `host`'s accept list as it was just before entry `seq` (`admins` where none was set, or it stopped running AI since). */
-export function acceptBefore(chain: ChainState, host: string, seq: number): Accept {
-  let from: Accept = { type: "admins" };
-  for (let s = 0; s < seq; s++) {
-    const a = chain.entryAt(s)?.draft.action;
-    if (a?.type === "setAccept" && a.host === host) from = a.from;
-    else if (a?.type === "setHost" && a.id === host && !a.host) from = { type: "admins" };
-  }
-  return from;
-}
-
-/**
- * Where an open renewal pause stands on `chain` (§3.4 rule 10, §4.1 「链上标记」):
- * the hosts whose latest `SetAccept` is still this pause's own (`open`: only
- * those are ever restored — a list changed since, by anyone, is left as it
- * is); its hosts still to renew (`waiting`: still exposed and not renewed
- * since it started; one removed, or no longer exposed, waits no more); and the
- * list each open one goes back to — its list from just before the pause, `All`
- * where it was `All`, an explicit one without the devices no longer in the
- * account.
- */
-export function pauseStanding(chain: ChainState, pause: OpenPause, exposed: ReadonlyMap<string, Exposure>): { open: string[]; waiting: string[]; restore: { host: string; from: Accept }[] } {
-  const open = pause.hosts.filter((h) => chain.machine(h) && sameOp(chain.acceptOp(h), pause.op)).sort();
-  const waiting = pause.hosts.filter((m) => chain.machine(m) && exposed.has(m) && (chain.deviceRecord(m)?.rotatedSeq ?? -1) <= pause.startSeq);
-  const restore = open.map((host) => {
-    const before = acceptBefore(chain, host, pause.startSeq);
-    if (before.type !== "devices") return { host, from: before };
-    const ids = before.ids.filter((id) => id !== host && chain.device(id));
-    return { host, from: ids.length ? ({ type: "devices", ids } as Accept) : ({ type: "admins" } as Accept) };
-  });
-  return { open, waiting, restore };
-}
-
-function sameOp(x: Uint8Array | null, y: Uint8Array): boolean {
-  return x !== null && x.length === y.length && x.every((b, i) => b === y[i]);
-}
-
 /**
  * The exposed hosts `host` lets control it (§4.1 「次序先于收窄」): each must have
  * renewed before `host` does — its old key is dead by then. Not `host` itself.
  */
 export function exposedControllers(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, host: string): string[] {
-  const policy = chain.acceptPolicy(host);
-  return [...exposed.keys()].filter((e) => e !== host && chain.machine(e) && acceptNames(policy, e)).sort();
+  // As the chain admits now (`mayControl`): an edge a renewal pause holds is no controller of it.
+  return [...exposed.keys()].filter((e) => e !== host && chain.machine(e) && admits(chain, host, e)).sort();
 }
 
 /**
@@ -5654,7 +5673,7 @@ export function exposedControllers(chain: ChainState, exposed: ReadonlyMap<strin
  */
 export function exposedCycles(chain: ChainState, exposed: ReadonlyMap<string, Exposure>): string[][] {
   const ids = [...exposed.keys()].filter((h) => chain.machine(h)).sort();
-  const next = (v: string) => ids.filter((h) => h !== v && acceptNames(chain.acceptPolicy(h), v));
+  const next = (v: string) => ids.filter((h) => h !== v && admits(chain, h, v));
   const index = new Map<string, number>();
   const low = new Map<string, number>();
   const stack: string[] = [];
@@ -5688,34 +5707,70 @@ export function exposedCycles(chain: ChainState, exposed: ReadonlyMap<string, Ex
 }
 
 /**
- * The narrowing §4.1 calls for, before any of them renews — only where no
- * order of renewals works: in each cycle of exposed hosts that let each other
- * control them (`exposedCycles`, two or more, one of them able to renew), every
- * member's list without the other members — `All` as an explicit list of
- * everyone else, `admins` untouched (a host is never an admin). Acyclic parts
- * are never narrowed: the order of renewals takes care of them
- * (`exposedControllers`). Empty: no such cycle.
+ * The pauses §4.1 calls for, before any of them renews — only where no order
+ * of renewals works: for each cycle of exposed hosts that let each other
+ * control them (`exposedCycles`, two or more, one of them able to renew), the
+ * removals of one `RenewalPause` start (§3.4 rule 10): every member, and the
+ * other members it lets control it now. The lists themselves (the base) are
+ * never touched. Acyclic parts are never paused: the order of renewals takes
+ * care of them (`exposedControllers`). Empty: no such cycle.
  */
-export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, renews: (host: string) => boolean): { hosts: string[]; lists: { host: string; from: Accept }[] }[] {
-  const all: { hosts: string[]; lists: { host: string; from: Accept }[] }[] = [];
+export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, Exposure>, renews: (host: string) => boolean): { hosts: string[]; removals: PauseRemoval[] }[] {
+  const all: { hosts: string[]; removals: PauseRemoval[] }[] = [];
   for (const cycle of exposedCycles(chain, exposed)) {
     if (!cycle.some(renews)) continue;
-    const out: { host: string; from: Accept }[] = [];
-    all.push({ hosts: cycle, lists: out });
-    const drop = new Set(cycle);
-    for (const host of cycle) {
-      const policy = chain.acceptPolicy(host);
-      if (!cycle.some((e) => e !== host && acceptNames(policy, e))) continue;
-      const keep =
-        policy.type === "all"
-          ? chain.allDevices().filter((d) => d.status.type === "active" && !d.admin && d.info.id !== host && !drop.has(d.info.id)).map((d) => d.info.id)
-          : policy.type === "devices"
-            ? policy.ids.filter((id) => !drop.has(id) && chain.device(id))
-            : [];
-      out.push({ host, from: keep.length ? { type: "devices", ids: keep } : { type: "admins" } });
-    }
+    const removals = cycle.flatMap((host) => {
+      const ids = cycle.filter((e) => e !== host && admits(chain, host, e)).sort(compareUtf8Ids);
+      return ids.length ? [{ host, ids }] : [];
+    });
+    if (removals.length) all.push({ hosts: cycle, removals });
   }
   return all;
+}
+
+const compareUtf8Ids = (x: string, y: string) => compareBytes(utf8(x), utf8(y));
+
+/**
+ * The control edges an open renewal pause would give back if it ended now
+ * (§4.1 「结束之前」): each `(host, id)` it holds that no other open pause holds,
+ * whose host is current, whose id is a current device, and that the host's
+ * base list still names — exactly what its completion or cancellation
+ * re-enables. `all`: the hosts among them whose base lets every device in.
+ */
+export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { host: string; id: string }[]; all: string[] } {
+  const others = chain.openPauses().filter((p) => !equal(p.op, pause.op));
+  const heldElsewhere = (host: string, id: string) => others.some((p) => p.removals.some((r) => r.host === host && r.ids.includes(id)));
+  const edges: { host: string; id: string }[] = [];
+  const all = new Set<string>();
+  for (const r of pause.removals) {
+    if (!chain.machine(r.host)) continue;
+    const base = chain.baseAccept(r.host);
+    for (const id of r.ids) {
+      if (!chain.device(id) || heldElsewhere(r.host, id) || !acceptNames(base, id)) continue;
+      edges.push({ host: r.host, id });
+      if (base.type === "all") all.add(r.host);
+    }
+  }
+  return { edges, all: [...all].sort() };
+}
+
+/**
+ * Why an edge a pause holds must stay held (§4.1 「结束之前」, Codex #136-2), judged on
+ * `chain` alone — whatever an earlier renewal, or the hub's word on what can
+ * renew, says: either end exposed on it, or held by isolation or the hub's
+ * flag. `null`: it may come back.
+ */
+export function edgeHeld(
+  chain: ChainState,
+  edge: { host: string; id: string },
+  held: { exposed: ReadonlyMap<string, Exposure>; isolated: (id: string) => boolean; flagged: (id: string) => boolean },
+): { who: string; why: "exposed" | "isolated" | "flagged" } | null {
+  for (const who of [edge.id, edge.host]) {
+    if (held.isolated(who)) return { who, why: "isolated" };
+    if (held.flagged(who)) return { who, why: "flagged" };
+    if (held.exposed.has(who)) return { who, why: "exposed" };
+  }
+  return null;
 }
 
 /** Whether renewing a host's identity key ends its exposure: something renewing fixes, and nothing that it does not. */
@@ -5760,13 +5815,16 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
   const renewedAt = new Map<string, number>();
   const exposed = new Map<string, { since: number; lost: Map<string, number>; via: Map<string, number> }>();
   const policy = (host: string) => accept.get(host) ?? ({ type: "admins" } as Accept);
+  /** The renewal pauses open at this point of the chain (§3.4 rule 10): by op, the edges each takes out of its hosts' lists. */
+  const pauses = new Map<string, PauseRemoval[]>();
+  const paused = (host: string, id: string) => [...pauses.values()].some((rs) => rs.some((r) => r.host === host && r.ids.includes(id)));
   const could = (d: string, host: string) => {
     const r = devs.get(d);
     return !!r && r.active && d !== host && (r.admin || acceptNames(policy(host), d));
   };
-  /** Since when `host`'s list has let `id` in (`undefined`: it does not). */
+  /** Since when `host`'s list has let `id` in, as the overlay of open pauses leaves it (`undefined`: it does not now). */
   const admittedSince = (host: string, id: string): number | undefined => {
-    if (!acceptNames(policy(host), id)) return undefined;
+    if (!acceptNames(policy(host), id) || paused(host, id)) return undefined;
     const since = admitted.get(host);
     const named = since?.get(id);
     if (named !== undefined) return named;
@@ -5870,6 +5928,23 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
         renewedAt.set(a.rotation.host, upTo);
         break;
       }
+      case "renewalPause": {
+        const op = hex(a.op);
+        if (a.phase === PAUSE_START) {
+          pauses.set(op, a.removals.map((r) => ({ host: r.host, ids: [...r.ids] })));
+          break;
+        }
+        // Ended (completed or cancelled): each edge it held and no other open pause holds is let in again — now, as an
+        // addition to the list after any renewal before it (§4.1: an exposed host let back in exposes again).
+        const removals = pauses.get(op) ?? [];
+        pauses.delete(op);
+        for (const r of removals) {
+          const since = admitted.get(r.host);
+          if (!since) continue;
+          for (const id of r.ids) if (!paused(r.host, id) && acceptNames(policy(r.host), id)) since.set(id, seq);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -5905,7 +5980,8 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       const id = h.info.id;
       if (h.status.type !== "active") continue;
       for (const source of stuck) {
-        if (source === id || !acceptNames(chain.acceptPolicy(id), source)) continue;
+        // As the chain admits now: an edge a renewal pause holds lets nothing in.
+        if (source === id || !admits(chain, id, source)) continue;
         const by = blocked.get(id) ?? new Map<string, number>();
         if (by.has(source)) continue;
         by.set(source, exposed.get(source)?.since ?? chain.seq);
@@ -5947,7 +6023,7 @@ export function hostsExposedBy(chain: ChainState, device: string, from?: readonl
     for (const h of hosts) {
       const id = h.info.id;
       if (out.has(id) || id === device) continue;
-      if ([...out].some((e) => e !== id && acceptNames(chain.acceptPolicy(id), e))) {
+      if ([...out].some((e) => e !== id && admits(chain, id, e))) {
         out.add(id);
         changed = true;
       }
