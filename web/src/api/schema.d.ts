@@ -3319,7 +3319,10 @@ export interface components {
             codeExpiresMs?: number | null;
             /** @description Its fingerprint before (8 groups of 4 hex digits). */
             previousFingerprint?: string | null;
-            /** @description Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`. */
+            /**
+             * @description Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,
+             *     `staged_key_unreadable` for `unreadable`.
+             */
             reason?: string | null;
             /** @description When (ms) it took the renewed key. */
             renewedMs?: number | null;
@@ -3331,7 +3334,9 @@ export interface components {
              *     elsewhere — its own chain gives its id keys it does not hold, for
              *     example after restoring a backup made before a renewal: the link
              *     stopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new
-             *     identity).
+             *     identity); `unreadable` (renewed, and a staged key it may have been
+             *     renewed to does not read: the link stopped until the file beside its
+             *     key is put right — never taken for `foreign`).
              */
             state: string;
         };
