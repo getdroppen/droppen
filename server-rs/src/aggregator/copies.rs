@@ -187,8 +187,20 @@ pub(super) struct Host {
     /// a position stored here, verified when it was stored, may carry one
     /// (`docs/host-identity-rotation.md` §5.4).
     pub retired: Vec<[u8; 32]>,
+    /// The Ed25519 key it joined with (`keys_at` the entry that added it):
+    /// what a stored position from before `copies.db` kept its key was
+    /// verified under — they all predate any renewal ([`resume_key`]).
+    pub first_key: [u8; 32],
     /// Its epochs held.
     pub keys: Keys,
+}
+
+/// The key a stored position of `host` is checked under again: the one
+/// recorded with it (`head_key`) — or, for a row from before that was kept,
+/// the key the host joined with, never any other of its retired keys: such
+/// rows were all verified before any renewal could exist.
+pub(super) fn resume_key(host: &Host, head_key: Option<[u8; 32]>) -> [u8; 32] {
+    head_key.unwrap_or(host.first_key)
 }
 
 /// The hosts this computer may follow: accepting its control (D2), with
@@ -203,6 +215,7 @@ pub(super) fn followed(view: &View, ring: &KeyRing) -> Vec<Host> {
                 id: h.info.id.clone(),
                 machine_key: h.info.sign_key,
                 retired: h.retired.iter().map(|r| r.sign_key).collect(),
+                first_key: view.chain.keys_at(&h.info.id, h.added_seq).map_or(h.info.sign_key, |k| k.sign_key),
                 keys: keys.clone(),
             })
         })
@@ -350,11 +363,12 @@ impl PageSource {
 enum Start {
     Fresh { floor: Option<Floor> },
     /// `head_key`: the host's key the cursor was verified under when it was
-    /// stored (none in a row older than renewals: the host's key now).
+    /// stored ([`resume_key`]: for a row older than renewals, the key the
+    /// host joined with).
     Resume {
         head: SignedHead,
         state: String,
-        head_key: Option<[u8; 32]>,
+        head_key: [u8; 32],
     },
 }
 
@@ -386,7 +400,7 @@ fn started(want: &Want, machine_key: [u8; 32], retired: &[[u8; 32]], keys: &Keys
     match start {
         Start::Fresh { floor } => fresh(floor),
         Start::Resume { head, state, head_key } => {
-            let signed_by = head_key.unwrap_or(machine_key);
+            let signed_by = head_key;
             let held = (signed_by == machine_key || retired.contains(&signed_by)) && head.verify(&signed_by);
             let floor = held.then(|| Floor::of(&head));
             match (
@@ -1363,7 +1377,11 @@ impl Live {
                         stream,
                         head_key,
                         ..
-                    })) if stream == want.stream => Start::Resume { head, state, head_key },
+                    })) if stream == want.stream => Start::Resume {
+                        head,
+                        state,
+                        head_key: resume_key(host, head_key),
+                    },
                     _ => Start::Fresh { floor },
                 },
                 _ => Start::Fresh { floor },
@@ -1793,6 +1811,7 @@ mod tests {
                     id: id.to_string(),
                     machine_key: [7; 32],
                     retired: Vec::new(),
+                    first_key: [7; 32],
                     keys: Keys(vec![(0, [8; 32])]),
                 })
                 .collect(),
@@ -1869,33 +1888,173 @@ mod tests {
         let state = copy.to_json();
         assert!(Fold::restore(Kind::Session, &state).is_some());
         let keys = Keys(vec![(0, [3; 32])]);
-        let resume = |head_key| Start::Resume {
+        let resume = |head: &SignedHead, head_key| Start::Resume {
             head: head.clone(),
             state: state.clone(),
             head_key,
         };
         // Stored under the key the host held then, renewed since: resumed.
-        let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(Some(old_key)));
+        let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(&head, old_key));
         assert_eq!(f.from_seq(), 4);
         assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.len() == 1));
-        // Recorded under the key now (or no key: a row from before renewals)
-        // but signed by the old one: read again from the start, no floor.
-        for head_key in [Some(new_key), None] {
-            let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(head_key));
-            assert_eq!((f.from_seq(), f.floor()), (0, None));
-            assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.is_empty()));
-        }
+        // Recorded under the key now but signed by the old one: read again
+        // from the start, no floor.
+        let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(&head, new_key));
+        assert_eq!((f.from_seq(), f.floor()), (0, None));
+        assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.is_empty()));
         // Recorded under a key the chain does not say the host held.
-        let (f, _) = started(&want, new_key, &[], &keys, resume(Some(old_key)));
+        let (f, _) = started(&want, new_key, &[], &keys, resume(&head, old_key));
         assert_eq!((f.from_seq(), f.floor()), (0, None));
         // A copy that does not restore: from the start, under the cursor's floor.
         let broken = Start::Resume {
             head: head.clone(),
             state: "not json".into(),
-            head_key: Some(old_key),
+            head_key: old_key,
         };
         let (f, _) = started(&want, new_key, &[old_key], &keys, broken);
         assert_eq!((f.from_seq(), f.floor().map(|fl| fl.next_seq)), (0, Some(4)));
+
+        // A row from before `copies.db` kept the key (no `head_key`): every
+        // such row was verified before any renewal, so under the key the host
+        // joined with — and resumes under that one after a renewal, never
+        // under any other of its retired keys.
+        let later = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
+        let later_key = later.verifying_key().to_bytes();
+        let host = |machine_key, retired: Vec<[u8; 32]>| Host {
+            id: "m-2".into(),
+            machine_key,
+            first_key: retired.first().copied().unwrap_or(machine_key),
+            retired,
+            keys: keys.clone(),
+        };
+        let never_renewed = host(old_key, Vec::new());
+        assert_eq!(resume_key(&never_renewed, None), old_key, "the key now is the one it joined with");
+        assert_eq!(resume_key(&never_renewed, Some(new_key)), new_key, "a recorded key is the one");
+        // Renewed once since (old → new): the legacy row still resumes.
+        let renewed = host(new_key, vec![old_key]);
+        let (f, fold) = started(&want, new_key, &renewed.retired, &keys, resume(&head, resume_key(&renewed, None)));
+        assert_eq!(f.from_seq(), 4, "still resumes after the renewal");
+        assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.len() == 1));
+        // Renewed twice (old → later → new): a legacy row whose head the
+        // later retired key signed is refused — read again from the start.
+        let twice = host(new_key, vec![old_key, later_key]);
+        assert_eq!(resume_key(&twice, None), old_key);
+        let by_later = rh_proto::record::StreamHead {
+            stream: want.stream,
+            next_seq: 6,
+            epoch: 0,
+            link: [5; 32],
+            time_ms: 1_700_000_000_000,
+        }
+        .sign(&later);
+        let (f, fold) = started(&want, new_key, &twice.retired, &keys, resume(&by_later, resume_key(&twice, None)));
+        assert_eq!((f.from_seq(), f.floor()), (0, None), "not under a later retired key");
+        assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.is_empty()));
+        // …while the same head, recorded with its key, resumes.
+        let (f, _) = started(&want, new_key, &twice.retired, &keys, resume(&by_later, resume_key(&twice, Some(later_key))));
+        assert_eq!(f.from_seq(), 6);
+    }
+
+    /// The key a host joined with, from its own verified chain (`keys_at`
+    /// the entry that added it), whatever it renewed to since.
+    #[test]
+    fn a_followed_host_carries_the_key_it_joined_with() {
+        use rh_proto::chain::{Action, ChainClock, ChainState, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
+        let ak = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+        let admin = MachineIdentity::from_seed(&[2; 32]);
+        let genesis = rh_proto::chain::genesis3_draft(
+            "a-1",
+            ak.verifying_key().to_bytes(),
+            DeviceV3 {
+                id: "d-a".into(),
+                sign_key: admin.sign_public(),
+                dh_key: admin.dh_public(),
+                flags: Flags { host: false, admin: true },
+            },
+            None,
+            1,
+        )
+        .sign(&ak);
+        let mut chain = ChainState::genesis(&genesis, None).unwrap();
+        let push = |chain: &mut ChainState, action: Action| {
+            let e = chain.draft(Signer::Device("d-a".into()), action, 100 + chain.seq()).sign(admin.signing_key());
+            chain.apply(&e, &mut ChainClock::history()).unwrap();
+        };
+        let host_epoch = |host: &str, e: u32| {
+            Action::KeyEpochs(KeyCommits {
+                user: None,
+                machines: vec![(host.into(), KeyCommit { epoch: e, hash: [e as u8; 32] })],
+            })
+        };
+        let epoch = |e: u32| host_epoch("m-2", e);
+        // This computer (m-me), a host too, and m-2, the one it follows.
+        let me = MachineIdentity::from_seed(&[19; 32]);
+        push(
+            &mut chain,
+            Action::AddDevice3(DeviceV3 {
+                id: "m-me".into(),
+                sign_key: me.sign_public(),
+                dh_key: me.dh_public(),
+                flags: Flags { host: true, admin: false },
+            }),
+        );
+        push(&mut chain, host_epoch("m-me", 0));
+        let joined = MachineIdentity::from_seed(&[20; 32]);
+        push(
+            &mut chain,
+            Action::AddDevice3(DeviceV3 {
+                id: "m-2".into(),
+                sign_key: joined.sign_public(),
+                dh_key: joined.dh_public(),
+                flags: Flags { host: true, admin: false },
+            }),
+        );
+        push(&mut chain, epoch(0));
+        let renew = |chain: &mut ChainState, from: &MachineIdentity, to: &MachineIdentity, e: u32| {
+            let mut r = HostRotation {
+                host: "m-2".into(),
+                sign_key: to.sign_public(),
+                dh_key: to.dh_public(),
+                staged_seq: chain.seq(),
+                staged_head: chain.head(),
+                nonce: [e as u8; 16],
+                assurance: rh_proto::chain::Assurance::Auto,
+                old_sig: [0; 64],
+                new_sig: [0; 64],
+            };
+            let body = r.body("a-1", &from.sign_public(), &from.dh_public());
+            r.old_sig = rh_proto::sig::sign(from.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+            r.new_sig = rh_proto::sig::sign(to.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+            push(chain, Action::RotateHostKey(r));
+            push(chain, epoch(e));
+        };
+        let (second, third) = (MachineIdentity::from_seed(&[21; 32]), MachineIdentity::from_seed(&[22; 32]));
+        renew(&mut chain, &joined, &second, 1);
+        renew(&mut chain, &second, &third, 2);
+        push(
+            &mut chain,
+            Action::SetAccept {
+                host: "m-2".into(),
+                from: rh_proto::chain::Accept::Devices(vec!["m-me".into()]),
+            },
+        );
+        let view = View {
+            hub: "ws://127.0.0.1:1".into(),
+            account: "a-1".into(),
+            me: "m-me".into(),
+            chain,
+        };
+        let ring = KeyRing {
+            account: "a-1".into(),
+            device: "m-me".into(),
+            hosts: BTreeMap::from([("m-2".to_string(), Keys(vec![(0, [8; 32])]))]),
+        };
+        let hosts = followed(&view, &ring);
+        assert_eq!(hosts.len(), 1, "{hosts:?}");
+        assert_eq!(hosts[0].machine_key, third.sign_public());
+        assert_eq!(hosts[0].retired, vec![joined.sign_public(), second.sign_public()]);
+        assert_eq!(hosts[0].first_key, joined.sign_public());
+        assert_eq!(resume_key(&hosts[0], None), joined.sign_public());
     }
 
     fn want(host: &str, name: &str) -> Want {
