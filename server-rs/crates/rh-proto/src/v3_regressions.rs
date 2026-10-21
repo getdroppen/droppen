@@ -2844,3 +2844,172 @@ fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
     assert_eq!(base.clone().apply(&v2.sign(k0), &mut h()), Err(ChainError::Version(VERSION)));
     assert_eq!(ChainState::verify(state.entries(), None, &mut h()).unwrap(), state);
 }
+
+/// §3.4 rule 10 (overlay, after the final review): a renewal pause narrows
+/// the effective accept of its hosts — base minus every open pause's
+/// removals, admins included — without touching the base; `may_control`,
+/// `authorize_control` and `hosts_admitting` follow it; a hand `SetAccept`
+/// during the pause changes only the base; completion (by any admin) lifts
+/// it; a pause whose starter was demoted stays in force.
+#[test]
+fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
+    let f = fixture();
+    let (_, entries, steps) = rotation_chain(&f);
+    let k0 = &f.devices[0].0;
+    let mut st = upto(&entries, &steps, "removalKeys");
+    let (a, b) = ([0xa1u8; 16], [0xb2u8; 16]);
+    let removal = |hosts: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
+        hosts.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect()
+    };
+    let pause = |op: [u8; 16], phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause { op, phase, removals };
+    let ids = |ids: &[&str]| Accept::Devices(ids.iter().map(|i| i.to_string()).collect());
+    let accept = |host: &str, from: Accept| Action::SetAccept { host: host.into(), from };
+    let ok = |s: &ChainState, d: &str, host: &str| s.may_control(d, host).is_ok();
+    push(&mut st, by0(), k0, accept("m-1", Accept::All)).unwrap();
+    push(&mut st, by0(), k0, accept("h-2", ids(&["dev-2", "m-1"]))).unwrap();
+    push(&mut st, by0(), k0, Action::AddDevice3(dev3("d-a", &extra(26), false, true))).unwrap();
+    let ka = &extra(26).0;
+    let by_a = || Signer::Device("d-a".into());
+    assert!(ok(&st, "h-2", "m-1") && ok(&st, "m-1", "h-2") && ok(&st, "dev-2", "m-1") && ok(&st, "dev-0", "m-1"));
+
+    // The pause: h-2 stops accepting m-1; m-1 stops accepting h-2 and the admin dev-0.
+    let start = push(&mut st, by0(), k0, pause(a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["h-2", "dev-0"])]))).unwrap();
+    assert!(!ok(&st, "h-2", "m-1") && !ok(&st, "m-1", "h-2"), "the paused edges are refused");
+    assert!(matches!(st.may_control("dev-0", "m-1"), Err(ChainError::NotAccepted { .. })), "admins included");
+    assert!(ok(&st, "dev-2", "m-1") && ok(&st, "dev-2", "h-2") && ok(&st, "d-a", "m-1"), "the rest stands");
+    assert!(st.authorize_control("h-2", &extra(0).1.public(), "m-1").is_err());
+    assert_eq!(st.hosts_admitting("h-2").map(|d| d.info.id.clone()).collect::<Vec<_>>(), Vec::<String>::new());
+    assert_eq!((st.base_accept("m-1"), st.paused_edges("m-1")), (Accept::All, vec!["dev-0".to_string(), "h-2".to_string()]));
+    assert_eq!(st.paused_edges("h-2"), vec!["m-1".to_string()]);
+    assert_eq!(
+        st.open_pauses(),
+        vec![OpenPause {
+            op: a,
+            start_seq: start.seq(),
+            signer: "dev-0".into(),
+            removals: removal(&[("h-2", &["m-1"]), ("m-1", &["h-2", "dev-0"])]),
+        }]
+    );
+    // A hand SetAccept during the pause changes only the base; the pause still holds.
+    push(&mut st, by0(), k0, accept("m-1", ids(&["dev-2", "h-2"]))).unwrap();
+    assert_eq!(st.base_accept("m-1"), ids(&["dev-2", "h-2"]));
+    assert!(!ok(&st, "h-2", "m-1"), "listed in the base, paused all the same");
+    let epoch = st.machine_key_epochs("m-1");
+    push(&mut st, by0(), k0, Action::KeyEpochs(mk_commit("m-1", epoch, &[0x43; 32]))).unwrap();
+    // Another admin completes it: the overlay lifts, the base as it now is stands.
+    push(&mut st, by_a(), ka, pause(a, PausePhase::Completed, vec![])).unwrap();
+    assert!(st.open_pauses().is_empty() && st.paused_edges("m-1").is_empty());
+    assert!(ok(&st, "h-2", "m-1") && ok(&st, "m-1", "h-2") && ok(&st, "dev-0", "m-1"));
+
+    // A pause whose starter is demoted stays in force; another admin ends it.
+    push(&mut st, by_a(), ka, pause(b, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))).unwrap();
+    push(&mut st, by0(), k0, Action::SetAdmin { id: "d-a".into(), admin: false }).unwrap();
+    assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()]);
+    assert!(!ok(&st, "dev-2", "m-1"));
+    assert_eq!(
+        try_push(&st, by_a(), ka, pause(b, PausePhase::Cancelled, vec![])),
+        rule(st.seq() + 1, rules::ONLY_ADMIN_SIGNS),
+        "a demoted starter ends nothing"
+    );
+    let cancelled = push(&mut st, by0(), k0, pause(b, PausePhase::Cancelled, vec![])).unwrap();
+    assert!(ok(&st, "dev-2", "m-1"));
+    assert_eq!(st.pause(&b).and_then(|p| p.end), Some((PausePhase::Cancelled, cancelled.seq())));
+    // Overlapping pauses: an edge comes back only when every pause naming it ended.
+    let mut two = st.clone();
+    push(&mut two, by0(), k0, pause([0xd1; 16], PausePhase::Start, removal(&[("m-1", &["h-2"])]))).unwrap();
+    push(&mut two, by0(), k0, pause([0xd2; 16], PausePhase::Start, removal(&[("m-1", &["h-2", "dev-2"])]))).unwrap();
+    push(&mut two, by0(), k0, pause([0xd1; 16], PausePhase::Completed, vec![])).unwrap();
+    assert_eq!(two.paused_edges("m-1"), vec!["dev-2".to_string(), "h-2".to_string()]);
+    push(&mut two, by0(), k0, pause([0xd2; 16], PausePhase::Completed, vec![])).unwrap();
+    assert!(two.paused_edges("m-1").is_empty());
+
+    // The rules, each on its own.
+    let seq = st.seq() + 1;
+    let attempt = |s: &ChainState, action: Action| try_push(s, by0(), k0, action);
+    let c = [0xc1u8; 16];
+    assert_eq!(attempt(&st, pause(a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))), rule(seq, rules::PAUSE_OP_REUSED));
+    for removals in [
+        vec![],
+        removal(&[("dev-2", &["m-1"])]),
+        removal(&[("dev-1", &["m-1"])]),
+        removal(&[("nobody", &["m-1"])]),
+        removal(&[("m-1", &["dev-2"]), ("m-1", &["h-2"])]),
+        (0..257).map(|i| (format!("h-{i}"), vec!["dev-2".to_string()])).collect(),
+    ] {
+        assert_eq!(attempt(&st, pause(c, PausePhase::Start, removals.clone())), rule(seq, rules::PAUSE_HOSTS), "{removals:?}");
+    }
+    let mut pending = st.clone();
+    push(&mut pending, Signer::Recovery, &f.recovery.signing, Action::RecoveryJoin3(dev3("dev-r", &extra(4), false, true))).unwrap();
+    assert_eq!(
+        attempt(&pending, pause(c, PausePhase::Start, removal(&[("dev-r", &["m-1"])]))),
+        rule(seq + 1, rules::PAUSE_HOSTS),
+        "a pending device"
+    );
+    let many: Vec<String> = (0..513).map(|i| format!("d-{i}")).collect();
+    assert_eq!(
+        attempt(&st, pause(c, PausePhase::Start, vec![("m-1".into(), many.clone()), ("h-2".into(), many)])),
+        rule(seq, rules::PAUSE_EDGES)
+    );
+    for removals in [
+        removal(&[("m-1", &[])]),
+        removal(&[("m-1", &["m-1"])]),
+        removal(&[("m-1", &["nobody"])]),
+        removal(&[("m-1", &["dev-2", "dev-2"])]),
+    ] {
+        assert_eq!(attempt(&st, pause(c, PausePhase::Start, removals.clone())), rule(seq, rules::PAUSE_IDS), "{removals:?}");
+    }
+    attempt(&st, pause(c, PausePhase::Start, removal(&[("m-1", &["dev-1"])]))).expect("a removed device is a device the chain named");
+    assert_eq!(attempt(&st, pause(a, PausePhase::Completed, vec![])), rule(seq, rules::PAUSE_NOT_OPEN), "twice");
+    assert_eq!(attempt(&st, pause([0xcc; 16], PausePhase::Cancelled, vec![])), rule(seq, rules::PAUSE_NOT_OPEN), "unknown");
+    let mut open = st.clone();
+    push(&mut open, by0(), k0, pause(c, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))).unwrap();
+    assert_eq!(
+        attempt(&open, pause(c, PausePhase::Completed, removal(&[("m-1", &["dev-2"])]))),
+        rule(seq + 1, rules::PAUSE_END_REMOVALS)
+    );
+    let start_c = || pause(c, PausePhase::Start, removal(&[("m-1", &["dev-2"])]));
+    assert_eq!(
+        try_push(&st, Signer::Device("dev-2".into()), &f.devices[2].0, start_c()),
+        rule(seq, rules::ONLY_ADMIN_SIGNS)
+    );
+    assert!(matches!(
+        try_push(&st, Signer::Recovery, &f.recovery.signing, start_c()),
+        Err(ChainError::NotAllowed { .. })
+    ));
+    let mut slotted = st.clone();
+    let p = pak(&f, "p-1", 800, 1, true);
+    push(&mut slotted, by0(), k0, Action::PasskeySlotSet(p.slot.clone())).unwrap();
+    assert!(matches!(
+        try_push(&slotted, Signer::Passkey("p-1".into()), &p.signing, start_c()),
+        Err(ChainError::NotAllowed { .. })
+    ));
+
+    // Encoding: kind 22, op, phase, the removals; nothing else decodes, nor kind 22 under v2.
+    for e in [&start, &cancelled] {
+        assert_eq!((e.draft.version, e.draft.action.kind()), (VERSION_3, 22));
+        assert_eq!(&Entry::decode(&e.encode()).unwrap(), e);
+    }
+    let bytes = cancelled.encode();
+    let at = bytes.len() - 64 - 2 - 1;
+    assert_eq!(bytes[at], 2);
+    for bad in [3u8, 0x80, 0xff] {
+        let mut x = bytes.clone();
+        x[at] = bad;
+        assert!(matches!(Entry::decode(&x), Err(ChainError::Decode(_))), "{bad}");
+    }
+    let mut v2 = bytes.clone();
+    v2[0] = VERSION;
+    assert!(matches!(Entry::decode(&v2), Err(ChainError::Decode(_))), "kind 22 under version 2");
+    let mut draft = st.draft(by0(), start_c(), 1);
+    assert_eq!(draft.version, VERSION_3);
+    draft.version = VERSION;
+    assert_eq!(st.clone().apply(&draft.sign(k0), &mut h()), Err(ChainError::Version(VERSION)));
+    for removals in [
+        (0..257).map(|i| (format!("h-{i}"), vec!["d".to_string()])).collect::<Vec<_>>(),
+        vec![("m-1".to_string(), (0..1025).map(|i| format!("d-{i}")).collect())],
+    ] {
+        let e = st.draft(by0(), pause(c, PausePhase::Start, removals), 1).sign(k0);
+        assert!(matches!(Entry::decode(&e.encode()), Err(ChainError::Decode(_))), "too large to decode");
+    }
+    assert_eq!(ChainState::verify(st.entries(), None, &mut h()).unwrap(), st);
+}

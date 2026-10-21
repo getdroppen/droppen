@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use crate::chain::tests::{device_info, fixture, machine_info, recovered_device, sample_chain};
 use crate::chain::{
     genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, Entry, KeyCommit,
-    KeyCommits, RecoveryKey, Signer, RECOVERY_DELAY_MS,
+    KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
 };
 use crate::codec::hex;
 use crate::frame::Frame;
@@ -1734,6 +1734,29 @@ fn chain_v3_vectors() -> Value {
 
 /// A state as the identity renewal vectors write it: [`v3_state_json`] and,
 /// for every device, its keys now, the keys it retired and its last renewal.
+/// The renewal pauses of a state, as both halves' vectors write them (§3.4
+/// rule 10): the open ones; for `hosts`, the base accept and the paused
+/// edges; and who may control whom (`pairs`) through the overlay.
+pub(crate) fn pause_state_json(state: &ChainState, hosts: &[&str], pairs: &[(&str, &str)]) -> Value {
+    use crate::chain::Accept;
+    let accept_json = |a: &Accept| match a {
+        Accept::Admins => json!({"kind": "admins"}),
+        Accept::All => json!({"kind": "all"}),
+        Accept::Devices(ids) => json!({"kind": "devices", "ids": ids}),
+    };
+    json!({
+        "openPauses": state.open_pauses().iter().map(|p| json!({
+            "op": h(&p.op), "startSeq": p.start_seq, "signer": p.signer,
+            "removals": p.removals.iter().map(|(host, ids)| json!({"host": host, "ids": ids})).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "hosts": hosts.iter().map(|host| json!({"host": host, "base": accept_json(&state.base_accept(host)), "paused": state.paused_edges(host)})).collect::<Vec<_>>(),
+        "control": pairs.iter().map(|(d, host)| {
+            let r = state.may_control(d, host);
+            json!({"device": d, "host": host, "ok": r.is_ok(), "error": r.err().map(|e| chain_error_kind(&e))})
+        }).collect::<Vec<_>>(),
+    })
+}
+
 pub(crate) fn rotation_state_json(state: &ChainState, hosts: &[&str]) -> Value {
     let mut v = v3_state_json(state, hosts);
     v["identities"] = state
@@ -2156,6 +2179,187 @@ fn host_rotation_vectors() -> Value {
         not_allowed,
         Some(rules::ONLY_ADMIN_SIGNS),
     );
+    // The renewal pause, an overlay (§3.4 rule 10): m-1 accepts every device and h-2 accepts dev-2 and m-1 (the bases);
+    // a second admin joins; a pause removes m-1 from h-2 and h-2 and dev-0 from m-1; a hand SetAccept narrows m-1's
+    // base during it; h-2 renews; the other admin completes the pause (the bases stand, overlay-free); that admin
+    // starts a second pause, is demoted (the pause stays in force), and the first admin cancels it.
+    let (op_a, op_b) = ([0xa1u8; 16], [0xb2u8; 16]);
+    let pause_hosts = ["m-1", "h-2"];
+    let pairs = [("h-2", "m-1"), ("m-1", "h-2"), ("dev-2", "m-1"), ("dev-2", "h-2"), ("dev-0", "m-1"), ("dev-0", "h-2")];
+    let removal = |hosts: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
+        hosts.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect()
+    };
+    let marker = |op: [u8; 16], phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause { op, phase, removals };
+    let (pause_entries, pause_steps) = {
+        let mut st = ChainState::verify(&base, None, &mut hist()).unwrap();
+        let mut es = base.clone();
+        let mut steps: Vec<Value> = Vec::new();
+        let ka = extra(26).0;
+        let mut step = |st: &mut ChainState, es: &mut Vec<Entry>, label: &str, by: &str, action: Action| {
+            let key = if by == "d-a" { &ka } else { k0 };
+            let e = st.draft(Signer::Device(by.into()), action, 30_000 + st.seq()).sign(key);
+            st.apply(&e, &mut hist()).unwrap_or_else(|err| panic!("{label}: {err}"));
+            es.push(e);
+            steps.push(json!({"label": label, "seq": st.seq(), "state": pause_state_json(st, &pause_hosts, &pairs)}));
+        };
+        let accept = |host: &str, from: crate::chain::Accept| Action::SetAccept { host: host.into(), from };
+        let ids = |ids: &[&str]| crate::chain::Accept::Devices(ids.iter().map(|i| i.to_string()).collect());
+        let key = |st: &ChainState, host: &str, k: u8| Action::KeyEpochs(crate::v3_regressions::mk_commit(host, st.machine_key_epochs(host), &[k; 32]));
+        step(&mut st, &mut es, "acceptAll", "dev-0", accept("m-1", crate::chain::Accept::All));
+        step(&mut st, &mut es, "acceptH2", "dev-0", accept("h-2", ids(&["dev-2", "m-1"])));
+        step(&mut st, &mut es, "addAdmin", "dev-0", Action::AddDevice3(dev3("d-a", &extra(26), false, true)));
+        step(&mut st, &mut es, "pauseStart", "dev-0", marker(op_a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["h-2", "dev-0"])])));
+        step(&mut st, &mut es, "handM1", "dev-0", accept("m-1", ids(&["dev-2"])));
+        let k = key(&st, "m-1", 0x35);
+        step(&mut st, &mut es, "handM1Key", "dev-0", k);
+        let r = renewal(&st, "h-2", &o.0, &extra(RENEWED[0]), st.seq(), [0x61; 16], Assurance::Auto);
+        step(&mut st, &mut es, "renew", "dev-0", Action::RotateHostKey(r));
+        let k = key(&st, "h-2", 0x36);
+        step(&mut st, &mut es, "renewKey", "dev-0", k);
+        step(&mut st, &mut es, "pauseCompleted", "d-a", marker(op_a, PausePhase::Completed, vec![]));
+        step(&mut st, &mut es, "pause2Start", "d-a", marker(op_b, PausePhase::Start, removal(&[("m-1", &["dev-2"])])));
+        step(&mut st, &mut es, "demoteStarter", "dev-0", Action::SetAdmin { id: "d-a".into(), admin: false });
+        assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()], "a demoted starter's pause stays in force");
+        step(&mut st, &mut es, "pause2Cancelled", "dev-0", marker(op_b, PausePhase::Cancelled, vec![]));
+        assert!(st.open_pauses().is_empty() && st.paused_edges("m-1").is_empty() && st.paused_edges("h-2").is_empty());
+        (es, steps)
+    };
+    let pause_seq = |label: &str| pause_steps.iter().find(|s| s["label"] == label).unwrap()["seq"].as_u64().unwrap() as usize;
+    let pause_upto = |label: &str| pause_entries[..=pause_seq(label)].to_vec();
+    let at_base = |action: Action| -> (Vec<Entry>, Action) { (base.clone(), action) };
+    let with = |chain: Vec<Entry>, signer: Signer, key: &SigningKey, action: Action| -> Vec<Entry> {
+        let mut st = ChainState::verify(&chain, None, &mut hist()).unwrap();
+        let e = st.draft(signer, action, 30_000 + st.seq()).sign(key);
+        st.apply(&e, &mut hist()).unwrap();
+        [chain, vec![e]].concat()
+    };
+    let pending = with(
+        base.clone(),
+        Signer::Recovery,
+        &f.recovery.signing,
+        Action::RecoveryJoin3(dev3("dev-r", &extra(4), false, true)),
+    );
+    let removed = with(base.clone(), dev0(), k0, Action::RemoveDevice3("m-1".into()));
+    let c = [0xc1u8; 16];
+    for (name, (chain, action), rule) in [
+        (
+            "a renewal pause that starts under a used op",
+            (pause_upto("pauseCompleted"), marker(op_a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))),
+            rules::PAUSE_OP_REUSED,
+        ),
+        (
+            "a renewal pause that starts under an open op",
+            (pause_upto("pauseStart"), marker(op_a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))),
+            rules::PAUSE_OP_REUSED,
+        ),
+        (
+            "a renewal pause naming a pending device as a host",
+            (pending, marker(c, PausePhase::Start, removal(&[("dev-r", &["m-1"])]))),
+            rules::PAUSE_HOSTS,
+        ),
+        (
+            "a renewal pause naming a removed host",
+            (removed, marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))),
+            rules::PAUSE_HOSTS,
+        ),
+        (
+            "a renewal pause naming a device that does not run AI as a host",
+            at_base(marker(c, PausePhase::Start, removal(&[("dev-2", &["m-1"])]))),
+            rules::PAUSE_HOSTS,
+        ),
+        (
+            "a renewal pause naming a host twice",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2"]), ("m-1", &["h-2"])]))),
+            rules::PAUSE_HOSTS,
+        ),
+        ("a renewal pause with no removals", at_base(marker(c, PausePhase::Start, vec![])), rules::PAUSE_HOSTS),
+        (
+            "a renewal pause removing nothing from a host",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &[])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
+            "a renewal pause removing a host from itself",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["m-1"])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
+            "a renewal pause removing an unknown device",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["nobody"])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
+            "a renewal pause removing a device twice",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2", "dev-2"])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
+            "a renewal pause that ends an unknown op",
+            at_base(marker([0xcc; 16], PausePhase::Cancelled, vec![])),
+            rules::PAUSE_NOT_OPEN,
+        ),
+        (
+            "a renewal pause that ends twice",
+            (pause_upto("pauseCompleted"), marker(op_a, PausePhase::Completed, vec![])),
+            rules::PAUSE_NOT_OPEN,
+        ),
+        (
+            "a renewal pause that ends naming removals",
+            (pause_upto("pauseStart"), marker(op_a, PausePhase::Completed, removal(&[("h-2", &["m-1"])]))),
+            rules::PAUSE_END_REMOVALS,
+        ),
+    ] {
+        bad(name, chain, dev0(), k0, &|_| action.clone(), not_allowed, Some(rule));
+    }
+    let start_c = || marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2"])]));
+    bad(
+        "a renewal pause by a device that is not an admin",
+        base.clone(),
+        Signer::Device("dev-2".into()),
+        &f.devices[2].0,
+        &|_| start_c(),
+        not_allowed,
+        Some(rules::ONLY_ADMIN_SIGNS),
+    );
+    let p1 = crate::v3_regressions::pak(&f, "p-1", 800, 1, true);
+    let slotted = with(base.clone(), dev0(), k0, Action::PasskeySlotSet(p1.slot.clone()));
+    bad(
+        "a renewal pause signed by a passkey slot",
+        slotted,
+        Signer::Passkey("p-1".into()),
+        &p1.signing,
+        &|_| start_c(),
+        not_allowed,
+        Some("a passkey slot signs only its own joins and activations"),
+    );
+    bad(
+        "a renewal pause signed by the recovery key",
+        base.clone(),
+        Signer::Recovery,
+        &f.recovery.signing,
+        &|_| start_c(),
+        not_allowed,
+        Some("the recovery key signs only recovery entries"),
+    );
+    // More than 256 hosts, or more than 1024 edges in all: such bytes do not decode.
+    bad(
+        "a renewal pause naming more than 256 hosts",
+        base.clone(),
+        dev0(),
+        k0,
+        &|_| marker(c, PausePhase::Start, (0..257).map(|i| (format!("h-{i}"), vec!["dev-2".to_string()])).collect()),
+        "decode",
+        None,
+    );
+    bad(
+        "a renewal pause removing more than 1024 edges",
+        base.clone(),
+        dev0(),
+        k0,
+        &|_| marker(c, PausePhase::Start, vec![("m-1".into(), (0..1025).map(|i| format!("d-{i}")).collect())]),
+        "decode",
+        None,
+    );
     // Bytes that do not decode: an assurance other than 0 or 1, kind 20 in a v2 entry.
     let rotate_bytes = entries[rotate as usize].encode();
     let at = rotate_bytes.len() - 64 * 3 - 1;
@@ -2180,6 +2384,20 @@ fn host_rotation_vectors() -> Value {
         let mut b = policy_bytes.clone();
         b[at] = value;
         let mut es = entries_json(&base).as_array().unwrap().clone();
+        es.push(h(&b));
+        invalid.push((name.into(), es, "decode"));
+    }
+    // Kind 22 with a phase other than 0, 1 or 2, and under version 2: neither decodes.
+    let completed_bytes = pause_entries[pause_seq("pauseCompleted")].encode();
+    let phase_at = completed_bytes.len() - 64 - 2 - 1;
+    assert_eq!((completed_bytes[phase_at - 17], completed_bytes[phase_at]), (22, 1), "kind 22, op, then the phase");
+    for (name, at, value) in [
+        ("a renewal pause with an unknown phase", phase_at, 3),
+        ("a renewal pause inside a v2 entry", 0, crate::chain::VERSION),
+    ] {
+        let mut b = completed_bytes.clone();
+        b[at] = value;
+        let mut es = entries_json(&pause_entries[..pause_seq("pauseCompleted")]).as_array().unwrap().clone();
         es.push(h(&b));
         invalid.push((name.into(), es, "decode"));
     }
@@ -2267,6 +2485,17 @@ fn host_rotation_vectors() -> Value {
         "keysAt": keys_at,
         "everNamed": named,
         "disputes": disputes,
+        "pause": {
+            "entries": entries_json(&pause_entries),
+            "steps": pause_steps,
+            "hosts": pause_hosts,
+            "pairs": pairs.iter().map(|(d, host)| json!([d, host])).collect::<Vec<_>>(),
+            "encoding": {
+                "start": h(&pause_entries[pause_seq("pauseStart")].encode()),
+                "completed": h(&pause_entries[pause_seq("pauseCompleted")].encode()),
+                "cancelled": h(&pause_entries[pause_seq("pause2Cancelled")].encode()),
+            },
+        },
         "policy": {
             "entries": entries_json(&policy_entries),
             "steps": policy_steps,
@@ -2290,6 +2519,12 @@ fn host_rotation_vectors() -> Value {
             "rotateProof": rules::ROTATE_PROOF,
             "keyRetired": rules::KEY_RETIRED,
             "rotateNeedsAssurance": rules::ROTATE_NEEDS_ASSURANCE,
+            "pauseOpReused": rules::PAUSE_OP_REUSED,
+            "pauseHosts": rules::PAUSE_HOSTS,
+            "pauseEdges": rules::PAUSE_EDGES,
+            "pauseIds": rules::PAUSE_IDS,
+            "pauseNotOpen": rules::PAUSE_NOT_OPEN,
+            "pauseEndRemovals": rules::PAUSE_END_REMOVALS,
         },
     })
 }
@@ -3234,6 +3469,36 @@ fn ts_vectors_verify_in_rust() {
             );
         }
         assert!(d["invalid"].as_array().unwrap().len() >= 7);
+        // The renewal pause TS wrote: every step verifies, with the same open pauses, bases, paused edges and
+        // who may control whom through the overlay.
+        let p = &r["pause"];
+        let pause: Vec<Entry> = p["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| Entry::decode(&hexv(e)).expect("a TS pause entry decodes"))
+            .collect();
+        for (entry, hex_entry) in pause.iter().zip(p["entries"].as_array().unwrap()) {
+            assert_eq!(h(&entry.encode()), *hex_entry);
+        }
+        let names: Vec<String> = p["hosts"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let pair_names: Vec<(String, String)> = p["pairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| (v[0].as_str().unwrap().to_string(), v[1].as_str().unwrap().to_string()))
+            .collect();
+        let pairs: Vec<(&str, &str)> = pair_names.iter().map(|(d, host)| (d.as_str(), host.as_str())).collect();
+        for step in p["steps"].as_array().unwrap() {
+            let seq = step["seq"].as_u64().unwrap() as usize;
+            let st = ChainState::verify(&pause[..=seq], None, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{}: {e}", step["label"]));
+            assert_eq!(pause_state_json(&st, &names, &pairs), step["state"], "{}", step["label"]);
+        }
+        for (which, phase) in [("start", PausePhase::Start), ("completed", PausePhase::Completed), ("cancelled", PausePhase::Cancelled)] {
+            let e = Entry::decode(&hexv(&p["encoding"][which])).unwrap();
+            assert!(matches!(e.draft.action, Action::RenewalPause { phase: got, .. } if got == phase), "{which}");
+        }
         // The renewal policy TS wrote: every step verifies, and says what the policy is.
         let p = &r["policy"];
         let policy: Vec<Entry> = p["entries"]

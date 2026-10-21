@@ -12,8 +12,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { renewalJson, rotationStateJson } from "../scripts/e2e-vectors.js";
+import { pauseStateJson, renewalJson, rotationStateJson } from "../scripts/e2e-vectors.js";
 import {
+  type Accept,
   type Action,
   ASSURANCE_AUTO,
   ASSURANCE_ON_DEVICE,
@@ -36,6 +37,12 @@ import {
   importX25519Private,
   LABELS,
   machineKeyCommit,
+  type OpenPause,
+  PAUSE_CANCELLED,
+  PAUSE_COMPLETED,
+  PAUSE_START,
+  type PausePhase,
+  type PauseRemoval,
   publicFromSecret,
   recoveryKeys,
   RENEWAL_NONCE_LEN,
@@ -187,6 +194,12 @@ test("renewals: the confirmation MAC, the code and the ack are Rust's, from eith
       rotateProof: RULES.rotateProof,
       keyRetired: RULES.keyRetired,
       rotateNeedsAssurance: RULES.rotateNeedsAssurance,
+      pauseOpReused: RULES.pauseOpReused,
+      pauseHosts: RULES.pauseHosts,
+      pauseEdges: RULES.pauseEdges,
+      pauseIds: RULES.pauseIds,
+      pauseNotOpen: RULES.pauseNotOpen,
+      pauseEndRemovals: RULES.pauseEndRemovals,
     },
     R.rules,
   );
@@ -465,6 +478,120 @@ test("R1d: while the account asks for it, only renewals confirmed on the device 
   }
   // clone() keeps the policy.
   assert.equal(on.clone().alwaysAssured, true);
+});
+
+test("R1e: Rust's renewal pause chain verifies here step by step — the same open pauses, bases, paused edges and control", async () => {
+  const p = R.pause;
+  const entries = entriesOf(p.entries);
+  entries.forEach((e, i) => assert.equal(hex(encodeEntry(e)), p.entries[i], `entry ${i} round-trips`));
+  const k0 = (await dev0()).key;
+  for (const e of entries) {
+    if (e.draft.signer.type === "device" && e.draft.signer.id === "dev-0") assert.equal(hex(encodeEntry(await signDraft(e.draft, k0))), hex(encodeEntry(e)), `entry ${e.draft.seq} re-signed`);
+  }
+  for (const step of p.steps) {
+    const st = await ChainState.verify(entries.slice(0, step.seq + 1), undefined, hist());
+    assert.deepEqual(pauseStateJson(st, p.hosts, p.pairs), step.state, step.label);
+  }
+  for (const [which, phase] of [
+    ["start", PAUSE_START],
+    ["completed", PAUSE_COMPLETED],
+    ["cancelled", PAUSE_CANCELLED],
+  ] as [string, number][]) {
+    const a = decodeEntry(h(p.encoding[which])).draft.action;
+    assert.ok(a.type === "renewalPause" && a.phase === phase, which);
+  }
+});
+
+test("R1e: a renewal pause overlays the accept policy — admins included — and leaves the base alone; any admin ends it", async () => {
+  const st = (await upto("removalKeys")).clone();
+  const k0 = (await dev0()).key;
+  const da = await freshKeys("d-a");
+  const push = async (s: ChainState, action: Action, signer: Signer = byDev0, key: CryptoKey = k0) => s.apply(await signDraft(s.draft(signer, action, 80_000 + s.seq), key), hist());
+  const marker = (op: Uint8Array, phase: PausePhase, removals: PauseRemoval[]): Action => ({ type: "renewalPause", op, phase, removals });
+  const accept = (hostId: string, from: Accept): Action => ({ type: "setAccept", host: hostId, from });
+  const ok = (s: ChainState, d: string, hostId: string) => {
+    try {
+      s.mayControl(d, hostId);
+      return true;
+    } catch (e) {
+      assert.ok(e instanceof ChainError);
+      return false;
+    }
+  };
+  const [a, b] = [new Uint8Array(16).fill(0xa1), new Uint8Array(16).fill(0xb2)];
+  const byA: Signer = { type: "device", id: "d-a" };
+  await push(st, accept("m-1", { type: "all" }));
+  await push(st, accept("h-2", { type: "devices", ids: ["dev-2", "m-1"] }));
+  await push(st, { type: "addDevice3", device: { id: "d-a", signKey: da.signKey, dhKey: da.dhKey, flags: { host: false, admin: true } } });
+  assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-0", "m-1"));
+  const removals = [
+    { host: "h-2", ids: ["m-1"] },
+    { host: "m-1", ids: ["h-2", "dev-0"] },
+  ];
+  await push(st, marker(a, PAUSE_START, removals));
+  assert.ok(!ok(st, "h-2", "m-1") && !ok(st, "m-1", "h-2") && !ok(st, "dev-0", "m-1"), "paused, admins included");
+  assert.ok(ok(st, "dev-2", "m-1") && ok(st, "d-a", "m-1") && ok(st, "dev-2", "h-2"), "the rest stands");
+  assert.throws(() => st.authorizeControl("h-2", h(R.hostKeys[0].dhKey), "m-1"), kind("notAccepted"));
+  assert.deepEqual(st.baseAccept("m-1"), { type: "all" });
+  assert.deepEqual(st.pausedEdges("m-1"), ["dev-0", "h-2"]);
+  assert.deepEqual(
+    st.openPauses().map((x: OpenPause) => [hex(x.op), x.signer, x.removals]),
+    [[hex(a), "dev-0", removals]],
+  );
+  // A hand setAccept during the pause changes only the base.
+  await push(st, accept("m-1", { type: "devices", ids: ["dev-2", "h-2"] }));
+  assert.deepEqual(st.baseAccept("m-1"), { type: "devices", ids: ["dev-2", "h-2"] });
+  assert.ok(!ok(st, "h-2", "m-1"), "listed in the base, paused all the same");
+  // Another admin completes it: the overlay lifts.
+  await push(st, marker(a, PAUSE_COMPLETED, []), byA, da.key);
+  assert.deepEqual(st.openPauses(), []);
+  assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-0", "m-1"));
+  // A pause whose starter is demoted stays in force; a demoted admin ends nothing; another admin does.
+  await push(st, marker(b, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]), byA, da.key);
+  await push(st, { type: "setAdmin", id: "d-a", admin: false });
+  assert.deepEqual(st.pausedEdges("m-1"), ["dev-2"]);
+  await assert.rejects(tryPush(st, marker(b, PAUSE_CANCELLED, []), byA, da.key), rule(RULES.onlyAdminSigns));
+  await push(st, marker(b, PAUSE_CANCELLED, []));
+  assert.ok(ok(st, "dev-2", "m-1"));
+  // The rules.
+  const c = new Uint8Array(16).fill(0xc1);
+  await assert.rejects(tryPush(st, marker(a, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }])), rule(RULES.pauseOpReused));
+  for (const bad of [[], [{ host: "dev-2", ids: ["m-1"] }], [{ host: "dev-1", ids: ["m-1"] }], [{ host: "m-1", ids: ["dev-2"] }, { host: "m-1", ids: ["h-2"] }], Array.from({ length: 257 }, (_, i) => ({ host: `h-${i}`, ids: ["dev-2"] }))]) {
+    await assert.rejects(tryPush(st, marker(c, PAUSE_START, bad)), rule(RULES.pauseHosts), JSON.stringify(bad).slice(0, 80));
+  }
+  const many = Array.from({ length: 513 }, (_, i) => `d-${i}`);
+  await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: many }, { host: "h-2", ids: many }])), rule(RULES.pauseEdges));
+  for (const ids of [[], ["m-1"], ["nobody"], ["dev-2", "dev-2"]]) {
+    await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids }])), rule(RULES.pauseIds), ids.join(","));
+  }
+  await tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: ["dev-1"] }]));
+  await assert.rejects(tryPush(st, marker(a, PAUSE_COMPLETED, [])), rule(RULES.pauseNotOpen), "twice");
+  await assert.rejects(tryPush(st, marker(new Uint8Array(16).fill(0xcc), PAUSE_CANCELLED, [])), rule(RULES.pauseNotOpen), "unknown");
+  const open = await tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]));
+  await assert.rejects(tryPush(open, marker(c, PAUSE_COMPLETED, [{ host: "m-1", ids: ["dev-2"] }])), rule(RULES.pauseEndRemovals));
+  await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]), { type: "device", id: "dev-2" }, (await fixtureKeys(V.chain.devices[2])).key), rule(RULES.onlyAdminSigns));
+  const rk = await recoveryKeys(h(V.chain.recoverySecret));
+  await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]), { type: "recovery" }, rk.signing), kind("notAllowed"));
+  // Encoding: phase 0/1/2 only, kind 22 only under v3; too many hosts or edges do not decode.
+  const cancelled = encodeEntry(st.entryAt(st.seq)!);
+  const at = cancelled.length - 64 - 2 - 1;
+  assert.equal(cancelled[at], PAUSE_CANCELLED);
+  for (const x of [3, 0x80, 0xff]) {
+    const y = Uint8Array.from(cancelled);
+    y[at] = x;
+    assert.throws(() => decodeEntry(y), kind("decode"), `phase ${x}`);
+  }
+  const v2 = Uint8Array.from(cancelled);
+  v2[0] = CHAIN_VERSION;
+  assert.throws(() => decodeEntry(v2), kind("decode"));
+  for (const removalsTooBig of [Array.from({ length: 257 }, (_, i) => ({ host: `h-${i}`, ids: ["d"] })), [{ host: "m-1", ids: Array.from({ length: 1025 }, (_, i) => `d-${i}`) }]]) {
+    const e = await signDraft(st.draft(byDev0, marker(c, PAUSE_START, removalsTooBig), 1), k0);
+    assert.throws(() => decodeEntry(encodeEntry(e)), kind("decode"));
+  }
+  // clone() keeps pauses apart.
+  const copyState = open.clone();
+  await push(copyState, marker(c, PAUSE_CANCELLED, []));
+  assert.deepEqual(open.pausedEdges("m-1"), ["dev-2"]);
 });
 
 test("R1b: a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {
