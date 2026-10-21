@@ -3270,6 +3270,98 @@ mod tests {
         );
     }
 
+    /// Open channel `ch` as `device` the way the hub's connection hands it
+    /// on ([`on_frame`]) or a relay's does ([`on_channel_frame`], as
+    /// [`super::super::relays`] calls it): whether it was let in, and the
+    /// codes it was refused with.
+    fn open_via(a: &Account, key: &MachineIdentity, device: &str, ch: u32, relay: bool) -> (bool, Vec<(u32, u16)>) {
+        let (mut routes, mut pending) = (Routes::new(), Pending::new());
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let (text_tx, _text_rx) = mpsc::unbounded_channel();
+        let frames = [
+            Frame::Open { ch, peer: device.into() },
+            Frame::Data {
+                ch,
+                payload: hello(a, key, device, Vec::new()),
+            },
+        ];
+        for frame in frames {
+            if relay {
+                on_channel_frame(&a.shared, frame, &mut routes, &mut pending, &out_tx, &text_tx);
+            } else {
+                on_frame(&a.shared, frame, &mut routes, &mut pending, &out_tx, &text_tx);
+            }
+        }
+        (routes.contains_key(&ch), closes(&mut out_rx))
+    }
+
+    /// Contract §15 (`docs/host-identity-rotation.md` §3.4 rule 10): a
+    /// renewal pause is an overlay on who may control a host. While one that
+    /// removes m-1←d-3 is open, d-3's open channel is closed (and its next
+    /// stream not served), and a new one is refused on the hub's path and on
+    /// a relay's alike; once it is completed — or another one cancelled — d-3
+    /// is let in again. Every check is rh-proto's `may_control` (and the
+    /// handshake's), so the overlay holds everywhere at once.
+    #[tokio::test]
+    async fn a_renewal_pause_closes_and_refuses_a_paused_controller_until_it_ends() {
+        use rh_proto::chain::{Accept, PausePhase};
+        let mut a = policy_account();
+        take(
+            &mut a,
+            vec![Action::SetAccept {
+                host: "m-1".into(),
+                from: Accept::Devices(vec!["d-3".into()]),
+            }],
+        );
+        attest(&a, "d-1", &a.d1, 0);
+        let mut routes = Routes::new();
+        let channel = connect(&a, &d3(), "d-3", 4, &mut routes).await.expect("m-1 accepts d-3");
+        assert_eq!(served(&channel).await, Some(200));
+        assert!(open_via(&a, &d3(), "d-3", 5, false).0, "the hub's path lets it in");
+        assert!(open_via(&a, &d3(), "d-3", 6, true).0, "a relay's path lets it in");
+        let pause = |op: u8, phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause {
+            op: [op; 16],
+            phase,
+            removals,
+        };
+        let removing_d3 = || vec![("m-1".to_string(), vec!["d-3".to_string()])];
+        // The pause starts.
+        take(&mut a, vec![pause(1, PausePhase::Start, removing_d3())]);
+        attest(&a, "d-1", &a.d1, 0);
+        {
+            let st = a.shared.state.lock().unwrap();
+            let chain = st.chain.as_ref().unwrap();
+            assert_eq!(chain.paused_edges("m-1"), vec!["d-3".to_string()]);
+            assert_eq!(chain.base_accept("m-1"), Accept::Devices(vec!["d-3".into()]), "the base is untouched");
+        }
+        // The open channel: its next stream is not served, and the chain's
+        // change closes it.
+        assert_eq!(served(&channel).await, None, "not served while paused");
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        drop_removed(&a.shared, &mut routes, &out_tx);
+        assert_eq!(closes(&mut out_rx), vec![(4, 4403)]);
+        assert!(routes.is_empty());
+        // New ones: refused on both paths.
+        for (ch, relay) in [(7, false), (8, true)] {
+            let (let_in, closed) = open_via(&a, &d3(), "d-3", ch, relay);
+            assert!(!let_in && closed.contains(&(ch, 4401)), "relay {relay}: {closed:?}");
+        }
+        // Completed: let in again, on both paths, and served.
+        take(&mut a, vec![pause(1, PausePhase::Completed, Vec::new())]);
+        attest(&a, "d-1", &a.d1, 0);
+        assert!(a.shared.state.lock().unwrap().chain.as_ref().unwrap().paused_edges("m-1").is_empty());
+        assert!(open_via(&a, &d3(), "d-3", 9, false).0 && open_via(&a, &d3(), "d-3", 10, true).0);
+        let channel = connect(&a, &d3(), "d-3", 11, &mut routes).await.expect("in again");
+        assert_eq!(served(&channel).await, Some(200));
+        // Cancelled: the same.
+        take(&mut a, vec![pause(2, PausePhase::Start, removing_d3())]);
+        attest(&a, "d-1", &a.d1, 0);
+        assert!(!open_via(&a, &d3(), "d-3", 12, true).0, "paused again");
+        take(&mut a, vec![pause(2, PausePhase::Cancelled, Vec::new())]);
+        attest(&a, "d-1", &a.d1, 0);
+        assert!(open_via(&a, &d3(), "d-3", 13, false).0 && open_via(&a, &d3(), "d-3", 14, true).0);
+    }
+
     // ---- control lapses on open channels too (external E2E review, item D) ----
 
     const SEVEN_DAYS: u64 = rh_proto::chain::CONTROL_FRESHNESS_MS;
