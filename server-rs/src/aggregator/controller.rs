@@ -343,6 +343,10 @@ struct Controller {
     hub_removed: Option<(String, String, u64)>,
     /// Mail whose key could not be stored: id → rounds tried ([`MAX_PUT_TRIES`]).
     put_failures: HashMap<i64, u32>,
+    /// Parked (R6 review A4): the hub suspended the device role while this
+    /// computer's identity renewal is pending (`rotation_pending`) at this
+    /// chain version; no round until the chain moves, or until (ms).
+    suspended: Option<(u64, u64)>,
 }
 
 /// Run the controller until `env.cancel`.
@@ -359,6 +363,7 @@ pub async fn run(env: Env) {
         backoff: BACKOFF_MIN,
         hub_removed: None,
         put_failures: HashMap::new(),
+        suspended: None,
     };
     loop {
         if c.env.cancel.is_cancelled() {
@@ -418,6 +423,9 @@ impl Controller {
             }
             self.hub_removed = None;
         }
+        if let Some(wait) = self.parked() {
+            return wait;
+        }
         // The client and the keys are bound to this enrollment.
         if self
             .client
@@ -460,6 +468,15 @@ impl Controller {
                 // control the others goes now, and it stops asking (S2).
                 self.forget_removed(&view);
                 self.env.timing.idle_every.max(Duration::from_millis(1))
+            }
+            Err(HubError::Suspended) => {
+                // Parked until the chain moves — the renewal committed (the
+                // link then restarts with the new key) — or REFUSED_EVERY:
+                // not retried on the back-off meanwhile (R6 review A4).
+                tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
+                self.suspended = Some((*self.env.chain.borrow(), now_ms() + REFUSED_EVERY.as_millis() as u64));
+                self.report(&view, Some(HubError::Suspended.to_string()));
+                REFUSED_EVERY
             }
             Err(error) => {
                 let wait = match &error {
@@ -650,7 +667,7 @@ impl Controller {
         for admin in admins {
             match self.client.as_mut().expect("a client").ask(&admin).await {
                 Ok(()) => asked.push(admin),
-                Err(error @ (HubError::Unauthorized | HubError::Unreachable(_))) => return Err(error),
+                Err(error @ (HubError::Unauthorized | HubError::Unreachable(_) | HubError::Suspended)) => return Err(error),
                 Err(error) => tracing::warn!(%error, %admin, "could not ask an admin for keys"),
             }
         }
@@ -671,6 +688,19 @@ impl Controller {
             }
         }
         Ok(())
+    }
+
+    /// While parked after `rotation_pending` ([`Controller::suspended`]) at the
+    /// chain version now: how long still. Unparked once the chain moved or
+    /// the time is over.
+    fn parked(&mut self) -> Option<Duration> {
+        let (version, until) = self.suspended?;
+        let now = now_ms();
+        if *self.env.chain.borrow() == version && now < until {
+            return Some(Duration::from_millis(until - now));
+        }
+        self.suspended = None;
+        None
     }
 
     /// Whether a write was refused because the aggregator is off, its link
@@ -967,6 +997,8 @@ mod tests {
         ask_delay_ms: u64,
         /// Answer sign-ins `403 device_removed`.
         removed: bool,
+        /// Answer sign-ins `403 rotation_pending` (the device role suspended).
+        suspended: bool,
         /// How many times the mailbox was read, and at which read each mail was acknowledged.
         reads: usize,
         acked_at: Vec<(i64, usize)>,
@@ -1001,6 +1033,9 @@ mod tests {
                     if h.removed {
                         h.sessions += 1;
                         return (StatusCode::FORBIDDEN, Json(json!({"error": "device_removed"})));
+                    }
+                    if h.suspended {
+                        return (StatusCode::FORBIDDEN, Json(json!({"error": "rotation_pending"})));
                     }
                     let text = body["signature"].as_str().unwrap_or_default();
                     let bytes: Vec<u8> = (0..text.len() / 2)
@@ -1223,6 +1258,8 @@ mod tests {
         status: Arc<Mutex<Status>>,
         cancel: CancellationToken,
         task: tokio::task::JoinHandle<()>,
+        /// Wakes it as pushed mail would.
+        nudge: Arc<tokio::sync::Notify>,
         _dir: tempfile::TempDir,
     }
 
@@ -1246,6 +1283,7 @@ mod tests {
         let (bump, chain) = watch::channel(0u64);
         let status = Arc::new(Mutex::new(Status::default()));
         let cancel = CancellationToken::new();
+        let nudge: Arc<tokio::sync::Notify> = Arc::default();
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
             identity: Arc::new(identity),
@@ -1260,7 +1298,7 @@ mod tests {
                 ask_backoff: [Duration::from_secs(600); 3],
             },
             keys_out: watch::channel(None).0,
-            nudge: Arc::default(),
+            nudge: nudge.clone(),
             may_sign_in,
         }));
         Running {
@@ -1270,6 +1308,7 @@ mod tests {
             status,
             cancel,
             task,
+            nudge,
             _dir: dir,
         }
     }
@@ -1456,6 +1495,40 @@ mod tests {
         // The link signed in with the key in use: it is current.
         open.store(true, std::sync::atomic::Ordering::SeqCst);
         until(Duration::from_secs(10), "a sign-in", || hub.lock().unwrap().sessions > 0).await;
+        r.cancel.cancel();
+        r.task.await.unwrap();
+    }
+
+    /// R6 review A4: while this computer's identity renewal is pending the
+    /// hub suspends its device role (`403 rotation_pending`). The controller
+    /// parks — pushed mail does not wake it into another sign-in — until the
+    /// chain moves (the renewal written), then signs in again.
+    #[tokio::test]
+    async fn a_suspended_device_role_is_parked_until_the_chain_moves() {
+        let a = account();
+        let (hub, origin) = fake_hub(a.me.sign_public()).await;
+        hub.lock().unwrap().suspended = true;
+        let r = start(&a, &origin);
+        until(Duration::from_secs(10), "the first sign-in", || hub.lock().unwrap().attempts == 1).await;
+        until(Duration::from_secs(10), "the refusal said", || {
+            r.status.lock().unwrap().error.as_deref().is_some_and(|e| e.contains("rotation_pending"))
+        })
+        .await;
+        // Mail pushed meanwhile wakes it, and it stays parked.
+        for _ in 0..5 {
+            r.nudge.notify_one();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+        }
+        assert_eq!(hub.lock().unwrap().attempts, 1, "parked: no sign-in on a wake-up");
+        // The chain moved: it tries again (and parks again while suspended)…
+        r.bump.send_modify(|v| *v += 1);
+        until(Duration::from_secs(10), "a sign-in once the chain moved", || hub.lock().unwrap().attempts == 2).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(hub.lock().unwrap().attempts, 2);
+        // …and signs in once the hub lets it.
+        hub.lock().unwrap().suspended = false;
+        r.bump.send_modify(|v| *v += 1);
+        until(Duration::from_secs(10), "a session", || hub.lock().unwrap().sessions > 0).await;
         r.cancel.cancel();
         r.task.await.unwrap();
     }

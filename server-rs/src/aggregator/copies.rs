@@ -701,8 +701,12 @@ struct Copies {
     env: Env,
     store: Option<CopyStore>,
     backoff: Duration,
-    /// No connection before this (ms): `device_removed`, `host_devices_off`.
+    /// No connection before this (ms): `device_removed`, `host_devices_off`,
+    /// `rotation_pending`.
     quiet_until: Option<u64>,
+    /// Parked (R6 review A4): `rotation_pending` at this chain version — the
+    /// quiet ends as soon as the chain moves ([`Copies::unpark_if_moved`]).
+    parked: Option<u64>,
     /// The device session and when (ms) it expires.
     session: Option<(Arc<RwLock<Zeroizing<String>>>, u64)>,
     /// Streams that failed: when they may be read again (ms), and how often they failed.
@@ -731,6 +735,7 @@ pub async fn run(env: Env) {
         store: None,
         backoff: BACKOFF_MIN,
         quiet_until: None,
+        parked: None,
         session: None,
         failures: HashMap::new(),
         too_large: HashSet::new(),
@@ -837,12 +842,14 @@ impl Copies {
             return IDLE_EVERY;
         };
         self.env.live.set_hosts(&hosts.iter().map(|h| h.id.clone()).collect::<Vec<_>>());
+        self.unpark_if_moved();
         if let Some(until) = self.quiet_until {
             let now = now_ms();
             if now < until {
                 return Duration::from_millis(until - now).min(IDLE_EVERY);
             }
             self.quiet_until = None;
+            self.parked = None;
         }
         if self.store.is_none() {
             // The store is created only once there is something to keep.
@@ -972,7 +979,29 @@ impl Copies {
                 self.set_status(|s| s.error = Some("the hub lets no device that runs AI act as a device now".into()));
                 REFUSED_EVERY.min(IDLE_EVERY)
             }
+            "rotation_pending" => {
+                // This computer's identity renewal is pending: parked until
+                // the chain moves (the renewal written) or REFUSED_EVERY —
+                // never a removal, nothing deleted, and not retried on the
+                // back-off meanwhile (R6 review A4).
+                tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
+                self.session = None;
+                self.parked = Some(*self.env.chain.borrow());
+                self.quiet_until = Some(now_ms() + REFUSED_EVERY.as_millis() as u64);
+                self.set_status(|s| {
+                    s.error = Some("the hub suspends this device's device role while its identity renewal is pending (rotation_pending)".into())
+                });
+                IDLE_EVERY
+            }
             other => self.failed(format!("the hub refused: {other}")),
+        }
+    }
+
+    /// Parked after `rotation_pending` and the chain moved since: the quiet ends.
+    fn unpark_if_moved(&mut self) {
+        if self.parked.is_some_and(|v| v != *self.env.chain.borrow()) {
+            self.parked = None;
+            self.quiet_until = None;
         }
     }
 
@@ -1739,6 +1768,7 @@ mod tests {
             env,
             backoff: BACKOFF_MIN,
             quiet_until: None,
+            parked: None,
             session: None,
             failures: HashMap::new(),
             too_large: HashSet::new(),
@@ -1789,20 +1819,31 @@ mod tests {
 
     /// Host identity renewal (the hub phase's constraint): while this
     /// computer's renewal is pending the hub suspends its device role —
-    /// `rotation_pending` on `/v1/session` or `/v1/client`. A refusal like
-    /// any other, retried with backoff: nothing is deleted, nothing goes
-    /// quiet for an hour as for a removal.
+    /// `rotation_pending` on `/v1/session` or `/v1/client`. Not a removal:
+    /// nothing is deleted, nothing goes quiet for an hour. Parked (R6 review
+    /// A4) — no connection on the back-off — until the chain moves.
     #[tokio::test]
-    async fn a_suspended_device_role_is_retried_not_taken_for_a_removal() {
+    async fn a_suspended_device_role_is_parked_until_the_chain_moves_not_taken_for_a_removal() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "pendingtest");
         let (mut c, live) = live(&paths, &["m-2"]);
+        let (bump, chain) = watch::channel(3u64);
+        c.env.chain = chain;
         let wait = c.refused(&live.view, "rotation_pending");
-        assert!(wait <= BACKOFF_MAX, "{wait:?}");
-        assert!(c.quiet_until.is_none(), "not quiet as after a removal");
+        assert!(wait <= IDLE_EVERY, "{wait:?}");
+        let quiet = c.quiet_until.expect("parked");
+        assert!(quiet > now_ms() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < now_ms() + REMOVED_EVERY.as_millis() as u64);
+        assert_eq!(c.parked, Some(3));
         assert!(super::super::store::path(&paths).exists(), "the copies stay");
         assert!(c.store.is_some());
         assert!(c.env.status.lock().unwrap().error.as_deref().is_some_and(|e| e.contains("rotation_pending")));
+        // Woken, the chain where it was: still parked.
+        c.unpark_if_moved();
+        assert!(c.quiet_until.is_some() && c.parked.is_some());
+        // The chain moved (the renewal written, say): the quiet ends.
+        bump.send_modify(|v| *v += 1);
+        c.unpark_if_moved();
+        assert!(c.quiet_until.is_none() && c.parked.is_none());
     }
 
     /// R6 review: a stored cursor resumes under exactly the key recorded with
@@ -1822,7 +1863,11 @@ mod tests {
             time_ms: 1_700_000_000_000,
         }
         .sign(&old);
-        let state = r#"{"fromIndex":0,"items":[{"t":1}],"endIndex":1}"#.to_string();
+        let mut copy = Fold::empty(Kind::Session);
+        copy.apply(&(FMT_FEED_V1, br#"{"fromIndex":0,"items":[{"t":1}],"endIndex":1}"#.to_vec()))
+            .unwrap();
+        let state = copy.to_json();
+        assert!(Fold::restore(Kind::Session, &state).is_some());
         let keys = Keys(vec![(0, [3; 32])]);
         let resume = |head_key| Start::Resume {
             head: head.clone(),

@@ -43,6 +43,10 @@ pub enum HubError {
     Off,
     /// `403 not_in_chain`: the hub's chain does not list this computer yet.
     NotInChain,
+    /// `403 rotation_pending`: this computer's identity renewal is pending
+    /// and the hub suspends its device role until it is done (R6 review A4:
+    /// parked until its chain moves, not retried on the back-off).
+    Suspended,
     /// The network, a timeout, a hub that is down.
     Unreachable(String),
     /// Any other answer: its status and error code.
@@ -56,6 +60,7 @@ impl std::fmt::Display for HubError {
             HubError::Removed => f.write_str("the hub says this device was removed"),
             HubError::Off => f.write_str("the hub lets no device that runs AI act as a device now"),
             HubError::NotInChain => f.write_str("the hub does not list this device in the account yet"),
+            HubError::Suspended => f.write_str("the hub suspends this device's device role while its identity renewal is pending (rotation_pending)"),
             HubError::Unreachable(why) => write!(f, "the hub is unreachable: {why}"),
             HubError::Refused(status, code) => write!(f, "the hub refused: {status} {code}"),
         }
@@ -166,6 +171,7 @@ impl DeviceClient {
             (403, "device_removed") => HubError::Removed,
             (403, "host_devices_off") => HubError::Off,
             (403, "not_in_chain") => HubError::NotInChain,
+            (403, "rotation_pending") => HubError::Suspended,
             (500..=599, _) => HubError::Unreachable(format!("{status} {code}")),
             _ => HubError::Refused(status, code),
         })
@@ -263,13 +269,10 @@ mod tests {
         assert_eq!(DeviceClient::judge(403, &body("host_devices_off")), Err(HubError::Off));
         assert_eq!(DeviceClient::judge(403, &body("not_in_chain")), Err(HubError::NotInChain));
         // Host identity renewal: while this computer's renewal is pending
-        // its device role is suspended — a refusal like any other, retried
-        // with backoff, never a removal; a retired key's session is only
-        // unauthorized (sync the chain first).
-        assert_eq!(
-            DeviceClient::judge(403, &body("rotation_pending")),
-            Err(HubError::Refused(403, "rotation_pending".into()))
-        );
+        // its device role is suspended — its own refusal, parked until the
+        // chain moves (R6 review A4), never a removal; a retired key's
+        // session is only unauthorized (sync the chain first).
+        assert_eq!(DeviceClient::judge(403, &body("rotation_pending")), Err(HubError::Suspended));
         assert_eq!(DeviceClient::judge(401, &body("rotated")), Err(HubError::Unauthorized));
         assert!(matches!(DeviceClient::judge(503, &body("unavailable")), Err(HubError::Unreachable(_))));
         assert_eq!(
