@@ -211,7 +211,7 @@ export function RenewalLine({
                     </span>
                   </span>
                   <span data-testid={`renewal-shows-code-${id}`} className="flex flex-col items-start gap-1">
-                    <span className="text-fg">{t("It shows a code: it still holds its current key.")}</span>
+                    <span className="text-fg">{t("It does not say “replaced elsewhere”: confirm on the device, with the code it shows.")}</span>
                     <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                       {onCode && (
                         <button type="button" data-testid={`renewal-code-${id}`} className={cn(primary, "h-7 px-3 text-xs")} onClick={onCode}>

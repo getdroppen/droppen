@@ -937,6 +937,20 @@ export class CloudAccount {
    * loses one, nor does another tab writing over it.
    */
   private keptMemory: KeptDispute[] = [];
+  /**
+   * What re-verifying a kept dispute on this page's chain found (R6 L6), by
+   * {@link disputeId}: `ok`, `bad` (dropped: it isolates nothing), or
+   * `checking`. One not looked at yet — or that the chain cannot judge yet —
+   * still counts, as a wait: isolation fails safe.
+   */
+  private keptChecks = new Map<string, "ok" | "bad" | "checking">();
+  /**
+   * Bumped whenever what an automatic renewal may not go past changes (Codex
+   * round 5): this device's guard turned on, a dispute kept or heard of, the
+   * hub's isolated hosts. An attempt in flight that sees it move checks again
+   * at once — and every attempt checks once more right before publication.
+   */
+  private assuranceGen = 0;
   private readonly crossTab: CrossTab | null;
   /** {@link hostsToRotate} for the chain as it was last asked, by its head (and the narrowed groups it read). */
   private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure> } | null = null;
@@ -1867,7 +1881,15 @@ export class CloudAccount {
    * chain, which this device then takes; anything else waits for the user to
    * approve or remove the device first.
    */
-  private async appendBatch(build: (chain: ChainState) => Promise<Action[]>, opts: { overHeld?: boolean; asV3?: boolean } = {}): Promise<Entry[]> {
+  private async appendBatch(
+    build: (chain: ChainState) => Promise<Action[]>,
+    opts: {
+      overHeld?: boolean;
+      asV3?: boolean;
+      /** Checked right before the signed batch is published (after the signing's awaits), on the chain it was built on: a throw publishes nothing. */
+      beforePublish?: (base: ChainState) => void;
+    } = {},
+  ): Promise<Entry[]> {
     this.assertNotForked();
     for (let attempt = 0; ; attempt++) {
       if (!this.state) throw new AccountError("notInChain", "the account has no chain yet");
@@ -1885,6 +1907,7 @@ export class CloudAccount {
       await verifyBatch(base, entries);
       try {
         this.assertNotForked();
+        opts.beforePublish?.(base);
         await this.api.appendChain(
           this.session.token,
           entries.map((e) => encodeEntry(e)),
@@ -2623,13 +2646,13 @@ export class CloudAccount {
     id: string,
     courier: MachineKeyCourier,
     reencrypt = false,
-    /** Entries the new epoch follows in the same call (a narrowed accept list: review D2). */
-    prefix: Action[] = [],
+    /** Entries the new epoch follows in the same call (a narrowed accept list: review D2), made for the chain each batch is built on. */
+    prefix: Action[] | ((chain: ChainState) => Action[]) = [],
   ): Promise<{ mkEpoch: number; ukEpoch: number; result: DeliveryResult; hostKeysTo: string[]; userKey?: FreshUserKey }> {
     if (!this.state?.machine(id)) throw new AccountError("notInChain", "no device {{id}} that runs AI in the chain", undefined, undefined, { id });
     const mk = random32();
     try {
-      const { mkEpoch, ukEpoch, userKey } = await this.commitHostKey(id, mk, () => prefix, (build) => this.appendBatch(build));
+      const { mkEpoch, ukEpoch, userKey } = await this.commitHostKey(id, mk, (chain) => (typeof prefix === "function" ? prefix(chain) : prefix), (build) => this.appendBatch(build));
       // The devices that hold no user key and that it accepts read it with this (only those: review D2).
       const { sent } = await this.mailHostKey(id, mkEpoch, mk);
       this.emit();
@@ -3466,20 +3489,20 @@ export class CloudAccount {
     const { admitted, shutOut } = acceptChange(chain, host, accept);
     // A host that may have had its identity key copied, or is isolated, is let control no other one until it renewed it (§4.1, §7
     // decision 8). One that cannot renew (an older agent, the hub not taking renewals yet) stays under the re-enroll warning instead.
-    const exposed = admitted.filter((id) => this.mustRenewFirst(id));
-    if (exposed.length) {
-      throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
-        ids: exposed.join(", "),
-      });
-    }
+    // Checked here, and again on the chain every (re)built batch goes on (Codex round 6).
+    this.refuseExposedAdmission(chain, host, accept);
     const setAccept: Action = { type: "setAccept", host, from: accept };
+    const checked = (c: ChainState): Action[] => {
+      this.refuseExposedAdmission(c, host, accept);
+      return [setAccept];
+    };
     if (shutOut.length) {
       if (courier === NO_COURIER) throw new AccountError("invalidEntry", "shutting a device out hands the device that runs AI a new key: say how", undefined, RULES.hostKeyNext);
       // Those shut out may have read its key: a new epoch, in the same call (review D2).
-      const issued = await this.issueMachineKey(host, courier, false, [setAccept]);
+      const issued = await this.issueMachineKey(host, courier, false, checked);
       return { narrowed: true, admitted, shutOut, mkEpoch: issued.mkEpoch, result: issued.result, hostKeysTo: issued.hostKeysTo, ...(issued.userKey ? { userKey: issued.userKey } : {}) };
     }
-    await this.append(setAccept);
+    await this.appendBatch(async (c) => checked(c));
     // Let in: the host's committed keys, so it reads what the host wrote.
     for (const id of admitted) {
       try {
@@ -3581,6 +3604,7 @@ export class CloudAccount {
     const was = this.renewal;
     const flagged = note.flagged ?? new Set<string>();
     if (same(was.renews, note.renews) && same(was.pending, note.pending) && same(was.isolated, note.isolated) && same(was.flagged ?? new Set(), flagged)) return;
+    if ([...note.isolated].some((h) => !was.isolated.has(h)) || [...flagged].some((h) => !(was.flagged ?? new Set()).has(h))) this.assuranceGen++;
     this.renewal = { renews: new Set(note.renews), pending: new Set(note.pending), isolated: new Set(note.isolated), flagged: new Set(flagged) };
     // What can renew changes what is exposed (`hostsToRotate`).
     this.exposureCache = null;
@@ -3646,7 +3670,7 @@ export class CloudAccount {
             }
             if (sameAccept(chain.acceptPolicy(c.host), from)) continue;
             const { admitted, shutOut } = acceptChange(chain, c.host, from);
-            const risky = admitted.filter((id) => this.mustRenewFirst(id));
+            const risky = admitted.filter((id) => this.mustRenewFirstOn(chain, id));
             if (risky.length) {
               throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
                 ids: risky.join(", "),
@@ -3741,6 +3765,9 @@ export class CloudAccount {
     const kept = this.keptDisputes();
     const fresh = disputesNotIn(kept, found);
     if (!fresh.length) return;
+    // Verified just now by the caller (`checkStatement`), on this page's chain.
+    for (const d of fresh) this.keptChecks.set(disputeId(d), "ok");
+    this.assuranceGen++;
     // Memory holds what storage is told: if the write fails, nothing is lost here.
     this.keptMemory = capDisputes(this.state, mergeDisputes(kept, fresh));
     this.write(keptDisputesKey(this.account), JSON.stringify(this.keptMemory));
@@ -3755,7 +3782,10 @@ export class CloudAccount {
     if (m.account === this.account) {
       const heard = parseDisputes(m.disputes);
       const fresh = disputesNotIn(this.keptDisputes(), heard);
-      if (fresh.length) this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptDisputes(), fresh));
+      if (fresh.length) {
+        this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptDisputes(), fresh));
+        this.assuranceGen++;
+      }
     } else if (!("storage" in m)) return;
     this.exposureCache = null;
     this.emit();
@@ -3778,7 +3808,38 @@ export class CloudAccount {
       this.keptRaw = raw;
       this.keptParsed = parsed;
     }
-    return this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
+    const all = this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
+    // Each read back is verified again on this page's chain (R6 L6); one that does not check out counts for nothing.
+    for (const d of all) this.checkKept(d);
+    return all.filter((d) => this.keptChecks.get(disputeId(d)) !== "bad");
+  }
+
+  /**
+   * Verify kept dispute `d` on this page's chain, once (R6 L6): the statement
+   * must be signed by the key the renewal at `d.seq` retired. A chain that
+   * has no such entry yet cannot judge it: it is looked at again when asked
+   * once the chain has it — until then it counts.
+   */
+  private checkKept(d: KeptDispute): void {
+    const id = disputeId(d);
+    const chain = this.state;
+    if (this.keptChecks.has(id) || !chain || chain.seq < d.seq) return;
+    this.keptChecks.set(id, "checking");
+    void (async () => {
+      let ok = false;
+      try {
+        ok = await chain.verifyRotateDispute(d.host, d.seq, fromHex(d.sig));
+      } catch {
+        ok = false;
+      }
+      this.keptChecks.set(id, ok ? "ok" : "bad");
+      if (!ok) {
+        console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq} does not check out: dropped`);
+        this.keptMemory = this.keptMemory.filter((k) => disputeId(k) !== id);
+        this.exposureCache = null;
+        this.emit();
+      }
+    })();
   }
 
   /** Whether a kept dispute isolates host `id` on this page's chain. */
@@ -3871,10 +3932,16 @@ export class CloudAccount {
         throw new RenewalError("superseded", `a device that could control ${host} was lost after its new key was staged: starting again`);
       }
     }
+    this.checkAssurance(chain, host, assurance);
+  }
+
+  /** What only a renewal confirmed on the device may go past (§3.8, §4.4): isolation, the hub's flag, the account's policy, this device's guard. */
+  private checkAssurance(chain: ChainState, host: string, assurance: Assurance): void {
     if (assurance === ASSURANCE_ON_DEVICE) return;
     if (this.renewal.isolated.has(host) || this.keptDisputes().some((d) => d.host === host && disputeIsolates(chain, d))) {
       throw new RenewalError("needsAssurance", `${host} is isolated: renew its identity key with the code its screen shows`);
     }
+    if (this.flagged(host)) throw new RenewalError("needsAssurance", `the hub holds ${host} isolated: renew its identity key with the code its screen shows`, "flagged");
     if (chain.alwaysAssured || this.localAssured()) {
       throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
     }
@@ -3885,6 +3952,13 @@ export class CloudAccount {
     // Nothing of a renewal leaves a page whose view forked: every call to the host and every key goes through the latch.
     this.assertNotForked();
     const courier = this.guardedRenewal(unguarded);
+    // What an automatic renewal may not go past, as it stands now: when it moves, the attempt checks again at once.
+    let gen = this.assuranceGen;
+    const recheck = () => {
+      if (gen === this.assuranceGen || !this.state) return;
+      gen = this.assuranceGen;
+      if (this.state.machine(host)) this.checkAssurance(this.state, host, opts.assurance);
+    };
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     if (!chain0.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
@@ -3919,6 +3993,7 @@ export class CloudAccount {
         console.warn("cloud account: sync before renewing:", error);
       }
       const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now);
+      recheck();
       const chain = this.state!;
       const old = chain.machine(host)?.info;
       if (!old) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
@@ -3937,7 +4012,7 @@ export class CloudAccount {
         }
       }
       opts.onStep?.("waiting");
-      let readyMs = await this.waitStaged(host, rotation, answer.readyMs, sleep, now, opts);
+      let readyMs = await this.waitStaged(host, rotation, answer.readyMs, sleep, now, opts, recheck);
       opts.onStep?.("writing");
       const mk = random32();
       try {
@@ -3954,7 +4029,9 @@ export class CloudAccount {
                 this.checkRenewalOn(chain, host, rotation, assurance);
                 return [{ type: "rotateHostKey", rotation }];
               },
-              (build) => this.appendBatch(build),
+              // …and once more right before publication, after the signing's awaits (Codex round 5): the guard or a dispute
+              // that arrived meanwhile stops it there.
+              (build) => this.appendBatch(build, { beforePublish: (base) => this.checkRenewalOn(base, host, rotation, assurance) }),
             );
           } catch (error) {
             // Early by the hub's clock: its `ready_ms` says when (a few times; the window is short).
@@ -4090,10 +4167,19 @@ export class CloudAccount {
    * holder of the old key: `not_acked`, `conflict`) is a {@link RenewalError}
    * `voided`; so is one staged with other keys.
    */
-  private async waitStaged(host: string, rotation: HostRotation, answered: number | null, sleep: (ms: number) => Promise<void>, now: () => number, opts: RenewOptions): Promise<number> {
+  private async waitStaged(
+    host: string,
+    rotation: HostRotation,
+    answered: number | null,
+    sleep: (ms: number) => Promise<void>,
+    now: () => number,
+    opts: RenewOptions,
+    recheck: () => void = () => undefined,
+  ): Promise<number> {
     const deadline = now() + (opts.maxWaitMs ?? 10 * 60_000);
     const readyMs = answered;
     for (;;) {
+      recheck();
       let row;
       try {
         row = (await this.api.rotations(this.session.token)).hosts.find((r) => r.host === host);
@@ -4152,6 +4238,7 @@ export class CloudAccount {
   setLocalAssured(on: boolean): void {
     if (on) this.write(localAssuredKey(this.account), "1");
     else this.forget(localAssuredKey(this.account));
+    if (on) this.assuranceGen++;
     this.emit();
   }
 
@@ -4167,8 +4254,31 @@ export class CloudAccount {
    * Save; `setAccept` refuses it.
    */
   mustRenewFirst(id: string): boolean {
-    if (!this.state?.device(id)?.host) return false;
-    return this.isolated(id) || (this.renews(id) && this.hostsToRotate().has(id));
+    return this.state ? this.mustRenewFirstOn(this.state, id) : false;
+  }
+
+  /**
+   * {@link mustRenewFirst} on `chain` — the chain a batch is being built on
+   * (Codex round 6: a 409's rebuild goes on a newer one). The hub's isolated
+   * flag holds a host back too (R6 L5): unverified, it is no proof — but no
+   * reason to let it control another host either.
+   */
+  mustRenewFirstOn(chain: ChainState, id: string): boolean {
+    if (!chain.device(id)?.host) return false;
+    if (this.flagged(id) || this.renewal.isolated.has(id) || this.keptDisputes().some((d) => d.host === id && disputeIsolates(chain, d))) return true;
+    const exposed = chain === this.state ? this.hostsToRotate() : hostsToRotate(chain, (h) => this.renews(h));
+    return this.renews(id) && exposed.has(id);
+  }
+
+  /** Refuse an accept list for `host` that lets in a host that must renew first, on `chain` (§4.1, §7 decision 8). */
+  private refuseExposedAdmission(chain: ChainState, host: string, accept: Accept): void {
+    const { admitted } = acceptChange(chain, host, accept);
+    const exposed = admitted.filter((id) => this.mustRenewFirstOn(chain, id));
+    if (exposed.length) {
+      throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
+        ids: exposed.join(", "),
+      });
+    }
   }
 
   /**
@@ -5549,6 +5659,13 @@ class NothingToWrite extends Error {}
 export interface KeptDispute {
   host: string;
   seq: number;
+  /**
+   * The statement's signature (hex), by the key the renewal at `seq` retired
+   * (R6 L6): kept with it, so that whatever reads it back — a reload, another
+   * tab — verifies it again on its own chain (`verifyRotateDispute`) before it
+   * counts for anything but a wait.
+   */
+  sig: string;
 }
 
 /** Kept disputes as stored (anything else in the list is dropped). */
@@ -5557,21 +5674,26 @@ function parseDisputes(list: unknown): KeptDispute[] {
   return mergeDisputes(
     [],
     list.flatMap((d) => {
-      const x = (d && typeof d === "object" ? d : {}) as { host?: unknown; seq?: unknown };
-      return typeof x.host === "string" && Number.isSafeInteger(x.seq) && (x.seq as number) > 0 ? [{ host: x.host, seq: x.seq as number }] : [];
+      const x = (d && typeof d === "object" ? d : {}) as { host?: unknown; seq?: unknown; sig?: unknown };
+      return typeof x.host === "string" && Number.isSafeInteger(x.seq) && (x.seq as number) > 0 && typeof x.sig === "string" && /^[0-9a-f]{128}$/.test(x.sig)
+        ? [{ host: x.host, seq: x.seq as number, sig: x.sig }]
+        : [];
     }),
   );
 }
 
-/** Those of `found` not in `kept`, one each (by host and renewal). */
+/** A dispute's identity: its host, its renewal and its signature (one each; a forged copy is another, dropped once checked). */
+const disputeId = (d: KeptDispute) => `${d.seq}@${d.host}@${d.sig}`;
+
+/** Those of `found` not in `kept`, one each. */
 function disputesNotIn(kept: readonly KeptDispute[], found: readonly KeptDispute[]): KeptDispute[] {
-  const seen = new Set(kept.map((d) => `${d.seq}@${d.host}`));
+  const seen = new Set(kept.map(disputeId));
   const out: KeptDispute[] = [];
   for (const d of found) {
-    const id = `${d.seq}@${d.host}`;
+    const id = disputeId(d);
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ host: d.host, seq: d.seq });
+    out.push({ host: d.host, seq: d.seq, sig: d.sig });
   }
   return out;
 }
