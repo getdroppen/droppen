@@ -904,7 +904,12 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.to_string());
         st.rotation.refused_ms = None;
         st.rotation.unreadable_ms = None;
-        super::dispute::statement(&st, &shared.identity, now_ms())
+        // Once the hub took it (its file is gone then), not again.
+        if st.rotation.evidence_ms.is_some() {
+            Err(())
+        } else {
+            Ok(super::dispute::statement(&st, &shared.identity, now_ms()))
+        }
     };
     tracing::warn!(
         alarm = "foreign_rotation",
@@ -916,7 +921,7 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     shared.save();
     shared.cancel.cancel();
     match statement {
-        Some(statement) => {
+        Ok(Some(statement)) => {
             match super::dispute::keep(&shared.paths, &statement) {
                 Ok(true) => tracing::warn!(seq = statement.seq, "signed a dispute of that renewal with the retired key; delivering it to the hub"),
                 Ok(false) => {}
@@ -924,7 +929,8 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
             }
             super::dispute::deliver(&shared.paths);
         }
-        None => tracing::warn!("the device chain retired no key this device holds: no dispute statement to sign"),
+        Ok(None) => tracing::warn!("the device chain retired no key this device holds: no dispute statement to sign"),
+        Err(()) => tracing::info!("the hub took this device's dispute statement already"),
     }
 }
 

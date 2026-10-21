@@ -13,14 +13,16 @@
 //!   holds, its hash and the sign key it installed, signed with that key
 //!   ([`statement`]).
 //! - **Kept** before anything is sent: `agent/rotation-dispute-<seq>.json`,
-//!   written whole and flushed ([`keep`]). It needs no seed, so it outlives
-//!   "add this device again with a new identity".
+//!   written whole and flushed ([`keep`]). It needs no seed and holds no
+//!   secret, so it outlives "add this device again with a new identity" and
+//!   "disconnect" alike, until the hub has it.
 //! - **Delivered** to `POST /v1/rotations/{host}/disputes` `{seq, entry_hash,
 //!   sig}` — no session: the signature is the credential — until the hub
 //!   says 200, or 410 `host_removed` (then it stops). Anything else is tried
 //!   again 30 s later, doubling to 10 minutes, and again at every start
-//!   ([`deliver`]). The hub's 200 is noted on the file and as
-//!   `RotationNote.evidence_ms`.
+//!   ([`deliver`]), enrolled or not. The hub's 200 is noted as
+//!   `RotationNote.evidence_ms` (while that enrollment is still here); then,
+//!   as after a 410, the file is marked done and deleted.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -300,17 +302,13 @@ async fn deliveries(paths: Paths, guard: Running) {
                     let at = now_ms();
                     tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
                     s.acked_ms = Some(at);
-                    if let Err(error) = write(&path, &s) {
-                        tracing::error!(%error, "cannot note that the hub took the dispute statement");
-                    }
                     note_evidence(&paths, &s, at);
+                    done(&path, &s);
                 }
                 Delivery::Removed => {
                     tracing::info!(seq = s.seq, "the hub says this device was removed: its dispute statement is not delivered any more");
                     s.stopped = Some("host_removed".into());
-                    if let Err(error) = write(&path, &s) {
-                        tracing::error!(%error, "cannot note that delivering the dispute statement stopped");
-                    }
+                    done(&path, &s);
                 }
                 Delivery::Again(why) => {
                     tracing::warn!(seq = s.seq, %why, "cannot deliver this device's dispute statement yet; trying again in {wait:?}");
@@ -323,6 +321,35 @@ async fn deliveries(paths: Paths, guard: Running) {
             wait = (wait * 2).min(RETRY_MAX);
         }
     }
+}
+
+/// Delivering `s` is over (200, or 410): it is marked so first — a crash
+/// right after never sends it again — and then deleted; nothing needs it
+/// any more.
+fn done(path: &std::path::Path, s: &Statement) {
+    if let Err(error) = write(path, s) {
+        tracing::error!(%error, "cannot note that delivering the dispute statement is over");
+        return;
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => super::sync_dir(path),
+        Err(error) => tracing::warn!(%error, "cannot delete a dispute statement delivered already (it is not sent again)"),
+    }
+}
+
+/// Whether `path` (a file in `agent/`) is a dispute statement still to be
+/// delivered: what "disconnect" keeps ([`super::control::unenroll_files`]) —
+/// signed evidence with no secret in it, which the hub may not have yet.
+pub fn is_pending_statement(path: &std::path::Path) -> bool {
+    let named = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("rotation-dispute-") && n.ends_with(".json"));
+    named
+        && std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Statement>(&b).ok())
+            .is_some_and(|s| s.pending())
 }
 
 /// The hub took `s`: noted for the local settings — in the state of the
@@ -519,8 +546,8 @@ mod tests {
 
     /// Kept before anything is sent, once per renewal; delivered — no session
     /// — again after the hub's 5xx and after a timeout, 30 s doubling (here
-    /// shortened), until it says 200; then noted on the file and as
-    /// `evidence_ms`, and not delivered again.
+    /// shortened), until it says 200; then noted as `evidence_ms`, the file
+    /// deleted, and not delivered again.
     #[tokio::test]
     async fn a_statement_is_delivered_again_until_the_hub_takes_it() {
         let (k0, k1) = (MachineIdentity::from_seed(&[4; 32]), MachineIdentity::from_seed(&[5; 32]));
@@ -538,7 +565,8 @@ mod tests {
             assert_eq!(std::fs::metadata(path(&paths, s.seq)).unwrap().permissions().mode() & 0o777, 0o600);
         }
         deliver(&paths);
-        until("taken", || kept(&paths).first().is_some_and(|(_, s)| s.acked_ms.is_some())).await;
+        until("taken, and then deleted", || !path(&paths, s.seq).exists()).await;
+        assert!(kept(&paths).is_empty());
         let posts: Vec<(String, Value, Instant)> = fake.lock().unwrap().posts.clone();
         assert_eq!(posts.len(), 4, "503, a timeout, 500, then 200");
         for (host, body, _) in &posts {
@@ -573,11 +601,11 @@ mod tests {
         // The hub is well again; the next start delivers it.
         fake.lock().unwrap().answers.clear();
         deliver(&paths);
-        until("taken after the restart", || kept(&paths)[0].1.acked_ms.is_some()).await;
+        until("taken after the restart", || kept(&paths).is_empty()).await;
     }
 
-    /// 410 `host_removed`: nobody needs it any more — delivering stops, noted
-    /// on the file, never sent again, no evidence noted.
+    /// 410 `host_removed`: nobody needs it any more — delivering stops, the
+    /// file goes, never sent again, no evidence noted.
     #[tokio::test]
     async fn a_removed_host_stops_the_delivery() {
         let (k0, k1) = (MachineIdentity::from_seed(&[4; 32]), MachineIdentity::from_seed(&[5; 32]));
@@ -586,12 +614,11 @@ mod tests {
         let (_dir, paths) = instance("disputegone", [4; 32], &st);
         keep(&paths, &statement(&st, &k0, now_ms()).unwrap()).unwrap();
         deliver(&paths);
-        until("stopped", || kept(&paths)[0].1.stopped.as_deref() == Some("host_removed")).await;
+        until("stopped, and deleted", || kept(&paths).is_empty()).await;
         until("the delivery ends", || !delivering(&paths)).await;
         deliver(&paths);
         tokio::time::sleep(RETRY_MAX * 2).await;
         assert_eq!(fake.lock().unwrap().posts.len(), 2);
-        assert!(kept(&paths)[0].1.acked_ms.is_none());
         assert!(AgentState::load(&paths).unwrap().unwrap().rotation.evidence_ms.is_none());
     }
 
@@ -611,7 +638,7 @@ mod tests {
         assert_eq!(kept(&paths), vec![(path(&paths, s.seq), s.clone())], "the statement is not");
         fake.lock().unwrap().answers.clear();
         deliver(&paths);
-        until("taken", || kept(&paths)[0].1.acked_ms.is_some()).await;
+        until("taken", || kept(&paths).is_empty()).await;
         assert_eq!(fake.lock().unwrap().posts[0].1["sig"], json!(s.sig));
     }
 }

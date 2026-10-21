@@ -1270,6 +1270,8 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
         script.accept = vec![thief().sign_public()];
         script.rotated = vec![old.sign_public()];
     }
+    // Its own trouble twice first: the statement waits on disk meanwhile.
+    hub.script.lock().unwrap().dispute_answers = vec![503, 503];
     let before = hub.logins().len();
     let entries = a.renew_to(&thief());
     hub.send_entries(&entries);
@@ -1281,10 +1283,14 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
+    let file = super::dispute::path(&a.paths, entries[0].seq());
+    assert!(file.ends_with(format!("agent/rotation-dispute-{}.json", entries[0].seq())));
+    assert!(file.exists(), "kept until the hub has it");
+    until("the hub's 200", || hub.disputes().len() == 3).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), before, "no sign-in with the retired key on purpose");
     let disputes = hub.disputes();
-    assert_eq!(disputes.len(), 1, "{disputes:?}");
+    assert!(disputes.iter().all(|d| d == &disputes[0]), "the same statement each time");
     let (path, body) = &disputes[0];
     assert_eq!(path, "/v1/rotations/m-1/disputes");
     let seq = entries[0].seq();
@@ -1292,14 +1298,11 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert_eq!(body["entry_hash"].as_str(), Some(hex(&a.hub.hash_at(seq).unwrap()).as_str()));
     let sig = unhex64(body["sig"].as_str().unwrap());
     assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with rh-proto on the chain");
-    let kept = super::dispute::kept(&a.paths);
-    assert_eq!(kept.len(), 1);
-    assert!(kept[0].0.ends_with(format!("agent/rotation-dispute-{seq}.json")));
     until("the hub's 200 noted", || {
         AgentState::load(&a.paths).unwrap().unwrap().rotation.evidence_ms.is_some()
     })
     .await;
-    assert!(super::dispute::kept(&a.paths)[0].1.acked_ms.is_some());
+    until("the file gone once delivered", || !file.exists()).await;
     let st = AgentState::load(&a.paths).unwrap().unwrap();
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
@@ -1319,7 +1322,56 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("it stops at once").unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), before, "no sign-in with a key the chain retired");
-    assert_eq!(hub.disputes().len(), 1);
+    assert_eq!(hub.disputes().len(), 3);
+}
+
+/// The undelivered statement survives "disconnect" (#6 follow-up): a real
+/// host told "replaced elsewhere" whose user disconnects instead of adding
+/// it again would otherwise delete the only evidence before the hub has it.
+/// Everything else in `agent/` goes; the statement is delivered after the
+/// unenroll — also after a restart — and only then deleted.
+#[tokio::test]
+async fn an_undelivered_dispute_statement_survives_disconnecting() {
+    let mut a = Account::new();
+    let old = machine();
+    let mut script = Script::rotating(vec![old.sign_public()]);
+    script.dispute_answers = vec![503; 10_000];
+    let hub = FakeHub::start(script, a.entries.clone()).await;
+    let shared = a.shared(&hub.url, &Arc::default());
+    let task = signed_in(&shared).await;
+    {
+        let mut script = hub.script.lock().unwrap();
+        script.accept = vec![thief().sign_public()];
+        script.rotated = vec![old.sign_public()];
+    }
+    let entries = a.renew_to(&thief());
+    hub.send_entries(&entries);
+    tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
+    let seq = entries[0].seq();
+    let file = super::dispute::path(&a.paths, seq);
+    until("a first delivery", || !hub.disputes().is_empty()).await;
+    assert!(file.exists());
+    // Disconnect before the hub has it.
+    super::control::Control::new(a.paths.clone()).unenroll().await.unwrap();
+    assert!(file.exists(), "the statement survives");
+    let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, vec![file.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
+    assert!(!super::state::exists(&a.paths));
+    // Still delivered, unenrolled…
+    let tried = hub.disputes().len();
+    until("a delivery after the unenroll", || hub.disputes().len() > tried).await;
+    // …and after a restart (the process ends; the next start delivers it).
+    super::dispute::stop_delivery(&a.paths);
+    until("the process gone", || !super::dispute::delivering(&a.paths)).await;
+    assert!(file.exists());
+    hub.script.lock().unwrap().dispute_answers.clear();
+    super::dispute::deliver(&a.paths);
+    until("delivered, and only then deleted", || !file.exists()).await;
+    let sig = unhex64(hub.disputes().last().unwrap().1["sig"].as_str().unwrap());
+    assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig));
+    // Done: a disconnect now leaves nothing at all.
+    super::control::unenroll_files(&a.paths).unwrap();
+    assert!(!file.parent().unwrap().exists());
 }
 
 /// Contract §10: a hub refusing the key in use as `rotated` is not
