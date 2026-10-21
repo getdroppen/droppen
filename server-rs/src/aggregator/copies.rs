@@ -349,7 +349,13 @@ impl PageSource {
 /// floor, when it had one), or from a stored cursor.
 enum Start {
     Fresh { floor: Option<Floor> },
-    Resume { head: SignedHead, state: String },
+    /// `head_key`: the host's key the cursor was verified under when it was
+    /// stored (none in a row older than renewals: the host's key now).
+    Resume {
+        head: SignedHead,
+        state: String,
+        head_key: Option<[u8; 32]>,
+    },
 }
 
 /// One stream to follow, and where to.
@@ -366,6 +372,32 @@ struct Task {
     tx: mpsc::UnboundedSender<Update>,
     /// Where the copy is published for the local gateway once caught up.
     live: Arc<LiveCopies>,
+}
+
+/// Where a stream's task starts reading, and the copy it folds into.
+///
+/// A stored cursor was verified, when it was stored, under the key recorded
+/// with it — one the host held (`keys_at`): it may have renewed its identity
+/// key since — and is checked under exactly that key again, never under
+/// whichever retired key happens to verify. One that is not is read again
+/// from the start.
+fn started(want: &Want, machine_key: [u8; 32], retired: &[[u8; 32]], keys: &Keys, start: Start) -> (Follower, Fold) {
+    let fresh = |floor| (Follower::new(want.stream, machine_key, &keys.0).with_floor(floor), Fold::empty(want.kind));
+    match start {
+        Start::Fresh { floor } => fresh(floor),
+        Start::Resume { head, state, head_key } => {
+            let signed_by = head_key.unwrap_or(machine_key);
+            let held = (signed_by == machine_key || retired.contains(&signed_by)) && head.verify(&signed_by);
+            let floor = held.then(|| Floor::of(&head));
+            match (
+                Follower::resume_stored(want.stream, machine_key, &signed_by, retired, &keys.0, head),
+                Fold::restore(want.kind, &state),
+            ) {
+                (Ok(f), Some(fold)) => (f, fold),
+                _ => fresh(floor),
+            }
+        }
+    }
 }
 
 /// Follow one stream until the link closes, `stop`, or an error.
@@ -386,23 +418,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
         live,
     } = task;
     let key = Key::new(&want.host, want.kind, &want.name);
-    let fresh = |floor| (Follower::new(want.stream, machine_key, &keys.0).with_floor(floor), Fold::empty(want.kind));
-    let (mut follower, fold) = match start {
-        Start::Fresh { floor } => fresh(floor),
-        Start::Resume { head, state } => {
-            // Stored here, verified when it was: under any key the host held
-            // (`keys_at`) — it may have renewed its identity key since.
-            let held = std::iter::once(&machine_key).chain(&retired).any(|k| head.verify(k));
-            let floor = held.then(|| Floor::of(&head));
-            match (
-                Follower::resume_stored(want.stream, machine_key, &retired, &keys.0, head),
-                Fold::restore(want.kind, &state),
-            ) {
-                (Ok(f), Some(fold)) => (f, fold),
-                _ => fresh(floor),
-            }
-        }
-    };
+    let (mut follower, fold) = started(&want, machine_key, &retired, &keys, start);
     let slot: Slot = Arc::new(Mutex::new(Published::new(fold, follower.from_seq(), 0)));
     // Whether the slot is the one the gateway shows (once caught up).
     let mut published = false;
@@ -1122,7 +1138,7 @@ struct Live {
     /// When (ms) each row was last written in this connection.
     written: HashMap<(String, Kind, String), u64>,
     /// Heads of unchanged copies to write (a heartbeat: how current they are).
-    touches: HashMap<(String, Kind, String), (StreamId, SignedHead)>,
+    touches: HashMap<(String, Kind, String), (StreamId, SignedHead, [u8; 32])>,
     online: BTreeMap<String, Option<bool>>,
     reported: Option<BTreeMap<String, HostCopy>>,
 }
@@ -1316,8 +1332,9 @@ impl Live {
                         head: Some(head),
                         state: Some(state),
                         stream,
+                        head_key,
                         ..
-                    })) if stream == want.stream => Start::Resume { head, state },
+                    })) if stream == want.stream => Start::Resume { head, state, head_key },
                     _ => Start::Fresh { floor },
                 },
                 _ => Start::Fresh { floor },
@@ -1374,6 +1391,9 @@ impl Live {
                         floor: head.as_ref().map(Floor::of),
                     },
                 );
+                // The host key its stream task verifies heads under: the key
+                // this head is checked with again when the copy carries on.
+                let head_key = self.host(&want.host).map(|h| h.machine_key);
                 self.pending.insert(
                     key,
                     Row {
@@ -1383,6 +1403,7 @@ impl Live {
                         stream: want.stream,
                         epoch: want.epoch,
                         head,
+                        head_key,
                         state: Some(state),
                         too_large: false,
                         updated_ms: now_ms(),
@@ -1410,15 +1431,19 @@ impl Live {
                 }));
                 // A copy waiting to be written takes the newer head; one
                 // already written gets only its head and time moved.
+                let Some(head_key) = self.host(&want.host).map(|h| h.machine_key) else {
+                    return Ok(());
+                };
                 match self.pending.get_mut(&key) {
                     // Only at the place the waiting state stands.
                     Some(row) => {
                         if row.head.as_ref().is_some_and(|h| h.head.next_seq == head.head.next_seq) {
                             row.head = Some(head);
+                            row.head_key = Some(head_key);
                         }
                     }
                     None => {
-                        self.touches.insert(key, (want.stream, head));
+                        self.touches.insert(key, (want.stream, head, head_key));
                     }
                 }
             }
@@ -1451,6 +1476,7 @@ impl Live {
                         stream: want.stream,
                         epoch: want.epoch,
                         head: None,
+                        head_key: None,
                         state: None,
                         too_large: true,
                         updated_ms: now_ms(),
@@ -1506,11 +1532,11 @@ impl Live {
         if !self.touches.is_empty() {
             let hosts: HashSet<&str> = self.hosts.iter().map(|h| h.id.as_str()).collect();
             let store = c.store.as_mut().ok_or(Ended::Off)?;
-            for ((host, kind, name), (stream, head)) in self.touches.drain() {
+            for ((host, kind, name), (stream, head, head_key)) in self.touches.drain() {
                 if !hosts.contains(host.as_str()) {
                     continue;
                 }
-                match store.touch(&host, kind, &name, &stream, &head, now_ms()) {
+                match store.touch(&host, kind, &name, &stream, &head, &head_key, now_ms()) {
                     Ok(_) => {}
                     Err(error) if error == super::store::OFF => return Err(Ended::Off),
                     Err(error) => tracing::debug!(%error, %host, "cannot note how current a copy is"),
@@ -1779,6 +1805,54 @@ mod tests {
         assert!(c.env.status.lock().unwrap().error.as_deref().is_some_and(|e| e.contains("rotation_pending")));
     }
 
+    /// R6 review: a stored cursor resumes under exactly the key recorded with
+    /// it in `copies.db` — a key the host held — and not under whichever of
+    /// its retired keys happens to verify; one that does not is read again
+    /// from the start (under its floor only when that key signed it).
+    #[test]
+    fn a_stored_cursor_resumes_only_under_the_key_it_was_stored_under() {
+        let (old, new) = (ed25519_dalek::SigningKey::from_bytes(&[7; 32]), ed25519_dalek::SigningKey::from_bytes(&[8; 32]));
+        let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
+        let want = want("m-2", "s");
+        let head = rh_proto::record::StreamHead {
+            stream: want.stream,
+            next_seq: 4,
+            epoch: 0,
+            link: [5; 32],
+            time_ms: 1_700_000_000_000,
+        }
+        .sign(&old);
+        let state = r#"{"fromIndex":0,"items":[{"t":1}],"endIndex":1}"#.to_string();
+        let keys = Keys(vec![(0, [3; 32])]);
+        let resume = |head_key| Start::Resume {
+            head: head.clone(),
+            state: state.clone(),
+            head_key,
+        };
+        // Stored under the key the host held then, renewed since: resumed.
+        let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(Some(old_key)));
+        assert_eq!(f.from_seq(), 4);
+        assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.len() == 1));
+        // Recorded under the key now (or no key: a row from before renewals)
+        // but signed by the old one: read again from the start, no floor.
+        for head_key in [Some(new_key), None] {
+            let (f, fold) = started(&want, new_key, &[old_key], &keys, resume(head_key));
+            assert_eq!((f.from_seq(), f.floor()), (0, None));
+            assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.is_empty()));
+        }
+        // Recorded under a key the chain does not say the host held.
+        let (f, _) = started(&want, new_key, &[], &keys, resume(Some(old_key)));
+        assert_eq!((f.from_seq(), f.floor()), (0, None));
+        // A copy that does not restore: from the start, under the cursor's floor.
+        let broken = Start::Resume {
+            head: head.clone(),
+            state: "not json".into(),
+            head_key: Some(old_key),
+        };
+        let (f, _) = started(&want, new_key, &[old_key], &keys, broken);
+        assert_eq!((f.from_seq(), f.floor().map(|fl| fl.next_seq)), (0, Some(4)));
+    }
+
     fn want(host: &str, name: &str) -> Want {
         Want {
             host: host.into(),
@@ -1844,6 +1918,7 @@ mod tests {
                 head: None,
                 state: Some("{}".into()),
                 too_large: false,
+                head_key: None,
                 updated_ms: 1,
             },
         );
@@ -1997,6 +2072,7 @@ mod tests {
                 head: Some(head(index_stream, 12, 1_700_000_000_000)),
                 state: Some(serde_json::to_string(&index).unwrap()),
                 too_large: false,
+                head_key: None,
                 updated_ms: 1,
             })
             .unwrap();

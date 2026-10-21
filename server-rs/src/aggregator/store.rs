@@ -52,9 +52,13 @@ CREATE TABLE IF NOT EXISTS copies (
     state TEXT,
     too_large INTEGER NOT NULL DEFAULT 0,
     updated_ms INTEGER NOT NULL,
+    head_key BLOB,
     PRIMARY KEY (host, kind, name)
 );
 ";
+
+/// `head_key` for a file made before it was kept (a cache: added in place).
+const ADD_HEAD_KEY: &str = "ALTER TABLE copies ADD COLUMN head_key BLOB";
 
 /// What a row copies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -102,6 +106,12 @@ pub struct Row {
     pub epoch: u32,
     /// The machine-signed head it was released up to (the cursor).
     pub head: Option<SignedHead>,
+    /// The host's key that head was verified under when it was stored:
+    /// exactly that key verifies it when the copy carries on, even after the
+    /// host renewed its identity key (`docs/host-identity-rotation.md`
+    /// §5.4). `None` for a row from before it was kept: then only the host's
+    /// key now does.
+    pub head_key: Option<[u8; 32]>,
     /// The folded state (JSON); `None` when too large to keep.
     pub state: Option<String>,
     /// A session over [`super::copies::MAX_SESSION_BYTES`]: not kept.
@@ -194,6 +204,12 @@ fn open_conn(path: &Path) -> rusqlite::Result<Connection> {
     let _: i64 = conn.query_row(&format!("PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT}"), [], |row| row.get(0))?;
     conn.pragma_update(None, "busy_timeout", 5_000)?;
     conn.execute_batch(SCHEMA)?;
+    let has_head_key = conn
+        .prepare("SELECT head_key FROM copies LIMIT 0")
+        .is_ok();
+    if !has_head_key {
+        conn.execute_batch(ADD_HEAD_KEY)?;
+    }
     Ok(conn)
 }
 
@@ -285,8 +301,8 @@ impl CopyStore {
     pub fn put(&mut self, row: &Row) -> Result<(), String> {
         self.write(|tx| {
             tx.execute(
-                "INSERT OR REPLACE INTO copies (host, kind, name, stream, epoch, head, state, too_large, updated_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT OR REPLACE INTO copies (host, kind, name, stream, epoch, head, state, too_large, updated_ms, head_key)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     row.host,
                     row.kind.as_str(),
@@ -297,6 +313,7 @@ impl CopyStore {
                     row.state,
                     row.too_large,
                     row.updated_ms as i64,
+                    row.head_key.map(|k| k.to_vec()),
                 ],
             )?;
             Ok(())
@@ -308,7 +325,16 @@ impl CopyStore {
     /// head stands at that very place — a head further on would put the
     /// cursor past records the stored state lacks (a write of them that
     /// failed), and the next run would skip them. `true` when moved.
-    pub fn touch(&mut self, host: &str, kind: Kind, name: &str, stream: &StreamId, head: &SignedHead, updated_ms: u64) -> Result<bool, String> {
+    pub fn touch(
+        &mut self,
+        host: &str,
+        kind: Kind,
+        name: &str,
+        stream: &StreamId,
+        head: &SignedHead,
+        head_key: &[u8; 32],
+        updated_ms: u64,
+    ) -> Result<bool, String> {
         self.write(|tx| {
             let held: Option<Option<Vec<u8>>> = tx
                 .query_row(
@@ -325,8 +351,8 @@ impl CopyStore {
                 return Ok(false);
             }
             tx.execute(
-                "UPDATE copies SET head = ?1, updated_ms = ?2 WHERE host = ?3 AND kind = ?4 AND name = ?5 AND stream = ?6",
-                params![head.encode(), updated_ms as i64, host, kind.as_str(), name, stream.0.to_vec()],
+                "UPDATE copies SET head = ?1, updated_ms = ?2, head_key = ?7 WHERE host = ?3 AND kind = ?4 AND name = ?5 AND stream = ?6",
+                params![head.encode(), updated_ms as i64, host, kind.as_str(), name, stream.0.to_vec(), head_key.to_vec()],
             )?;
             Ok(true)
         })
@@ -377,7 +403,7 @@ impl CopyStore {
     /// Every row.
     pub fn rows(&self) -> Result<Vec<Row>, String> {
         self.select(
-            "SELECT host, kind, name, stream, epoch, head, state, too_large, updated_ms FROM copies ORDER BY host, kind, name",
+            "SELECT host, kind, name, stream, epoch, head, state, too_large, updated_ms, head_key FROM copies ORDER BY host, kind, name",
             &[],
         )
     }
@@ -386,7 +412,7 @@ impl CopyStore {
     pub fn row(&self, host: &str, kind: Kind, name: &str) -> Result<Option<Row>, String> {
         Ok(self
             .select(
-                "SELECT host, kind, name, stream, epoch, head, state, too_large, updated_ms FROM copies WHERE host = ?1 AND kind = ?2 AND name = ?3",
+                "SELECT host, kind, name, stream, epoch, head, state, too_large, updated_ms, head_key FROM copies WHERE host = ?1 AND kind = ?2 AND name = ?3",
                 &[&host, &kind.as_str(), &name],
             )?
             .pop())
@@ -406,12 +432,13 @@ impl CopyStore {
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, bool>(7)?,
                     r.get::<_, i64>(8)?,
+                    r.get::<_, Option<Vec<u8>>>(9)?,
                 ))
             })
             .map_err(sql)?;
         let mut out = Vec::new();
         for row in rows {
-            let (host, kind, name, stream, epoch, head, state, too_large, updated_ms) = row.map_err(sql)?;
+            let (host, kind, name, stream, epoch, head, state, too_large, updated_ms, head_key) = row.map_err(sql)?;
             // A row this release cannot read is skipped (it is read again from the hub).
             let (Some(kind), Ok(stream), Ok(epoch)) = (Kind::parse(&kind), <[u8; 32]>::try_from(stream), u32::try_from(epoch)) else {
                 continue;
@@ -423,6 +450,7 @@ impl CopyStore {
                 stream: StreamId(stream),
                 epoch,
                 head: head.and_then(|h| SignedHead::decode(&h).ok()),
+                head_key: head_key.and_then(|k| <[u8; 32]>::try_from(k).ok()),
                 state,
                 too_large,
                 updated_ms: u64::try_from(updated_ms).unwrap_or(0),
@@ -480,6 +508,7 @@ mod tests {
             stream,
             epoch: 0,
             head: Some(head),
+            head_key: Some(machine.verifying_key().to_bytes()),
             state: Some(state.into()),
             too_large: false,
             updated_ms: 9,
@@ -616,13 +645,37 @@ mod tests {
         };
         let stored_head = |store: &CopyStore| store.row("m-2", Kind::Status, "").unwrap().unwrap().head.unwrap().head;
         // The row's head is at 3 (`row`): a heartbeat at 12 (a state at 12 whose write failed) moves nothing.
-        assert!(!store.touch("m-2", Kind::Status, "", &at10.stream, &head(12, 9_000), 5).unwrap());
+        assert!(!store.touch("m-2", Kind::Status, "", &at10.stream, &head(12, 9_000), &[4; 32], 5).unwrap());
         assert_eq!(stored_head(&store).next_seq, 3);
         // At the same place, signed later: moved.
-        assert!(store.touch("m-2", Kind::Status, "", &at10.stream, &head(3, 9_000), 5).unwrap());
+        assert!(store.touch("m-2", Kind::Status, "", &at10.stream, &head(3, 9_000), &[4; 32], 5).unwrap());
         assert_eq!((stored_head(&store).next_seq, stored_head(&store).time_ms), (3, 9_000));
         // Another stream's heartbeat: nothing.
         let other = rh_proto::stream::index_stream(&[9; 32]);
-        assert!(!store.touch("m-2", Kind::Status, "", &other, &head(3, 10_000), 5).unwrap());
+        assert!(!store.touch("m-2", Kind::Status, "", &other, &head(3, 10_000), &[4; 32], 5).unwrap());
+    }
+
+    /// Host identity renewal (§5.4, R6 review): the host key a stored head
+    /// was verified under is kept with it — moved by a heartbeat too — and a
+    /// file from before the column takes it in place, its rows saying none.
+    #[test]
+    fn the_key_a_head_was_verified_under_is_kept_with_it() {
+        let (_dir, paths) = paths();
+        let mut store = open(&paths, "a-1", "m-me");
+        let at = row("m-2", Kind::Status, "", "{}");
+        store.put(&at).unwrap();
+        assert_eq!(store.row("m-2", Kind::Status, "").unwrap().unwrap().head_key, at.head_key);
+        let head = at.head.clone().unwrap();
+        assert!(store.touch("m-2", Kind::Status, "", &at.stream, &head, &[6; 32], 5).unwrap());
+        assert_eq!(store.row("m-2", Kind::Status, "").unwrap().unwrap().head_key, Some([6; 32]));
+        drop(store);
+        // A file from an older release: no such column.
+        let conn = rusqlite::Connection::open(path(&paths)).unwrap();
+        conn.execute_batch("ALTER TABLE copies DROP COLUMN head_key").unwrap();
+        drop(conn);
+        let store = open(&paths, "a-1", "m-me");
+        let old = store.row("m-2", Kind::Status, "").unwrap().unwrap();
+        assert_eq!(old.head_key, None, "a row from before says none");
+        assert!(old.head.is_some());
     }
 }
