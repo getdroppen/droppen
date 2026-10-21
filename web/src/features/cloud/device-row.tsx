@@ -29,7 +29,7 @@ import type { DeviceAttention } from "@/features/machines/needs-you";
 import { ActivityChipView, StateCountChip, UnreadPill } from "@/features/sessions/attention-badges";
 import { unreadCountOf } from "@/features/sessions/session-attention";
 import { Presence } from "./machine-name";
-import { RenewalLine } from "./renewal";
+import { pauseHeldText, RenewalLine } from "./renewal";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 type T = (key: string, opts?: Record<string, unknown>) => string;
@@ -91,6 +91,10 @@ export interface DeviceRowView {
   retiredLoginMs?: number | null;
   /** The devices whose control of each other is paused while their identity keys are renewed (§4.1), it among them. */
   pausedWith?: string[];
+  /** The ids its list names whose control of it a renewal pause holds now (§3.4 rule 10): said apart from the list itself. */
+  pausedControllers?: string[];
+  /** The open renewal pauses on its list: what ending each now gives back, and what must stay held, and why (§4.1). */
+  pauses?: { op: Uint8Array; ending: { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] } }[];
   /** A host's facts for 「详情」: its system, agent version, hostname, the newest content key's generation. */
   facts?: { os?: string | null; agent?: string | null; agentFull?: string | null; hostname?: string | null; keyEpoch?: number | null };
   /** A host's sessions at a glance (off its copy): `null` while there is no list of them. */
@@ -382,7 +386,9 @@ function RowDetails({ view, open, warnings, onOpenSession }: { view: DeviceRowVi
   if (f?.agent) facts.push({ key: "agent", label: "agent", value: f.agent, title: f.agentFull ?? undefined });
   if (f?.keyEpoch != null) facts.push({ key: "key", label: t("content key"), value: t("generation {{n}}", { n: f.keyEpoch }) });
   if (view.path && view.presence === "online") facts.push({ key: "path", label: t("path"), value: `${view.path.relay}${view.path.rttMs !== null ? ` · ${Math.round(view.path.rttMs)} ms` : ""}` });
+  // The list as set (its base), and apart from it what a renewal pause holds now: a widened list cannot hide behind a pause.
   if (view.host && view.accept) facts.push({ key: "control", label: t("who can control it"), value: acceptText(view.accept, t) });
+  if (view.host && view.pausedControllers?.length) facts.push({ key: "paused", label: t("paused now"), value: view.pausedControllers.join(", ") });
   const recent = view.recent ?? [];
   return (
     <details data-testid={`details-${view.id}`} open={open || undefined} className="group/details min-w-0">
@@ -571,6 +577,7 @@ export function DeviceRow({
   onWarnAgain,
   onRenew,
   onRenewCode,
+  onEndPause,
   onRenewRetry,
   onAddComputer,
   notes,
@@ -604,6 +611,8 @@ export function DeviceRow({
   onRenewRetry?: () => void;
   /** Where a new registration code is made (an isolated host added again with a new identity). */
   onAddComputer?: () => void;
+  /** 「结束暂停」 of open renewal pause `op` on its list: opens the confirmation. */
+  onEndPause?: (op: Uint8Array) => void;
   notes?: ReactNode;
   /** How re-sending its keys went, said on the row. */
   keys?: ReactNode;
@@ -692,6 +701,21 @@ export function DeviceRow({
               {t("Control between {{ids}} is paused while their identity keys are renewed.", { ids: view.pausedWith.join(", ") })}
             </span>
           )}
+          {status === "active" &&
+            (view.pauses ?? []).map((p) => (
+              <span key={p.ending.edges.map((e) => `${e.host}<${e.id}`).join(",") || id} data-testid={`pause-${id}`} className="flex flex-col items-start gap-0.5 text-2xs leading-4 text-muted">
+                {p.ending.held.map((h) => (
+                  <span key={`${h.host}<${h.id}`} data-testid={`pause-held-${id}-${h.id}`} data-why={h.why} data-signal="warn" className="text-warn-fg">
+                    {pauseHeldText(h, t)}
+                  </span>
+                ))}
+                {viewerAdmin && onEndPause && (
+                  <button type="button" data-testid={`end-pause-${id}`} className="text-muted underline underline-offset-2 hover:text-fg" onClick={() => onEndPause(p.op)}>
+                    {t("end pause")}
+                  </button>
+                )}
+              </span>
+            ))}
           {view.retiredLoginMs != null && status === "active" && (
             <span data-testid={`retired-login-${id}`} className="font-mono text-2xs leading-4 text-muted">
               {t("its old identity key was used to sign in at {{time}}", { time: formatAsOf(view.retiredLoginMs) })}

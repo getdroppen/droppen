@@ -32,7 +32,7 @@ import { MachineNotes, noteRenamed, RenameMachineForm, renameThroughNewChannel, 
 import { addAsked } from "./onboarding";
 import { AddDeviceHint } from "./onboarding-hints";
 import { RelaySection } from "./relays";
-import { AlwaysConfirmSetting, PushRenewNotice, RenewalNotice, RenewalsAhead, RenewPanel, useRenewals } from "./renewal";
+import { AlwaysConfirmSetting, EndPauseConfirm, PushRenewNotice, RenewalNotice, RenewalsAhead, RenewPanel, useRenewals } from "./renewal";
 import { LimitNote, UsageSummary, useMe } from "./plan";
 import { QrScanner } from "./qr";
 import { RecoveryWords } from "./recovery";
@@ -117,6 +117,8 @@ export type Section =
   | { kind: "dismissReEnroll"; device: string; culprit: string; lostSeq: number }
   /** Renewing a host's identity key now (docs/host-identity-rotation.md §4.4); `fixed`: only confirmed on the device. */
   | { kind: "renew"; device: string; fixed: boolean }
+  /** 「结束暂停」 of an open renewal pause on host `device`'s list, asked first (docs/host-identity-rotation.md §4.1). */
+  | { kind: "endPause"; device: string; op: Uint8Array }
   | { kind: "words"; words: string[] };
 
 /** A time of day ("14:02"), with the date when it is not today. */
@@ -373,6 +375,9 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
       isolatedControllers: d.host && renewals ? renewals.isolatedControllers(id) : undefined,
       retiredLoginMs: d.host && renewals ? renewals.retiredLoginAt(id) : undefined,
       pausedWith: d.host && renewals ? renewals.pausedWith(id) : undefined,
+      // The pause held apart from the list (its base): what is paused, and the pauses on it.
+      pausedControllers: d.host && chain ? (chain.pausedEdges?.(id) ?? []) : undefined,
+      pauses: d.host && renewals ? renewals.pausesOf(id) : undefined,
       ...(host
         ? {
             facts: { os: osLabel(info?.os), agent: versionLabel(info?.agentVersion), agentFull: info?.agentVersion ?? null, hostname, keyEpoch: chain?.latestMachineEpoch(id) ?? null },
@@ -424,11 +429,30 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         onRenewCode={renewals ? () => setSection({ kind: "renew", device: id, fixed: true }) : undefined}
         onRenewRetry={renewals ? () => void run(() => renewals.renew(id, { assurance: 0 })) : undefined}
         onAddComputer={() => setSection({ kind: "addComputer" })}
+        onEndPause={(op) => setSection({ kind: "endPause", device: id, op })}
         onOpen={v.host ? () => open(id) : undefined}
         onOpenSession={v.host ? (s) => openAt(id, sessionPath(s.source, s.id)) : undefined}
         notes={v.host ? <HostNotes account={account} link={link} id={id} status={statuses.get(id) ?? null} /> : null}
         keys={<ResendLine state={resend.states.get(id)} />}
       >
+        {section.kind === "endPause" && section.device === id && (
+          <div className="border-b border-border px-6 py-4 max-md:px-3">
+            <div className="max-w-xl">
+              <EndPauseConfirm
+                ending={account.pauseEnding?.(section.op) ?? { edges: [], all: [], held: [] }}
+                busy={busy}
+                error={error}
+                onCancel={() => setSection({ kind: "list" })}
+                onConfirm={() =>
+                  void run(async () => {
+                    await account.endPause(section.op);
+                    setSection({ kind: "list" });
+                  })
+                }
+              />
+            </div>
+          </div>
+        )}
         {section.kind === "renew" && section.device === id && renewals && (
           <div className="border-b border-border px-6 py-4 max-md:px-3">
             <div className="max-w-xl">
@@ -457,7 +481,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
             />
           </div>
         )}
-        {"device" in section && section.kind !== "renew" && section.device === id && <RowConfirm section={section} id={id} busy={busy} actions={acts} onCancel={() => setSection({ kind: "list" })} />}
+        {"device" in section && section.kind !== "renew" && section.kind !== "endPause" && section.device === id && <RowConfirm section={section} id={id} busy={busy} actions={acts} onCancel={() => setSection({ kind: "list" })} />}
         {section.kind === "dismissReEnroll" && section.device === id && (
           <DismissReEnroll
             host={id}
@@ -472,7 +496,8 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         {section.kind === "control" && section.host === id && chain && (
           <HostControl
             host={id}
-            policy={chain.acceptPolicy(id)}
+            policy={chain.baseAccept?.(id) ?? chain.acceptPolicy(id)}
+            paused={chain.pausedEdges?.(id) ?? []}
             declaresPolicy={me?.view?.machines.find((m) => m.id === id)?.readsV3}
             candidates={devices
               .filter((x) => x.status.type === "active" && !x.admin && x.info.id !== id)
@@ -1210,6 +1235,7 @@ export function HostControl({
   mustRenew,
   renewable,
   renewsIfNarrowed,
+  paused = [],
   busy,
   onSave,
   onCancel,
@@ -1234,6 +1260,8 @@ export function HostControl({
   renewable?: boolean;
   /** The devices that run AI a narrowing would start renewing. */
   renewsIfNarrowed?: string[];
+  /** The ids a renewal pause holds from controlling it now: shown apart from the list, which is what stays (§3.4 rule 10). */
+  paused?: string[];
   busy: boolean;
   onSave: (from: Accept) => void;
   onCancel: () => void;
@@ -1309,6 +1337,11 @@ export function HostControl({
               {t("Checking which Droppen this device runs: until then only your full devices may control it.")}
             </p>
           )
+        )}
+        {paused.length > 0 && (
+          <p data-testid="control-paused" className="text-2xs leading-4 text-muted">
+            {t("Paused while identity keys are renewed: {{ids}}. They come back when the pause ends; the list here is what stays.", { ids: paused.join(", ") })}
+          </p>
         )}
         {exposed.length > 0 && (
           <p data-testid="control-exposed" data-signal="warn" className="text-2xs leading-4 text-warn-fg">

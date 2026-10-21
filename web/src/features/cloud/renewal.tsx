@@ -519,6 +519,79 @@ export function AlwaysConfirmSetting({
   );
 }
 
+/** Why an edge a renewal pause holds stays held (§4.1), in words. */
+export function pauseHeldText(h: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  switch (h.why) {
+    case "exposed":
+      return t("{{id}} stays paused from controlling {{host}}: {{who}} has not renewed its identity key since it may have been copied", h);
+    case "isolated":
+      return t("{{id}} stays paused from controlling {{host}}: {{who}} is isolated", h);
+    case "flagged":
+      return t("{{id}} stays paused from controlling {{host}}: Droppen's hub holds {{who}} isolated", h);
+  }
+}
+
+/**
+ * 「结束暂停」, asked first (§4.1 「卡住的暂停」, R6 L4): exactly which control comes
+ * back — each device and the host it may control again — and, where a host's
+ * list lets every device in, that it lets in every device again, those added
+ * while it was paused among them. Refused while one of them must stay held:
+ * it says which, and why.
+ */
+export function EndPauseConfirm({
+  ending,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  ending: { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] };
+  busy: boolean;
+  error?: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const blocked = ending.held.length > 0;
+  return (
+    <div role="alertdialog" data-testid="end-pause-confirm" data-signal="warn" className="flex flex-col gap-2 border border-border p-3 shadow-[inset_2px_0_0_var(--color-warn)]">
+      <span className="font-mono text-xs text-fg">{t("End this pause of control?")}</span>
+      {ending.edges.length ? (
+        <ul data-testid="end-pause-edges" className="flex list-disc flex-col gap-0.5 pl-4 text-xs leading-5 text-fg">
+          {ending.edges.map((e) => (
+            <li key={`${e.host}<${e.id}`}>{t("{{id}} can control {{host}} again", e)}</li>
+          ))}
+        </ul>
+      ) : (
+        <span className="text-xs leading-5 text-muted">{t("No control comes back: the lists changed since.")}</span>
+      )}
+      {ending.all.map((host) => (
+        <span key={host} data-testid={`end-pause-all-${host}`} className="text-xs leading-5 text-muted">
+          {t("{{host}} lets every device of the account control it: every device comes back, those added while it was paused among them.", { host })}
+        </span>
+      ))}
+      {blocked && (
+        <span data-testid="end-pause-held" className="flex flex-col gap-0.5 text-xs leading-5 text-warn-fg">
+          <span>{t("Not now: it would let a device control another while it must stay held.")}</span>
+          {ending.held.map((h) => (
+            <span key={`${h.host}<${h.id}`}>{pauseHeldText(h, t)}</span>
+          ))}
+        </span>
+      )}
+      <span className="flex flex-wrap gap-2">
+        <button type="button" data-testid="end-pause-yes" className={cn(danger, "h-7 px-3 text-xs")} disabled={busy || blocked} onClick={onConfirm}>
+          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {t("end pause")}
+        </button>
+        <button type="button" data-testid="end-pause-no" className={cn(quiet, "h-7 px-3 text-xs")} disabled={busy} onClick={onCancel}>
+          {t("cancel")}
+        </button>
+      </span>
+      <ErrorLine message={error ?? null} />
+    </div>
+  );
+}
+
 /** The account notice (§4.4): devices renewing their identity key now, and those that need the person. */
 export function RenewalNotice({ runner }: { runner: RenewalRunner }) {
   const { t } = useTranslation();

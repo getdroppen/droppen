@@ -16,7 +16,7 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ControlConfirm, DeviceRow, type DeviceRowView, HostControl, rowMenuItems } from "../src/features/cloud/devices.js";
-import { AlwaysConfirmSetting, EnterCode, PushRenewNotice, RenewalLine, RenewalNotice, RenewalsAhead, RenewPanel } from "../src/features/cloud/renewal.js";
+import { AlwaysConfirmSetting, EndPauseConfirm, EnterCode, PushRenewNotice, RenewalLine, RenewalNotice, RenewalsAhead, RenewPanel } from "../src/features/cloud/renewal.js";
 import { renewalErrorText } from "../src/features/cloud/ui.js";
 import { RotationNote, linkRotation, type LinkRotation } from "../src/features/link/link-settings.js";
 import { RenewalError, type RenewalFailure } from "../src/lib/hub/account.js";
@@ -497,4 +497,40 @@ test("every string the renewal screens use is in zh-CN, zh-TW and ja", () => {
   assert.equal(cloudDevicesZhCN["renew identity key"], "更换身份密钥");
   assert.equal(cloudDevicesZhTW["renew identity key"], "更換身分金鑰");
   assert.equal(cloudDevicesJa["renew identity key"], "ID 鍵を更新");
+});
+
+test("§4.1 overlay UI: the list (base) and what a pause holds apart; 「结束暂停」 asks first, listing exactly what comes back, the `All` case, and what must stay held", () => {
+  // The row: the base under "who can control it", the paused edges apart from it; why an edge stays held; "end pause".
+  const ops: Uint8Array[] = [];
+  const op = new Uint8Array(16).fill(7);
+  const ending = { edges: [{ host: "m-1", id: "m-2" }], all: [], held: [{ host: "m-1", id: "m-2", who: "m-2", why: "exposed" as const }] };
+  const view = host({ accept: { type: "devices", ids: ["m-2", "m-3"] }, pausedControllers: ["m-2"], pausedWith: ["m-1", "m-2"], pauses: [{ op, ending }] });
+  const html = rowHtml(view, { onEndPause: (o: Uint8Array) => ops.push(o) });
+  assert.ok(html.includes("your full devices, and m-2, m-3"), "the base as set");
+  assert.match(html, /paused now<\/dt><dd[^>]*>m-2</);
+  assert.ok(html.includes("m-2 stays paused from controlling m-1: m-2 has not renewed its identity key since it may have been copied"));
+  assert.match(html, /data-testid="end-pause-m-1"/);
+  drive(DeviceRow, { view, viewerAdmin: true, upgraded: true, writable: true, onEndPause: (o: Uint8Array) => ops.push(o) }, [
+    (tree) => (tree.find((e) => e.props["data-testid"] === "end-pause-m-1")!.props.onClick as () => void)(),
+  ]);
+  assert.deepEqual(ops, [op]);
+  assert.doesNotMatch(draw(<ul><DeviceRow view={view} viewerAdmin={false} upgraded writable onEndPause={() => undefined} /></ul>), /end-pause-m-1/, "not for a limited device");
+  // The confirmation: exactly what comes back; the All note; refused while something must stay held.
+  let confirmed = 0;
+  const free = { edges: [{ host: "m-1", id: "m-2" }, { host: "m-3", id: "m-1" }], all: ["m-3"], held: [] };
+  const ask = draw(<EndPauseConfirm ending={free} busy={false} onConfirm={() => confirmed++} onCancel={() => undefined} />);
+  assert.ok(ask.includes("m-2 can control m-1 again") && ask.includes("m-1 can control m-3 again"));
+  assert.ok(ask.includes("m-3 lets every device of the account control it: every device comes back, those added while it was paused among them."));
+  assert.doesNotMatch(ask, /data-testid="end-pause-yes"[^>]*disabled=""/);
+  drive(EndPauseConfirm, { ending: free, busy: false, onConfirm: () => confirmed++, onCancel: () => undefined }, [
+    (tree) => (tree.find((e) => e.props["data-testid"] === "end-pause-yes")!.props.onClick as () => void)(),
+  ]);
+  assert.equal(confirmed, 1);
+  const refused = draw(<EndPauseConfirm ending={ending} busy={false} onConfirm={() => confirmed++} onCancel={() => undefined} />);
+  assert.match(refused, /data-testid="end-pause-yes"[^>]*disabled=""/);
+  assert.ok(refused.includes("Not now: it would let a device control another while it must stay held."));
+  assert.ok(draw(<EndPauseConfirm ending={free} busy={false} onConfirm={() => undefined} onCancel={() => undefined} />, "zh-CN").includes("m-2 将重新可以控制 m-1"));
+  // The list editor shows the base, and the paused ids apart from it.
+  const editor = draw(<HostControl host="m-1" policy={{ type: "devices", ids: ["m-2"] }} paused={["m-2"]} candidates={[{ id: "m-2", host: true }]} upgraded busy={false} onSave={() => undefined} onCancel={() => undefined} />);
+  assert.ok(editor.includes("Paused while identity keys are renewed: m-2. They come back when the pause ends; the list here is what stays."));
 });

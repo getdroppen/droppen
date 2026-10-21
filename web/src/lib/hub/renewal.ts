@@ -37,15 +37,16 @@
  * The page reads it all through {@link RenewalRunner.status}; the account is
  * told what the chain does not say (`noteRenewals`).
  */
-import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, PAUSE_COMPLETED, PAUSE_START, Serial, verifyHubLogin } from "@/lib/e2e";
+import { type Action, ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, type OpenPause, PAUSE_COMPLETED, PAUSE_START, type PauseRemoval, Serial, verifyHubLogin } from "@/lib/e2e";
 import {
   assuredRenewalAfter,
   type CloudAccount,
   disputeIsolates,
   type Exposure,
   exposedControllers,
+  edgeHeld,
   groupNarrowing,
-  pauseStanding,
+  pauseReturns,
   hostsToRotate,
   type KeptDispute,
   RenewalError,
@@ -384,14 +385,14 @@ export class RenewalRunner {
   }
 
   /**
-   * Narrow, in ONE batch, a cycle of exposed hosts that let each other control
-   * them (§4.1, one cycle a batch) before any of them renews: a
-   * `RenewalPause` start naming the cycle (§3.4 rule 10), then each member's
-   * list without the others, each with its next key epoch — read off the
-   * newest chain, so a page that finds it done already writes nothing.
+   * Pause, with ONE `RenewalPause` start (§3.4 rule 10, §4.1 覆盖层), the
+   * control inside a cycle of exposed hosts that let each other control them,
+   * before any of them renews — one cycle a time, read off the newest chain,
+   * so a page that finds it paused already writes nothing. No list is
+   * written: the overlay takes the edges out of what the chain admits.
    * `written`: the chain changed (the next look goes on); `failed`: not
-   * written, and nothing of that cycle renews until it is; `none`: nothing to
-   * narrow.
+   * written, and nothing of that cycle renews until it is; `none`: nothing
+   * to pause.
    */
   private async narrowGroup(): Promise<"none" | "written" | "failed"> {
     const { account } = this.opts;
@@ -400,73 +401,115 @@ export class RenewalRunner {
     if (!chain || !groupNarrowing(chain, account.hostsToRotate(), renews).length) return "none";
     const op = crypto.getRandomValues(new Uint8Array(16));
     try {
-      const written = await account.setAccepts((c) => {
+      const wrote = await account.writePause((c) => {
         const cycle = groupNarrowing(c, hostsToRotate(c, renews), renews)[0];
-        if (!cycle) return [];
-        return { before: [{ type: "renewalPause", op, phase: PAUSE_START, hosts: cycle.hosts }], lists: cycle.lists };
-      }, this.opts.courier());
-      return written.length ? "written" : "none";
+        return cycle ? [{ type: "renewalPause", op, phase: PAUSE_START, removals: cycle.removals }] : [];
+      });
+      return wrote ? "written" : "none";
     } catch (error) {
-      console.warn("cloud: narrowing the lists of devices renewing together:", error);
+      console.warn("cloud: pausing control between devices renewing together:", error);
       return "failed";
     }
   }
 
   /**
-   * End an open renewal pause (§3.4 rule 10) once every host it named renewed
-   * (or is gone), in ONE batch: each list whose latest `SetAccept` is still the
-   * pause's own back to what it was just before it, then the pause's
-   * completion. Nothing else is ever restored — a list changed since, by
-   * anyone, stays as it is — and never a list that would let in a host that
-   * must renew first. Whether it wrote.
+   * End what may end of each open renewal pause (§4.1 「结束之前」), judged on
+   * this page's chain alone — exposure as the chain has it now, whatever an
+   * earlier renewal or the hub's word on what can renew says (Codex #136-2):
+   *
+   * - no edge it gives back has an end that is exposed, isolated or flagged:
+   *   `completed`;
+   * - some must stay held and others may come back: in ONE batch, a new
+   *   start holding just those, then `completed` — the held ones never come
+   *   back between the two;
+   * - every one must stay held: nothing (the rows say why).
+   *
+   * Whether it wrote.
    */
   private async restoreGroups(): Promise<boolean> {
     const { account } = this.opts;
     const chain = account.chain;
     if (!chain) return false;
     for (const pause of chain.openPauses()) {
-      const standing = pauseStanding(chain, pause, account.hostsToRotate());
-      if (standing.waiting.length) continue;
-      if (standing.restore.some((r) => r.from.type !== "admins" && this.wouldLetIn(r.host, r.from))) continue;
-      const before = chain.seq;
+      const plan = this.ending(chain, pause);
+      if (!plan) continue;
+      const opHex = hex(pause.op);
+      const next = crypto.getRandomValues(new Uint8Array(16));
       try {
-        await account.setAccepts((c) => {
-          const now = c.openPauses().find((x) => equal(x.op, pause.op));
-          if (!now) return [];
-          const standing = pauseStanding(c, now, hostsToRotate(c, (h) => account.renews(h)));
-          if (standing.waiting.length) return [];
-          return { lists: standing.restore, after: [{ type: "renewalPause", op: now.op, phase: PAUSE_COMPLETED, hosts: [] }] };
-        }, this.opts.courier());
-        if ((account.chain?.seq ?? before) !== before) return true;
+        const wrote = await account.writePause((c) => {
+          const now = c.openPauses().find((p) => hex(p.op) === opHex);
+          const again = now ? this.ending(c, now) : null;
+          if (!now || !again) return [];
+          const keep: Action[] = again.keep.length ? [{ type: "renewalPause", op: next, phase: PAUSE_START, removals: again.keep }] : [];
+          return [...keep, { type: "renewalPause", op: now.op, phase: PAUSE_COMPLETED, removals: [] }];
+        });
+        if (wrote) return true;
       } catch (error) {
-        console.warn("cloud: restoring the lists of devices renewed together:", error);
+        console.warn("cloud: ending a pause of control between devices renewed together:", error);
       }
     }
     return false;
   }
 
-  /** Whether list `from` for `host` would let in a host that must renew first (then the restore waits). */
-  private wouldLetIn(host: string, from: { type: string; ids?: string[] }): boolean {
+  /**
+   * What ending `pause` on `chain` would write (see {@link restoreGroups}):
+   * the edges to keep held in a new pause (empty: none), or `null` when
+   * nothing of it may come back yet.
+   */
+  private ending(chain: ChainState, pause: OpenPause): { keep: PauseRemoval[] } | null {
     const { account } = this.opts;
-    const chain = account.chain;
-    if (!chain) return true;
-    const ids = from.type === "all" ? chain.hosts().map((h) => h.info.id) : (from.ids ?? []);
-    return ids.some((id) => id !== host && account.mustRenewFirst(id));
+    const { edges } = pauseReturns(chain, pause);
+    // A host of it that will still renew on its own (it can, a renewal helps, nothing holds it): waited for — no churn of
+    // pauses while the cycle renews. Only what may come back is judged on the chain alone, below.
+    const pending = account.hostsToRotate();
+    const ends = new Set(edges.flatMap((e) => [e.host, e.id]));
+    const renewing = (x: string) => {
+      const ex = pending.get(x);
+      return !!ex && account.renews(x) && renewalHelps(ex) && !account.isolated(x) && !account.flagged(x) && !this.runs.get(x)?.outcome;
+    };
+    if ([...ends].some(renewing)) return null;
+    const exposed = hostsToRotate(chain);
+    const held = edges.filter((e) => edgeHeld(chain, e, { exposed, isolated: (id) => account.isolated(id), flagged: (id) => account.flagged(id) }));
+    if (edges.length && held.length === edges.length) return null;
+    const byHost = new Map<string, string[]>();
+    for (const e of held) byHost.set(e.host, [...(byHost.get(e.host) ?? []), e.id]);
+    return { keep: [...byHost].map(([host, ids]) => ({ host, ids: ids.sort() })).sort((x, y) => (x.host < y.host ? -1 : 1)) };
   }
 
   /**
    * The devices whose control of each other is paused while their identity
-   * keys are renewed (§4.1), when `host` is one of them: the hosts an open
-   * renewal pause names, while a list it wrote still stands. Empty otherwise.
+   * keys are renewed (§4.1), when `host` is one of them: the hosts of the open
+   * renewal pauses that take an edge to or from it. Empty otherwise.
    */
   pausedWith(host: string): string[] {
     const chain = this.opts.account.chain;
     if (!chain) return [];
+    const out = new Set<string>();
     for (const pause of chain.openPauses()) {
-      if (!pause.hosts.includes(host) || !pauseStanding(chain, pause, this.opts.account.hostsToRotate()).open.length) continue;
-      return pause.hosts.filter((m) => chain.device(m));
+      const touches = pause.removals.some((r) => r.host === host || r.ids.includes(host));
+      if (!touches) continue;
+      for (const r of pause.removals) {
+        out.add(r.host);
+        for (const id of r.ids) if (chain.machine(id)) out.add(id);
+      }
     }
-    return [];
+    return [...out].filter((m) => chain.device(m)).sort();
+  }
+
+  /**
+   * The open renewal pauses that take an edge out of `host`'s list, each with
+   * what ending it now would give back and what must stay held, and why
+   * (`CloudAccount.pauseEnding`): what its row says, and its 「结束暂停」.
+   */
+  pausesOf(host: string): { op: Uint8Array; ending: NonNullable<ReturnType<CloudAccount["pauseEnding"]>> }[] {
+    const { account } = this.opts;
+    const chain = account.chain;
+    if (!chain) return [];
+    return chain.openPauses().flatMap((p) => {
+      if (!p.removals.some((r) => r.host === host)) return [];
+      const ending = account.pauseEnding(p.op);
+      return ending ? [{ op: p.op, ending }] : [];
+    });
   }
 
   /** When a retired key of `host` was last used to sign in, as checked here (information only: §3.8). */
