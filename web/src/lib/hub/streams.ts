@@ -957,9 +957,12 @@ export class StreamSubscription<S> {
     const reader = this.reader;
     const before = this.state;
     if (!reader || before === null) throw new RecordError("outOfOrder", "a head arrived with no starting point");
-    // A refused head leaves the reader as it was, so it can be tried again.
+    // A refused head leaves the reader as it was, so it can be tried again. The chain's seq is noted as the key is
+    // set for the check (Codex round 7): the position is kept with the seq whose key verified it, not a later one.
+    const at: { seq: number | null } = { seq: null };
     const released = await this.underCurrentKey(reader.machineKey, (key) => {
       reader.setMachineKey(key);
+      at.seq = this.client.stamp();
       return reader.confirm(signed);
     });
     const head = reader.confirmedHead;
@@ -975,8 +978,8 @@ export class StreamSubscription<S> {
     const reset = this.rebuilding;
     this.state = state;
     this.head = head;
-    // A head from the hub: verified under the machine's key now, so kept with the chain's seq now.
-    this.headSeq = this.client.stamp();
+    // A head from the hub: kept with the chain's seq it was verified at — that seq's key is the one it carries.
+    this.headSeq = at.seq;
     this.rebuilding = false;
     if (released.length > 0) this.failures = 0;
     this.events.onState?.(state, { reset, bodies, head, seq: head.head.nextSeq, freshestMs: reader.freshestMs, keySeq: this.headSeq });

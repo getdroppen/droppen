@@ -37,7 +37,7 @@
  * The page reads it all through {@link RenewalRunner.status}; the account is
  * told what the chain does not say (`noteRenewals`).
  */
-import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, type LoginRole, PAUSE_COMPLETED, PAUSE_START, Serial, verifyHubLogin } from "@/lib/e2e";
+import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, PAUSE_COMPLETED, PAUSE_START, Serial, verifyHubLogin } from "@/lib/e2e";
 import {
   assuredRenewalAfter,
   type CloudAccount,
@@ -157,7 +157,8 @@ export interface RenewalRunnerOptions {
  */
 export async function checkStatement(chain: ChainState, d: HostDispute): Promise<KeptDispute | null> {
   if (d.kind !== "disputed" || d.seq === null || !d.sig) return null;
-  return (await chain.verifyRotateDispute(d.host, d.seq, d.sig)) ? { host: d.host, seq: d.seq } : null;
+  // Kept with its signature (R6 L6): what reads it back verifies it again.
+  return (await chain.verifyRotateDispute(d.host, d.seq, d.sig)) ? { host: d.host, seq: d.seq, sig: hex(d.sig) } : null;
 }
 
 /**

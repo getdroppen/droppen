@@ -596,3 +596,30 @@ test("Codex 1: an open channel is not reused to a host isolated meanwhile — ev
   await assert.rejects(ask());
   assert.deepEqual(agent.hellos, ["open"], "nothing new reached the agent");
 });
+
+test("Codex 7: a stream head checked under a key the machine renewed away from meanwhile is not committed — it is held to the new one", async () => {
+  const machine = await makeMachine();
+  const renewed = await generateDeviceKeys();
+  const stream = crypto.getRandomValues(new Uint8Array(32));
+  const writer = await StreamWriter.open(machine, stream, 1);
+  const record = await writer.append({ a: 1 });
+  const reader = LogReader.fromStart(stream, machine.signPublic);
+  await reader.addEpoch(0, machine.mk);
+  await reader.push(record);
+  const head = decodeSignedHead(await writer.head());
+  const subtle = crypto.subtle as unknown as { verify: (...args: unknown[]) => Promise<boolean> };
+  const verify = subtle.verify;
+  // The chain renews the machine's key while the head's signature is being checked.
+  subtle.verify = function (...args: unknown[]) {
+    delete (subtle as { verify?: unknown }).verify;
+    reader.setMachineKey(renewed.signPublic);
+    return verify.apply(crypto.subtle, args);
+  };
+  try {
+    await assert.rejects(reader.confirm(head), (e: unknown) => e instanceof RecordError && e.kind === "badHead");
+  } finally {
+    delete (subtle as { verify?: unknown }).verify;
+  }
+  assert.equal(reader.confirmed, 0, "nothing released under the retired key");
+  assert.equal(reader.confirmedHead, null);
+});

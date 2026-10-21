@@ -699,7 +699,7 @@ export function DeviceRow({
           )}
           {view.isolatedControllers && view.isolatedControllers.length > 0 && status === "active" && (
             <span data-testid={`isolated-controllers-${id}`} data-signal="warn" className="text-2xs leading-4 text-warn-fg">
-              {t("It lets {{ids}} control it, which is isolated: remove {{ids}} first.", { ids: view.isolatedControllers.join(", ") })}
+              {t("It lets {{ids}} control it, which is isolated: settle it on its row first.", { ids: view.isolatedControllers.join(", ") })}
             </span>
           )}
           {notes}

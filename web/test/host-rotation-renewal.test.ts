@@ -137,6 +137,13 @@ async function statementJson(a: CloudAccount, host: string, key: CryptoKey, seq 
   return { host, kind: "disputed", seen_ms: Date.now(), seq, entry_hash: hex(hash), sig: hex(sig) };
 }
 
+/** The kept form of `host`'s dispute statement of its renewal at `seq` (its latest when not given), signed by `key` — checked as the runner checks it. */
+async function keptOf(a: CloudAccount, host: string, key: CryptoKey, seq?: number) {
+  const kept = await checkStatement(a.chain!, hostDispute(await statementJson(a, host, key, seq))!);
+  assert.ok(kept, `a statement for ${host}`);
+  return kept;
+}
+
 /** What isolates `host` after its last (automatic) renewal: the statement its retired key signs. */
 async function isolatingEvidence(a: CloudAccount, host: string, h: { signPrivate: CryptoKey }) {
   return statementJson(a, host, h.signPrivate);
@@ -745,7 +752,7 @@ test("#6: a dispute statement signed by the retired key isolates the host — ch
   const seq = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
   const json = await statementJson(a, "m-1", h1.signPrivate);
   const checked = await checkStatement(a.chain!, hostDispute(json)!);
-  assert.deepEqual(checked, { host: "m-1", seq });
+  assert.deepEqual(checked, { host: "m-1", seq, sig: json.sig }, "kept with its signature (R6 L6)");
   assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], ["m-1"]);
   // Signed by the new key, by another device, about another entry, or not a signature: nothing.
   const current = agents.current("m-1")!;
@@ -776,7 +783,7 @@ test("#6: a dispute statement signed by the retired key isolates the host — ch
   assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], [], "an assurance-1 renewal after the disputed one");
   // A statement disputing that renewal (confirmed on the device) isolates nothing (R6 M1).
   const assured = await checkStatement(a.chain!, hostDispute(await statementJson(a, "m-1", current.sign))!);
-  assert.deepEqual(assured, { host: "m-1", seq: a.chain!.deviceRecord("m-1")!.rotatedSeq! });
+  assert.deepEqual({ host: assured?.host, seq: assured?.seq }, { host: "m-1", seq: a.chain!.deviceRecord("m-1")!.rotatedSeq! });
   assert.deepEqual([...isolatedHosts(a.chain!, [assured!])], []);
   // Removal ends it too, whatever the hub says.
   await a.removeDevice("m-1", new FakeCourier());
@@ -1090,7 +1097,7 @@ test("R6 W1: the hub's isolated flag alone isolates nothing — keys are withhel
   assert.equal(a.isolated("m-1"), false, "no evidence checked here");
   assert.equal(a.flagged("m-1"), true);
   assert.equal(a.keysWithheldFrom("m-1"), true, "withholding keys from it is fine");
-  assert.equal(a.mustRenewFirst("m-1"), false);
+  assert.equal(a.mustRenewFirst("m-1"), true, "but let control no other host (R6 L5)");
   assert.notEqual(runner.status("m-1").kind, "isolated", "not the isolated state, with its removal first");
   assert.equal(runner.needsCode("m-1"), "evidence", "renewed only confirmed on the device");
   runner.stop();
@@ -1375,19 +1382,21 @@ function refusingDisputes(base: ReturnType<typeof browserStorage>) {
 }
 
 test("Codex 1: kept disputes are one per renewal; copies, or many others, never evict one that still isolates; a failed write or another tab loses none", async () => {
-  const { a, agents, x } = await account();
+  const { a, agents, x, h1, h2 } = await account();
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
   await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
   const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
   const s2 = a.chain!.deviceRecord("m-2")!.rotatedSeq!;
-  a.keepDisputes([{ host: "m-1", seq: s1 }]);
+  const d1 = await keptOf(a, "m-1", h1.signPrivate, s1);
+  const d2 = await keptOf(a, "m-2", h2.signPrivate, s2);
+  a.keepDisputes([d1]);
   // 600 copies of one valid statement for m-2 (a hub may repeat it): one kept, m-1's stays.
-  a.keepDisputes(Array.from({ length: 600 }, () => ({ host: "m-2", seq: s2 })));
-  assert.deepEqual(a.keptDisputes(), [{ host: "m-1", seq: s1 }, { host: "m-2", seq: s2 }]);
+  a.keepDisputes(Array.from({ length: 600 }, () => d2));
+  assert.deepEqual(a.keptDisputes(), [d1, d2]);
   assert.equal(a.isolated("m-1"), true);
   // Many resolved ones (hosts long gone): only those are dropped past the cap, the oldest first.
-  a.keepDisputes(Array.from({ length: 600 }, (_, i) => ({ host: `gone-${i}`, seq: 1 })));
+  a.keepDisputes(Array.from({ length: 600 }, (_, i) => ({ host: `gone-${i}`, seq: 1, sig: "00".repeat(64) })));
   const kept = a.keptDisputes();
   assert.ok(kept.length <= 512, String(kept.length));
   assert.ok(kept.some((d) => d.host === "m-1") && kept.some((d) => d.host === "m-2"), "the isolating ones stay");
@@ -1395,7 +1404,7 @@ test("Codex 1: kept disputes are one per renewal; copies, or many others, never 
   assert.equal(a.isolated("m-2"), true);
 
   // Storage that cannot be written: kept in memory all the same.
-  const { a: b, agents: bAgents, x: bx } = await account();
+  const { a: b, agents: bAgents, x: bx, h1: bh1 } = await account();
   await b.removeDevice(bx.deviceId, new FakeCourier());
   await b.renewIdentity("m-1", bAgents, { assurance: ASSURANCE_AUTO, ...quick });
   const b1 = b.chain!.deviceRecord("m-1")!.rotatedSeq!;
@@ -1404,7 +1413,7 @@ test("Codex 1: kept disputes are one per renewal; copies, or many others, never 
   const tab2 = await tabOf(b, bus(), refusingDisputes(browserStorage(b.store)));
   let heard = 0;
   tab2.onChange(() => heard++);
-  tab1.keepDisputes([{ host: "m-1", seq: b1 }]);
+  tab1.keepDisputes([await keptOf(b, "m-1", bh1.signPrivate, b1)]);
   assert.equal(tab1.isolated("m-1"), true, "the write failed; memory keeps it");
   // Another tab hears of it at once — and tells its listeners (its channels among them).
   assert.equal(tab2.isolated("m-1"), true, "the other tab heard of it");
@@ -1412,11 +1421,11 @@ test("Codex 1: kept disputes are one per renewal; copies, or many others, never 
 });
 
 test("Codex 1: the runner's evidence from the hub now never stands in for what this page kept", async () => {
-  const { hub, a, agents, x } = await account();
+  const { hub, a, agents, x, h1 } = await account();
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
   const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
-  a.keepDisputes([{ host: "m-1", seq: s1 }]);
+  a.keepDisputes([await keptOf(a, "m-1", h1.signPrivate, s1)]);
   // The hub flags it isolated but hands no statement on now: what this page kept still isolates it — not a mere flag.
   hub.rotationRows.set("m-1", { host: "m-1", state: "committed", committed_seq: s1, isolated: true });
   const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }) });
@@ -1512,14 +1521,15 @@ test("Codex 5: this device's guard, or isolation learned while a renewal waits, 
     assert.deepEqual(rotated(a), []);
   }
   {
-    const { hub, a, agents, x } = await account({ chain: false });
+    const { hub, a, agents, x, h1 } = await account({ chain: false });
     await a.removeDevice(x.deviceId, new FakeCourier());
     await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
     const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+    const d1 = await keptOf(a, "m-1", h1.signPrivate, s1);
     hub.windowRefusals = [Date.now() + 30];
     const sleep = async (ms: number) => {
       // Its retired key's dispute arrives meanwhile: isolated now.
-      a.keepDisputes([{ host: "m-1", seq: s1 }]);
+      a.keepDisputes([d1]);
       await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
     };
     await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), renewal("needsAssurance"));
@@ -1593,4 +1603,117 @@ test("main's fork latch holds renewals too: a forked page asks nothing of the ho
     assert.throws(() => guarded.rotate("m-1", { nonce: "00", eph: "00", chainSeq: 0, chainHead: "00", assurance: 0 }), (e: unknown) => e instanceof AccountError && e.kind === "fork");
     assert.deepEqual(agents.rotateCalls, []);
   }
+});
+
+test("R6 L6: kept disputes carry their signature and are verified again when read back: a tampered one isolates nothing once checked; a real one survives a reload", async () => {
+  const { hub, a, agents, x, h1 } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const d1 = await keptOf(a, "m-1", h1.signPrivate);
+  // Written into storage with a signature that is not the retired key's.
+  browserStorage(a.store).setItem(`rh.hub.renewal.disputes.${a.account}`, JSON.stringify([{ ...d1, sig: "ab".repeat(64) }]));
+  const page = await hub.reload(a);
+  assert.equal(page.isolated("m-1"), true, "until checked, it counts: isolation fails safe");
+  await until(() => !page.isolated("m-1"));
+  assert.deepEqual(page.keptDisputes(), [], "dropped once checked");
+  // From another tab, forged: the same.
+  const bus = tabsBus();
+  const tab1 = await tabOf(a, bus());
+  const tab2 = await tabOf(a, bus());
+  browserStorage(a.store).removeItem(`rh.hub.renewal.disputes.${a.account}`);
+  tab1.keepDisputes([{ ...d1, sig: "cd".repeat(64) }]);
+  await until(() => !tab2.isolated("m-1"));
+  // The real one: kept, read back on a reload, verified again — and isolating.
+  a.keepDisputes([d1]);
+  const again = await hub.reload(a);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(again.isolated("m-1"), true, "it checks out");
+  assert.ok(again.keptDisputes().some((d) => d.sig === d1.sig));
+});
+
+test("R6 L5: a host the hub flags isolated is let control no other host either", async () => {
+  const { a } = await account({ chain: false });
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set(), flagged: new Set(["m-1"]) });
+  assert.equal(a.flagged("m-1"), true);
+  assert.equal(a.mustRenewFirst("m-1"), true);
+  await assert.rejects(a.setAccept("m-3", { type: "devices", ids: ["m-1"] }), (e: unknown) => e instanceof AccountError && e.kind === "exposed");
+  assert.equal(admitsOn(a.chain!, "m-3", "m-1"), false);
+});
+
+test("Codex 6: a hand edit of who can control a host checks exposure on the chain every rebuilt batch goes on — a 409 lets no exposed host in", async () => {
+  const { hub, a, x } = await account({ chain: false });
+  // Every host renews here (what the runner notes): an exposed one must renew before it is let in anywhere.
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set() });
+  const other = await tabOf(a, null);
+  let removed = false;
+  hub.gate = async (request) => {
+    if (request !== "POST /v1/chain" || removed) return;
+    removed = true;
+    hub.gate = null;
+    // Another page removes X just as this one appends: m-1 (which lets X in) is exposed on the newer head.
+    await other.removeDevice(x.deviceId, new FakeCourier());
+  };
+  await assert.rejects(a.setAccept("m-3", { type: "devices", ids: ["m-1"] }), (e: unknown) => e instanceof AccountError && e.kind === "exposed");
+  assert.ok(removed);
+  await a.sync();
+  assert.equal(admitsOn(a.chain!, "m-3", "m-1"), false, "m-1, exposed now, is let in nowhere");
+});
+
+test("Codex 5: this device's guard, or a dispute verified, while the batch is being signed is checked again right before publication", async () => {
+  for (const flip of ["guard", "dispute"] as const) {
+    const { a, agents, x, h1 } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    let d1: Awaited<ReturnType<typeof keptOf>> | null = null;
+    if (flip === "dispute") {
+      await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+      d1 = await keptOf(a, "m-1", h1.signPrivate);
+    }
+    const subtle = crypto.subtle as unknown as { sign: (...args: unknown[]) => Promise<ArrayBuffer> };
+    const sign = subtle.sign;
+    let armed = false;
+    // The batch's signatures (Ed25519) come after its build's checks: the flip lands between those and publication.
+    subtle.sign = function (...args: unknown[]) {
+      const alg = args[0] as string | { name?: string };
+      if (armed && (alg === "Ed25519" || (typeof alg === "object" && alg?.name === "Ed25519"))) {
+        armed = false;
+        if (flip === "guard") a.setLocalAssured(true);
+        else a.keepDisputes([d1!]);
+      }
+      return sign.apply(crypto.subtle, args);
+    };
+    try {
+      await assert.rejects(
+        a.renewIdentity("m-1", agents, {
+          assurance: ASSURANCE_AUTO,
+          ...quick,
+          onStep: (st) => {
+            if (st === "writing") armed = true;
+          },
+        }),
+        renewal("needsAssurance"),
+      );
+    } finally {
+      delete (subtle as { sign?: unknown }).sign;
+    }
+    assert.deepEqual(rotated(a), flip === "guard" ? [] : ["m-1"], `${flip}: nothing published`);
+  }
+});
+
+test("Codex 4 cap: a renewal superseded on every try is started again at most 3 times in all, then it says so", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const ys = [await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false })];
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, ...ys.map((y) => y.deviceId)] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.windowRefusals = [Date.now() + 30, Date.now() + 30, Date.now() + 30, Date.now() + 30];
+  const left = [...ys];
+  const sleep = async (ms: number) => {
+    // Each try: a device that could control m-1 is removed while it waits — a loss after its staged view.
+    const y = left.shift();
+    if (y) await a.removeDevice(y.deviceId, new FakeCourier());
+    await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20)));
+  };
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep }), renewal("superseded"));
+  assert.deepEqual(agents.rotateCalls, ["m-1", "m-1", "m-1"], "three tries, no fourth");
+  assert.deepEqual(rotated(a), []);
+  assert.equal(hub.rotationDeletes.filter((h) => h === "m-1").length, 3, "each withdrawn");
 });

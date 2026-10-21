@@ -201,7 +201,7 @@ test("isolated (§3.8 「页面」, decision B): first look at Droppen on it; �
   assert.ok(at('data-testid="renewal-remove-m-1"') < at("then, on that device, choose “add this device again with a new identity”"));
   assert.match(html, /data-testid="renewal-add-m-1"/);
   // A code: confirming on the device is the main action; removing still one click away.
-  assert.ok(html.includes("It shows a code: it still holds its current key."));
+  assert.ok(html.includes("It does not say “replaced elsewhere”: confirm on the device, with the code it shows."));
   assert.match(html, /<button[^>]*data-testid="renewal-code-m-1"[^>]*class="[^"]*"[^>]*>confirm on the device</);
   assert.match(html, /data-testid="renewal-remove-also-m-1"[^>]*>or remove m-1</);
   drive(RenewalLine, props, [
@@ -391,8 +391,9 @@ test("a refusal of a renewal reads in words, in the reader's language", () => {
 test("R6: a host that lets an isolated one control it says to remove that one first; notifications stopped by a renewal come back with one tap", async () => {
   const html = rowHtml(host({ id: "m-2", isolatedControllers: ["m-1"] }));
   assert.match(html, /data-testid="isolated-controllers-m-2" data-signal="warn"/);
-  assert.ok(html.includes("It lets m-1 control it, which is isolated: remove m-1 first."));
-  assert.ok(rowHtml(host({ id: "m-2", isolatedControllers: ["m-1"] }), {}, "zh-CN").includes("请先移除 m-1"));
+  assert.ok(html.includes("It lets m-1 control it, which is isolated: settle it on its row first."));
+  assert.doesNotMatch(html, /remove m-1 first/, "removing is not the only way any more (decision B)");
+  assert.ok(rowHtml(host({ id: "m-2", isolatedControllers: ["m-1"] }), {}, "zh-CN").includes("请先在那一行处理好它"));
   // A group renewing together (§4.1): control between them is paused, said on each row until the lists are back.
   const paused = rowHtml(host({ pausedWith: ["m-1", "m-2"] }));
   assert.match(paused, /data-testid="paused-m-1"/);

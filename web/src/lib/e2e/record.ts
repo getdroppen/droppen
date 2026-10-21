@@ -295,6 +295,8 @@ export class LogReader {
   private freshest: number | null;
   /** The newest signed head at exactly {@link confirmed}: what a saved reader restarts from. */
   private anchor: SignedHead | null;
+  /** Bumped by every change of {@link machineKey}: a head checked under one key never commits under the next (Codex round 7). */
+  private keyGen = 0;
 
   private constructor(
     readonly stream: Bytes,
@@ -336,6 +338,7 @@ export class LogReader {
 
   /** The host renewed its identity key: heads from now on are held to `key` (the chain's current one), not the old. */
   setMachineKey(key: Uint8Array): void {
+    if (!equal(key, this.signKey)) this.keyGen++;
     this.signKey = copy(key);
   }
 
@@ -388,9 +391,13 @@ export class LogReader {
   /** Release what a signed head covers (see the Rust side for each refusal). Serialised. */
   confirm(head: SignedHead): Promise<OpenedRecord[]> {
     return this.serial.run(async () => {
+      const gen = this.keyGen;
       if (!equal(head.head.stream, this.stream) || !(await verifyStreamHead(head, this.signKey))) {
         throw new RecordError("badHead", "the stream head's signature is not the machine's");
       }
+      // The machine renewed its key while the head was being checked: it was checked under a key that is retired now, and
+      // is held to the new one instead (refused here; the caller tries it again under the current key).
+      if (gen !== this.keyGen) throw new RecordError("badHead", "the machine renewed its key while its head was checked");
       const h = head.head;
       if (h.nextSeq < this.confirmedNext) return [];
       if (h.nextSeq > this.nextSeq) {
