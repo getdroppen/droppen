@@ -603,6 +603,18 @@ export interface RenewalReport {
   userKey?: FreshUserKey;
 }
 
+/** How long a renewal confirmed on the device waits for the person to type the code (`RenewOptions.codeWaitMs`). */
+export const CODE_WAIT_MS = 10 * 60_000;
+
+/** The code `answer` gives, or `null` (given up) once `ms` passed without one. */
+function answeredWithin(answer: Promise<string | null>, ms: number): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([answer, late]).finally(() => clearTimeout(timer));
+}
+
 /** How `renewIdentity` goes (`assurance`), and what it may ask of the page. */
 export interface RenewOptions {
   assurance: Assurance;
@@ -612,6 +624,12 @@ export interface RenewOptions {
    * never told the code: it must be typed (§3.7).
    */
   askCode?: (host: string) => Promise<string | null>;
+  /**
+   * How long `askCode` is waited for ({@link CODE_WAIT_MS}): unanswered by
+   * then, the renewal is cancelled as if the person gave up — a prompt left
+   * open never holds the renewal runner's queue (and the disputes it checks).
+   */
+  codeWaitMs?: number;
   /** Where it is, for the page. */
   onStep?: (step: "requesting" | "confirming" | "waiting" | "writing" | "handing") => void;
   /** How often to look at the hub's staging, and for how long at most (the window and a margin). */
@@ -4300,7 +4318,7 @@ export class CloudAccount {
       }
       if (assurance === ASSURANCE_ON_DEVICE) {
         opts.onStep?.("confirming");
-        const typed = opts.askCode ? await opts.askCode(host) : null;
+        const typed = opts.askCode ? await answeredWithin(opts.askCode(host), opts.codeWaitMs ?? CODE_WAIT_MS) : null;
         if (typed === null) throw new RenewalError("cancelled", "no code was typed");
         const want = (await rotateSas(body)).replace("-", "");
         if (typed.toUpperCase().replace(/[^A-Z2-7]/g, "") !== want) {

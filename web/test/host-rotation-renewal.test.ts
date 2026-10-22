@@ -704,6 +704,24 @@ test("confirmed on the device: the code must be typed, and be the one its screen
   assert.equal(a.chain!.machine("m-1")!.retired[0]!.byAssured, true);
 });
 
+test("a code prompt nobody answers gives up after `codeWaitMs`: the renewal is cancelled and withdrawn, and the runner reads the hub's renewals again", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: { ...quick, codeWaitMs: 50 } });
+  const late = <T>(p: Promise<T>, ms: number) => Promise.race([p.then((v) => ({ v }), (e: unknown) => ({ e })), new Promise<"late">((resolve) => setTimeout(() => resolve("late"), ms))]);
+  let asked = 0;
+  // A prompt left open (its panel closed, say): it never answers.
+  const renewing = runner.renew("m-1", { assurance: ASSURANCE_ON_DEVICE, askCode: () => (asked++, new Promise<string | null>(() => undefined)) });
+  const outcome = await late(renewing, 3_000);
+  assert.equal(asked, 1);
+  assert.ok(outcome !== "late" && "e" in outcome && outcome.e instanceof RenewalError && outcome.e.kind === "cancelled", `the prompt timed out: ${JSON.stringify(outcome)}`);
+  assert.ok(hub.rotationDeletes.includes("m-1"), "the attempt withdrawn");
+  assert.deepEqual(rotated(a), []);
+  // The queue is not held: a dispute the hub hands on is read and checked as before.
+  assert.notEqual(await late(runner.refresh(), 3_000), "late");
+  runner.stop();
+});
+
 test("renewIdentity waits for the hub's window (409 rotation_not_ready window → its ready_ms), and says why it cannot go otherwise", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());

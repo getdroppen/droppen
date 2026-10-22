@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance } from "@/lib/e2e";
@@ -265,9 +265,26 @@ export function RenewPanel({
   const [assurance, setAssurance] = useState<Assurance>(fixed ? ASSURANCE_ON_DEVICE : ASSURANCE_AUTO);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [asking, setAsking] = useState<((code: string | null) => void) | null>(null);
+  const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // The open code prompt's answer. The panel closing (another row's menu opened, say) gives it up: a renewal never waits
+  // on a prompt nobody can see — the runner does one at a time, and checks the hub's disputes in the same queue.
+  const answer = useRef<((code: string | null) => void) | null>(null);
+  const reply = (code: string | null) => {
+    const give = answer.current;
+    answer.current = null;
+    setAsking(false);
+    give?.(code);
+  };
+  useEffect(
+    () => () => {
+      const give = answer.current;
+      answer.current = null;
+      give?.(null);
+    },
+    [],
+  );
   const go = async () => {
     setBusy(true);
     setError(null);
@@ -275,14 +292,20 @@ export function RenewPanel({
       await runner.renew(host, {
         assurance,
         // The code is asked for once the device answered (it shows the code then), and is never shown here.
-        askCode: () => new Promise<string | null>((resolve) => setAsking(() => resolve)),
+        askCode: () =>
+          new Promise<string | null>((resolve) => {
+            answer.current?.(null);
+            answer.current = resolve;
+            setAsking(true);
+          }),
         onStep: (s) => setStep(s),
       });
       setDone(true);
     } catch (err) {
       setError(errorText(err));
     } finally {
-      setAsking(null);
+      answer.current = null;
+      setAsking(false);
       setStep(null);
       setBusy(false);
     }
@@ -322,17 +345,7 @@ export function RenewPanel({
         </div>
       )}
       {asking ? (
-        <EnterCode
-          host={host}
-          onCode={(code) => {
-            asking(code);
-            setAsking(null);
-          }}
-          onCancel={() => {
-            asking(null);
-            setAsking(null);
-          }}
-        />
+        <EnterCode host={host} onCode={(code) => reply(code)} onCancel={() => reply(null)} />
       ) : (
         <>
           {busy && step && (
