@@ -629,6 +629,86 @@ mod tests {
         }
     }
 
+    /// §3.4 rule 10 (大小上限): [`MAX_HELLO_ENTRIES`] renewal pauses of the
+    /// most bytes the chain takes fill a hello and a reply beside the most
+    /// info, within what a handshake message carries; one fills a `CHAIN`
+    /// frame; an entry past a u16 length is refused, never cut.
+    #[test]
+    fn the_largest_renewal_pauses_fit_every_transport() {
+        use crate::chain::{Draft, PausePhase, MAX_PAUSE_ENTRY_LEN, VERSION_3};
+        use crate::frame::Frame;
+        let f = fixture();
+        let entry = |ids: &[String]| {
+            Draft {
+                version: VERSION_3,
+                account: "acct-1".into(),
+                seq: 9,
+                prev: [0; 32],
+                created_ms: 1,
+                signer: Signer::Device("dev-0".into()),
+                action: Action::RenewalPause {
+                    op: [1; 16],
+                    phase: PausePhase::Start,
+                    removals: vec![("m-1".into(), ids.to_vec())],
+                },
+            }
+            .sign(&f.devices[0].0)
+        };
+        let mut ids: Vec<String> = Vec::new();
+        while entry(&ids).encode().len() + 2 * 66 <= MAX_PAUSE_ENTRY_LEN {
+            ids.push(format!("{:064}", ids.len()));
+        }
+        let rest = MAX_PAUSE_ENTRY_LEN - entry(&ids).encode().len() - 4;
+        ids.push("a".repeat(rest / 2));
+        ids.push("b".repeat(rest - rest / 2));
+        let largest = entry(&ids);
+        assert_eq!(largest.encode().len(), MAX_PAUSE_ENTRY_LEN);
+
+        let hello = HelloBody {
+            chain_seq: 9,
+            chain_head: [2; 32],
+            entries: vec![largest.clone(); MAX_HELLO_ENTRIES],
+            client: vec![7; MAX_INFO],
+        };
+        let bytes = hello.encode().unwrap();
+        assert!(bytes.len() <= crate::noise::MAX_HELLO_PAYLOAD, "{} bytes", bytes.len());
+        assert_eq!(HelloBody::decode(&bytes).unwrap(), hello);
+        let reply = ReplyBody {
+            status: ReplyStatus::Accepted,
+            chain_seq: 9,
+            chain_head: [2; 32],
+            need_from: 0,
+            server: vec![7; MAX_INFO],
+            entries: vec![largest.clone(); MAX_HELLO_ENTRIES],
+        };
+        let bytes = reply.encode().unwrap();
+        assert!(bytes.len() <= crate::noise::MAX_HELLO_PAYLOAD, "{} bytes", bytes.len());
+        assert_eq!(ReplyBody::decode(&bytes).unwrap(), reply);
+        let frame = Frame::Chain {
+            ch: 0,
+            entries: vec![largest.encode()],
+        };
+        assert_eq!(Frame::decode(&frame.encode().unwrap()).unwrap(), frame);
+
+        // Past a u16 length: refused, never cut.
+        let mut huge = largest.clone();
+        let Action::RenewalPause { removals, .. } = &mut huge.draft.action else { unreachable!() };
+        removals[0].1 = (0..1100).map(|i| format!("{i:064}")).collect();
+        assert!(huge.encode().len() > usize::from(u16::MAX));
+        let hello = HelloBody {
+            entries: vec![huge.clone()],
+            ..hello
+        };
+        assert!(hello.encode().is_err());
+        assert!(ReplyBody { entries: vec![huge.clone()], ..reply }.encode().is_err());
+        assert!(Frame::Chain { ch: 0, entries: vec![huge.encode()] }.encode().is_err());
+        // No count is clamped: one past u16::MAX does not encode at all.
+        let mut wide = largest.draft.clone();
+        let Action::RenewalPause { removals, .. } = &mut wide.action else { unreachable!() };
+        *removals = vec![("m-1".into(), vec!["d".into()]); 0x10000];
+        assert!(std::panic::catch_unwind(|| wide.encode()).is_err(), "a count past u16::MAX is refused, never cut");
+    }
+
     #[test]
     fn a_device_and_an_agent_with_the_same_view_open_a_channel() {
         let f = fixture();

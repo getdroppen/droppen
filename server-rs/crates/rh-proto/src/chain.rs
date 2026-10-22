@@ -106,7 +106,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::codec::{check_u64, put_str16, DecodeError, Reader};
+use crate::codec::{check_u64, put_count, put_str16, DecodeError, Reader};
 use crate::keys::{ed25519_key, x25519_valid};
 use crate::sig;
 
@@ -648,13 +648,15 @@ pub enum Action {
     /// (§3.4 rule 10) — an overlay, not an edit: a start names, per host, the
     /// devices it stops accepting for now; while the pause is open, the
     /// host's effective accept is its `SetAccept` base minus those
-    /// ([`ChainState::may_control`], [`ChainState::paused_edges`]); a
-    /// completion or cancellation lifts it. A `SetAccept` only ever changes
-    /// the base.
+    /// ([`ChainState::may_control`], so [`ChainState::authorize_control`];
+    /// [`ChainState::paused_edges`]); a completion or cancellation lifts it.
+    /// A `SetAccept` only ever changes the base. The whole entry fits every
+    /// transport ([`MAX_PAUSE_ENTRY_LEN`]).
     RenewalPause {
         op: [u8; 16],
         phase: PausePhase,
-        /// Start: each host and the ids it stops accepting. End: empty.
+        /// Start: each host and the ids it stops accepting (never a current
+        /// admin), hosts and each host's ids in byte order. End: empty.
         removals: Vec<(String, Vec<String>)>,
     },
 }
@@ -694,6 +696,15 @@ impl PausePhase {
 pub const MAX_PAUSE_HOSTS: usize = 256;
 /// The most edges (host, id) one renewal pause may remove.
 pub const MAX_PAUSE_EDGES: usize = 1024;
+/// The most bytes a renewal pause entry may take, encoded with its signature
+/// (§3.4 rule 10, 大小上限): what every transport that carries chain entries
+/// holds. [`crate::handshake::MAX_HELLO_ENTRIES`] of them, each behind its
+/// u16 length, fit a hello beside the most client info and a reply beside the
+/// most server info ([`crate::noise::MAX_HELLO_PAYLOAD`]); one fits a `CHAIN`
+/// frame ([`crate::frame::MAX_PAYLOAD_LEN`]). A larger one is refused
+/// ([`rules::PAUSE_TOO_LARGE`]): a cycle that needs more is split into
+/// several pauses. The TS verifier holds the same number.
+pub const MAX_PAUSE_ENTRY_LEN: usize = 4000;
 
 /// A renewal pause as the chain has it, by op.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -908,7 +919,7 @@ fn put_key_commits(out: &mut Vec<u8>, k: &KeyCommits) {
             put_commit(out, c);
         }
     }
-    out.extend_from_slice(&(k.machines.len().min(usize::from(u16::MAX)) as u16).to_be_bytes());
+    put_count(out, k.machines.len());
     for (machine, c) in &k.machines {
         put_str16(out, machine);
         put_commit(out, c);
@@ -1004,7 +1015,7 @@ fn put_accept(out: &mut Vec<u8>, from: &Accept) {
         Accept::All => out.push(1),
         Accept::Devices(ids) => {
             out.push(2);
-            out.extend_from_slice(&(ids.len().min(usize::from(u16::MAX)) as u16).to_be_bytes());
+            put_count(out, ids.len());
             for id in ids {
                 put_str16(out, id);
             }
@@ -1109,6 +1120,17 @@ fn get_pause(r: &mut Reader<'_>) -> Result<Action, DecodeError> {
     Ok(Action::RenewalPause { op, phase, removals })
 }
 
+/// Whether `items` are strictly ascending by bytes: each once, in the one
+/// order a renewal pause's removals take (§3.4 rule 10).
+fn ascending<'a>(items: impl IntoIterator<Item = &'a String>) -> bool {
+    let mut last: Option<&String> = None;
+    items.into_iter().all(|item| {
+        let ok = last.is_none_or(|l| l.as_bytes() < item.as_bytes());
+        last = Some(item);
+        ok
+    })
+}
+
 impl Draft {
     /// The bytes that are signed (after the label) and that, with the
     /// signature, are the entry.
@@ -1181,10 +1203,10 @@ impl Draft {
             Action::RenewalPause { op, phase, removals } => {
                 out.extend_from_slice(op);
                 out.push(phase.to_byte());
-                out.extend_from_slice(&(removals.len().min(usize::from(u16::MAX)) as u16).to_be_bytes());
+                put_count(&mut out, removals.len());
                 for (host, ids) in removals {
                     put_str16(&mut out, host);
-                    out.extend_from_slice(&(ids.len().min(usize::from(u16::MAX)) as u16).to_be_bytes());
+                    put_count(&mut out, ids.len());
                     for id in ids {
                         put_str16(&mut out, id);
                     }
@@ -1758,13 +1780,20 @@ pub mod rules {
     /// `RenewalPause` (§3.4 rule 10): a start names an op the chain never used.
     pub const PAUSE_OP_REUSED: &str = "a renewal pause starts under an op the chain never used";
     /// A start names current hosts, at least one and at most
-    /// [`super::MAX_PAUSE_HOSTS`], each once.
-    pub const PAUSE_HOSTS: &str = "a renewal pause names current hosts, at least one, each once";
+    /// [`super::MAX_PAUSE_HOSTS`], each once, in byte order (one list, one
+    /// encoding).
+    pub const PAUSE_HOSTS: &str = "a renewal pause names current hosts, at least one, each once, in byte order";
     /// A start removes at most [`super::MAX_PAUSE_EDGES`] edges in all.
     pub const PAUSE_EDGES: &str = "a renewal pause removes too many edges";
+    /// A start, encoded with its signature, takes at most
+    /// [`super::MAX_PAUSE_ENTRY_LEN`] bytes, so every transport carries it.
+    pub const PAUSE_TOO_LARGE: &str = "a renewal pause is too large for every transport to carry";
     /// From each host, a start removes devices the chain named, at least one,
-    /// each once, never the host itself.
-    pub const PAUSE_IDS: &str = "a renewal pause removes, from each host, devices the chain named, at least one, each once, never the host itself";
+    /// each once, in byte order — never the host itself, nor a current admin
+    /// (D1: an admin's control does not go by any list; pausing it is not
+    /// needed, and would escape the exposure check).
+    pub const PAUSE_IDS: &str =
+        "a renewal pause removes, from each host, devices the chain named, at least one, each once, in byte order, never the host itself nor an admin";
     /// A completion or cancellation ends an open pause, once.
     pub const PAUSE_NOT_OPEN: &str = "only an open renewal pause ends, and only once";
     /// A completion or cancellation names no removals.
@@ -2422,10 +2451,12 @@ impl ChainState {
                         if self.pauses.contains_key(op) {
                             return Err(not_allowed(seq, rules::PAUSE_OP_REUSED));
                         }
-                        let hosts: BTreeSet<&String> = removals.iter().map(|(h, _)| h).collect();
+                        // Canonical: hosts, and each host's ids, strictly
+                        // ascending by bytes — so each once, and one list has
+                        // one encoding.
                         if removals.is_empty()
                             || removals.len() > MAX_PAUSE_HOSTS
-                            || hosts.len() != removals.len()
+                            || !ascending(removals.iter().map(|(h, _)| h))
                             || removals.iter().any(|(h, _)| self.machine(h).is_none())
                         {
                             return Err(not_allowed(seq, rules::PAUSE_HOSTS));
@@ -2433,9 +2464,14 @@ impl ChainState {
                         if removals.iter().map(|(_, ids)| ids.len()).sum::<usize>() > MAX_PAUSE_EDGES {
                             return Err(not_allowed(seq, rules::PAUSE_EDGES));
                         }
+                        if entry.encode().len() > MAX_PAUSE_ENTRY_LEN {
+                            return Err(not_allowed(seq, rules::PAUSE_TOO_LARGE));
+                        }
                         for (host, ids) in removals {
-                            let distinct: BTreeSet<&String> = ids.iter().collect();
-                            if ids.is_empty() || distinct.len() != ids.len() || ids.iter().any(|id| id == host || !self.devices.contains_key(id)) {
+                            if ids.is_empty()
+                                || !ascending(ids)
+                                || ids.iter().any(|id| id == host || !self.devices.contains_key(id) || self.admin(id).is_some())
+                            {
                                 return Err(not_allowed(seq, rules::PAUSE_IDS));
                             }
                         }
@@ -2981,7 +3017,9 @@ impl ChainState {
             return Err(refuse("not a current host of this account"));
         }
         // §3.4 rule 10: while a renewal pause is open, the host's effective
-        // accept is its base minus the pause's removals — admins included.
+        // accept is its base minus the pause's removals. A start never names
+        // a current admin (D1); a device made admin while paused stays paused
+        // until the pause ends (a pause only ever narrows).
         if self.paused_edges(host).iter().any(|id| id == device) {
             return Err(refuse("control is paused while identity keys are renewed"));
         }

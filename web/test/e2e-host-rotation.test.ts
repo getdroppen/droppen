@@ -24,8 +24,14 @@ import {
   ChainError,
   ChainState,
   decodeEntry,
+  decodeFrame,
+  decodeHelloBody,
+  decodeReplyBody,
   encodeDraft,
   encodeEntry,
+  encodeFrame,
+  encodeHelloBody,
+  encodeReplyBody,
   type Entry,
   entryHash,
   fromHex,
@@ -37,6 +43,10 @@ import {
   importX25519Private,
   LABELS,
   machineKeyCommit,
+  MAX_HELLO_ENTRIES,
+  MAX_HELLO_PAYLOAD,
+  MAX_INFO,
+  MAX_PAUSE_ENTRY_LEN,
   type OpenPause,
   PAUSE_CANCELLED,
   PAUSE_COMPLETED,
@@ -65,6 +75,7 @@ import {
   verifyHostRotation,
   verifyRotateAck,
   verifyRotateConfirm,
+  Writer,
 } from "../src/lib/e2e/index.js";
 import { deviceFingerprint } from "../src/lib/hub/account.js";
 
@@ -198,6 +209,7 @@ test("renewals: the confirmation MAC, the code and the ack are Rust's, from eith
       pauseHosts: RULES.pauseHosts,
       pauseEdges: RULES.pauseEdges,
       pauseIds: RULES.pauseIds,
+      pauseTooLarge: RULES.pauseTooLarge,
       pauseNotOpen: RULES.pauseNotOpen,
       pauseEndRemovals: RULES.pauseEndRemovals,
     },
@@ -500,9 +512,14 @@ test("R1e: Rust's renewal pause chain verifies here step by step — the same op
     const a = decodeEntry(h(p.encoding[which])).draft.action;
     assert.ok(a.type === "renewalPause" && a.phase === phase, which);
   }
+  const labels = p.steps.map((s: Json) => s.label);
+  for (const label of ["pauseStart", "pauseCompleted", "pause2Cancelled", "overlapCompleted", "pausedHostStops", "pausedDeviceRemoved", "overlap2Completed"]) {
+    assert.ok(labels.includes(label), `Rust's pause chain has ${label}`);
+  }
+  assert.equal(p.maxEntryLen, MAX_PAUSE_ENTRY_LEN, "one size bound on both sides");
 });
 
-test("R1e: a renewal pause overlays the accept policy — admins included — and leaves the base alone; any admin ends it", async () => {
+test("R1e: a renewal pause overlays the accept policy — never an admin — and leaves the base alone; any admin ends it", async () => {
   const st = (await upto("removalKeys")).clone();
   const k0 = (await dev0()).key;
   const da = await freshKeys("d-a");
@@ -526,14 +543,15 @@ test("R1e: a renewal pause overlays the accept policy — admins included — an
   assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-0", "m-1"));
   const removals = [
     { host: "h-2", ids: ["m-1"] },
-    { host: "m-1", ids: ["h-2", "dev-0"] },
+    { host: "m-1", ids: ["dev-2", "h-2"] },
   ];
   await push(st, marker(a, PAUSE_START, removals));
-  assert.ok(!ok(st, "h-2", "m-1") && !ok(st, "m-1", "h-2") && !ok(st, "dev-0", "m-1"), "paused, admins included");
-  assert.ok(ok(st, "dev-2", "m-1") && ok(st, "d-a", "m-1") && ok(st, "dev-2", "h-2"), "the rest stands");
+  assert.ok(!ok(st, "h-2", "m-1") && !ok(st, "m-1", "h-2") && !ok(st, "dev-2", "m-1"), "the paused edges are refused");
+  assert.throws(() => st.mayControl("dev-2", "m-1"), /control is paused while identity keys are renewed/);
+  assert.ok(ok(st, "dev-0", "m-1") && ok(st, "d-a", "m-1") && ok(st, "dev-2", "h-2"), "the rest stands, admins always");
   assert.throws(() => st.authorizeControl("h-2", h(R.hostKeys[0].dhKey), "m-1"), kind("notAccepted"));
   assert.deepEqual(st.baseAccept("m-1"), { type: "all" });
-  assert.deepEqual(st.pausedEdges("m-1"), ["dev-0", "h-2"]);
+  assert.deepEqual(st.pausedEdges("m-1"), ["dev-2", "h-2"]);
   assert.deepEqual(
     st.openPauses().map((x: OpenPause) => [hex(x.op), x.signer, x.removals]),
     [[hex(a), "dev-0", removals]],
@@ -545,7 +563,7 @@ test("R1e: a renewal pause overlays the accept policy — admins included — an
   // Another admin completes it: the overlay lifts.
   await push(st, marker(a, PAUSE_COMPLETED, []), byA, da.key);
   assert.deepEqual(st.openPauses(), []);
-  assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-0", "m-1"));
+  assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-2", "m-1") && ok(st, "dev-0", "m-1"));
   // A pause whose starter is demoted stays in force; a demoted admin ends nothing; another admin does.
   await push(st, marker(b, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]), byA, da.key);
   await push(st, { type: "setAdmin", id: "d-a", admin: false });
@@ -553,17 +571,44 @@ test("R1e: a renewal pause overlays the accept policy — admins included — an
   await assert.rejects(tryPush(st, marker(b, PAUSE_CANCELLED, []), byA, da.key), rule(RULES.onlyAdminSigns));
   await push(st, marker(b, PAUSE_CANCELLED, []));
   assert.ok(ok(st, "dev-2", "m-1"));
+  // A device made admin while paused stays paused until the pause ends: a pause only ever narrows.
+  const d3 = new Uint8Array(16).fill(0xd3);
+  const promoted = await tryPush(st, marker(d3, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }]));
+  await push(promoted, { type: "setAdmin", id: "dev-2", admin: true });
+  assert.ok(!ok(promoted, "dev-2", "m-1"), "an admin now, paused all the same");
+  await push(promoted, marker(d3, PAUSE_COMPLETED, []));
+  assert.ok(ok(promoted, "dev-2", "m-1"));
   // The rules.
   const c = new Uint8Array(16).fill(0xc1);
   await assert.rejects(tryPush(st, marker(a, PAUSE_START, [{ host: "m-1", ids: ["dev-2"] }])), rule(RULES.pauseOpReused));
-  for (const bad of [[], [{ host: "dev-2", ids: ["m-1"] }], [{ host: "dev-1", ids: ["m-1"] }], [{ host: "m-1", ids: ["dev-2"] }, { host: "m-1", ids: ["h-2"] }], Array.from({ length: 257 }, (_, i) => ({ host: `h-${i}`, ids: ["dev-2"] }))]) {
+  for (const bad of [
+    [],
+    [{ host: "dev-2", ids: ["m-1"] }],
+    [{ host: "dev-1", ids: ["m-1"] }],
+    [{ host: "m-1", ids: ["dev-2"] }, { host: "m-1", ids: ["h-2"] }],
+    [{ host: "m-1", ids: ["dev-2"] }, { host: "h-2", ids: ["dev-2"] }],
+    Array.from({ length: 257 }, (_, i) => ({ host: `h-${i}`, ids: ["dev-2"] })),
+  ]) {
     await assert.rejects(tryPush(st, marker(c, PAUSE_START, bad)), rule(RULES.pauseHosts), JSON.stringify(bad).slice(0, 80));
   }
   const many = Array.from({ length: 513 }, (_, i) => `d-${i}`);
-  await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: many }, { host: "h-2", ids: many }])), rule(RULES.pauseEdges));
-  for (const ids of [[], ["m-1"], ["nobody"], ["dev-2", "dev-2"]]) {
+  await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "h-2", ids: many }, { host: "m-1", ids: many }])), rule(RULES.pauseEdges));
+  for (const ids of [[], ["m-1"], ["nobody"], ["dev-2", "dev-2"], ["h-2", "dev-2"], ["dev-0"]]) {
     await assert.rejects(tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids }])), rule(RULES.pauseIds), ids.join(","));
   }
+  // The whole entry fits every transport: one byte past MAX_PAUSE_ENTRY_LEN is refused for that alone; at it, the ids'
+  // own rule speaks.
+  const sized = (len: number): Action => {
+    const length = (ids: string[]) => encodeDraft(st.draft(byDev0, marker(c, PAUSE_START, [{ host: "m-1", ids }]), 0)).length + 64;
+    const ids: string[] = [];
+    while (length(ids) + 2 * 66 <= len) ids.push(`x${String(ids.length).padStart(63, "0")}`);
+    const rest = len - length(ids) - 4;
+    ids.push("y".repeat(Math.floor(rest / 2)), "z".repeat(rest - Math.floor(rest / 2)));
+    assert.equal(length(ids), len);
+    return marker(c, PAUSE_START, [{ host: "m-1", ids }]);
+  };
+  await assert.rejects(tryPush(st, sized(MAX_PAUSE_ENTRY_LEN + 1)), rule(RULES.pauseTooLarge));
+  await assert.rejects(tryPush(st, sized(MAX_PAUSE_ENTRY_LEN)), rule(RULES.pauseIds));
   await tryPush(st, marker(c, PAUSE_START, [{ host: "m-1", ids: ["dev-1"] }]));
   await assert.rejects(tryPush(st, marker(a, PAUSE_COMPLETED, [])), rule(RULES.pauseNotOpen), "twice");
   await assert.rejects(tryPush(st, marker(new Uint8Array(16).fill(0xcc), PAUSE_CANCELLED, [])), rule(RULES.pauseNotOpen), "unknown");
@@ -592,6 +637,44 @@ test("R1e: a renewal pause overlays the accept policy — admins included — an
   const copyState = open.clone();
   await push(copyState, marker(c, PAUSE_CANCELLED, []));
   assert.deepEqual(open.pausedEdges("m-1"), ["dev-2"]);
+});
+
+test("R1e: the largest renewal pauses fit every transport; a longer entry or count is refused, never cut", async () => {
+  // As in Rust (handshake.rs): MAX_HELLO_ENTRIES pauses of MAX_PAUSE_ENTRY_LEN bytes fill a hello and a reply beside the
+  // most info, within what a handshake message carries; one fills a `chain` frame.
+  const st = await upto("removalKeys");
+  const k0 = (await dev0()).key;
+  const pauseOf = (ids: string[]) => st.draft(byDev0, { type: "renewalPause", op: new Uint8Array(16).fill(1), phase: PAUSE_START, removals: [{ host: "m-1", ids }] }, 1);
+  const ids: string[] = [];
+  while (encodeDraft(pauseOf(ids)).length + 64 + 2 * 66 <= MAX_PAUSE_ENTRY_LEN) ids.push(`x${String(ids.length).padStart(63, "0")}`);
+  const rest = MAX_PAUSE_ENTRY_LEN - (encodeDraft(pauseOf(ids)).length + 64) - 4;
+  ids.push("y".repeat(Math.floor(rest / 2)), "z".repeat(rest - Math.floor(rest / 2)));
+  const largest = await signDraft(pauseOf(ids), k0);
+  assert.equal(encodeEntry(largest).length, MAX_PAUSE_ENTRY_LEN);
+  const hello = { chainSeq: 9, chainHead: new Uint8Array(32).fill(2), entries: Array(MAX_HELLO_ENTRIES).fill(largest), client: new Uint8Array(MAX_INFO).fill(7) };
+  const helloBytes = encodeHelloBody(hello);
+  assert.ok(helloBytes.length <= MAX_HELLO_PAYLOAD, `${helloBytes.length} bytes`);
+  assert.equal(decodeHelloBody(helloBytes).entries.length, MAX_HELLO_ENTRIES);
+  const reply = { status: "accepted" as const, chainSeq: 9, chainHead: new Uint8Array(32).fill(2), needFrom: 0, server: new Uint8Array(MAX_INFO).fill(7), entries: Array(MAX_HELLO_ENTRIES).fill(largest) };
+  const replyBytes = encodeReplyBody(reply);
+  assert.ok(replyBytes.length <= MAX_HELLO_PAYLOAD, `${replyBytes.length} bytes`);
+  assert.equal(decodeReplyBody(replyBytes).entries.length, MAX_HELLO_ENTRIES);
+  const frame = decodeFrame(encodeFrame({ type: "chain", ch: 0, entries: [encodeEntry(largest)] }));
+  assert.ok(frame.type === "chain" && hex(frame.entries[0]!) === hex(encodeEntry(largest)));
+  // Past a u16 length: refused, never cut (the encoder used to wrap the length).
+  const huge = await signDraft(pauseOf(Array.from({ length: 1100 }, (_, i) => String(i).padStart(64, "0"))), k0);
+  assert.ok(encodeEntry(huge).length > 0xffff);
+  assert.throws(() => encodeHelloBody({ ...hello, entries: [huge] }), /too long/);
+  assert.throws(() => encodeReplyBody({ ...reply, entries: [huge] }), /too long/);
+  assert.throws(() => encodeFrame({ type: "chain", ch: 0, entries: [encodeEntry(huge)] }));
+  // No field clamps or wraps: a count past 0xffff throws.
+  assert.throws(() => new Writer().u16(0x10000), /does not fit a u16/);
+  assert.throws(() => new Writer().u8(256), /does not fit a u8/);
+  assert.throws(() => new Writer().u32(-1), /does not fit a u32/);
+  const wide = Array.from({ length: 0x10000 }, () => ({ host: "m-1", ids: ["dev-2"] }));
+  assert.throws(() => encodeDraft(st.draft(byDev0, { type: "renewalPause", op: new Uint8Array(16), phase: PAUSE_START, removals: wide }, 1)), /does not fit a u16/);
+  const longList = Array.from({ length: 0x10000 }, (_, i) => `d-${i}`);
+  assert.throws(() => encodeDraft(st.draft(byDev0, { type: "setAccept", host: "m-1", from: { type: "devices", ids: longList } }, 1)), /does not fit a u16/);
 });
 
 test("R1b: a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {

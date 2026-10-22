@@ -1723,7 +1723,10 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
     case "renewalPause": {
       // Host identity rotation §3.4 rule 10: control paused over hosts while identity keys are renewed, a note.
       const edges = (alert.pause?.removals ?? []).map((r) => t("{{ids}} over {{host}}", { ids: r.ids.join(", "), host: r.host })).join("; ") || "?";
-      if (alert.pause?.phase === "completed") return t("control by {{edges}} resumes (by {{by}})", { edges, by });
+      if (alert.pause?.phase === "completed") {
+        if (alert.pause.removals.length === 0) return t("a renewal pause was completed; none of the control it paused comes back (by {{by}})", { by });
+        return t("control by {{edges}} resumes (by {{by}})", { edges, by });
+      }
       if (alert.pause?.phase === "cancelled") return t("the pause of control by {{edges}} was ended (by {{by}})", { edges, by });
       return t("control by {{edges}} is paused while identity keys are renewed (by {{by}})", { edges, by });
     }

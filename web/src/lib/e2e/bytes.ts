@@ -81,25 +81,32 @@ export function fromHex(text: string): Bytes {
   return out;
 }
 
+function fits(v: number, max: number, what: string): number {
+  if (!Number.isInteger(v) || v < 0 || v > max) throw new DecodeError(`${v} does not fit a ${what}`);
+  return v;
+}
+
 /** Appends big-endian fields; the encoder half of {@link Reader}. */
 export class Writer {
   private parts: Uint8Array[] = [];
 
+  // Every fixed-width field throws on a value it cannot hold, never wraps or masks: a count or length that does not fit
+  // must not encode as a smaller one (Rust's encoders refuse the same).
   u8(v: number): this {
-    this.parts.push(Uint8Array.of(v & 0xff));
+    this.parts.push(Uint8Array.of(fits(v, 0xff, "u8")));
     return this;
   }
 
   u16(v: number): this {
     const b = bytes(2);
-    new DataView(b.buffer).setUint16(0, v);
+    new DataView(b.buffer).setUint16(0, fits(v, 0xffff, "u16"));
     this.parts.push(b);
     return this;
   }
 
   u32(v: number): this {
     const b = bytes(4);
-    new DataView(b.buffer).setUint32(0, v);
+    new DataView(b.buffer).setUint32(0, fits(v, 0xffffffff, "u32"));
     this.parts.push(b);
     return this;
   }

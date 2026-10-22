@@ -438,12 +438,15 @@ export type Action =
   /**
    * Kind 22: control paused over hosts while identity keys are renewed (§3.4 rule 10) — an overlay, not an edit: a start
    * names, per host, the devices it stops accepting for now; while the pause is open, the host's effective accept is its
-   * `setAccept` base minus those (`mayControl`, `pausedEdges`); a completion or cancellation lifts it. A `setAccept` only
-   * ever changes the base.
+   * `setAccept` base minus those (`mayControl`, so `authorizeControl`; `pausedEdges`); a completion or cancellation lifts
+   * it. A `setAccept` only ever changes the base. The whole entry fits every transport (`MAX_PAUSE_ENTRY_LEN`).
    */
   | { type: "renewalPause"; op: Bytes; phase: PausePhase; removals: PauseRemoval[] };
 
-/** One host and the ids it stops accepting while a renewal pause is open (Rust's `(host, ids)`). */
+/**
+ * One host and the ids it stops accepting while a renewal pause is open (Rust's `(host, ids)`): never a current admin;
+ * hosts, and each host's ids, in byte order.
+ */
 export interface PauseRemoval {
   host: string;
   ids: string[];
@@ -458,6 +461,14 @@ export const PAUSE_CANCELLED = 2;
 export const MAX_PAUSE_HOSTS = 256;
 /** The most edges (host, id) one renewal pause may remove. */
 export const MAX_PAUSE_EDGES = 1024;
+/**
+ * The most bytes a renewal pause entry may take, encoded with its signature (§3.4 rule 10, 大小上限; Rust's
+ * `MAX_PAUSE_ENTRY_LEN`, the same number): what every transport that carries chain entries holds — `MAX_HELLO_ENTRIES`
+ * of them, each behind its u16 length, fit a hello beside the most client info and a reply beside the most server info,
+ * and one fits a `chain` frame. A larger one is refused (`RULES.pauseTooLarge`): a cycle that needs more is split into
+ * several pauses (`encodeEntry(entry).length`, or `encodeDraft(draft).length + 64`, is what counts).
+ */
+export const MAX_PAUSE_ENTRY_LEN = 4000;
 
 /** A renewal pause as the chain has it (Rust's `PauseRecord`). */
 export interface PauseRecord {
@@ -566,12 +577,18 @@ export const RULES = {
   rotateNeedsAssurance: "the account asks for every renewal to be confirmed on the device",
   /** `renewalPause` (§3.4 rule 10): a start names an op the chain never used. */
   pauseOpReused: "a renewal pause starts under an op the chain never used",
-  /** A start names current hosts, at least one and at most `MAX_PAUSE_HOSTS`, each once. */
-  pauseHosts: "a renewal pause names current hosts, at least one, each once",
+  /** A start names current hosts, at least one and at most `MAX_PAUSE_HOSTS`, each once, in byte order (one list, one encoding). */
+  pauseHosts: "a renewal pause names current hosts, at least one, each once, in byte order",
   /** A start removes at most `MAX_PAUSE_EDGES` edges in all. */
   pauseEdges: "a renewal pause removes too many edges",
-  /** From each host, a start removes devices the chain named, at least one, each once, never the host itself. */
-  pauseIds: "a renewal pause removes, from each host, devices the chain named, at least one, each once, never the host itself",
+  /** A start, encoded with its signature, takes at most `MAX_PAUSE_ENTRY_LEN` bytes, so every transport carries it. */
+  pauseTooLarge: "a renewal pause is too large for every transport to carry",
+  /**
+   * From each host, a start removes devices the chain named, at least one, each once, in byte order — never the host
+   * itself, nor a current admin (D1: an admin's control does not go by any list; pausing it is not needed, and would
+   * escape the exposure check).
+   */
+  pauseIds: "a renewal pause removes, from each host, devices the chain named, at least one, each once, in byte order, never the host itself nor an admin",
   /** A completion or cancellation ends an open pause, once. */
   pauseNotOpen: "only an open renewal pause ends, and only once",
   /** A completion or cancellation names no removals. */
@@ -727,6 +744,12 @@ function getSlot(r: Reader): PasskeySlot {
   };
 }
 
+/** Whether `items` are strictly ascending by bytes: each once, in the one order a renewal pause's removals take (§3.4 rule 10). */
+function ascending(items: string[]): boolean {
+  for (let i = 1; i < items.length; i++) if (compareUtf8(items[i - 1]!, items[i]!) >= 0) return false;
+  return true;
+}
+
 /** Byte order of two strings' UTF-8 (what Rust's `as_bytes()` comparison is). */
 function compareUtf8(a: string, b: string): number {
   const x = utf8(a);
@@ -740,7 +763,7 @@ function putAccept(w: Writer, from: Accept): void {
   if (from.type === "admins") w.u8(0);
   else if (from.type === "all") w.u8(1);
   else {
-    w.u8(2).u16(Math.min(from.ids.length, 0xffff));
+    w.u8(2).u16(from.ids.length);
     for (const id of from.ids) w.str16(id);
   }
 }
@@ -772,7 +795,7 @@ function sameAccept(a: Accept, b: Accept): boolean {
 function putKeyCommits(w: Writer, user: KeyCommit | null, machines: MachineKeyCommit[]): void {
   if (user) w.u8(1).u32(user.epoch).raw(user.hash);
   else w.u8(0);
-  w.u16(Math.min(machines.length, 0xffff));
+  w.u16(machines.length);
   for (const m of machines) w.str16(m.machine).u32(m.epoch).raw(m.hash);
 }
 
@@ -880,9 +903,9 @@ export function encodeDraft(d: Draft): Bytes {
       break;
     case "renewalPause":
       if (a.op.length !== 16) throw new Error("a renewal pause op is 16 bytes");
-      w.raw(a.op).u8(a.phase).u16(Math.min(a.removals.length, 0xffff));
+      w.raw(a.op).u8(a.phase).u16(a.removals.length);
       for (const { host, ids } of a.removals) {
-        w.str16(host).u16(Math.min(ids.length, 0xffff));
+        w.str16(host).u16(ids.length);
         for (const id of ids) w.str16(id);
       }
       break;
@@ -1716,13 +1739,14 @@ export class ChainState {
         const op = hex(a.op);
         if (a.phase === PAUSE_START) {
           if (this.pauses.has(op)) throw notAllowed(RULES.pauseOpReused);
-          const hosts = new Set(a.removals.map((r) => r.host));
-          if (a.removals.length === 0 || a.removals.length > MAX_PAUSE_HOSTS || hosts.size !== a.removals.length || a.removals.some((r) => !this.machine(r.host))) {
+          // Canonical: hosts, and each host's ids, strictly ascending by bytes — so each once, and one list has one encoding.
+          if (a.removals.length === 0 || a.removals.length > MAX_PAUSE_HOSTS || !ascending(a.removals.map((r) => r.host)) || a.removals.some((r) => !this.machine(r.host))) {
             throw notAllowed(RULES.pauseHosts);
           }
           if (a.removals.reduce((n, r) => n + r.ids.length, 0) > MAX_PAUSE_EDGES) throw notAllowed(RULES.pauseEdges);
+          if (encodeEntry(entry).length > MAX_PAUSE_ENTRY_LEN) throw notAllowed(RULES.pauseTooLarge);
           for (const { host, ids } of a.removals) {
-            if (ids.length === 0 || new Set(ids).size !== ids.length || ids.some((id) => id === host || !this.devices.has(id))) throw notAllowed(RULES.pauseIds);
+            if (ids.length === 0 || !ascending(ids) || ids.some((id) => id === host || !this.devices.has(id) || this.admin(id) !== undefined)) throw notAllowed(RULES.pauseIds);
           }
           this.pauses.set(op, { removals: copyRemovals(a.removals), startSeq: seq, signer: signerId, end: null });
         } else {
@@ -2156,7 +2180,8 @@ export class ChainState {
     const refuse = (reason: string) => new ChainError("notAccepted", `device ${device} may not control ${host}: ${reason}`, { device, host });
     if (!this.machine(host)) throw refuse("not a current host of this account");
     // As in Rust (§3.4 rule 10): while a renewal pause is open, the host's effective accept is its base minus the
-    // pause's removals — admins included.
+    // pause's removals. A start never names a current admin (D1); a device made admin while paused stays paused until
+    // the pause ends (a pause only ever narrows).
     if (this.pausedEdges(host).includes(device)) throw refuse("control is paused while identity keys are renewed");
     if (requester.admin) return;
     const policy = this.accept.get(host);

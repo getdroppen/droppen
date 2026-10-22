@@ -38,13 +38,20 @@ export function helloFor(chain: ChainState, client: Uint8Array): HelloBody {
   return { chainSeq: chain.seq, chainHead: chain.head, entries: chain.suffix(MAX_HELLO_ENTRIES), client: Uint8Array.from(client) };
 }
 
-export function encodeHelloBody(b: HelloBody): Bytes {
-  if (b.entries.length > MAX_HELLO_ENTRIES || b.client.length > MAX_INFO) throw new DecodeError("hello too large");
-  const w = new Writer().u64(b.chainSeq).raw(b.chainHead).u16(b.entries.length);
-  for (const e of b.entries) {
+/** Each entry behind its u16 length: one too long for it is refused, never cut (Rust's encoders refuse the same). */
+function putEntries(w: Writer, entries: Entry[]): void {
+  w.u16(entries.length);
+  for (const e of entries) {
     const bytes = encodeEntry(e);
+    if (bytes.length > 0xffff) throw new DecodeError(`a chain entry of ${bytes.length} bytes is too long for a handshake`);
     w.u16(bytes.length).raw(bytes);
   }
+}
+
+export function encodeHelloBody(b: HelloBody): Bytes {
+  if (b.entries.length > MAX_HELLO_ENTRIES || b.client.length > MAX_INFO) throw new DecodeError("hello too large");
+  const w = new Writer().u64(b.chainSeq).raw(b.chainHead);
+  putEntries(w, b.entries);
   return w.u16(b.client.length).raw(b.client).finish();
 }
 
@@ -90,12 +97,8 @@ export function encodeReplyBody(b: ReplyBody): Bytes {
     .raw(b.chainHead)
     .u64(b.needFrom)
     .u16(b.server.length)
-    .raw(b.server)
-    .u16(b.entries.length);
-  for (const e of b.entries) {
-    const bytes = encodeEntry(e);
-    w.u16(bytes.length).raw(bytes);
-  }
+    .raw(b.server);
+  putEntries(w, b.entries);
   return w.finish();
 }
 

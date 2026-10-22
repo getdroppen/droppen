@@ -630,6 +630,15 @@ test("R1e: control paused over hosts while identity keys are renewed is a note �
   assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "zh-CN").includes("m-2, d-3 对 m-1; m-1 对 m-2 的控制已暂停，正在更换身份密钥（d-1）"));
   assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "ja").includes("m-2, d-3 から m-1 への操作; m-1 から m-2 への操作を一時停止しました。ID 鍵を更新しています（d-1）"));
   assert.equal(cloudDevicesZhTW["control by {{edges}} resumes (by {{by}})"], "{{edges}} 的控制已恢復（{{by}}）");
+  // A completion whose paused control the base has since dropped names none of it.
+  const none = { ...pause("completed"), pause: { phase: "completed", removals: [] } } as const;
+  assert.equal(alertText(none, t), "a renewal pause was completed; none of the control it paused comes back (by d-1)");
+  const noneAccount = { alerts: () => [none], onChange: () => () => undefined } as unknown as CloudAccount;
+  assert.ok(draw(<ChainAlerts account={noneAccount} link={{} as HubLink} />, "zh-CN").includes("一次控制暂停已完成，暂停的控制都没有恢复（d-1）"));
+  assert.equal(
+    cloudDevicesZhTW["a renewal pause was completed; none of the control it paused comes back (by {{by}})"],
+    "一次控制暫停已完成，暫停的控制都沒有恢復（{{by}}）",
+  );
 });
 
 test("14: stopping AI is asked first", () => {

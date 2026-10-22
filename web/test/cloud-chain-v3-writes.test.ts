@@ -26,6 +26,8 @@ import {
   generateDeviceKeys,
   hex,
   PASSKEY_DELAY_MS,
+  PAUSE_COMPLETED,
+  PAUSE_START,
   passkeySlotProof,
   RECOVERY_DELAY_MS,
   RULES,
@@ -576,6 +578,28 @@ test("alerts name chain v3's changes, with the flags in words for an addition an
     { kind: "removeDevice", subject: b.deviceId, flags: undefined, on: undefined, accept: undefined },
   ]);
   assert.ok(!c.alerts().some((x) => x.kind === "keyEpochs"), "the keys that come with an addition or a removal are not alerts of their own");
+});
+
+test("R1e: a renewal pause's alerts — its start names what it pauses; its completion only the control that comes back", async () => {
+  const { hub, a } = await account();
+  const c = await pairAs(hub, a, { admin: true });
+  await c.receiveMail();
+  const [b, d] = [await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false })];
+  const ids = [b.deviceId, d.deviceId].sort();
+  await a.setAccept("m-1", { type: "devices", ids });
+  const op = new Uint8Array(16).fill(5);
+  await a.append({ type: "renewalPause", op, phase: PAUSE_START, removals: [{ host: "m-1", ids }] });
+  // A hand setAccept during the pause drops b from the base: its control does not come back with the completion.
+  await a.setAccept("m-1", { type: "devices", ids: [d.deviceId] }, new FakeCourier());
+  await a.append({ type: "renewalPause", op, phase: PAUSE_COMPLETED, removals: [] });
+  await c.sync();
+  assert.deepEqual(
+    c.alerts().filter((x) => x.kind === "renewalPause").map((x) => x.pause),
+    [
+      { phase: "start", removals: [{ host: "m-1", ids }] },
+      { phase: "completed", removals: [{ host: "m-1", ids: [d.deviceId] }] },
+    ],
+  );
 });
 
 /** Seal attempts the hub saw for `id` with `purpose` (taken or refused). */

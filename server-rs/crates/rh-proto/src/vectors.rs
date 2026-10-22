@@ -1798,7 +1798,7 @@ pub(crate) fn renewal_json(state_before: &ChainState, entry: &Entry) -> Value {
 /// renewal proves; the confirmation MAC, the code and the ack; `keys_at` and
 /// `ever_named`; and one refused chain per rule, with the rule.
 fn host_rotation_vectors() -> Value {
-    use crate::chain::{rotate_ack_body, rules, Assurance};
+    use crate::chain::{rotate_ack_body, rules, Assurance, MAX_PAUSE_ENTRY_LEN};
     use crate::v3_regressions::{dev3, extra, renewal, rotation_chain, seq_of, RENEWED};
     let f = fixture();
     let (state, entries, steps) = rotation_chain(&f);
@@ -2180,9 +2180,11 @@ fn host_rotation_vectors() -> Value {
         Some(rules::ONLY_ADMIN_SIGNS),
     );
     // The renewal pause, an overlay (§3.4 rule 10): m-1 accepts every device and h-2 accepts dev-2 and m-1 (the bases);
-    // a second admin joins; a pause removes m-1 from h-2 and h-2 and dev-0 from m-1; a hand SetAccept narrows m-1's
-    // base during it; h-2 renews; the other admin completes the pause (the bases stand, overlay-free); that admin
-    // starts a second pause, is demoted (the pause stays in force), and the first admin cancels it.
+    // a second admin joins; a pause removes m-1 from h-2 and dev-2 and h-2 from m-1 (never an admin: D1; hosts and ids
+    // in byte order); a hand SetAccept narrows m-1's base during it; h-2 renews; the other admin completes the pause
+    // (the bases stand, overlay-free); that admin starts a second pause, is demoted (the pause stays in force), and the
+    // first admin cancels it. Then two pauses overlap on dev-2 over m-1 (the edge stays paused until both end); while
+    // the second is open, m-1 stops hosting and dev-2 is removed; ending it gives back only what the base still holds.
     let (op_a, op_b) = ([0xa1u8; 16], [0xb2u8; 16]);
     let pause_hosts = ["m-1", "h-2"];
     let pairs = [("h-2", "m-1"), ("m-1", "h-2"), ("dev-2", "m-1"), ("dev-2", "h-2"), ("dev-0", "m-1"), ("dev-0", "h-2")];
@@ -2208,7 +2210,7 @@ fn host_rotation_vectors() -> Value {
         step(&mut st, &mut es, "acceptAll", "dev-0", accept("m-1", crate::chain::Accept::All));
         step(&mut st, &mut es, "acceptH2", "dev-0", accept("h-2", ids(&["dev-2", "m-1"])));
         step(&mut st, &mut es, "addAdmin", "dev-0", Action::AddDevice3(dev3("d-a", &extra(26), false, true)));
-        step(&mut st, &mut es, "pauseStart", "dev-0", marker(op_a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["h-2", "dev-0"])])));
+        step(&mut st, &mut es, "pauseStart", "dev-0", marker(op_a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["dev-2", "h-2"])])));
         step(&mut st, &mut es, "handM1", "dev-0", accept("m-1", ids(&["dev-2"])));
         let k = key(&st, "m-1", 0x35);
         step(&mut st, &mut es, "handM1Key", "dev-0", k);
@@ -2222,6 +2224,23 @@ fn host_rotation_vectors() -> Value {
         assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()], "a demoted starter's pause stays in force");
         step(&mut st, &mut es, "pause2Cancelled", "dev-0", marker(op_b, PausePhase::Cancelled, vec![]));
         assert!(st.open_pauses().is_empty() && st.paused_edges("m-1").is_empty() && st.paused_edges("h-2").is_empty());
+        let (op_d, op_e) = ([0xd1u8; 16], [0xe2u8; 16]);
+        step(&mut st, &mut es, "overlapStart", "dev-0", marker(op_d, PausePhase::Start, removal(&[("m-1", &["dev-2"])])));
+        step(
+            &mut st,
+            &mut es,
+            "overlap2Start",
+            "dev-0",
+            marker(op_e, PausePhase::Start, removal(&[("h-2", &["dev-2", "m-1"]), ("m-1", &["dev-2"])])),
+        );
+        step(&mut st, &mut es, "overlapCompleted", "dev-0", marker(op_d, PausePhase::Completed, vec![]));
+        assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()], "still paused by the other pause");
+        step(&mut st, &mut es, "pausedHostStops", "dev-0", Action::SetHost { id: "m-1".into(), host: false });
+        step(&mut st, &mut es, "pausedDeviceRemoved", "dev-0", Action::RemoveDevice3("dev-2".into()));
+        step(&mut st, &mut es, "overlap2Completed", "dev-0", marker(op_e, PausePhase::Completed, vec![]));
+        assert!(st.open_pauses().is_empty() && st.paused_edges("h-2").is_empty() && st.paused_edges("m-1").is_empty());
+        assert!(st.may_control("m-1", "h-2").is_ok(), "h-2's base still names m-1");
+        assert!(st.may_control("dev-2", "h-2").is_err() && st.may_control("dev-0", "m-1").is_err());
         (es, steps)
     };
     let pause_seq = |label: &str| pause_steps.iter().find(|s| s["label"] == label).unwrap()["seq"].as_u64().unwrap() as usize;
@@ -2294,6 +2313,21 @@ fn host_rotation_vectors() -> Value {
             rules::PAUSE_IDS,
         ),
         (
+            "a renewal pause removing an admin",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["dev-0"])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
+            "a renewal pause naming its hosts out of byte order",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2"]), ("h-2", &["dev-2"])]))),
+            rules::PAUSE_HOSTS,
+        ),
+        (
+            "a renewal pause removing ids out of byte order",
+            at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["h-2", "dev-2"])]))),
+            rules::PAUSE_IDS,
+        ),
+        (
             "a renewal pause that ends an unknown op",
             at_base(marker([0xcc; 16], PausePhase::Cancelled, vec![])),
             rules::PAUSE_NOT_OPEN,
@@ -2340,6 +2374,38 @@ fn host_rotation_vectors() -> Value {
         &|_| start_c(),
         not_allowed,
         Some("the recovery key signs only recovery entries"),
+    );
+    // The size bound (大小上限): one byte past it is refused for that alone; at it, the ids' own rule speaks (they
+    // name no devices).
+    let sized = |st: &ChainState, len: usize| {
+        let entry = |ids: &[String]| st.draft(dev0(), marker(c, PausePhase::Start, vec![("m-1".into(), ids.to_vec())]), 0).sign(k0);
+        let mut ids: Vec<String> = Vec::new();
+        while entry(&ids).encode().len() + 2 * 66 <= len {
+            ids.push(format!("x{:063}", ids.len()));
+        }
+        let rest = len - entry(&ids).encode().len() - 4;
+        ids.push("y".repeat(rest / 2));
+        ids.push("z".repeat(rest - rest / 2));
+        assert_eq!(entry(&ids).encode().len(), len);
+        marker(c, PausePhase::Start, vec![("m-1".into(), ids)])
+    };
+    bad(
+        "a renewal pause one byte too large for every transport",
+        base.clone(),
+        dev0(),
+        k0,
+        &|st| sized(st, MAX_PAUSE_ENTRY_LEN + 1),
+        not_allowed,
+        Some(rules::PAUSE_TOO_LARGE),
+    );
+    bad(
+        "a renewal pause of the largest size, removing no devices",
+        base.clone(),
+        dev0(),
+        k0,
+        &|st| sized(st, MAX_PAUSE_ENTRY_LEN),
+        not_allowed,
+        Some(rules::PAUSE_IDS),
     );
     // More than 256 hosts, or more than 1024 edges in all: such bytes do not decode.
     bad(
@@ -2490,6 +2556,7 @@ fn host_rotation_vectors() -> Value {
             "steps": pause_steps,
             "hosts": pause_hosts,
             "pairs": pairs.iter().map(|(d, host)| json!([d, host])).collect::<Vec<_>>(),
+            "maxEntryLen": MAX_PAUSE_ENTRY_LEN,
             "encoding": {
                 "start": h(&pause_entries[pause_seq("pauseStart")].encode()),
                 "completed": h(&pause_entries[pause_seq("pauseCompleted")].encode()),
@@ -2523,6 +2590,7 @@ fn host_rotation_vectors() -> Value {
             "pauseHosts": rules::PAUSE_HOSTS,
             "pauseEdges": rules::PAUSE_EDGES,
             "pauseIds": rules::PAUSE_IDS,
+            "pauseTooLarge": rules::PAUSE_TOO_LARGE,
             "pauseNotOpen": rules::PAUSE_NOT_OPEN,
             "pauseEndRemovals": rules::PAUSE_END_REMOVALS,
         },
@@ -3495,6 +3563,11 @@ fn ts_vectors_verify_in_rust() {
             let st = ChainState::verify(&pause[..=seq], None, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{}: {e}", step["label"]));
             assert_eq!(pause_state_json(&st, &names, &pairs), step["state"], "{}", step["label"]);
         }
+        let labels: Vec<&str> = p["steps"].as_array().unwrap().iter().map(|s| s["label"].as_str().unwrap()).collect();
+        for label in ["pauseStart", "pauseCompleted", "pause2Cancelled", "overlapCompleted", "pausedHostStops", "pausedDeviceRemoved", "overlap2Completed"] {
+            assert!(labels.contains(&label), "TS's pause chain has {label}");
+        }
+        assert_eq!(p["maxEntryLen"], json!(crate::chain::MAX_PAUSE_ENTRY_LEN), "one size bound on both sides");
         for (which, phase) in [("start", PausePhase::Start), ("completed", PausePhase::Completed), ("cancelled", PausePhase::Cancelled)] {
             let e = Entry::decode(&hexv(&p["encoding"][which])).unwrap();
             assert!(matches!(e.draft.action, Action::RenewalPause { phase: got, .. } if got == phase), "{which}");

@@ -108,6 +108,8 @@ import {
   importX25519Private,
   rotateAckBody,
   rotateConfirmFor,
+  encodeDraft,
+  MAX_PAUSE_ENTRY_LEN,
   PAUSE_CANCELLED,
   PAUSE_COMPLETED,
   PAUSE_START,
@@ -837,8 +839,11 @@ async function hostRotationVectors() {
   await bad("a renewal policy set by a device that is not an admin", base, async () => ({ type: "setRenewalPolicy", alwaysAssured: true }), "notAllowed", RULES.onlyAdminSigns, plain);
   // The renewal pause, an overlay (§3.4 rule 10): the other host accepts every device and the host accepts the other and
   // the plain device (the bases); a second admin joins; a pause removes the other from the host, and the host and the
-  // admin from the other; a hand setAccept narrows the other's base during it; the host renews; the second admin
-  // completes the pause; it starts another, is demoted (the pause stays in force), and the first admin cancels it.
+  // plain device from the other (never an admin: D1; hosts and ids in byte order); a hand setAccept narrows the other's
+  // base during it; the host renews; the second admin completes the pause; it starts another, is demoted (the pause
+  // stays in force), and the first admin cancels it. Then two pauses overlap on the plain device over the other (the edge
+  // stays paused until both end); while the second is open, the other stops hosting and the plain device is removed;
+  // ending it gives back only what the base still holds.
   const admin2 = await member("ts-r-admin2", 245);
   const [opA, opB] = [new Uint8Array(16).fill(0xa1), new Uint8Array(16).fill(0xb2)];
   const pauseHosts = [other.id, host.id];
@@ -865,7 +870,7 @@ async function hostRotationVectors() {
     await step("acceptAll", admin, accept(other.id, { type: "all" }));
     await step("acceptHost", admin, accept(host.id, { type: "devices", ids: [other.id, plain.id] }));
     await step("addAdmin", admin, { type: "addDevice3", device: v3(admin2, false, true) });
-    await step("pauseStart", admin, marker(opA, PAUSE_START, [{ host: host.id, ids: [other.id] }, { host: other.id, ids: [host.id, admin.id] }]));
+    await step("pauseStart", admin, marker(opA, PAUSE_START, [{ host: host.id, ids: [other.id] }, { host: other.id, ids: [host.id, plain.id] }]));
     await step("handOther", admin, accept(other.id, { type: "devices", ids: [plain.id] }));
     await step("handOtherKey", admin, await mk(other.id, st.machineKeyEpochs(other.id)));
     await step("renew", admin, { type: "rotateHostKey", rotation: await renewal(st, host.id, host.key, renewed[0], st.seq, nonce(0x61), ASSURANCE_AUTO) });
@@ -876,6 +881,16 @@ async function hostRotationVectors() {
     if (st.pausedEdges(other.id).join() !== plain.id) throw new Error("a demoted starter's pause stays in force");
     await step("pause2Cancelled", admin, marker(opB, PAUSE_CANCELLED, []));
     if (st.openPauses().length !== 0 || st.pausedEdges(other.id).length !== 0) throw new Error("the pause chain ends with nothing open");
+    const [opD, opE] = [new Uint8Array(16).fill(0xd1), new Uint8Array(16).fill(0xe2)];
+    await step("overlapStart", admin, marker(opD, PAUSE_START, [{ host: other.id, ids: [plain.id] }]));
+    await step("overlap2Start", admin, marker(opE, PAUSE_START, [{ host: host.id, ids: [other.id, plain.id] }, { host: other.id, ids: [plain.id] }]));
+    await step("overlapCompleted", admin, marker(opD, PAUSE_COMPLETED, []));
+    if (st.pausedEdges(other.id).join() !== plain.id) throw new Error("still paused by the other pause");
+    await step("pausedHostStops", admin, { type: "setHost", id: other.id, host: false });
+    await step("pausedDeviceRemoved", admin, { type: "removeDevice3", id: plain.id });
+    await step("overlap2Completed", admin, marker(opE, PAUSE_COMPLETED, []));
+    if (st.openPauses().length !== 0 || st.pausedEdges(host.id).length !== 0) throw new Error("nothing open at the end");
+    st.mayControl(other.id, host.id);
     return { entries: es, steps };
   })();
   const pauseSeq = (label: string) => pause.steps.find((s) => s.label === label)!.seq;
@@ -902,6 +917,9 @@ async function hostRotationVectors() {
     ["a renewal pause removing a host from itself", base, marker(opC, PAUSE_START, one(other.id, [other.id])), RULES.pauseIds],
     ["a renewal pause removing an unknown device", base, marker(opC, PAUSE_START, one(other.id, ["ts-nobody"])), RULES.pauseIds],
     ["a renewal pause removing a device twice", base, marker(opC, PAUSE_START, one(other.id, [plain.id, plain.id])), RULES.pauseIds],
+    ["a renewal pause removing an admin", base, marker(opC, PAUSE_START, one(other.id, [admin.id])), RULES.pauseIds],
+    ["a renewal pause naming its hosts out of byte order", base, marker(opC, PAUSE_START, [...one(other.id, [plain.id]), ...one(host.id, [plain.id])]), RULES.pauseHosts],
+    ["a renewal pause removing ids out of byte order", base, marker(opC, PAUSE_START, one(other.id, [plain.id, host.id])), RULES.pauseIds],
     ["a renewal pause that ends an unknown op", base, marker(new Uint8Array(16).fill(0xcc), PAUSE_CANCELLED, []), RULES.pauseNotOpen],
     ["a renewal pause that ends twice", pauseUpto("pauseCompleted"), marker(opA, PAUSE_COMPLETED, []), RULES.pauseNotOpen],
     ["a renewal pause that ends naming removals", pauseUpto("pauseStart"), marker(opA, PAUSE_COMPLETED, one(host.id, [other.id])), RULES.pauseEndRemovals],
@@ -922,6 +940,19 @@ async function hostRotationVectors() {
     const byRecovery = await signDraft((await ChainState.verify(base, undefined, ChainClock.history())).draft({ type: "recovery" }, startC(), 3_000 + base.length - 1), rk.signing);
     await refuse("a renewal pause signed by the recovery key", base, byRecovery, "notAllowed", "the recovery key signs only recovery entries");
   }
+  // The size bound (大小上限): one byte past it is refused for that alone; at it, the ids' own rule speaks (they name no
+  // devices).
+  const sized = (len: number) => async (st: ChainState): Promise<Action> => {
+    const length = (ids: string[]) => encodeDraft(st.draft(byAdmin, marker(opC, PAUSE_START, one(other.id, ids)), 0)).length + 64;
+    const ids: string[] = [];
+    while (length(ids) + 2 * 66 <= len) ids.push(`x${String(ids.length).padStart(63, "0")}`);
+    const rest = len - length(ids) - 4;
+    ids.push("y".repeat(Math.floor(rest / 2)), "z".repeat(rest - Math.floor(rest / 2)));
+    if (length(ids) !== len) throw new Error(`sized ${length(ids)}, not ${len}`);
+    return marker(opC, PAUSE_START, one(other.id, ids));
+  };
+  await bad("a renewal pause one byte too large for every transport", base, sized(MAX_PAUSE_ENTRY_LEN + 1), "notAllowed", RULES.pauseTooLarge);
+  await bad("a renewal pause of the largest size, removing no devices", base, sized(MAX_PAUSE_ENTRY_LEN), "notAllowed", RULES.pauseIds);
   // Bytes that do not decode: an assurance other than 0 or 1, kind 20 in a v2 entry.
   const rotateBytes = encodeEntry(entries[rotate]!);
   for (const [name, at, value] of [
@@ -1066,6 +1097,7 @@ async function hostRotationVectors() {
       steps: pause.steps,
       hosts: pauseHosts,
       pairs,
+      maxEntryLen: MAX_PAUSE_ENTRY_LEN,
       encoding: {
         start: hex(encodeEntry(pause.entries[pauseSeq("pauseStart")]!)),
         completed: hex(encodeEntry(pause.entries[pauseSeq("pauseCompleted")]!)),

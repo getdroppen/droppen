@@ -600,7 +600,10 @@ export interface ChainAlert {
   seq: number;
   /** `upgrade`: the account's first chain v3 entry (a new user key written as v3: review D4). */
   kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause";
-  /** `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the ids it stopped accepting). */
+  /**
+   * `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the
+   * ids it stopped accepting) — for `completed`, only what comes back (empty: none of it).
+   */
   pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[] }[] };
   /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
   by: string | null;
@@ -1799,9 +1802,12 @@ export class CloudAccount {
           break;
         case "renewalPause": {
           // Control paused over hosts while identity keys are renewed (§3.4 rule 10): a note. An ending marker names no
-          // removals; its start did.
+          // removals; its start did. "Resumes" names only the control that comes back: never an edge the base has since
+          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds.
           const phase = action.phase === PAUSE_START ? "start" : action.phase === PAUSE_COMPLETED ? "completed" : "cancelled";
-          const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? [])).map((r) => ({ host: r.host, ids: [...r.ids] }));
+          const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? []))
+            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id)) : [...r.ids] }))
+            .filter((r) => r.ids.length > 0);
           out.push({ alert: { seq, kind: "renewalPause", by, subject: null, pause: { phase, removals }, atMs, remove: null }, pending: false });
           break;
         }
