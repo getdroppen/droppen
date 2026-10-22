@@ -542,10 +542,16 @@ pub(super) async fn run(shared: Arc<Shared>) {
 
 impl Shared {
     pub(super) fn save(&self) {
-        let st = self.state.lock().expect("agent state");
-        if let Err(error) = st.save(&self.paths) {
+        if let Err(error) = self.try_save() {
             tracing::error!(%error, "cannot save the agent state");
         }
+    }
+
+    /// [`Shared::save`], its failure returned: for a step that must not go
+    /// on unless the state it relies on is on disk.
+    pub(super) fn try_save(&self) -> Result<(), String> {
+        let st = self.state.lock().expect("agent state");
+        st.save(&self.paths)
     }
 
     fn set_health(&self, connected: bool, error: Option<String>) {

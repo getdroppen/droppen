@@ -1204,10 +1204,18 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
     let previous = super::control::machine_fingerprint(&shared.identity);
     // The push keys follow the identity key (R6 review): noted before the
     // rename, so a crash after it still renews them at the next start.
-    {
-        shared.state.lock().expect("agent state").rotation.push_renew = true;
+    let push_renew = std::mem::replace(&mut shared.state.lock().expect("agent state").rotation.push_renew, true);
+    // Saved before the rename, or nothing is renamed (final review of the
+    // agent's renewal): the state on disk must hold the chain that names the
+    // new key before that key is the one in use. Else, after an earlier
+    // renewal, the next start reads a chain naming keys this device holds
+    // nowhere any more, with a renewal on it, and takes its own renewal for
+    // one made elsewhere. The staged seed is kept: the next sign-in with it
+    // tries again.
+    if let Err(error) = shared.try_save() {
+        shared.state.lock().expect("agent state").rotation.push_renew = push_renew;
+        return Err(format!("cannot save the agent state, so the renewed identity key is not taken yet: {error}"));
     }
-    shared.save();
     store.promote(&new.nonce)?;
     let new = new.identity();
     {

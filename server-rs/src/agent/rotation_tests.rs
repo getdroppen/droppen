@@ -153,6 +153,11 @@ impl Account {
 
     /// d-1 writes the renewal `answer` (to `/rh/rotate`) proves, and m-1's next machine key.
     fn renew(&mut self, answer: &Value, nonce: [u8; 16], assurance: Assurance) -> Vec<Entry> {
+        self.renew_at(answer, nonce, assurance, 1)
+    }
+
+    /// [`Account::renew`], m-1's next machine key being `epoch`.
+    fn renew_at(&mut self, answer: &Value, nonce: [u8; 16], assurance: Assurance, epoch: u32) -> Vec<Entry> {
         let r = HostRotation {
             host: "m-1".into(),
             sign_key: unhex32(answer["signKey"].as_str().unwrap()).unwrap(),
@@ -164,7 +169,7 @@ impl Account {
             old_sig: unhex64(answer["oldSig"].as_str().unwrap()),
             new_sig: unhex64(answer["newSig"].as_str().unwrap()),
         };
-        vec![self.push(Action::RotateHostKey(r)), self.push(key_epoch("m-1", 1))]
+        vec![self.push(Action::RotateHostKey(r)), self.push(key_epoch("m-1", epoch))]
     }
 
     /// Somebody holding m-1's seed renews it to `to` (signed by the old key and `to`), d-1 writing it.
@@ -207,7 +212,11 @@ impl Account {
     /// What `POST /rh/rotate` would have answered for `new` staged with
     /// `nonce` at the hub's head now (call it before the renewal is written).
     fn staged_answer(&self, new: &MachineIdentity, nonce: [u8; 16]) -> Value {
-        let old = machine();
+        self.staged_answer_from(&machine(), new, nonce)
+    }
+
+    /// [`Account::staged_answer`] of m-1 running with `old`.
+    fn staged_answer_from(&self, old: &MachineIdentity, new: &MachineIdentity, nonce: [u8; 16]) -> Value {
         let body = rh_proto::chain::host_rotate_body(
             "a-1",
             "m-1",
@@ -903,6 +912,64 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(super::dispute::kept(&a.paths).is_empty());
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
+}
+
+/// Final review of the agent's renewal: the state — with the chain that
+/// names the renewed key — is saved before the staged seed takes the place
+/// of the key in use, or the seed is not swapped at all. When that save
+/// failed and the seed was swapped all the same, a device renewed once
+/// before was left with a state whose chain names its previous keys, and a
+/// renewal on it: the next start took its own renewal for one made
+/// elsewhere ("replaced elsewhere").
+#[tokio::test]
+async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
+    let mut a = Account::new();
+    let hub = "ws://127.0.0.1:9";
+    // Renewed once before: m-1 runs with `first`, and the state on disk
+    // holds the chain naming it.
+    let first = a.stage([44; 32], [1; 16]);
+    let answer = a.staged_answer(&first, [1; 16]);
+    a.renew(&answer, [1; 16], Assurance::Auto);
+    FileSeedStore::for_instance(&a.paths).promote(&[1; 16]).unwrap();
+    a.state(hub).save(&a.paths).unwrap();
+    assert_eq!(a.seed_in_use().sign_public(), first.sign_public());
+    // Renewed again, to `second`: the chain naming it is in memory only.
+    let second = a.stage([77; 32], [7; 16]);
+    let answer = a.staged_answer_from(&first, &second, [7; 16]);
+    a.renew_at(&answer, [7; 16], Assurance::Auto, 2);
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let count = restarts.clone();
+    let restart: rotation::Restart = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    });
+    let shared = link::test_shared(&a.paths, a.state(hub), MachineIdentity::from_seed(&[44; 32]), super::streams::Handle::detached(), restart);
+    // The state cannot be saved (a directory where its file goes); what is
+    // on disk stays as it was, as after any failed atomic write.
+    let state_file = super::state::state_path(&a.paths);
+    let on_disk = std::fs::read(&state_file).unwrap();
+    std::fs::remove_file(&state_file).unwrap();
+    std::fs::create_dir(&state_file).unwrap();
+    let promoted = rotation::promote(&shared, &second);
+    std::fs::remove_dir(&state_file).unwrap();
+    super::write_private(&state_file, &on_disk).unwrap();
+    // The next start does not take the key in use for one renewed away.
+    assert!(
+        !rotation::seed_retired(&a.paths, &a.seed_in_use()),
+        "the next start takes this device's own renewal for one made elsewhere ({promoted:?})"
+    );
+    assert!(promoted.is_err(), "not taken while the state naming it is not saved");
+    assert_eq!(a.seed_in_use().sign_public(), first.sign_public(), "the key in use stays");
+    assert_eq!(a.nonces(), vec![[7; 16]], "the renewed key stays staged, to be taken at the next sign-in");
+    assert_eq!(restarts.load(Ordering::SeqCst), 0);
+    assert!(!shared.state.lock().unwrap().rotation.push_renew, "the push keys are renewed with a key taken only");
+    // Once the state saves, it is taken.
+    rotation::promote(&shared, &second).unwrap();
+    assert_eq!(a.seed_in_use().sign_public(), second.sign_public());
+    assert_eq!(restarts.load(Ordering::SeqCst), 1);
+    assert!(!rotation::seed_retired(&a.paths, &second));
+    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    assert_eq!(rotation::named_keys(&st), Some((second.sign_public(), second.dh_public())));
+    assert!(st.rotation.push_renew);
 }
 
 /// R6 re-review: the device role never signs in once this computer's own
