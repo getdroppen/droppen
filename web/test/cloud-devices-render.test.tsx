@@ -609,11 +609,11 @@ test("the account's renewal policy on the chain — turned on, a note; turned of
   assert.equal(alertLevel(policy(true)), "info");
   assert.equal(alertLevel(policy(false)), "confirm");
   assert.equal(alertText(policy(true), t), "identity key renewals must now be confirmed on the device (set by d-1)");
-  assert.equal(alertText(policy(false), t), "identity key renewals may be automatic again (set by d-1)");
+  assert.equal(alertText(policy(false), t), "identity key renewals may now be automatic (set by d-1)");
   const account = { alerts: () => [policy(true)], onChange: () => () => undefined } as unknown as CloudAccount;
   assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "zh-CN").includes("更换身份密钥现在都要在那台设备上确认（由 d-1 设置）"));
   assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "ja").includes("ID 鍵の更新は、今後そのデバイスでの確認が必要です（d-1 が設定）"));
-  assert.equal(cloudDevicesZhTW["identity key renewals may be automatic again (set by {{by}})"], "更換身分金鑰又可以自動進行了（由 {{by}} 設定）");
+  assert.equal(cloudDevicesZhTW["identity key renewals may now be automatic (set by {{by}})"], "更換身分金鑰現在可以自動進行（由 {{by}} 設定）");
 });
 
 test("control paused over hosts while identity keys are renewed is a note — paused, resumes, ended", () => {

@@ -1851,7 +1851,7 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
       // Host identity rotation §3.4 rule 9: the account's renewal policy, a note.
       return alert.on
         ? t("identity key renewals must now be confirmed on the device (set by {{by}})", { by })
-        : t("identity key renewals may be automatic again (set by {{by}})", { by });
+        : t("identity key renewals may now be automatic (set by {{by}})", { by });
     case "rotateHostKey":
       // Host identity rotation §3.4 "告警": a note, with the new fingerprint as the device list shows it — and, as the
       // agent's notice says, whether the renewal was confirmed on the device itself (assurance 1).

@@ -1270,7 +1270,7 @@ fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Option<&[(Stri
         Action::SetRenewalPolicy { always_assured: true } => {
             format!("identity key renewals must now be confirmed on the device (set by {signer})")
         }
-        Action::SetRenewalPolicy { always_assured: false } => format!("identity key renewals may be automatic again (set by {signer})"),
+        Action::SetRenewalPolicy { always_assured: false } => format!("identity key renewals may now be automatic (set by {signer})"),
         Action::RenewalPause { phase, removals, .. } => {
             // §3.4 rule 10: "control by {ids} over {host}", per host.
             let edges = |removals: &[(String, Vec<String>)]| {
@@ -4204,7 +4204,7 @@ mod tests {
         );
         assert_eq!(
             account_change(&policy(false), None).as_deref(),
-            Some("identity key renewals may be automatic again (set by d-1)")
+            Some("identity key renewals may now be automatic (set by d-1)")
         );
         // A renewal pause (kind 22): its start names the control it pauses;
         // an end names the start's, from this agent's chain.
