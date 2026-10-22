@@ -234,7 +234,8 @@ mod tests {
         assert!(refusal(&denied).to_string().contains("sign-in refused"));
         let rotated = json!({"t": "error", "code": "rotated", "message": "this device's identity key was renewed"});
         assert!(matches!(refusal(&rotated), LoginError::Refused { code, .. } if code == "rotated"));
-        assert!(matches!(refusal(&json!({"t": "bye"})), LoginError::Other(_)));
+        // Any other answer than an `error` (a hub message that is no refusal at all).
+        assert!(matches!(refusal(&json!({"t": "welcome"})), LoginError::Other(_)));
     }
 
     #[test]
