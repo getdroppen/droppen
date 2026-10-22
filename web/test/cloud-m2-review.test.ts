@@ -584,6 +584,8 @@ test("review of #172: first sightings are not merged into a record this page cou
   delete legacy.heads;
   legacy.firstSeen = [];
   setSeenRecord(seen, a.account, legacy);
+  // And where older pages read it (pages of this version keep it there too).
+  browserStorage(a.store).setItem(`rh.hub.seen.${a.account}`, JSON.stringify(legacy));
   hub.chain = full.slice(0, full.length - 1);
   await behind.sync();
   hub.chain = full;
@@ -1107,8 +1109,8 @@ test("#183: an older page's record in localStorage counts where it is proven one
   await a.append({ type: "setRecoveryKey", key: null });
   const after = seenRecord(seen, a.account);
   assert.equal(after.seenThrough, before.seenThrough + 2);
-  assert.equal(storage.getItem(key), null, "a page of this version keeps no record there");
-  assert.equal(storage.getItem(`rh.hub.genesis.${a.account}`), storedGenesis(seen, a.account), "only the pin, for older pages");
+  assert.deepEqual(JSON.parse(storage.getItem(key)!), after, "the record, for older pages");
+  assert.equal(storage.getItem(`rh.hub.genesis.${a.account}`), storedGenesis(seen, a.account), "and the pin");
   // Higher, and proven one chain with the store's: an older page verified two entries more (what it wrote is the same JSON).
   setSeenRecord(seen, a.account, before);
   storage.setItem(key, JSON.stringify(after));
@@ -1511,4 +1513,108 @@ test("#183 re-review: a store that twice will not take the pin of the genesis th
   const again = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen });
   assert.ok(again.pinned, "a reload trusts it");
   assert.equal(again.chain!.seq, a.chain!.seq);
+});
+
+// ---- #183 third review ------------------------------------------------------
+
+test("#183 third review: what a page records is written where older pages read it too, so one of them that a hub keeps behind vouches for nothing", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const storage = browserStorage(a.store);
+  // A page of this browser that keeps the record in localStorage (an older version of the app; one where IndexedDB would not open).
+  const older = await openPage(hub, a, storage, null, localStorageSeenStore(storage, null));
+  const seq = older.chain!.seq;
+  await a.append({ type: "setRecoveryKey", key: null });
+  await a.append({ type: "setRecoveryKey", key: null });
+  // The hub keeps the newer entries from the older page.
+  const full = hub.chain.slice();
+  hub.chainServed = async () => full.slice(0, seq + 1);
+  await assert.rejects(older.attestation(), isFork, "not its word for the old head");
+  hub.chainServed = null;
+  assert.equal((JSON.parse(storage.getItem(`rh.hub.seen.${a.account}`)!) as StoredSeen).seenThrough, a.chain!.seq, "the record raised where older pages read it");
+});
+
+test("#183 third review: what a page records where older pages read it never lowers theirs, nor replaces one it cannot prove is the same chain", async (t) => {
+  await t.test("higher, not proven", async () => {
+    const { a } = await setup();
+    await a.sync();
+    const storage = browserStorage(a.store);
+    const key = `rh.hub.seen.${a.account}`;
+    // An older page went further than this page (no hash at this page's height to prove it the same chain): kept apart.
+    const higher: StoredSeen = { v: 1, seenThrough: a.chain!.seq + 5, head: "ee".repeat(32), heads: [], firstSeen: [] };
+    storage.setItem(key, JSON.stringify(higher));
+    a.watchSeenRecord({});
+    await settle();
+    assert.equal(a.forked, null);
+    assert.equal(storage.getItem(key), JSON.stringify(higher), "left as it is");
+  });
+  await t.test("lower, not proven", async () => {
+    const { a } = await setup();
+    await a.sync();
+    const seen = browserSeen(a.store);
+    const storage = browserStorage(a.store);
+    const key = `rh.hub.seen.${a.account}`;
+    const seq = a.chain!.seq;
+    // The store's record from before `heads`, and an older page's lower one: nothing proves them one chain, so that one is kept apart.
+    setSeenRecord(seen, a.account, { v: 1, seenThrough: seq, head: hex(a.chain!.head), firstSeen: [] });
+    const lower: StoredSeen = { v: 1, seenThrough: seq - 1, head: hex(a.chain!.hashAt(seq - 1)!), firstSeen: [] };
+    storage.setItem(key, JSON.stringify(lower));
+    a.watchSeenRecord({});
+    await settle();
+    assert.equal(a.forked, null);
+    assert.equal(storage.getItem(key), JSON.stringify(lower), "not replaced: it is a checkpoint of its own");
+  });
+});
+
+test("#183 third review: a page whose newer view could not be recorded vouches for nothing — not for the older head it still shows — until it takes that view", async () => {
+  const { hub, a, b } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  let failing = false;
+  const flaky: SeenStore = {
+    get atomic() {
+      return seen.atomic;
+    },
+    get: (account) => seen.get(account),
+    // Every commit fails after the compare (a full disk, say).
+    update: (account, change) =>
+      seen.update(account, (stored) => {
+        const next = change(stored);
+        if (failing && next !== undefined) throw new DOMException("the disk is full", "QuotaExceededError");
+        return next;
+      }),
+    watch: (heard) => seen.watch(heard),
+  };
+  const page = await openPage(hub, a, browserStorage(a.store), null, flaky);
+  const seq = page.chain!.seq;
+  await b.append({ type: "setRecoveryKey", key: null });
+  failing = true;
+  await assert.rejects(page.sync(), (e: unknown) => e instanceof SeenStoreError);
+  assert.equal(page.chain!.seq, seq, "the newer view verified, and not taken");
+  await assert.rejects(page.attestation(), (e: unknown) => e instanceof SeenStoreError, "no fresh word for the older head");
+  assert.equal(page.forked, null, "and no fork: it is tried again");
+  failing = false;
+  const vouched = await page.attestation();
+  assert.equal(vouched.seq, seq + 1, "once the store takes the record, it takes the view and vouches for that");
+});
+
+test("#183 third review: a page whose chain does not start with the genesis this browser pinned, or contradicts the record at its own head, vouches for nothing: a fork", async (t) => {
+  await t.test("another genesis pinned", async () => {
+    const { a } = await setup();
+    await a.sync();
+    // What no page of this browser writes over a pin (code in this origin, say).
+    const other = "ab".repeat(32);
+    browserSeen(a.store).values.set(a.account, { v: 1, genesis: other, seen: null });
+    browserStorage(a.store).setItem(`rh.hub.genesis.${a.account}`, other);
+    browserStorage(a.store).removeItem(`rh.hub.seen.${a.account}`);
+    await assert.rejects(a.attestation(), isFork);
+  });
+  await t.test("another head at this page's height", async () => {
+    const { a } = await setup();
+    await a.sync();
+    const seq = a.chain!.seq;
+    setSeenRecord(browserSeen(a.store), a.account, { v: 1, seenThrough: seq, head: "cd".repeat(32), heads: [], firstSeen: [] });
+    browserStorage(a.store).removeItem(`rh.hub.seen.${a.account}`);
+    await assert.rejects(a.attestation(), isFork);
+  });
 });
