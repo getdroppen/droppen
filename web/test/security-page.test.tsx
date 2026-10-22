@@ -178,7 +178,11 @@ test("only what ships is described as live: the renewal is not live yet, nor a p
   assert.ok(words.includes("Not switched on yet."));
   assert.ok(words.includes("Not live: a passkey letting a new device in without a full device's approval"));
   // What #190 shipped: a passkey's slot lets a new browser ask; a full device approves it by pairing.
-  assert.ok(words.includes("It gets nothing until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen"));
+  assert.ok(words.includes("It gets no key until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen"));
+  // On by default only for a passkey added on a full device (with PRF); the sign-up passkey only once switched on.
+  assert.ok(words.includes("when you add one on a full device it does, unless you untick that (it needs a passkey that supports PRF); the passkey you signed up with does only once you switch it on"));
+  assert.ok(words.includes("no app writes such a slot"));
+  assert.ok(words.includes("A record of the last 30 days' changes to how you sign in"));
   assert.ok(words.includes("A passkey holds no encryption key and unlocks none: a slot only lets a device ask."));
   // No e-mail recovery, password reset or start-over exists.
   assert.doesNotMatch(words, /e-mail recovery|gets you back into the account|password reset/i);

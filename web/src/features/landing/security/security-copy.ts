@@ -248,10 +248,16 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "見えるもの",
   ],
   [
-    "Your account: the e-mail address and whether it is verified, a password hash or your passkeys' public keys and which provider made each (from its AAGUID), the plan and the invite it came with, and the usage it is counted on (bytes stored and transferred).",
-    "你的账户：邮箱地址和是否已验证、密码哈希或通行密钥的公钥以及每把出自哪个提供方（取自它的 AAGUID）、套餐和注册时用的邀请码，以及计费用的用量（存储与传输的字节数）。",
-    "你的帳戶：電子郵件地址和是否已驗證、密碼雜湊或通行金鑰的公鑰以及每把出自哪個提供者（取自它的 AAGUID）、方案和註冊時用的邀請碼，以及計費用的用量（儲存與傳輸的位元組數）。",
-    "アカウント：メールアドレスと確認済みかどうか、パスワードのハッシュまたはパスキーの公開鍵と各パスキーの提供元（AAGUID から）、プランと登録時の招待、課金の基になる使用量（保存と転送のバイト数）。",
+    "Your account: the e-mail address and whether it is verified, a password hash or your passkeys' public keys, which provider made each (from its AAGUID) and the name you gave it, the plan and the invite it came with, and the usage it is counted on (bytes stored and transferred).",
+    "你的账户：邮箱地址和是否已验证、密码哈希或通行密钥的公钥、每把出自哪个提供方（取自它的 AAGUID）和你给它起的名字、套餐和注册时用的邀请码，以及计费用的用量（存储与传输的字节数）。",
+    "你的帳戶：電子郵件地址和是否已驗證、密碼雜湊或通行金鑰的公鑰、每把出自哪個提供者（取自它的 AAGUID）和你給它取的名字、方案和註冊時用的邀請碼，以及計費用的用量（儲存與傳輸的位元組數）。",
+    "アカウント：メールアドレスと確認済みかどうか、パスワードのハッシュまたはパスキーの公開鍵、各パスキーの提供元（AAGUID から）とあなたが付けた名前、プランと登録時の招待、課金の基になる使用量（保存と転送のバイト数）。",
+  ],
+  [
+    "A record of the last 30 days' changes to how you sign in: which change, from which device, and the passkey's name.",
+    "最近 30 天登录方式变化的记录：哪种变化、在哪台设备上做的，以及通行密钥的名字。",
+    "最近 30 天登入方式變化的紀錄：哪種變化、在哪台裝置上做的，以及通行金鑰的名字。",
+    "過去 30 日間のサインイン方法の変更記録：どんな変更か、どのデバイスからか、パスキーの名前。",
   ],
   [
     "The IP address of every request and connection.",
@@ -446,10 +452,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "チェーン v3：デバイス、AI、フルデバイス",
   ],
   [
-    "Every device on the chain has two flags: host (it runs AI) and admin (a full device: it signs entries, holds the user key and vouches for the chain). Every browser and phone you pair now is a full device; one paired earlier as a limited device (it holds no user key and signs nothing) stays limited until a full device makes it full. A device that runs AI is never a full device, and both verifiers refuse any entry that would make it one. Entries that change the account are signed by a current, active full device; the account key signs only the genesis, and the recovery key only a recovery join and its activation. A passkey slot, which a full device puts on the chain, signs only a limited device's pending join ([[3.6|t3-6]]). Accounts made before chain v3 follow the earlier rules until you upgrade them in My devices. The last full device cannot be removed.",
-    "链上每台设备有两个标志：host（可运行 AI）和 admin（完整设备：签链条目、持有用户钥、为链作证）。你现在配对的每个浏览器、每部手机都是完整设备；早先以受限设备配对的（不持有用户钥、什么都不签）会一直受限，直到一台完整设备把它设为完整设备。可运行 AI 的设备永远不会是完整设备，两个验证者都会拒绝任何想让它成为完整设备的条目。改动账户的条目由当前、有效的完整设备签；账户钥只签创世条目，恢复钥只签恢复加入和它的激活。通行密钥槽由完整设备写上链，它只签受限设备等待批准的加入（[[3.6|t3-6]]）。链 v3 之前创建的账户沿用早先的规则，直到你在「我的设备」里升级。最后一台完整设备不能被移除。",
-    "鏈上每台裝置有兩個標誌：host（可執行 AI）和 admin（完整裝置：簽鏈項目、持有使用者金鑰、為鏈作證）。你現在配對的每個瀏覽器、每支手機都是完整裝置；早先以受限裝置配對的（不持有使用者金鑰、什麼都不簽）會一直受限，直到一台完整裝置把它設為完整裝置。可執行 AI 的裝置永遠不會是完整裝置，兩個驗證者都會拒絕任何想讓它成為完整裝置的項目。變更帳戶的項目由目前、有效的完整裝置簽；帳戶金鑰只簽創世項目，復原金鑰只簽復原加入和它的啟用。通行金鑰槽由完整裝置寫上鏈，它只簽受限裝置等待核准的加入（[[3.6|t3-6]]）。鏈 v3 之前建立的帳戶沿用早先的規則，直到你在「我的裝置」裡升級。最後一台完整裝置不能被移除。",
-    "チェーン上の各デバイスには 2 つのフラグがあります。host（AI を実行できる）と admin（フルデバイス：エントリに署名し、ユーザー鍵を持ち、チェーンを証明する）です。今ペアリングするブラウザやスマホはすべてフルデバイスです。以前に制限付きデバイスとしてペアリングしたもの（ユーザー鍵を持たず、何にも署名しない）は、フルデバイスがフルデバイスにするまで制限付きのままです。AI を実行できるデバイスがフルデバイスになることはなく、そうしようとするエントリは 2 つの検証器の両方が拒否します。アカウントを変えるエントリには、現在有効なフルデバイスが署名します。アカウント鍵はジェネシスに、リカバリー鍵はリカバリーでの参加とその有効化に署名します。フルデバイスがチェーンに置くパスキースロットは、制限付きデバイスの承認待ちの参加にだけ署名します（[[3.6|t3-6]]）。チェーン v3 より前に作ったアカウントは、マイデバイスでアップグレードするまで以前のルールに従います。最後のフルデバイスは削除できません。",
+    "Every device on the chain has two flags: host (it runs AI) and admin (a full device: it signs entries, holds the user key and vouches for the chain). Every browser and phone you pair now is a full device; one paired earlier as a limited device (it holds no user key and signs nothing) stays limited until a full device makes it full. A device that runs AI is never a full device, and both verifiers refuse any entry that would make it one. Entries that change the account are signed by a current, active full device; the account key signs only the genesis, and the recovery key only a recovery join and its activation. A passkey slot, which a full device puts on the chain, signs only a limited device's pending join ([[3.6|t3-6]]) (the protocol also lets a slot marked self-activating activate that device after 24 hours; no app writes such a slot). Accounts made before chain v3 follow the earlier rules until you upgrade them in My devices. The last full device cannot be removed.",
+    "链上每台设备有两个标志：host（可运行 AI）和 admin（完整设备：签链条目、持有用户钥、为链作证）。你现在配对的每个浏览器、每部手机都是完整设备；早先以受限设备配对的（不持有用户钥、什么都不签）会一直受限，直到一台完整设备把它设为完整设备。可运行 AI 的设备永远不会是完整设备，两个验证者都会拒绝任何想让它成为完整设备的条目。改动账户的条目由当前、有效的完整设备签；账户钥只签创世条目，恢复钥只签恢复加入和它的激活。通行密钥槽由完整设备写上链，它只签受限设备等待批准的加入（[[3.6|t3-6]]）（协议还允许一个标为可自行激活的槽在 24 小时后激活那台设备；没有任何应用会写这种槽）。链 v3 之前创建的账户沿用早先的规则，直到你在「我的设备」里升级。最后一台完整设备不能被移除。",
+    "鏈上每台裝置有兩個標誌：host（可執行 AI）和 admin（完整裝置：簽鏈項目、持有使用者金鑰、為鏈作證）。你現在配對的每個瀏覽器、每支手機都是完整裝置；早先以受限裝置配對的（不持有使用者金鑰、什麼都不簽）會一直受限，直到一台完整裝置把它設為完整裝置。可執行 AI 的裝置永遠不會是完整裝置，兩個驗證者都會拒絕任何想讓它成為完整裝置的項目。變更帳戶的項目由目前、有效的完整裝置簽；帳戶金鑰只簽創世項目，復原金鑰只簽復原加入和它的啟用。通行金鑰槽由完整裝置寫上鏈，它只簽受限裝置等待核准的加入（[[3.6|t3-6]]）（協定還允許一個標為可自行啟用的槽在 24 小時後啟用那台裝置；沒有任何應用程式會寫這種槽）。鏈 v3 之前建立的帳戶沿用早先的規則，直到你在「我的裝置」裡升級。最後一台完整裝置不能被移除。",
+    "チェーン上の各デバイスには 2 つのフラグがあります。host（AI を実行できる）と admin（フルデバイス：エントリに署名し、ユーザー鍵を持ち、チェーンを証明する）です。今ペアリングするブラウザやスマホはすべてフルデバイスです。以前に制限付きデバイスとしてペアリングしたもの（ユーザー鍵を持たず、何にも署名しない）は、フルデバイスがフルデバイスにするまで制限付きのままです。AI を実行できるデバイスがフルデバイスになることはなく、そうしようとするエントリは 2 つの検証器の両方が拒否します。アカウントを変えるエントリには、現在有効なフルデバイスが署名します。アカウント鍵はジェネシスだけに、リカバリー鍵はリカバリーでの参加とその有効化だけに署名します。フルデバイスがチェーンに置くパスキースロットは、制限付きデバイスの承認待ちの参加にだけ署名します（[[3.6|t3-6]]）（プロトコルでは、自分で有効化できると記したスロットが 24 時間後にそのデバイスを有効にすることもできますが、そうしたスロットを書くアプリはありません）。チェーン v3 より前に作ったアカウントは、マイデバイスでアップグレードするまで以前のルールに従います。最後のフルデバイスは削除できません。",
   ],
   [
     "Who may control which device",
@@ -506,10 +512,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "変更はすべて知らされる",
   ],
   [
-    "Adding or removing a device, a recovery join, an activation, an approval, a change to who may control a device that runs AI or to which devices are full or run AI, new recovery words and a key epoch written on its own all raise an alert on every device (a banner to confirm that it was you) and on every device that runs AI (its log, and a push where push or Bark is set up). They read it from their own copy of the chain, so Droppen Hub can delay it, not hide it.",
-    "添加或移除设备、恢复加入、激活、批准，改变谁能控制可运行 AI 的设备、哪些设备是完整设备或可运行 AI，换恢复词，以及单独写下的一轮钥匙，都会在每台设备上告警（一条要你确认「是我做的」的提示），也会在每台可运行 AI 的设备上告警（写进日志；设置了推送或 Bark 的，还会推送）。它们从自己那份链上读到这些变化，所以 Droppen Hub 只能延迟，藏不住。",
-    "新增或移除裝置、復原加入、啟用、核准，改變誰能控制可執行 AI 的裝置、哪些裝置是完整裝置或可執行 AI，換復原詞，以及單獨寫下的一輪金鑰，都會在每台裝置上警示（一條要你確認「是我做的」的提示），也會在每台可執行 AI 的裝置上警示（寫進日誌；設定了推播或 Bark 的，還會推播）。它們從自己那份鏈上讀到這些變化，所以 Droppen Hub 只能延遲，藏不住。",
-    "デバイスの追加や削除、リカバリーでの参加、有効化、承認、AI を実行できるデバイスを誰が操作できるかの変更、どのデバイスがフルデバイスか・AI を実行できるかの変更、新しいリカバリーワード、単独で書かれた鍵の世代は、どれもすべてのデバイスで警告になり（「自分がやった」と確認するバナー）、AI を実行できるすべてのデバイスでも警告になります（ログに記録し、プッシュや Bark を設定していれば通知も）。どれも自分の持つチェーンから読むので、Droppen Hub は遅らせることはできても、隠すことはできません。",
+    "Adding or removing a device, a recovery join, an activation, an approval, a change to who may control a device that runs AI or to which devices are full or run AI, a passkey slot added or removed, new recovery words and a key epoch written on its own all raise an alert on every device (a banner to confirm that it was you) and on every device that runs AI (its log, and a push where push or Bark is set up). They read it from their own copy of the chain, so Droppen Hub can delay it, not hide it.",
+    "添加或移除设备、恢复加入、激活、批准，改变谁能控制可运行 AI 的设备、哪些设备是完整设备或可运行 AI，添加或移除通行密钥槽，换恢复词，以及单独写下的一轮钥匙，都会在每台设备上告警（一条要你确认「是我做的」的提示），也会在每台可运行 AI 的设备上告警（写进日志；设置了推送或 Bark 的，还会推送）。它们从自己那份链上读到这些变化，所以 Droppen Hub 只能延迟，藏不住。",
+    "新增或移除裝置、復原加入、啟用、核准，改變誰能控制可執行 AI 的裝置、哪些裝置是完整裝置或可執行 AI，新增或移除通行金鑰槽，換復原詞，以及單獨寫下的一輪金鑰，都會在每台裝置上警示（一條要你確認「是我做的」的提示），也會在每台可執行 AI 的裝置上警示（寫進日誌；設定了推播或 Bark 的，還會推播）。它們從自己那份鏈上讀到這些變化，所以 Droppen Hub 只能延遲，藏不住。",
+    "デバイスの追加や削除、リカバリーでの参加、有効化、承認、AI を実行できるデバイスを誰が操作できるかの変更、どのデバイスがフルデバイスか・AI を実行できるかの変更、パスキースロットの追加や削除、新しいリカバリーワード、単独で書かれた鍵の世代は、どれもすべてのデバイスで警告になり（「自分がやった」と確認するバナー）、AI を実行できるすべてのデバイスでも警告になります（ログに記録し、プッシュや Bark を設定していれば通知も）。どれも自分の持つチェーンから読むので、Droppen Hub は遅らせることはできても、隠すことはできません。",
   ],
   [
     "Removal and key rotation",
@@ -525,8 +531,8 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
   [
     "Then new keys: a new user key if the removed device ever held one, sealed to the full devices that remain and to the recovery words (the chain voids the words if the removed device knew them: then make new ones); and a new content key for every device that runs AI, which you may skip only when the removed device never held the user key and no device that runs AI let it control it. Each new epoch is committed on the chain first, always exactly one up, and sealed only to the devices that remain.",
-    "然后换钥：被移除的设备若曾持有用户钥，就换一把新的用户钥，封装给留下的完整设备和恢复词（被移除的设备若知道这组恢复词，链会让它作废，这时请生成一组新的）；并为每台可运行 AI 的设备换一把新的内容密钥——只有当被移除的设备从没持有用户钥、也没有任何可运行 AI 的设备接受过它的控制时，这一步才可以不做。每一轮新钥都先在链上提交，每次只能加一，并且只封装给留下的设备。",
-    "然後換金鑰：被移除的裝置若曾持有使用者金鑰，就換一把新的使用者金鑰，封裝給留下的完整裝置和復原詞（被移除的裝置若知道這組復原詞，鏈會讓它作廢，這時請產生一組新的）；並為每台可執行 AI 的裝置換一把新的內容金鑰——只有當被移除的裝置從沒持有使用者金鑰、也沒有任何可執行 AI 的裝置接受過它的控制時，這一步才可以不做。每一輪新金鑰都先在鏈上提交，每次只能加一，並且只封裝給留下的裝置。",
+    "然后换钥：被移除的设备若曾持有用户钥，就换一把新的用户钥，封装给留下的完整设备和恢复词（被移除的设备若知道这组恢复词，链会让这组恢复词作废，这时请生成一组新的）；并为每台可运行 AI 的设备换一把新的内容密钥——只有当被移除的设备从没持有用户钥、也没有任何可运行 AI 的设备接受过它的控制时，这一步才可以不做。每一轮新钥都先在链上提交，每次只能加一，并且只封装给留下的设备。",
+    "然後換金鑰：被移除的裝置若曾持有使用者金鑰，就換一把新的使用者金鑰，封裝給留下的完整裝置和復原詞（被移除的裝置若知道這組復原詞，鏈會讓這組復原詞作廢，這時請產生一組新的）；並為每台可執行 AI 的裝置換一把新的內容金鑰——只有當被移除的裝置從沒持有使用者金鑰、也沒有任何可執行 AI 的裝置接受過它的控制時，這一步才可以不做。每一輪新金鑰都先在鏈上提交，每次只能加一，並且只封裝給留下的裝置。",
     "次に鍵を替えます。削除されたデバイスがユーザー鍵を持ったことがあれば新しいユーザー鍵を作り、残ったフルデバイスとリカバリーワードに封印します（削除されたデバイスがそのワードを知っていたなら、チェーンがワードを無効にするので、新しく作り直してください）。AI を実行できる各デバイスには新しいコンテンツ鍵を。これを省けるのは、削除されたデバイスがユーザー鍵を持ったことがなく、AI を実行できるどのデバイスもその操作を受け入れていなかった場合だけです。新しい世代はどれもまずチェーン上でコミットされ、必ずちょうど 1 つずつ進み、残ったデバイスにだけ封印されます。",
   ],
   [
@@ -827,7 +833,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "A key sent to one device is sealed to its X25519 key with sender authentication, in the manner of HPKE's Auth mode: the key-encryption key depends on the sender's static key as well as a fresh one, and the context (purpose, account, sender, recipient, epoch) is both an input to the KDF and the AAD. Keys go through Droppen Hub's mailbox; a content key for its own device that runs AI goes straight over the end-to-end channel when that device is online.",
     "发给某台设备的钥匙，以带发送方认证的方式封装给它的 X25519 钥，仿 HPKE 的 Auth 模式：密钥加密钥既依赖一把新的临时钥，也依赖发送方的静态钥；上下文（用途、账户、发送方、接收方、轮次）既是 KDF 的输入，也是 AAD。钥匙经 Droppen Hub 的信箱投递；给某台可运行 AI 的设备的它自己的内容密钥，在那台设备在线时直接走端到端通道。",
     "發給某台裝置的金鑰，以帶傳送方認證的方式封裝給它的 X25519 金鑰，仿 HPKE 的 Auth 模式：金鑰加密金鑰既依賴一把新的臨時金鑰，也依賴傳送方的靜態金鑰；上下文（用途、帳戶、傳送方、接收方、輪次）既是 KDF 的輸入，也是 AAD。金鑰經 Droppen Hub 的信箱投遞；給某台可執行 AI 的裝置的它自己的內容金鑰，在那台裝置上線時直接走端對端通道。",
-    "特定のデバイスに送る鍵は、HPKE の Auth モードにならって送信者認証付きでその X25519 鍵に封印します。鍵暗号化鍵は新しい一時鍵だけでなく送信者の静的鍵にも依存し、コンテキスト（用途、アカウント、送信者、受信者、世代）は KDF の入力であると同時に AAD でもあります。鍵は Droppen Hub のメールボックスを通ります。AI を実行できるデバイスへのそのデバイス自身のコンテンツ鍵は、そのデバイスがオンラインならエンドツーエンドのチャネルで直接届きます。",
+    "特定のデバイスに送る鍵は、HPKE の Auth モードにならって送信者認証付きでその X25519 鍵に封印します。鍵暗号化鍵は新しい一時鍵だけでなく送信者の静的鍵にも依存し、コンテキスト（用途、アカウント、送信者、受信者、世代）は KDF の入力であると同時に AAD でもあります。鍵は Droppen Hub の鍵メールボックスを通ります。AI を実行できるデバイスへのそのデバイス自身のコンテンツ鍵は、そのデバイスがオンラインならエンドツーエンドのチャネルで直接届きます。",
   ],
   [
     "A recipient takes a key only if it is addressed to itself, in this account, from a current full device, and matches the hash the chain committed for that epoch. So neither Droppen Hub nor a removed device can slip in a key of its own choosing, or push an epoch forward.",
@@ -921,15 +927,15 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
   [
     "A passkey signs you in to Droppen Hub: it gives the same short sign-in session a password does (15 minutes: enough to see the account and its devices, read the chain and register this browser's device key). Everything else needs a device session, signed by a device key, and what a device may do is decided by the chain: a device the chain does not list gets only ciphertext. Adding or removing a passkey and setting, changing or removing the password take a full device and a fresh passkey or the current password, and each such change shows on your other full devices.",
-    "通行密钥用来登录 Droppen Hub：它换来的登录会话和密码一样短（15 分钟，够查看账户和它的设备、读取设备链、登记这个浏览器的设备钥）。其余一切都要设备会话，由设备钥签名换取，而一台设备能做什么由链决定：链上没有的设备，只能拿到密文。添加或删除通行密钥、设置、更改或删除密码，都要在完整设备上进行，并再用一次通行密钥或输入当前密码；每一次这样的变化，都会显示在你的其它完整设备上。",
-    "通行金鑰用來登入 Droppen Hub：它換來的登入工作階段和密碼一樣短（15 分鐘，夠查看帳戶和它的裝置、讀取裝置鏈、登記這個瀏覽器的裝置金鑰）。其餘一切都要裝置工作階段，由裝置金鑰簽章換取，而一台裝置能做什麼由鏈決定：鏈上沒有的裝置，只能拿到密文。新增或刪除通行金鑰、設定、變更或刪除密碼，都要在完整裝置上進行，並再用一次通行金鑰或輸入目前密碼；每一次這樣的變化，都會顯示在你的其他完整裝置上。",
+    "通行密钥用来登录 Droppen Hub：它换来的登录会话和密码一样短（15 分钟，够查看账户和它的设备、读取设备链、登记这个浏览器的设备钥）。其余一切都要设备会话，由设备钥签名换取，而一台设备能做什么由链决定：链上没有的设备，只能拿到密文。添加或删除通行密钥，以及设置、更改或删除密码，都要在完整设备上进行，并再用一次通行密钥或输入当前密码；每一次这样的变化，都会显示在你的其它完整设备上。",
+    "通行金鑰用來登入 Droppen Hub：它換來的登入工作階段和密碼一樣短（15 分鐘，夠查看帳戶和它的裝置、讀取裝置鏈、登記這個瀏覽器的裝置金鑰）。其餘一切都要裝置工作階段，由裝置金鑰簽章換取，而一台裝置能做什麼由鏈決定：鏈上沒有的裝置，只能拿到密文。新增或刪除通行金鑰，以及設定、變更或刪除密碼，都要在完整裝置上進行，並再用一次通行金鑰或輸入目前密碼；每一次這樣的變化，都會顯示在你的其他完整裝置上。",
     "パスキーは Droppen Hub へのサインインに使います。得られるのはパスワードと同じ短いサインインセッション（15 分。アカウントとそのデバイスを見ること、チェーンを読むこと、このブラウザのデバイス鍵を登録することができる）です。それ以外はすべて、デバイス鍵の署名で得るデバイスセッションが必要で、デバイスに何ができるかはチェーンが決めます。チェーンに載っていないデバイスが受け取れるのは暗号文だけです。パスキーの追加や削除、パスワードの設定・変更・削除には、フルデバイスと、改めてのパスキーか現在のパスワードが必要で、そうした変更はほかのフルデバイスにすべて表示されます。",
   ],
   [
-    "A passkey can also let a new browser ask to join, and does by default. Adding it on a full device puts a passkey slot on the chain: a key derived from the passkey's PRF output, which only that passkey can produce. A new browser that signs in with the passkey derives the same key, checks the slot on the chain, and adds itself as a pending, limited device, which every device announces. It gets nothing until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen; then it becomes a full device and receives the user key through the pairing. Any full device can remove it instead. A passkey holds no encryption key and unlocks none: a slot only lets a device ask.",
-    "通行密钥还可以让新浏览器申请加入，默认就是开着的。在完整设备上添加它时，会把一个通行密钥槽写上链：一把从通行密钥的 PRF 输出派生的钥匙，只有那把通行密钥算得出来。新浏览器用这把通行密钥登录后，派生出同一把钥匙、核对链上的槽，再把自己作为等待批准的受限设备加进链里，每台设备都会告警。在一台完整设备与它配对（用它显示的 8 位数字码或二维码）、并批准它屏幕上正是这两把钥匙之前，它什么都拿不到；批准后它成为完整设备，经这次配对收到用户钥。任何一台完整设备也可以直接把它移除。通行密钥不持有、也解不开任何加密钥匙：槽只让设备能够申请。",
-    "通行金鑰還可以讓新瀏覽器申請加入，預設就是開著的。在完整裝置上新增它時，會把一個通行金鑰槽寫上鏈：一把從通行金鑰的 PRF 輸出衍生的金鑰，只有那把通行金鑰算得出來。新瀏覽器用這把通行金鑰登入後，衍生出同一把金鑰、核對鏈上的槽，再把自己作為等待核准的受限裝置加進鏈裡，每台裝置都會警示。在一台完整裝置與它配對（用它顯示的 8 位數字碼或 QR 碼）、並核准它螢幕上正是這兩把金鑰之前，它什麼都拿不到；核准後它成為完整裝置，經這次配對收到使用者金鑰。任何一台完整裝置也可以直接把它移除。通行金鑰不持有、也解不開任何加密金鑰：槽只讓裝置能夠申請。",
-    "パスキーは、新しいブラウザが参加を申請できるようにもします（既定でオン）。フルデバイスでパスキーを追加すると、パスキースロットがチェーンに置かれます。パスキーの PRF 出力から導いた鍵で、そのパスキーにしか作れません。新しいブラウザはそのパスキーでサインインすると同じ鍵を導き、チェーン上のスロットを確かめて、自分を承認待ちの制限付きデバイスとして追加します。これはすべてのデバイスで警告になります。フルデバイスがそのブラウザと 8 桁のコードか QR コードでペアリングし、画面に出ている鍵そのものを承認するまで、何も受け取れません。承認されるとフルデバイスになり、ペアリングを通じてユーザー鍵を受け取ります。どのフルデバイスも、代わりにそれを削除できます。パスキーは暗号化の鍵を持たず、何も開けません。スロットはデバイスに申請させるだけです。",
+    "A passkey can also let a new browser ask to join: when you add one on a full device it does, unless you untick that (it needs a passkey that supports PRF); the passkey you signed up with does only once you switch it on. That puts a passkey slot on the chain: a key derived from the passkey's PRF output, which only that passkey can produce. A new browser that signs in with the passkey derives the same key, checks the slot on the chain, and adds itself as a pending, limited device, which every device announces. It gets no key until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen; then it becomes a full device and receives the user key through the pairing. Any full device can remove it instead. A passkey holds no encryption key and unlocks none: a slot only lets a device ask.",
+    "通行密钥还可以让新浏览器申请加入：你在完整设备上添加的通行密钥默认会开启这一项，除非你取消勾选（需要支持 PRF 的通行密钥）；注册时用的那把，要你打开这一项后才会。开启后，链上会写入一个通行密钥槽：一把从通行密钥的 PRF 输出派生的钥匙，只有那把通行密钥算得出来。新浏览器用这把通行密钥登录后，派生出同一把钥匙、核对链上的槽，再把自己作为等待批准的受限设备加进链里，每台设备都会告警。在一台完整设备与它配对（用它显示的 8 位数字码或二维码）、并批准正是它屏幕上显示的钥匙之前，它拿不到任何钥匙；批准后它成为完整设备，经这次配对收到用户钥。任何一台完整设备也可以直接把它移除。通行密钥不持有、也解不开任何加密钥匙：槽只让设备能够申请。",
+    "通行金鑰還可以讓新瀏覽器申請加入：你在完整裝置上新增的通行金鑰預設會開啟這一項，除非你取消勾選（需要支援 PRF 的通行金鑰）；註冊時用的那把，要你開啟這一項後才會。開啟後，鏈上會寫入一個通行金鑰槽：一把從通行金鑰的 PRF 輸出衍生的金鑰，只有那把通行金鑰算得出來。新瀏覽器用這把通行金鑰登入後，衍生出同一把金鑰、核對鏈上的槽，再把自己作為等待核准的受限裝置加進鏈裡，每台裝置都會警示。在一台完整裝置與它配對（用它顯示的 8 位數字碼或 QR 碼）、並核准正是它螢幕上顯示的金鑰之前，它拿不到任何金鑰；核准後它成為完整裝置，經這次配對收到使用者金鑰。任何一台完整裝置也可以直接把它移除。通行金鑰不持有、也解不開任何加密金鑰：槽只讓裝置能夠申請。",
+    "パスキーは、新しいブラウザが参加を申請できるようにもします。フルデバイスで追加したパスキーでは、チェックを外さない限りそうなります（PRF に対応したパスキーが必要です）。登録に使ったパスキーは、あなたがオンにしたときだけです。オンにすると、パスキースロットがチェーンに置かれます。パスキーの PRF 出力から導いた鍵で、そのパスキーにしか作れません。新しいブラウザはそのパスキーでサインインすると同じ鍵を導き、チェーン上のスロットを確かめて、自分を承認待ちの制限付きデバイスとして追加します。これはすべてのデバイスで警告になります。フルデバイスがそのブラウザと 8 桁のコードか QR コードでペアリングし、画面に出ている鍵そのものを承認するまで、鍵は何も受け取れません。承認されるとフルデバイスになり、ペアリングを通じてユーザー鍵を受け取ります。どのフルデバイスも、代わりにそれを削除できます。パスキーは暗号化の鍵を持たず、何も開けません。スロットはデバイスに申請させるだけです。",
   ],
   [
     "Not live: a passkey letting a new device in without a full device's approval, and renewing the identity key of a device that runs AI in place ([[section 06|renewal]]).",
@@ -1256,7 +1262,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "失ったデバイスが A を操作でき、A が B を操作できるなら、A の鍵のコピーは B にも届きます。B も露出しています。操作する側から先に更新します。B が A を受け入れているなら A が B より先に更新するので、B が更新するころには A の古い鍵はもう役に立ちません。",
   ],
   [
-    "Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first writes a pause, an entry of kind 22 (RenewalPause), that names each control edge it removes. Every verifier, and every device that runs AI on every path (Hub, relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge whose ends are still exposed is carried into a new pause in the same batch. A pause only ever takes access away, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.",
+    "Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first writes a pause, an entry of kind 22 (RenewalPause), that names each control edge it removes. Every verifier, and every device that runs AI on every path (Hub, relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge with an end still exposed is carried into a new pause in the same batch. A pause only ever takes access away, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.",
     "只有彼此互相够得着、形成环的设备排不出先后。对这些设备，完整设备先写一条暂停，即种类 22 的条目（RenewalPause），逐条写明它去掉的控制边。每个验证者，以及每台可运行 AI 的设备在每条路径上（Hub、中继、直连），都把有效的放行算作「接受名单减去所有开着的暂停去掉的边」，并关掉因此失去准入的通道；接受名单本身一字不改。环里的设备都换完之后，写一条条目标明暂停已完成，接受名单重新完整生效；两端仍有暴露设备的边，会在同一批里转进一个新的暂停。暂停只会收回权限，所以一直开着的暂停是安全的，并显示在每台设备上。在确认它会交还哪些控制、且相关设备都已不再暴露之后，你可以手动结束它（写一条取消条目）。任何一台完整设备都能结束它，不只是开始它的那一台。",
     "只有彼此互相夠得著、形成環的裝置排不出先後。對這些裝置，完整裝置先寫一筆暫停，即種類 22 的項目（RenewalPause），逐條寫明它去掉的控制邊。每個驗證者，以及每台可執行 AI 的裝置在每條路徑上（Hub、中繼、直連），都把有效的放行算作「接受名單減去所有開著的暫停去掉的邊」，並關掉因此失去准入的通道；接受名單本身一字不改。環裡的裝置都換完之後，寫一筆項目標明暫停已完成，接受名單重新完整生效；兩端仍有暴露裝置的邊，會在同一批裡轉進一個新的暫停。暫停只會收回權限，所以一直開著的暫停是安全的，並顯示在每台裝置上。在確認它會交還哪些控制、且相關裝置都已不再暴露之後，你可以手動結束它（寫一筆取消項目）。任何一台完整裝置都能結束它，不只是開始它的那一台。",
     "互いに届き合って輪になっているデバイスだけは、順番を付けられません。それらについては、フルデバイスがまず一時停止、つまり種別 22 のエントリ（RenewalPause）を書き、取り除く操作の辺を 1 本ずつ記します。すべての検証器と、すべての経路（Hub、中継、直結）上の AI を実行できるすべてのデバイスは、有効なアクセスを「受け入れリストから、開いているすべての一時停止が取り除く辺を引いたもの」として計算し、それを失ったチャネルを閉じます。受け入れリスト自体は書き換えません。輪の中のデバイスが更新を終えると、エントリが一時停止の完了を記し、受け入れリストが再びそのまま効きます。両端のどちらかがまだ露出している辺は、同じバッチで新しい一時停止に引き継がれます。一時停止はアクセスを減らすだけなので、開いたままでも安全で、すべてのデバイスに表示されます。返す操作を確認したうえで、どのデバイスももう露出していなければ、手で終わらせることもできます（取り消しのエントリ）。終わらせられるのは始めたフルデバイスに限らず、どのフルデバイスでもかまいません。",
@@ -1305,8 +1311,8 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
   [
     "Withhold a renewal, and every pause, policy change and dispute, from one device for a while, as it can a removal: bounded by freshness, and the chain also travels inside handshakes.",
-    "像扣住移除一样，对某台设备暂时扣住一次更换，以及每一条暂停、档位变化和争议声明：受新鲜度约束，而且链也会随握手传过去。",
-    "像扣住移除一樣，對某台裝置暫時扣住一次更換，以及每一筆暫停、等級變化和爭議聲明：受新鮮度約束，而且鏈也會隨交握傳過去。",
+    "像扣住移除一样，对某台设备暂时扣住一次更换，以及每一条暂停、更换策略设置的变更和争议声明：受新鲜度约束，而且链也会随握手传过去。",
+    "像扣住移除一樣，對某台裝置暫時扣住一次更換，以及每一筆暫停、更換策略設定的變更和爭議聲明：受新鮮度約束，而且鏈也會隨交握傳過去。",
     "削除と同じように、あるデバイスへの更新、そしてすべての一時停止・設定の変更・異議をしばらく差し止める。鮮度の上限があり、チェーンはハンドシェイクでも伝わります。",
   ],
   [
@@ -1448,10 +1454,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "サービスを使い、アカウントとそのデバイスを見る。自分のデバイスを登録する（ただしフルデバイスなしには参加できない）。新しいデバイスの参加を許すパスキーなら、承認待ちのデバイスを 1 台追加できる（すべてのデバイスで警告になる）。",
   ],
   [
-    "Read or delete data, or take over a device: a sign-in session sees only the account, its devices and the chain, and a device the chain does not list gets only ciphertext.",
-    "读取或删除数据、接管设备：登录会话只能看到账户、它的设备和设备链，链上没有的设备只能拿到密文。",
-    "讀取或刪除資料、接管裝置：登入工作階段只能看到帳戶、它的裝置和裝置鏈，鏈上沒有的裝置只能拿到密文。",
-    "データを読む・消す、デバイスを乗っ取る。サインインセッションで見えるのはアカウントとそのデバイスとチェーンだけで、チェーンに載っていないデバイスが受け取れるのは暗号文だけです。",
+    "Read or delete data, or take over a device: a sign-in session sees only the account, its devices and the chain, and a device the chain does not list as active gets only ciphertext.",
+    "读取或删除数据、接管设备：登录会话只能看到账户、它的设备和设备链，链上没有列为有效的设备只能拿到密文。",
+    "讀取或刪除資料、接管裝置：登入工作階段只能看到帳戶、它的裝置和裝置鏈，鏈上沒有列為有效的裝置只能拿到密文。",
+    "データを読む・消す、デバイスを乗っ取る。サインインセッションで見えるのはアカウントとそのデバイスとチェーンだけで、チェーンが有効なデバイスとして載せていないデバイスが受け取れるのは暗号文だけです。",
   ],
   [
     "Stolen recovery words and password",
@@ -1689,7 +1695,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
   [
     "Each implementation writes test vectors (vectors/rust.json, vectors/ts.json) and must read the other's: Noise transcripts through rekeys, chains in which every refusal gives the same error, key wraps, records and pages; the direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.",
-    "两份实现各自产出测试向量（vectors/rust.json、vectors/ts.json），并且必须读懂对方的：跨越换钥的 Noise 会话记录、每一种拒绝都给出同样错误的链、钥匙包裹、记录和快照页；直连握手只单向核对，从 Rust 到 TypeScript。评审中发现的攻击，都以回归测试的形式留在两边。",
+    "两份实现各自产出测试向量（vectors/rust.json、vectors/ts.json），并且必须读懂对方的：跨越换钥的 Noise 收发记录、每一种拒绝都给出同样错误的链、钥匙包裹、记录和快照页；直连握手只单向核对，从 Rust 到 TypeScript。评审中发现的攻击，都以回归测试的形式留在两边。",
     "兩份實作各自產出測試向量（vectors/rust.json、vectors/ts.json），並且必須讀懂對方的：跨越換金鑰的 Noise 交換紀錄、每一種拒絕都給出同樣錯誤的鏈、金鑰包裹、紀錄和快照頁；直連交握只單向核對，從 Rust 到 TypeScript。審查中發現的攻擊，都以回歸測試的形式留在兩邊。",
     "それぞれの実装がテストベクター（vectors/rust.json、vectors/ts.json）を書き出し、相手のものを読めなければなりません。鍵の更新をまたぐ Noise のやりとり、どの拒否も同じエラーになるチェーン、鍵のラップ、レコード、ページです。直結のハンドシェイクは Rust から TypeScript への一方向だけ確かめます。レビューで見つかった攻撃は、両方の側に回帰テストとして残しています。",
   ],

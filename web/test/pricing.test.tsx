@@ -356,7 +356,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     `To be taken off, write to ${PRIVACY_EMAIL} from that address and we will delete it.`,
     "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys.",
     "Which of your devices are online, when they connect and from which IP address",
-    "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself",
+    "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself",
     "What is said in a session, or typed and shown in a terminal",
     "The names of your devices, your files and their names",
     // Stored data is padded; live connections are not (as /security says).
