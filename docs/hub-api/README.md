@@ -79,7 +79,7 @@ subdomain of it.
 | `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/signup/config`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
 | `session` | `Authorization: Bearer <token>`, a **login** or a **device** session | `POST /v1/devices`, `GET /v1/me`, `GET /v1/chain`, `POST /v1/email/resend`, `POST /v1/logout` |
 | `device` | `Authorization: Bearer <token>` of a **device** session | everything else under `/v1/` — managing the account's passkeys and password included (a current full device: a login session never changes how the account signs in) |
-| `admin` | `Authorization: Bearer <the operator's admin token>` (constant-time compare) | `/v1/admin/*`; without a configured token those routes answer 404 |
+| `admin` | `Authorization: Bearer <the operator's admin token>` | `/v1/admin/*`, the operator routes (documented with the Hub) |
 
 **Login session.** `POST /v1/signup` or `POST /v1/login` (email and
 password), or `POST /v1/signup/passkey` or `POST /v1/login/passkey` (a
@@ -192,7 +192,7 @@ A refused request costs nothing and leaves nothing behind.
 
 | what | limit |
 |---|---|
-| every unauthenticated route (incl. the WebSocket upgrades and `/v1/admin/*`), but the static ones below | 300 a minute per address, bursts of 60; a body (if any) read whole within 10 s before anything else, else `408 slow_request` and the connection closed |
+| every unauthenticated route (incl. the WebSocket upgrades and the operator routes), but the static ones below | 300 a minute per address, bursts of 60; a body (if any) read whole within 10 s before anything else, else `408 slow_request` and the connection closed |
 | the static and stateless routes: `/healthz`, `/install.sh`, `/.well-known/droppen-build`, the web app's files and any path nothing else serves, the Turnstile host's page and its 404s, a redirected host's `308` | 600 per 10 s and 3,000 a minute per address (a browser loads some 40 files) |
 | argon2 (`POST /v1/login`, `POST /v1/signup`) | one hash at a time per address, two at a time per network (IPv4 /24, IPv6 /48), four across the hub: one source never holds every slot; the rest wait their turn |
 | sign-up attempts: `POST /v1/signup`, `POST /v1/passkeys/options {signup}` | every attempt, account made or not (each can say whether an e-mail is taken): 10 an hour and 30 a day per address, spent first (counted twice while Turnstile is unreachable and the hub fails open); and, only once the attempt passed every cheap check (mode, the e-mail's syntax and domain, the invite, Turnstile) — just before the e-mail is looked up — 20 an hour and 50 a day per network (IPv4 /24, IPv6 /48) and 200 an hour and 1,000 a day across the hub. Junk spends only its own address's share |
@@ -214,7 +214,6 @@ A refused request costs nothing and leaves nothing behind.
 | `POST /v1/mailbox` | 120 a minute per sending device, sliding (`429 mail_rate`); per recipient **mailbox role** (a host's agent: purpose 2; any device role: the rest — counted apart, so neither fills the other's) 256 mails and 1 MiB, one sender at most 128 of them, mail that delivers no key at most 192 and 512 KiB (`507 mailbox_full`); non-key mail counts against `storage.bytes` (`409 limit`) |
 | pairings | 4 open per account (`429 too_many_pairings`), 8 messages each (`429 pairing_full`), 10 minutes; a device outside the chain holds 1, within 30 minutes of registering |
 | keyring | one name per writer per committed epoch plus 64, at most 10,000 names per account (`507 keyring_full`) |
-| `/v1/admin/*` | 10 a minute per address |
 | WebSocket upgrades (`/v1/client`, `/v1/agent`, `/v1/relay`, `/v1/probe/rooms/{room}`) | 60 a minute per address |
 | every route with a session | 600 per 10 s and 3,000 a minute per address before the session is looked up; 600 a minute per device (or login session), snapshot pages excepted |
 | relay `/v1/ping`, `/v1/relay-id` | 120 a minute per address |
@@ -222,7 +221,7 @@ A refused request costs nothing and leaves nothing behind.
 
 | body cap | routes |
 |---|---|
-| 8 KiB | unauthenticated routes and `/v1/admin/*` |
+| 8 KiB | unauthenticated routes and the operator routes |
 | 16 KiB | the four passkey routes, and adding, renaming or removing a passkey and setting the password (`/v1/passkeys`, `/v1/passkeys/*`, `/v1/password`) |
 | 256 KiB | `/v1/chain` (1–64 entries per append) |
 | 20 KiB | `/v1/mailbox` (`sealed` ≤ 8 KiB) |

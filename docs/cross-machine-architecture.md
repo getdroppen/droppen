@@ -294,7 +294,7 @@
 
 - **crate**：hub（`rh-hub`，闭源，不在本仓库）；`crates/rh-devkit`（无头设备与回显 agent，测试与本地端到端用）；`rh-proto` 新增 `bridge`（回环桥接的线格式）、`flow`（hub 层信用窗口）、`driver`（feature `runtime`，tokio 上跑一条通道，agent 与无头设备共用）。
 - **两种 WebSocket 消息**：二进制消息恰好是一个 `rh_proto::frame` 帧（数据面）；文本消息是一个以 `t` 标记的 JSON 控制消息（登录挑战、注册、在线态、信箱、错误），见 `docs/hub-api/websocket.md`。登录签名的 `hub` 字段用**签名方自己拨号的源**，hub 用自己配置的源校验。
-- **HTTP**：`/v1/signup|login|logout|me|devices|chain|enrollments|mailbox`、`/v1/admin/invites`、`/healthz`（见 `docs/hub-api/http.md`）。二进制字段一律小写 hex。
+- **HTTP**：`/v1/signup|login|logout|me|devices|chain|enrollments|mailbox`、`/healthz`（见 `docs/hub-api/http.md`）；运营方的路由（`/v1/admin/*`）与 Hub 一起记录，不在公开仓库。二进制字段一律小写 hex。
 - **通道**：设备的 `ch` 单调递增、永不复用；hub 为 agent 一侧另行分配，同样永不复用。每个方向一个 512 KiB 信用窗口（`flow::INITIAL_CREDIT`），超发或超额授信即以 4408 关闭该通道。关闭码：4404 机器离线、4403 不在设备链里、4400 协议错误、4409 通道过多、4410 对端断开；连接级 1012 表示 hub 重启。
 - **新鲜度门槛**：每条通道都要求有完整设备在 `FRESHNESS_MAX_AGE_MS`（12 小时）内为 agent 的链头签过证明；没有则回复新状态 `Stale`。设备连上后先发 `ATTEST` 帧（hub 存最新一条并转给 agent），再握手。只剩一台完整设备时它自己的证明有效（M3 复审）。
 - **桥接**：`OPEN` 元数据是请求头（方法、路径、头部）；流内是 `[kind][len][payload]` 消息（text/binary/head/end）。rpc：请求体后跟 `end`，agent 回 `head` 和响应体再关流；mux/term：agent 回状态 101 的 `head` 即为 socket 打开。内部凭据 `x-rh-agent` 每次启动随机生成，`auth::guard` 只接受来自回环的；身份记为 `cloud:<设备 id>`。

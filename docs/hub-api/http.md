@@ -8,8 +8,9 @@ returns; any route may also answer `429 rate`, `503 unavailable`, and the
 framework's non-JSON 400/413/415/422; a route that needs no sign-in also
 `408 slow_request` when its body takes longer than 10 s to arrive.
 
-Audience: **client** routes are what devices and agents use; **operator**
-routes need the admin token; **relay** and **tooling** routes are marked.
+Audience: **client** routes are what devices and agents use; the **operator**
+routes (`/v1/admin/*`) are documented with the Hub, not here; **relay** and
+**tooling** routes are marked.
 
 ## Public (no session)
 
@@ -49,8 +50,7 @@ static routes' share per address, as does a redirected host's `308`.
 → `{commit: null | "<hex>", web: {digest: "sha256:<hex>", files}}`, with
 `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. Which build of
 the web app this hub serves: the commit its image was built from
-(`DROPPEN_HUB_BUILD_COMMIT`, else Railway's `RAILWAY_GIT_COMMIT_SHA`; `null` when
-neither is set) and the digest of the files as built — one
+(`null` when the hub does not know it) and the digest of the files as built — one
 `<sha256>  <path>\n` line per file, sorted by path bytewise, hashed; the shell
 before the hub adds its `rh-hub` marker. A release's `web-manifest.json` has
 the same `digest`; `scripts/verify-web.mjs` uses this to pick the manifest and
@@ -781,7 +781,7 @@ Errors: `400 bad_request`, `409 not_a_host` (not a current host of this
 account), `409 rotation_not_ready` with `reason` `disabled`, `v2`,
 `agent_too_old` (its agent has not declared `rotate/1`), `policy_unset`
 (an attempt before the account's chain has a `SetRenewalPolicy`: an admin
-chooses, on or off, before the first — design §8 「打开的顺序」),
+chooses, on or off, before the first — `docs/host-identity-rotation.md` §5.6 「打开的顺序」),
 `needs_assurance` (an attempt with assurance 0 for a host that takes only
 1, or while the account's chain asks for every renewal to be confirmed on
 the device — `SetRenewalPolicy`),
@@ -968,18 +968,12 @@ reauth_required | reauth_failed`, `409 last_credential`, `429 rate`.
 
 ## Operator: `admin`
 
-The `/v1/admin/*` routes are the hub operator's own tools: invites, plans
-and overrides, relay tokens, the waitlist. No open client uses them, so they
-are documented with the hub, not here. `index.json` still lists their paths
-and auth (`admin`, a bearer token; `404 not_found` without a configured one),
-so every route the hub serves is in the index.
-
-The entitlement keys, as `/v1/me`'s `plan.entitlements` and `409 limit` name
-them:
-`storage.retention_days`, `storage.bytes`, `relay.max`, `devices.max`,
-`hosts.max` (`machines.max` is its old name), `transfer.included_bytes`, `transfer.overage`,
-`transfer.hard_cap_bytes`, `conn.bytes_per_sec`, `streams.records_per_sec`,
-`relay.beta`.
+The `/v1/admin/*` routes are the hub operator's own tools. No open client
+uses them, so they are documented with the Hub, not here. `index.json` still
+lists their paths and auth (`admin`, a bearer token), so every route the hub
+serves is in the index. The entitlement keys that `/v1/me`'s
+`plan.entitlements` and a `409 limit` name are the Hub's too, and documented
+with it.
 
 ## Served by a relay (`droppen-relay`)
 
