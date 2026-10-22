@@ -92,6 +92,7 @@ import {
   DecodeError,
   decodeEntry,
   decodeHostKeyMail,
+  encodeDraft,
   type DeviceInfo,
   type DeviceKeys,
   DeviceKeysUnreadable,
@@ -4590,6 +4591,12 @@ export class CloudAccount {
     }
   }
 
+  /** How long the encoded entry of a pause start with `removals` would be, signed here on `chain` (M6: `MAX_PAUSE_ENTRY_LEN`). */
+  pauseEntryLen(chain: ChainState, removals: PauseRemoval[]): number {
+    const draft = chain.draft({ type: "device", id: this.deviceId }, { type: "renewalPause", op: new Uint8Array(16), phase: PAUSE_START, removals }, Date.now());
+    return encodeDraft(draft).length + 64;
+  }
+
   /**
    * What ending open pause `op` now would give back, and what stops it
    * (§4.1 「卡住的暂停」, R6 L4): the edges that come back, the hosts among
@@ -5794,7 +5801,8 @@ export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, E
   const all: { hosts: string[]; removals: PauseRemoval[] }[] = [];
   for (const cycle of exposedCycles(chain, exposed)) {
     if (!cycle.some(renews)) continue;
-    const removals = cycle.flatMap((host) => {
+    // Canonical, as the chain requires: hosts, and each host's ids, ascending by bytes.
+    const removals = [...cycle].sort(compareUtf8Ids).flatMap((host) => {
       const ids = cycle.filter((e) => e !== host && admits(chain, host, e)).sort(compareUtf8Ids);
       return ids.length ? [{ host, ids }] : [];
     });
@@ -5803,7 +5811,40 @@ export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, E
   return all;
 }
 
-const compareUtf8Ids = (x: string, y: string) => compareBytes(utf8(x), utf8(y));
+/** Strings by their UTF-8 bytes: the chain's canonical order for a pause's hosts and ids. */
+export const compareUtf8Ids = (x: string, y: string) => compareBytes(utf8(x), utf8(y));
+
+/**
+ * `removals` (canonical: hosts, and each host's ids, ascending by bytes) cut
+ * into pauses each of which `fits` (M6: the whole encoded entry within
+ * `MAX_PAUSE_ENTRY_LEN`) — in order, a host's ids split across pauses only
+ * when they alone would not fit one. Each part stays canonical. A single
+ * edge that does not fit is refused (it cannot be paused at all).
+ */
+export function splitPauseRemovals(removals: readonly PauseRemoval[], fits: (removals: PauseRemoval[]) => boolean): PauseRemoval[][] {
+  const parts: PauseRemoval[][] = [];
+  let part: PauseRemoval[] = [];
+  const close = () => {
+    if (part.length) parts.push(part);
+    part = [];
+  };
+  for (const r of removals) {
+    for (const id of r.ids) {
+      const last = part.at(-1);
+      const tried = last?.host === r.host ? [...part.slice(0, -1), { host: r.host, ids: [...last.ids, id] }] : [...part, { host: r.host, ids: [id] }];
+      if (fits(tried)) {
+        part = tried;
+        continue;
+      }
+      close();
+      const alone = [{ host: r.host, ids: [id] }];
+      if (!fits(alone)) throw new AccountError("invalidEntry", "a renewal pause of one edge does not fit an entry", undefined, RULES.pauseTooLarge);
+      part = alone;
+    }
+  }
+  close();
+  return parts;
+}
 
 /** What ending an open renewal pause now gives back, what must stay held and why, and whether its starter still manages the account. */
 export interface PauseEnding {
