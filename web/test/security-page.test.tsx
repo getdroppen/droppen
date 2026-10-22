@@ -10,7 +10,7 @@
 // (the renewal "not live yet", a passkey letting a device in on its own "not
 // live"), passkeys are described as shipped (sign-in, and a join a full device
 // approves by pairing), and the page says
-// the source "will be published" rather than that it is; it says plainly that
+// where the source is; it says plainly that
 // a modified page can do anything the browser can, keys included; the
 // cross-references are links to anchors that exist; vulnerabilities go to the
 // security address; it names no Hub setting.
@@ -163,7 +163,7 @@ test("the page reads in each language, with nothing left in English but the code
   }
 });
 
-test("only what ships is described as live: the renewal is not live yet, nor a passkey letting a device in on its own; the source will be published", () => {
+test("only what ships is described as live: the renewal is not live yet, nor a passkey letting a device in on its own; the source is where it says", () => {
   for (const lng of ["en", ...LANGS]) {
     const html = draw(lng);
     // The renewal's head carries the chip, in the reader's language.
@@ -187,7 +187,8 @@ test("only what ships is described as live: the renewal is not live yet, nor a p
   // No e-mail recovery, password reset or start-over exists.
   assert.doesNotMatch(words, /e-mail recovery|gets you back into the account|password reset/i);
   assert.ok(words.includes("starting the account over is not offered yet"));
-  assert.ok(words.includes("their source code will be published at github.com/getdroppen/droppen, and until then it is available on request"));
+  assert.ok(words.includes("their source code is at github.com/getdroppen/droppen. Droppen Hub is not open source."));
+  assert.doesNotMatch(words, /will be published|available on request|until the repository is public/i);
   assert.ok(words.includes("Internal security reviews only; no external audit yet."));
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i, /is open[- ]source/i, /are open[- ]source/i]) assert.doesNotMatch(words, claim);
 });

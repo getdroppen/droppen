@@ -308,7 +308,7 @@ function Faq() {
     {
       q: t("Can I host it myself?"),
       a: t(
-        "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code will be published at github.com/getdroppen/droppen; until then it is available on request. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.",
+        "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code is at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.",
       ),
     },
     {
