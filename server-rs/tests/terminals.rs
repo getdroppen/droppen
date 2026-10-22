@@ -368,7 +368,8 @@ async fn output_reaches_the_socket_and_the_exit_is_announced() {
     let mut socket = probe.attach(&info.id).await;
     // The replay covers whatever landed before the attach; later frames carry
     // the rest. Both are bare text — no envelope, exactly what `term.write` eats.
-    let before = socket.read_until(&["hello"]).await;
+    // The line's end can come a frame after its text, so wait for both.
+    let before = socket.read_until(&["hello", "\n"]).await;
     assert!(
         before.contains("hello\r\n"),
         "the pty's own CRLF translation is passed through: {before:?}"
