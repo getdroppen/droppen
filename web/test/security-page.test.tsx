@@ -7,9 +7,13 @@
 // with every string translated and nothing left in English; its sections come
 // in order, each with an anchor the table of contents links, and the identity
 // renewal's parts have anchors of their own; what is not live is marked so
-// (the renewal "rolling out", passkey joining "not live"), and the page says
+// (the renewal "not live yet", a passkey letting a device in on its own "not
+// live"), passkeys are described as shipped (sign-in, and a join a full device
+// approves by pairing), and the page says
 // the source "will be published" rather than that it is; it says plainly that
-// code on the page can export the browser's keys; it names no Hub setting.
+// a modified page can do anything the browser can, keys included; the
+// cross-references are links to anchors that exist; vulnerabilities go to the
+// security address; it names no Hub setting.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -145,9 +149,9 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 test("the page reads in each language, with nothing left in English but the code it quotes", () => {
   const lines = {
     en: ["How Droppen's end-to-end encryption works.", "Your devices hold the keys. Our servers carry ciphertext.", "One signed list decides who is in your account.", "Renewing the identity key of a device that runs AI.", "Don't take our word for it."],
-    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "即将启用"],
-    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "即將啟用"],
-    ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "まもなく有効化"],
+    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "尚未启用"],
+    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "尚未啟用"],
+    ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "まだ有効になっていない"],
   };
   for (const [lng, want] of Object.entries(lines)) {
     const words = text(draw(lng));
@@ -155,16 +159,16 @@ test("the page reads in each language, with nothing left in English but the code
   }
   for (const lng of LANGS) {
     const words = text(draw(lng));
-    assert.doesNotMatch(words, /Your devices hold the keys|What it never sees|Rolling out|Threat model|Verify it yourself|Report a vulnerability|devices? that runs? AI/, lng);
+    assert.doesNotMatch(words, /Your devices hold the keys|What it never sees|Not live yet|Threat model|Verify it yourself|Report a vulnerability|devices? that runs? AI/, lng);
   }
 });
 
-test("only what ships is described as live: the renewal is rolling out, passkey joining is not live, the source will be published", () => {
+test("only what ships is described as live: the renewal is not live yet, nor a passkey letting a device in on its own; the source will be published", () => {
   for (const lng of ["en", ...LANGS]) {
     const html = draw(lng);
     // The renewal's head carries the chip, in the reader's language.
     const head = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="renewal-why"'));
-    const chip = { en: "Rolling out", "zh-CN": "即将启用", "zh-TW": "即將啟用", ja: "まもなく有効化" }[lng]!;
+    const chip = { en: "Not live yet", "zh-CN": "尚未启用", "zh-TW": "尚未啟用", ja: "まだ有効になっていない" }[lng]!;
     assert.ok(text(head).includes(chip), `${lng}: the renewal is marked`);
     // So does its line in the table of contents.
     const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
@@ -172,20 +176,30 @@ test("only what ships is described as live: the renewal is rolling out, passkey 
   }
   const words = text(draw("en"));
   assert.ok(words.includes("Not switched on yet."));
-  assert.ok(words.includes("Being worked on, not live: adding a device with a passkey"));
-  assert.ok(words.includes("A passkey holds no encryption key and unlocks none."));
+  assert.ok(words.includes("Not live: a passkey letting a new device in without a full device's approval"));
+  // What #190 shipped: a passkey's slot lets a new browser ask; a full device approves it by pairing.
+  assert.ok(words.includes("It gets nothing until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen"));
+  assert.ok(words.includes("A passkey holds no encryption key and unlocks none: a slot only lets a device ask."));
+  // No e-mail recovery, password reset or start-over exists.
+  assert.doesNotMatch(words, /e-mail recovery|gets you back into the account|password reset/i);
+  assert.ok(words.includes("starting the account over is not offered yet"));
   assert.ok(words.includes("their source code will be published at github.com/getdroppen/droppen, and until then it is available on request"));
   assert.ok(words.includes("Internal security reviews only; no external audit yet."));
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i, /is open[- ]source/i, /are open[- ]source/i]) assert.doesNotMatch(words, claim);
 });
 
-test("the web-delivery gap is said plainly: code on the page can export the browser's keys", () => {
+test("the web-delivery gap is said plainly: a modified page can do anything the browser can, and export its keys", () => {
   const words = text(draw("en"));
   assert.ok(words.includes("WebCrypto's non-extractable keys do not stop code on the same origin"));
-  assert.ok(words.includes("export the browser's private keys and user keys"));
+  assert.ok(words.includes("Served to you once, do anything this browser can: read all history"));
+  assert.ok(words.includes("export this browser's private keys and user keys"));
+  // The Hub's own row says it serves the page, and its Cannot list holds only through the protocol.
+  assert.ok(words.includes("serve a modified page to a browser that uses droppen.app"));
+  assert.ok(words.includes("Through the protocol alone: decrypt content"));
   assert.ok(words.includes("use the local web app that the droppen program serves"));
   // The 7-day control bound and its documented limit.
-  assert.ok(words.includes("if the Hub freezes every other full device on the same head, the bound holds only once those devices notice they are frozen"));
+  assert.ok(words.includes("if the Hub also freezes every other full device on that same head, they keep vouching for it, and a removed device keeps control until one of them notices it is frozen"));
+  assert.ok(words.includes("and longer if it also freezes every other full device on the same head until one of them notices"));
 });
 
 test("the labels it quotes are the protocol's own, and it names no Hub setting or private path", () => {
@@ -201,7 +215,18 @@ test("the labels it quotes are the protocol's own, and it names no Hub setting o
   assert.doesNotMatch(html, /(?:DROPPEN|RH)_HUB_|rh[-_]hub/);
 });
 
+test("every cross-reference is a link to an anchor on the page, in every language", () => {
+  for (const lng of ["en", ...LANGS]) {
+    const html = draw(lng);
+    assert.doesNotMatch(html, /\[\[|\]\]/, `${lng}: an unrendered reference`);
+    const targets = [...html.matchAll(/<a href="#([a-z0-9-]+)"/g)].map((m) => m[1]!);
+    assert.ok(targets.length > 15, lng);
+    for (const id of targets) assert.match(html, new RegExp(`id="${id}"`), `${lng}: #${id}`);
+  }
+});
+
 test("a vulnerability report has somewhere to go", () => {
+  assert.equal(SECURITY_EMAIL, "security@droppen.app");
   const html = draw("en");
   assert.match(html, new RegExp(`<a href="mailto:${SECURITY_EMAIL}"[^>]*data-testid="security-email"`));
   assert.ok(text(html).includes("GitHub's private vulnerability reporting"));
