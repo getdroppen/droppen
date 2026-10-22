@@ -1355,3 +1355,119 @@ test("#183: where IndexedDB is not to be had, the record stays in localStorage, 
   await assert.rejects(CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen }), isFork, "and it is held against as before");
   hub.chain = full;
 });
+
+// ---- #183 re-review: a pin another page made ------------------------------
+
+/** `seen` as a page that hears nothing of other pages' writes has it (a message lost; an older page writing only localStorage). */
+function deafSeen(seen: MemorySeenStore): SeenStore {
+  return {
+    get atomic() {
+      return seen.atomic;
+    },
+    get: (account) => seen.get(account),
+    update: (account, change) => seen.update(account, change),
+    watch: () => () => undefined,
+  };
+}
+
+/**
+ * A new device's browser with two pages on the pairing screen: the device is
+ * paired through `first`, and `second` takes in the chain that names the
+ * device just before `first` pins the account (as it takes the keys) — so
+ * `second` last read the store before there was a pin in it. `second` opens
+ * on `seen` (the browser's store as it is, by default), and `opened` runs as
+ * it has opened (its watch, say).
+ */
+async function pairTwoPages(
+  hub: FakeKeysHub,
+  a: CloudAccount,
+  opts: { seen?: (backing: MemorySeenStore) => SeenStore; opened?: (second: CloudAccount) => void } = {},
+): Promise<{ first: CloudAccount; second: CloudAccount }> {
+  const store = new RecordingKeyStore();
+  const first = await hub.device("tok", store);
+  const backing = browserSeen(store);
+  const second = await openPage(hub, first, browserStorage(store), null, opts.seen?.(backing) ?? backing);
+  opts.opened?.(second);
+  const r = new PairingResponder({
+    api: first.api,
+    token: first.session.token,
+    account: first.account,
+    device: first.deviceId,
+    signPublic: first.keys.signPublic,
+    noise: first.noiseKeys,
+    chain: async () => (await first.sync(), first.chain),
+    storeUserKeys: async (keys) => {
+      await second.sync();
+      return first.storeUserKeys(keys);
+    },
+    pollMs: 1,
+  });
+  try {
+    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
+    await completePairing(
+      {
+        api: a.api,
+        token: a.session.token,
+        device: a.deviceId,
+        signPublic: a.keys.signPublic,
+        noise: a.noiseKeys,
+        chain: () => a.chain!,
+        append: (action) => a.append(action),
+        withUserKeys: (use) => a.withUserKeys(use),
+      },
+      c,
+    );
+    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
+  } finally {
+    r.stop();
+  }
+  assert.equal(r.state.kind, "paired");
+  assert.ok(first.pinned);
+  assert.equal(second.standing, "active", "the second page sees its device in the account");
+  return { first, second };
+}
+
+test("#183 re-review: a page that took the chain naming its device just before another page pinned the account still vouches for nothing behind the record", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await a.createGenesis(false);
+  const { first, second } = await pairTwoPages(hub, a);
+  // The account goes on; the first page verifies it, and the hub keeps the second where it was.
+  const seq = second.chain!.seq;
+  await a.append({ type: "setRecoveryKey", key: null });
+  await a.append({ type: "setRecoveryKey", key: null });
+  await first.sync();
+  const full = hub.chain.slice();
+  hub.chainServed = async () => full.slice(0, seq + 1);
+  await assert.rejects(second.attestation(), isFork, "its fresh word for the old head is what a hub keeping the newer entries from it would want");
+  assert.match(second.forked ?? "", new RegExp(`through entry ${seq}, and another page of this browser verified it through ${full.length - 1}$`));
+  hub.chainServed = null;
+});
+
+test("#183 re-review: an open page takes in a pin another page made — as the store says it was written, or as the page comes back into view — and is not sent to pair again", async (t) => {
+  for (const heard of ["store", "visibility", "unwatched"] as const) {
+    await t.test(heard, async () => {
+      const hub = new FakeKeysHub();
+      const a = await hub.device("tok");
+      await a.createGenesis(false);
+      const documentLike = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      const { second } = await pairTwoPages(hub, a, {
+        seen: heard === "store" ? undefined : deafSeen,
+        opened: heard === "unwatched" ? undefined : (page) => void page.watchSeenRecord({ visibility: documentLike }),
+      });
+      await settle();
+      if (heard === "visibility") {
+        documentLike.visibilityState = "hidden";
+        documentLike.dispatchEvent(new Event("visibilitychange"));
+        documentLike.visibilityState = "visible";
+        documentLike.dispatchEvent(new Event("visibilitychange"));
+        await settle();
+      }
+      if (heard !== "unwatched") assert.ok(second.pinned, `the pin taken in (${heard})`);
+      // Asked of the store, not of what this page saw last: an honest page is not sent to pair again.
+      assert.equal(await second.lacksKeys(), false, `the keys are there (${heard})`);
+      assert.ok(second.pinned, `and the pin with them (${heard})`);
+      second.stopSession();
+    });
+  }
+});

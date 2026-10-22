@@ -1247,7 +1247,10 @@ export class CloudAccount {
   /**
    * Whether this browser pinned this account's genesis (and so trusts the
    * chain enough to take keys) — as the seen store said it last time this
-   * page read or wrote it (a pin, once set, never changes).
+   * page read or wrote it (a pin, once set, never changes). So it can lag a
+   * pin another page made: what must not lag reads the store itself
+   * (`attestation`, `lacksKeys`), and the watch takes such a pin in
+   * ({@link recheckSeen}).
    */
   get pinned(): boolean {
     return this.pinnedAt !== null && !!this.state && this.pinnedAt === hex(this.state.hashAt(0)!);
@@ -1470,7 +1473,16 @@ export class CloudAccount {
    * view, or another pin, is a fork.
    */
   private async recheckSeen(): Promise<void> {
-    if (!this.state || !this.pinned || this.forkedWhy !== null || this.standing === "removed") return;
+    const done = () => !this.state || this.forkedWhy !== null || this.standing === "removed";
+    if (done()) return;
+    if (!this.pinned) {
+      // `pinned` is the store as this page last read or wrote it: another
+      // page may have pinned the account since (two pairing screens open).
+      // Taken in here, and this view held against the record from then on.
+      await this.readHeld();
+      if (done() || !this.pinned) return;
+      this.emit();
+    }
     await this.withSeenLock(() =>
       this.updateHeld((held) => {
         const state = this.state!;
@@ -2476,6 +2488,8 @@ export class CloudAccount {
    */
   async lacksKeys(): Promise<boolean> {
     if (this.standing !== "active") return false;
+    // Asked of the store where this page saw no pin: another page may have pinned the account since.
+    if (!this.pinned) await this.readHeld();
     if (!this.pinned) return true;
     // Not an admin: it holds no user key by design, and asks for the hosts' keys it lacks.
     if (!this.isAdmin) return false;
@@ -4254,8 +4268,11 @@ export class CloudAccount {
     // A page behind what this browser verified vouches for nothing: its word,
     // freshly dated, for a head before (say) a removal is what a hub keeping
     // the newer entries from it would need. It catches up first; a hub that
-    // will not let it is a fork.
-    const recorded = this.pinned ? Math.max(-1, ...checkpoints(await this.readHeld()).map((mark) => mark.seenThrough)) : -1;
+    // will not let it is a fork. Whether the account is pinned is read from
+    // the store here, never taken from `pinned`: that is what this page saw
+    // last, and another page may have pinned the account since.
+    const held = await this.readHeld();
+    const recorded = held.genesis === hex(this.state.hashAt(0)!) ? Math.max(-1, ...checkpoints(held).map((mark) => mark.seenThrough)) : -1;
     if (recorded > this.state.seq) {
       await this.sync();
       if (this.state.seq < recorded) {
