@@ -419,7 +419,7 @@ that closes the connection (4400).
 | 4005 | this host's identity key was renewed (`error rotated` with the new key's fingerprint before it): sign in with the new key. Only to a renewed host's agent and device connections | hub |
 | 4400 | a message or frame the server does not understand, or one not allowed here | hub, relay |
 | 4401 | sign-in refused, or not signed in in time (renew the session, then reconnect); `rotated`: signed with a key a renewal retired (after one `chain_sub`, or 10 s) | hub, relay |
-| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed (`rotation_pending`) | hub, relay |
+| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed, or an isolated host's agent connection (`rotation_pending`) | hub, relay |
 | 4409 | the enrollment was already completed | hub (`/v1/agent`) |
 | 4419 | the ticket ran out and was not renewed | relay |
 | 4429 | too many attempts (enrollment, relay registration), or over the account's connections on a relay | hub, relay |
@@ -457,7 +457,7 @@ Codes 4408 and 4412 from the agent are end to end: the hub and relays pass
 | `forbidden` | 4403 | `SUB` from a device not current in the chain |
 | `host_devices_off` | 4403 | a host signing in as a device while the hub runs `DROPPEN_HUB_CHAIN_V3=off` |
 | `rotated` | 4005 or 4401 | 4005: this host's identity key was just renewed (`fp`: the new key's fingerprint), sign in with the new key; 4401: the sign-in was signed with a key a renewal retired (`retired_seq`: that renewal; kept as evidence, the host may be isolated) — the close comes after one `chain_sub` answered up to that renewal, or 10 s (see `/v1/agent`) |
-| `rotation_pending` | 4403 | a host signing in as a device (or signed in as one) while its identity key is being renewed: retry once the renewal is committed or withdrawn |
+| `rotation_pending` | 4403 | a host signing in as a device (or signed in as one) while its identity key is being renewed: retry once the renewal is committed or withdrawn; or, on `/v1/agent`, the host was just isolated (http.md, identity key renewals): its channels through the hub end with the connection; sign in again (the hub routes nothing new to it until the isolation clears) |
 | `too_large` | 1009 | a control message over 16 KiB (on `/v1/relay`: over 4 KiB before sign-in) |
 | `bad_token`, `bad_keys`, `weak_keys` | 4400 | a malformed enrollment |
 | `unknown_enrollment` | — | no such code, or expired or used: try another |

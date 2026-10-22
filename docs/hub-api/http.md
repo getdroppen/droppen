@@ -407,8 +407,10 @@ never freezes an account that is already v3. `403 email_unverified`
 `409 rotation_not_ready` (`{error, reason, message, waiting?, ready_ms?}`)
 for a batch that renews a host's identity key (`RotateHostKey`, kind 20),
 sets the account's renewal policy (`SetRenewalPolicy`, kind 21) or pauses
-control over hosts while they are renewed (`RenewalPause`, kind 22;
-[below](#identity-key-renewals)) the hub does not take now — `reason`:
+control over hosts while they are renewed (`RenewalPause`, kind 22, its
+start; [below](#identity-key-renewals)) the hub does not take now — the end
+of a pause the chain holds open (`completed`, `cancelled`) is taken whatever
+the switch and the gate say — `reason`:
 `disabled` (`DROPPEN_HUB_HOST_ROTATION` is off: refused before anything else
 is looked at), `v2` (the account's chain is v2), `waiting` (a host current
 *after* the batch has not declared `rotate/1`; `waiting` names them — a host
@@ -591,8 +593,10 @@ relay outside the account's set adds it, replaces a member idle for a week
 (or one the hub added that no device used, `last_used_ms` 0), or is refused
 (`error: "limit"`, with the set); when every member is
 unusable, up to 2 emergency tickets. `error` is `unknown` (not listed for
-this account), `unavailable` (not `up`), `limit` or `forbidden` (and, for an
-agent's `relay_tickets`, `isolated`). An isolated host
+this account), `unavailable` (not `up`; for an agent's `relay_tickets`,
+also when the hub cannot read now whether the host is isolated: try again),
+`limit` or `forbidden` (and, for an agent's `relay_tickets`, `isolated`). An
+isolated host
 ([below](#identity-key-renewals)) gets no ticket and is named in none — but
 while a renewal confirmed on the device is under way for it, an admin
 device's ticket names it and its own agent gets its tickets. The
@@ -711,7 +715,9 @@ at all. What isolates is the retired key's
 for a renewal **not** confirmed on the device (assurance 0) with no renewal
 confirmed on the device after it, the host is
 **isolated**: `pending` again, no relay tickets to or for it, no channel
-through the hub, until a renewal confirmed on the device (assurance 1) is
+through the hub (its agent connections are closed, 4403 `rotation_pending`,
+so a channel already open through the hub ends with them; it signs in
+again), until a renewal confirmed on the device (assurance 1) is
 committed, or it is removed. While an assurance-1 attempt (opened by an
 admin's `PUT`, its 10 minutes) or staging (until 10 minutes past when it
 could be committed) is open for it — and only then — the hub routes a
@@ -736,7 +742,11 @@ either (`PUT /v1/rotations/{host}`: `409 rotation_not_ready`,
 reads kind 20 reads kind 21 too — and so is `RenewalPause` (kind 22), the
 overlay a page opens over hosts' accept policies while a group of them is
 renewed (and ends, `completed` or `cancelled`): every reader applies it to
-who may control whom, so the hub only gates it.
+who may control whom, so the hub only gates it — its start. The end of a
+pause the chain holds open passes the gate and the switch (the chain takes
+an end only for an open pause, so every reader of that chain reads kind 22
+already, and the end only gives control back): switching renewals off, or a
+host without `rotate/1` joining meanwhile, never strands an open pause.
 
 #### `GET /v1/rotations`
 Any device session of the account → `{now_ms, enabled, window_ms,

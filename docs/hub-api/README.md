@@ -282,7 +282,9 @@ tickets. WebSocket limits are in websocket.md.
   `DROPPEN_HUB_HOST_ROTATION=on` and once every current host declared
   `rotate/1`; after the account's first, no reader may be rolled back below
   the first release that reads kinds 20 to 22 (switching the hub back to
-  `off` stops new ones, it does not undo one).
+  `off` stops new ones, it does not undo one). The end of a pause the chain
+  holds open (`completed`, `cancelled`) passes the gate and the switch: it
+  starts nothing, and every reader of that chain reads kind 22 already.
 - **Every change to the hub API updates this folder in the same round**: the
   closed change implements, the open change documents (here) and adapts the
   clients; `check.mjs` must pass.
