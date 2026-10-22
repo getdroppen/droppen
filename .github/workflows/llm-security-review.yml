@@ -3,14 +3,13 @@ name: llm-security-review
 # An automated, security-focused LLM review of every pull request before it
 # can reach main. Secrets are only used by jobs that run on main and on tags,
 # so what this guards is the way into main: a BLOCK verdict fails this check.
-# It is advisory until main can require it (branch protection: once the
-# repository is public, or on a paid plan).
 #
 # It does not stop a pull request's own workflows from running: on
 # `pull_request`, GitHub runs the workflow files of the pull request itself,
-# so a pull request can also change this one. Fork pull requests do not run
-# workflows while the repository is private; once it is public they get no
-# secrets, so the review cannot run and the check fails.
+# so a pull request can also change this one. Pull requests from forks get no
+# secrets, so the review cannot run on them and the check fails: a maintainer
+# reviews such a pull request by hand (or pushes its commits to a branch here,
+# where the review runs).
 #
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true. The job is
 # skipped otherwise. Needs the secrets OPENROUTER_BASE_URL (an
@@ -96,7 +95,12 @@ jobs:
         # An empty base URL would send the gateway's key to the default API host.
         env:
           BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
+          if [ "$FORK" = true ] && [ -z "$BASE_URL" ]; then
+            echo "::error::a pull request from a fork gets no secrets, so the automated review cannot run; a maintainer reviews it by hand"
+            exit 1
+          fi
           case "$BASE_URL" in
             https://?*) ;;
             *) echo "::error::OPENROUTER_BASE_URL must be the gateway's https:// URL"; exit 1 ;;

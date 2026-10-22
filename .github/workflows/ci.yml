@@ -95,9 +95,6 @@ jobs:
   # release's macOS job requires it, and this finds out before a tag does.
   web-reproducible-macos:
     needs: web-reproducible
-    # macOS minutes count ten times while the repository is private: run it on
-    # main and by hand, not on every pull request.
-    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
