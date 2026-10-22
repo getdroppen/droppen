@@ -972,6 +972,40 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     assert!(st.rotation.push_renew);
 }
 
+/// Review of the renewal fixes: when the staged seed cannot take the place of
+/// the key in use after the state was saved (its file moved away, say), the
+/// key in use stays, and so do its push keys: `push_renew` is back to what it
+/// was, in memory and on disk — the push key is not refused (503
+/// `push_renewing`) for a renewal not taken.
+#[tokio::test]
+async fn a_renewed_key_not_put_in_place_leaves_the_push_keys_alone() {
+    let mut a = Account::new();
+    let new = a.stage([77; 32], [7; 16]);
+    let answer = a.staged_answer(&new, [7; 16]);
+    a.renew(&answer, [7; 16], Assurance::Auto);
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let shared = a.shared("ws://127.0.0.1:9", &restarts);
+    // After the save, the staged seed's file is moved away: the rename fails.
+    let staging = FileSeedStore::for_instance(&a.paths).staging_path(&[7; 16]);
+    let aside = staging.with_extension("aside");
+    let (from, to) = (staging.clone(), aside.clone());
+    rotation::BETWEEN_SAVE_AND_SWAP.with(|b| *b.borrow_mut() = Some(Box::new(move || std::fs::rename(&from, &to).unwrap())));
+    let promoted = rotation::promote(&shared, &new);
+    assert!(promoted.is_err(), "nothing to put in place");
+    assert_eq!(a.seed_in_use().sign_public(), machine().sign_public(), "the key in use stays");
+    assert_eq!(restarts.load(Ordering::SeqCst), 0);
+    assert!(
+        !shared.state.lock().unwrap().rotation.push_renew,
+        "the push keys are refused as being renewed for a renewal not taken"
+    );
+    assert!(!AgentState::load(&a.paths).unwrap().unwrap().rotation.push_renew, "nor at the next start");
+    // Put back, it is taken, and the push keys follow it.
+    std::fs::rename(&aside, &staging).unwrap();
+    rotation::promote(&shared, &new).unwrap();
+    assert_eq!(a.seed_in_use().sign_public(), new.sign_public());
+    assert!(AgentState::load(&a.paths).unwrap().unwrap().rotation.push_renew);
+}
+
 /// R6 re-review: the device role never signs in once this computer's own
 /// chain names other keys for it (a renewal not taken yet, or made
 /// elsewhere) — even with no staged seed at all — nor once a renewal is

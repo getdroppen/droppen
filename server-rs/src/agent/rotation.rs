@@ -1185,6 +1185,13 @@ fn free_archive_path(paths: &Paths, now: u64) -> std::path::PathBuf {
         .unwrap_or(first)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: what happens in [`promote`] between saving the state and
+    /// renaming the staged seed into place.
+    pub(super) static BETWEEN_SAVE_AND_SWAP: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Take the staged seed the chain names (see the module docs): only once
 /// this device's own verified chain names exactly its keys, and only the key
 /// that just signed in to the hub (`signed_in`). Renamed into place
@@ -1216,7 +1223,18 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
         shared.state.lock().expect("agent state").rotation.push_renew = push_renew;
         return Err(format!("cannot save the agent state, so the renewed identity key is not taken yet: {error}"));
     }
-    store.promote(&new.nonce)?;
+    #[cfg(test)]
+    if let Some(between) = BETWEEN_SAVE_AND_SWAP.with(|b| b.borrow_mut().take()) {
+        between();
+    }
+    // Not renamed (the rename is the swap): the key in use stays, and so do
+    // its push keys — not refused as being renewed (review of the renewal
+    // fixes), in memory and on disk.
+    if let Err(error) = store.promote(&new.nonce) {
+        shared.state.lock().expect("agent state").rotation.push_renew = push_renew;
+        shared.save();
+        return Err(error);
+    }
     let new = new.identity();
     {
         let mut st = shared.state.lock().expect("agent state");
