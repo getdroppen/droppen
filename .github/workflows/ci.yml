@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only, whatever the repository's default for the token is: no job here
+# writes to the repository (artifacts and caches do not need the token).
+permissions:
+  contents: read
+
 jobs:
   web:
     runs-on: ubuntu-latest
