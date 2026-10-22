@@ -210,7 +210,7 @@ fi
 
 # The manifest tool of this checkout (desktop/core), or a build of it
 # (DROPPEN_UPDATE_MANIFEST: release.yml builds it in a job of its own, so that
-# no build script runs where the key is).
+# none of its build scripts runs in the job that holds the key).
 manifest_tool() {
   if [ -n "${DROPPEN_UPDATE_MANIFEST:-}" ]; then
     "$DROPPEN_UPDATE_MANIFEST" "$@"

@@ -15,8 +15,10 @@ name: release
 #   where a secret is: those jobs only read, sign or upload the files.
 # - One job per secret, each in the protected `release` environment (a person
 #   approves each): sign-apple (Developer ID, notarisation; the keychain is
-#   deleted right after), sign-updater (the updater key; its signer is built
-#   in that job from pinned sources before the key is in reach), publish
+#   deleted right after), sign-updater (the updater key; it runs the signer
+#   `signer` built, a secret-free job of its own, checked by sha256; it holds
+#   no Apple, write or OIDC credential, and the key alone cannot ship an
+#   update without a release here, which only `publish` makes), publish
 #   (`contents: write`; runs our scripts, gh and Apple's stapler, nothing
 #   built): a draft with every file, checked, then published once.
 # - attest holds the OIDC token, only when publishing, and runs nothing built
@@ -24,8 +26,9 @@ name: release
 #
 #   meta ─┬─ web ─┬─ server-macos (aarch64, x86_64) ─┐
 #         │       └─ server-linux (x86_64, aarch64) ─┼─ stage ─┬─ smoke-linux ─┐
-#         └─ tools ──────────────────────────────────┘         └─ desktop ─────┴─ sign-apple ─ sign-updater ─┐
-#                                                       verify (no secrets) ─ attest ─ publish
+#         ├─ tools ──────────────────────────────────┘         └─ desktop ─────┴─ sign-apple ─ sign-updater ─┐
+#         └─ signer ───────────────────────────────────────────────────────────────────────────┘             │
+#                                       verify (no secrets) ─ [approve: server-only] ─ attest ─ publish
 on:
   push:
     tags: ["v*"]
@@ -58,6 +61,7 @@ env:
   # What each artifact may hold (.github/scripts/unpack-artifact.sh).
   ALLOW_WEB: '^dist(/[^/]+)*$'
   ALLOW_TOOLS: '^bin(/(cargo-about|cargo-tauri))?$'
+  ALLOW_SIGNER: '^signer(/bin(/(cargo-tauri|droppen-update-manifest))?)?$'
   ALLOW_STAGED: '^release(/((droppen|remote-hand)-v[0-9A-Za-z.-]+-(macos|linux)-(aarch64|x86_64|universal)\.tar\.gz|SHA256SUMS|LICENSE|THIRD_PARTY_NOTICES|NOTES\.md|web-manifest\.json|install\.sh|INSTALL-(macos|linux)\.txt))?$'
   ALLOW_APP: '^Droppen\.app(/[^/]+)*$'
   ALLOW_SIGNED: '^(Droppen\.app(/[^/]+)*|Droppen-[0-9]+\.[0-9]+\.[0-9]+\.dmg)$'
@@ -239,6 +243,45 @@ jobs:
         with:
           name: tools
           path: ${{ runner.temp }}/tools.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The updater's signer (tauri-cli) and droppen-update-manifest, for
+  # sign-updater only: built from pinned versions and locked sources in a job
+  # of their own that holds nothing and builds nothing else, and handed on by
+  # sha256 like every artifact. (Later: a small signer in this repository,
+  # with few dependencies, instead of tauri-cli.)
+  signer:
+    needs: meta
+    if: needs.meta.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the signer and the manifest tool
+        id: pack
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          signer=$RUNNER_TEMP/out/signer
+          tauri=$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)
+          cargo install --locked tauri-cli --version "$tauri" --root "$signer"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-manifest" cargo build --release --locked \
+            --manifest-path desktop/Cargo.toml -p droppen-desktop-core --bin droppen-update-manifest
+          cp "$RUNNER_TEMP/target-manifest/release/droppen-update-manifest" "$signer/bin/"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/signer.tar" -C "$RUNNER_TEMP/out" signer/bin/cargo-tauri signer/bin/droppen-update-manifest
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/signer.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signer
+          path: ${{ runner.temp }}/signer.tar
           if-no-files-found: error
           retention-days: 3
 
@@ -694,11 +737,15 @@ jobs:
 
   # The updater's files (desktop/updater-artifacts.sh) from the stapled app:
   # Droppen.app.tar.gz, its minisign signature by the updater key, and
-  # latest.json. The signer (tauri-cli) and droppen-update-manifest are built
-  # here, from pinned versions and locked sources, before the key is in reach;
-  # nothing from an artifact is run.
+  # latest.json. It runs two programs: the signer (tauri-cli) and
+  # droppen-update-manifest, built by `signer` (no secrets) and checked by
+  # sha256; it compiles nothing. GitHub hands a job all its secrets when it
+  # starts, so whatever runs here could reach the key: hence nothing built
+  # here, and no other credential (no Apple, write or OIDC token). The key
+  # alone ships nothing: apps take an update only from a release of this
+  # repository, which only `publish` makes, after its own approval.
   sign-updater:
-    needs: [meta, sign-apple]
+    needs: [meta, sign-apple, signer]
     runs-on: macos-latest
     timeout-minutes: 60
     environment: release
@@ -712,31 +759,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust
-        run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
-          rustup default "$RUST_TOOLCHAIN"
-      - name: Build the signer and the manifest tool
-        run: |
-          set -euo pipefail
-          signer=$RUNNER_TEMP/signer
-          tauri=$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)
-          cargo install --locked tauri-cli --version "$tauri" --root "$signer"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target-manifest" cargo build --release --locked \
-            --manifest-path desktop/Cargo.toml -p droppen-desktop-core --bin droppen-update-manifest
-          cp "$RUNNER_TEMP/target-manifest/release/droppen-update-manifest" "$signer/bin/"
-          {
-            echo "DROPPEN_TOOLS_DIR=$signer"
-            echo "DROPPEN_UPDATE_MANIFEST=$signer/bin/droppen-update-manifest"
-          } >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signer
+          path: ${{ runner.temp }}/dl/signer
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-app
           path: ${{ runner.temp }}/dl/signed-app
       - name: Unpack
         env:
+          SIGNER_SHA: ${{ needs.signer.outputs.sha }}
           SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
-        run: .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/signed-app/signed-app.tar" "$SIGNED_SHA" "$RUNNER_TEMP/desktop" "$ALLOW_SIGNED"
+        run: |
+          set -euo pipefail
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/signer/signer.tar" "$SIGNER_SHA" "$RUNNER_TEMP/a/signer" "$ALLOW_SIGNER"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/signed-app/signed-app.tar" "$SIGNED_SHA" "$RUNNER_TEMP/desktop" "$ALLOW_SIGNED"
+          signer=$RUNNER_TEMP/a/signer/signer
+          # The very version updater-artifacts.sh wants, or it would compile one here.
+          [ "$("$signer/bin/cargo-tauri" --version | awk '{ print $2 }')" = "$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)" ]
+          {
+            echo "DROPPEN_TOOLS_DIR=$signer"
+            echo "DROPPEN_UPDATE_MANIFEST=$signer/bin/droppen-update-manifest"
+          } >> "$GITHUB_ENV"
       - name: The updater's files (desktop/updater-artifacts.sh)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -824,6 +869,27 @@ jobs:
           SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
           UPDATER_SHA: ${{ needs.sign-updater.outputs.sha }}
         run: .github/scripts/unpack-release.sh
+      # stage ran npm install scripts: the files the release takes from the
+      # source must be the source's, byte for byte.
+      - name: install.sh, LICENSE and the INSTALL texts are the source's
+        run: |
+          set -euo pipefail
+          rel=$RUNNER_TEMP/a/staged/release
+          contents=$(sed -n 's/^CONTENTS_NEW="\(.*\)"$/\1/p' scripts/release-public.sh)
+          # As bash reads it: without the backslashes before the backticks.
+          contents=${contents//\\/}
+          [ -n "$contents" ] || { echo "::error::cannot read CONTENTS_NEW in scripts/release-public.sh"; exit 1; }
+          sed -e "s/@ARCH@/Apple silicon and Intel/" -e "s/@CONTENTS@/$contents/" .github/scripts/INSTALL.txt.in > "$RUNNER_TEMP/INSTALL-macos.txt"
+          sed -e "s/@ARCH@/x86_64 and aarch64/" -e "s/@CONTENTS@/$contents/" .github/scripts/INSTALL-linux.txt.in > "$RUNNER_TEMP/INSTALL-linux.txt"
+          bad=0
+          same() { # the source's, the release's
+            if cmp -s "$1" "$rel/$2"; then echo "ok: $2"; else echo "::error::the release's $2 is not the source's ($1)"; bad=1; fi
+          }
+          same scripts/install.sh install.sh
+          same LICENSE LICENSE
+          same "$RUNNER_TEMP/INSTALL-macos.txt" INSTALL-macos.txt
+          same "$RUNNER_TEMP/INSTALL-linux.txt" INSTALL-linux.txt
+          [ "$bad" = 0 ]
       - name: Check the release (scripts/publish-release.sh --dry-run)
         id: check
         env:
@@ -852,6 +918,19 @@ jobs:
           retention-days: 2
           compression-level: 0
 
+  # A server-only release has no signing job, so nothing would have been
+  # approved before attest: this waits for the approval there (a release with
+  # the app was approved at sign-apple and sign-updater already).
+  approve:
+    needs: [meta, verify]
+    if: ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.meta.outputs.desktop != 'true' && needs.verify.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release
+    permissions: {}
+    steps:
+      - run: echo "approved"
+
   # Build provenance for every file the release publishes (a carried DMG or
   # latest.json is not this run's: its own release attests it), and the web
   # manifest once more on its own, whose bundle droppen.app's verifier
@@ -860,8 +939,12 @@ jobs:
   # gh and Apple's stapler: SHA256SUMS by publish-release.sh --sums-only
   # (which runs no manifest tool), held to the one verify checked.
   attest:
-    needs: [meta, stage, sign-apple, sign-updater, verify]
-    if: ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.verify.result == 'success' }}
+    needs: [meta, stage, sign-apple, sign-updater, verify, approve]
+    # After an approval: sign-updater's with the app, approve's without.
+    if: >-
+      ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.verify.result == 'success'
+      && (needs.meta.outputs.desktop == 'true' && needs.sign-updater.result == 'success'
+      || needs.meta.outputs.desktop != 'true' && needs.approve.result == 'success') }}
     runs-on: macos-latest
     timeout-minutes: 20
     permissions:
