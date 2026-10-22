@@ -153,6 +153,10 @@ pub struct Follower {
     reader: LogReader,
     /// The last head that released anything (or the one resumed from).
     head: Option<SignedHead>,
+    /// The machine's key `head` was checked under: its key now, but for the
+    /// head resumed from — the key it was stored under, which may be one
+    /// it renewed away from since.
+    head_key: [u8; 32],
     /// Whether the reader starts from something (a head, a manifest): a
     /// checkpoint at or behind it is not taken again.
     anchored: bool,
@@ -174,6 +178,7 @@ impl Follower {
             reader: LogReader::new(stream, machine_key),
             keys,
             head: None,
+            head_key: machine_key,
             anchored: false,
             reset: true,
             synced: false,
@@ -210,6 +215,7 @@ impl Follower {
             self.raise_floor(&head);
         }
         self.head = Some(head);
+        self.head_key = self.machine_key;
         self.anchored = true;
     }
 
@@ -256,6 +262,7 @@ impl Follower {
         f.add_keys();
         f.raise_floor(&head);
         f.released(head);
+        f.head_key = *signed_by;
         f.reset = false;
         Ok(f)
     }
@@ -274,6 +281,16 @@ impl Follower {
     /// The cursor: the newest machine-signed head released up to.
     pub fn head(&self) -> Option<&SignedHead> {
         self.head.as_ref()
+    }
+
+    /// The machine's key [`Follower::head`] was checked under — what a
+    /// cursor stored from it must be checked under again
+    /// ([`Follower::resume_stored`]): the machine's key now for any head
+    /// from the network, and for the head resumed from, until a newer one
+    /// is released, the key it was stored under (one the machine may have
+    /// renewed away from since).
+    pub fn head_key(&self) -> Option<[u8; 32]> {
+        self.head.as_ref().map(|_| self.head_key)
     }
 
     /// The stream followed.
@@ -613,8 +630,12 @@ mod tests {
         r.on_frame(recs(more.clone())).unwrap();
         assert!(r.on_frame(head(&m.writer.head(&old, 6_000))).is_err(), "nothing new under the retired key");
         let mut r = Follower::resume_stored(stream(), new_key, &old_key, &[old_key], &[(0, MK)], cursor.clone()).unwrap();
+        // The cursor stands where it was stored, signed by the key it was
+        // stored under: a copy kept from here is kept with that key.
+        assert_eq!((r.head(), r.head_key()), (Some(&cursor), Some(old_key)));
         r.on_frame(recs(more)).unwrap();
         assert_eq!(released(r.on_frame(head(&m.writer.head(&new, 6_000))).unwrap()), (false, vec![2, 3]));
+        assert_eq!(r.head_key(), Some(new_key), "the next head is the new key's");
         // Only the exact key it was stored under (R6 review): not any retired
         // key that happens to verify, nor a recorded key the machine never held.
         assert!(

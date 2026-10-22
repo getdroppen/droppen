@@ -323,9 +323,27 @@ impl Fold {
 struct Copied {
     want: Want,
     head: Option<SignedHead>,
+    /// The host's key `head` was verified under ([`Follower::head_key`]):
+    /// the key it is checked under again when the copy carries on.
+    head_key: Option<[u8; 32]>,
     at_ms: Option<u64>,
     state: String,
     index: Option<IndexCopy>,
+}
+
+/// The copy `follower` stands at, as a stream's task tells it: its position
+/// and the key that position was verified under — for the position it
+/// resumed from, until the host signs a newer one, the key it was stored
+/// under, which the host may have renewed away from since.
+fn copied(want: &Want, follower: &Follower, state: String, index: Option<IndexCopy>) -> Copied {
+    Copied {
+        want: want.clone(),
+        head: follower.head().cloned(),
+        head_key: follower.head_key(),
+        at_ms: follower.freshest_ms(),
+        state,
+        index,
+    }
 }
 
 /// What a stream's task tells the copies task.
@@ -482,13 +500,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
             too_large();
             return Err(());
         }
-        send(Update::State(Box::new(Copied {
-            want: want.clone(),
-            head: follower.head().cloned(),
-            at_ms: follower.freshest_ms(),
-            state,
-            index,
-        })));
+        send(Update::State(Box::new(copied(&want, follower, state, index))));
         Ok(())
     };
     let failed = |error: String, unauthorized: bool| {
@@ -1445,6 +1457,7 @@ impl Live {
                 let Copied {
                     want,
                     head,
+                    head_key,
                     at_ms,
                     state,
                     index,
@@ -1472,9 +1485,15 @@ impl Live {
                         floor: head.as_ref().map(Floor::of),
                     },
                 );
-                // The host key its stream task verifies heads under: the key
-                // this head is checked with again when the copy carries on.
-                let head_key = signer.or_else(|| self.host(&want.host).map(|h| h.machine_key));
+                // The key this head was verified under, as its stream task
+                // tells it: the key it is checked with again when the copy
+                // carries on. Not merely the key the task verifies new heads
+                // under: a position resumed from before the host renewed its
+                // key, told before the host signed a newer one, is the
+                // retired key's — kept as the new key's, the next resume
+                // refused it and read the stream again from the start,
+                // without its floor (final review of the agent's renewal).
+                let head_key = head_key.or(signer).or_else(|| self.host(&want.host).map(|h| h.machine_key));
                 self.pending.insert(
                     key,
                     Row {
@@ -1995,6 +2014,87 @@ mod tests {
         assert_eq!(f.from_seq(), 6);
     }
 
+    /// Final review of the agent's renewal: a copy resumed from a position
+    /// its host signed before renewing its key, and told before the host
+    /// signs anything newer (caught up at once), is kept with the key that
+    /// signed that position — not the host's key now, which its task checks
+    /// new heads under. So the next resume takes it again, floor and all,
+    /// instead of refusing it and reading the stream again from the start
+    /// with no floor.
+    #[tokio::test]
+    async fn a_position_resumed_from_before_a_renewal_is_kept_with_the_key_that_signed_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "resumekey");
+        let (mut c, mut live) = live(&paths, &["m-2"]);
+        let (old, new) = (ed25519_dalek::SigningKey::from_bytes(&[7; 32]), ed25519_dalek::SigningKey::from_bytes(&[8; 32]));
+        let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
+        // m-2 renewed old → new since its position was stored.
+        live.hosts[0].machine_key = new_key;
+        live.hosts[0].retired = vec![old_key];
+        live.hosts[0].first_key = old_key;
+        let w = want("m-2", "s");
+        live.subs.insert(
+            w.stream,
+            Sub {
+                want: w.clone(),
+                stop: CancellationToken::new(),
+            },
+        );
+        let head = rh_proto::record::StreamHead {
+            stream: w.stream,
+            next_seq: 4,
+            epoch: 0,
+            link: [5; 32],
+            time_ms: 1_700_000_000_000,
+        }
+        .sign(&old);
+        let mut copy = Fold::empty(Kind::Session);
+        copy.apply(&(FMT_FEED_V1, br#"{"fromIndex":0,"items":[{"t":1}],"endIndex":1}"#.to_vec()))
+            .unwrap();
+        // Where the copy's task starts: as `replan` starts it from a stored row.
+        let start = |live: &Live, row: Row| {
+            let host = &live.hosts[0];
+            let start = Start::Resume {
+                head: row.head.expect("a cursor"),
+                state: row.state.expect("a copy"),
+                head_key: resume_key(host, row.head_key),
+            };
+            started(&w, host.machine_key, &host.retired, &host.keys, start)
+        };
+        let stored = Row {
+            host: "m-2".into(),
+            kind: Kind::Session,
+            name: "s".into(),
+            stream: w.stream,
+            epoch: 0,
+            head: Some(head.clone()),
+            head_key: Some(old_key),
+            state: Some(copy.to_json()),
+            too_large: false,
+            updated_ms: 1,
+        };
+        let (f, fold) = start(&live, stored);
+        assert_eq!((f.from_seq(), f.floor().map(|fl| fl.next_seq)), (4, Some(4)), "resumed from the stored position");
+        // Caught up at once: the task tells the copy, at the stored position,
+        // under the host's key now — and it is written.
+        live.on_update_from(&mut c, Some(new_key), Update::State(Box::new(copied(&w, &f, fold.to_json(), None))))
+            .ok()
+            .unwrap();
+        live.flush(&mut c, true).ok().unwrap();
+        let row = c.store.as_ref().unwrap().row("m-2", Kind::Session, "s").unwrap().expect("written");
+        assert_eq!(row.head.as_ref(), Some(&head));
+        // The next resume: from where it was, its floor kept.
+        let (g, fold) = start(&live, row.clone());
+        assert_eq!(
+            (g.from_seq(), g.floor().map(|fl| fl.next_seq)),
+            (4, Some(4)),
+            "the next resume refused the position and dropped its floor (kept as the new key's: {})",
+            row.head_key == Some(new_key)
+        );
+        assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.len() == 1));
+        assert_eq!(row.head_key, Some(old_key));
+    }
+
     /// R6 review (the outbound direction of the pause overlay, §3.4 rule
     /// 10): another host, m-2, pausing THIS computer's control of it — a
     /// renewal pause removing m-2←m-me — stops this computer's device role
@@ -2270,6 +2370,7 @@ mod tests {
         Update::State(Box::new(Copied {
             want: want.clone(),
             head: None,
+            head_key: None,
             at_ms: None,
             state: json!({"items": [text]}).to_string(),
             index: None,
@@ -2404,6 +2505,7 @@ mod tests {
             Update::State(Box::new(Copied {
                 want: w.clone(),
                 head: Some(head_at(1_000)),
+                head_key: None,
                 at_ms: Some(1_000),
                 state: r#"{"asOf":1}"#.into(),
                 index: None,
