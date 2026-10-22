@@ -20,7 +20,7 @@ import { PRIVACY_EMAIL } from "./waitlist";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-21";
+export const PRIVACY_UPDATED = "2026-10-22";
 
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
@@ -102,7 +102,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                   t("Your e-mail address, and when you sign in"),
                   t("Which of your devices are online, when they connect and from which IP address"),
                   t("What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself"),
-                  t("How much data moves and when, in padded sizes: so roughly when you are working"),
+                  t("How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working"),
                   t("Your plan, and how much of it you use"),
                 ]}
               />

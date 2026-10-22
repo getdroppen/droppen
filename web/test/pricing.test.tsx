@@ -359,10 +359,14 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself",
     "What is said in a session, or typed and shown in a terminal",
     "The names of your devices, your files and their names",
+    // Stored data is padded; live connections are not (as /security says).
+    "What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal",
     `Last updated ${PRIVACY_UPDATED}`,
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
+  assert.doesNotMatch(words, /in padded sizes/);
+  assert.equal(PRIVACY_UPDATED, "2026-10-22");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));

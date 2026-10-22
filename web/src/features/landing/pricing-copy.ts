@@ -145,7 +145,7 @@ export const pricingZhCN: Bundle = {
   "Which of your devices are online, when they connect and from which IP address": "你的哪些设备在线、何时连接、从哪个 IP 地址",
   "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself":
     "每台设备的类型和浏览器，只记一个简称，比如「iPhone · Chrome」，由它的 User-Agent 得出；User-Agent 本身从不保存",
-  "How much data moves and when, in padded sizes: so roughly when you are working": "传了多少数据、什么时候传的（大小经过填充）：也就是你大概什么时候在工作",
+  "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "传了多少数据、什么时候传的。我们保存的数据会填充到固定大小；实时连接不做填充，所以经我们的服务器转发时，它的时序、流量和终端里的打字节奏都看得到：也就是你大概什么时候在工作",
   "Your plan, and how much of it you use": "你的方案，以及用了多少",
   "What they cannot see": "我们的服务器看不到",
   "What is said in a session, or typed and shown in a terminal": "会话里说了什么，终端里输入和显示了什么",
@@ -276,7 +276,7 @@ export const pricingZhTW: Bundle = {
   "Which of your devices are online, when they connect and from which IP address": "你的哪些裝置在線、何時連線、從哪個 IP 位址",
   "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself":
     "每台裝置的類型和瀏覽器，只記一個簡稱，例如「iPhone · Chrome」，由它的 User-Agent 得出；User-Agent 本身從不保存",
-  "How much data moves and when, in padded sizes: so roughly when you are working": "傳了多少資料、什麼時候傳的（大小經過填充）：也就是你大概什麼時候在工作",
+  "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "傳了多少資料、什麼時候傳的。我們保存的資料會填充到固定大小；即時連線不做填充，所以經我們的伺服器轉送時，它的時序、流量和終端機裡的打字節奏都看得到：也就是你大概什麼時候在工作",
   "Your plan, and how much of it you use": "你的方案，以及用了多少",
   "What they cannot see": "我們的伺服器看不到",
   "What is said in a session, or typed and shown in a terminal": "工作階段裡說了什麼，終端機裡輸入和顯示了什麼",
@@ -407,7 +407,7 @@ export const pricingJa: Bundle = {
   "Which of your devices are online, when they connect and from which IP address": "どのデバイスがオンラインか、いつ、どの IP アドレスから接続したか",
   "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; never the User-Agent itself":
     "各デバイスの種類とブラウザ（「iPhone · Chrome」のような短い名前。User-Agent から作り、User-Agent そのものは保存しません）",
-  "How much data moves and when, in padded sizes: so roughly when you are working": "どれだけのデータがいつ流れたか（サイズはパディング済み）。つまり、だいたいいつ作業しているか",
+  "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "どれだけのデータがいつ流れたか。保存するデータは決まったサイズまでパディングしますが、ライブの接続はしません。そのため私たちのサーバーを通る間は、そのタイミング、量、ターミナルでの打鍵のリズムが見えます。つまり、だいたいいつ作業しているか",
   "Your plan, and how much of it you use": "契約プランと、その使用量",
   "What they cannot see": "見えないもの",
   "What is said in a session, or typed and shown in a terminal": "セッションでのやり取り、ターミナルの入力と出力",

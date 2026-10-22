@@ -2,8 +2,9 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately, through GitHub's private vulnerability
-reporting: open this repository's **Security** tab and choose
+Report vulnerabilities privately. Until this repository is public, e-mail
+**security@droppen.app**. Once it is public, use GitHub's private
+vulnerability reporting: open this repository's **Security** tab and choose
 **Report a vulnerability**. Only you and the maintainers can see the report.
 
 Please do not open a public issue, pull request or discussion about a
@@ -20,8 +21,9 @@ A useful report says:
   computer);
 - a suggested fix, if you have one.
 
-We will follow up in the advisory, keep you informed there while we work on a
-fix, and are glad to credit you when it is published.
+We will follow up where you reported it (the advisory, or by e-mail), keep you
+informed there while we work on a fix, and are glad to credit you when it is
+published.
 
 ## Scope
 
