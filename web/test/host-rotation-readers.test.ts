@@ -52,7 +52,7 @@ import { HubCopySource } from "../src/lib/hub/copy-source.js";
 import type { HubLink } from "../src/lib/hub/link.js";
 import { AGENT_HANDSHAKE_REFUSED, ChannelIsolated, MachineChannel } from "../src/lib/hub/machine.js";
 import { MachineMirror } from "../src/lib/hub/mirror.js";
-import { type IndexState, indexFold, type StreamClientOptions } from "../src/lib/hub/streams.js";
+import { type IndexState, indexFold, StreamClient, type StreamClientOptions } from "../src/lib/hub/streams.js";
 import { tunnelTransport } from "../src/lib/transport/tunnel.js";
 import { FakeKv, FakeStreamLink, flush, makeMachine, type Machine, putCopy, StreamWriter, until } from "./stream-fixtures.js";
 
@@ -622,4 +622,43 @@ test("Codex 7: a stream head checked under a key the machine renewed away from m
   }
   assert.equal(reader.confirmed, 0, "nothing released under the retired key");
   assert.equal(reader.confirmedHead, null);
+});
+
+test("M2: a reader built while the machine renews its key is held to the current key before it is installed — a head under the retired key is refused", async () => {
+  const machine = await makeMachine();
+  const renewed = await generateDeviceKeys();
+  const stream = crypto.getRandomValues(new Uint8Array(32));
+  const writer = await StreamWriter.open(machine, stream, FMT_INDEX_V1);
+  await writer.append({ upserts: [{ source: "claude", id: "a", title: "a", updatedAt: "2026-10-15T00:00:00.000Z" }], removed: [] });
+  const link = new FakeStreamLink();
+  const states: IndexState[] = [];
+  const errors: unknown[] = [];
+  const client = new StreamClient({
+    link,
+    machineSignKey: machine.signPublic,
+    epochs: machine.epochs,
+    fetchPage: async () => {
+      throw new Error("no pages here");
+    },
+    retryDelay: () => 60_000,
+  });
+  // The renewal lands while the reader's epochs are being installed: it reaches no reader yet.
+  const keyed = client.keyed.bind(client);
+  let once = true;
+  client.keyed = async (reader) => {
+    const out = await keyed(reader);
+    if (once) {
+      once = false;
+      client.setMachineSignKey(renewed.signPublic);
+    }
+    return out;
+  };
+  client.subscribe(stream, indexFold, { onState: (st) => states.push(st), onError: (e) => errors.push(e) });
+  await until(() => link.subs().length === 1);
+  const ch = link.lastSub().ch;
+  link.deliver({ type: "recs", ch, stream, records: writer.records });
+  link.deliver({ type: "head", ch, head: await writer.head(1) });
+  await until(() => errors.length > 0);
+  assert.equal(states.length, 0, "nothing under the retired key");
+  assert.ok(errors.some((e) => e instanceof RecordError && e.kind === "badHead"));
 });

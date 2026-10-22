@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance } from "@/lib/e2e";
 import { formatAsOf } from "@/lib/format";
-import type { CloudAccount } from "@/lib/hub/account";
+import type { CloudAccount, PauseEnding } from "@/lib/hub/account";
 import { type QueuedWhy, renewalRunner, type RenewalRunner, type RenewalStatus } from "@/lib/hub/renewal";
 import { cn } from "@/lib/cn";
 import { enablePush, pushRenewalNeeded } from "@/lib/push";
@@ -520,8 +520,10 @@ export function AlwaysConfirmSetting({
 }
 
 /** Why an edge a renewal pause holds stays held (§4.1), in words. */
-export function pauseHeldText(h: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }, t: (key: string, opts?: Record<string, unknown>) => string): string {
+export function pauseHeldText(h: PauseEnding["held"][number], t: (key: string, opts?: Record<string, unknown>) => string): string {
   switch (h.why) {
+    case "cannotRenew":
+      return t("{{id}} stays paused from controlling {{host}}: {{who}} cannot renew its identity key (its Droppen is too old): remove it, or update it", h);
     case "exposed":
       return t("{{id}} stays paused from controlling {{host}}: {{who}} has not renewed its identity key since it may have been copied", h);
     case "isolated":
@@ -545,7 +547,7 @@ export function EndPauseConfirm({
   onConfirm,
   onCancel,
 }: {
-  ending: { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] };
+  ending: PauseEnding;
   busy: boolean;
   error?: string | null;
   onConfirm: () => void;
@@ -567,7 +569,7 @@ export function EndPauseConfirm({
       )}
       {ending.all.map((host) => (
         <span key={host} data-testid={`end-pause-all-${host}`} className="text-xs leading-5 text-muted">
-          {t("{{host}} lets every device of the account control it: every device comes back, those added while it was paused among them.", { host })}
+          {t("{{host}} lets every device of the account control it: ending the pause gives back only the control listed above.", { host })}
         </span>
       ))}
       {blocked && (

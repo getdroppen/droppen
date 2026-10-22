@@ -438,18 +438,25 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         {section.kind === "endPause" && section.device === id && (
           <div className="border-b border-border px-6 py-4 max-md:px-3">
             <div className="max-w-xl">
-              <EndPauseConfirm
-                ending={account.pauseEnding?.(section.op) ?? { edges: [], all: [], held: [] }}
-                busy={busy}
-                error={error}
-                onCancel={() => setSection({ kind: "list" })}
-                onConfirm={() =>
-                  void run(async () => {
-                    await account.endPause(section.op);
-                    setSection({ kind: "list" });
-                  })
-                }
-              />
+              {(() => {
+                // Exactly what is shown is what is asked for (M7): if ending it would give back anything else by then, it is
+                // refused, and this shows the new set to confirm again.
+                const ending = account.pauseEnding?.(section.op) ?? { edges: [], all: [], held: [], orphan: false };
+                return (
+                  <EndPauseConfirm
+                    ending={ending}
+                    busy={busy}
+                    error={error}
+                    onCancel={() => setSection({ kind: "list" })}
+                    onConfirm={() =>
+                      void run(async () => {
+                        await account.endPause(section.op, ending.edges);
+                        setSection({ kind: "list" });
+                      })
+                    }
+                  />
+                );
+              })()}
             </div>
           </div>
         )}

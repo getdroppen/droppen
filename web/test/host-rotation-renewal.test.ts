@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, fromHex, hex, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
 import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal } from "../src/lib/hub/account.js";
-import { type AccountView, hostDispute, HubApiError, rotationPush } from "../src/lib/hub/api.js";
+import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush } from "../src/lib/hub/api.js";
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
 import { followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
@@ -1773,7 +1773,11 @@ test("§4.1 overlay: a cycle member that cannot renew keeps only the edges that 
   assert.equal(admitsOn(a.chain!, "m-1", "m-3"), false, "m-3, which cannot renew, still paused");
   assert.equal(admitsOn(a.chain!, "m-3", "m-2"), false);
   assert.equal(a.chain!.openPauses().length, 1);
-  assert.deepEqual(runner.pausesOf("m-1")[0]!.ending.held.map((h) => [h.host, h.id, h.who, h.why]), [["m-1", "m-3", "m-3", "exposed"], ["m-3", "m-2", "m-3", "exposed"]], "each held edge, and why");
+  assert.deepEqual(
+    runner.pausesOf("m-1")[0]!.ending.held.map((h) => [h.host, h.id, h.who, h.why]),
+    [["m-1", "m-3", "m-3", "cannotRenew"], ["m-3", "m-2", "m-3", "cannotRenew"]],
+    "each held edge, and why: m-3 can never renew here, not merely exposed",
+  );
   runner.stop();
 });
 
@@ -1787,4 +1791,100 @@ test("§4.1 overlay: purpose-5 seals follow the chain's effective accept — a d
   await a.endPause(op);
   assert.equal(a.chain!.pause(op)?.end?.phase, 2, "cancelled");
   assert.deepEqual((await a.issueMachineKey("m-1", new FakeCourier())).hostKeysTo, [x.deviceId], "after: to X again");
+});
+
+/** Patch the Ed25519 signing of the next batch: `then` runs as it is signed — after its build's checks, before it is published. */
+function duringSigning(then: () => void): () => void {
+  const subtle = crypto.subtle as unknown as { sign: (...args: unknown[]) => Promise<ArrayBuffer> };
+  const sign = subtle.sign;
+  let armed = true;
+  subtle.sign = function (...args: unknown[]) {
+    const alg = args[0] as string | { name?: string };
+    if (armed && (alg === "Ed25519" || (typeof alg === "object" && alg?.name === "Ed25519"))) {
+      armed = false;
+      then();
+    }
+    return sign.apply(crypto.subtle, args);
+  };
+  return () => void delete (subtle as { sign?: unknown }).sign;
+}
+
+test("H1: a pause end is judged again right before publication — the hub's flag (or isolation) learned while it is signed stops it, by hand or on its own", async () => {
+  const { a, x } = await account({ chain: false });
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set() });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  for (const how of ["person", "runner"] as const) {
+    const op = crypto.getRandomValues(new Uint8Array(16));
+    assert.ok(await a.writePause(() => [{ type: "renewalPause", op, phase: 0, removals: [{ host: "m-1", ids: ["m-2"] }] }]));
+    const restore = duringSigning(() => a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set(), flagged: new Set(["m-2"]) }));
+    try {
+      const ending = how === "person" ? a.endPause(op, [{ host: "m-1", id: "m-2" }]) : a.endPauseWith(op, 1, () => ({ keep: [] }));
+      await assert.rejects(ending, (e: unknown) => e instanceof AccountError && e.kind === "exposed");
+    } finally {
+      restore();
+    }
+    assert.equal(a.chain!.pause(op)?.end ?? null, null, `${how}: not published`);
+    assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false);
+    a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set() });
+    await a.endPause(op, [{ host: "m-1", id: "m-2" }]);
+  }
+});
+
+test("M7: 「结束暂停」 is bound to the exact control it showed — a 409 that reveals an overlapping pause ended meanwhile asks again", async () => {
+  const { a, x } = await account({ chain: false });
+  const p1 = crypto.getRandomValues(new Uint8Array(16));
+  const p2 = crypto.getRandomValues(new Uint8Array(16));
+  assert.ok(await a.writePause(() => [{ type: "renewalPause", op: p1, phase: 0, removals: [{ host: "m-1", ids: [x.deviceId] }] }]));
+  assert.ok(await a.writePause(() => [{ type: "renewalPause", op: p2, phase: 0, removals: [{ host: "m-1", ids: [x.deviceId] }] }]));
+  // Shown now: ending p1 gives back nothing (p2 still holds X out).
+  const shown = a.pauseEnding(p1)!;
+  assert.deepEqual(shown.edges, []);
+  // Another page ends p2; this one's view lags (its append meets a 409, then the newer head).
+  const other = await tabOf(a, null);
+  // (Ending p2 alone gives nothing back: p1 still holds X out.)
+  await other.endPause(p2, []);
+  await assert.rejects(a.endPause(p1, shown.edges), (e: unknown) => e instanceof AccountError && e.kind === "pauseChanged");
+  assert.equal(a.chain!.pause(p1)?.end ?? null, null, "not ended on what was not shown");
+  const again = a.pauseEnding(p1)!;
+  assert.deepEqual(again.edges, [{ host: "m-1", id: x.deviceId }], "the new set, to confirm again");
+  await a.endPause(p1, again.edges);
+  assert.equal(admitsOn(a.chain!, "m-1", x.deviceId), true);
+});
+
+test("M7: a pause whose starter no longer manages the account is never ended on its own — only by a person, and its row says so", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const b = await pairAs(hub, a, { admin: true });
+  await b.sync();
+  const op = crypto.getRandomValues(new Uint8Array(16));
+  assert.ok(await b.writePause(() => [{ type: "renewalPause", op, phase: 0, removals: [{ host: "m-1", ids: [x.deviceId] }] }]));
+  await a.sync();
+  await a.removeDevice(b.deviceId, new FakeCourier());
+  // Removing b exposed every host; once they renewed, nothing held would stop the pause from ending — were its starter still an admin.
+  const link = new FakeLink();
+  for (const h of ["m-1", "m-2", "m-3"]) link.set(h, "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await until(() => exposedIds(a.chain!).length === 0);
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await runner.idle();
+  assert.equal(a.chain!.pause(op)?.end ?? null, null, "still open");
+  const of = runner.pausesOf("m-1");
+  assert.equal(of[0]!.ending.orphan, true);
+  await a.endPause(op, of[0]!.ending.edges);
+  assert.equal(a.chain!.pause(op)?.end?.phase, 2);
+  runner.stop();
+});
+
+test("D2: when a pause ends, a device only paused is sealed the host's committed key epochs it missed — none while paused", async () => {
+  const { hub, a, x } = await account({ chain: false });
+  const op = crypto.getRandomValues(new Uint8Array(16));
+  assert.ok(await a.writePause(() => [{ type: "renewalPause", op, phase: 0, removals: [{ host: "m-1", ids: [x.deviceId] }] }]));
+  const issued = await a.issueMachineKey("m-1", new FakeCourier());
+  assert.deepEqual(issued.hostKeysTo, [], "paused: not sealed the new epoch");
+  const before = hub.mailLog.filter((m) => m.recipient === x.deviceId && m.purpose === MAIL_HOST_KEY).length;
+  await a.endPause(op, [{ host: "m-1", id: x.deviceId }]);
+  const after = hub.mailLog.filter((m) => m.recipient === x.deviceId && m.purpose === MAIL_HOST_KEY);
+  assert.ok(after.length > before, "sealed once it is let in again");
+  assert.ok(after.some((m) => m.epoch === issued.mkEpoch), "the epoch issued while it was paused among them");
 });
