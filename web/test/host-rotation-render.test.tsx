@@ -145,7 +145,7 @@ test("renewed: the new fingerprint, the time, and the reminder about what else t
 });
 
 test("too old: re-enrolling is in the row's ⋯ menu (§7 decision 7); an admin renews from it, a limited device does not", () => {
-  const view = host({ renewal: { kind: "tooOld" }, renewable: false });
+  const view = host({ renewal: { kind: "tooOld" }, renewable: false, renewalsOn: true });
   assert.ok(rowHtml(view).includes("or, in its ⋯ menu: remove it, then add it again"));
   const asked: string[] = [];
   const ctx = { viewerAdmin: true, upgraded: true, writable: true, t: tt, onReEnroll: () => asked.push("re-enroll"), onRenew: () => asked.push("renew") };
@@ -156,14 +156,27 @@ test("too old: re-enrolling is in the row's ⋯ menu (§7 decision 7); an admin 
   assert.equal(items.some((i) => i.id === "renew-m-1"), false, "no renewal for a host that cannot renew");
   reEnroll.onSelect();
   // A host that renews here: "renew identity key" in its menu, and re-enrolling only said to be the other way.
-  const renewable = rowMenuItems(host({ renewable: true }), ctx);
+  const renewable = rowMenuItems(host({ renewable: true, renewalsOn: true }), ctx);
   const renew = renewable.find((i) => i.id === "renew-m-1")!;
   assert.equal(renew.label, "renew identity key");
   assert.equal(renew.blocked, null);
   renew.onSelect();
   assert.equal(renewable.find((i) => i.id === "re-enroll-m-1")!.hint, "a new identity: only if renewing its identity key is not the way");
   assert.deepEqual(asked, ["re-enroll", "renew"]);
-  assert.equal(rowMenuItems(host({ renewable: true }), { ...ctx, viewerAdmin: false }).some((i) => i.id === "renew-m-1" || i.id === "re-enroll-m-1"), false, "not for a limited device");
+  assert.equal(rowMenuItems(host({ renewable: true, renewalsOn: true }), { ...ctx, viewerAdmin: false }).some((i) => i.id === "renew-m-1" || i.id === "re-enroll-m-1"), false, "not for a limited device");
+});
+
+test("the hub's renewal switch off: a host's ⋯ menu is as before renewals — no “remove it, then add it again” saying its Droppen cannot renew", () => {
+  const ctx = { viewerAdmin: true, upgraded: true, writable: true, t: tt, onReEnroll: () => undefined, onRenew: () => undefined, onRemove: () => undefined };
+  // What devices.tsx gives a host while the hub's switch is off (or the hub has no renewals): nothing renews, `renewalsOn` unset.
+  for (const view of [host(), host({ renewalsOn: false }), host({ renewable: false, renewalsOn: false })]) {
+    const ids = rowMenuItems(view, ctx).map((i) => i.id);
+    assert.equal(ids.includes("re-enroll-m-1"), false, ids.join(","));
+    assert.equal(ids.includes("renew-m-1"), false);
+    assert.ok(ids.includes("remove-m-1"), "removing stays");
+  }
+  // On, a host that cannot renew is offered the new identity, and says why.
+  assert.equal(rowMenuItems(host({ renewalsOn: true }), ctx).find((i) => i.id === "re-enroll-m-1")?.hint, "a new identity: its Droppen cannot renew its identity key");
 });
 
 test("§4.1 “renew identity key” cannot be pressed while an exposed host it lets control it has not renewed, and says which", () => {

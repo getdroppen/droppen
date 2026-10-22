@@ -83,6 +83,12 @@ export interface DeviceRowView {
   renewal?: RenewalStatus;
   /** It renews its identity key here at all (v3, the hub takes renewals, its Droppen declared it): the menu's "renew identity key". */
   renewable?: boolean;
+  /**
+   * The hub takes identity key renewals (its switch is on): only then does the
+   * menu offer "remove it, then add it again" as the way for a host that
+   * cannot renew. Off, the row is as it was before renewals.
+   */
+  renewalsOn?: boolean;
   /** Exposed hosts it lets control it that must renew first (§4.1): until then "renew identity key" cannot be pressed, and says so. */
   renewFirst?: string[];
   /** Isolated hosts it lets control it: until they are removed, whoever holds their current key may drive it (§3.8). */
@@ -240,7 +246,8 @@ export function rowMenuItems(
     }
   }
   // A new identity (§7 decision 7): for a host that cannot renew its identity key, or a fresh start — a removal, then adding it again.
-  if (viewerAdmin && status === "active" && view.host && !view.self) {
+  // Only while the hub takes renewals: with its switch off, no host renews, and "its Droppen cannot renew" would be untrue.
+  if (viewerAdmin && status === "active" && view.host && !view.self && view.renewalsOn) {
     add({
       id: `re-enroll-${id}`,
       label: t("remove it, then add it again"),

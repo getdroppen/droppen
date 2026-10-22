@@ -371,6 +371,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
       reEnroll: d.host ? reEnroll.get(id) : undefined,
       renewal: d.host && renewals ? renewals.status(id) : undefined,
       renewable: d.host && upgraded && account.renews?.(id) === true,
+      renewalsOn: d.host && renewals?.view?.enabled === true,
       renewFirst: d.host ? (account.renewFirst?.(id) ?? []) : undefined,
       isolatedControllers: d.host && renewals ? renewals.isolatedControllers(id) : undefined,
       retiredLoginMs: d.host && renewals ? renewals.retiredLoginAt(id) : undefined,
