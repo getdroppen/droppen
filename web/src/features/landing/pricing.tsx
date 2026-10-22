@@ -17,12 +17,12 @@ import { type WaitlistState, WaitlistForm } from "./waitlist";
  * droppen.app/pricing: the three ways to use Droppen side by side — local
  * only (no account), Free and Pro — what each includes, the waitlist, and
  * the questions people ask before choosing. Signed in or not; its own lazy
- * chunk, in the landing page's drafting-sheet language (design/DESIGN.md).
+ * chunk, in the landing page's drafting-sheet language.
  *
  * Product words, not implementation: devices that run AI, all your devices,
  * how far back your phone can read while a device is off, a month's
  * transfer through our servers. Every number is a plan's own
- * (`pricing-plans.ts`, held to the hub's plans.rs by a test), and every plan
+ * (`pricing-plans.ts`, held to the hub's plans by a test), and every plan
  * is end-to-end encrypted alike — the page says so on each.
  *
  * There is nothing to pay with yet (Stripe comes with M4): Pro's button is

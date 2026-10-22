@@ -1,8 +1,8 @@
 //! The terminal REST surface and the websocket the browser's xterm attaches to.
 //!
-//! Ports `server/src/app.ts:1566-1655` (the four documented routes) and
-//! `server/src/index.ts:21-54` (the socket, which the TypeScript mounts outside
-//! its OpenAPI app and therefore never documents — so neither does this).
+//! Ports the former TypeScript server's `app.ts` (the four documented routes) and
+//! its `index.ts` (the socket, which the TypeScript mounts outside its OpenAPI
+//! app and therefore never documents — so neither does this).
 //!
 //! The wire protocol, as `web/src/features/terminals/xterm-pane.tsx:46-65` reads
 //! and writes it:

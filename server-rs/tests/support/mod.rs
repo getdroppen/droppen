@@ -1,10 +1,9 @@
 //! A server pointed at a synthetic home, with fake `claude` / `codex`
 //! executables on `PATH`.
 //!
-//! Mirrors the fixture in `server/src/lib/inject.test.ts:17-59`: the CLIs are
-//! replaced by scripts that record the argv and the environment they were
-//! started with, so the account plumbing — which is exactly "what ends up in a
-//! child process" — can be asserted on without a real login.
+//! The CLIs are replaced by scripts that record the argv and the environment
+//! they were started with, so the account plumbing — which is exactly "what
+//! ends up in a child process" — can be asserted on without a real login.
 //!
 //! Two rules keep the tests independent of each other despite `PATH` being
 //! process-global:
@@ -219,10 +218,9 @@ static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// `PATH` is process-global and the harness runs tests in threads, so the write
 /// below is the one piece of shared mutable state in this fixture. The
 /// [`OnceLock`] makes it happen exactly once and before any test in the binary
-/// spawns a CLI — every entry point calls this first — which is the same
-/// arrangement `server/src/lib/inject.test.ts` relies on. It is not, strictly,
-/// free of a concurrent `getenv`: a test thread already inside `clean_env` when
-/// the first one initializes could observe the write mid-flight. Removing the
+/// spawns a CLI — every entry point calls this first. It is not, strictly, free
+/// of a concurrent `getenv`: a test thread already inside `clean_env` when the
+/// first one initializes could observe the write mid-flight. Removing the
 /// window entirely would mean an environment snapshot taken before `main`, which
 /// Rust's test harness gives no hook for.
 fn ensure_fake_clis_on_path() -> &'static Path {

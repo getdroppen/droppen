@@ -1,5 +1,5 @@
 /*
- * The guide opening by itself (docs/desktop-onboarding.md §4): the first
+ * The guide opening by itself: the first
  * route of a page load in the app, when it is the home and the server says
  * the guide never started on an install with no sessions. Asked from the
  * router's guard, once per page load, so the session list never flashes

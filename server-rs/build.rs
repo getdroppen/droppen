@@ -80,7 +80,7 @@ fn rerun_if_changed(names: &[&str]) {
 }
 
 /// A build variable under its name since the rename to Droppen, else under
-/// `old`, the one it had before (`docs/rename-to-droppen.md`): trimmed, empty
+/// `old`, the one it had before: trimmed, empty
 /// is unset, and the old name — or both set to different values, when the new
 /// one wins — is a build warning. The server's own reader, `crate::env`, does
 /// the same for the variables it reads when it runs.

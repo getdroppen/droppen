@@ -1,8 +1,8 @@
 //! The two Claude config roots remote-hand knows about.
 //!
-//! Port of `server/src/lib/claude-roots.ts`. Claude Code keeps everything
-//! (projects, live-session registrations, credentials) under one config root,
-//! chosen by `CLAUDE_CONFIG_DIR`. remote-hand knows two of them:
+//! Port of the former TypeScript server's `claude-roots.ts`. Claude Code keeps
+//! everything (projects, live-session registrations, credentials) under one
+//! config root, chosen by `CLAUDE_CONFIG_DIR`. remote-hand knows two of them:
 //!
 //! * **local** — `~/.claude`, the user's own login. Never touched by the account
 //!   machinery: sessions there keep spawning exactly as before. Everything in it

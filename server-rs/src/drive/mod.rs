@@ -1,9 +1,9 @@
 //! Driving sessions: start one, send to one, stop one, rename, archive, and the
 //! composer preferences that decide what a spawn is asked for.
 //!
-//! The routes are ports of the session-driving half of `server/src/app.ts`; the
-//! stores they sit on are ports of `lib/titles.ts`, `lib/archive.ts` and
-//! `lib/composer-prefs.ts`.
+//! The routes are ports of the session-driving half of the former TypeScript
+//! server's `app.ts`; the stores they sit on are ports of its `titles.ts`,
+//! `archive.ts` and `composer-prefs.ts`.
 //!
 //! [`Drive`] is the one field this subsystem adds to `AppState`. It owns the
 //! account store, the setup-token captures, the injection registry, the quota

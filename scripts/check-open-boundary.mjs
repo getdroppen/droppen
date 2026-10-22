@@ -4,9 +4,8 @@
  * and `web/` never reach into the hub — not its code, not its schema, not its
  * environment — and the hub depends on them, never the other way round. The
  * hub (`server-rs/crates/rh-hub`, `droppen-hub` once renamed) is closed and
- * moves to a repository of its own (docs/open-source-split.md §4.2); this
- * check keeps the open tree buildable without it, here (hub present) and in
- * the public repository (hub absent).
+ * moves to a repository of its own; this check keeps the open tree buildable
+ * without it, here (hub present) and in the public repository (hub absent).
  *
  * The hub's side is the hub and the packages that go with it, named after it
  * (`rh-hub-*`, `droppen-hub-*`: `rh-hub-tools`, its white-box e2e and stress
@@ -99,7 +98,7 @@ export const ALLOWED = [
   { file: "server-rs/crates/rh-relay/src/config.rs", allow: ["DROPPEN_HUB_ORIGIN"] },
   // CI builds and tests the hub while it lives here: its Docker stage
   // (`crates/rh-hub/Dockerfile`) and its database tests (`RH_HUB_TEST_*`).
-  // These jobs go to the hub repository with it (docs/open-source-split.md §4.2-2).
+  // These jobs go to the hub repository with it.
   { file: ".github/workflows/ci.yml", allow: ["rh-hub/", "RH_HUB_TEST_DATABASE_URL", "RH_HUB_TEST_REDIS_URL", "RH_HUB_TEST_REQUIRE_DB"] },
 ];
 

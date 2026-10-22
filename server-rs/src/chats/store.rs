@@ -1,9 +1,10 @@
 //! The API-backed chat store, and the turn that streams a completion into it.
 //!
-//! Port of the "API-backed chat store" half of `server/src/lib/chats.ts`. A
-//! transcript is one `<uuid>.json` under `~/.local/share/remote-hand/api-chats`,
-//! written with the same keys in the same order as the TypeScript store so the
-//! two servers can read each other's chats.
+//! Port of the "API-backed chat store" half of the former TypeScript server's
+//! `chats.ts`. A transcript is one `<uuid>.json` under
+//! `~/.local/share/remote-hand/api-chats`, written with the same keys in the
+//! same order as the TypeScript store so the two servers can read each other's
+//! chats.
 //!
 //! [`Chats::run_api_chat_turn`] is the only part that talks to the network. It
 //! is written as "persist the user turn, stream, persist the assistant turn" in

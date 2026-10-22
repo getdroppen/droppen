@@ -1,5 +1,5 @@
 // The interface calls every device a device (docs/local-aggregator.md §3.1
-// 用词, §6; the user's decision on #68): 「设备」 / 「裝置」 / 「デバイス」 /
+// 用词, §6; the user's decision): 「设备」 / 「裝置」 / 「デバイス」 /
 // "device", a device that runs AI included — 「可运行 AI 的设备」 where it has
 // to be told apart. "Machine" and "computer" stay in the code (`Machine*`,
 // `mq`, `machine` params), never on screen, in any of the four languages the
@@ -107,7 +107,7 @@ test("no interface source puts 「机器」 / machine / 「电脑」 / computer 
   assert.deepEqual(said, []);
 });
 
-// The user's decision of 2026-10-20 (#111): every browser or phone is a full
+// The user's decision of 2026-10-20: every browser or phone is a full
 // device, so nothing on screen speaks of 「可管理账号」 / managing the account
 // any more — a browser or phone is a full device, or a limited one to make
 // full. (The chain's own rule texts, matched against the verifiers, stay in
@@ -115,7 +115,7 @@ test("no interface source puts 「机器」 / machine / 「电脑」 / computer 
 const MANAGES_EN = /\bmanag(?:e|es|ing) (?:the|this) account\b|\bcan manage\b/i;
 const MANAGES_CJK = /管理账号|管理账户|管理帳號|管理帳戶|アカウントを管理|アカウント管理|アカウントの管理/;
 
-test("#111: no interface text and no translation speaks of managing the account", () => {
+test("no interface text and no translation speaks of managing the account", () => {
   for (const [lang, { table }] of Object.entries(TABLES)) {
     const said = Object.entries(table).filter(([, value]) => MANAGES_CJK.test(value));
     assert.deepEqual(said, [], `${lang} says it`);
@@ -180,7 +180,7 @@ test("errors a device's channel, a relay or an enrollment can end in read in the
     assert.equal(errorText(new MachineClosedError()), "这台设备已不在本页打开");
     assert.equal(errorText(new ChannelBlocked("agentTooOld")), "设备的 agent 版本过旧，无法连接");
     assert.equal(errorText(new AccountError("proof", "the device's enrollment proof does not verify: it was not added")), "设备的注册证明校验不通过：没有添加它");
-    // D1's refusal, in words that do not speak of managing the account (#111).
+    // D1's refusal, in words that do not speak of managing the account.
     const { hostAdminRefused } = await import("../src/lib/hub/account.js");
     assert.equal(errorText(hostAdminRefused()), "可运行 AI 的设备暂时不能成为完整设备");
     // The relay's or the hub's own reason reaches the reader, inside their sentence.

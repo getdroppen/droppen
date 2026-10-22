@@ -24,7 +24,7 @@ const WIRE_STROKE: Record<WireTone, string> = {
 };
 
 /**
- * Stroke weights (design/DESIGN.md §2.5, the diagram exception): hairlines for
+ * Stroke weights (the diagram exception): hairlines for
  * structure, heavier strokes for data. Each sits on the pixel grid its width
  * needs: odd widths on half pixels, even on whole ones, 1.5px a quarter in
  * (whole device pixels at 2x).

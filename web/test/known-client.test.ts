@@ -1,4 +1,4 @@
-// #34 review S1: the hub's known-client token — given on every sign-in,
+// The hub's known-client token — given on every sign-in,
 // kept per e-mail, sent with the next login — so a hub without Turnstile does
 // not hold this browser back for others' failed logins at its account.
 import assert from "node:assert/strict";

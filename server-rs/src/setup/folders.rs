@@ -1,4 +1,4 @@
-//! Step 03's folders: where the first session can run (design §6.8).
+//! Step 03's folders: where the first session can run.
 //!
 //! Two places to pick from besides the device's own folder browser, each read
 //! as little as the question needs:

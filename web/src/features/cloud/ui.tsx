@@ -15,11 +15,11 @@ import { limitText } from "./plan";
 
 /*
  * The pieces the cloud screens share (sign-in, set-up, recovery, pairing,
- * machines, devices), in the drafting-sheet language (design/DESIGN.md §6):
- * a 56px top bar and a page framed by hairlines with registration marks at its
- * seams — edge to edge below 1280px, then 32px in from the window and centred
- * past 2400px (design/cloud-wide §1) — ink primary buttons, white fields that ink on focus, and
- * colour only for state. Cloud pages use the 36px control size
+ * machines, devices), in the drafting-sheet language: a 56px top bar and a
+ * page framed by hairlines with registration marks at its seams — edge to
+ * edge below 1280px, then 32px in from the window and centred past 2400px —
+ * ink primary buttons, white fields that ink on focus, and colour only for
+ * state. Cloud pages use the 36px control size
  * (docs/ui-spec.md §2).
  */
 

@@ -36,7 +36,7 @@ import { shownName, useMachineStatuses } from "./machine-name";
  * §4.3): the device and machine limits where devices and machines are added;
  * the cloud storage with each machine's share and, plainly, how long a
  * machine's offline copy is kept once it is away; a downgrade's end and what
- * it takes away; and the devices someone registered with the password (#33).
+ * it takes away; and the devices someone registered with the password.
  *
  * Every number is the plan's (`lib/hub/plan.ts`), kept live by the hub link
  * (`lib/hub/me.ts`). No "upgrade" anywhere yet: there is nothing to pay with.
@@ -438,7 +438,7 @@ export function UsagePanel({
 }
 
 /**
- * #33: a device someone registered with the account's password — not in the
+ * A device someone registered with the account's password — not in the
  * chain (yet) — said next to the chain's own alerts until "that was me".
  */
 export function RegisteredDeviceAlerts({ account, link }: { account: CloudAccount; link: HubLink }) {

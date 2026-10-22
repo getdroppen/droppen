@@ -401,8 +401,8 @@ pub fn seal_for_recovery<R: RngCore + CryptoRng>(
 }
 
 /// Open a recovery-package `UK` with the keys derived from `RK`: sealed by a
-/// device the chain names — a current admin, or one demoted or removed since
-/// (#34g) — and exactly the key the chain committed for that epoch
+/// device the chain names — a current admin, or one demoted or removed since —
+/// and exactly the key the chain committed for that epoch
 /// ([`ChainState::check_user_key`]). The commitment, not the sender, makes it
 /// the account's key: a device removed since still holds old user keys and
 /// the public `RSK`, but it can seal only a key the chain already names,
@@ -749,7 +749,7 @@ pub(crate) mod tests {
             open_from_recovery(&f.recovery, &chain, &ctx, &planted),
             Err(WrapError::Uncommitted(_))
         ));
-        // M2 review and #34g: the removed dev-1 cannot plant a key of its
+        // M2 review: the removed dev-1 cannot plant a key of its
         // own; a package of the committed key it sealed before still opens.
         let open_by_removed = |key: [u8; 32]| {
             let by_removed = seal_for_recovery(&f.devices[1].1, "dev-1", "acct-1", &rsk, 1, &key, &mut rng(2)).unwrap();

@@ -13,7 +13,7 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* "Drafting sheet" (docs/ui-spec.md, design/DESIGN.md): one ink on white
+/* "Drafting sheet" (docs/ui-spec.md): one ink on white
    paper, 1px hairlines, and colour kept for state signals only. Token names are
    unchanged — tests and ~1500 class names use them — only their values moved.
    `panel` equals `bg` (regions are separated by lines, not tinted panels) and

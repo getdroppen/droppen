@@ -1,5 +1,5 @@
-// The /link consent page (S1-4, docs/local-aggregator.md §4.3 step 4) since
-// #111: no 「可管理账号」 switch. The computer that asks runs AI, so it is
+// The /link consent page (S1-4, docs/local-aggregator.md §4.3 step 4) has no
+// 「可管理账号」 switch any more. The computer that asks runs AI, so it is
 // added as a device that runs AI and never as a full device (review D1) —
 // there is nothing to choose. The page is driven as the browser would: the
 // computer's page sends its request, the person clicks "add this device".
@@ -29,7 +29,7 @@ function elements(node: unknown, out: El[] = []): El[] {
   return out;
 }
 
-test("#111: the consent page asks nothing about what the device may do, and adds it with admin false", async () => {
+test("the consent page asks nothing about what the device may do, and adds it with admin false", async () => {
   const i18n = i18next.createInstance();
   await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false }, keySeparator: false, nsSeparator: false });
   // The computer's page that opened the popup (on this device's loopback), and the popup's window.

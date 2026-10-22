@@ -7,8 +7,8 @@
 # (DROPPEN_RELAY_DRAIN_SECS, default 30).
 #
 # The binary is the `droppen-relay` package (crates/droppen-relay); this file
-# stays beside the library because railway.toml, fly.toml and the services'
-# settings name this path.
+# stays beside the library because the deployment configuration outside this
+# repository and the services' settings name this path.
 
 FROM rust:1-slim-bookworm AS build
 WORKDIR /src/server-rs

@@ -40,8 +40,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      # The same install and build as the hub's Docker stage; CI's
-      # `web-reproducible` job keeps the two byte-identical.
+      # The same install and build as the hub's Docker stage (outside this
+      # repository); CI's `web-reproducible` job keeps the two byte-identical.
       - run: pnpm install --frozen-lockfile --filter "@remote-hand/web..."
       - name: Build the public distribution and its manifest
         run: |

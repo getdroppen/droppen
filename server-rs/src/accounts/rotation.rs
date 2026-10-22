@@ -1,10 +1,10 @@
 //! Moving a claude session off an account that hit a limit.
 //!
-//! Phase 2 of automatic account rotation (`docs/account-rotation-design.md`,
-//! §5). Phase 1 ([`super::limits`], [`super::rest`]) reads what the CLI said and
-//! writes down who is resting until when. This module is what acts on it: when
-//! a session's own turn ends in a limit, which account it goes to next, what it
-//! is told when it gets there, and what the person who owns it is told.
+//! Phase 2 of automatic account rotation. Phase 1 ([`super::limits`],
+//! [`super::rest`]) reads what the CLI said and writes down who is resting
+//! until when. This module is what acts on it: when a session's own turn ends
+//! in a limit, which account it goes to next, what it is told when it gets
+//! there, and what the person who owns it is told.
 //!
 //! Everything that decides is pure — accounts, rests and readings in, an order
 //! or a sentence out — so the rules can be pinned without a CLI running out of
@@ -18,9 +18,9 @@
 //! somebody puts them in. A session only ever moves *from* an account in the
 //! pool *to* another one in it: an env block is usually a different vendor
 //! behind a gateway, with model names of its own, and moving a conversation
-//! across that line is not something to do on a person's behalf (§5.8 of the
-//! design note). Codex sessions and sessions on the machine's own login never
-//! move in this phase at all.
+//! across that line is not something to do on a person's behalf. Codex
+//! sessions and sessions on the machine's own login never move in this phase at
+//! all.
 //!
 //! # The switch itself
 //!

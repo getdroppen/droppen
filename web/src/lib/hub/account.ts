@@ -2672,7 +2672,7 @@ export class CloudAccount {
   /**
    * A recovery package from this device, for the current recovery key, for
    * every `UK` epoch it holds that has none: a package a device no longer
-   * current sealed still opens (#34g), but none is counted on — after a
+   * current sealed still opens, but none is counted on — after a
    * removal this device's own must cover every epoch.
    *
    * `scope`: `own` (a rotation, new words) writes this device's own package
@@ -3692,7 +3692,7 @@ export class CloudAccount {
   }
 
   /**
-   * 「我的设备」's "make it a full device" (#111): `setAdmin(id, true)`, and
+   * 「我的设备」's "make it a full device": `setAdmin(id, true)`, and
    * whether its user keys reached the hub. The entry is written either way;
    * the device need not be online, its keys wait in its mailbox — unless
    * mailing them failed (its mailbox at the hub full, the hub holding back
@@ -5236,7 +5236,7 @@ export class CloudAccount {
 
   /**
    * Open every recovery package for an epoch not held yet, whoever sealed it
-   * — a current admin, or one demoted or removed since (#34g: that one may be
+   * — a current admin, or one demoted or removed since (that one may be
    * the only package for its epoch) — each only if it is the key the chain
    * committed (`openRecoveryPackage`); returns how many were.
    */

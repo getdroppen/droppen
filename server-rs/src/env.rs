@@ -1,5 +1,5 @@
 //! The server's environment variables, under the names they have had since the
-//! rename to Droppen (`docs/rename-to-droppen.md`, R2).
+//! rename to Droppen.
 //!
 //! Before the rename they were `REMOTE_HAND_*` and `RH_*`; each is `DROPPEN_*`
 //! now ([`RENAMED`] lists every one with its old name). The server reads them

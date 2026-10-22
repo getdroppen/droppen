@@ -1,8 +1,8 @@
 //! Archiving a session out of the list.
 //!
-//! Port of `server/src/lib/archive.ts`. Claude has no native archive, so
-//! remote-hand keeps its own hidden list; Codex has one, and it is driven
-//! through the official CLI so the Codex app stays in sync.
+//! Port of the former TypeScript server's `archive.ts`. Claude has no native
+//! archive, so remote-hand keeps its own hidden list; Codex has one, and it is
+//! driven through the official CLI so the Codex app stays in sync.
 //!
 //! The hidden list is one row per archived id in the machine-wide state database
 //! ([`crate::db`]) under [`scope::ARCHIVED`]. It is the store this migration is

@@ -1,5 +1,5 @@
 // What a page holding every machine of the account follows from the hub, and
-// how much it reads of the device: bounded (review of #58, S2).
+// how much it reads of the device: bounded.
 //
 // - A copy out of view follows its index and its status, and no session; in
 //   view, its warm sessions too; out of view again, those go.

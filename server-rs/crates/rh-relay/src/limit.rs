@@ -237,8 +237,7 @@ pub fn address_key(ip: Option<IpAddr>) -> IpAddr {
 mod tests {
     use super::*;
 
-    /// `/tmp/rh-m2-attack/hub/bucket_poc2.rs`: a batch larger than the burst
-    /// used to be refused for ever.
+    /// A batch larger than the burst used to be refused for ever.
     #[test]
     fn a_batch_larger_than_the_burst_goes_through_once_the_bucket_is_full() {
         let t0 = Instant::now();

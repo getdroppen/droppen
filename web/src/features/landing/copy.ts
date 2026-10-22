@@ -28,7 +28,7 @@
  * Every claim here is one the build makes good on (docs/cross-machine-
  * architecture.md §0, §2, §5, §7, §9; the account
  * rotation in server-rs/src/accounts/rotation.rs; the devices dashboard and
- * its 「需要你」 list in features/cloud/devices-dashboard.tsx): numbers are the
+ * its 「需要你」 list in features/cloud/my-devices.tsx): numbers are the
  * measured p50s, and nothing says "unhackable", "audited" or "open source".
  */
 

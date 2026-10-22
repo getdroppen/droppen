@@ -2,7 +2,7 @@
 //!
 //! The guide's page cannot keep this itself. The app's web page is served from
 //! the server's own port, which moves between launches, and its storage moves
-//! with it (design §6.10). So the progress is one row of this instance's `kv`
+//! with it. So the progress is one row of this instance's `kv`
 //! table (`setup` / `progress`), the shape the page sends, read whole and
 //! written whole: which steps are done or skipped, what steps 02 to 04 chose,
 //! when the guide started and finished, and "don't remind me".
@@ -13,7 +13,7 @@
 //! * `autoOpen` — whether the app's first window opens the guide by itself:
 //!   the desktop app runs this server, the guide never started, and this
 //!   instance owns no sessions. An install that was in use before the guide
-//!   existed never gets it (Q4); its session list shows a bar at most.
+//!   existed never gets it; its session list shows a bar at most.
 //!
 //! The row is a record of what the guide showed and the user chose, nothing
 //! more, and nothing may act on it. Any device that may use this computer can
@@ -43,7 +43,7 @@ const PROGRESS_KEY: &str = "progress";
 
 /// The version of the guide this server ships. A step remembers the version
 /// it was completed in (`stepFlow`), so a later guide that changes one step
-/// can tell who has not seen the new one (H27).
+/// can tell who has not seen the new one.
 pub const FLOW: u32 = 1;
 
 /// Where one step stands.

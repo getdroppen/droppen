@@ -18,7 +18,7 @@ import { APP_PATH, onPublicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAIT
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
  * (droppen.app). Loaded on demand, so the app's own boot does not carry it.
  *
- * Drafting-sheet language throughout (design/DESIGN.md): a 1152px framed
+ * Drafting-sheet language throughout: a 1152px framed
  * column of hairline sections with registration marks at their seams, one ink
  * primary action ("get started"), display type only for the headlines, and
  * colour only where a diagram shows state — a live direct path, a dropped one,

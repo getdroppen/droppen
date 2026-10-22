@@ -106,7 +106,8 @@ impl GotchaApp for RemoteHandApp {
             let instance = Arc::new(instance_dirs(&paths, &instance)?);
             // Attachments uploaded but never sent accumulate; sweep the stale
             // ones once at boot, off the startup path so a slow disk cannot
-            // delay the listener (`server/src/lib/files.ts` does it at import).
+            // delay the listener (the former TypeScript server's `files.ts`
+            // does it at import).
             tokio::spawn({
                 let paths = paths.clone();
                 async move { crate::files::sweep_uploads(paths.as_ref()).await }

@@ -1469,7 +1469,7 @@ export function RelayStandbySetting({ account, link }: { account: CloudAccount; 
 /**
  * "Missing key": the chain commits a newer user key than this device holds
  * (it missed the rotation's mail, or the rotation died after its commit). It
- * wraps no machine key until it has it (M2 re-review #27) — it has asked the
+ * wraps no machine key until it has it (M2 re-review) — it has asked the
  * account's other devices to send it; if none has it, rotating again mends it.
  */
 export function MissingUserKey({ account, link, epoch }: { account: CloudAccount; link: HubLink; epoch: number }) {
@@ -2326,7 +2326,7 @@ function EnterCode({ account, onCandidate }: { account: CloudAccount; onCandidat
                 <input type="radio" name="pairing" checked={picked === p.id} onChange={() => setPicked(p.id)} />
                 <span className="text-fg">{p.device}</span>
                 <span className="text-faint">{formatRelative(new Date(p.createdMs).toISOString())}</span>
-                {/* Any full device may close one it does not recognise (M2 re-review #28). */}
+                {/* Any full device may close one it does not recognise (M2 re-review). */}
                 <button
                   type="button"
                   className={cn(quiet, "ml-auto h-5 px-1.5 text-2xs")}

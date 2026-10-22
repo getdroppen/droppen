@@ -301,7 +301,7 @@ impl Store {
 
     /// Every stream, or the error that kept them from being read — for a
     /// decision that must not take an unreadable store for an empty one (a
-    /// delete, #34).
+    /// delete).
     pub fn try_all(&self) -> rusqlite::Result<Vec<Row>> {
         self.db.read(|c| {
             let mut stmt = c.prepare("SELECT * FROM streams")?;

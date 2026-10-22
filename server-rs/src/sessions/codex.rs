@@ -1,7 +1,7 @@
 //! Codex session discovery and transcripts.
 //!
-//! Port of `server/src/lib/codex.ts`. Discovery has two independent paths and
-//! the fallback is not a degraded copy of the first:
+//! Port of the former TypeScript server's `codex.ts`. Discovery has two
+//! independent paths and the fallback is not a degraded copy of the first:
 //!
 //! * **The state database.** Codex keeps a thread index in
 //!   `~/.codex/state_5.sqlite`, and it is preferred because it is the only place
@@ -38,7 +38,7 @@ use crate::openapi_ext::Nullable;
 const ACTIVE_WINDOW_MS: i64 = 15 * 60 * 1000;
 /// The first `session_meta` line can exceed 100 KiB (embedded base instructions).
 const HEAD_BYTES: usize = 512 * 1024;
-/// `readTailLines`' default in `server/src/lib/util.ts`.
+/// `readTailLines`' default in the former TypeScript server's `util.ts`.
 const TAIL_BYTES: u64 = 64 * 1024;
 /// Codex only writes `turn_context` at each turn start, and a turn's output can
 /// run long, so the model/effort reading needs a much deeper tail than Claude's.
@@ -614,7 +614,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
 
 /// The model/effort a Codex session last ran with.
 ///
-/// Port of `codexChoice` in `server/src/lib/session-choice.ts`.
+/// Port of `codexChoice` in the former TypeScript server's `session-choice.ts`.
 pub async fn read_codex_cli_choice(file_path: &Path) -> Option<CliChoice> {
     let lines = read_tail_lines(file_path, CHOICE_TAIL_BYTES).await.ok()?;
     for line in lines.iter().rev() {

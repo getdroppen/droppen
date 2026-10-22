@@ -3,15 +3,14 @@
 //! A client picks from this list by `(tool, kind, method)`; it never sends a
 //! command string. The string here is what `GET /api/setup/commands` shows the
 //! user before they press "Run here" and what the terminal then runs, so what
-//! the user read is what runs (H3) — and the same string is what "Copy
-//! command" copies, for anyone who would rather paste it into their own
-//! terminal.
+//! the user read is what runs — and the same string is what "Copy command"
+//! copies, for anyone who would rather paste it into their own terminal.
 //!
-//! Availability follows the design's table: the official installers are
-//! recommended (no Node, no administrator password, installed into the user's
-//! own home — which is also why they survive a Mac shared with a Homebrew owned
-//! by somebody else, H31); Homebrew only shows up where `brew` is installed,
-//! npm only where Node is; Claude's own installer needs macOS 13 (H8).
+//! Availability: the official installers are recommended (no Node, no
+//! administrator password, installed into the user's own home — which is also
+//! why they survive a Mac shared with a Homebrew owned by somebody else);
+//! Homebrew only shows up where `brew` is installed, npm only where Node is;
+//! Claude's own installer needs macOS 13.
 //!
 //! # The official installers
 //!
@@ -124,7 +123,7 @@ const CLAUDE_INSTALLER: &str = r#"/bin/sh -c 't="$(mktemp)" && trap "rm -f \"\$t
 /// Codex's official installer, the same way.
 const CODEX_INSTALLER: &str = r#"/bin/sh -c 't="$(mktemp)" && trap "rm -f \"\$t\"" 0 && trap "exit 1" 1 2 15 && curl --proto =https --tlsv1.2 -fsSLo "$t" https://chatgpt.com/codex/install.sh && sh "$t"'"#;
 
-/// The whitelist (design §6.3, §6.4). Nothing else is ever run for the user.
+/// The whitelist. Nothing else is ever run for the user.
 pub const WHITELIST: [Entry; 19] = {
     use CommandTool::{Claude, Codex, Git};
     use TaskKind::{Install, Login, Update};

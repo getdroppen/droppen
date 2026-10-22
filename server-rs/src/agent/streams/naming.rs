@@ -1,4 +1,4 @@
-//! Stream names per key epoch (`docs/relay-and-plans.md` §5, issue #21).
+//! Stream names per key epoch (`docs/relay-and-plans.md` §5).
 //!
 //! A stream's id is `HMAC(HKDF(MK_e, "rh/v1 stream-id"), source ‖ 0 ‖ id)`
 //! with `e` the machine-key epoch it was created or migrated in (its
@@ -26,7 +26,7 @@
 //!   Re-encryption is that migration; the hub sees a batch of streams stop
 //!   and a batch start — the random moment, the order and the padding make
 //!   that an anonymity set, no more.
-//! - **Nothing goes for being missing from a list** (#34). The session list
+//! - **Nothing goes for being missing from a list.** The session list
 //!   a round is made from can come back short — a transcript unreadable for
 //!   a moment, an archived session, a session index still loading at boot, a
 //!   listing that failed — and the hub's copy may be the only one left to
@@ -164,7 +164,7 @@ pub struct Round<'a> {
 /// once positively superseded ([`retire`]); a session missing from this
 /// round's list is kept — the list may be short — and left to the window
 /// round, whose rule for an unlisted session is that its copy has not been
-/// written for the whole window (#34).
+/// written for the whole window.
 pub fn migration_fate(round: &Round, old: &Row, to: u32, idle: bool) -> Fate {
     if name_epoch(old, round.first) >= to {
         return Fate::Unmark;
@@ -197,7 +197,7 @@ pub fn migration_fate(round: &Round, old: &Row, to: u32, idle: bool) -> Fate {
 /// machine's truth. A session this round's list (`listed`: `source/id`) does
 /// not name has nothing to rebuild it from *now*: it is kept, still marked —
 /// never deleted for it — and the window round deletes it once its copy has
-/// not been written for the whole window (#34).
+/// not been written for the whole window.
 pub fn reencrypt_fate(row: &Row, listed: &HashSet<String>) -> Fate {
     if row.kind == Kind::Session && !listed.contains(&format!("{}/{}", row.source, row.id)) {
         Fate::Keep
@@ -213,7 +213,7 @@ pub fn reencrypt_fate(row: &Row, listed: &HashSet<String>) -> Fate {
 /// does not point readers at: a migration's delete that never reached the
 /// hub. One it cannot place (a store reset, a session it no longer lists) is
 /// kept for the hub's retention sweep. `known` and `entries` are `None` when
-/// `streams.db` could not be read: nothing goes then (#34). The hub's list
+/// `streams.db` could not be read: nothing goes then. The hub's list
 /// may be capped; only what it names is ever considered.
 pub fn strays(
     held: &[StreamId],
@@ -390,7 +390,7 @@ mod tests {
         }
     }
 
-    // ---------------------------------------------------------------- #34: nothing goes for being missing from a list
+    // ---------------------------------------------------------------- nothing goes for being missing from a list
 
     /// The first epoch's key and the one a rotation moved to (epoch 3).
     const K0: [u8; 32] = [7; 32];

@@ -1,5 +1,5 @@
-// Step 03's rules (`features/setup/first-model.ts`, `first-session.ts`,
-// docs/desktop-onboarding.md §5.3, §6.8, H23–H25): only ready tools run the
+// Step 03's rules (`features/setup/first-model.ts`, `first-session.ts`): only
+// ready tools run the
 // first session, the first messages offered for a project and for the
 // practice folder, the macOS privacy note, what Continue stores, and which
 // first session Finish opens.
@@ -42,7 +42,7 @@ test("only the ready tools run the first session; none ready is step 03's own st
   assert.equal(noToolReady(null), true, "a server that cannot say has nothing to start with");
 });
 
-test("first messages: two that only look in a project, one that builds in the practice folder, or the user's own (H25)", () => {
+test("first messages: two that only look in a project, one that builds in the practice folder, or the user's own", () => {
   assert.deepEqual(promptChoices(false), ["repo1", "repo2", "own"]);
   assert.deepEqual(promptChoices(true), ["practice", "own"]);
   assert.match(PROMPTS.repo1, /Don't change any files yet\./);
@@ -54,7 +54,7 @@ test("first messages: two that only look in a project, one that builds in the pr
   assert.equal(promptText({ ...EMPTY_FIRST_UI, prompt: "own", own: "  look at the tests  " }, t), "look at the tests");
 });
 
-test("Documents, Desktop and Downloads: macOS will ask (H23)", () => {
+test("Documents, Desktop and Downloads: macOS will ask", () => {
   const home = "/Users/lin";
   for (const path of ["/Users/lin/Documents", "/Users/lin/Documents/notes", "/Users/lin/Desktop/site", "/Users/lin/Downloads/x"]) assert.ok(protectedFolder(path, home), path);
   for (const path of ["/Users/lin/Projects/app", "/Users/lin/DocumentsArchive", "/Users/lin", "/Volumes/Documents/a", null]) assert.ok(!protectedFolder(path, home), String(path));

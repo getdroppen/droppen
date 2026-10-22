@@ -1,5 +1,5 @@
 /*
- * The guide's frame (docs/desktop-onboarding.md §5, A.1): the whole window, no
+ * The guide's frame: the whole window, no
  * rail of the app's. A 40px top bar (the mark · "Get started with Droppen" ·
  * offline · language · "Finish later"); under it a document frame up to
  * 1120px wide between two hairlines, holding the step rail (232px) and the
@@ -26,7 +26,7 @@ import type { SetupProgress, StepId } from "./types";
 
 type Prefs = components["schemas"]["Prefs"];
 
-/** The header: never 「设置 Droppen」, which reads as Settings (design §10). */
+/** The header: never 「设置 Droppen」, which reads as Settings. */
 export const GUIDE_TITLE = "Get started with Droppen";
 
 /** The frame's widths (px): the document column and the step rail. */
@@ -291,7 +291,7 @@ export function ActionBar({ step, onSkip, onBack, action }: { step: StepId; onSk
   );
 }
 
-/** A step's kicker, title and lead: the title takes the focus when the step opens (§6.12). */
+/** A step's kicker, title and lead: the title takes the focus when the step opens. */
 export const StepHeader = forwardRef<HTMLHeadingElement, { kicker: string; title: string; body?: string }>(function StepHeader({ kicker, title, body }, ref) {
   return (
     <>

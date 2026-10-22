@@ -1,6 +1,6 @@
 /*
- * `/welcome`: the Droppen app's first-run guide (docs/desktop-onboarding.md
- * §4–§6), the whole window. The progress lives on the server
+ * `/welcome`: the Droppen app's first-run guide, the whole window. The
+ * progress lives on the server
  * (`GET/PUT /api/setup/progress`), so leaving and coming back — "Finish
  * later", the bar above the session list, Settings → General → Setup —
  * picks up where it stopped; `?rerun=1` starts over from step 01.
@@ -34,7 +34,7 @@ import { ToolsStep, type ToolsStepUi } from "./tools-step";
 import type { SetupProgress, StepId, ToolsReport } from "./types";
 import { type GuideSignIn, useGuideSignIn, type WhereSignIn } from "./where-sign-in";
 
-/** Each step's kicker, title and lead (appendix A). */
+/** Each step's kicker, title and lead. */
 export const STEP_HEADERS: Record<StepId, { kicker: string; title: string; body?: string }> = {
   tools: {
     kicker: "01 · AI tools",
@@ -49,7 +49,7 @@ export const STEP_HEADERS: Record<StepId, { kicker: string; title: string; body?
   first: {
     kicker: "03 · First session",
     title: "Pick a folder for the AI to work in",
-    // The first session runs with the device's own permission, shown in the view's row (§5.5); "ask before changing" waits for approvals (§10).
+    // The first session runs with the device's own permission, shown in the view's row; "ask before changing" waits for approvals.
     body: "The AI works in the folder you pick. The suggested first messages only ask it to look, and nothing runs until you press Send on the next screen, where the permission it runs with is shown and can be changed.",
   },
   wrap: { kicker: "04 · Finishing up", title: "A few last things" },
@@ -93,7 +93,7 @@ export function WelcomeView() {
   const openFirstSession = useOpenFirstSession();
   // This Mac's sign-in to Droppen (step 02): the page's one, so it goes on while the guide does.
   const signIn = useGuideSignIn();
-  // Kept going while it was under way (H19): say so once this Mac is in the account.
+  // Kept going while it was under way: say so once this Mac is in the account.
   const signingIn = useRef(false);
   useEffect(() => {
     const next = linkedToast(signingIn.current, signIn.state.kind, screen);
@@ -122,7 +122,7 @@ export function WelcomeView() {
 
   const heading = useRef<HTMLHeadingElement>(null);
   const frame = useRef<HTMLDivElement>(null);
-  // Each step takes the focus on its title as it opens (§6.12).
+  // Each step takes the focus on its title as it opens.
   useEffect(() => {
     if (screen && screen !== "welcome") heading.current?.focus();
   }, [screen]);
@@ -318,12 +318,12 @@ export function GuideScreen({
 
 const noop = () => undefined;
 
-/** The guide's line once this Mac is in the account while the guide went on (H19). */
+/** The guide's line once this Mac is in the account while the guide went on. */
 export const LINKED_TOAST = "This Mac is in your Droppen account";
 
 /**
- * Whether this Mac joining its Droppen account is the guide's toast to show
- * (H19), given whether the sign-in was under way when the guide last looked
+ * Whether this Mac joining its Droppen account is the guide's toast to show,
+ * given whether the sign-in was under way when the guide last looked
  * (`wasPending`), how it stands now and the screen on show. Only a sign-in
  * seen under way and now in the account, and not on step 02, which says so
  * itself; `pending` is what to remember for the next look. An account the
@@ -351,12 +351,12 @@ export function settle(
 }
 
 /**
- * The right end of a step's action bar (§4: one primary per page). Step 01
+ * The right end of a step's action bar (one primary per page). Step 01
  * goes on with "Continue" once a tool is ready — the primary only while no
  * card holds it (the first tool that needs the user does, `tools-model.ts`)
  * — else with "Continue without AI tools", never primary. Step 04 is
  * "Finish", or "Finish and open my first session" once step 03 saved a folder.
- * Step 02 with "Sign in to Droppen" chosen follows the sign-in (§5.2): "Sign
+ * Step 02 with "Sign in to Droppen" chosen follows the sign-in: "Sign
  * in in the browser" until it starts, "Keep going; I'll finish in the
  * browser" while it is under way, "Continue" once this Mac is in the account,
  * and "Only on this Mac for now" (`go.local`) when it stopped.

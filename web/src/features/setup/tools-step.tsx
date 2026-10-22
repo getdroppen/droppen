@@ -1,6 +1,5 @@
 /*
- * Step 01 · AI tools (docs/desktop-onboarding.md §5.1, §6.2–§6.4, §6.11,
- * §6.12): a card each for Claude Code and Codex in every state of the design
+ * Step 01 · AI tools: a card each for Claude Code and Codex in every state
  * — checking, not installed, the confirm box with the server's command shown
  * verbatim, installing in an embedded terminal, failed, signed out, signing
  * in (and when the browser didn't open), ready with the plan and the quota,
@@ -121,12 +120,12 @@ const SHELL_KEY: Record<ToolId, string> = {
   claude: "Your Terminal sets ANTHROPIC_API_KEY. Droppen doesn't take keys from your shell settings; to use that key here, add it to Droppen below.",
   codex: "Your Terminal sets OPENAI_API_KEY. Droppen doesn't take keys from your shell settings; to use that key here, add it to Droppen below.",
 };
-/** The toast when a sign-in lands (§5.5). */
+/** The toast when a sign-in lands. */
 export const SIGNED_IN_TOAST: Record<ToolId, string> = {
   claude: "Claude Code is signed in. You can go back to Droppen.",
   codex: "Codex is signed in. You can go back to Droppen.",
 };
-/** The facts under an install command (H3): from where, into where, needing what. */
+/** The facts under an install command: from where, into where, needing what. */
 function factsOf(command: SetupCommand, node: string | null): { key: string; vars?: Record<string, string> }[] {
   if (command.method === "brew") return [{ key: "Uses your Homebrew. Homebrew copies don't update themselves; Droppen offers the update when one is out." }];
   if (command.method === "npm") return [{ key: "Uses your Node.js ({{node}}). Only if you already manage tools with npm.", vars: { node: node ?? "Node.js" } }];
@@ -145,7 +144,7 @@ function factsOf(command: SetupCommand, node: string | null): { key: string; var
 
 const METHOD_LABEL: Record<string, string> = { native: "Official installer", brew: "Homebrew", npm: "npm" };
 
-/** The official installer's own advice after it ran (H4): Droppen finds claude itself; the user's own Terminal may not. */
+/** The official installer's own advice after it ran: Droppen finds claude itself; the user's own Terminal may not. */
 const PATH_HINT = `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`;
 
 /** What the step's actions are, for the cards to call. */
@@ -274,7 +273,7 @@ function DocsLink({ href, label, primary = false, className }: { href: string; l
   );
 }
 
-/** The card's main button: the page's primary when this card holds it (§4). */
+/** The card's main button: the page's primary when this card holds it. */
 function MainButton({ primary, children, onClick, disabled, testId }: { primary: boolean; children: ReactNode; onClick: () => void; disabled?: boolean; testId?: string }) {
   return (
     <Button variant={primary ? "primary" : "secondary"} data-guide-primary={primary ? "" : undefined} data-testid={testId} disabled={disabled} onClick={onClick}>
@@ -287,7 +286,7 @@ function Actions({ children, className }: { children: ReactNode; className?: str
   return <div className={cn("mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-2", className)}>{children}</div>;
 }
 
-/** Why a button is grey (H28; this page not the app's). */
+/** Why a button is grey (this page not the app's). */
 function Blocked({ online, canInstall }: { online: boolean; canInstall: boolean }) {
   const { t } = useTranslation();
   if (!canInstall) return <p className="mt-2 text-2xs leading-4 text-muted">{t("These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.")}</p>;
@@ -295,7 +294,7 @@ function Blocked({ online, canInstall }: { online: boolean; canInstall: boolean 
   return null;
 }
 
-/** The API key form of Codex's "Use an OpenAI API key instead" (H34): the key is cleared from the field as it is sent. */
+/** The API key form of Codex's "Use an OpenAI API key instead": the key is cleared from the field as it is sent. */
 export function ApiKeyForm({ primary, online, onSubmit, onCancel }: { primary: boolean; online: boolean; onSubmit: (key: string) => void; onCancel: () => void }) {
   const { t } = useTranslation();
   const [key, setKey] = useState("");
@@ -370,7 +369,7 @@ function ChoosePathForm({ id, primary, onUse, onCancel, busy }: { id: ToolId; pr
   );
 }
 
-/** The confirm box (§5.1, H3): the method, the command verbatim, three facts, and then — only then — Run it here. */
+/** The confirm box: the method, the command verbatim, three facts, and then — only then — Run it here. */
 function ConfirmBox({
   tool,
   ui,
@@ -808,7 +807,7 @@ function CardBody({
   }
 }
 
-/** Claude's "More": the enterprise single sign-on (§6.4). */
+/** Claude's "More": the enterprise single sign-on. */
 function MoreMenu({ onSso, disabled }: { onSso: () => void; disabled: boolean }) {
   const { t } = useTranslation();
   return (
@@ -936,8 +935,8 @@ function useVisible(): boolean {
 }
 
 /**
- * F6 moves the focus between each embedded terminal and the action bar
- * (H29); a terminal never takes it by itself. Caught before xterm sees the
+ * F6 moves the focus between each embedded terminal and the action bar; a
+ * terminal never takes it by itself. Caught before xterm sees the
  * key, so the CLI is never sent it.
  */
 function useF6(active: boolean) {
@@ -980,7 +979,7 @@ export function ToolsStep({ tools, online, toolsUi = IDLE_TOOLS_UI, onToolsUi }:
   useSetupTools(true, toolsPoll(tools));
   const commands = useSetupCommands(tools != null).data?.commands ?? [];
   const anyReady = tools?.tools.some((tool) => tool.ready) ?? false;
-  // The reading every composer shows: asked only once a card has bars to draw; never a probe of its own (H36).
+  // The reading every composer shows: asked only once a card has bars to draw; never a probe of its own.
   const quota = useQuery({
     queryKey: quotaKey(machine),
     queryFn: async () => (await api.GET("/api/stats/quota")).data ?? null,
@@ -1001,7 +1000,7 @@ export function ToolsStep({ tools, online, toolsUi = IDLE_TOOLS_UI, onToolsUi }:
   const [advanced, setAdvanced] = useState<{ open: boolean; kind: AdvancedKind }>({ open: false, kind: "token" });
   const report = tools ?? undefined;
 
-  // Each running sign-in, checked while the page is visible (H35).
+  // Each running sign-in, checked while the page is visible.
   const signingIn = (report?.tools ?? []).filter((tool) => pollsLogin(tool, ui[tool.id], visible, Date.now())).map((tool) => tool.id);
   const signingKey = signingIn.join(",");
   useEffect(() => {

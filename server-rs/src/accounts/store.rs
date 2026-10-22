@@ -1,7 +1,7 @@
 //! The account store: several Claude logins, kept server-side.
 //!
-//! Port of `server/src/lib/accounts.ts`. A secret never leaves this module:
-//! everything the API returns goes through [`Account`], and only
+//! Port of the former TypeScript server's `accounts.ts`. A secret never leaves
+//! this module: everything the API returns goes through [`Account`], and only
 //! [`AccountsStore::account_env`] reads the raw value — to hand it to a spawn as
 //! an environment variable. Two narrow accessors publish *about* a credential
 //! without publishing it: [`AccountsStore::env_values`], for the named

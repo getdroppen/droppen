@@ -1,4 +1,4 @@
-// The cross-device "needs you" (#24, S3-2; `docs/local-aggregator.md` §6.4):
+// The cross-device "needs you" (S3-2; `docs/local-aggregator.md` §6.4):
 // on droppen.app under 「我的设备」's list, and each device's row there with
 // its sessions at a glance; in the local app the sessions index.
 //
@@ -504,7 +504,7 @@ function dials(shell: HubShell, key: string) {
   return counted;
 }
 
-test("#24: a question on a machine out of view tops the ledger, read off its copy — nothing dialled, nothing followed beyond index and status — and opening it brings that machine into view", async (t) => {
+test("a question on a machine out of view tops the ledger, read off its copy — nothing dialled, nothing followed beyond index and status — and opening it brings that machine into view", async (t) => {
   const { shell, link, writers } = await world();
   shell.start();
   setHubShell(shell);

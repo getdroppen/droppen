@@ -1,18 +1,17 @@
-// The M2 fix re-review's account-level findings (GitHub #26–#28), as
-// regressions against a fake hub. The re-review's proofs of concept
-// (`/tmp/rh-m2-verify/keys/web/test/verify-keys-poc.test.ts`) each worked
-// before; ported here, each must now fail:
+// The M2 fix re-review's account-level findings, as regressions against a
+// fake hub. The re-review's proofs of concept each worked before; ported
+// here, each must now fail:
 //
-// - PoC A (#26.5): a browser closed across a recovery join and its
+// - PoC A: a browser closed across a recovery join and its
 //   self-activation was locked out for good — `sync` threw `tooEarly` before
 //   it saved its first sighting of the join, so every load saw the join anew.
-// - PoC C (#26.4): `confirmRemoval` verified with every entry as history, so
+// - PoC C: `confirmRemoval` verified with every entry as history, so
 //   a hub with the recovery words could join, self-activate at once and
 //   remove the owner — whose page then wiped its keys.
-// - PoC B / B2 (#27.1): a device that missed a rotation's user key (the hub
+// - PoC B / B2: a device that missed a rotation's user key (the hub
 //   dropped the mail, or the rotation died after its commit) wrapped a new
 //   machine's key under the old user key, which the removed device holds.
-// - #27.2 / #27.3: a device about to be removed squatted the next rotation's
+// - Two more: a device about to be removed squatted the next rotation's
 //   keyring names, or filled the others' mailboxes, so the rotation skipped
 //   a machine or bounced the new user key.
 import assert from "node:assert/strict";
@@ -44,7 +43,7 @@ async function recoveredWhileClosed(t: { mock: { timers: { enable(o: { apis: str
   return { t0, hub, a, z, words, seen };
 }
 
-test("PoC A (#26.5): a browser that missed a join and its activation is not locked out; the join is pending, vetoable, and taken a day after it first saw it", async (t) => {
+test("PoC A: a browser that missed a join and its activation is not locked out; the join is pending, vetoable, and taken a day after it first saw it", async (t) => {
   const { t0, hub, a, z, seen } = await recoveredWhileClosed(t);
   // a reopens (a day after the join, by every clock but its own).
   const back = await hub.reload(a);
@@ -66,7 +65,7 @@ test("PoC A (#26.5): a browser that missed a join and its activation is not lock
   assert.equal(done.chain!.device(z.deviceId)?.status.type, "active");
 });
 
-test("#26.5: a held-back activation can be vetoed — the removal goes on the hub's chain, and the device is out everywhere", async (t) => {
+test("a held-back activation can be vetoed — the removal goes on the hub's chain, and the device is out everywhere", async (t) => {
   const { hub, a, z } = await recoveredWhileClosed(t);
   const back = await hub.reload(a);
   assert.equal(back.heldBack?.device, z.deviceId);
@@ -89,7 +88,7 @@ test("#26.5: a held-back activation can be vetoed — the removal goes on the hu
   assert.equal(again.chain!.seq, hub.state!.seq);
 });
 
-test("#26.5: approving a held-back activation takes the hub's chain on the user's word", async (t) => {
+test("approving a held-back activation takes the hub's chain on the user's word", async (t) => {
   const { hub, a, z } = await recoveredWhileClosed(t);
   const back = await hub.reload(a);
   await back.approveDevice(z.deviceId);
@@ -101,7 +100,7 @@ test("#26.5: approving a held-back activation takes the hub's chain on the user'
   assert.equal(hub.state!.seq, back.chain!.seq);
 });
 
-test("PoC C (#26.4): a hub with the recovery words cannot have the owner's page confirm its removal and wipe it", async () => {
+test("PoC C: a hub with the recovery words cannot have the owner's page confirm its removal and wipe it", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   const words = (await createV2Genesis(a, true))!.join(" ");
@@ -123,7 +122,7 @@ test("PoC C (#26.4): a hub with the recovery words cannot have the owner's page 
   assert.deepEqual(await back.vault.epochs(), [0], "nothing wiped: cloud-app wipes only a removal the chain shows");
 });
 
-test("#26.4: a removal is confirmed only on a chain that keeps the head this device saw (a hub serving less is a fork, not a removal)", async () => {
+test("a removal is confirmed only on a chain that keeps the head this device saw (a hub serving less is a fork, not a removal)", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await createV2Genesis(a, false);
@@ -142,7 +141,7 @@ test("#26.4: a removal is confirmed only on a chain that keeps the head this dev
   assert.deepEqual(await back.vault.epochs(), [0]);
 });
 
-// ---------------------------------------------------------------- #27
+// ---------------------------------------------------------------- the rotation's key mail and keyring names
 
 async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
   const b = await hub.device("tok", new RecordingKeyStore());
@@ -194,7 +193,7 @@ async function threeDevices() {
   return { hub, a, b, d, m };
 }
 
-test("PoC B (#27.1): a device that missed the rotation's user key wraps nothing under the old one; it asks for the key and gets it", async () => {
+test("PoC B: a device that missed the rotation's user key wraps nothing under the old one; it asks for the key and gets it", async () => {
   const { hub, a, b, d } = await threeDevices();
   const report = await a.removeDevice(d.deviceId, new FakeCourier());
   assert.equal(report.ukEpoch, 1);
@@ -221,7 +220,7 @@ test("PoC B (#27.1): a device that missed the rotation's user key wraps nothing 
   assert.equal(hub.keysAt(`mk/${m2.id}/0/0`).length, 0);
 });
 
-test("PoC B2 (#27.1): a rotation that died after its commit leaves no device wrapping under the retired key; rotating again mends it", async () => {
+test("PoC B2: a rotation that died after its commit leaves no device wrapping under the retired key; rotating again mends it", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await createV2Genesis(a, true);
@@ -252,7 +251,7 @@ test("PoC B2 (#27.1): a rotation that died after its commit leaves no device wra
   assert.deepEqual(hub.keysAt(`mk/${m2.id}/0/2`), [`mk/${m2.id}/0/2/${a.deviceId}`]);
 });
 
-test("#27.2: a device about to be removed cannot squat the next rotation's keyring names, and its blobs are swept to one per epoch with its removal", async () => {
+test("a device about to be removed cannot squat the next rotation's keyring names, and its blobs are swept to one per epoch with its removal", async () => {
   const { hub, a, d, m } = await threeDevices();
   const rsk = a.chain!.currentRecoveryKey!;
   // The squats the PoC made: the next epochs' names, under d's own name and under a's.
@@ -271,7 +270,7 @@ test("#27.2: a device about to be removed cannot squat the next rotation's keyri
   // The rotation's names were all free: every machine got its new key in the keyring.
   assert.deepEqual(report.machines.map((x) => [x.machine, x.mkEpoch, x.error]), [[m.id, 1, undefined]]);
   assert.deepEqual(hub.keysAt(`mk/${m.id}/1/1`), [`mk/${m.id}/1/1/${a.deviceId}`]);
-  // #34g: of d's blobs one per epoch stays — its newest try of the wrap a
+  // Of d's blobs one per epoch stays — its newest try of the wrap a
   // holds too (the hub cannot tell a good copy from a bad one: readers try
   // both against the chain), and its package — the retries go.
   assert.deepEqual(
@@ -281,7 +280,7 @@ test("#27.2: a device about to be removed cannot squat the next rotation's keyri
   assert.ok(hub.keys.has(`${base}/${a.deviceId}`), "a's own wrap of it stays");
 });
 
-test("#27.3: a device about to be removed cannot fill the others' mailboxes so the rotation's key mail bounces", async () => {
+test("a device about to be removed cannot fill the others' mailboxes so the rotation's key mail bounces", async () => {
   const { hub, a, b, d } = await threeDevices();
   // d fills b's mailbox as far as it may: one sender's share, and only so much keyless mail.
   hub.mailRatePerMin = 10_000;
@@ -308,9 +307,9 @@ test("#27.3: a device about to be removed cannot fill the others' mailboxes so t
   assert.equal(hub.mail.filter((x) => x.recipient === b.deviceId).length, 0, "and nothing left behind");
 });
 
-// ---------------------------------------------------------------- #28
+// ---------------------------------------------------------------- re-encryption by mailbox
 
-test("#28: a re-encryption asked for by mailbox is dropped only when the agent took it or is past it — not on any 409", async () => {
+test("a re-encryption asked for by mailbox is dropped only when the agent took it or is past it — not on any 409", async () => {
   const { a, m } = await threeDevices();
   const courier = new FakeCourier();
   courier.online = false;
@@ -334,7 +333,7 @@ test("#28: a re-encryption asked for by mailbox is dropped only when the agent t
   forgetPendingReencrypts(a.account);
 });
 
-// ---------------------------------------------------------------- the review of the fix (`/tmp/rh-m2-review/zz-review-veto.test.ts`)
+// ---------------------------------------------------------------- the review of the fix
 
 test("N1 (REVIEW): a veto over a held activation takes out what the thief added after it, and mails it nothing", async (t) => {
   const t0 = Date.now();

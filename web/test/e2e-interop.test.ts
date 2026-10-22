@@ -536,7 +536,7 @@ test("chain v3: Rust's v3 chain verifies here entry for entry, re-signs to the s
     s.slots,
   );
   assert.equal(state.slot("p-1"), undefined, "removing the admin that registered p-1 voided it");
-  // Re-review T16: demoting d-y voided the slot it registered; it stays a device.
+  // Demoting d-y voided the slot it registered; it stays a device.
   assert.equal(state.slot("p-3"), undefined, "demoting the admin that registered p-3 voided it");
   assert.equal(state.device("d-y")?.admin, false);
   // Write gate: d-s came back with RSK4 and was demoted after RSK5 was set — RSK5 stood, and d-t came back with it;
@@ -547,7 +547,7 @@ test("chain v3: Rust's v3 chain verifies here entry for entry, re-signs to the s
   const afterRemoveS = await ChainState.verify(entries.slice(0, stepSeq("removeS") + 1), undefined, hist());
   assert.deepEqual(afterRemoveS.currentRecoveryKey, afterDemoteS.currentRecoveryKey, "nor does its (v3) removal void them");
   assert.equal(state.currentRecoveryKey, null);
-  // Re-review T17 and D1: m-1 stopped and restarted (its policy restarted from admins, then set to h-2 again), and ran AI.
+  // Re-review D1: m-1 stopped and restarted (its policy restarted from admins, then set to h-2 again), and ran AI.
   assert.deepEqual(acceptJson(state.acceptPolicy("m-1")), { kind: "devices", ids: ["h-2"] });
   assert.equal(state.deviceRecord("m-1")?.ranAi, true);
   assert.equal(state.deviceRecord("dev-0")?.ranAi, false);

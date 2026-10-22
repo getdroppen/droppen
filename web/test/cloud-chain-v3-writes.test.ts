@@ -517,7 +517,7 @@ test("setAdmin, setHost and setAccept write v3 entries; granting manage mails th
   assert.ok(a.chain!.allEntries().every((e) => e.draft.seq < a.chain!.v3From! || e.draft.version === 3));
 });
 
-test("#111: a limited device is a current browser or phone that is not a full device; a full device makes it one — not its own row, nothing until the account is upgraded", () => {
+test("a limited device is a current browser or phone that is not a full device; a full device makes it one — not its own row, nothing until the account is upgraded", () => {
   const rec = (id: string, admin: boolean, host = false, status: "active" | "removed" | "pending" = "active", ranAi = host) =>
     ({ info: { id, signKey: new Uint8Array(32), dhKey: new Uint8Array(32) }, host, admin, ranAi, status: { type: status }, viaRecovery: false, viaPasskey: null, addedSeq: 0, activatedSeq: 0 }) as const;
   const of = (viewer: string, viewerAdmin: boolean, device: ReturnType<typeof rec>, upgraded = true, ranAi?: boolean) =>
@@ -534,7 +534,7 @@ test("#111: a limited device is a current browser or phone that is not a full de
   assert.equal(of("d-1", true, rec("d-5", false, false, "pending")), null, "nor one waiting for approval");
 });
 
-test("#111: “make it a full device” writes setAdmin true and mails its user keys — and says so when the mail did not go, the entry written all the same", async () => {
+test("“make it a full device” writes setAdmin true and mails its user keys — and says so when the mail did not go, the entry written all the same", async () => {
   const { hub, a } = await account();
   const b = await pairAs(hub, a, { admin: false });
   // The hub does not take the mail: the entry stands, and the reason comes back (not only a console line).
@@ -1251,7 +1251,7 @@ test("D1 extended: a device that ever ran AI is never made an admin — refused 
   await assert.rejects(a.setAdmin("m-1", true), (e: unknown) => {
     invalid(RULES.ranAiNotAdmin)(e);
     assert.match((e as Error).message, /ran AI before/, "said in words");
-    // …in the reader's language too: its message is an i18n key, and it says nothing of managing the account (#111).
+    // …in the reader's language too: its message is an i18n key, and it says nothing of managing the account.
     assert.equal((e as AccountError).message, "m-1 ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.");
     assert.ok(cloudDevicesZhCN[(e as AccountError).key], "translated");
     return true;

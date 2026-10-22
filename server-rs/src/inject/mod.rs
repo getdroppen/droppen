@@ -66,8 +66,8 @@ pub enum InjectError {
     /// A plain I/O failure on the way to a spawn.
     ///
     /// The TypeScript lets these escape as ordinary `Error`s, which
-    /// `spawnErrorMessage` (`server/src/app.ts:168`) replaces with the route's
-    /// own wording rather than showing the user an `errno`.
+    /// `spawnErrorMessage` (the former TypeScript server's `app.ts`) replaces
+    /// with the route's own wording rather than showing the user an `errno`.
     #[error("{0}")]
     Internal(String),
 }
@@ -187,9 +187,7 @@ pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static st
     })
 }
 
-/// The instant-chat persona. Lives here until the chats subsystem is ported;
-/// `server/src/lib/chats.ts` owns the original and both must stay identical,
-/// because it is the text the CLI is actually launched with.
+/// The instant-chat persona: the text the CLI is actually launched with.
 const CHAT_SYSTEM_PROMPT: &str = concat!(
     "You are a friendly general-purpose assistant in a casual chat app. ",
     "This is not a coding tool: have a normal conversation, answer in the user's language, ",
@@ -234,12 +232,12 @@ fn attachment_missing() -> ApiError {
 /// Prove every attachment came from `/api/uploads` and is still there, and
 /// return the resolved paths.
 ///
-/// The gate is `isUploadPath` in `server/src/app.ts:471`, and it belongs here
-/// rather than in the route because this module is what hands the paths to a
-/// child process (`-i`, `--add-dir`, the prompt suffix): a path that escaped the
-/// uploads directory would widen what the CLI may read. The *resolved* paths are
-/// returned because [`crate::files::assert_under_uploads`] only vouches for what
-/// it resolved, not for the spelling the client sent.
+/// The gate is `isUploadPath` in the former TypeScript server's `app.ts`, and
+/// it belongs here rather than in the route because this module is what hands
+/// the paths to a child process (`-i`, `--add-dir`, the prompt suffix): a path
+/// that escaped the uploads directory would widen what the CLI may read. The
+/// *resolved* paths are returned because [`crate::files::assert_under_uploads`]
+/// only vouches for what it resolved, not for the spelling the client sent.
 ///
 /// The lexical check comes first and keeps its own refusal. Then the file
 /// itself: it must exist, be a regular file, and — symlinks followed — still be

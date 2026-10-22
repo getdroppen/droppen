@@ -1,8 +1,9 @@
 //! The per-session websocket feed.
 //!
-//! Port of `server/src/lib/session-feed.ts`. One [`Feed`] per `source/id`, shared
-//! by every socket watching that session; each socket gets a `snapshot` on
-//! attach and then `delta` / `reset` / `state` / `draft` / `closed` frames.
+//! Port of the former TypeScript server's `session-feed.ts`. One [`Feed`] per
+//! `source/id`, shared by every socket watching that session; each socket gets
+//! a `snapshot` on attach and then `delta` / `reset` / `state` / `draft` /
+//! `closed` frames.
 //!
 //! # Resuming
 //!
@@ -516,7 +517,7 @@ pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -
 }
 
 /// How many transcripts are remembered; `TRANSCRIPT_CACHE_MAX` in
-/// `server/src/lib/session-feed.ts`.
+/// the former TypeScript server's `session-feed.ts`.
 const TRANSCRIPT_CACHE_MAX: usize = 8;
 
 /// One remembered parse.
@@ -672,10 +673,11 @@ struct Feed {
 /// Every live feed, keyed by `source/id`.
 ///
 /// This lives in the application state rather than in a `static`, unlike the
-/// module-level `feeds` map in `server/src/lib/session-feed.ts`. A `static`
-/// would be keyed only by session id, so two servers in one process — which is
-/// exactly what the integration tests run, each pointed at its own synthetic
-/// home — would share and tear down each other's watchers.
+/// module-level `feeds` map in the former TypeScript server's
+/// `session-feed.ts`. A `static` would be keyed only by session id, so two
+/// servers in one process — which is exactly what the integration tests run,
+/// each pointed at its own synthetic home — would share and tear down each
+/// other's watchers.
 #[derive(Default)]
 pub struct FeedRegistry {
     feeds: Mutex<HashMap<String, Feed>>,

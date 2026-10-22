@@ -1,10 +1,11 @@
 //! Embedded app instances: one VS Code server per app, framed by the web UI.
 //!
-//! Port of `server/src/lib/apps.ts` (the supervision) and the three `/api/apps`
-//! routes in `server/src/app.ts:1750-1813`. The transport half — the
-//! `/embed/{id}/*` reverse proxy the iframe actually talks to — is [`embed`],
-//! and is deliberately not part of the API surface: the TypeScript mounts it on
-//! the bare node server rather than inside hono, so it appears in no spec.
+//! Port of the former TypeScript server's `apps.ts` (the supervision) and the
+//! three `/api/apps` routes in the former TypeScript server's `app.ts`. The
+//! transport half — the `/embed/{id}/*` reverse proxy the iframe actually talks
+//! to — is [`embed`], and is deliberately not part of the API surface: the
+//! TypeScript mounts it on the bare node server rather than inside hono, so it
+//! appears in no spec.
 //!
 //! The shape here is one supervisor task per instance, owning the
 //! [`tokio::process::Child`], plus a [`std::sync::Mutex`]-guarded list that is

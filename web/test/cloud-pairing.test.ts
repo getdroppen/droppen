@@ -262,7 +262,7 @@ test("a code answered but never confirmed: the new device gives up and closes th
   abandonCandidate(c);
   assert.ok(c.secret.every((x) => x === 0), "its secret forgotten");
   // Another device outside the chain cannot close it (its opener, or any
-  // current full device, can: M2 re-review #28).
+  // current full device, can: M2 re-review).
   const other = await hub.device("tok", new RecordingKeyStore());
   await other.api.closePairing(other.session.token, pairing!.id);
   assert.equal(hub.pairings.size, 1, "still open");

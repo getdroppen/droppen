@@ -1,9 +1,10 @@
 //! User-set session titles.
 //!
-//! Port of `server/src/lib/titles.ts`. The titles are kept outside the CLIs' own
-//! session files, which are never mutated, and they are the highest-precedence
-//! title for both sources — so a rename in remote-hand survives a restart and
-//! works for Codex, which has no custom-title mechanism of its own.
+//! Port of the former TypeScript server's `titles.ts`. The titles are kept
+//! outside the CLIs' own session files, which are never mutated, and they are
+//! the highest-precedence title for both sources — so a rename in remote-hand
+//! survives a restart and works for Codex, which has no custom-title mechanism
+//! of its own.
 //!
 //! One row per title in the machine-wide state database ([`crate::db`]) under
 //! [`scope::TITLES`], keyed `"<source>:<id>"`. `titles.json` used to be written

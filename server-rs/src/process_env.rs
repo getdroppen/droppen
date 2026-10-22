@@ -1,7 +1,7 @@
 //! The environment a spawned CLI runs with, and the redaction every captured
 //! byte of its output passes through.
 //!
-//! Port of `server/src/lib/env.ts`.
+//! Port of the former TypeScript server's `env.ts`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

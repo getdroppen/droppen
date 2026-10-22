@@ -1,4 +1,4 @@
-//! The rename to Droppen (#120, R1): a relay reads `DROPPEN_RELAY_*` first
+//! The rename to Droppen: a relay reads `DROPPEN_RELAY_*` first
 //! and the old `RH_RELAY_*` names when those are unset, logging each old name
 //! it used once. Checked on the binary, with nothing in its environment but
 //! what each case sets; every case stops on a bad value before listening.

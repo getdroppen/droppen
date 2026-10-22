@@ -1,6 +1,6 @@
 /*
- * Step 01's rules (docs/desktop-onboarding.md §5.1, §6.2–§6.4): which state
- * each tool's card is in, which card holds the page's one primary, which
+ * Step 01's rules: which state each tool's card is in, which card holds the
+ * page's one primary, which
  * whitelisted command a confirm box shows, how a failed install is said in
  * plain words, when to poll, and where F6 goes. No React and no requests:
  * `tools-step.tsx` draws these, the tests run them.
@@ -8,7 +8,7 @@
 import type { QuotaWindow } from "@/features/accounts/use-accounts";
 import type { SetupCommand, SetupTask, SetupTool, ToolId, ToolsReport } from "./types";
 
-/** Every state a tool's card can be in (§5.1's table, plus the forms a card opens). */
+/** Every state a tool's card can be in, plus the forms a card opens. */
 export type CardState =
   | "checking"
   | "notInstalled"
@@ -44,10 +44,10 @@ export type ToolsUi = Record<ToolId, CardUi>;
 export const IDLE_CARD: CardUi = { open: "none", kind: "install", method: null, noBrowser: false, dismissed: null };
 export const IDLE_TOOLS_UI: ToolsUi = { claude: IDLE_CARD, codex: IDLE_CARD };
 
-/** How often a running task's tool is detected again, and a running sign-in checked (§6.4). */
+/** How often a running task's tool is detected again, and a running sign-in checked. */
 export const TASK_POLL_MS = 2_000;
 export const LOGIN_POLL_MS = 2_000;
-/** A sign-in is checked for at most this long (H35). */
+/** A sign-in is checked for at most this long. */
 export const LOGIN_POLL_LIMIT_MS = 10 * 60_000;
 
 /** The official guides, when the server's commands do not say. */
@@ -112,7 +112,7 @@ export function needsUser(state: CardState, ui: CardUi, id: ToolId): boolean {
 }
 
 /**
- * The card that holds the page's one primary (§4, V10): one the user is in
+ * The card that holds the page's one primary (V10): one the user is in
  * the middle of, else the first that waits for the user, else none — then
  * "Continue" is primary once a tool is ready.
  */
@@ -209,7 +209,7 @@ export const FAILURE_WORDS = {
  * What went wrong with a finished install or update, as i18n keys: the
  * headline with its exit code (or, for one that exited 0, that it did not do
  * its job), and the reason in plain words — the network, a permission (a
- * Homebrew owned by another user on a shared Mac, H31), a full disk, or
+ * Homebrew owned by another user on a shared Mac), a full disk, or
  * anything else, read from the last lines.
  */
 export function failureWords(task: SetupTask): { title: string; code: number | null; why: string } {
@@ -235,7 +235,7 @@ export function toolsPoll(report: ToolsReport | null | undefined): number | fals
 }
 
 /**
- * Whether to check a tool's sign-in now (H35): only while its sign-in runs,
+ * Whether to check a tool's sign-in now: only while its sign-in runs,
  * the page is visible, and for at most ten minutes from its start.
  */
 export function pollsLogin(tool: SetupTool | undefined, ui: CardUi, visible: boolean, now: number): boolean {
@@ -265,7 +265,7 @@ export function readyWindows(windows: readonly QuotaWindow[] | null | undefined)
 }
 
 /**
- * Where F6 goes (H29): through the regions in order — each embedded
+ * Where F6 goes: through the regions in order — each embedded
  * terminal, then the action bar — and round again; Shift+F6 the other way.
  * From anywhere else on the page it goes to the first terminal.
  */

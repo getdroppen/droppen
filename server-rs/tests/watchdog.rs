@@ -1,13 +1,14 @@
 //! The stall watchdog: what it notices, and what it refuses to do about it.
 //!
-//! Port of `server/src/lib/inject-watchdog.test.ts`, and the place where that
-//! port stopped being a port. The TypeScript watchdog *reaped*: a run that had
-//! produced nothing for twenty minutes was `SIGTERM`ed and reported as stuck.
-//! Against a resident claude that is wrong twice over. A session between
-//! messages produces nothing by definition, so a reaper would end every idle
-//! session on the machine; and a turn that is quiet is not the same as a turn
-//! that is dead — a build, a test suite or a background agent can legitimately
-//! say nothing for an hour, and killing one destroys work nobody can get back.
+//! Port of the former TypeScript server's `inject-watchdog.test.ts`, and the
+//! place where that port stopped being a port. The TypeScript watchdog
+//! *reaped*: a run that had produced nothing for twenty minutes was `SIGTERM`ed
+//! and reported as stuck. Against a resident claude that is wrong twice over. A
+//! session between messages produces nothing by definition, so a reaper would
+//! end every idle session on the machine; and a turn that is quiet is not the
+//! same as a turn that is dead — a build, a test suite or a background agent
+//! can legitimately say nothing for an hour, and killing one destroys work
+//! nobody can get back.
 //!
 //! So the watchdog marks and never kills, and the two halves asserted here are
 //! the two halves of that: a long turn that keeps talking finishes normally, and

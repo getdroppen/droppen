@@ -1,6 +1,7 @@
 //! Browsing, reading, downloading and uploading files under the home directory.
 //!
-//! Port of `server/src/lib/files.ts` plus its five routes in `server/src/app.ts`.
+//! Port of the former TypeScript server's `files.ts` plus its five routes in
+//! `app.ts`.
 //! Every path the client names is resolved and then proven to sit under the home
 //! directory before a syscall touches it, and the two upload routes are the only
 //! writes the API performs outside its own config directory. A device reaching
@@ -652,8 +653,8 @@ pub fn resolve_safe(paths: &Paths, requested: Option<&str>) -> Result<PathBuf, F
 /// therefore use the returned, resolved path rather than the one they passed in.
 ///
 /// The failure is the `409` the TypeScript's send route answers with
-/// (`server/src/app.ts:471`), because that is the only thing `isUploadPath`
-/// guards; the message is that route's, verbatim.
+/// (the former TypeScript server's `app.ts`), because that is the only thing
+/// `isUploadPath` guards; the message is that route's, verbatim.
 ///
 /// Resolution is lexical, matching [`resolve`] — a symlink inside the uploads
 /// directory is accepted on the strength of its path, exactly as in the

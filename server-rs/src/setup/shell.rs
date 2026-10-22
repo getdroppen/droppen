@@ -11,10 +11,10 @@
 //! whatever the start-up files print cannot end up in it:
 //!
 //! * `PATH`;
-//! * the proxy variables, both spellings (H32 in the design) — handed to
+//! * the proxy variables, both spellings — handed to
 //!   install terminals, never reported, never logged;
 //! * whether `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are set — `set` or `unset`,
-//!   computed *inside* the shell, so the value never leaves it (H10).
+//!   computed *inside* the shell, so the value never leaves it.
 //!
 //! Nothing else is read. The script runs under `/bin/sh` as a child of the
 //! login shell, so it means the same thing whether that shell is zsh, bash or
@@ -50,7 +50,7 @@ pub const PROXY_VARIABLES: [&str; 8] = [
 /// The keys whose presence — never value — is reported.
 pub const KEY_VARIABLES: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
 /// The `PATH` the read starts from: launchd's, so what comes back is what the
-/// user's own start-up files produce and nothing Droppen added (H5).
+/// user's own start-up files produce and nothing Droppen added.
 pub const MINIMAL_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// The user's login shell: `$SHELL` when it is an absolute path, else zsh.

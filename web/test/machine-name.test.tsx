@@ -245,7 +245,7 @@ test("the list shows the name with the id under it, and offers a rename only whi
   assert.match(offline, /studio mac/, "the name from the last status, offline as well");
 });
 
-test("#26.3: a machine's chain alarm (a fork it was shown) reaches every device through its status, and the list says so", () => {
+test("a machine's chain alarm (a fork it was shown) reaches every device through its status, and the list says so", () => {
   const now = Date.now();
   const alarmed = status({
     displayName: "studio mac",

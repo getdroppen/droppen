@@ -1,5 +1,5 @@
-// Step 01 · AI tools as drawn (`features/setup/tools-step.tsx`,
-// docs/desktop-onboarding.md §5.1): one test per state of the design's table
+// Step 01 · AI tools as drawn (`features/setup/tools-step.tsx`): one test per
+// state a card can be in
 // — what the card says, its status chip, its buttons — plus the page's one
 // primary across states, a page that is not the app's (`canInstall: false`)
 // and offline.
@@ -241,7 +241,7 @@ test("ready: the plan, the email and the 5-hour and weekly bars — or that quot
   assert.match(step(r, { q: quota(), lang: "zh-CN" }), /已用 12%/);
 });
 
-test("ready through a Droppen account (H11), not a red “not signed in”", () => {
+test("ready through a Droppen account, not a red “not signed in”", () => {
   const c = cardOf(step(report(tool("claude", "viaAccount"), tool("codex", "missing"))), "claude");
   assert.match(c, /data-tone="ready"/);
   assert.match(c, /data-testid="via-account"[^>]*>Ready through the Droppen account “Company gateway”/);

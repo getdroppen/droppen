@@ -1,11 +1,12 @@
 //! How a Claude tool call and its result read on screen.
 //!
-//! Port of `server/src/lib/tool-display.ts`. A Claude `tool_use` block carries a
-//! parsed JSON object, so everything here starts from one. Codex hands over the
-//! *source text* of a JavaScript cell or a JSON-encoded argument string, and
-//! records what actually ran somewhere else entirely; that half lives in
-//! [`super::codex_tools`], which borrows the generic helpers below so that a
-//! tool nothing knows by name reads the same from either CLI.
+//! Port of the former TypeScript server's `tool-display.ts`. A Claude
+//! `tool_use` block carries a parsed JSON object, so everything here starts
+//! from one. Codex hands over the *source text* of a JavaScript cell or a
+//! JSON-encoded argument string, and records what actually ran somewhere else
+//! entirely; that half lives in [`super::codex_tools`], which borrows the
+//! generic helpers below so that a tool nothing knows by name reads the same
+//! from either CLI.
 
 use serde_json::{Map, Value};
 

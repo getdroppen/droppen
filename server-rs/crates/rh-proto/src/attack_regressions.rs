@@ -486,7 +486,7 @@ fn the_hub_can_no_longer_enroll_a_machine_of_its_own() {
     assert!(!code.verify_proof("acct-1", "m-1", &hub_machine.sign_public(), &hub_machine.dh_public(), &proof));
 }
 
-// ---------------------------------------------------------------- the M2 review's PoCs (`/tmp/rh-m2-attack`)
+// ---------------------------------------------------------------- the M2 review's PoCs
 
 mod m2 {
     use super::*;
@@ -505,11 +505,10 @@ mod m2 {
         }
     }
 
-    /// `poc_removed_device_plants_recovery_package`: the removed dev-1 seals a
-    /// UK of its choosing for the recovery key. A recovering device does not
-    /// take it: whoever sealed a package, the key must be the one the chain
-    /// committed (#34g: a package from a device no longer current opens only
-    /// that way).
+    /// The removed dev-1 seals a UK of its choosing for the recovery key. A
+    /// recovering device does not take it: whoever sealed a package, the key
+    /// must be the one the chain committed (a package from a device no longer
+    /// current opens only that way).
     #[test]
     fn a_removed_device_can_no_longer_plant_a_recovery_package() {
         let f = fixture();
@@ -529,11 +528,10 @@ mod m2 {
         ));
     }
 
-    /// `poc_hub_fabricated_chain_fools_recovery`: the hub builds a chain under
-    /// its own `AK` around the account's real (public) `RSK`. It cannot sign the
-    /// recovery key's proof over its own root, and the real proof is over the
-    /// real root: the fabricated genesis does not verify, so there is nothing
-    /// for the recovering device to join.
+    /// The hub builds a chain under its own `AK` around the account's real
+    /// (public) `RSK`. It cannot sign the recovery key's proof over its own
+    /// root, and the real proof is over the real root: the fabricated genesis
+    /// does not verify, so there is nothing for the recovering device to join.
     #[test]
     fn a_hub_fabricated_chain_no_longer_fools_a_recovering_device() {
         let f = fixture();
@@ -568,12 +566,11 @@ mod m2 {
         assert!(ChainState::verify(std::slice::from_ref(&g), None, &mut h()).is_err());
     }
 
-    /// `poc_thief_mints_puppet_to_skip_24h`: the day of distrust after a
-    /// removal was skipped by a thief with a puppet device yet locked the
-    /// honest owner out. It is gone (alerts to every device and machine
-    /// replace it): a sole device that removed the others vouches for itself
-    /// at once — the PoC's premise (the owner is Stale, the thief is not) no
-    /// longer holds either way.
+    /// The day of distrust after a removal was skipped by a thief with a puppet
+    /// device yet locked the honest owner out. It is gone (alerts to every
+    /// device and machine replace it): a sole device that removed the others
+    /// vouches for itself at once — the PoC's premise (the owner is Stale, the
+    /// thief is not) no longer holds either way.
     #[test]
     fn the_sole_device_rule_that_a_puppet_skipped_is_gone() {
         let f = fixture();
@@ -593,11 +590,10 @@ mod m2 {
         assert_eq!(state.freshness("dev-0", &[own], 10_002, 12 * 3_600_000), Ok(Freshness::Fresh));
     }
 
-    /// `poc_browser_page_load_accepts_instant_self_activation`: a browser that
-    /// re-verified with a history clock on every page load accepted a join and
-    /// its activation delivered together. A verifier now comes back with the
-    /// clock it saved — live from the seq after the last one it had seen — and
-    /// refuses them.
+    /// A browser that re-verified with a history clock on every page load
+    /// accepted a join and its activation delivered together. A verifier now
+    /// comes back with the clock it saved — live from the seq after the last
+    /// one it had seen — and refuses them.
     #[test]
     fn a_page_load_no_longer_accepts_an_instant_self_activation() {
         let f = fixture();
@@ -700,17 +696,17 @@ mod m2 {
     }
 }
 
-// ---------------------------------------------------------------- the M2 re-review's PoCs (`/tmp/rh-m2-verify`)
+// ---------------------------------------------------------------- the M2 re-review's PoCs
 
 mod m2_verify {
     use super::*;
     use crate::chain::tests::{h, recovered_device};
     use crate::chain::{Merged, RECOVERY_DELAY_MS};
 
-    /// `merge_partial.rs`: a hub sends `[RecoveryJoin, <a spoiled entry>]` in
-    /// one batch. The join is applied and stays applied; the batch must say so
-    /// — how many took effect, and what stopped it — so the verifier alerts
-    /// about the join, rather than treating the whole batch as refused.
+    /// A hub sends `[RecoveryJoin, <a spoiled entry>]` in one batch. The join
+    /// is applied and stays applied; the batch must say so — how many took
+    /// effect, and what stopped it — so the verifier alerts about the join,
+    /// rather than treating the whole batch as refused.
     #[test]
     fn a_batch_that_fails_half_way_says_what_it_applied() {
         let f = fixture();

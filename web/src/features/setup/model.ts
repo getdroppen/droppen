@@ -1,6 +1,6 @@
 /*
- * The first-run guide's rules, as plain functions of its progress
- * (docs/desktop-onboarding.md §4, §6.10): the four steps and their order,
+ * The first-run guide's rules, as plain functions of its progress: the four
+ * steps and their order,
  * what Continue, Skip and Back do to them, how many are left, where to pick
  * up again, what a rerun clears, when the guide opens by itself and which bar
  * the session list shows. No React and no requests: `welcome-view.tsx` and
@@ -120,7 +120,7 @@ export function rerun(progress: SetupProgress, now: string): SetupProgress {
 
 /**
  * Finish on step 04: done, and the guide is over. Start at login is not the
- * guide's to set (design §10, Q2): the app turns it on by itself at a new
+ * guide's to set: the app turns it on by itself at a new
  * install's first launch and the menu bar changes it, so `wrap.startAtLogin`
  * stays as it was — `null`, never chosen here — and nothing reads it.
  */
@@ -144,11 +144,11 @@ export function opensFirstSession(progress: SetupProgress): boolean {
 }
 
 /**
- * Whether this page load opens the guide by itself (design §4): only in the
+ * Whether this page load opens the guide by itself: only in the
  * app, only on the page load's first route and only when that is the home
  * (`/` or `/sessions`, never a deep link), and only when the server says the
  * guide never started on an install with no sessions of its own
- * (`autoOpen`) — an existing install never gets it (Q4).
+ * (`autoOpen`) — an existing install never gets it.
  */
 export function shouldAutoOpen(input: {
   desktopApp: boolean;
@@ -164,7 +164,7 @@ export function shouldAutoOpen(input: {
 export type SetupBar = { kind: "resume"; left: number } | { kind: "noTool" } | null;
 
 /**
- * Which bar the session list shows (§5.5, Q4): in the app only. A guide
+ * Which bar the session list shows: in the app only. A guide
  * started and left unfinished, not dismissed: "Setup: N steps left". An
  * install that never started the guide, when no AI tool is ready: "No AI
  * tool is ready on this device yet". Nothing while either answer is missing.

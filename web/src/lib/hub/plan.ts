@@ -216,7 +216,7 @@ export function downgradeOf(plan: PlanView | null | undefined, now: number): Dow
   };
 }
 
-/** The devices registered with the account's password that the chain does not list yet — worth a look if it was not you (#33). */
+/** The devices registered with the account's password that the chain does not list yet — worth a look if it was not you. */
 export interface Registration {
   device: string;
   createdMs: number;

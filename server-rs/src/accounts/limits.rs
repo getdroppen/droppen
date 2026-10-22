@@ -1,11 +1,10 @@
 //! Which CLI failures are limits, and how long an account should rest after one.
 //!
-//! Phase 1 of automatic account rotation (`docs/account-rotation-design.md`,
-//! §5): **detect.** Nothing in this module retries a turn, switches an account
-//! or holds a queue. What it does is read what the CLI said and answer three
-//! questions: is this a limit, which kind, and when does it lift.
-//! [`super::rest`] writes the answer down, and [`super::rotation`] decides what
-//! a session does about it.
+//! Phase 1 of automatic account rotation: **detect.** Nothing in this module
+//! retries a turn, switches an account or holds a queue. What it does is read
+//! what the CLI said and answer three questions: is this a limit, which kind,
+//! and when does it lift. [`super::rest`] writes the answer down, and
+//! [`super::rotation`] decides what a session does about it.
 //!
 //! Everything here is pure — text or payload in, [`Verdict`] out — so the
 //! wordings it was built from are pinned by tests rather than by an account

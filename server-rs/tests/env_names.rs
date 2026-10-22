@@ -1,4 +1,4 @@
-//! The rename to Droppen (`docs/rename-to-droppen.md`, R2): the server reads
+//! The rename to Droppen: the server reads
 //! `DROPPEN_*` first and the old `REMOTE_HAND_*` / `RH_*` names when those are
 //! unset, saying once per old name that it is deprecated — by name, never by
 //! value, and never on stdout; and what one Droppen program hands another is

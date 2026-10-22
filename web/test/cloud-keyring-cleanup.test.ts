@@ -4,8 +4,8 @@
 //
 // - after a rotation to a new user key, the rotating device rewrites every
 //   machine-key wrap it can read under the new key and its own name, so the
-//   hub can reclaim its own older wraps (a removed device keeps one per epoch,
-//   #34g) and old ciphertext stays readable from the newest user key alone;
+//   hub can reclaim its own older wraps (a removed device keeps one per epoch)
+//   and old ciphertext stays readable from the newest user key alone;
 // - recovery packages: a rotation writes its own; the settle steps only fill
 //   an epoch no current device covers (the hub keeps the newest per epoch, so
 //   two devices would otherwise take turns rewriting theirs);

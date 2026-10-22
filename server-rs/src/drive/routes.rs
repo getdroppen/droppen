@@ -1,7 +1,7 @@
 //! The session-driving routes: start, send, interrupt, rename, archive, browse
 //! history, and the composer preferences.
 //!
-//! Ports of the matching handlers in `server/src/app.ts`.
+//! Ports of the matching handlers in the former TypeScript server's `app.ts`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};

@@ -1,5 +1,5 @@
 // The Droppen app's first-run guide, as rules (`features/setup/model.ts`,
-// `auto-open.ts`; docs/desktop-onboarding.md §4, §6.10, Q4): when it opens by
+// `auto-open.ts`): when it opens by
 // itself, what Continue, Skip, Back, Finish and a rerun do to the stored
 // progress, where it picks up again, and which bar the session list shows.
 import assert from "node:assert/strict";
@@ -70,7 +70,7 @@ test("the guide opens by itself only in the app, on the page load's first route,
   assert.equal(shouldAutoOpen({ ...yes, pathname: "/settings" }), false);
   assert.equal(shouldAutoOpen({ ...yes, desktopApp: false }), false, "a browser never gets it");
   assert.equal(shouldAutoOpen({ ...yes, firstLoad: false }), false, "only once per page load");
-  assert.equal(shouldAutoOpen({ ...yes, progress: { autoOpen: false } }), false, "an existing install never gets it (Q4)");
+  assert.equal(shouldAutoOpen({ ...yes, progress: { autoOpen: false } }), false, "an existing install never gets it");
   assert.equal(shouldAutoOpen({ ...yes, progress: null }), false, "no answer is no");
 });
 
@@ -133,7 +133,7 @@ test("Finish ends the guide, leaves start at login to the app, and opens the fir
   const p = finish(complete(complete(start(progress(), NOW), "tools"), "where"), LATER);
   assert.equal(p.finishedAt, LATER);
   assert.equal(p.steps.wrap, "done");
-  // Q2: on by default, but the app's to turn on (at a new install's first
+  // On by default, but the app's to turn on (at a new install's first
   // launch) and the menu bar's to change; the guide never chooses it.
   assert.equal(p.wrap.startAtLogin, null, "not chosen by the guide");
   assert.equal(finish({ ...progress(), wrap: { startAtLogin: false } }, LATER).wrap.startAtLogin, false, "nor overwritten");
@@ -170,7 +170,7 @@ test("the resume bar: while a started guide is unfinished and not dismissed, wit
   assert.equal(whichBar({ desktopApp: true, progress: undefined, tools: NONE_READY }), null, "nothing until the progress is known");
 });
 
-test("the no-tool bar (Q4): an install that never started the guide, only while no AI tool is ready", () => {
+test("the no-tool bar: an install that never started the guide, only while no AI tool is ready", () => {
   const never = progress({ autoOpen: false });
   assert.deepEqual(whichBar({ desktopApp: true, progress: never, tools: NONE_READY }), { kind: "noTool" });
   assert.equal(whichBar({ desktopApp: true, progress: never, tools: ONE_READY }), null, "one ready tool is enough");

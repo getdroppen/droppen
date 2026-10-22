@@ -4,7 +4,7 @@
 // `limit` read back into the same words; how long a machine away for days
 // keeps its offline copy in the cloud — from the plan, so free and pro differ;
 // the storage thresholds; a downgrade's end; and the devices someone
-// registered with the password (#33).
+// registered with the password.
 //
 // `react-dom/server` with no DOM, like the other render tests; `import * as
 // React` because the test directory is outside the tsconfig's `include`.
@@ -309,7 +309,7 @@ test("the offline copy's notice says so when the cloud storage is full", () => {
   assert.ok(html.includes("云端存储已满：设备在线时一切照常，离线副本停在 "));
 });
 
-test("#33: a device registered with the password is an alert until “that was me”, and only while it matters", () => {
+test("a device registered with the password is an alert until “that was me”, and only while it matters", () => {
   const now = 10 * DAY_MS;
   const seen = [
     { device: "d-new", createdMs: now - 60_000 },

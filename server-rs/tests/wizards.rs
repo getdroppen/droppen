@@ -1,10 +1,10 @@
 //! The two account wizards, end to end through a real pty.
 //!
-//! Mirrors `server/src/lib/setup-token.test.ts` and the spawn half of
-//! `server/src/lib/usage-login.test.ts`: a fake `claude` prints a token the way
-//! the real one does — trailing ANSI-wrapped hint and all — and the assertions
-//! are about what the server did with it. Nothing here contacts Anthropic, and
-//! no real `claude` is ever run.
+//! Mirrors the former TypeScript server's `setup-token.test.ts` and the spawn
+//! half of the former TypeScript server's `usage-login.test.ts`: a fake
+//! `claude` prints a token the way the real one does — trailing ANSI-wrapped
+//! hint and all — and the assertions are about what the server did with it.
+//! Nothing here contacts Anthropic, and no real `claude` is ever run.
 //!
 //! The fake is driven by files under the server's *data* directory rather than
 //! by arguments, because the wizard chooses the working directory itself:

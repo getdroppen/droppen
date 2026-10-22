@@ -1,6 +1,6 @@
 /**
  * 「需要你」: every session that needs you, across every device that runs AI,
- * as one ledger (`docs/local-aggregator.md` §6.4, #24) — asking you first,
+ * as one ledger (`docs/local-aggregator.md` §6.4) — asking you first,
  * then unread, then working, newest first in each. One row is one session on
  * its device; picking it opens that session there.
  *

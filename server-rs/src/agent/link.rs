@@ -483,7 +483,7 @@ fn startable(paths: &Paths) -> Result<AgentState, String> {
 }
 
 /// The writer's check of a machine key from `machine-keys.json`: exactly the
-/// key this agent's chain committed for its epoch (M2 re-review #27: the file
+/// key this agent's chain committed for its epoch (M2 re-review: the file
 /// is not the chain, and outlived re-enrollments).
 fn committed_keys(state: Arc<Mutex<AgentState>>) -> super::streams::KeyCheck {
     Arc::new(move |epoch, key| {
@@ -1083,8 +1083,8 @@ fn defer(deferred: &mut Vec<Value>, value: Value) -> Option<Value> {
     (deferred.len() > MAX_DEFERRED).then(|| deferred.remove(0))
 }
 
-/// What becomes of a mail pushed out of a full deferred list (M2 re-review
-/// #28: it used to vanish, neither acknowledged nor ever tried again, and the
+/// What becomes of a mail pushed out of a full deferred list (M2 re-review:
+/// it used to vanish, neither acknowledged nor ever tried again, and the
 /// hub — counting it as unanswered — sent no further page of mail): one for
 /// an epoch this agent is already past is settled, so acknowledged; any other
 /// is released — left in the mailbox for the next sign-in, and counted as
@@ -2988,7 +2988,7 @@ mod tests {
         }
     }
 
-    /// The handshake is saved before its reply leaves (review of #117): a
+    /// The handshake is saved before its reply leaves (a review finding): a
     /// device new to the record whose save fails is refused — no reply, no
     /// route, its note taken back so the next try saves again — and never
     /// gets in without being on disk. One already on record gets in whatever
@@ -3045,7 +3045,7 @@ mod tests {
         initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap()
     }
 
-    /// Review of #117: handshakes from a device new to the record arriving
+    /// Review: handshakes from a device new to the record arriving
     /// at once — on the hub link and two direct paths, which run side by
     /// side — while saves fail: none gets in, and none leaves it noted. The
     /// note, the save and the taking back are one step under the state's
@@ -3094,7 +3094,7 @@ mod tests {
         (!routes.is_empty(), closes(&mut out_rx))
     }
 
-    /// The race of the #117 review, made to happen every time: a hub
+    /// The race of that review, made to happen every time: a hub
     /// handshake from a device new to the record is held between noting it
     /// and saving it (a test hook in [`AgentState::record_controller`])
     /// while saves fail, and a direct handshake from the same device comes
@@ -3534,7 +3534,7 @@ mod tests {
 
     /// A sole admin's own word counts for the head it was the sole admin at,
     /// even once a second admin joined: pairing one does not end its
-    /// channels before the new one vouches (review of #177).
+    /// channels before the new one vouches (a review finding).
     #[test]
     fn a_sole_admins_own_word_counts_for_the_head_it_was_sole_at() {
         let mut a = account();
@@ -3578,7 +3578,7 @@ mod tests {
         assert_eq!(lapse_wait(None, 0), Duration::ZERO);
     }
 
-    /// Review of #177 (left over): a sole admin's renewal, then its first word
+    /// Review (left over): a sole admin's renewal, then its first word
     /// on the head where a second admin joined (which does not count, and
     /// replaces the renewal in the state), reaching this agent before the
     /// channel heard of the chain change: the renewal is the channel's all
@@ -3624,7 +3624,7 @@ mod tests {
         assert_eq!(served(&channel).await, Some(200), "open past its first word's seven days");
     }
 
-    /// Third look at #177: a renewal arriving right after a handshake's
+    /// Third look: a renewal arriving right after a handshake's
     /// admission — before the channel's own task ran, and replaced at once by
     /// a word that does not count — still reaches the channel: its lapse was
     /// seeded and registered under the admission's state lock.
@@ -3667,7 +3667,7 @@ mod tests {
         assert_eq!(served(&channel).await, Some(200), "open past its first word's seven days");
     }
 
-    /// Third look at #177: a channel that ended leaves the lapse registry
+    /// Third look: a channel that ended leaves the lapse registry
     /// then, not only once an attestation arrives.
     #[tokio::test]
     async fn an_ended_channel_leaves_the_lapse_registry() {
@@ -3682,7 +3682,7 @@ mod tests {
         assert!(a.shared.lapses.lock().unwrap().is_empty(), "gone with its channel");
     }
 
-    /// Third look at #177 (optional): who was the sole admin as of a seq is
+    /// Third look (optional): who was the sole admin as of a seq is
     /// worked out once, and kept with the entry's hash.
     #[test]
     fn the_sole_admin_as_of_a_seq_is_worked_out_once() {
@@ -3711,7 +3711,7 @@ mod tests {
         assert_eq!(Some(*hash), st.chain.as_ref().unwrap().hash_at(vouched));
     }
 
-    /// Review of #177: a sole admin pairing a second admin used to have
+    /// Review: a sole admin pairing a second admin used to have
     /// every open channel of its own closed until the new admin vouched.
     #[tokio::test]
     async fn a_sole_admin_pairing_a_second_admin_keeps_its_open_channels() {
@@ -3745,7 +3745,7 @@ mod tests {
         assert!(a.heard_closes.lock().unwrap().is_empty());
     }
 
-    /// Review of #177: a hub that holds one honest admin back at an old head
+    /// Review: a hub that holds one honest admin back at an old head
     /// and forwards its fresh words about it cannot keep an open channel
     /// going past seven days from the last word given before this agent
     /// moved on.
@@ -3772,7 +3772,7 @@ mod tests {
         assert_eq!(served(&channel).await, None);
     }
 
-    /// Review of #177: a stream that races a chain change taking away the
+    /// Review: a stream that races a chain change taking away the
     /// word the channel stood on (its chain version not seen yet) is judged
     /// on the chain as it is, not on the lapse worked out before.
     #[tokio::test]
@@ -3793,7 +3793,7 @@ mod tests {
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
     }
 
-    /// Review of #177: a management request is held to the twelve hours when
+    /// Review: a management request is held to the twelve hours when
     /// it is dispatched, not only when its stream opened — a device could
     /// hold back its `End` past them.
     #[tokio::test]
@@ -3808,7 +3808,7 @@ mod tests {
         assert_eq!(a.shared.state.lock().unwrap().display_name, None, "not renamed");
     }
 
-    /// Review of #177: routes of channels that ended here go — neither the
+    /// Review: routes of channels that ended here go — neither the
     /// hub nor a relay echoes this agent's `CLOSE`.
     #[test]
     fn routes_of_channels_that_ended_here_are_forgotten() {
@@ -3926,7 +3926,7 @@ mod tests {
         assert!(connect(&a, &a.d1, "d-1", 3, &mut routes).await.is_ok(), "and lets devices in again");
     }
 
-    /// The PoC `merge_partial.rs`, at the link (M2 re-review #26.1, and the
+    /// The partial-merge PoC, at the link (M2 re-review, and the
     /// review of the fix: only `absorb`'s return value was tested). A hub
     /// batch that fails half-way is still acted on for everything it applied.
     #[tokio::test]

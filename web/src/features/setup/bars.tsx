@@ -1,10 +1,9 @@
 /*
- * The guide's one line above the session list, in the Droppen app only
- * (docs/desktop-onboarding.md §5.5, Q4): "Setup: N steps left · Continue · ×"
- * while a started guide is unfinished, or — for an install that never
- * started it — "No AI tool is ready on this device yet · Get one ready"
- * while no AI tool is ready. An existing install never gets the welcome page
- * itself.
+ * The guide's one line above the session list, in the Droppen app only:
+ * "Setup: N steps left · Continue · ×" while a started guide is unfinished,
+ * or — for an install that never started it — "No AI tool is ready on this
+ * device yet · Get one ready" while no AI tool is ready. An existing install
+ * never gets the welcome page itself.
  */
 import { useNavigate } from "@tanstack/react-router";
 import { Info, X } from "lucide-react";

@@ -1,9 +1,9 @@
 //! Token usage aggregated by calendar day and model.
 //!
-//! Port of `server/src/lib/usage.ts`. Every session file that was touched inside
-//! the window is folded once and cached by path+mtime, then the rows are keyed
-//! on their *own* timestamps — so a session that straddles the window boundary
-//! only contributes the turns that actually fall inside it.
+//! Port of the former TypeScript server's `usage.ts`. Every session file that
+//! was touched inside the window is folded once and cached by path+mtime, then
+//! the rows are keyed on their *own* timestamps — so a session that straddles
+//! the window boundary only contributes the turns that actually fall inside it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

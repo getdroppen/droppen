@@ -1,8 +1,9 @@
 //! Transcript item shape and the text/file helpers the normalizers share.
 //!
-//! Mirrors `server/src/lib/util.ts`. The types here are both the wire shape and
-//! the OpenAPI schema, so `TranscriptItem` is named after its `.openapi()` name
-//! in `server/src/schemas.ts` rather than after the internal `NormalizedItem`.
+//! Mirrors the former TypeScript server's `util.ts`. The types here are both
+//! the wire shape and the OpenAPI schema, so `TranscriptItem` is named after
+//! its `.openapi()` name in the former TypeScript server's `schemas.ts` rather
+//! than after the internal `NormalizedItem`.
 
 use std::path::Path;
 

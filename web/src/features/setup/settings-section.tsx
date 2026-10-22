@@ -5,8 +5,8 @@ import { isDesktopApp } from "@/lib/auth";
 import { useHomeMachine, useMachine } from "@/lib/machines/context";
 
 /**
- * Settings → General → Setup, in the Droppen app (docs/desktop-onboarding.md
- * §5.5): runs the first-run guide again from step 01 (`/welcome?rerun=1`).
+ * Settings → General → Setup, in the Droppen app: runs the first-run guide
+ * again from step 01 (`/welcome?rerun=1`).
  * What is set up stays set up; each step shows it as it is now.
  */
 export function SetupSection() {

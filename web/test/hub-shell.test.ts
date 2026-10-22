@@ -358,7 +358,7 @@ test("an address on another device: the same page when it is that device's, else
 });
 
 // ---------------------------------------------------------------------------
-// Bounds and lifetimes (review of #58)
+// Bounds and lifetimes
 // ---------------------------------------------------------------------------
 
 /** A hub link the streams can run over, with presence, for a shell. */

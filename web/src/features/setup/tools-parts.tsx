@@ -1,8 +1,7 @@
 /*
- * The small pieces step 01's cards are built of (docs/desktop-onboarding.md
- * §5.1): the status chip, a command shown verbatim with its copy button, the
- * method picker, the embedded terminal of a running task, and the last lines
- * of a failed one.
+ * The small pieces step 01's cards are built of: the status chip, a command
+ * shown verbatim with its copy button, the method picker, the embedded
+ * terminal of a running task, and the last lines of a failed one.
  */
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -33,7 +32,7 @@ export function useCopy(): { copied: boolean; copy: (text: string) => void } {
   };
 }
 
-/** What a status chip says with its colour: only the state, never decoration (§5.1). */
+/** What a status chip says with its colour: only the state, never decoration. */
 export type ChipTone = "ready" | "running" | "failed" | "warn" | "neutral";
 
 export function StatusChip({ tone, children }: { tone: ChipTone; children: ReactNode }) {
@@ -154,7 +153,7 @@ function Elapsed({ since }: { since: string }) {
  * A running task's terminal, embedded (dark in both themes, like every
  * terminal here): its header with the time it has run and Stop, then the
  * shim-hosted terminal itself, which a reopened window attaches to again.
- * The focus never moves in by itself; a click or F6 takes it there (H29).
+ * The focus never moves in by itself; a click or F6 takes it there.
  */
 export function TaskTerminal({ terminalId, startedAt, onStop, stopLabel }: { terminalId: string; startedAt: string; onStop: (() => void) | null; stopLabel?: string }) {
   const { t } = useTranslation();

@@ -10,8 +10,8 @@ import { DOWNLOAD_PATH } from "./get-droppen";
 import { APP_PATH, onPublicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, usePathname } from "./route";
 
 /*
- * The public pages' frame, in the landing page's drafting-sheet language
- * (design/DESIGN.md): a sticky header over a 1152px framed column, hairline
+ * The public pages' frame, in the landing page's drafting-sheet language: a
+ * sticky header over a 1152px framed column, hairline
  * sections with registration marks at their seams, and the one-line footer.
  * The landing page (`landing.tsx`), the download page (`download.tsx`), the
  * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`) and the

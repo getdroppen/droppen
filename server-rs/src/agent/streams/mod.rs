@@ -603,7 +603,7 @@ impl Sync {
                     // know goes (a delete that never reached the hub); the
                     // rest — a store reset, a session no longer listed — may be
                     // the only copy left, and is the hub's retention sweep's
-                    // to expire (#34).
+                    // to expire.
                     if self.reencrypt.is_empty() {
                         return;
                     }
@@ -743,7 +743,7 @@ impl Sync {
     /// The machine keys from `machine-keys.json` the chain committed — never
     /// one it does not (a key file left from an earlier enrollment, or one
     /// written ahead of the chain): new records are sealed under the newest
-    /// of these, not the newest in the file (M2 re-review #27).
+    /// of these, not the newest in the file (M2 re-review).
     fn load_keys(&mut self) {
         match super::state::load_machine_keys(&self.paths) {
             Ok(keys) => {
@@ -1120,7 +1120,7 @@ impl Sync {
     /// from its transcript — a batch at a time, in shuffled order — and its
     /// old stream goes once the new one is acknowledged and the index points
     /// at it. Nothing goes for being missing from this round's list, which
-    /// may be short ([`naming::migration_fate`], #34): a session it does not
+    /// may be short ([`naming::migration_fate`]): a session it does not
     /// name keeps its old stream, for the window round to judge.
     async fn migrate_round(&mut self, listed: &HashMap<String, &SessionSummary>, wanted: &BTreeMap<String, String>, target: u32, now: u64) {
         use rand::seq::SliceRandom;
@@ -1443,7 +1443,7 @@ impl Sync {
     /// Rebuild `row` under the newest machine key, past its head, so the hub
     /// deletes every record (and page) sealed under the keys before it. A
     /// session no longer in the list is not deleted for it — the list may be
-    /// short (#34) — but kept, marked, and tried again later; the window round
+    /// short — but kept, marked, and tried again later; the window round
     /// deletes its copy once that has not been written for the whole window.
     async fn reencrypt_stream(&mut self, row: &Row) -> Result<(), String> {
         let result = self.rebuild(&row.stream, row.next_seq + 1).await;
@@ -1975,7 +1975,7 @@ mod tests {
         }
     }
 
-    /// M2 re-review #27: the writer sealed under the newest epoch in
+    /// M2 re-review: the writer sealed under the newest epoch in
     /// `machine-keys.json`, whatever the chain said; now only committed keys count.
     #[test]
     fn only_keys_the_chain_committed_reach_the_writer() {

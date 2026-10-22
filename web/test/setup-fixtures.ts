@@ -35,7 +35,7 @@ export function task(tool: ToolId, kind: SetupTask["kind"], over: Partial<SetupT
   };
 }
 
-/** One tool in a named state of §5.1. */
+/** One tool in a named state. */
 export function tool(id: ToolId, state: "missing" | "signedOut" | "ready" | "tooOld" | "plan" | "fallback" | "viaAccount", over: Partial<SetupTool> = {}): SetupTool {
   const installed = {
     found: { path: `${HOME}/.local/bin/${id}`, via: "path" as const, method: "native" as const },
@@ -92,7 +92,7 @@ function command(tool: SetupCommand["tool"], kind: SetupCommand["kind"], method:
   };
 }
 
-/** The whitelist (contract PR-2); `brew: false` is a Mac without Homebrew. */
+/** The whitelist; `brew: false` is a Mac without Homebrew. */
 export function commands({ brew = true, oldMac = false }: { brew?: boolean; oldMac?: boolean } = {}): SetupCommand[] {
   const noBrew = brew ? {} : { available: false, reason: "no_brew" };
   return [

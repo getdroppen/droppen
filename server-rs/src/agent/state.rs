@@ -406,7 +406,7 @@ impl AgentState {
     /// fails) taking the note back are one step under whatever lock holds
     /// this state: what is in memory is only ever what was saved, so "on the
     /// record already" never means another handshake's note that is not on
-    /// disk (review of #117: concurrent hub, relay and direct admissions).
+    /// disk (review: concurrent hub, relay and direct admissions).
     pub fn record_controller(&mut self, paths: &Paths, device: &str, now_ms: u64) -> Recorded {
         let noted = self.note_controller(device, now_ms);
         #[cfg(test)]
@@ -792,8 +792,8 @@ pub fn load_machine_keys(paths: &Paths) -> Result<BTreeMap<u32, Zeroizing<[u8; 3
 /// What an earlier enrollment of this instance left that is not the new
 /// one's: its machine keys (`machine-keys.json`) and its streams' store
 /// (`streams.db`). A new enrollment mints a new machine id with new keys; the
-/// old file's epochs must never be what the writer seals under (M2 re-review
-/// #27). Gone files are fine.
+/// old file's epochs must never be what the writer seals under (M2 re-review).
+/// Gone files are fine.
 pub fn forget_enrollment_leftovers(paths: &Paths) -> Result<(), String> {
     let store = super::streams::store::path(paths);
     // The process's connection to the old store goes with it, or the next
@@ -906,7 +906,7 @@ mod tests {
         assert!(fresh.absorb(&[other_genesis], 0).error.is_some(), "the genesis hash is pinned too");
     }
 
-    /// The PoC `merge_partial.rs`, at the agent: the hub sends `[RecoveryJoin,
+    /// The partial-merge PoC, at the agent: the hub sends `[RecoveryJoin,
     /// <a spoiled entry>]`. The join took effect, so it is news — alerted
     /// about, saved, with this agent's own first sighting — though the batch
     /// stopped short. (It used to come back as a bare `Err`, and the link
@@ -1196,7 +1196,7 @@ mod tests {
         assert_eq!(*keys[&2], [2; 32]);
     }
 
-    /// M2 re-review #27: `agent enroll` after a re-enrollment kept the old
+    /// M2 re-review: `agent enroll` after a re-enrollment kept the old
     /// `machine-keys.json`, and the writer sealed under its newest epoch.
     #[test]
     fn a_new_enrollment_forgets_the_last_ones_keys_and_streams() {

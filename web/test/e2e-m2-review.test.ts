@@ -115,7 +115,7 @@ test("a removed device's recovery package is refused, and so is any key the chai
   const rk = await recoveryKeys(h(V.chain.recoverySecret));
   const [d0, d1] = [await dev(0), await dev(1)];
   // The removed device plants a key of its own, for an existing epoch and for one minted after its removal:
-  // whoever sealed a package, only the key the chain committed opens (#34g).
+  // whoever sealed a package, only the key the chain committed opens.
   for (const epoch of [1, 7]) {
     const sealed = await sealForRecovery(d1.dh, "dev-1", ACCOUNT, rsk, epoch, fill(0xaa));
     await assert.rejects(openFromRecovery(rk.seal, chain, rkCtx("dev-1", epoch), sealed), wrapKind("uncommitted"));

@@ -13,7 +13,7 @@
  * page runs on 「这台设备」 / 「這台裝置」 / 「このデバイス」, never a computer
  * or a machine; no "relay", "host" or "entitlement" — "our servers", "devices
  * that run AI". Every number is interpolated from `pricing-plans.ts`, which
- * a test holds to the hub's plans.rs; none is written into a sentence here.
+ * a test holds to the hub's plans; none is written into a sentence here.
  */
 
 type Bundle = Record<string, string>;

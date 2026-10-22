@@ -1,11 +1,11 @@
 //! UI preferences.
 //!
-//! Port of `server/src/lib/prefs.ts`: five settings, one row each in the
-//! machine-wide state database ([`crate::db`]) under [`scope::PREFS`], keyed by
-//! the same camelCase names the wire uses. A row per field rather than one row
-//! holding the document, because that is the shape the store already had — five
-//! independent settings that happen to be saved together — and because it is
-//! what makes the read below lenient for free.
+//! Port of the former TypeScript server's `prefs.ts`: five settings, one row
+//! each in the machine-wide state database ([`crate::db`]) under
+//! [`scope::PREFS`], keyed by the same camelCase names the wire uses. A row per
+//! field rather than one row holding the document, because that is the shape
+//! the store already had — five independent settings that happen to be saved
+//! together — and because it is what makes the read below lenient for free.
 //!
 //! The read is deliberately lenient — every field falls back on its own, so a
 //! value this build does not recognise (a newer client, a hand-edited file)

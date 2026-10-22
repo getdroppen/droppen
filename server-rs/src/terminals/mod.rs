@@ -1,8 +1,8 @@
 //! Web terminals: PTYs the browser drives over a websocket.
 //!
-//! Port of `server/src/lib/terminals.ts` (the engine) and the
-//! `/api/terminals/:id/ws` mount in `server/src/index.ts:21-54` (the transport,
-//! which lives in [`routes`]).
+//! Port of the former TypeScript server's `terminals.ts` (the engine) and the
+//! `/api/terminals/:id/ws` mount in its `index.ts` (the transport, which lives
+//! in [`routes`]).
 //!
 //! # Where the pty lives
 //!
@@ -901,9 +901,9 @@ impl Registry {
     /// Resolve a requested path (expanding a leading `~`) and make sure it stays
     /// inside the home directory.
     ///
-    /// The rule is `resolveSafe` in `server/src/lib/files.ts`, so the terminal
-    /// and the file browser can never disagree about what is inside the home
-    /// directory; only the error type is this module's.
+    /// The rule is `resolveSafe` in the former TypeScript server's `files.ts`,
+    /// so the terminal and the file browser can never disagree about what is
+    /// inside the home directory; only the error type is this module's.
     pub fn resolve_safe(&self, requested: &str) -> Result<String, TerminalError> {
         crate::files::resolve_safe(&self.paths, Some(requested))
             .map(|path| path.to_string_lossy().into_owned())

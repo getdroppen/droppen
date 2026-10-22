@@ -1,6 +1,6 @@
 /*
- * The guide's one passing line (docs/desktop-onboarding.md §5.5): "Claude Code
- * is signed in. You can go back to Droppen." when a sign-in in step 01 lands,
+ * The guide's one passing line: "Claude Code is signed in. You can go back to
+ * Droppen." when a sign-in in step 01 lands,
  * and the note over the first session the guide opens. The app has no toasts
  * of its own; this is the smallest that does: one line at a time, kept in a
  * module store so it outlives the guide's page when it navigates away, read

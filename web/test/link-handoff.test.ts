@@ -56,7 +56,7 @@ test("only this computer itself is trusted without a warning; the hub's own host
   assert.equal(callbackTier("https://droppen.app/path", hub), "refuse", "not an origin");
 });
 
-// Review of the local sign-in (PoC tier-poc.test.ts): Tailscale Funnel hands
+// Review of the local sign-in (its proof of concept): Tailscale Funnel hands
 // anyone a public https://x.<tailnet>.ts.net; a LAN neighbour can answer for
 // *.local, a private address or 100.64/10. A fake settings page on any of
 // them could open the real /link, and one click on "Add this computer" sent it

@@ -4,8 +4,8 @@
 //! server terminal ([`crate::terminals`]): the guide shows it in its embedded
 //! xterm, the user can type into it (a password prompt, the code a CLI asks
 //! for), and because terminals live in a detached shim, an install keeps going
-//! when the window closes and is there to reattach to when it opens again
-//! (H26). What this module adds around the terminal is bookkeeping:
+//! when the window closes and is there to reattach to when it opens again.
+//! What this module adds around the terminal is bookkeeping:
 //!
 //! * a bounded tail of the output (`on_data`), so a failure can be shown in
 //!   plain words — no network, no permission, no disk — with the last lines
@@ -30,8 +30,8 @@
 //! not with the `PATH` Droppen gives its children. Two reasons, both found on
 //! real machines: Codex's installer decides whether to add `~/.local/bin` to
 //! `~/.zprofile` by looking at `PATH`, and Droppen's always has it, so the
-//! user's own terminal would never find codex (H5); and a company proxy set in
-//! `.zshrc` is invisible to an app launchd started (H32).
+//! user's own terminal would never find codex; and a company proxy set in
+//! `.zshrc` is invisible to an app launchd started.
 //!
 //! A sign-in is the opposite: it runs the very binary the guide found, with
 //! the children's environment, because the login being made is the one

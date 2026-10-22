@@ -1,10 +1,10 @@
 //! Claude JSONL -> normalized transcript items.
 //!
-//! Port of `parseClaudeTranscript` in `server/src/lib/claude.ts`. The parse is
-//! deliberately tolerant: every line goes through `serde_json::Value`, so an
-//! unknown block type is skipped rather than failing the file, and a line that
-//! does not parse at all (a half-written tail while the CLI is mid-write) is
-//! ignored exactly as the TypeScript does.
+//! Port of `parseClaudeTranscript` in the former TypeScript server's
+//! `claude.ts`. The parse is deliberately tolerant: every line goes through
+//! `serde_json::Value`, so an unknown block type is skipped rather than failing
+//! the file, and a line that does not parse at all (a half-written tail while
+//! the CLI is mid-write) is ignored exactly as the TypeScript does.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1419,9 +1419,10 @@ mod tests {
         assert_eq!(items[0].files.as_ref().expect("one file")[0].name, "b.txt");
     }
 
-    /// Port of `server/src/lib/background.test.ts`. A background launch has to
-    /// stay visible in the UI, because its result lands much later and the item
-    /// would otherwise be folded away into a step group before it arrives.
+    /// Port of the former TypeScript server's `background.test.ts`. A
+    /// background launch has to stay visible in the UI, because its result
+    /// lands much later and the item would otherwise be folded away into a step
+    /// group before it arrives.
     #[tokio::test]
     async fn a_background_launch_is_flagged_and_a_foreground_one_is_not() {
         let (dir, path) = write_jsonl(&[

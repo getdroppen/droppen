@@ -1,4 +1,4 @@
-// #34g, the page's side: the hub serves every copy of a wrap and keeps one
+// The page's side: the hub serves every copy of a wrap and keeps one
 // copy per epoch, and one recovery package per epoch, of a writer no longer
 // current (removed, or demoted by chain v3) — so the readers must try them:
 //
@@ -62,7 +62,7 @@ function onlyPackage(hub: FakeKeysHub, epoch: number, keep: string): void {
   for (const name of [...hub.keys.keys()]) if (name.startsWith(`rk/${epoch}/`) && name !== keep) hub.keys.delete(name);
 }
 
-test("#34g v2: a removed device's recovery package is the way back in for its epoch — only as the chain committed it", async () => {
+test("v2: a removed device's recovery package is the way back in for its epoch — only as the chain committed it", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   const words = (await createV2Genesis(a, true))!;
@@ -104,7 +104,7 @@ test("#34g v2: a removed device's recovery package is the way back in for its ep
   assert.equal(hex(await rawUk(z, 0)), hex(uk0));
 });
 
-test("#34g v3: a demoted admin's package and machine-key copy are tried, and taken only as the chain committed them", async () => {
+test("v3: a demoted admin's package and machine-key copy are tried, and taken only as the chain committed them", async () => {
   const hub = new FakeKeysHub();
   hub.chainV3Mode = "write";
   const a = await hub.device("tok");

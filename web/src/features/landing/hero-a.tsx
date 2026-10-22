@@ -21,7 +21,7 @@ import { type Chip, chipLabel, drawRow, type Message, type Shown, textOf } from 
  *
  * Computer and phone share a row with the straight green line between them;
  * the Droppen relay sits below, between them, reached by a single L from each
- * (design/DESIGN.md: a wire bends at most once). Sizes are fixed: a wider
+ * (a wire bends at most once). Sizes are fixed: a wider
  * screen only leaves more grid around the figure. On a phone the three stack.
  */
 

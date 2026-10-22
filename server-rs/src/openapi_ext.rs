@@ -10,7 +10,7 @@
 //! name) plus the status entry into the operation's `responses`.
 //!
 //! It also carries two shape fixes that keep the generated TypeScript identical
-//! to the zod contract in `server/src/schemas.ts`:
+//! to the zod contract in the former TypeScript server's `schemas.ts`:
 //!
 //! * [`Nullable`] — a value that is always present but may be `null`. gotcha maps
 //!   `Option<T>` to *optional and nullable*, but zod's `.nullable()` (without

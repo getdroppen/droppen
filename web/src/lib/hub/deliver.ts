@@ -257,7 +257,7 @@ export function forgetPendingReencrypts(account: string): void {
  * commitment) — and only if it hashes to the pinned commitment too. A key
  * that does not is never posted. Cleared once the agent answers 200, or a
  * 409 saying it already holds a newer epoch (re-encrypting under this one is
- * moot) — and only then (M2 re-review #28): a 409 `uncommitted` means the
+ * moot) — and only then (M2 re-review): a 409 `uncommitted` means the
  * agent's chain is behind (a hub can hold back the commitment to make it say
  * so), and `key_mismatch` that its chain disagrees; either way the request
  * stays, to be asked again in the next channel. Returns how many were asked.

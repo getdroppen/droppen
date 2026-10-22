@@ -4,7 +4,7 @@
 // exist without a Node toolchain on the build host.
 //
 // The mark is a solid drop that is also a D: a square corner at the top left
-// and a 270° arc (design/DESIGN.md §2.9, design/logo/). The owner's rule: the
+// and a 270° arc. The owner's rule: the
 // browser favicon is the black mark on a transparent ground (white in dark tab
 // bars, via the SVG's prefers-color-scheme), and every app icon is the paper
 // mark on an ink tile. logo.png is an output of this script, not its input.

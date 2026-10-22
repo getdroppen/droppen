@@ -1,5 +1,5 @@
 /*
- * Step 03's rules (docs/desktop-onboarding.md §5.3, §6.8, H23–H25): which
+ * Step 03's rules: which
  * tools can run the first session, which first messages are offered for the
  * folder picked, when macOS will ask about a protected folder, and what
  * Continue stores — `progress.first = { cwd, agent, prompt }`. No React and
@@ -27,14 +27,14 @@ export interface FirstUi {
 
 export const EMPTY_FIRST_UI: FirstUi = { cwd: null, practice: false, agent: null, prompt: null, own: "", browsing: false };
 
-/** The suggestions (i18n keys): in a project they only ask the AI to look (H25); in the practice folder it makes something. */
+/** The suggestions (i18n keys): in a project they only ask the AI to look; in the practice folder it makes something. */
 export const PROMPTS: Record<Exclude<PromptChoice, "own">, string> = {
   repo1: "Explain this project: what it does and how to run it. Don't change any files yet.",
   repo2: "List the three things most worth fixing here first. Just list them; don't change anything.",
   practice: "Make a one-page website that shows today's date and a short quote, then tell me how to open it.",
 };
 
-/** The note over the empty-session view the guide lands on (§5.5), an i18n key. */
+/** The note over the empty-session view the guide lands on, an i18n key. */
 export const LANDED = "Press Send when you're ready. Model, effort and permission are in the row below.";
 
 /** The practice folder's place (the server adds -2, -3… when it is taken). */
@@ -78,7 +78,7 @@ export function promptText(ui: FirstUi, t: (key: string) => string): string {
   return choice === "own" ? ui.own.trim() : t(PROMPTS[choice]);
 }
 
-/** The folders macOS guards (TCC, H23): asked once whether Droppen may open them. */
+/** The folders macOS guards (TCC): asked once whether Droppen may open them. */
 const PROTECTED = ["Documents", "Desktop", "Downloads"];
 
 /** Whether `path` is in ~/Documents, ~/Desktop or ~/Downloads (or is one of them). */

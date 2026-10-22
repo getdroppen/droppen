@@ -1,7 +1,7 @@
 /*
- * The hand-off from the guide to the empty-session view (docs/desktop-
- * onboarding.md §5.5, §6.8): the one place that knows how the guide opens
- * that view with step 03's folder, tool and first message — through the
+ * The hand-off from the guide to the empty-session view: the one place that
+ * knows how the guide opens that view with step 03's folder, tool and first
+ * message — through the
  * view's own prefill entry point (`useOpenNewSession`, the
  * `?cwd=…&draft=…&agent=…` it takes into its draft and drops from the
  * address).

@@ -1,9 +1,10 @@
 //! The `/embed/{id}/*` reverse proxy, for HTTP and for websockets.
 //!
-//! Port of `server/src/index.ts:135-196`, where the TypeScript drops out of hono
-//! entirely: it puts `http-proxy` on the bare node server, in front of the hono
-//! listener for `web` requests and in front of hono's own upgrade handler for
-//! `upgrade` ones. Nothing about it is in the OpenAPI document, in either server.
+//! Port of the former TypeScript server's `index.ts`, where the TypeScript
+//! drops out of hono entirely: it puts `http-proxy` on the bare node server, in
+//! front of the hono listener for `web` requests and in front of hono's own
+//! upgrade handler for `upgrade` ones. Nothing about it is in the OpenAPI
+//! document, in either server.
 //!
 //! # Where it hangs
 //!

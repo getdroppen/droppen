@@ -1,10 +1,10 @@
 //! `claude auth login`, run in a terminal against one account's probe directory.
 //!
-//! Port of the `startUsageLogin` half of `server/src/lib/usage-login.ts` and the
-//! route that drives it in `server/src/app.ts:1209-1247`. The other half —
-//! `verifyUsageLogin`, which is a plain `claude auth status --json` with no pty
-//! involved — is [`super::verify_usage_login`], and was ported with the accounts
-//! routes.
+//! Port of the `startUsageLogin` half of the former TypeScript server's
+//! `usage-login.ts` and the route that drives it in its `app.ts`. The other
+//! half — `verifyUsageLogin`, which is a plain `claude auth status --json` with
+//! no pty involved — is [`super::verify_usage_login`], and was ported with the
+//! accounts routes.
 //!
 //! A `setup-token` token can run sessions but cannot read usage: its scope is
 //! `user:inference` only. Reading the quota needs a real login, so each account

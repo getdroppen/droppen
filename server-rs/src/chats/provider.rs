@@ -2,10 +2,10 @@
 //! model.
 //!
 //! Port of the "OpenAI-compatible provider configuration" half of
-//! `server/src/lib/chats.ts`. Three rows in the machine-wide state database
-//! ([`crate::db`]) under [`scope::CHAT_PROVIDER`], keyed by the wire's own
-//! `baseUrl`, `apiKey` and `model`. Three properties are load-bearing and are
-//! what the tests in this module pin down:
+//! the former TypeScript server's `chats.ts`. Three rows in the machine-wide
+//! state database ([`crate::db`]) under [`scope::CHAT_PROVIDER`], keyed by the
+//! wire's own `baseUrl`, `apiKey` and `model`. Three properties are
+//! load-bearing and are what the tests in this module pin down:
 //!
 //! * **the key never leaves the server.** Everything the API returns goes
 //!   through [`ChatProviderInfo`], which carries `hasKey: bool` and no key. The

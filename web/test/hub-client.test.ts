@@ -922,7 +922,7 @@ test("a device that does not manage the account vouches for nothing when it open
 
 test("a computer that cannot save who connects to it says so, at once, rather than retrying blind", async (t) => {
   const { account, hub, link } = await linked(t);
-  // What the agent closes with when it took the handshake but its disk would not take the record (review of #117).
+  // What the agent closes with when it took the handshake but its disk would not take the record.
   hub.refuseOpens = "this device cannot save its record of who connects to it: check its disk";
   hub.refuseCode = AGENT_UNSAVED;
   const opens = hub.opens.length;
@@ -1176,7 +1176,7 @@ test("the local sign-in's enrollment adds only the computer whose keys the reque
   assert.equal(http.chain.length, before + 2, "added, with its first key epoch");
 });
 
-test("re-review of #172: a fork a handshake shows latches the account: no channel, no attestation", async (t) => {
+test("re-review: a fork a handshake shows latches the account: no channel, no attestation", async (t) => {
   const { account, hub, link } = await linked(t);
   // The agent's view at this device's seq is another entry.
   hub.agent.shapeReply = () => ({ chainHead: new Uint8Array(32).fill(7) });
@@ -1189,7 +1189,7 @@ test("re-review of #172: a fork a handshake shows latches the account: no channe
   await assert.rejects(channel.ensure(), "and no channel opens on it after");
 });
 
-test("re-review of #172: what a refused handshake taught (verified) is kept, not left to a hub that may withhold it", async (t) => {
+test("re-review: what a refused handshake taught (verified) is kept, not left to a hub that may withhold it", async (t) => {
   const { account, hub, link } = await linked(t);
   // An entry the hub has not served this device, which the agent learnt elsewhere: it teaches it, and refuses this once.
   const chain = account.chain!;

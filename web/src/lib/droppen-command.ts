@@ -38,7 +38,7 @@ export interface CommandEnv {
 /**
  * The variables a command may be shown with: which instance, and where its
  * files are — today's names, and the `DROPPEN_` ones the rename moves the
- * directories to (`docs/rename-to-droppen.md`; `APP_INSTANCE` is the
+ * directories to (`APP_INSTANCE` is the
  * framework's and keeps its name). Anything else a server sends is dropped:
  * a page that shows another device's commands must not let that device put
  * `DYLD_INSERT_LIBRARIES` or `BASH_ENV` in front of one a person copies.

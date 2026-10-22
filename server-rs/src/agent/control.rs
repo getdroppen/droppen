@@ -735,7 +735,7 @@ mod tests {
         );
     }
 
-    /// Review of the local sign-in (PoC `poc_unenroll_then_reenroll_reuses_the_old_streams_store`):
+    /// Review of the local sign-in:
     /// the process keeps one connection per database file, so after unenroll
     /// deleted `streams.db` the next enrollment's store was the old one —
     /// its rows (re-sent to the new account), in an unlinked file (every

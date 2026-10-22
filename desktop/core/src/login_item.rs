@@ -22,12 +22,11 @@
 //! local build registering it would take over the release's Login Item, and an
 //! end-to-end run must never register anything with the real Login Items.
 //!
-//! *Start at Login* is on by default (design `docs/desktop-onboarding.md`
-//! §10, Q2): a new install's first launch turns it on, once
-//! ([`default_at_launch`]), and `state.json` records that it did. From then on
-//! it is the user's — the menu, System Settings — and the app never turns it
-//! on again. An install that ran here before ([`first_launch`] lists the
-//! signs), or one with a login item of any kind, is left as it is.
+//! *Start at Login* is on by default: a new install's first launch turns it
+//! on, once ([`default_at_launch`]), and `state.json` records that it did. From
+//! then on it is the user's — the menu, System Settings — and the app never
+//! turns it on again. An install that ran here before ([`first_launch`] lists
+//! the signs), or one with a login item of any kind, is left as it is.
 //!
 //! The decisions are here, over [`Service`] and [`Legacy`], so they are tested
 //! with fakes; the app crate supplies the real `SMAppService` and file.

@@ -44,7 +44,7 @@ test("keyring names are the hub's, and parse back", () => {
   assert.equal(keyName.machine("m-abc", 2, 1), "mk/m-abc/2/1");
   const rsk = new Uint8Array(32).fill(0xab);
   assert.equal(keyName.recovery(3, "d-xyz", rsk), "rk/3/d-xyz/abababababababab");
-  // Today's names end with their writer (M2 re-review #27); older ones parse with none.
+  // Today's names end with their writer (M2 re-review); older ones parse with none.
   assert.equal(keyName.written("mk/m-abc/2/1", "d-1"), "mk/m-abc/2/1/d-1");
   assert.equal(keyName.written("mk/m-abc/2/1", "d-1", "0a0b"), "mk/m-abc/2/1/d-1.0a0b");
   assert.deepEqual(parseKeyName("mk/m-abc/2/1/d-1"), { kind: "machine", machine: "m-abc", mkEpoch: 2, ukEpoch: 1, base: "mk/m-abc/2/1", writer: "d-1" });
@@ -147,7 +147,7 @@ test("M1's raw machine keys are deleted only once the hub holds a blob that unwr
   const before = store.puts.length;
   // The hub holds garbage under this device's own name already (tampering:
   // only this device writes names ending with it). The blob goes under a
-  // new name of its own (M2 re-review #27: a taken name used to mean "skip"),
+  // new name of its own (M2 re-review: a taken name used to mean "skip"),
   // and the raw copy goes only once a blob the hub holds unwraps to it.
   hub.keys.set(`mk/m-1/0/1/${a.deviceId}`, { blob: hex(new Uint8Array(60).fill(7)), updated_ms: 0, writer: a.deviceId });
   const again = await hub.reload(a);

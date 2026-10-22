@@ -10,7 +10,7 @@
  * foot, ends up on top of the keyboard, and the header is off the top of the
  * screen until the keyboard goes. WebKit makes that pan even though the root
  * has nothing to scroll: the iOS 26.5 Simulator does it in one step, and the
- * owner's iOS 27 phone animates it (#169's readout).
+ * owner's iOS 27 phone animates it.
  * The shell is never sized from `visualViewport` or `innerHeight` here, no
  * keyboard is ever detected, and nothing scrolls the page while a field has
  * focus. The one field WebKit does not reveal is the terminal's (`holdInView`).
@@ -20,19 +20,19 @@
  * `innerHeight` (or the fixed box) and the visual viewport. While the page is
  * panned, `innerHeight` follows the visual viewport down (iOS 26 too). Where
  * the pan lands in one step the gap never reads wrong. iOS 27 animates it over
- * several frames, and `innerHeight` shrinks along with it. So before #115 the
- * gap "closed" partway up, and the leftover-pan reset then scrolled the page
- * back to the top with the keyboard still up. That put the composer under the
- * keyboard (#115). After #115 the shell fell back to full height partway up
- * (#166). Then, after a dismissal, iOS 27 kept the keyboard's numbers and the
- * shell stayed a keyboard short (#169).
+ * several frames, and `innerHeight` shrinks along with it. So before the
+ * first fix the gap "closed" partway up, and the leftover-pan reset then
+ * scrolled the page back to the top with the keyboard still up. That put the
+ * composer under the keyboard. After that fix the shell fell back to full
+ * height partway up. Then, after a dismissal, iOS 27 kept the keyboard's
+ * numbers and the shell stayed a keyboard short.
  *
  * One thing is left to do here. With no field focused there is no keyboard,
  * and the root, which has nothing to scroll, belongs at the top. (Focus in an
  * embedded app's frame counts as a field: a field in it may have the keyboard.) Once the
  * keyboard is dismissed, iOS 27 can leave its pan behind: `visualViewport`,
  * `innerHeight` and `scrollY` keep their keyboard-up values and no event
- * follows (WebKit bug 322900, and the readout in #169). The pinned shell then
+ * follows (WebKit bug 322900). The pinned shell then
  * sits a keyboard high over an empty strip. So once focus has stayed off every
  * field for `RESET_MS[0]`, and again over the next second, a root that is still
  * scrolled is scrolled back to the top. The same happens whenever the viewport

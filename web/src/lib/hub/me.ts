@@ -3,7 +3,7 @@
  * machine's offline copy on the hub, and the devices registered with the
  * account's password — kept current from the hub link: the `plan` control
  * message (after sign-in and on every change: its `detail` is `/v1/me`'s
- * `plan`), `device_registered` (#33), `sign_in_changed` (a passkey or the
+ * `plan`), `device_registered`, `sign_in_changed` (a passkey or the
  * password added, renamed, changed or removed: every full device says so),
  * and a fresh read when the link opens or a machine's presence changes (the
  * hub notes when an agent signed out).

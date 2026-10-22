@@ -10,7 +10,7 @@
 //!
 //! Detection reads no credential. It does not open `~/.claude/.credentials.json`,
 //! `~/.claude.json` or `~/.codex/auth.json`, does not run `security` against
-//! the keychain, and runs no `/usage` probe (H36: that takes a machine-wide lock
+//! the keychain, and runs no `/usage` probe (that takes a machine-wide lock
 //! and spends rate-limit budget). `codex login status` prints a masked API key;
 //! [`codex_login`] reads only the words before it, and the output is dropped
 //! the moment it has been parsed — it is never stored, logged or reported.
@@ -123,7 +123,7 @@ fn signed_out() -> ToolLogin {
 /// present). A banner around the JSON is tolerated
 /// ([`crate::accounts::parse_auth_status`]).
 ///
-/// `usable` is the design's best effort at H9: `subscriptionType: "free"` is a
+/// `usable` is a best effort: `subscriptionType: "free"` is a
 /// login whose plan does not include Claude Code. Any other subscription says
 /// yes; no subscription (a Console or API-key login) says nothing.
 pub fn claude_login(output: &RunOutput) -> ToolLogin {

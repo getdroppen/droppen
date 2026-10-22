@@ -1,9 +1,9 @@
 //! Persistent screens — saved pane layouts.
 //!
-//! Port of `server/src/lib/screens.ts`. A screen's layout is a binary split tree
-//! whose leaves *reference* server-side resources (sessions, terminals, chats);
-//! the server never interprets those ids and never owns what they point at, so
-//! deleting a screen leaves the resources alone.
+//! Port of the former TypeScript server's `screens.ts`. A screen's layout is a
+//! binary split tree whose leaves *reference* server-side resources (sessions,
+//! terminals, chats); the server never interprets those ids and never owns what
+//! they point at, so deleting a screen leaves the resources alone.
 //!
 //! The file is instance-scoped (`<data>/instances/<name>/screens.json`) rather
 //! than shared like most sidecars: those leaf ids name terminals and resident

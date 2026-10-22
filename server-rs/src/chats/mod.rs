@@ -1,8 +1,8 @@
 //! Instant chats: the casual-conversation surface, on two very different
 //! backends behind one list.
 //!
-//! Port of `server/src/lib/chats.ts` plus the chat routes of `server/src/app.ts`.
-//! A chat is either
+//! Port of the former TypeScript server's `chats.ts` plus the chat routes of
+//! its `app.ts`. A chat is either
 //!
 //! * **CLI-backed** — an ordinary `claude` / `codex` session anchored in
 //!   [`chats_cwd`], billed to the CLI's own subscription login. Nothing about it
@@ -18,9 +18,9 @@
 //! The streaming send is the one route in this module without an `#[api]`
 //! attribute: it answers with server-sent events, which the OpenAPI document
 //! cannot describe, and the TypeScript leaves it out of the spec for the same
-//! reason (`server/src/app.ts`, "Server-sent events rather than an OpenAPI
-//! route"). Its frames are therefore a contract of their own, pinned by
-//! `tests/chats.rs`.
+//! reason (the former TypeScript server's `app.ts`, "Server-sent events rather
+//! than an OpenAPI route"). Its frames are therefore a contract of their own,
+//! pinned by `tests/chats.rs`.
 
 pub mod provider;
 pub mod store;
@@ -49,7 +49,7 @@ pub use store::{ApiChat, ApiChatMessage};
 ///
 /// codex has no `--system-prompt`, so its persona is an `AGENTS.md` in the
 /// anchor directory. The bytes are the contract: this is the text a CLI is
-/// actually launched against, and `server/src/lib/chats.ts` owns the original.
+/// actually launched against.
 const CHATS_AGENTS_MD: &str = "# Instant chat\n\
                                \n\
                                This directory is a casual chat app, NOT a coding session. The user wants a\n\

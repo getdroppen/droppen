@@ -50,8 +50,8 @@ const encoder = new TextEncoder();
  * UTF-8 (overlong forms, surrogates, past U+10FFFF, cut short) is refused,
  * and a leading byte-order mark is kept as U+FEFF — not dropped, as a
  * `TextDecoder` does by default, which let a hub put one into a signed
- * string that this side then verified as the original and Rust refused
- * (external review of the E2E line, item B). So `utf8(fromUtf8(b))` is `b`.
+ * string that this side then verified as the original and Rust refused.
+ * So `utf8(fromUtf8(b))` is `b`.
  */
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 

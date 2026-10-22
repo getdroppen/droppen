@@ -1,7 +1,7 @@
 //! `claude setup-token`, captured off a pty.
 //!
-//! Port of `server/src/lib/setup-token.ts` plus the two routes that drive it in
-//! `server/src/app.ts:1156-1206`.
+//! Port of the former TypeScript server's `setup-token.ts` plus the two routes
+//! that drive it in its `app.ts`.
 //!
 //! `claude setup-token` is an OAuth dance: the CLI prints an authorization URL,
 //! the user authorizes it and pastes the code back, and the CLI finally prints a
@@ -30,7 +30,7 @@
 //! [`submit_setup_token_code`] and is typed into the pty.
 //!
 //! The one exception is the desktop app asking its own server from this very
-//! device ([`crate::setup::app_caller`], H15 in the first-run design):
+//! device ([`crate::setup::app_caller`]):
 //! there the browser the CLI opens *is* the user's, so the stubs are left out
 //! and the authorization page simply opens. The URL is still scraped and shown,
 //! as the fallback for a browser that did not come up.

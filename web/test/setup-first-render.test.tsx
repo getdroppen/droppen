@@ -1,5 +1,5 @@
-// Step 03 · First session as drawn (`features/setup/first-step.tsx`,
-// docs/desktop-onboarding.md §5.3): the recent folders, the practice
+// Step 03 · First session as drawn (`features/setup/first-step.tsx`): the
+// recent folders, the practice
 // folder, another folder through the empty-session view's own browser (and
 // no search of the disk for projects), the macOS privacy note, only ready tools to run with,
 // the first messages, and the step with no tool ready.
@@ -87,7 +87,7 @@ test("the folders: recent ones (name, place, which tool, how long ago), the prac
   assert.doesNotMatch(step(both, { recent: [] }), /Used recently/, "no recent folders: no section");
 });
 
-test("a folder in Documents, Desktop or Downloads: macOS will ask once — choose Allow (H23)", () => {
+test("a folder in Documents, Desktop or Downloads: macOS will ask once — choose Allow", () => {
   const html = step(both, { ui: { ...EMPTY_FIRST_UI, cwd: `${HOME}/Documents/notes` } });
   assert.match(html, /data-testid="first-tcc"[^>]*>Folders in Documents, Desktop or Downloads: macOS asks once whether Droppen may open them\. Choose Allow\./);
   assert.doesNotMatch(step(both, { ui: { ...EMPTY_FIRST_UI, cwd: `${HOME}/Projects/droppen-site` } }), /first-tcc/);

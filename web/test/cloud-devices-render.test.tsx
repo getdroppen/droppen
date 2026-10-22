@@ -142,7 +142,7 @@ test("every active device warns about a pending recovery, with approve and remov
   assert.equal(draw(<PendingRecoveryBanner account={fake([{ id: "d-xyz", joinSeq: 4 }], "pending")} link={link} />), "", "only an active device can act on it");
 });
 
-test("#26.5: a self-activation this browser holds back says so, still with approve and remove", () => {
+test("a self-activation this browser holds back says so, still with approve and remove", () => {
   const account = {
     standing: "active",
     chain: { pendingRecoveries: () => [{ id: "d-xyz", joinSeq: 4 }] },
@@ -163,7 +163,7 @@ test("#26.5: a self-activation this browser holds back says so, still with appro
   assert.equal(blockedByHold(account, "d-xyz"), false);
 });
 
-test("#27.1: a device missing the newest user key says so, and can ask again or rotate", () => {
+test("a device missing the newest user key says so, and can ask again or rotate", () => {
   const account = { onChange: () => () => undefined } as unknown as CloudAccount;
   const html = draw(<MissingUserKey account={account} link={{} as HubLink} epoch={3} />);
   assert.match(html, /data-testid="missing-user-key"/);
@@ -294,7 +294,7 @@ test("my devices: a computer that runs AI shows the badge, where it is, and — 
   assert.ok(zh.includes(">可运行 AI<"), zh);
   const zhMenu = menu(row({ id: "m-1", kind: "computer", host: true, presence: "online" }), {}, "zh-CN").map((i) => i.label);
   assert.ok(zhMenu.includes("停止运行 AI") && zhMenu.includes("谁可以控制它") && zhMenu.includes("打开终端"), zhMenu.join(","));
-  assert.ok(!zh.includes("可管理账号") && !zh.includes('role="switch"'), "no 「可管理账号」 switch (#111)");
+  assert.ok(!zh.includes("可管理账号") && !zh.includes('role="switch"'), "no 「可管理账号」 switch");
   // Stopped: it may run AI again (behind the same v3 gate).
   const stopped = list(<DeviceRow view={row({ id: "m-2", kind: "computer", stoppedHost: true })} viewerAdmin upgraded writable />);
   assert.ok(stopped.includes(">stopped running AI<"));
@@ -377,7 +377,7 @@ test("badges say what a device is: this device, can run AI, the main device, a f
   assert.ok(dismissed.includes("re-enroll-dismissed-m-1"));
 });
 
-test("#111: no 「可管理账号」 switch on any row; a limited device says so, and a full device may make it one — or is told to upgrade the account first", () => {
+test("no 「可管理账号」 switch on any row; a limited device says so, and a full device may make it one — or is told to upgrade the account first", () => {
   // A full device's row: no switch, no chip, no promote — on any row, whatever it is.
   for (const view of [row(), row({ self: true }), row({ id: "m-1", kind: "computer", host: true, presence: "online" }), row({ id: "m-2", kind: "computer", stoppedHost: true })]) {
     const html = list(<DeviceRow view={view} viewerAdmin upgraded writable onPromote={() => undefined} />);
@@ -454,7 +454,7 @@ test("D4: upgrading to chain v3 is its own step — offered only while the hub t
   assert.ok(draw(<UpgradeConfirm ukEpoch={4} busy={false} error={null} onConfirm={() => undefined} onCancel={() => undefined} />, "zh-CN").includes("此操作无法撤销"));
 });
 
-test("#111: making a limited device a full device asks first — it gets the account's keys, and need not be online", () => {
+test("making a limited device a full device asks first — it gets the account's keys, and need not be online", () => {
   const html = draw(<PromoteDevice device="d-2" busy={false} onConfirm={() => undefined} onCancel={() => undefined} />);
   assert.match(html, /role="alertdialog"[^>]*data-testid="promote-device"/);
   assert.ok(html.includes("make d-2 a full device?"), html);
@@ -466,7 +466,7 @@ test("#111: making a limited device a full device asks first — it gets the acc
   assert.ok(draw(<PromoteDevice device="d-2" busy={false} onConfirm={() => undefined} onCancel={() => undefined} />, "ja").includes("d-2 をフルデバイスにしますか"));
 });
 
-test("#111: a device made a full device whose keys were not mailed says so under its row, with “re-send keys” right there", async () => {
+test("a device made a full device whose keys were not mailed says so under its row, with “re-send keys” right there", async () => {
   if (!i18next.isInitialized) await i18next.init({ lng: "en", resources: {}, keySeparator: false, nsSeparator: false, interpolation: { escapeValue: false } });
   // The confirmation writes through `promote`; when mailing its keys failed, the row hears why, in words.
   const heard: string[] = [];
@@ -529,7 +529,7 @@ test("who can control this device: three choices, a picker, and the warning abou
   assert.ok(zh.includes("请先升级账号"));
 });
 
-test("#111: adding a browser or phone always makes it a full device — no choice, on chain v2 and v3 alike", async () => {
+test("adding a browser or phone always makes it a full device — no choice, on chain v2 and v3 alike", async () => {
   const candidate = { device: "d-new", fingerprint: "ABCD-EFGH-IJKL-MNOP" } as unknown as Parameters<typeof ConfirmCandidate>[0]["candidate"];
   for (const isV3 of [true, false]) {
     const paired: unknown[] = [];
@@ -850,7 +850,7 @@ const confirmRow = (tree: El[], id: string): El => {
   return dialog;
 };
 
-test("14 (U1–U3), #111: on the devices page, a limited device's “make it a full device” and stopping AI each open their confirmation; only confirming writes", async () => {
+test("on the devices page, a limited device's “make it a full device” and stopping AI each open their confirmation; only confirming writes", async () => {
   const { a, other, plain, calls, props } = await panelAccount();
   const me = a.deviceId;
   const promote = (id: string) => (tree: El[]) => (rowOf(tree, id).props.onPromote as () => void)();
@@ -895,7 +895,7 @@ test("14 (U1–U3), #111: on the devices page, a limited device's “make it a f
   assert.deepEqual(calls.splice(0).map((c) => c.slice(0, 3)), [["setHost", "m-1", true]]);
 });
 
-test("#111: on chain v2 a limited device is shown, and making it a full device waits for the upgrade", async () => {
+test("on chain v2 a limited device is shown, and making it a full device waits for the upgrade", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await createV2Genesis(a, true);
@@ -1048,7 +1048,7 @@ test("the upgrade banner says the hub is why while it reads chain v3 only — an
 /** A page link that offers nothing (no presence, no messages). */
 const quietLink = () => new Proxy({ presence: new Map() } as Record<string, unknown>, { get: (t, k) => (k in t ? t[k as string] : () => () => undefined) }) as unknown as HubLink;
 
-test("U3: on 「我的设备」, the upgrade's start button opens its confirmation — it upgrades nothing until that is confirmed", async () => {
+test("on 「我的设备」, the upgrade's start button opens its confirmation — it upgrades nothing until that is confirmed", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await createV2Genesis(a, true);

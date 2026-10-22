@@ -1,7 +1,7 @@
 // The M2 security review's account-level findings, as regressions against a
 // fake hub (`lib/hub/account.ts`, `keyring.ts`, `deliver.ts`, `pairing.ts`).
-// The review's proofs of concept (`poc-m2.test.ts`) each attacked successfully
-// before; ported here, each attack must now fail:
+// The review's proofs of concept each attacked successfully before; ported
+// here, each attack must now fail:
 //
 // - PoC 1 (C1): a removed device — with the hub, since it can no longer write
 //   the keyring itself — plants `mk/<m>/1/0`, and the pending re-encryption
@@ -88,7 +88,7 @@ async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
   return b;
 }
 
-/** Postgres lists the keyring `ORDER BY name` (rh-hub db.rs key_wraps). */
+/** Postgres lists the keyring `ORDER BY name` (rh-hub's `key_wraps`). */
 function sortByName(hub: FakeKeysHub) {
   hub.keys = new Map([...hub.keys.entries()].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
 }
@@ -142,7 +142,7 @@ test("PoC 2 now fails: a garbage keyring name numbers nothing, and the removal s
   const { hub, a, b } = await setup();
   const c = b; // the device to remove
   // A full device no longer can plant a name with the largest epoch (M2
-  // re-review #27: names end with their writer and name committed epochs)…
+  // re-review: names end with their writer and name committed epochs)…
   await assert.rejects(c.api.putKey(c.session.token, "rk/4294967295/x", new Uint8Array(16)), { status: 403 });
   await assert.rejects(c.api.putKey(c.session.token, `mk/m-1/4294967295/4294967295/${c.deviceId}`, new Uint8Array(16)), { status: 403 });
   // …but the hub can.
@@ -396,7 +396,7 @@ test("E2E review: first sightings from every page are merged, the earliest of ea
   assert.equal(back.chainClock.firstSeen.get(y), t0 + 180_000, "the stale tab's sighting of y, not a's later one");
 });
 
-// ---- review of #172 ----------------------------------------------------
+// ---- review ------------------------------------------------------------
 
 /**
  * `account`'s browser opened again on `storage` (another page's copy of its
@@ -455,7 +455,7 @@ async function equalHeightFork(hub: FakeKeysHub, a: CloudAccount, b: CloudAccoun
   return { mine, theirs: hub.chain.slice() };
 }
 
-test("review of #172: a fork caught is not installed — the page keeps its view, latches the alarm, and attests, signs and seals nothing", async () => {
+test("review: a fork caught is not installed — the page keeps its view, latches the alarm, and attests, signs and seals nothing", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   await b.sync();
@@ -475,7 +475,7 @@ test("review of #172: a fork caught is not installed — the page keeps its view
   }
 });
 
-test("review of #172: a page behind what this browser verified vouches for nothing until it catches up, and a hub that will not let it is a fork", async () => {
+test("review: a page behind what this browser verified vouches for nothing until it catches up, and a hub that will not let it is a fork", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   const behind = await hub.reload(a);
@@ -571,7 +571,7 @@ test("review of #172: the pin is read, compared and written under one Web Lock p
   assert.equal(seenRecord(seen, a.account).seenThrough, seq + 1, "compared with the record as it was once the lock was its own: not lowered");
 });
 
-test("review of #172: first sightings are not merged into a record this page could not hold its view against", async () => {
+test("review: first sightings are not merged into a record this page could not hold its view against", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -593,7 +593,7 @@ test("review of #172: first sightings are not merged into a record this page cou
   assert.deepEqual(seenRecord(seen, a.account).firstSeen, [], "its sightings stay out of a record it could not check");
 });
 
-test("review of #172: a hub serving no chain to a browser that pinned one is a fork, and no new genesis is made over the pin", async () => {
+test("review: a hub serving no chain to a browser that pinned one is a fork, and no new genesis is made over the pin", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const posts = hub.chainPosts;
@@ -605,7 +605,7 @@ test("review of #172: a hub serving no chain to a browser that pinned one is a f
   assert.equal((await hub.reload(a)).chain!.seq, hub.chain.length - 1);
 });
 
-test("review of #172: a page that fetched the chain just before another page recorded more looks once more before calling it a fork", async () => {
+test("review: a page that fetched the chain just before another page recorded more looks once more before calling it a fork", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const before = hub.chain.slice();
@@ -620,7 +620,7 @@ test("review of #172: a page that fetched the chain just before another page rec
   assert.equal(page.forked, null);
 });
 
-// ---- re-review of #172 ---------------------------------------------------
+// ---- re-review ---------------------------------------------------------
 
 /** A gate for `hub.gate`: holds back the first request `matches` says, until `release`; `reached` once it is held. */
 function holdFirst(hub: FakeKeysHub, matches: (request: string, body: unknown) => boolean, then?: () => void) {
@@ -646,7 +646,7 @@ async function latchAFork(hub: FakeKeysHub, a: CloudAccount): Promise<void> {
   assert.ok(a.forked);
 }
 
-test("re-review of #172 (#179's reviewer): two pages on the set-up screen — the second click says the account was just set up in another tab, not a fork", async () => {
+test("re-review: two pages on the set-up screen — the second click says the account was just set up in another tab, not a fork", async () => {
   const hub = new FakeKeysHub();
   const tabA = await hub.device("tok");
   const tabB = await hub.reload(tabA);
@@ -658,7 +658,7 @@ test("re-review of #172 (#179's reviewer): two pages on the set-up screen — th
   assert.equal((await hub.reload(tabB)).chain!.seq, hub.chain.length - 1, "a reload opens the account");
 });
 
-test("re-review of #172: a handshake's copy that differs from this view at the same height is a fork, even when it adds nothing", async () => {
+test("re-review: a handshake's copy that differs from this view at the same height is a fork, even when it adds nothing", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   await b.sync();
@@ -683,7 +683,7 @@ test("re-review of #172: a handshake's copy that differs from this view at the s
   assert.equal(page.chain!.seq, a.chain!.seq, "this page keeps A");
 });
 
-test("re-review of #172: user keys are not handed out by a call that began before the fork latched", async () => {
+test("re-review: user keys are not handed out by a call that began before the fork latched", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const held = holdFirst(hub, (r) => r === "GET /v1/mailbox");
@@ -699,7 +699,7 @@ test("re-review of #172: user keys are not handed out by a call that began befor
   assert.equal(used, false, "the keys never reached the callback");
 });
 
-test("re-review of #172: a loop mailing user key epochs stops at the fork, between one epoch and the next", async () => {
+test("re-review: a loop mailing user key epochs stops at the fork, between one epoch and the next", async () => {
   const { hub, a, b, words } = await setup();
   await a.removeDevice(b.deviceId, new FakeCourier());
   assert.deepEqual(await a.vault.epochs(), [0, 1]);
@@ -716,7 +716,7 @@ test("re-review of #172: a loop mailing user key epochs stops at the fork, betwe
   assert.equal(toZ(), 1, "the epoch held at the hub went; the next was neither sealed nor sent");
 });
 
-test("re-review of #172: two first set-ups at once: the genesis pinned first stands, with its record", async () => {
+test("re-review: two first set-ups at once: the genesis pinned first stands, with its record", async () => {
   const hub = new FakeKeysHub();
   const tabA = await hub.device("tok");
   const tabB = await hub.reload(tabA);
@@ -772,7 +772,7 @@ test("re-review of #172, #183: an open page puts a lowered record back when anot
   assert.equal(seenRecord(seen, a.account).seenThrough, seq, "once back in view");
 });
 
-test("re-review of #172: a page loading while other pages record twice more looks again until the chain holds the record's head", async () => {
+test("re-review: a page loading while other pages record twice more looks again until the chain holds the record's head", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const before = hub.chain.slice();
@@ -907,7 +907,7 @@ test("the hub's caps are surfaced: mail rate, a full mailbox, and the write-once
   assert.equal(report.failedWhy[b.deviceId], "mailbox_full");
   // The same bytes again are fine; other bytes under a written name are refused —
   // and the keyring, which writes only names of its own, takes that as tampering
-  // and puts the blob under a new name (M2 re-review #27).
+  // and puts the blob under a new name (M2 re-review).
   const base = keyName.machine("m-1", 0, 0);
   const name = keyName.written(base, a.deviceId);
   const blob = Buffer.from(hub.keys.get(name)!.blob, "hex");
@@ -920,9 +920,9 @@ test("the hub's caps are surfaced: mail rate, a full mailbox, and the write-once
   await assert.rejects(z.api.putKey(z.session.token, `mk/m-1/0/0/${z.deviceId}`, new Uint8Array(16)), (e: unknown) => hubErrorKind(e) === "notFullDevice");
 });
 
-// ---- third look at #172 --------------------------------------------------
+// ---- third look --------------------------------------------------------
 
-test("third look at #172: a handshake's copy that adds nothing is still held against the record", async () => {
+test("third look: a handshake's copy that adds nothing is still held against the record", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -937,7 +937,7 @@ test("third look at #172: a handshake's copy that adds nothing is still held aga
   assert.ok(page.forked, "no channel goes on from it");
 });
 
-test("third look at #172: \"set up in another tab\" only for the very chain this browser recorded; a chain that cannot be read is tried again, not a fork", async () => {
+test("third look: \"set up in another tab\" only for the very chain this browser recorded; a chain that cannot be read is tried again, not a fork", async () => {
   const hub = new FakeKeysHub();
   const tabA = await hub.device("tok");
   await tabA.createGenesis(false);
@@ -969,7 +969,7 @@ test("third look at #172: \"set up in another tab\" only for the very chain this
   assert.equal(tabD.forked, null);
 });
 
-test("third look at #172: no machine key leaves after a fork latched while the hand-over waited for the machine", async () => {
+test("third look: no machine key leaves after a fork latched while the hand-over waited for the machine", async () => {
   const { hub, a, machine } = await setup();
   await a.sync();
   let reach!: () => void;
@@ -993,7 +993,7 @@ test("third look at #172: no machine key leaves after a fork latched while the h
   assert.deepEqual(courier.mailed, [], "nor by mail");
 });
 
-test("third look at #172: user keys read before a fork latched are not handed over after it", async () => {
+test("third look: user keys read before a fork latched are not handed over after it", async () => {
   const hub = new FakeKeysHub();
   let reach!: () => void;
   const reached = new Promise<void>((r) => (reach = r));
@@ -1024,7 +1024,7 @@ test("third look at #172: user keys read before a fork latched are not handed ov
   assert.equal(used, false, "the keys never reached the callback");
 });
 
-test("third look at #172: a first load retries only a checkpoint still moving; a contradicting chain is a fork at once", async () => {
+test("third look: a first load retries only a checkpoint still moving; a contradicting chain is a fork at once", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   await b.sync();

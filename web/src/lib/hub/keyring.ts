@@ -481,7 +481,7 @@ export async function openMachineKeyBlob(
 /**
  * A recovery package's `UK` (`rk/<ukEpoch>/<sender>/…`), opened with the
  * recovery words' seal key: sealed by any device `chain` names — a current
- * admin, or one demoted or removed since (#34g) — and exactly the key the
+ * admin, or one demoted or removed since — and exactly the key the
  * chain committed for its epoch (`chain.checkUserKey`); rejects otherwise.
  *
  * The commitment, not the sender, is what makes it the account's key: a
@@ -723,7 +723,7 @@ export interface Rewrap {
  * epoch this device holds — so it can read it — `mk/<m>/<e>/<ukEpoch>`,
  * unless this device wrote that already. With these in, the hub reclaims
  * this device's own older wraps (a removed or demoted writer keeps one copy
- * per epoch, #34g): `MK_e` stays readable under the newest `UK`, which every
+ * per epoch): `MK_e` stays readable under the newest `UK`, which every
  * current device holds.
  */
 export function rewrapTargets(

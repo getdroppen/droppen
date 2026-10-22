@@ -1,6 +1,6 @@
 /*
- * Step 01's last two blocks (docs/desktop-onboarding.md §5.1, §6.6): the
- * optional developer tools (git) row, and the folded "Add accounts to
+ * Step 01's last two blocks: the optional developer tools (git) row, and the
+ * folded "Add accounts to
  * Droppen (advanced)" — the existing setup-token wizard, the existing env
  * block for a key or a company gateway, and a Codex OpenAI API key stored as
  * a Droppen account (the custom provider's env key, which the user never
@@ -27,7 +27,7 @@ import type { ToolsReport } from "./types";
 
 type AccountConflict = components["schemas"]["AccountConflict"];
 
-/** The developer tools row: ✓ when `xcode-select -p` says so, else why and Apple's installer (H12). */
+/** The developer tools row: ✓ when `xcode-select -p` says so, else why and Apple's installer. */
 export function GitRow({
   git,
   canInstall,

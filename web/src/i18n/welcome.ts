@@ -1,16 +1,16 @@
 /*
  * The first-run guide of the Droppen app (`features/setup/`, `/welcome`):
- * every string of its design (docs/desktop-onboarding.md, appendix A), so the
+ * every string of the guide as first designed, so the
  * steps built later (01 AI tools, 03 first session) only add what they invent.
  * Kept apart from the main tables and merged under them in `index.ts` (a key
  * the main tables already translate keeps that translation); keys are the
  * English source strings, as everywhere.
  *
- * Generated once from the design's `prototypes/desktop-onboarding/copy.js`
+ * Generated once from a table of the guide's copy
  * (one row per string: screen, key, en, zh-CN, zh-TW, ja): the key is the
  * English text with `{name}` written as `{{name}}`; rows with no English are
- * left out; the trailing comment is the row's design key (`where.title`, the
- * same as appendix A's). Changes from the design: the header reads "Get
+ * left out; the trailing comment is the row's key in that table
+ * (`where.title`). Changes from that table: the header reads "Get
  * started with Droppen" (「设置 Droppen」 read as Settings); the sign-in card's
  * "coming soon" line, step 04's menu-bar line and the resume bar's "1 step"
  * are new; nothing here changes a translation the app already has
@@ -23,7 +23,7 @@
  */
 
 export const welcomeZhCN: Record<string, string> = {
-  // Frame: top bar, step rail, bottom bar (appendix A.1)
+  // Frame: top bar, step rail, bottom bar
   "Get started with Droppen": "开始使用 Droppen", // shell.setup
   "Finish later": "稍后再说", // shell.later
   "What you've done is kept. Continue from the bar above the session list, or from Settings → General → Setup.": "已经做的都会保留。可以从会话列表上方的提示条，或 设置 → 通用 → 设置引导 继续。", // shell.laterHint
@@ -252,7 +252,7 @@ export const welcomeZhCN: Record<string, string> = {
   "This window cannot sign this device in. See Settings → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "随时可以在菜单栏的 Droppen 图标里打开或关闭「登录时启动」。", // wrap.login.menuBar
-  // Step 01 · AI tools, as built: the states, forms and failures the design leaves to the implementation
+  // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "关闭",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS 已打开 Apple 的安装程序。在那里装完，再回来检查一次。",
   "Check again": "再检查一次",
@@ -306,7 +306,7 @@ export const welcomeZhCN: Record<string, string> = {
 };
 
 export const welcomeZhTW: Record<string, string> = {
-  // Frame: top bar, step rail, bottom bar (appendix A.1)
+  // Frame: top bar, step rail, bottom bar
   "Get started with Droppen": "開始使用 Droppen", // shell.setup
   "Finish later": "稍後再說", // shell.later
   "What you've done is kept. Continue from the bar above the session list, or from Settings → General → Setup.": "已經做的都會保留。可以從工作階段列表上方的提示列，或 設定 → 一般 → 設定引導 繼續。", // shell.laterHint
@@ -535,7 +535,7 @@ export const welcomeZhTW: Record<string, string> = {
   "This window cannot sign this device in. See Settings → Droppen.": "這個視窗不能讓這台裝置登入。請看 設定 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "隨時可以在選單列的 Droppen 圖示裡開啟或關閉「登入時啟動」。", // wrap.login.menuBar
-  // Step 01 · AI tools, as built: the states, forms and failures the design leaves to the implementation
+  // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "關閉",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS 已打開 Apple 的安裝程式。在那裡裝完，再回來檢查一次。",
   "Check again": "再檢查一次",
@@ -589,7 +589,7 @@ export const welcomeZhTW: Record<string, string> = {
 };
 
 export const welcomeJa: Record<string, string> = {
-  // Frame: top bar, step rail, bottom bar (appendix A.1)
+  // Frame: top bar, step rail, bottom bar
   "Get started with Droppen": "Droppen を使い始める", // shell.setup
   "Finish later": "あとで続ける", // shell.later
   "What you've done is kept. Continue from the bar above the session list, or from Settings → General → Setup.": "ここまでの内容は保存されます。セッション一覧の上のバー、または 設定 → 一般 → セットアップ から続けられます。", // shell.laterHint
@@ -733,7 +733,7 @@ export const welcomeJa: Record<string, string> = {
   "Change it later in Settings → Droppen and Settings → Security.": "あとから 設定 → Droppen と 設定 → セキュリティ で変更できます。", // where.changeLater
   "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Droppen.": "droppen.app にはインターネットが必要です。いまは「この Mac だけで使う」を選び、あとで 設定 → Droppen からログインしてください。", // where.offline
   "Continue in your browser": "ブラウザで続けてください", // where.wait.title
-  "Sign in to droppen.app, or create an account.": "droppen.app にサインインするか、アカウントを作成します。", // where.wait.1: the app's own wording (#108)
+  "Sign in to droppen.app, or create an account.": "droppen.app にサインインするか、アカウントを作成します。", // where.wait.1: the app's own wording
   "Check that the fingerprint there matches this one, then choose Allow.": "表示されたフィンガープリントがこれと一致することを確認して「許可」を選びます。", // where.wait.2
   "Come back here. This Mac joins your account by itself.": "ここに戻ると、この Mac が自動でアカウントに加わります。", // where.wait.3
   "Fingerprint": "フィンガープリント", // where.fingerprint
@@ -818,7 +818,7 @@ export const welcomeJa: Record<string, string> = {
   "This window cannot sign this device in. See Settings → Droppen.": "このウィンドウからはこのデバイスをサインインできません。設定 → Droppen を見てください。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "メニューバーの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。", // wrap.login.menuBar
-  // Step 01 · AI tools, as built: the states, forms and failures the design leaves to the implementation
+  // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "閉じる",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS で Apple のインストーラーが開きました。そちらで完了してから、もう一度確認してください。",
   "Check again": "もう一度確認",

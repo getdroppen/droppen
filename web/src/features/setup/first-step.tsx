@@ -1,5 +1,5 @@
 /*
- * Step 03 · First session (docs/desktop-onboarding.md §5.3, §6.8): one folder
+ * Step 03 · First session: one folder
  * for the AI to work in — used recently with Claude Code or Codex, a practice
  * folder the guide makes, or any other through the empty-session view's own
  * folder browser —
@@ -107,7 +107,7 @@ function Section({ title, aside, children }: { title: string; aside?: ReactNode;
   );
 }
 
-/** Step 03 with nothing ready to run it (§5.3): say so, and the way back to step 01; Skip stays in the bar. */
+/** Step 03 with nothing ready to run it: say so, and the way back to step 01; Skip stays in the bar. */
 function NoTool({ onGoto }: { onGoto: (step: StepId) => void }) {
   const { t } = useTranslation();
   return (

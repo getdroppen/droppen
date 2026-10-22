@@ -9,8 +9,8 @@ import type { Attempt, LinkOpener, OpenerState } from "./opener";
  * Signing this device in to Droppen through the system browser
  * (docs/local-aggregator.md §4.9, the browser hand-off), as pieces any screen
  * can use — Settings → Droppen, the first-run card, and the desktop app's
- * first-run guide (docs/desktop-onboarding.md §5.2, 「在手机和其它设备上也能用
- * → 登录 Droppen」, `features/setup/where-sign-in.tsx`):
+ * first-run guide (「在手机和其它设备上也能用 → 登录 Droppen」,
+ * `features/setup/where-sign-in.tsx`):
  *
  * - {@link startDroppenSignIn}: start it the way this window can, from the
  *   click itself — the system browser inside the Droppen desktop app (its

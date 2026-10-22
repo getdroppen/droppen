@@ -82,7 +82,7 @@
 //!
 //! * On a normal Linux or macOS desktop the reaper is pid 1 (systemd, launchd)
 //!   and there is nothing to do.
-//! * **In Docker, `docker-entrypoint.sh` runs as pid 1**, and a shell script is
+//! * **In Docker, the entrypoint script runs as pid 1**, and a shell script is
 //!   not a reaper: it neither reaps orphans nor forwards signals. The container
 //!   phase must therefore either run the entrypoint under an init that does
 //!   (`docker run --init`, `tini`, `dumb-init`) or make the entrypoint itself

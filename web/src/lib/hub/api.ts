@@ -417,7 +417,7 @@ export function chainV3Writable(view: Pick<AccountView, "chainV3"> | null | unde
 const SESSION_KEY = "rh.hub.session";
 /**
  * Known-client tokens, one per e-mail signed in with (`known_client`).
- * Kept across logout on purpose (#34 review S2): the token only says this
+ * Kept across logout on purpose: the token only says this
  * browser signed in to the account before, so its owner's next login is not
  * held back by others' failures; it lets nobody in without the password.
  * Clearing it on logout would hand that protection away exactly when the

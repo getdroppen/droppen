@@ -329,9 +329,9 @@ export class FakeKeysHub {
 
   /**
    * What `rh-hub` does with a removal or a new recovery key in the same
-   * transaction (M2 re-review #27/#28): the removed device's mail (from or
-   * to it) purged, and the keyring swept as `keyring::sweep` sweeps it
-   * (#34g) — packages for another recovery key (every one, with none); of a
+   * transaction (M2 re-review): the removed device's mail (from or
+   * to it) purged, and the keyring swept as `keyring::sweep` sweeps it —
+   * packages for another recovery key (every one, with none); of a
    * writer no longer current (for a package, its sender) whatever names an
    * epoch or a machine the chain never committed, and all but one copy per
    * (writer, machine, `MK` epoch) — under the newest `UK` — and per (sender,
@@ -601,7 +601,7 @@ export class FakeKeysHub {
       if (recent.length >= this.mailRatePerMin) return this.json(429, { error: "mail_rate", message: "too much mail from this device: wait a minute" });
       const held = this.mail.filter((m) => m.recipient === body.recipient);
       const bytes = held.reduce((n, m) => n + m.sealed.length / 2, 0);
-      // As rh-hub (M2 re-review #27): one sender's share, and room kept for key mail.
+      // As rh-hub (M2 re-review): one sender's share, and room kept for key mail.
       const fromSender = held.filter((m) => m.sender === me).length;
       const other = held.filter((m) => m.purpose !== 1 && m.purpose !== 2).length;
       const keyMail = body.purpose === 1 || body.purpose === 2;
@@ -652,7 +652,7 @@ export class FakeKeysHub {
     }
     if (path === "/v1/pairings" && method === "POST") {
       if (body.device !== me) return this.json(403, { error: "forbidden", message: "a pairing is opened for this session's own device" });
-      // As rh-hub (M2 re-review #28): a device outside the chain holds one at a time.
+      // As rh-hub (M2 re-review): a device outside the chain holds one at a time.
       // …and only within 30 minutes of registering (rh-hub `pairings::UNCHAINED_WINDOW_MS`).
       if (!this.full(me) && this.now() - (this.registeredMs.get(me) ?? this.now()) >= 30 * 60_000) {
         return this.json(403, { error: "pairing_window_closed", message: "this device registered too long ago to open a pairing: sign in again on it" });
@@ -673,7 +673,7 @@ export class FakeKeysHub {
       const p = this.pairings.get(id);
       if (!p) return this.json(404, { error: "not_found", message: "no such pairing (or it expired)" });
       if (method === "DELETE" && !pm[2]) {
-        // Its opener, or any current full device (M2 re-review #28).
+        // Its opener, or any current full device (M2 re-review).
         if (p.device !== me && !this.full(me)) return new Response(null, { status: 204 });
         this.pairings.delete(id);
         return new Response(null, { status: 204 });

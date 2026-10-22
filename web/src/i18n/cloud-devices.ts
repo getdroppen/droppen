@@ -8,7 +8,7 @@
 export const cloudDevicesZhCN: Record<string, string> = {
   "its copy": "副本",
   "as of {{time}}": "截至 {{time}}",
-  // The devices dashboard and the cross-device "needs you" (features/cloud/devices-dashboard.tsx, features/machines).
+  // The devices dashboard and the cross-device "needs you" (features/cloud/my-devices.tsx, features/machines).
   "latest sessions · from its encrypted copy": "最近会话 · 来自加密副本",
   "latest sessions": "最近会话",
   "answer": "去回答",
@@ -748,7 +748,7 @@ export const cloudDevicesZhCN: Record<string, string> = {
 export const cloudDevicesZhTW: Record<string, string> = {
   "its copy": "副本",
   "as of {{time}}": "截至 {{time}}",
-  // The devices dashboard and the cross-device "needs you" (features/cloud/devices-dashboard.tsx, features/machines).
+  // The devices dashboard and the cross-device "needs you" (features/cloud/my-devices.tsx, features/machines).
   "latest sessions · from its encrypted copy": "最近工作階段 · 來自加密副本",
   "latest sessions": "最近工作階段",
   "answer": "去回答",
@@ -1488,7 +1488,7 @@ export const cloudDevicesZhTW: Record<string, string> = {
 export const cloudDevicesJa: Record<string, string> = {
   "its copy": "コピー",
   "as of {{time}}": "{{time}} 時点",
-  // The devices dashboard and the cross-device "needs you" (features/cloud/devices-dashboard.tsx, features/machines).
+  // The devices dashboard and the cross-device "needs you" (features/cloud/my-devices.tsx, features/machines).
   "latest sessions · from its encrypted copy": "最近のセッション · 暗号化コピーから",
   "latest sessions": "最近のセッション",
   "answer": "回答する",

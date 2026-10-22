@@ -148,7 +148,7 @@ describe("manifests", () => {
       "# the hub (crates/rh-hub) is closed", // a comment
       'members = [".", "crates/rh-proto", "crates/rh-hub"]',
       "[[bin]]",
-      'name = "rh-hub-stress"', // a binary (the devkit's, before #159), not a package
+      'name = "rh-hub-stress"', // a binary (once the devkit's), not a package
       'path = "src/bin/rh-hub-stress.rs"',
       "[dev-dependencies]",
       'rh-hub = { path = "../rh-hub" }',

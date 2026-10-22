@@ -1,10 +1,11 @@
 //! The same-origin guard and CORS answer on `/api/*`.
 //!
-//! Port of the two `app.use("/api/*", ...)` middlewares in `server/src/app.ts`
-//! plus the `cors()` they wrap (`hono/dist/middleware/cors/index.js`). The fs
-//! endpoints can write into `$HOME` and read files back, so a cross-origin page
-//! must never be able to reach them: a browser request whose `Origin` is not
-//! trusted is refused outright, and only a trusted one is echoed back in
+//! Port of the two `app.use("/api/*", ...)` middlewares in the former
+//! TypeScript server's `app.ts` plus the `cors()` they wrap
+//! (`hono/dist/middleware/cors/index.js`). The fs endpoints can write into
+//! `$HOME` and read files back, so a cross-origin page must never be able to
+//! reach them: a browser request whose `Origin` is not trusted is refused
+//! outright, and only a trusted one is echoed back in
 //! `Access-Control-Allow-Origin`. Tools that send no `Origin` at all (curl,
 //! the integration tests) are unaffected, exactly as in the TypeScript.
 //!

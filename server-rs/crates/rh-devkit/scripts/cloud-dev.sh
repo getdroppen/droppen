@@ -101,8 +101,7 @@ image_mode() { [ "${HUB:-source}" = image ]; }
 # An image reference pinned by its digest: <name>@sha256:<64 hex digits>.
 pinned() { [[ "$1" =~ @sha256:[0-9a-f]{64}$ ]]; }
 
-# Which hub runs, on stderr: stdout's `hub:` line is the URL that callers
-# (onboarding-acceptance.sh) read.
+# Which hub runs, on stderr: stdout's `hub:` line is the URL that callers read.
 say_hub() {
   if ! image_mode; then
     echo "hub: source (server-rs/crates/rh-hub)" >&2

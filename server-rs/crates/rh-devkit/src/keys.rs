@@ -755,7 +755,7 @@ impl Device {
 /// The machine key epochs of `machine` that `entries` (the keyring, `(name,
 /// blob)`) hold under a user key in `user_keys` — each exactly the key
 /// `chain` committed for its epoch. Every copy is tried, whoever wrote it: a
-/// current admin, or one demoted or removed since (#34g — the hub serves
+/// current admin, or one demoted or removed since (the hub serves
 /// them all, and cannot tell a good one from a bad one); the commitment, not
 /// the writer, is what makes one the account's key.
 pub fn open_machine_copies(
@@ -800,7 +800,7 @@ pub fn open_machine_copies(
 /// with `RK`'s keys: `(epoch, user key)`, or `None`.
 ///
 /// Sealed by any device `chain` names — a current admin, or one demoted or
-/// removed since (#34g) — and exactly the user key the chain committed for
+/// removed since — and exactly the user key the chain committed for
 /// that epoch ([`ChainState::check_user_key`]). The commitment is what makes
 /// it the account's key: a device removed since could seal only a key the
 /// chain already names, never one of its own nor an epoch out of reach. And
@@ -928,7 +928,7 @@ mod tests {
         wrap::wrap_under(&UK0, &ctx, mk, &mut OsRng).unwrap().encode()
     }
 
-    /// #34g, the readers: what a writer no longer current left — a recovery
+    /// The readers: what a writer no longer current left — a recovery
     /// package, a machine-key copy — is tried, and taken when it is the key
     /// the chain committed (and refused when it is not).
     fn check_readers(f: &Fixture) {
@@ -937,7 +937,7 @@ mod tests {
         let name = format!("rk/0/d-2/{}/d-2", hex(&f.chain.recovery_key().unwrap()[..8]));
         let (epoch, uk) = open_recovery_package(&f.rk, &f.chain, &name, &good).expect("the only way back in opens");
         assert_eq!((epoch, uk.as_slice()), (0, &UK0[..]));
-        // The proto's opener agrees (the readers are one rule, #34g).
+        // The proto's opener agrees (the readers are one rule).
         let ctx = SealContext {
             purpose: Purpose::UserKey,
             account: ACCOUNT.into(),

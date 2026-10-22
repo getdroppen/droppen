@@ -6,11 +6,11 @@ publish = false
 description = "Phase-1 feasibility probe: remote-hand's server on the gotcha framework"
 license = "AGPL-3.0-only"
 
-# A workspace so the cloud protocol crate (`crates/rh-proto`), the hub
-# (`crates/rh-hub`), the device side of the hub API (`crates/rh-client`) and
-# the headless test device (`crates/rh-devkit`) share this lockfile and target
-# directory. The root package stays the default member, so a
-# bare `cargo build`/`cargo test` here still means the server and nothing else.
+# A workspace so the cloud protocol crate (`crates/rh-proto`), the device side
+# of the hub API (`crates/rh-client`) and the headless test device
+# (`crates/rh-devkit`) share this lockfile and target directory. The root
+# package stays the default member, so a bare `cargo build`/`cargo test` here
+# still means the server and nothing else.
 [workspace]
 members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk"]
 

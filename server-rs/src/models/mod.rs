@@ -1,8 +1,8 @@
 //! The models each local CLI can be asked for.
 //!
-//! Port of `server/src/lib/models.ts` plus the `/api/models` route in
-//! `server/src/app.ts`, and no longer only a port: the two CLIs are asked in two
-//! different ways, because they answer in two different ways.
+//! Port of the former TypeScript server's `models.ts` plus the `/api/models`
+//! route in its `app.ts`, and no longer only a port: the two CLIs are asked in
+//! two different ways, because they answer in two different ways.
 //!
 //! * **codex** publishes a file, `models_cache.json`, and it is simply read.
 //! * **claude** publishes nothing durable — the usage history this module used

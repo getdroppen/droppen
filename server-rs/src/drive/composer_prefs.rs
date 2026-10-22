@@ -1,9 +1,9 @@
 //! Composer model / effort / permission choices, shared across devices.
 //!
-//! Port of `server/src/lib/composer-prefs.ts`. A choice is merged into the
-//! source's default (so new sessions inherit the latest pick) and, when a
-//! session is named, into that session's entry too. The session bucket is capped
-//! at [`MAX_SESSION_ENTRIES`], oldest `updatedAt` first.
+//! Port of the former TypeScript server's `composer-prefs.ts`. A choice is
+//! merged into the source's default (so new sessions inherit the latest pick)
+//! and, when a session is named, into that session's entry too. The session
+//! bucket is capped at [`MAX_SESSION_ENTRIES`], oldest `updatedAt` first.
 //!
 //! The values are bounded by the same regexes the send routes accept, because
 //! they are handed to a CLI as flag values later: a stored `--dangerously-…`
@@ -110,8 +110,9 @@ pub struct ComposerPrefs {
 pub struct ComposerPrefsError(pub String);
 
 fn matches(pattern: &'static str, value: &str) -> bool {
-    // The patterns are compile-time constants from `server/src/schemas.ts`;
-    // building them per call is cheap next to the commit that follows.
+    // The patterns are compile-time constants from the former TypeScript
+    // server's `schemas.ts`; building them per call is cheap next to the commit
+    // that follows.
     regex::Regex::new(pattern).expect("valid composer pattern").is_match(value)
 }
 

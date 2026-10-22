@@ -1,10 +1,10 @@
 //! The first-run guide's server half: which AI tools this device has.
 //!
 //! The desktop app's first window walks a new user from "nothing installed"
-//! to a first session (`docs/desktop-onboarding.md` in the design branch). Its
-//! first step needs one answer the web app cannot get for itself — *are Claude
-//! Code and Codex ready on this device?* — and that answer is assembled here,
-//! behind `GET /api/setup/tools`, out of what the CLIs say about themselves:
+//! to a first session. Its first step needs one answer the web app cannot get
+//! for itself — *are Claude Code and Codex ready on this device?* — and that
+//! answer is assembled here, behind `GET /api/setup/tools`, out of what the
+//! CLIs say about themselves:
 //!
 //! * [`locate`] — where each CLI is: on the child `PATH`, or in one of the
 //!   places installers and version managers put things;
@@ -25,8 +25,7 @@
 //! A tool is ready when it runs, is at least [`detect::MIN_CLAUDE`] /
 //! [`detect::MIN_CODEX`], and either its own login works (and, as far as can
 //! be told, its plan includes it) or a Droppen account for it is stored —
-//! accounts are verified when they are saved, so a stored one is a working one
-//! (H11).
+//! accounts are verified when they are saved, so a stored one is a working one.
 //!
 //! # The `PATH`
 //!
@@ -807,7 +806,7 @@ pub fn local_app_request(state: &AppState, caller: &Caller) -> bool {
 /// through Droppen, a page reaching this port through a tunnel — must not be
 /// able to start an installer on this one. What this cannot yet tell apart is
 /// the app's window from another browser on the same Mac signed in to the same
-/// server at the same address. The local web access work (PR #93) adds the
+/// server at the same address. The local web access work adds the
 /// app-internal account (`user add --app`, `droppen-app`) the app signs in
 /// with, and once it exists this check also requires that identity.
 pub fn app_caller(state: &AppState, caller: &Caller) -> Result<(), ApiError> {
@@ -1217,7 +1216,7 @@ pub(crate) mod tests {
         assert_eq!(codex.login.plan.0.as_deref(), Some("plus"));
         assert!(!fixture.lines().iter().any(|line| line.starts_with("zsh")), "{:?}", fixture.lines());
 
-        // A stored account makes claude ready (H11); the desktop app's server
+        // A stored account makes claude ready; the desktop app's server
         // also reads the shell for the key question, once.
         let account = state
             .drive

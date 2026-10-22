@@ -307,7 +307,7 @@ async function chainV3Vectors() {
     selfActivate: true,
   };
   const [uk0, mkM1, mkH2, mkM1b, mkM1c] = [await seed(174), await seed(175), await seed(176), await seed(185), await seed(190)];
-  // A second slot, registered by an admin that is then demoted (review T16).
+  // A second slot, registered by an admin that is then demoted.
   const pak2Seed = await seed(186);
   const pak2 = await importEd25519Private(pak2Seed);
   const pak2Public = await publicFromSecret("Ed25519", pak2Seed);
@@ -355,11 +355,11 @@ async function chainV3Vectors() {
     // The recovery words on a v3 chain: a v3 join (review D4), approved.
     ["recoveryJoin3", { type: "recovery" }, rk.signing, { type: "recoveryJoin3", device: v3(devR, false, true) }],
     ["approveRecovered", byDev(dev0), dev0.key, { type: "approveDevice", id: devR.id }],
-    // Re-review T16: a demoted admin's slots go with its standing; it stays a device.
+    // A demoted admin's slots go with its standing; it stays a device.
     ["addAdminX", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(devX, false, true) }],
     ["slot2", byDev(devX), devX.key, { type: "passkeySlotSet", slot: slot2 }],
     ["demoteX", byDev(dev0), dev0.key, { type: "setAdmin", id: devX.id, admin: false }],
-    // Re-review T17: a host that stops running AI loses its accept policy; restarted, it admits admins only until set again.
+    // A host that stops running AI loses its accept policy; restarted, it admits admins only until set again.
     ["stopM1", byDev(dev0), dev0.key, { type: "setHost", id: m1.id, host: false }],
     ["restartM1", byDev(dev0), dev0.key, { type: "setHost", id: m1.id, host: true }],
     ["restartM1Key", byDev(dev0), dev0.key, { type: "keyEpochs", user: null, machines: [{ machine: m1.id, epoch: 2, hash: await machineKeyCommit(account, m1.id, 2, mkM1c) }] }],

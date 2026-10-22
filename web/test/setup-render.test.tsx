@@ -282,7 +282,7 @@ test("step 02 shows how the sign-in stands under the choices, with one primary o
   const refused = drawWhere({ kind: "failed", failure: "refused", message: "this device is in another account already" });
   assert.match(refused, /data-failure="refused"[\s\S]*<p class="[^"]*font-semibold">this device is in another account already<\/p>[\s\S]*data-testid="where-retry"/);
   assert.doesNotMatch(refused, /Can&#x27;t reach|When you&#x27;re online/);
-  // The panel is read out as it changes (§6.12), there before anything is in it.
+  // The panel is read out as it changes, there before anything is in it.
   assert.match(drawWhere({ kind: "none" }), /<div role="status" aria-live="polite" data-testid="where-sign-in-live"><\/div>/);
   assert.match(waiting, /role="status" aria-live="polite" data-testid="where-sign-in-live"><div data-testid="where-sign-in"/);
   // This Mac only: no sign-in shown, whatever stands.

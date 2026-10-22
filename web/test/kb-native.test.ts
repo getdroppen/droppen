@@ -4,7 +4,7 @@
 // is put back at the top.
 //
 // A fake `visualViewport` and window stand in for the browser. The numbers are
-// the owner's iPhone in iOS 27 Chrome, as its readout logged them (#169): a
+// the owner's iPhone in iOS 27 Chrome, as its readout logged them: a
 // 711px fixed box, the keyboard raised to a 434px visual viewport, and WebKit's
 // reveal pan animated over several frames, with `innerHeight` shrinking along.
 import assert from "node:assert/strict";
@@ -136,7 +136,7 @@ test("the keyboard rising: WebKit's pan is left alone, frame by frame and after"
   startKbNative(page.env);
   keyboardUp(page);
   page.advance(5000);
-  // The pre-#115 watch scrolled to the top 250ms into this (its keyboard
+  // The earlier watch scrolled to the top 250ms into this (its keyboard
   // "closed" when innerHeight came down with the pan), and the composer went
   // back under the keyboard. Here nothing scrolls while a field has focus.
   assert.deepEqual(page.scrolls, []);

@@ -1,5 +1,5 @@
-// The first-run guide's words (`i18n/welcome.ts`, docs/desktop-onboarding.md
-// appendix A): every string in all three languages with the same
+// The first-run guide's words (`i18n/welcome.ts`): every string in all three
+// languages with the same
 // placeholders, the header that never reads as Settings, no translation the
 // app already has changed by merging this table in, and every string the
 // guide's source puts on screen translated.

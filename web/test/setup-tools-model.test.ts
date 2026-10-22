@@ -1,5 +1,5 @@
-// Step 01's rules (`features/setup/tools-model.ts`, docs/desktop-onboarding.md
-// §5.1, §6.2–§6.4, §6.12): each card's state from the report and what the
+// Step 01's rules (`features/setup/tools-model.ts`): each card's state from
+// the report and what the
 // user opened, which card holds the page's one primary, which command a
 // confirm box shows, a failed install in words, when to poll, where F6 goes,
 // and how a running task or a fresh sign-in reaches the cached report.
@@ -32,11 +32,11 @@ const ok = { pathRead: "ok" as const };
 test("a card's state: checking, then what the report says, with a running task and an opened form on top", () => {
   assert.equal(cardState(undefined, undefined, IDLE_CARD), "checking");
   assert.equal(cardState(tool("claude", "missing"), ok, IDLE_CARD), "notInstalled");
-  assert.equal(cardState(tool("claude", "missing"), { pathRead: "timeout" }, IDLE_CARD), "notFound", "the shell read timed out: maybe hiding (H6)");
+  assert.equal(cardState(tool("claude", "missing"), { pathRead: "timeout" }, IDLE_CARD), "notFound", "the shell read timed out: maybe hiding");
   assert.equal(cardState(tool("claude", "missing"), { pathRead: "failed" }, IDLE_CARD), "notFound");
   assert.equal(cardState(tool("claude", "signedOut"), ok, IDLE_CARD), "signedOut");
   assert.equal(cardState(tool("claude", "ready"), ok, IDLE_CARD), "ready");
-  assert.equal(cardState(tool("claude", "viaAccount"), ok, IDLE_CARD), "ready", "a Droppen account makes it ready (H11)");
+  assert.equal(cardState(tool("claude", "viaAccount"), ok, IDLE_CARD), "ready", "a Droppen account makes it ready");
   assert.equal(cardState(tool("claude", "tooOld"), ok, IDLE_CARD), "tooOld");
   assert.equal(cardState(tool("claude", "plan"), ok, IDLE_CARD), "plan");
   assert.equal(cardState(tool("claude", "fallback"), ok, IDLE_CARD), "fallback", "found outside the sessions' PATH: adopted first, ready or not");
@@ -78,7 +78,7 @@ test("an installer that exited 0 without installing anything failed, and says so
   assert.equal(failureWords(stale).title, "The update finished, but the version is still too old.");
 });
 
-test("one primary (§4): the card the user is in, else the first that needs the user, else Continue once one is ready", () => {
+test("one primary: the card the user is in, else the first that needs the user, else Continue once one is ready", () => {
   const cards = (claude: ReturnType<typeof tool>, codex: ReturnType<typeof tool>, ui = IDLE_TOOLS_UI) =>
     [claude, codex].map((t) => ({ id: t.id, state: cardState(t, ok, ui[t.id]), ui: ui[t.id] }));
   assert.equal(primaryOwner(cards(tool("claude", "missing"), tool("codex", "missing"))), "claude");
@@ -111,9 +111,9 @@ test("the confirm box offers only usable methods, the official installer first; 
   assert.equal(chosenCommand(all, missing, { ...IDLE_CARD, open: "confirm" })?.command, `/bin/sh -c 't="$(mktemp)" && curl --proto =https --tlsv1.2 -fsSLo "$t" https://claude.ai/install.sh && bash "$t"; s=$?; rm -f "$t"; exit $s'`, "the recommended one");
   assert.equal(chosenCommand(all, missing, { ...IDLE_CARD, open: "confirm", method: "npm" })?.command, "npm install -g @anthropic-ai/claude-code");
   assert.equal(chosenCommand(all, missing, { ...IDLE_CARD, open: "confirm", method: "brew" })?.method, "native", "an unusable pick falls back");
-  // macOS 12 (H8): no official Claude installer.
+  // macOS 12: no official Claude installer.
   assert.deepEqual(offeredMethods(commands({ oldMac: true }), missing, "install").map((c) => c.method), ["brew", "npm"]);
-  // An npm copy is updated with npm (H7).
+  // An npm copy is updated with npm.
   const old = tool("claude", "tooOld");
   assert.deepEqual(offeredMethods(all, old, "update").map((c) => c.command), ["npm install -g @anthropic-ai/claude-code@latest"]);
   assert.equal(chosenCommand(all, old, { ...IDLE_CARD, open: "confirm", kind: "update" })?.command, "npm install -g @anthropic-ai/claude-code@latest");
@@ -126,7 +126,7 @@ test("a failed install in plain words: the network, a permission, a full disk, a
   const words = (over: Parameters<typeof task>[2]) => failureWords(task("claude", "install", { running: false, exitCode: 1, ...over }));
   assert.equal(words({ failure: "network" }).title, "The install didn't finish (exit code {{code}}).");
   assert.match(words({ failure: "network" }).why, /Couldn't reach the download server/);
-  assert.match(words({ failure: "permission", method: "brew" }).why, /Homebrew on this Mac may belong to another user/, "H31");
+  assert.match(words({ failure: "permission", method: "brew" }).why, /Homebrew on this Mac may belong to another user/, "a Homebrew owned by another user");
   assert.match(words({ failure: "permission" }).why, /Permission denied: it couldn't write/);
   assert.match(words({ failure: "disk" }).why, /disk is full/);
   assert.match(words({ failure: null }).why, /last lines are below/);
@@ -142,7 +142,7 @@ test("polling: the report every 2 s while a task runs; a sign-in every 2 s only 
   const at = Date.parse(STARTED);
   assert.equal(pollsLogin(signingIn, IDLE_CARD, true, at + 1000), true);
   assert.equal(pollsLogin(signingIn, IDLE_CARD, false, at + 1000), false, "hidden: held");
-  assert.equal(pollsLogin(signingIn, IDLE_CARD, true, at + LOGIN_POLL_LIMIT_MS + 1), false, "ten minutes at most (H35)");
+  assert.equal(pollsLogin(signingIn, IDLE_CARD, true, at + LOGIN_POLL_LIMIT_MS + 1), false, "ten minutes at most");
   assert.equal(pollsLogin(signingIn, { ...IDLE_CARD, dismissed: STARTED }, true, at + 1000), false, "cancelled");
   assert.equal(pollsLogin(tool("claude", "missing", { task: task("claude", "install") }), IDLE_CARD, true, at), false, "an install is not a sign-in");
   assert.equal(pollsLogin(tool("claude", "signedOut", { task: task("claude", "login", { running: false, exitCode: 0 }) }), IDLE_CARD, true, at), false);

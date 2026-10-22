@@ -1,7 +1,8 @@
 //! Subscription quota: the Claude plan and live window usage, plus Codex's own
 //! rolling windows.
 //!
-//! Port of `server/src/lib/quota.ts`, since reworked on the Claude side.
+//! Port of the former TypeScript server's `quota.ts`, since reworked on the
+//! Claude side.
 //!
 //! ## Claude: sessions first, the probe as a fallback
 //!

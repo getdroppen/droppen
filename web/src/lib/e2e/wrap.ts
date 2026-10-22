@@ -353,7 +353,7 @@ export async function sealForRecovery(sender: NoiseKeyPair, senderId: string, ac
 
 /**
  * A recovery-package `UK`, opened with `RK`'s keys: sealed by a device the
- * chain names — a current admin, or one demoted or removed since (#34g) — and
+ * chain names — a current admin, or one demoted or removed since — and
  * exactly the key the chain committed for that epoch, as in Rust. The
  * commitment, not the sender, makes it the account's key: a device removed
  * since still holds old user keys and the public `RSK`, but it can seal only a

@@ -1,11 +1,12 @@
 //! Several Claude logins, one managed config root.
 //!
-//! Port of the account routes in `server/src/app.ts`. Three of them are wizards
-//! the user drives in a terminal and live in their own modules:
-//! [`setup_token`] mints a token off `claude setup-token`'s own output, and
-//! [`usage_login`] puts `claude auth login` on screen against one account's
-//! probe directory. `POST /api/accounts/{id}/usage-verify` stays here, because
-//! it is a plain `claude auth status --json` with no PTY involved.
+//! Port of the account routes in the former TypeScript server's `app.ts`. Three
+//! of them are wizards the user drives in a terminal and live in their own
+//! modules: [`setup_token`] mints a token off `claude setup-token`'s own
+//! output, and [`usage_login`] puts `claude auth login` on screen against one
+//! account's probe directory. `POST /api/accounts/{id}/usage-verify` stays
+//! here, because it is a plain `claude auth status --json` with no PTY
+//! involved.
 
 pub mod limits;
 pub mod local_login;

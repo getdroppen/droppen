@@ -127,9 +127,9 @@ pub fn env(name: &str) -> Option<String> {
 /// The old names already logged in this process.
 static NOTICED: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
 
-/// The name a relay variable had before the rename to Droppen (#120, R1):
+/// The name a relay variable had before the rename to Droppen:
 /// `DROPPEN_RELAY_X` → `RH_RELAY_X`, and the shared capture's
-/// `DROPPEN_HUB_API_TRAFFIC` → `RH_HUB_API_TRAFFIC` (R2); `None` for any other
+/// `DROPPEN_HUB_API_TRAFFIC` → `RH_HUB_API_TRAFFIC`; `None` for any other
 /// name.
 pub fn old_name(name: &str) -> Option<String> {
     if name == "DROPPEN_HUB_API_TRAFFIC" {

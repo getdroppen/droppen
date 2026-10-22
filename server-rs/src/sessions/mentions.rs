@@ -1,9 +1,10 @@
 //! Download chips for files an assistant message points at.
 //!
-//! Port of `server/src/lib/mentions.ts`. A file the agent produced or referenced
-//! should be one click away instead of a hunt through the file browser, so
-//! path-like tokens in assistant prose are resolved and — when they name a file
-//! that actually exists under `$HOME` — attached to the item.
+//! Port of the former TypeScript server's `mentions.ts`. A file the agent
+//! produced or referenced should be one click away instead of a hunt through
+//! the file browser, so path-like tokens in assistant prose are resolved and —
+//! when they name a file that actually exists under `$HOME` — attached to the
+//! item.
 //!
 //! Existence-gating is what keeps precision high; the two caps
 //! ([`MAX_FILES_PER_ITEM`], [`MAX_STATS_PER_TRANSCRIPT`]) are what keeps the

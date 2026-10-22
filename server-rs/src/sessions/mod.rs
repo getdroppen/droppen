@@ -1,7 +1,7 @@
 //! Session discovery and the shapes the API speaks in.
 //!
-//! Mirrors `server/src/schemas.ts` plus the discovery halves of
-//! `server/src/lib/claude.ts` and `server/src/lib/session-feed.ts`.
+//! Mirrors the former TypeScript server's `schemas.ts` plus the discovery halves
+//! of its `claude.ts` and `session-feed.ts`.
 
 pub mod adoption_leftovers;
 pub mod checklist;
@@ -1112,8 +1112,9 @@ impl Paths {
 
 /// Sessions whose `cwd` is the API-chat scratch directory are hidden from the list.
 ///
-/// `CHATS_CWD` in `server/src/lib/chats.ts` — under the *data* directory, not the
-/// config one: an instant chat's scratch tree is working state, not settings.
+/// `CHATS_CWD` in the former TypeScript server's `chats.ts` — under the *data*
+/// directory, not the config one: an instant chat's scratch tree is working
+/// state, not settings.
 pub fn chats_cwd(paths: &Paths) -> PathBuf {
     paths.data_dir().join("chats")
 }
@@ -1252,12 +1253,13 @@ pub fn external_send_block_reason(source: Source) -> String {
 
 /// Whether the composer may send to this session, and why not.
 ///
-/// Port of `sendability` in `server/src/lib/session-feed.ts`, plus the arms the
-/// TypeScript never had. `scope` is the ownership arm: a session this server did
-/// not make is browse-only, because resuming it would interleave this server's
-/// turns with those of whoever actually owns it. `injecting` is the injection
-/// arm the probe left out: a one-shot run remote-hand started blocks the
-/// composer regardless of what the CLI's own registration says.
+/// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
+/// plus the arms the TypeScript never had. `scope` is the ownership arm: a
+/// session this server did not make is browse-only, because resuming it would
+/// interleave this server's turns with those of whoever actually owns it.
+/// `injecting` is the injection arm the probe left out: a one-shot run
+/// remote-hand started blocks the composer regardless of what the CLI's own
+/// registration says.
 ///
 /// `resident` is what a session driven by a process rather than a run needs, and
 /// it lifts both of the other two block arms:

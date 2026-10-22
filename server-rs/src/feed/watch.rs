@@ -4,7 +4,7 @@
 //! tokio channel and coalesced there: a CLI writing a transcript emits a burst
 //! of modify events per turn, and re-parsing on each one would dominate the cost
 //! of the feed. The 150 ms window matches `WATCH_DEBOUNCE_MS` in
-//! `server/src/lib/session-feed.ts`.
+//! the former TypeScript server's `session-feed.ts`.
 //!
 //! The watcher is best-effort. If `notify` cannot watch the file at all (an
 //! unsupported filesystem, a descriptor limit), the channel simply stays quiet

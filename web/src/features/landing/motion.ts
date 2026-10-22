@@ -64,7 +64,7 @@ export function pathD(points: Pt[], offset = 0.5): string {
 
 /**
  * How many times a wire turns. The drafting sheet is right-angled and a
- * wire bends at most once: a straight line or a single L (design/DESIGN.md).
+ * wire bends at most once: a straight line or a single L.
  */
 export function corners(points: Pt[]): number {
   let turns = 0;

@@ -1,5 +1,5 @@
 /*
- * What the guide's frame holds (docs/desktop-onboarding.md §5): the welcome
+ * What the guide's frame holds: the welcome
  * page, and steps 02 and 04. Step 01 (AI tools) is `tools-step.tsx`, step 03
  * (first session) `first-step.tsx`: each is one component taking
  * {@link StepProps}, put in place in `welcome-view.tsx`.
@@ -66,7 +66,7 @@ function ProbeLine({ tools }: { tools: ToolsReport | null | undefined }) {
 }
 
 /**
- * The welcome page (§5.0): what Droppen is doing here, the four steps in a
+ * The welcome page: what Droppen is doing here, the four steps in a
  * line each, detection already running. "Get started" is the page's one
  * primary and has the focus.
  */
@@ -114,7 +114,7 @@ export function WelcomeScreen({ tools, onStart, onSkipAll }: { tools: ToolsRepor
   );
 }
 
-/** Where to use it: the two outcomes (§5.2). */
+/** Where to use it: the two outcomes. */
 export type WhereChoice = "droppen" | "local";
 
 /** The choice step 02 shows: the stored one, else the recommended one when it can be had, else this Mac only. */
@@ -200,7 +200,7 @@ function WhereCard({
 }
 
 /**
- * Step 02 · Where to use it (§5.2), minimal: on the phone and other devices
+ * Step 02 · Where to use it, minimal: on the phone and other devices
  * too (signing in to Droppen; recommended), or only on this Mac. The first
  * is off without the app's sign-in through the system browser
  * ({@link DESKTOP_SIGN_IN_READY}) and while offline; chosen, the step signs
@@ -294,11 +294,11 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
 }
 
 /**
- * Step 04 · Finishing up (§5.4), as the design's fallback while the web app
- * cannot reach the app (§8): start at login points at the menu bar's own
+ * Step 04 · Finishing up, as the fallback while the web app cannot reach the
+ * app: start at login points at the menu bar's own
  * switch to turn it on or off — whether it is on is the app's to say (a new
- * install's first launch turns it on, Q2), so the guide claims neither; no
- * notifications row until the app can ask for them (PR-8), the phone row,
+ * install's first launch turns it on), so the guide claims neither; no
+ * notifications row until the app can ask for them, the phone row,
  * and what is set.
  */
 export function WrapStep({ progress, tools, signIn, signInReady = DESKTOP_SIGN_IN_READY }: StepProps & { signInReady?: boolean }) {

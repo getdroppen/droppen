@@ -1863,7 +1863,7 @@ fn w2_a_v2_chain_with_removals_replays_exactly_as_before() {
     assert_eq!(state.recovery_key(), None, "v2 keeps its rule: the removed device came back with words");
 }
 
-/// Recorded on 191ff56, before the v3-only rule: v2's removal of a device
+/// Recorded before the v3-only rule: v2's removal of a device
 /// that came back with the words voids the account's words, whichever.
 const V2_REMOVAL_STATE: &str = r#"{"accept":[{"from":{"kind":"admins"},"host":"m-1"}],"admins":["dev-0"],"devices":[{"activatedSeq":0,"addedSeq":0,"admin":true,"host":false,"id":"dev-0","status":"active","viaPasskey":null,"viaRecovery":false},{"activatedSeq":1,"addedSeq":1,"admin":true,"host":false,"id":"dev-1","status":"removed","viaPasskey":null,"viaRecovery":false},{"activatedSeq":3,"addedSeq":3,"admin":false,"host":false,"id":"dev-2","status":"active","viaPasskey":null,"viaRecovery":false},{"activatedSeq":6,"addedSeq":5,"admin":true,"host":false,"id":"dev-r","status":"removed","viaPasskey":null,"viaRecovery":true},{"activatedSeq":2,"addedSeq":2,"admin":false,"host":true,"id":"m-1","status":"active","viaPasskey":null,"viaRecovery":false}],"head":"c275baf73d2604f37e294c5c11d23afd83db4f54a83d6bdf4ad816e36a56e823","machineKeyEpochs":{"m-1":0},"machines":["m-1"],"recoveryKey":null,"seq":8,"slots":[],"userKeyEpochs":0,"v3From":null}"#;
 
@@ -2634,7 +2634,7 @@ fn r1_a_retired_key_never_names_a_device_again() {
     assert_eq!(same, state);
 }
 
-/// Security review of #128 (R1b): a pending join made with a host's key
+/// Security review (R1b): a pending join made with a host's key
 /// before its renewal does not come alive after it — not approved by an
 /// admin, not activated with the recovery words, not activated by its passkey
 /// (a thief with the old key and a synced passkey would otherwise join early

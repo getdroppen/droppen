@@ -2,7 +2,7 @@
 //!
 //! This module is the routing layer for the `/api/stats/*` surface; the
 //! aggregation it serves lives in [`usage`], mirroring the split between
-//! `server/src/app.ts` and `server/src/lib/usage.ts`.
+//! the former TypeScript server's `app.ts` and `usage.ts`.
 
 pub mod usage;
 

@@ -9,7 +9,6 @@ import { cn } from "@/lib/cn";
  *
  * `web/scripts/gen-pwa-assets.mjs` draws the same contour into the favicon
  * (black, transparent ground) and the app icons (paper on an ink tile).
- * Exploration and the similarity check: design/logo/README.md.
  */
 export const BRAND_PATH = "M2 2H12A10 10 0 1 1 2 12Z";
 

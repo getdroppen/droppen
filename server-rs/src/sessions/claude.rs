@@ -1,6 +1,6 @@
 //! Claude Code session discovery.
 //!
-//! Port of the discovery half of `server/src/lib/claude.ts`: scan
+//! Port of the discovery half of the former TypeScript server's `claude.ts`: scan
 //! `~/.claude/projects/*/<uuid>.jsonl`, derive a title/cwd/branch from the head
 //! (plus the newest `custom-title` in the tail), then overlay live-process
 //! status from `~/.claude/sessions/*.json`.

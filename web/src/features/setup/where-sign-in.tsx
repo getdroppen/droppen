@@ -1,12 +1,12 @@
 /*
- * Step 02's "On my phone and other devices too → Sign in to Droppen"
- * (docs/desktop-onboarding.md §5.2): this Mac signs in to Droppen through
- * the system browser (`features/link/browser-sign-in.tsx`, the same sign-in
+ * Step 02's "On my phone and other devices too → Sign in to Droppen": this
+ * Mac signs in to Droppen through the system browser
+ * (`features/link/browser-sign-in.tsx`, the same sign-in
  * as Settings → Droppen and the first-run card: one per page, so leaving the
  * step keeps it going), and the step shows how it stands — continue in the
  * browser, in the account, or what went wrong. The guide does not wait for
  * it: "Keep going; I'll finish in the browser" goes on, and the guide says
- * so once this Mac is in the account (H19).
+ * so once this Mac is in the account.
  */
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
@@ -117,7 +117,7 @@ const quiet =
 const box = "mt-4 max-w-[720px] border border-border p-4";
 
 /**
- * Under step 02's choices, read out politely as it changes (§6.12): with
+ * Under step 02's choices, read out politely as it changes: with
  * "Sign in to Droppen" chosen, how the sign-in stands, or why it cannot be
  * had from here; with "Only on this Mac" chosen while this Mac is in an
  * account, that it stays there.

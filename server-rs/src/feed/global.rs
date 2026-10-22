@@ -1,7 +1,7 @@
 //! The global feed: one websocket carrying every session list change.
 //!
-//! Port of `server/src/lib/global-feed.ts` plus its socket in
-//! `server/src/index.ts`. A client connects to `/api/events` once and receives
+//! Port of the former TypeScript server's `global-feed.ts` plus its socket in
+//! `index.ts`. A client connects to `/api/events` once and receives
 //! `settings`, then a `sessions:snapshot`, then a `sessions:delta` whenever the
 //! list changes — which is what lets the sidebar stay live without polling
 //! `/api/sessions` (`web/src/app/global-feed.tsx`). The same socket carries
@@ -469,7 +469,7 @@ fn snapshot_frame(sessions: &[SessionSummary]) -> String {
 /// `WebSocketUpgrade` is not a `ParameterProvider`, so the macro's generated
 /// call fails to compile (`gotcha_macro-0.4.1/src/route.rs:88`). The TypeScript
 /// server leaves this route out of its spec too — it is registered in
-/// `server/src/index.ts`, outside the OpenAPI app.
+/// the former TypeScript server's `index.ts`, outside the OpenAPI app.
 ///
 /// `?v=2` turns on the session subscriptions of [`super::mux`], and `&z=1`
 /// compression of large frames; without them the socket is exactly what it

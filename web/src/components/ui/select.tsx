@@ -4,7 +4,7 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * shadcn's Base UI Select, drawn on the drafting sheet (design/DESIGN.md):
+ * shadcn's Base UI Select, drawn on the drafting sheet:
  * the sheet the app's menus use — `bg`, a 1px `border-strong` frame, square
  * corners, no shadow, 24px rows — the highlighted row tinted with `hover`, the
  * chosen one marked with an ink check; never the system popup, whose blue
