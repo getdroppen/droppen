@@ -1216,7 +1216,7 @@ test("switching the device while a start is held drops it", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-const { mergeBack, MAX_ATTACHMENTS } = await import("../src/features/sessions/composer-box.js");
+const { mergeBack, MAX_ATTACHMENTS, useComposerAttachments } = await import("../src/features/sessions/composer-box.js");
 
 test("a refused message's attachments go back first, then as many later ones as fit; none twice", () => {
   const att = (key: string) => ({ key, file: null, name: `${key}.png`, isImage: true, preview: "", status: "ready" as const, path: `/u/${key}` });
@@ -1304,4 +1304,44 @@ test("a refused start's attachments always go back; later ones that no longer fi
   assert.match(notice.textContent, /later-19\.txt/);
   assert.doesNotMatch(notice.textContent, /later-18\.txt/, "only what did not fit");
   assert.deepEqual(errors, []);
+});
+
+test("a change to the attachments counts the ones before it that React has not drawn yet: a paste right after a press has the room the press made", async (t) => {
+  const sent: Sent[] = [];
+  reset(sent);
+  const view: { attachments?: ReturnType<typeof useComposerAttachments>; elsewhere?: () => void } = {};
+  function Composer() {
+    view.attachments = useComposerAttachments();
+    const [, setOther] = React.useState(0);
+    view.elsewhere = () => setOther((n) => n + 1);
+    return null;
+  }
+  /** The attachments as last drawn, and what changes them. */
+  const drawn = () => view.attachments!;
+  const root = createRoot(container as never);
+  t.after(() => root.unmount());
+  root.render(
+    <MachineProvider machine={LOCAL}>
+      <Composer />
+    </MachineProvider>,
+  );
+  await until("the composer", () => !!view.attachments);
+  drawn().addFiles([new File(["a"], "pressed.txt", { type: "text/plain" })]);
+  await until("the pressed upload", () => drawn().attachments[0]?.status === "ready");
+  const pressed = drawn().attachments.map((a) => a.key);
+  // In one tick, as a press's start does: another change to the view first —
+  // React keeps every change after it for its next render — then the press
+  // takes what it carries, and a full set is pasted before that render.
+  view.elsewhere!();
+  drawn().take(pressed);
+  const files = Array.from({ length: MAX_ATTACHMENTS }, (_, i) => new File([String(i)], `later-${i}.txt`, { type: "text/plain" }));
+  drawn().addFiles(files);
+  const later = () => drawn().attachments.filter((a) => a.name.startsWith("later-"));
+  await until("the paste drawn and uploaded", () => later().length > 0 && drawn().attachments.every((a) => a.status === "ready"));
+  assert.deepEqual(
+    drawn().attachments.map((a) => a.name),
+    files.map((f) => f.name),
+    "the whole set: the room the press made counts before React draws it",
+  );
+  assert.equal(sent.filter((s) => s.path === "/api/uploads").length, 1 + MAX_ATTACHMENTS);
 });

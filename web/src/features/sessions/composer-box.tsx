@@ -87,13 +87,17 @@ let attachmentSequence = 0;
 export function useComposerAttachments(initial: () => ComposerAttachment[] = () => []) {
   const runtime = useMachineRuntime();
   const [attachments, setState] = useState<ComposerAttachment[]>(initial);
+  // The list as of the last change — what the next change starts from, and
+  // `addFiles` counts its room in. Set here, not in a state updater: React
+  // runs one of those at once only when nothing else on this component is
+  // waiting to be drawn, so after a start's other updates its `take` would
+  // land only at the next render, and a paste before then would still count
+  // what was taken.
   const current = useRef(attachments);
   const update = (change: (prev: ComposerAttachment[]) => ComposerAttachment[]) => {
-    setState((prev) => {
-      const next = change(prev);
-      current.current = next;
-      return next;
-    });
+    const next = change(current.current);
+    current.current = next;
+    setState(next);
   };
 
   const uploadOne = async (entry: ComposerAttachment & { file: File }) => {
