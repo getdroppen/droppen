@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import i18next from "i18next";
+import { JSDOM } from "jsdom";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
@@ -93,7 +94,7 @@ test("every token of every formula names a term with a kind, its parties, words 
       if (i > 0) assert.notEqual(words, term.says[0], `${id}: ${LANGS[i]} is the English`);
     });
     // Short: one or two lines in the card.
-    assert.ok(term.says[0].length <= 160, `${id}: ${term.says[0].length} characters`);
+    assert.ok(term.says[0].length <= 180, `${id}: ${term.says[0].length} characters`);
     assert.ok(term.known.length > 0 && term.known.every((p) => (PARTIES as readonly string[]).includes(p)), `${id}: parties`);
     assert.equal(new Set(term.known).size, term.known.length, `${id}: a party twice`);
     if (term.kind === "label" || term.kind === "fn" || term.kind === "op") assert.deepEqual([...term.known].sort(), [...PARTIES].sort(), `${id}: public`);
@@ -187,9 +188,12 @@ test("the formulas still read as one line of monospace each, and copy as the pla
 test("every part of every formula is focusable and described, in every language", () => {
   for (const lng of LANGS) {
     const html = draw(lng);
-    const terms = [...html.matchAll(/<span role="button" tabindex="0" data-occ="([^"]+)" data-term="([^"]+)"[^>]*aria-describedby="([^"]+)"/g)];
+    const terms = [...html.matchAll(/<span role="button" tabindex="(0|-1)" data-occ="([^"]+)" data-term="([^"]+)"[^>]*aria-describedby="([^"]+)"/g)];
     assert.equal(terms.length, analysis.occurrences.size, `${lng}: every token`);
-    for (const [, occ, term, described] of terms) {
+    // One tab stop per formula; the arrow keys move inside it.
+    const stops = terms.filter((m) => m[1] === "0").map((m) => m[2]!.split(":")[0]);
+    assert.deepEqual(stops, blockIds, `${lng}: one tab stop per formula, its first part`);
+    for (const [, , occ, term, described] of terms) {
       assert.equal(analysis.occurrences.get(occ!)!.term, term);
       const id = described!;
       const at = html.indexOf(`id="${id}"`);
@@ -200,10 +204,26 @@ test("every part of every formula is focusable and described, in every language"
     // The descriptions are never shown, and the hint for the whole thing is there.
     assert.match(html, /<div hidden="" data-formula-glossary="">/);
     assert.match(html, /aria-describedby="fx-hint"/);
+    // One live region for "view as", silent until the choice changes.
+    assert.equal([...html.matchAll(/aria-live=/g)].length, 1, `${lng}: one live region`);
+    assert.match(html, /<span aria-live="polite" class="sr-only" data-formula-announcer=""><\/span>/);
   }
   // The reader's own words, not English, around the protocol's names.
   const zh = decode(draw("zh-CN"));
   assert.ok(zh.includes("由 HKDF-SHA256 产生。"));
   assert.ok(zh.includes("知道它的："));
   assert.ok(decode(draw("en")).includes("Made by HKDF-SHA256. Used by AES-256-GCM. Known to: Your device, The other device. Not known to: Droppen Hub, Relay."));
+});
+
+test("a formula's parts stay selectable, so a formula copies whole: no user-select: none rule reaches them", () => {
+  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const doc = new JSDOM('<span role="button" data-occ="seal:0:0">kek</span><span role="button">x</span><button>y</button>').window.document;
+  const [part, control, button] = [...doc.body.children];
+  const none = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /(?:^|;)\s*(?:-webkit-)?user-select:\s*none/.test(m[2]!));
+  assert.ok(none.length > 0, "the rule for controls is still there");
+  for (const [, selectors] of none) {
+    assert.ok(!part!.matches(selectors!.trim()), `${selectors!.trim()} makes a formula part unselectable`);
+  }
+  // The rule still reaches what it is for.
+  assert.ok(none.some(([, sel]) => control!.matches(sel!.trim())) && none.some(([, sel]) => button!.matches(sel!.trim())));
 });

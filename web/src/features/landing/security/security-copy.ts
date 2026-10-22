@@ -1891,10 +1891,22 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "{{party}}はこの値を知り得ない。",
   ],
   [
-    "Point at or focus any part of a formula to see what it is and where its value goes. Click it or press Enter to pin it; Esc unpins.",
-    "指向或聚焦公式的任何部分，就能看到它是什么、它的值从哪来到哪去。点击或按 Enter 固定说明；按 Esc 取消固定。",
-    "指向或聚焦公式的任何部分，就能看到它是什麼、它的值從哪來到哪去。點擊或按 Enter 固定說明；按 Esc 取消固定。",
-    "式のどの部分でも、ポインターを当てるかフォーカスすると、それが何か、その値がどこから来てどこへ行くかがわかります。クリックするか Enter で説明を固定し、Esc で解除します。",
+    "Point at or focus any part of a formula to see what it is and where its value goes; the arrow keys move between its parts. Click it or press Enter to pin it; Esc unpins.",
+    "指向或聚焦公式的任何部分，就能看到它是什么、它的值从哪来到哪去；方向键在各部分之间移动。点击或按 Enter 固定说明；按 Esc 取消固定。",
+    "指向或聚焦公式的任何部分，就能看到它是什麼、它的值從哪來到哪去；方向鍵在各部分之間移動。點擊或按 Enter 固定說明；按 Esc 取消固定。",
+    "式のどの部分でも、ポインターを当てるかフォーカスすると、それが何か、その値がどこから来てどこへ行くかがわかります。矢印キーで部分から部分へ移れます。クリックするか Enter で説明を固定し、Esc で解除します。",
+  ],
+  [
+    "Showing every value.",
+    "显示全部的值。",
+    "顯示全部的值。",
+    "すべての値を表示しています。",
+  ],
+  [
+    "Viewing as {{party}}: {{count}} values on this page are hidden.",
+    "以{{party}}的视角：本页隐去了 {{count}} 个值。",
+    "以{{party}}的視角：本頁隱去了 {{count}} 個值。",
+    "{{party}}の立場で表示中：このページの値のうち {{count}} 個を伏せています。",
   ],
 ];
 

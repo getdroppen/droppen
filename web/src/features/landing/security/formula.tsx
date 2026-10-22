@@ -1,4 +1,4 @@
-import { type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Check, Minus, Pin } from "lucide-react";
@@ -142,7 +142,7 @@ function hiddenFrom(block: BlockId, term: string, view: Party | null): boolean {
   return !!view && !!rolesOf(block) && !TERMS[term]!.known.includes(view);
 }
 
-function Term({ block, occ, text }: { block: BlockId; occ: string; text: string }) {
+function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; text: string; tabbable: boolean }) {
   const store = useStore();
   const term = ANALYSIS.occurrences.get(occ)!.term;
   const snapshot = useSyncExternalStore(
@@ -155,7 +155,7 @@ function Term({ block, occ, text }: { block: BlockId; occ: string; text: string 
   return (
     <span
       role="button"
-      tabIndex={0}
+      tabIndex={tabbable ? 0 : -1}
       data-occ={occ}
       data-term={term}
       data-kind={kind}
@@ -248,7 +248,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
               </button>
             ))}
           </div>
-          <span aria-live="polite" className="text-[10px] leading-[14px] text-muted">
+          <span className="text-[10px] leading-[14px] text-muted">
             {role && say(role, lang)}
             {role && view && " · "}
             {view && t("Hidden here: {{count}}", { count: hiddenCount })}
@@ -294,14 +294,46 @@ export function Formula({ block }: { block: BlockId }) {
   const { t } = useTranslation();
   const [legend, setLegend] = useState(false);
   const legendId = useId();
+  // One tab stop per formula: the part last focused (at first, the first part); the arrow keys move between parts.
+  const lines = ANALYSIS.lines[block];
+  const [current, setCurrent] = useState(() => lines.flat().find((tok) => tok.occ)!.occ!);
+  const move = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const parts = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-occ]")];
+    const at = parts.indexOf(e.target as HTMLElement);
+    if (at < 0) return;
+    const line = (el: HTMLElement) => el.closest("code");
+    let next: HTMLElement | undefined;
+    if (e.key === "ArrowRight") next = parts[at + 1];
+    else if (e.key === "ArrowLeft") next = parts[at - 1];
+    else if (e.key === "Home") next = parts[0];
+    else if (e.key === "End") next = parts[parts.length - 1];
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      // The first part of the next (or the previous) line.
+      const codes = [...e.currentTarget.querySelectorAll("code")];
+      const to = codes[codes.indexOf(line(parts[at]!)!) + (e.key === "ArrowDown" ? 1 : -1)];
+      next = to ? parts.find((p) => line(p) === to) : undefined;
+    } else return;
+    e.preventDefault();
+    next?.focus();
+  };
   return (
     <div data-formula={block} className="flex max-w-[46em] flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
       <Tools block={block} legendId={legendId} showLegend={legend} onLegend={() => setLegend((on) => !on)} />
       <Legend id={legendId} open={legend} />
-      <div role="group" aria-label={t("Formula")} aria-describedby={HINT_ID} className="flex flex-col gap-1 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">
-        {ANALYSIS.lines[block].map((tokens, li) => (
+      <div
+        role="group"
+        aria-label={t("Formula")}
+        aria-describedby={HINT_ID}
+        className="flex flex-col gap-1 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]"
+        onKeyDown={move}
+        onFocus={(e) => {
+          const occ = (e.target as HTMLElement).dataset.occ;
+          if (occ) setCurrent(occ);
+        }}
+      >
+        {lines.map((tokens, li) => (
           <code key={li} className="block">
-            {tokens.map((tok, ti) => (tok.occ ? <Term key={ti} block={block} occ={tok.occ} text={tok.text} /> : tok.text))}
+            {tokens.map((tok, ti) => (tok.occ ? <Term key={ti} block={block} occ={tok.occ} text={tok.text} tabbable={tok.occ === current} /> : tok.text))}
           </code>
         ))}
       </div>
@@ -339,7 +371,7 @@ function Glossary() {
   const names = usePartyName();
   return (
     <div hidden data-formula-glossary="">
-      <span id={HINT_ID}>{t("Point at or focus any part of a formula to see what it is and where its value goes. Click it or press Enter to pin it; Esc unpins.")}</span>
+      <span id={HINT_ID}>{t("Point at or focus any part of a formula to see what it is and where its value goes; the arrow keys move between its parts. Click it or press Enter to pin it; Esc unpins.")}</span>
       {PARTIES.map((party) => (
         <span key={party} id={hiddenId(party)}>
           {t("{{party}} cannot know this value.", { party: names[party] })}
@@ -482,6 +514,29 @@ function Cards() {
   );
 }
 
+/** One announcement for the whole page when "view as" changes: whose view, and how many values it hides. */
+function ViewAnnouncer() {
+  const { t } = useTranslation();
+  const store = useStore();
+  const names = usePartyName();
+  const view = useSyncExternalStore(store.subscribe, () => store.view, () => null);
+  const [said, setSaid] = useState("");
+  // Said only when the choice changes, never on load.
+  const last = useRef<Party | null>(null);
+  useEffect(() => {
+    if (view === last.current) return;
+    last.current = view;
+    if (!view) return setSaid(t("Showing every value."));
+    const hidden = (Object.keys(BLOCKS) as BlockId[]).reduce((n, block) => n + ANALYSIS.lines[block].flat().filter((tok) => tok.occ && hiddenFrom(block, tok.term!, view)).length, 0);
+    setSaid(t("Viewing as {{party}}: {{count}} values on this page are hidden.", { party: names[view], count: hidden }));
+  }, [view, t, names]);
+  return (
+    <span aria-live="polite" className="sr-only" data-formula-announcer="">
+      {said}
+    </span>
+  );
+}
+
 /** The page's formulas share one state: what is lit and pinned, and whose view. */
 export function FormulaProvider({ children }: { children: ReactNode }) {
   const [store] = useState(() => new FormulaStore());
@@ -501,6 +556,7 @@ export function FormulaProvider({ children }: { children: ReactNode }) {
     <StoreContext.Provider value={store}>
       {children}
       <Glossary />
+      <ViewAnnouncer />
       {mounted && <Cards />}
     </StoreContext.Provider>
   );

@@ -346,9 +346,12 @@ a {
 /* A long press on chrome must not raise iOS's callout sheet or start a text
    selection — both read as "the user grabbed a web page". Scoped to controls
    and the nav on purpose: transcripts, messages, code and inputs are content
-   and MUST stay selectable, so this may never be widened to a container. */
+   and MUST stay selectable, so this may never be widened to a container.
+   The security page's formula parts and named terms (`[data-occ]`) are words
+   of the text that also open a card: they stay selectable, so a formula or a
+   paragraph copies whole. */
 button,
-[role="button"],
+[role="button"]:not([data-occ]),
 nav a {
   -webkit-touch-callout: none;
   -webkit-user-select: none;

@@ -201,6 +201,39 @@ test("the legend opens beside the switch, and names every kind", async () => {
   assert.ok(Object.keys(BLOCKS).length > 10);
 });
 
+test("one tab stop per formula: the arrow keys move between its parts and lines, and the stop follows", async () => {
+  const seal = container.querySelector<HTMLElement>('[data-formula="seal"]')!;
+  const parts = [...seal.querySelectorAll<HTMLElement>("[data-occ]")];
+  assert.equal(parts.filter((p) => p.tabIndex === 0).length, 1, "one stop in the formula");
+  await act(async () => void document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+  await focus(parts[0]!);
+  await key(parts[0]!, "ArrowRight");
+  assert.equal(document.activeElement, parts[1]);
+  assert.equal(parts[1]!.tabIndex, 0, "the stop moves with the focus");
+  assert.equal(parts[0]!.tabIndex, -1);
+  await key(parts[1]!, "ArrowDown");
+  const line2 = seal.querySelectorAll("code")[1]!;
+  assert.equal(document.activeElement, line2.querySelector("[data-occ]"), "the next line's first part");
+  await key(document.activeElement!, "End");
+  assert.equal(document.activeElement, parts[parts.length - 1]);
+  await key(document.activeElement!, "Home");
+  assert.equal(document.activeElement, parts[0]);
+  await key(parts[0]!, "Escape");
+  await blur(parts[0]!);
+  assert.equal(cards().length, 0);
+});
+
+test("one live region for the whole page says what a view hides", async () => {
+  assert.equal(container.querySelectorAll("[data-formula] [aria-live]").length, 0, "none per block");
+  const announcer = container.querySelector<HTMLElement>("[data-formula-announcer]")!;
+  assert.equal(announcer.getAttribute("aria-live"), "polite");
+  await click(container.querySelector<HTMLElement>('[data-formula="stream"] [role="radio"][data-party="relay"]')!);
+  const hidden = container.querySelectorAll("[data-hidden-from]").length;
+  assert.equal(announcer.textContent, `Viewing as Relay: ${hidden} values on this page are hidden.`);
+  await click(container.querySelector<HTMLElement>('[data-formula="stream"] [role="radio"][data-party="all"]')!);
+  assert.equal(announcer.textContent, "Showing every value.");
+});
+
 test("a card stays inside the viewport: above its block when there is room, below it when not, moved in from the edge", async () => {
   type Box = { x: number; y: number; w: number; h: number };
   const rect = ({ x, y, w, h }: Box) => ({ x, y, left: x, top: y, width: w, height: h, right: x + w, bottom: y + h, toJSON: () => ({}) }) as DOMRect;
