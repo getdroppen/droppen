@@ -165,8 +165,8 @@ function Security() {
       items: [
         t("your e-mail address and when you sign in"),
         t("which devices and computers are online, when they connect, and from which IP address"),
-        t("how much data moves and when, in padded sizes"),
-        t("so, roughly when you are working"),
+        t("how much data moves and when: stored data is padded to fixed sizes, live connections are not"),
+        t("so, roughly when you are working, and in a terminal the rhythm of your typing"),
       ],
     },
     {

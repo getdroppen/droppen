@@ -150,6 +150,9 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   const words = text(draw("en"));
   for (const n of ["1–2 ms", "63–73 ms", "215–227 ms", "1.5 s", "two in three", "30 days"]) assert.ok(words.includes(n), `missing: ${n}`);
   assert.match(words, /internal security reviews, not an external audit/);
+  // Only stored data is padded; live connections are not (as /security and /privacy say).
+  assert.match(words, /stored data is padded to fixed sizes, live connections are not/);
+  assert.doesNotMatch(words, /in padded sizes/);
   assert.match(words, /invite-only beta/i);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /open[- ]source/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
