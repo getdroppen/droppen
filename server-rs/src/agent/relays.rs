@@ -18,9 +18,11 @@
 //!   to be on (`relays` and `emergency` together) and 64 to measure at most,
 //!   the first of any id or origin listed twice; the rest is ignored. Every
 //!   connection and every ping resolves the name here and dials only if every
-//!   address it resolves to is public; pings follow no redirects and use no
-//!   proxy. `RH_AGENT_RELAY_INSECURE=1` (local testing only) allows loopback
-//!   besides, and plain `ws://` to loopback only.
+//!   address it resolves to is public — or, for a public-looking name, if
+//!   every one is a local proxy's fake address (`198.18.0.0/15`, fake-ip mode:
+//!   the proxy carries the connection, TLS still verifies the name); pings
+//!   follow no redirects and use no proxy. `RH_AGENT_RELAY_INSECURE=1` (local
+//!   testing only) allows loopback besides, and plain `ws://` to loopback only.
 //! - **Measuring.** Every 15 minutes (and when the list changes) the agent
 //!   times `GET /v1/ping` on every listed relay — four requests, the first
 //!   dropped (DNS, TLS), the median of the rest; a relay still being timed
@@ -39,8 +41,8 @@
 //!   machine only while the hub still relays; after the cut-over, not at all).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -259,11 +261,48 @@ fn relay_list<'a>(lists: impl IntoIterator<Item = &'a Value>, cap: usize, insecu
     out
 }
 
+/// Whether `ip` is in `198.18.0.0/15` (or that range mapped into IPv6): the
+/// benchmarking range, where a local proxy in fake-ip mode (Clash, mihomo,
+/// Stash, Surge's enhanced mode) answers every name it then carries itself.
+fn proxy_fake(ip: IpAddr) -> bool {
+    let v4 = match ip {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4,
+            None => return false,
+        },
+    };
+    let [a, b, _, _] = v4.octets();
+    a == 198 && (b == 18 || b == 19)
+}
+
+/// Whether `name` may resolve to a local proxy's fake addresses: a name that
+/// looks public. Those are dialled over TLS only, which verifies the name
+/// ([`origin_ok`] takes plain `ws://` to `localhost` and loopback literals
+/// only, and `localhost` is not one of them).
+fn fake_ok(name: &str) -> bool {
+    !netpolicy::internal_name(name)
+}
+
 /// The addresses that may be dialled, all of them: none if any one is
 /// internal (a name that resolves partly inside the network is refused).
-fn vet(addrs: Vec<SocketAddr>, allow_loopback: bool) -> Result<Vec<SocketAddr>, String> {
+/// `name` is what they were resolved from (`None`: an address literal).
+///
+/// One exception, for names only: a proxy in fake-ip mode answers every name
+/// with an address in `198.18.0.0/15` and carries the connection itself, so
+/// a relay behind such a proxy resolves to nothing else. A name ([`fake_ok`])
+/// whose addresses are *all* in that range is dialled: whatever the proxy
+/// connects it to, TLS verifies the relay's name, so it cannot steer this
+/// agent to a plaintext service inside the network. An address literal in
+/// that range, or a name that resolves to it and to anything refused, is
+/// still refused (`rh_proto::netpolicy` itself, which the hub vets relay
+/// origins with, keeps refusing the range).
+fn vet(addrs: Vec<SocketAddr>, allow_loopback: bool, name: Option<&str>) -> Result<Vec<SocketAddr>, String> {
     if addrs.is_empty() {
         return Err("it resolves to no address".into());
+    }
+    if name.is_some_and(fake_ok) && addrs.iter().all(|a| proxy_fake(a.ip())) {
+        return Ok(addrs);
     }
     match addrs.iter().find(|a| !netpolicy::allowed(a.ip(), allow_loopback)) {
         Some(a) => Err(format!("it resolves to {}, which this agent does not dial", a.ip())),
@@ -271,10 +310,22 @@ fn vet(addrs: Vec<SocketAddr>, allow_loopback: bool) -> Result<Vec<SocketAddr>, 
     }
 }
 
+/// Whether a relay was reached through a proxy's fake address yet: said once
+/// a run, not on every reconnect or ping.
+static THROUGH_FAKE_IP: AtomicBool = AtomicBool::new(false);
+
 /// Resolve `host` here and keep it only if every address passes [`vet`].
 async fn lookup(host: &str, port: u16, allow_loopback: bool) -> Result<Vec<SocketAddr>, String> {
-    let addrs = tokio::net::lookup_host((host, port)).await.map_err(|e| format!("{host}: {e}"))?.collect();
-    vet(addrs, allow_loopback).map_err(|e| format!("{host}: {e}"))
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await.map_err(|e| format!("{host}: {e}"))?.collect();
+    let addrs = vet(addrs, allow_loopback, Some(host)).map_err(|e| format!("{host}: {e}"))?;
+    if addrs.iter().all(|a| proxy_fake(a.ip())) && !THROUGH_FAKE_IP.swap(true, Ordering::Relaxed) {
+        tracing::info!(
+            %host,
+            address = %addrs[0].ip(),
+            "a relay resolves to a local proxy's fake address (fake-ip DNS); dialling it through the proxy, TLS still verifies the relay's name"
+        );
+    }
+    Ok(addrs)
 }
 
 /// Where the host of a vetted origin may be dialled: an address literal as
@@ -285,7 +336,7 @@ async fn resolve(host: &str, port: u16, allow_loopback: bool) -> Result<Vec<Sock
         return Err(format!("{host}: not a host this agent dials"));
     }
     match bare.parse() {
-        Ok(ip) => vet(vec![SocketAddr::new(ip, port)], allow_loopback),
+        Ok(ip) => vet(vec![SocketAddr::new(ip, port)], allow_loopback, None),
         Err(_) => lookup(bare, port, allow_loopback).await,
     }
 }
@@ -1002,19 +1053,72 @@ mod tests {
     #[test]
     fn only_addresses_the_rules_allow_are_dialled() {
         let a = |s: &str| -> SocketAddr { s.parse().unwrap() };
-        assert!(vet(vec![a("127.0.0.1:443")], false).is_err());
-        assert!(vet(vec![a("[::1]:443")], false).is_err());
-        assert!(vet(vec![a("10.0.0.5:443")], false).is_err());
-        assert!(vet(vec![a("10.0.0.5:443")], true).is_err(), "local testing allows loopback, nothing else");
-        assert!(vet(vec![a("169.254.169.254:80")], true).is_err());
-        assert!(vet(vec![a("[::ffff:192.168.0.1]:443")], false).is_err());
-        assert!(
-            vet(vec![a("8.8.8.8:443"), a("10.0.0.5:443")], false).is_err(),
-            "a name with one internal address is refused"
-        );
-        assert!(vet(Vec::new(), false).is_err());
-        assert_eq!(vet(vec![a("8.8.8.8:443")], false), Ok(vec![a("8.8.8.8:443")]));
-        assert_eq!(vet(vec![a("127.0.0.1:9000")], true), Ok(vec![a("127.0.0.1:9000")]));
+        for name in [None, Some("relay.example")] {
+            assert!(vet(vec![a("127.0.0.1:443")], false, name).is_err());
+            assert!(vet(vec![a("[::1]:443")], false, name).is_err());
+            assert!(vet(vec![a("10.0.0.5:443")], false, name).is_err());
+            assert!(vet(vec![a("10.0.0.5:443")], true, name).is_err(), "local testing allows loopback, nothing else");
+            assert!(vet(vec![a("169.254.169.254:80")], true, name).is_err());
+            assert!(vet(vec![a("[::ffff:192.168.0.1]:443")], false, name).is_err());
+            assert!(
+                vet(vec![a("8.8.8.8:443"), a("10.0.0.5:443")], false, name).is_err(),
+                "a name with one internal address is refused"
+            );
+            assert!(vet(Vec::new(), false, name).is_err());
+            assert_eq!(vet(vec![a("8.8.8.8:443")], false, name), Ok(vec![a("8.8.8.8:443")]));
+            assert_eq!(vet(vec![a("127.0.0.1:9000")], true, name), Ok(vec![a("127.0.0.1:9000")]));
+        }
+    }
+
+    /// A proxy in fake-ip mode (Clash, mihomo, Stash, Surge) answers every
+    /// name with an address in `198.18.0.0/15`: a relay's name that resolves
+    /// to such addresses only is dialled (TLS verifies the name); nothing
+    /// else about the rules moves.
+    #[test]
+    fn a_name_behind_a_fake_ip_proxy_is_dialled() {
+        let a = |s: &str| -> SocketAddr { s.parse().unwrap() };
+        let name = Some("sin-1-production.up.railway.app");
+        for fake in ["198.18.0.92:443", "198.18.0.0:443", "198.19.255.255:443", "[::ffff:198.18.0.92]:443"] {
+            for insecure in [false, true] {
+                assert_eq!(vet(vec![a(fake)], insecure, name), Ok(vec![a(fake)]), "{fake}");
+            }
+        }
+        let all_fake = vec![a("198.18.0.92:443"), a("198.19.1.2:443")];
+        assert_eq!(vet(all_fake.clone(), false, name), Ok(all_fake), "every address fake");
+
+        // An address literal in the range is not a proxy's answer.
+        assert!(vet(vec![a("198.18.0.92:443")], false, None).is_err());
+        assert!(vet(vec![a("198.18.0.92:443")], true, None).is_err());
+        for literal in ["wss://198.18.0.92", "wss://198.19.0.1:8443", "wss://[::ffff:198.18.0.92]"] {
+            assert!(!origin_ok(literal, false) && !origin_ok(literal, true), "{literal}");
+        }
+        // Fake and anything refused together: refused.
+        for other in ["10.0.0.5:443", "127.0.0.1:443", "169.254.169.254:443", "100.100.100.200:443", "[fd00::1]:443", "8.8.8.8:443"] {
+            assert!(vet(vec![a("198.18.0.92:443"), a(other)], false, name).is_err(), "{other}");
+            assert!(vet(vec![a(other), a("198.18.0.92:443")], false, name).is_err(), "{other}");
+        }
+        // Next to the range: refused or public as before.
+        assert!(!proxy_fake("198.17.255.255".parse().unwrap()) && !proxy_fake("198.20.0.0".parse().unwrap()));
+        assert!(!proxy_fake("::198.18.0.92".parse().unwrap()) && !proxy_fake("64:ff9b::c612:5c".parse().unwrap()));
+        // Names internal by their form never get the exception: `localhost`
+        // (the only name plain `ws://` may dial, local testing) stays loopback.
+        for internal in ["localhost", "redis", "hub.railway.internal", "printer.local"] {
+            assert!(vet(vec![a("198.18.0.92:443")], true, Some(internal)).is_err(), "{internal}");
+        }
+        assert!(!origin_ok("ws://sin-1-production.up.railway.app", true), "plain ws:// stays loopback only");
+    }
+
+    /// Hosts are judged on their text before anything resolves: internal
+    /// names and refused literals (the fake-ip range among them) go nowhere.
+    #[tokio::test]
+    async fn hosts_are_refused_before_they_resolve() {
+        for host in ["198.18.0.92", "[::ffff:198.18.0.92]", "hub.railway.internal", "metadata.google.internal", "redis", "box.local"] {
+            for insecure in [false, true] {
+                let e = resolve(host, 443, insecure).await.unwrap_err();
+                assert!(e.ends_with("not a host this agent dials"), "{host}: {e}");
+            }
+        }
+        assert!(resolve("localhost", 443, false).await.unwrap_err().ends_with("not a host this agent dials"));
     }
 
     /// The addresses a name resolves to are what is checked: `localhost`
