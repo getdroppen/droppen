@@ -732,7 +732,6 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "End this pause of control?": "结束这次控制暂停？",
   "{{id}} can control {{host}} again": "{{id}} 将重新可以控制 {{host}}",
   "No control comes back: the lists changed since.": "没有控制会恢复：名单之后已改过。",
-  "{{host}} lets every device of the account control it: every device comes back, those added while it was paused among them.": "{{host}} 放行账户里的每台设备：所有设备都会恢复，包括暂停期间新加的设备。",
   "Not now: it would let a device control another while it must stay held.": "现在不行：这会让一台必须继续暂停的设备重新控制另一台。",
   "{{id}} stays paused from controlling {{host}}: {{who}} has not renewed its identity key since it may have been copied": "{{id}} 对 {{host}} 的控制继续暂停：{{who}} 可能被复制了身份密钥，还没有更换",
   "{{id}} stays paused from controlling {{host}}: {{who}} is isolated": "{{id}} 对 {{host}} 的控制继续暂停：{{who}} 已被隔离",
@@ -740,6 +739,10 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "Paused while identity keys are renewed: {{ids}}. They come back when the pause ends; the list here is what stays.": "更换身份密钥期间暂停：{{ids}}。暂停结束后它们会恢复；这里的名单是长期设置。",
   "renew the identity key of {{ids}} first: ending the pause would let it control a device again": "请先更换 {{ids}} 的身份密钥：结束暂停会让它重新控制一台设备",
   "that pause has ended already": "这次暂停已经结束了",
+  "{{id}} stays paused from controlling {{host}}: {{who}} cannot renew its identity key (its Droppen is too old): remove it, or update it": "{{id}} 对 {{host}} 的控制继续暂停：{{who}} 无法更换身份密钥（它的 Droppen 太旧）：请移除它，或更新它",
+  "{{host}} lets every device of the account control it: ending the pause gives back only the control listed above.": "{{host}} 放行账户里的每台设备：结束暂停只会恢复上面列出的控制。",
+  "Started by a device that is no longer a full device: it never ends by itself — end it here.": "由一台已不再是完整设备的设备开始：它不会自己结束，请在这里结束。",
+  "what ending the pause gives back has changed: look at it again": "结束暂停会恢复的控制已经变了：请再看一遍",
 };
 
 export const cloudDevicesZhTW: Record<string, string> = {
@@ -1469,7 +1472,6 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "End this pause of control?": "結束這次控制暫停？",
   "{{id}} can control {{host}} again": "{{id}} 將重新可以控制 {{host}}",
   "No control comes back: the lists changed since.": "沒有控制會恢復：名單之後已改過。",
-  "{{host}} lets every device of the account control it: every device comes back, those added while it was paused among them.": "{{host}} 放行帳戶裡的每台裝置：所有裝置都會恢復，包括暫停期間新加的裝置。",
   "Not now: it would let a device control another while it must stay held.": "現在不行：這會讓一台必須繼續暫停的裝置重新控制另一台。",
   "{{id}} stays paused from controlling {{host}}: {{who}} has not renewed its identity key since it may have been copied": "{{id}} 對 {{host}} 的控制繼續暫停：{{who}} 可能被複製了身分金鑰，還沒有更換",
   "{{id}} stays paused from controlling {{host}}: {{who}} is isolated": "{{id}} 對 {{host}} 的控制繼續暫停：{{who}} 已被隔離",
@@ -1477,6 +1479,10 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "Paused while identity keys are renewed: {{ids}}. They come back when the pause ends; the list here is what stays.": "更換身分金鑰期間暫停：{{ids}}。暫停結束後它們會恢復；這裡的名單是長期設定。",
   "renew the identity key of {{ids}} first: ending the pause would let it control a device again": "請先更換 {{ids}} 的身分金鑰：結束暫停會讓它重新控制一台裝置",
   "that pause has ended already": "這次暫停已經結束了",
+  "{{id}} stays paused from controlling {{host}}: {{who}} cannot renew its identity key (its Droppen is too old): remove it, or update it": "{{id}} 對 {{host}} 的控制繼續暫停：{{who}} 無法更換身分金鑰（它的 Droppen 太舊）：請移除它，或更新它",
+  "{{host}} lets every device of the account control it: ending the pause gives back only the control listed above.": "{{host}} 放行帳戶裡的每台裝置：結束暫停只會恢復上面列出的控制。",
+  "Started by a device that is no longer a full device: it never ends by itself — end it here.": "由一台已不再是完整裝置的裝置開始：它不會自己結束，請在這裡結束。",
+  "what ending the pause gives back has changed: look at it again": "結束暫停會恢復的控制已經變了：請再看一遍",
 };
 
 export const cloudDevicesJa: Record<string, string> = {
@@ -2206,7 +2212,6 @@ export const cloudDevicesJa: Record<string, string> = {
   "End this pause of control?": "この操作の一時停止を終えますか？",
   "{{id}} can control {{host}} again": "{{id}} が再び {{host}} を操作できるようになります",
   "No control comes back: the lists changed since.": "戻る操作はありません：その後リストが変わりました。",
-  "{{host}} lets every device of the account control it: every device comes back, those added while it was paused among them.": "{{host}} はアカウントのすべてのデバイスに操作を許可しています：一時停止中に追加されたものも含め、すべてのデバイスが戻ります。",
   "Not now: it would let a device control another while it must stay held.": "今はできません：一時停止を続けるべきデバイスが、ほかのデバイスを再び操作できるようになります。",
   "{{id}} stays paused from controlling {{host}}: {{who}} has not renewed its identity key since it may have been copied": "{{id}} から {{host}} への操作は一時停止のままです：{{who}} は ID 鍵がコピーされたおそれがあり、まだ更新していません",
   "{{id}} stays paused from controlling {{host}}: {{who}} is isolated": "{{id}} から {{host}} への操作は一時停止のままです：{{who}} は隔離されています",
@@ -2214,4 +2219,8 @@ export const cloudDevicesJa: Record<string, string> = {
   "Paused while identity keys are renewed: {{ids}}. They come back when the pause ends; the list here is what stays.": "ID 鍵の更新中は一時停止：{{ids}}。一時停止が終わると戻ります。ここのリストは変わらない設定です。",
   "renew the identity key of {{ids}} first: ending the pause would let it control a device again": "先に {{ids}} の ID 鍵を更新してください：一時停止を終えると、再びデバイスを操作できるようになります",
   "that pause has ended already": "この一時停止はすでに終わっています",
+  "{{id}} stays paused from controlling {{host}}: {{who}} cannot renew its identity key (its Droppen is too old): remove it, or update it": "{{id}} から {{host}} への操作は一時停止のままです：{{who}} は ID 鍵を更新できません（Droppen が古すぎます）。削除するか更新してください",
+  "{{host}} lets every device of the account control it: ending the pause gives back only the control listed above.": "{{host}} はアカウントのすべてのデバイスに操作を許可しています：一時停止を終えて戻るのは、上に挙げた操作だけです。",
+  "Started by a device that is no longer a full device: it never ends by itself — end it here.": "フルデバイスではなくなったデバイスが始めたものです：自動では終わりません。ここで終えてください。",
+  "what ending the pause gives back has changed: look at it again": "一時停止を終えて戻る操作が変わりました：もう一度確認してください",
 };

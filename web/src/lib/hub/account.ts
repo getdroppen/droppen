@@ -472,7 +472,9 @@ export type AccountErrorKind =
    * isolated would be let control another one: renew its identity key first
    * (docs/host-identity-rotation.md §4.1, §7 decision 8).
    */
-  | "exposed";
+  | "exposed"
+  /** A pause's end would give back other control than the person was shown (M7): ask again. */
+  | "pauseChanged";
 
 export class AccountError extends Error {
   /** The message as an i18n key (the English, with `{{name}}` where `vars` go). */
@@ -4569,15 +4571,18 @@ export class CloudAccount {
    * with the start that keeps what must stay held. Whether anything was
    * written (an empty build writes nothing).
    */
-  async writePause(build: (chain: ChainState) => Action[]): Promise<boolean> {
+  async writePause(build: (chain: ChainState) => Action[], beforePublish?: (base: ChainState) => void): Promise<boolean> {
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     try {
-      await this.appendBatch(async (chain) => {
-        const actions = build(chain);
-        if (!actions.length) throw new NothingToWrite();
-        return actions;
-      });
+      await this.appendBatch(
+        async (chain) => {
+          const actions = build(chain);
+          if (!actions.length) throw new NothingToWrite();
+          return actions;
+        },
+        { beforePublish },
+      );
       return true;
     } catch (error) {
       if (error instanceof NothingToWrite) return false;
@@ -4592,17 +4597,99 @@ export class CloudAccount {
    * with why — judged on this page's chain alone (`edgeHeld`). `null`: no
    * such open pause.
    */
-  pauseEnding(op: Uint8Array): { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] } | null {
+  pauseEnding(op: Uint8Array): PauseEnding | null {
     const chain = this.state;
     const pause = chain?.openPauses().find((p) => equal(p.op, op));
     if (!chain || !pause) return null;
     const { edges, all } = pauseReturns(chain, pause);
+    const held = this.heldEdges(chain, edges);
+    // Started by a device that is no longer an admin: in force all the same, and ended only by a person (M7).
+    return { edges, all, held, orphan: !chain.admin(pause.signer) };
+  }
+
+  /**
+   * Of `edges`, those that must stay held on `chain` (§4.1 「结束之前」), and
+   * why: judged on the chain alone, with the isolation and the hub's flags
+   * this page knows now. An exposed end that can never renew here (an older
+   * agent, `renews`) says so (`cannotRenew`), not merely `exposed`.
+   */
+  private heldEdges(chain: ChainState, edges: { host: string; id: string }[]): PauseEnding["held"] {
     const exposed = hostsToRotate(chain);
-    const held = edges.flatMap((e) => {
+    return edges.flatMap((e) => {
       const why = edgeHeld(chain, e, { exposed, isolated: (id) => this.isolated(id), flagged: (id) => this.flagged(id) });
-      return why ? [{ ...e, ...why }] : [];
+      if (!why) return [];
+      return [{ ...e, who: why.who, why: why.why === "exposed" && chain.machine(why.who) && !this.renews(why.who) ? ("cannotRenew" as const) : why.why }];
     });
-    return { edges, all, held };
+  }
+
+  /**
+   * End open pause `op` (§3.4 rule 10, §4.1): `phase` completed (the runner)
+   * or cancelled (a person's 「结束暂停」, after a confirm). `plan` says, on the
+   * chain the batch is built on, which of its edges must stay held — they go
+   * in a new start in the same batch (`next`) — or `null` to write nothing.
+   *
+   * - What it gives back is checked in the build and once more right before
+   *   publication (H1), with the isolation and the hub's flags known then:
+   *   one that must stay held aborts it (`exposed`; the runner tries again
+   *   on its next look, a person is told).
+   * - `expect`: the exact edges a person was shown (M7). Anything else
+   *   coming back — a base widened, an overlapping pause ended — refuses it
+   *   (`pauseChanged`): ask again.
+   * - Once written, every device let in again is sealed the host's committed
+   *   machine key epochs (D2, purpose 5): what it missed while paused.
+   *
+   * The edges given back; `null`: nothing written.
+   */
+  async endPauseWith(
+    op: Uint8Array,
+    phase: typeof PAUSE_COMPLETED | typeof PAUSE_CANCELLED,
+    plan: (chain: ChainState, pause: OpenPause) => { keep: PauseRemoval[] } | null,
+    opts: { expect?: { host: string; id: string }[]; next?: Uint8Array } = {},
+  ): Promise<{ host: string; id: string }[] | null> {
+    const opHex = hex(op);
+    const next: Bytes = opts.next ? copy(opts.next) : crypto.getRandomValues(new Uint8Array(16));
+    let returned: { host: string; id: string }[] = [];
+    const edgeKey = (e: { host: string; id: string }) => `${e.host}<${e.id}`;
+    // What ending it on `chain` gives back, held to everything it must be: the actions, or none.
+    const settle = (chain: ChainState): Action[] => {
+      const pause = chain.openPauses().find((p) => hex(p.op) === opHex);
+      if (!pause) return [];
+      const kept = plan(chain, pause);
+      if (!kept) return [];
+      const keep = new Set(kept.keep.flatMap((r) => r.ids.map((id) => edgeKey({ host: r.host, id }))));
+      const back = pauseReturns(chain, pause).edges.filter((e) => !keep.has(edgeKey(e)));
+      const held = this.heldEdges(chain, back);
+      if (held.length) {
+        throw new AccountError("exposed", "renew the identity key of {{ids}} first: ending the pause would let it control a device again", undefined, undefined, {
+          ids: [...new Set(held.map((h) => h.who))].sort().join(", "),
+        });
+      }
+      if (opts.expect) {
+        const want = new Set(opts.expect.map(edgeKey));
+        if (want.size !== back.length || back.some((e) => !want.has(edgeKey(e)))) {
+          throw new AccountError("pauseChanged", "what ending the pause gives back has changed: look at it again");
+        }
+      }
+      returned = back;
+      const start: Action[] = kept.keep.length ? [{ type: "renewalPause", op: next, phase: PAUSE_START, removals: kept.keep }] : [];
+      return [...start, { type: "renewalPause", op: pause.op, phase, removals: [] }];
+    };
+    // Built, then signed; right before it goes out, the same judgement again on what is known by then (H1).
+    const wrote = await this.writePause(settle, (base) => {
+      if (!settle(base).length) throw new AccountError("pauseChanged", "what ending the pause gives back has changed: look at it again");
+    });
+    if (!wrote) return null;
+    // D2: what a device only paused missed — the host's committed epochs — sealed to it now that it is let in again.
+    for (const e of returned) {
+      const to = this.state?.device(e.id);
+      if (!to || to.admin || e.id === this.deviceId || !this.state?.machine(e.host)) continue;
+      try {
+        await this.sendHostKeys(e.id, e.host);
+      } catch (error) {
+        if (!noDeviceRoleYet(to, error)) console.warn(`cloud account: could not send ${e.id} ${e.host}'s keys after a pause (it asks again):`, error);
+      }
+    }
+    return returned;
   }
 
   /**
@@ -4610,21 +4697,9 @@ export class CloudAccount {
    * on its own. Refused while an edge it gives back must stay held (the same
    * check as a completion's), on the chain the batch is built on.
    */
-  async endPause(op: Uint8Array): Promise<void> {
-    const opHex = hex(op);
-    const wrote = await this.writePause((chain) => {
-      const pause = chain.openPauses().find((p) => hex(p.op) === opHex);
-      if (!pause) return [];
-      const exposed = hostsToRotate(chain);
-      const held = pauseReturns(chain, pause).edges.filter((e) => edgeHeld(chain, e, { exposed, isolated: (id) => this.isolated(id), flagged: (id) => this.flagged(id) }));
-      if (held.length) {
-        throw new AccountError("exposed", "renew the identity key of {{ids}} first: ending the pause would let it control a device again", undefined, undefined, {
-          ids: [...new Set(held.flatMap((e) => [e.host, e.id]).filter((id) => exposed.has(id) || this.isolated(id) || this.flagged(id)))].sort().join(", "),
-        });
-      }
-      return [{ type: "renewalPause", op: pause.op, phase: PAUSE_CANCELLED, removals: [] }];
-    });
-    if (!wrote) throw new AccountError("notInChain", "that pause has ended already");
+  async endPause(op: Uint8Array, expect?: { host: string; id: string }[]): Promise<void> {
+    const returned = await this.endPauseWith(op, PAUSE_CANCELLED, () => ({ keep: [] }), { expect });
+    if (!returned) throw new AccountError("notInChain", "that pause has ended already");
   }
 
   /** Refuse an accept list for `host` that lets in a host that must renew first, on `chain` (§4.1, §7 decision 8). */
@@ -5729,6 +5804,16 @@ export function groupNarrowing(chain: ChainState, exposed: ReadonlyMap<string, E
 }
 
 const compareUtf8Ids = (x: string, y: string) => compareBytes(utf8(x), utf8(y));
+
+/** What ending an open renewal pause now gives back, what must stay held and why, and whether its starter still manages the account. */
+export interface PauseEnding {
+  edges: { host: string; id: string }[];
+  /** The hosts among them whose base lets every device in. */
+  all: string[];
+  held: { host: string; id: string; who: string; why: "exposed" | "cannotRenew" | "isolated" | "flagged" }[];
+  /** Its starter no longer manages the account: it is never ended on its own, only by a person (M7). */
+  orphan: boolean;
+}
 
 /**
  * The control edges an open renewal pause would give back if it ended now

@@ -48,6 +48,7 @@ import {
   groupNarrowing,
   pauseReturns,
   hostsToRotate,
+  type PauseEnding,
   type KeptDispute,
   RenewalError,
   renewalHelps,
@@ -431,19 +432,13 @@ export class RenewalRunner {
     const chain = account.chain;
     if (!chain) return false;
     for (const pause of chain.openPauses()) {
-      const plan = this.ending(chain, pause);
-      if (!plan) continue;
-      const opHex = hex(pause.op);
-      const next = crypto.getRandomValues(new Uint8Array(16));
+      // Started by a device that no longer manages the account: in force, and ended only by a person (M7) — never here.
+      if (!chain.admin(pause.signer)) continue;
+      if (!this.ending(chain, pause)) continue;
       try {
-        const wrote = await account.writePause((c) => {
-          const now = c.openPauses().find((p) => hex(p.op) === opHex);
-          const again = now ? this.ending(c, now) : null;
-          if (!now || !again) return [];
-          const keep: Action[] = again.keep.length ? [{ type: "renewalPause", op: next, phase: PAUSE_START, removals: again.keep }] : [];
-          return [...keep, { type: "renewalPause", op: now.op, phase: PAUSE_COMPLETED, removals: [] }];
-        });
-        if (wrote) return true;
+        // Judged again on the chain each batch is built on, and right before publication (H1).
+        const back = await account.endPauseWith(pause.op, PAUSE_COMPLETED, (c, p) => (c.admin(p.signer) ? this.ending(c, p) : null));
+        if (back) return true;
       } catch (error) {
         console.warn("cloud: ending a pause of control between devices renewed together:", error);
       }
@@ -501,7 +496,7 @@ export class RenewalRunner {
    * what ending it now would give back and what must stay held, and why
    * (`CloudAccount.pauseEnding`): what its row says, and its 「结束暂停」.
    */
-  pausesOf(host: string): { op: Uint8Array; ending: NonNullable<ReturnType<CloudAccount["pauseEnding"]>> }[] {
+  pausesOf(host: string): { op: Uint8Array; ending: PauseEnding }[] {
     const { account } = this.opts;
     const chain = account.chain;
     if (!chain) return [];

@@ -738,7 +738,7 @@ export class StreamSubscription<S> {
           // trusted for where it stands unless the machine signed it — under
           // its key of the seq this device checked it at before keeping it.
           const keySeq = saved.keySeq ?? null;
-          this.reader = await this.client.keyed(await LogReader.fromHead(this.client.machineSignKey, saved.head, this.client.keptKeys(keySeq)));
+          this.install(await this.client.keyed(await LogReader.fromHead(this.client.machineSignKey, saved.head, this.client.keptKeys(keySeq))));
           this.state = saved.state;
           this.head = saved.head;
           this.headSeq = keySeq;
@@ -788,8 +788,20 @@ export class StreamSubscription<S> {
     });
   }
 
+  /**
+   * Install `reader` as the one this stream reads with (M2): first held to
+   * the client's key as it is NOW — the machine may have renewed it while
+   * the reader was being built (its epochs installed), and the renewal
+   * reached only the reader there was then. Heads from here on are held to
+   * the current key, never the one the reader started with.
+   */
+  private install(reader: LogReader): void {
+    reader.setMachineKey(this.client.machineSignKey);
+    this.reader = reader;
+  }
+
   private async fresh(): Promise<void> {
-    this.reader = await this.client.keyed(LogReader.fromStart(this.stream, this.client.machineSignKey));
+    this.install(await this.client.keyed(LogReader.fromStart(this.stream, this.client.machineSignKey)));
     this.state = this.fold.empty();
     this.head = null;
     this.rebuilding = true;
@@ -826,7 +838,7 @@ export class StreamSubscription<S> {
       // head it stands on is one this device checked (it may carry a key the
       // machine renewed away from since); what comes next is held to the current.
       const key = this.client.machineSignKey;
-      this.reader = await this.client.keyed(this.head ? await LogReader.fromHead(key, this.head, this.client.keptKeys(this.headSeq)) : LogReader.fromStart(this.stream, key));
+      this.install(await this.client.keyed(this.head ? await LogReader.fromHead(key, this.head, this.client.keptKeys(this.headSeq)) : LogReader.fromStart(this.stream, key)));
     }
     this.subscribeNow();
   }
@@ -960,7 +972,8 @@ export class StreamSubscription<S> {
     // A refused head leaves the reader as it was, so it can be tried again. The chain's seq is noted as the key is
     // set for the check (Codex round 7): the position is kept with the seq whose key verified it, not a later one.
     const at: { seq: number | null } = { seq: null };
-    const released = await this.underCurrentKey(reader.machineKey, (key) => {
+    // Held to the client's current key, not whatever the reader was built with (M2).
+    const released = await this.underCurrentKey(this.client.machineSignKey, (key) => {
       reader.setMachineKey(key);
       at.seq = this.client.stamp();
       return reader.confirm(signed);
@@ -1015,7 +1028,7 @@ export class StreamSubscription<S> {
       bodies.push(body);
     }
     if (this.closed) return;
-    this.reader = next;
+    this.install(next);
     this.state = state;
     this.head = m.head;
     this.headSeq = this.client.stamp();

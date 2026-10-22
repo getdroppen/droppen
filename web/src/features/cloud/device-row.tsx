@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import type { Accept } from "@/lib/e2e";
 import { formatAsOf, formatExactTime, formatRelative } from "@/lib/format";
-import type { PromoteBlock, ReEnrollLine } from "@/lib/hub/account";
+import type { PauseEnding, PromoteBlock, ReEnrollLine } from "@/lib/hub/account";
 import type { PresenceState } from "@/lib/hub/link";
 import type { RenewalStatus } from "@/lib/hub/renewal";
 import type { DeviceAttention } from "@/features/machines/needs-you";
@@ -94,7 +94,7 @@ export interface DeviceRowView {
   /** The ids its list names whose control of it a renewal pause holds now (§3.4 rule 10): said apart from the list itself. */
   pausedControllers?: string[];
   /** The open renewal pauses on its list: what ending each now gives back, and what must stay held, and why (§4.1). */
-  pauses?: { op: Uint8Array; ending: { edges: { host: string; id: string }[]; all: string[]; held: { host: string; id: string; who: string; why: "exposed" | "isolated" | "flagged" }[] } }[];
+  pauses?: { op: Uint8Array; ending: PauseEnding }[];
   /** A host's facts for 「详情」: its system, agent version, hostname, the newest content key's generation. */
   facts?: { os?: string | null; agent?: string | null; agentFull?: string | null; hostname?: string | null; keyEpoch?: number | null };
   /** A host's sessions at a glance (off its copy): `null` while there is no list of them. */
@@ -704,6 +704,9 @@ export function DeviceRow({
           {status === "active" &&
             (view.pauses ?? []).map((p) => (
               <span key={p.ending.edges.map((e) => `${e.host}<${e.id}`).join(",") || id} data-testid={`pause-${id}`} className="flex flex-col items-start gap-0.5 text-2xs leading-4 text-muted">
+                {p.ending.orphan && (
+                  <span data-testid={`pause-orphan-${id}`}>{t("Started by a device that is no longer a full device: it never ends by itself — end it here.")}</span>
+                )}
                 {p.ending.held.map((h) => (
                   <span key={`${h.host}<${h.id}`} data-testid={`pause-held-${id}-${h.id}`} data-why={h.why} data-signal="warn" className="text-warn-fg">
                     {pauseHeldText(h, t)}

@@ -503,13 +503,17 @@ test("§4.1 overlay UI: the list (base) and what a pause holds apart; 「结束�
   // The row: the base under "who can control it", the paused edges apart from it; why an edge stays held; "end pause".
   const ops: Uint8Array[] = [];
   const op = new Uint8Array(16).fill(7);
-  const ending = { edges: [{ host: "m-1", id: "m-2" }], all: [], held: [{ host: "m-1", id: "m-2", who: "m-2", why: "exposed" as const }] };
+  const ending = { edges: [{ host: "m-1", id: "m-2" }], all: [], held: [{ host: "m-1", id: "m-2", who: "m-2", why: "exposed" as const }], orphan: true };
   const view = host({ accept: { type: "devices", ids: ["m-2", "m-3"] }, pausedControllers: ["m-2"], pausedWith: ["m-1", "m-2"], pauses: [{ op, ending }] });
   const html = rowHtml(view, { onEndPause: (o: Uint8Array) => ops.push(o) });
   assert.ok(html.includes("your full devices, and m-2, m-3"), "the base as set");
   assert.match(html, /paused now<\/dt><dd[^>]*>m-2</);
   assert.ok(html.includes("m-2 stays paused from controlling m-1: m-2 has not renewed its identity key since it may have been copied"));
   assert.match(html, /data-testid="end-pause-m-1"/);
+  assert.ok(html.includes("Started by a device that is no longer a full device: it never ends by itself — end it here."), "an orphaned pause says so");
+  // A host that can never renew says so (not merely "exposed").
+  const old = rowHtml(host({ pauses: [{ op, ending: { ...ending, held: [{ host: "m-1", id: "m-3", who: "m-3", why: "cannotRenew" as const }], orphan: false } }] }));
+  assert.ok(old.includes("m-3 stays paused from controlling m-1: m-3 cannot renew its identity key (its Droppen is too old): remove it, or update it"));
   drive(DeviceRow, { view, viewerAdmin: true, upgraded: true, writable: true, onEndPause: (o: Uint8Array) => ops.push(o) }, [
     (tree) => (tree.find((e) => e.props["data-testid"] === "end-pause-m-1")!.props.onClick as () => void)(),
   ]);
@@ -517,10 +521,10 @@ test("§4.1 overlay UI: the list (base) and what a pause holds apart; 「结束�
   assert.doesNotMatch(draw(<ul><DeviceRow view={view} viewerAdmin={false} upgraded writable onEndPause={() => undefined} /></ul>), /end-pause-m-1/, "not for a limited device");
   // The confirmation: exactly what comes back; the All note; refused while something must stay held.
   let confirmed = 0;
-  const free = { edges: [{ host: "m-1", id: "m-2" }, { host: "m-3", id: "m-1" }], all: ["m-3"], held: [] };
+  const free = { edges: [{ host: "m-1", id: "m-2" }, { host: "m-3", id: "m-1" }], all: ["m-3"], held: [], orphan: false };
   const ask = draw(<EndPauseConfirm ending={free} busy={false} onConfirm={() => confirmed++} onCancel={() => undefined} />);
   assert.ok(ask.includes("m-2 can control m-1 again") && ask.includes("m-1 can control m-3 again"));
-  assert.ok(ask.includes("m-3 lets every device of the account control it: every device comes back, those added while it was paused among them."));
+  assert.ok(ask.includes("m-3 lets every device of the account control it: ending the pause gives back only the control listed above."), "N1");
   assert.doesNotMatch(ask, /data-testid="end-pause-yes"[^>]*disabled=""/);
   drive(EndPauseConfirm, { ending: free, busy: false, onConfirm: () => confirmed++, onCancel: () => undefined }, [
     (tree) => (tree.find((e) => e.props["data-testid"] === "end-pause-yes")!.props.onClick as () => void)(),
