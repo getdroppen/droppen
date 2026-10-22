@@ -1485,6 +1485,8 @@ pub(super) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, out: &mpsc
             .filter_map(|(ch, (device, key, _))| {
                 let why = if chain.device(device).is_none() {
                     Gone::Removed
+                } else if chain.paused_edges(&st.machine).iter().any(|id| id == device) {
+                    Gone::Paused
                 } else if chain.may_control(device, &st.machine).is_err() {
                     Gone::NotAccepted
                 } else if !holds_named_key(chain, device, key) {
@@ -1506,6 +1508,10 @@ pub(super) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, out: &mpsc
             Gone::NotAccepted => {
                 tracing::info!(%device, ch, "closing the channel of a device this machine no longer accepts control from");
                 refuse(out, ch, 4403, "the device you reach no longer accepts control from this one");
+            }
+            Gone::Paused => {
+                tracing::info!(%device, ch, "closing the channel of a device whose control is paused while identity keys are renewed");
+                refuse(out, ch, 4403, PAUSED_REASON);
             }
             Gone::Renewed => {
                 tracing::info!(%device, ch, "closing a channel opened with an identity key the chain no longer names");
@@ -1711,8 +1717,15 @@ pub(super) fn drop_ended(routes: &mut Routes) {
 enum Gone {
     Removed,
     NotAccepted,
+    /// An open renewal pause removes it from this host's effective accept
+    /// (§3.4 rule 10): it comes back once the pause ends.
+    Paused,
     Renewed,
 }
+
+/// The close reason of a channel whose control a renewal pause took away.
+pub(super) const PAUSED_REASON: &str =
+    "control is paused while identity keys are renewed: connect again once the renewal is done";
 
 /// Whether `key` — the static key a channel of `device` was opened with — is
 /// the DH key the chain names for `device` now.
@@ -3339,7 +3352,13 @@ mod tests {
         assert_eq!(served(&channel).await, None, "not served while paused");
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         drop_removed(&a.shared, &mut routes, &out_tx);
-        assert_eq!(closes(&mut out_rx), vec![(4, 4403)]);
+        match out_rx.try_recv() {
+            Ok(Frame::Close { ch, code, reason }) => {
+                assert_eq!((ch, code), (4, 4403));
+                assert_eq!(reason, PAUSED_REASON, "said as a pause, not a narrowing");
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(routes.is_empty());
         // New ones: refused on both paths.
         for (ch, relay) in [(7, false), (8, true)] {
