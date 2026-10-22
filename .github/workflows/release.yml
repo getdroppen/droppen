@@ -1,244 +1,1046 @@
 name: release
 
+# Every release of Droppen is built here, from this repository's source, and
+# published as this repository's GitHub release of the tag, with a build
+# provenance attestation for every file (docs/releasing.md). A `v*` tag of a commit on main releases; a
+# manual run is a dry run unless it is on such a tag and `dry_run` is unticked.
+#
+# Zero trust in the builder:
+# - The build jobs run dependency code (npm install scripts, build scripts,
+#   the programs built) and hold no secret, no write token and no OIDC token.
+# - Every artifact is a tar whose sha256 its job puts out; a job that takes
+#   one checks it against that output and unpacks it into an empty directory
+#   of its own, refusing any member but the expected paths
+#   (.github/scripts/unpack-artifact.sh). Nothing from an artifact is run
+#   where a secret is: those jobs only read, sign or upload the files.
+# - One job per secret, each in the protected `release` environment (a person
+#   approves each): sign-apple (Developer ID, notarisation; the keychain is
+#   deleted right after), sign-updater (the updater key; its signer is built
+#   in that job from pinned sources before the key is in reach), publish
+#   (`contents: write`; runs our scripts, gh and Apple's stapler, nothing
+#   built): a draft with every file, checked, then published once.
+# - attest holds the OIDC token, only when publishing, and runs nothing built
+#   from dependencies. No caches anywhere.
+#
+#   meta ─┬─ web ─┬─ server-macos (aarch64, x86_64) ─┐
+#         │       └─ server-linux (x86_64, aarch64) ─┼─ stage ─┬─ smoke-linux ─┐
+#         └─ tools ──────────────────────────────────┘         └─ desktop ─────┴─ sign-apple ─ sign-updater ─┐
+#                                                       verify (no secrets) ─ attest ─ publish
 on:
   push:
-    # Tag caches cannot be read by later tags. Build on the default branch
-    # as well so every release can restore its compiled dependencies from main.
-    branches: [main]
     tags: ["v*"]
-    paths:
-      - server-rs/**
-      - web/**
-      - packages/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - distribution.json
-      - .nvmrc
-      - scripts/web-manifest.mjs
-      - .github/workflows/release.yml
-      - .github/scripts/**
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build, sign and notarise everything, publish nothing (always, unless run on a v* tag)"
+        type: boolean
+        default: true
 
 # Nothing by default: each job asks for what it needs.
 permissions: {}
 
+# One run per tag (or branch) at a time; a second one waits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The Rust the Linux image has (scripts/build-linux.sh), for every build.
+  RUST_TOOLCHAIN: "1.98.1"
+  # Where releases go: this repository (scripts/publish-release.sh reads it).
+  DROPPEN_RELEASE_REPO: ${{ github.repository }}
+  # The logs are public: a text check's hit shows its line number only
+  # (scripts/release-text-check.sh).
+  DROPPEN_RELEASE_TEXT_QUIET: "1"
+  # The runners' disks are their own; the scripts' 25 GB floor is the release
+  # Mac's.
+  DROPPEN_MIN_FREE_GB: "2"
+  # What each artifact may hold (.github/scripts/unpack-artifact.sh).
+  ALLOW_WEB: '^dist(/[^/]+)*$'
+  ALLOW_TOOLS: '^bin(/(cargo-about|cargo-tauri))?$'
+  ALLOW_STAGED: '^release(/((droppen|remote-hand)-v[0-9A-Za-z.-]+-(macos|linux)-(aarch64|x86_64|universal)\.tar\.gz|SHA256SUMS|LICENSE|THIRD_PARTY_NOTICES|NOTES\.md|web-manifest\.json|install\.sh|INSTALL-(macos|linux)\.txt))?$'
+  ALLOW_APP: '^Droppen\.app(/[^/]+)*$'
+  ALLOW_SIGNED: '^(Droppen\.app(/[^/]+)*|Droppen-[0-9]+\.[0-9]+\.[0-9]+\.dmg)$'
+  ALLOW_UPDATER: '^updater(/(Droppen\.app\.tar\.gz|Droppen\.app\.tar\.gz\.sig|latest\.json))?$'
+  ALLOW_SUMS: '^SHA256SUMS$'
+  ALLOW_BUNDLES: '^bundles(/(web-manifest\.sigstore\.json|droppen-v[0-9A-Za-z.-]+\.sigstore\.json))?$'
+
 jobs:
-  # The public web build — what droppen.app serves — as `web-manifest.json`:
-  # every file's sha256, the digest the hub reports at
-  # `/.well-known/droppen-build`, and what it was built from
-  # (docs/web-integrity.md). This job runs dependency code (install, vite), so
-  # it gets no signing rights: it only hands the manifest on as an artifact.
-  web:
+  # What this run is: the version, the commit, whether it publishes, whether
+  # the release has the desktop app.
+  meta:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      plain: ${{ steps.meta.outputs.plain }}
+      sha: ${{ steps.meta.outputs.sha }}
+      rev: ${{ steps.meta.outputs.rev }}
+      publish: ${{ steps.meta.outputs.publish }}
+      snapshot: ${{ steps.meta.outputs.snapshot }}
+      desktop: ${{ steps.meta.outputs.desktop }}
+      pnpm: ${{ steps.meta.outputs.pnpm }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      # The same install and build as the hub's Docker stage (outside this
-      # repository); CI's `web-reproducible` job keeps the two byte-identical.
-      - run: pnpm install --frozen-lockfile --filter "@remote-hand/web..."
-      - name: Build the public distribution and its manifest
-        run: |
-          unset DROPPEN_DISTRIBUTION
-          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm --filter @remote-hand/web build
-          mkdir -p dist
-          node scripts/web-manifest.mjs web/dist --commit "$GITHUB_SHA" --ref "$GITHUB_REF" --out dist/web-manifest.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-manifest
-          path: dist/web-manifest.json
-
-  # Signing, apart from building. This job checks nothing out and installs
-  # nothing: it downloads the manifest, attests it with GitHub's own action and
-  # attaches both to the release with the runner's `gh`. So no build-time
-  # dependency ever holds the OIDC token that could sign provenance. It also
-  # creates the release, before `macos` adds its tarballs (no race).
-  web-release:
-    needs: web
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      # Signing the attestation (Sigstore, through GitHub's OIDC token).
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: web-manifest
-          path: dist
-      # Attestations need a public repository (or Enterprise Cloud); until the
-      # repository is public the manifest ships unattested.
-      - id: attest
-        if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: dist/web-manifest.json
-      # The bundle lets anyone verify without a GitHub login:
-      # `gh attestation verify web-manifest.json --bundle web-manifest.sigstore.json --repo …`.
-      - if: steps.attest.outcome == 'success'
-        env:
-          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-        run: cp "$BUNDLE" dist/web-manifest.sigstore.json
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
-          files=(dist/web-manifest.json)
-          if [ -f dist/web-manifest.sigstore.json ]; then files+=(dist/web-manifest.sigstore.json); fi
-          gh release upload "$TAG" "${files[@]}" --clobber
-
-  macos:
-    # After `web` (the manifest to check the embedded web app against) and, on
-    # a tag, after `web-release` (which creates the release). `web-release` is
-    # skipped on main pushes; this job still runs then.
-    needs: [web, web-release]
-    if: ${{ !cancelled() && needs.web.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.web-release.result) }}
-    permissions:
-      # The release step creates/updates a GitHub Release and uploads assets to it.
-      contents: write
-    # `macos-latest` is arm64, which is the only macOS architecture we ship.
-    # Keeping the release native avoids spending most of the job cross-compiling
-    # an Intel slice that has no deployment target.
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # This job's token can write releases; nothing here needs it in .git/config.
           persist-credentials: false
-
-      # The tag names the artifacts; the short sha names the *binary*, via
-      # `RH_BUILD_REV`. They are not the same thing and both matter: a release
-      # rebuilt from the same tag must still be distinguishable to self-update,
-      # which compares `0.1.0+g<commit>` strings.
       - id: meta
-        run: |
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            version="${GITHUB_REF_NAME}"
-          else
-            version="$(git rev-parse --short HEAD)"
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "rev=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      # The SPA is embedded into the binary at compile time, so it has to exist
-      # before cargo runs: `server-rs/build.rs` fails the build outright when
-      # `web/dist` is missing rather than quietly shipping a placeholder page.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" pnpm --filter @remote-hand/web build
-      # The binary embeds the same bytes the release's manifest lists: the
-      # public build is reproducible across Linux and macOS too.
-      - uses: actions/download-artifact@v4
-        with:
-          name: web-manifest
-          path: web-manifest
-      - run: node scripts/web-manifest.mjs web/dist --check web-manifest/web-manifest.json
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: server-rs -> target
-          # Keep this job/key/target identical for main and tags. Never include
-          # the tag or revision in the key: rust-cache already keys by compiler,
-          # platform, Cargo manifests and lockfile, with dependency fallbacks.
-          cache-on-failure: true
-          # Tags consume main's cache instead of filling storage with isolated
-          # copies that no subsequent release can use.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build macOS aarch64
         env:
-          # `.git` is right here, but pass the revision explicitly anyway: the
-          # build script's git fallback would mark a shallow or detached
-          # checkout however it finds it, and the release should say exactly
-          # which commit it came from.
-          RH_BUILD_REV: ${{ steps.meta.outputs.rev }}
-        run: |
-          cargo build --release --locked --target aarch64-apple-darwin --manifest-path server-rs/Cargo.toml
-
-      # Before packaging, not after: an artifact that cannot boot is worse than
-      # a failed build, because self-update will happily install it.
-      - name: Smoke-test the native binary
-        run: ./.github/scripts/smoke-macos.sh server-rs/target/aarch64-apple-darwin/release/remote-hand-server
-
-      # The tarball's THIRD_PARTY_NOTICES (INSTALL.txt points to it), as
-      # scripts/release-public.sh writes it: the licences of every crate and
-      # npm package the binary carries. Only for what gets packaged.
-      - name: Third-party notices
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        env:
-          ABOUT_VERSION: 0.9.2
-          VERSION: ${{ steps.meta.outputs.version }}
-          REV: ${{ steps.meta.outputs.rev }}
-        run: |
-          cargo install --locked "cargo-about@${ABOUT_VERSION}" --features cli
-          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
-          ./.github/scripts/third-party-notices.sh "$RUNNER_TEMP/THIRD_PARTY_NOTICES" \
-            "THIRD_PARTY_NOTICES for Droppen ${VERSION} (remote-hand-server ${crate}+g${REV})"
-
-      - name: Package
-        # Main builds only warm the cache and smoke-test; they do not publish.
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        # Explicit, because the packaging step uses a bash array.
-        shell: bash
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          mkdir -p dist/aarch64
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$GITHUB_REF_NAME
+            if [ "$version" != "v$crate" ]; then
+              echo "::error::the tag $version is not the server's version, v$crate (server-rs/Cargo.toml)"
+              exit 1
+            fi
+            # A tag releases; a manual run on a tag only when dry_run is unticked.
+            if [ "$GITHUB_EVENT_NAME" = push ] || [ "$DRY_RUN_INPUT" = false ]; then publish=true; else publish=false; fi
+          else
+            # Anywhere else, a dry run of the version the source says.
+            version=v$crate
+            publish=false
+          fi
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$version is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+          plain=${version#v}
+          notes=docs/releases/$version.md
+          if [ -f "$notes" ]; then
+            snapshot=false
+            # The desktop app is part of a release whose notes announce it
+            # (scripts/publish-release.sh refuses notes that do, without it);
+            # a server-only release carries the latest one forward.
+            if grep -qF "Droppen-$plain.dmg" "$notes"; then desktop=true; else desktop=false; fi
+          elif [ "$publish" = true ]; then
+            echo "::error::$notes is missing: write what changed for people, in English and Chinese (docs/releases/ has the earlier ones), and tag the commit that has it"
+            exit 1
+          else
+            # A dry run of a version without notes: a snapshot, with the app.
+            snapshot=true
+            desktop=true
+          fi
+          # A prerelease never carries the app (scripts/publish-release.sh).
+          case "$plain" in *-*) desktop=false ;; esac
+          pnpm=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.json)
+          {
+            echo "version=$version"
+            echo "plain=$plain"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "rev=$(git rev-parse --short HEAD)"
+            echo "publish=$publish"
+            echo "snapshot=$snapshot"
+            echo "desktop=$desktop"
+            echo "pnpm=$pnpm"
+          } | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "### Droppen $version from \`$(git rev-parse HEAD)\`"
+            echo
+            if [ "$publish" = true ]; then
+              echo "Publishes to $DROPPEN_RELEASE_REPO once the \`release\` environment is approved (by each of sign-apple, sign-updater and publish)."
+            else
+              echo "**Dry run**: builds, signs and notarises, publishes nothing."
+            fi
+            echo
+            echo "Desktop app: $desktop. Snapshot (no release notes): $snapshot."
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Only a commit on main is released: the tag ruleset decides who may
+      # tag, this what may be.
+      - name: A release is of a commit on main
+        if: steps.meta.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not on main: only a commit merged into main is released"
+            exit 1
+          fi
+          echo "ok: $GITHUB_SHA is on main"
 
-          # `server-rs` is its own workspace, so its target dir is under it —
-          # not at the repository root.
-          cp server-rs/target/aarch64-apple-darwin/release/remote-hand-server dist/aarch64/
-          chmod +x dist/aarch64/remote-hand-server
-          sed -e "s/@ARCH@/aarch64/" \
-            -e 's/@CONTENTS@/`remote-hand-server` in this archive is the same program as `droppen`./' \
-            .github/scripts/INSTALL.txt.in > dist/aarch64/INSTALL.txt
-          cp LICENSE "$RUNNER_TEMP/THIRD_PARTY_NOTICES" dist/aarch64/
-          members=(remote-hand-server INSTALL.txt LICENSE THIRD_PARTY_NOTICES)
-          # Members listed by name rather than `.`, so the archive holds
-          # `remote-hand-server` and not `./remote-hand-server` — the README
-          # tells people to extract that one member by name, and a `./`
-          # prefix would make the pattern miss.
-          # COPYFILE_DISABLE keeps bsdtar from smuggling `._*` AppleDouble
-          # companions for the binary's extended attributes into the archive.
-          COPYFILE_DISABLE=1 tar -czf "dist/remote-hand-${VERSION}-macos-aarch64.tar.gz" \
-            -C dist/aarch64 "${members[@]}"
-
-          cd dist && shasum -a 256 ./*.tar.gz > SHA256SUMS && cat SHA256SUMS
-
-      # A dispatch run has no tag to release against, so it just leaves the
-      # tarballs on the workflow run — useful for testing this pipeline itself.
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+  # The public web build (what droppen.app serves), once, for every binary to
+  # embed: the same commands as the hub's Docker stage and CI's
+  # `web-reproducible`. The stage job checks its own build against it.
+  web:
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: remote-hand-macos-${{ steps.meta.outputs.version }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Build the public distribution
+        id: pack
+        env:
+          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
+          TZ: UTC
+        run: |
+          set -euo pipefail
+          unset DROPPEN_DISTRIBUTION
+          npm install -g "pnpm@$PNPM_VERSION"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+          pnpm --filter @remote-hand/web build
+          # Refuses anything but the public distribution.
+          node scripts/web-manifest.mjs web/dist --commit "$GITHUB_SHA" --out "$RUNNER_TEMP/web-manifest.json"
+          tar -cf "$RUNNER_TEMP/web-dist.tar" -C web dist
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/web-dist.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/web-dist.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # cargo-about (the notices) and tauri-cli (the app's build), for the build
+  # jobs below. The jobs with secrets build what they run themselves.
+  tools:
+    needs: meta
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Build the tools
+        id: pack
+        run: |
+          set -euo pipefail
+          tools=$RUNNER_TEMP/tools
+          about=$(sed -n 's/^ABOUT_VERSION=//p' scripts/release-public.sh)
+          tauri=$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)
+          cargo install --locked "cargo-about@$about" --features cli --root "$tools"
+          cargo install --locked tauri-cli --version "$tauri" --root "$tools"
+          "$tools/bin/cargo-about" --version
+          "$tools/bin/cargo-tauri" --version
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/tools.tar" -C "$tools" bin/cargo-about bin/cargo-tauri
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/tools.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tools
+          path: ${{ runner.temp }}/tools.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The macOS server binaries, as scripts/release-public.sh builds them: from
+  # an export of the commit, with web-dist embedded and the builder's paths
+  # remapped out.
+  server-macos:
+    needs: [meta, web]
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            key: aarch64
+          - target: x86_64-apple-darwin
+            key: x86_64
+    # Each leg sets only its own output.
+    outputs:
+      sha_aarch64: ${{ steps.pack.outputs.sha_aarch64 }}
+      sha_x86_64: ${{ steps.pack.outputs.sha_x86_64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "$TARGET"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/dl/web-dist
+      - name: Build
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+          KEY: ${{ matrix.key }}
+          REV: ${{ needs.meta.outputs.rev }}
+          WEB_SHA: ${{ needs.web.outputs.sha }}
+        run: |
+          set -euo pipefail
+          src=$RUNNER_TEMP/src
+          mkdir -p "$src" "$RUNNER_TEMP/out/$TARGET"
+          git archive --format=tar HEAD | tar -x -C "$src"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/web-dist/web-dist.tar" "$WEB_SHA" "$RUNNER_TEMP/a/web" "$ALLOW_WEB"
+          mv "$RUNNER_TEMP/a/web/dist" "$src/web/dist"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" CARGO_BUILD_BUILD_DIR="$RUNNER_TEMP/build" \
+            DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" \
+            RUSTFLAGS="--remap-path-prefix=$src=/droppen --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+            cargo build --release --locked --target "$TARGET" --manifest-path "$src/server-rs/Cargo.toml"
+          cp "$RUNNER_TEMP/target/$TARGET/release/remote-hand-server" "$RUNNER_TEMP/out/$TARGET/"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/server-$TARGET.tar" -C "$RUNNER_TEMP/out" "$TARGET"
+          echo "sha_$KEY=$(shasum -a 256 "$RUNNER_TEMP/server-$TARGET.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-${{ matrix.target }}
+          path: ${{ runner.temp }}/server-${{ matrix.target }}.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The Linux server binaries (glibc 2.28): scripts/build-linux-in-container.sh
+  # in scripts/build-linux.sh's image, pinned by digest, with the source where
+  # the build pod has it (/work/src).
+  server-linux:
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    outputs:
+      sha_x86_64: ${{ steps.pack.outputs.sha_x86_64 }}
+      sha_aarch64: ${{ steps.pack.outputs.sha_aarch64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/dl/web-dist
+      - name: Build
+        id: pack
+        env:
+          ARCH: ${{ matrix.arch }}
+          REV: ${{ needs.meta.outputs.rev }}
+          WEB_SHA: ${{ needs.web.outputs.sha }}
+        run: |
+          set -euo pipefail
+          image=$(sed -n 's/^IMAGE=//p' scripts/build-linux.sh)
+          case "$image" in rust:*@sha256:*) ;; *) echo "::error::cannot read the pinned IMAGE of scripts/build-linux.sh"; exit 1 ;; esac
+          work=$RUNNER_TEMP/work
+          mkdir -p "$work/src" "$work/out"
+          git archive --format=tar HEAD | tar -x -C "$work/src"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/web-dist/web-dist.tar" "$WEB_SHA" "$RUNNER_TEMP/a/web" "$ALLOW_WEB"
+          mv "$RUNNER_TEMP/a/web/dist" "$work/src/web/dist"
+          docker run --rm -v "$work:/work" -e DROPPEN_BUILD_REV="$REV" -e ARCHES="$ARCH" \
+            "$image" bash /work/src/scripts/build-linux-in-container.sh
+          tar -cf "$RUNNER_TEMP/server-linux-$ARCH.tar" -C "$work/out" "$ARCH/remote-hand-server"
+          echo "sha_$ARCH=$(shasum -a 256 "$RUNNER_TEMP/server-linux-$ARCH.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/server-linux-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # scripts/release-public.sh with the binaries above (--prebuilt): the binary
+  # checks, THIRD_PARTY_NOTICES, the macOS smoke tests, the universal binary,
+  # the tarballs and their checks, SHA256SUMS, NOTES.md, web-manifest.json.
+  # The Linux smoke tests need Docker, which macOS runners lack: smoke-linux.
+  # The text check's names are left to the jobs that have them.
+  stage:
+    needs: [meta, web, tools, server-macos, server-linux]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Rust (cargo-about reads the crates through cargo)
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/dl/web-dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tools
+          path: ${{ runner.temp }}/dl/tools
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-aarch64-apple-darwin
+          path: ${{ runner.temp }}/dl/server-aarch64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-x86_64-apple-darwin
+          path: ${{ runner.temp }}/dl/server-x86_64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-linux-x86_64
+          path: ${{ runner.temp }}/dl/server-linux-x86_64
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-linux-aarch64
+          path: ${{ runner.temp }}/dl/server-linux-aarch64
+      - name: Unpack
+        env:
+          WEB_SHA: ${{ needs.web.outputs.sha }}
+          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+          MAC_AARCH64_SHA: ${{ needs.server-macos.outputs.sha_aarch64 }}
+          MAC_X86_64_SHA: ${{ needs.server-macos.outputs.sha_x86_64 }}
+          LINUX_X86_64_SHA: ${{ needs.server-linux.outputs.sha_x86_64 }}
+          LINUX_AARCH64_SHA: ${{ needs.server-linux.outputs.sha_aarch64 }}
+        run: |
+          set -euo pipefail
+          dl=$RUNNER_TEMP/dl
+          a=$RUNNER_TEMP/a
+          unpack=.github/scripts/unpack-artifact.sh
+          $unpack "$dl/web-dist/web-dist.tar" "$WEB_SHA" "$a/web" "$ALLOW_WEB"
+          $unpack "$dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
+          $unpack "$dl/server-aarch64-apple-darwin/server-aarch64-apple-darwin.tar" "$MAC_AARCH64_SHA" "$a/mac-aarch64" '^aarch64-apple-darwin(/remote-hand-server)?$'
+          $unpack "$dl/server-x86_64-apple-darwin/server-x86_64-apple-darwin.tar" "$MAC_X86_64_SHA" "$a/mac-x86_64" '^x86_64-apple-darwin(/remote-hand-server)?$'
+          $unpack "$dl/server-linux-x86_64/server-linux-x86_64.tar" "$LINUX_X86_64_SHA" "$a/linux-x86_64" '^x86_64(/remote-hand-server)?$'
+          $unpack "$dl/server-linux-aarch64/server-linux-aarch64.tar" "$LINUX_AARCH64_SHA" "$a/linux-aarch64" '^aarch64(/remote-hand-server)?$'
+          # release-public.sh's --prebuilt layout.
+          prebuilt=$RUNNER_TEMP/prebuilt
+          mkdir -p "$prebuilt/linux"
+          mv "$a/mac-aarch64/aarch64-apple-darwin" "$a/mac-x86_64/x86_64-apple-darwin" "$prebuilt/"
+          mv "$a/linux-x86_64/x86_64" "$a/linux-aarch64/aarch64" "$prebuilt/linux/"
+          chmod 755 "$prebuilt"/*/remote-hand-server "$prebuilt"/linux/*/remote-hand-server
+      - name: Rosetta, to smoke-test the x86_64 slice
+        run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Stage the release (scripts/release-public.sh --prebuilt)
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          SHA: ${{ needs.meta.outputs.sha }}
+          SNAPSHOT: ${{ needs.meta.outputs.snapshot }}
+          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
+          DROPPEN_RELEASE_NAMES_DEFERRED: "1"
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/a/tools/bin:$PATH"
+          npm install -g "pnpm@$PNPM_VERSION"
+          args=("$VERSION" --ref "$SHA" --out "$RUNNER_TEMP/release" --prebuilt "$RUNNER_TEMP/prebuilt" --no-linux-smoke)
+          [ "$SNAPSHOT" = false ] || args+=(--snapshot)
+          scripts/release-public.sh "${args[@]}"
+      - name: The staged web manifest is the web app the binaries embed
+        id: pack
+        run: |
+          set -euo pipefail
+          node scripts/web-manifest.mjs "$RUNNER_TEMP/a/web/dist" --check "$RUNNER_TEMP/release/web-manifest.json"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/staged.tar" -C "$RUNNER_TEMP" release
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/staged.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/staged.tar
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  # Both Linux tarballs of each architecture, unpacked, on Debian 10 (glibc
+  # 2.28) on that architecture: `droppen` from the new one and
+  # `remote-hand-server` from the old one (scripts/release-public.sh smoke-tests
+  # these with Docker on the release Mac).
+  smoke-linux:
+    needs: [meta, stage]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - name: Smoke tests
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          REV: ${{ needs.meta.outputs.rev }}
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+        run: |
+          set -euo pipefail
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/staged/staged.tar" "$STAGED_SHA" "$RUNNER_TEMP/a/staged" "$ALLOW_STAGED"
+          for family in droppen remote-hand; do
+            mkdir -p "$RUNNER_TEMP/unpacked/$family"
+            tar -xzf "$RUNNER_TEMP/a/staged/release/$family-$VERSION-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/unpacked/$family"
+          done
+          EXPECT_VERSION="+g$REV" bash .github/scripts/smoke-linux.sh "$RUNNER_TEMP/unpacked/droppen/droppen" "$ARCH"
+          EXPECT_VERSION="+g$REV" bash .github/scripts/smoke-linux.sh "$RUNNER_TEMP/unpacked/remote-hand/remote-hand-server" "$ARCH"
+
+  # The desktop app around the staged universal server (desktop/SIGNING.md,
+  # "Making a release", step 2): desktop/build.sh --sidecar, unsigned.
+  desktop:
+    needs: [meta, tools, stage]
+    if: needs.meta.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tools
+          path: ${{ runner.temp }}/dl/tools
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - name: Build the app (desktop/build.sh --sidecar)
+        id: pack
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          SHA: ${{ needs.meta.outputs.sha }}
+          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
+          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+          DROPPEN_RELEASE_NAMES_DEFERRED: "1"
+        run: |
+          set -euo pipefail
+          a=$RUNNER_TEMP/a
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/staged/staged.tar" "$STAGED_SHA" "$a/staged" "$ALLOW_STAGED"
+          mkdir -p "$RUNNER_TEMP/sidecar"
+          tar -xzf "$a/staged/release/droppen-$VERSION-macos-universal.tar.gz" -C "$RUNNER_TEMP/sidecar" droppen
+          export DROPPEN_TOOLS_DIR=$a/tools PATH="$a/tools/bin:$PATH"
+          DROPPEN_BUILD_JOBS=$(sysctl -n hw.ncpu); export DROPPEN_BUILD_JOBS
+          npm install -g "pnpm@$PNPM_VERSION"
+          desktop/build.sh --ref "$SHA" --sidecar "$RUNNER_TEMP/sidecar/droppen" --out "$RUNNER_TEMP/desktop"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/desktop-app.tar" -C "$RUNNER_TEMP/desktop" Droppen.app
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/desktop-app.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-app
+          path: ${{ runner.temp }}/desktop-app.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The Developer ID signature and Apple's notarisation (desktop/notarise.sh):
+  # the app and the DMG, signed, notarised and stapled. Runs nothing from the
+  # artifacts: codesign, notarytool, stapler, hdiutil and spctl read them. The
+  # keychain goes right after. Also the release text check with the names,
+  # over the app's licence and notices and everything staged.
+  sign-apple:
+    needs: [meta, stage, smoke-linux, desktop]
+    if: needs.meta.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: read
+    env:
+      PLAIN: ${{ needs.meta.outputs.plain }}
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-app
+          path: ${{ runner.temp }}/dl/desktop-app
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - name: Unpack
+        env:
+          APP_SHA: ${{ needs.desktop.outputs.sha }}
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+        run: |
+          set -euo pipefail
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/desktop-app/desktop-app.tar" "$APP_SHA" "$RUNNER_TEMP/desktop" "$ALLOW_APP"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/staged/staged.tar" "$STAGED_SHA" "$RUNNER_TEMP/a/staged" "$ALLOW_STAGED"
+      - name: The secrets this job needs
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          RELEASE_FORBIDDEN_ENV: ${{ secrets.RELEASE_FORBIDDEN_ENV }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          [ "$PUBLISH" != true ] || [ -n "$RELEASE_FORBIDDEN_ENV" ] || missing+=(RELEASE_FORBIDDEN_ENV)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::the release environment lacks the secrets ${missing[*]} (docs/releasing.md, \"Once: the release environment\")"
+            exit 1
+          fi
+          echo "ok: the secrets this job needs are set"
+      - name: The text check's names
+        env:
+          RELEASE_FORBIDDEN_ENV: ${{ secrets.RELEASE_FORBIDDEN_ENV }}
+        run: .github/scripts/release-names.sh
+      - name: Text check of the staged release
+        run: .github/scripts/release-text-check-staged.sh "$RUNNER_TEMP/a/staged/release"
+      - name: Signing keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Apple's "Developer ID - G2" intermediate (desktop/SIGNING.md).
+          G2_URL: https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          G2_SHA256: f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a
+        run: |
+          set -euo pipefail
+          keychain=$RUNNER_TEMP/droppen-signing.keychain-db
+          echo "DROPPEN_NOTARY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          (umask 077 && printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12")
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -f pkcs12 -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" "$G2_URL"
+          echo "$G2_SHA256  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c -
+          # (A .p12 exported with its chain carries it already.)
+          if ! out=$(security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain" -t cert -f x509 2>&1); then
+            case "$out" in
+              *"already exists"*) echo "the .p12 carries the G2 intermediate already" ;;
+              *) echo "$out" >&2; exit 1 ;;
+            esac
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain" >/dev/null
+          # First in the search list, so codesign and find-identity see it.
+          existing=()
+          while IFS= read -r line; do
+            line=${line#"${line%%[![:space:]]*}"}
+            line=${line//\"/}
+            [ -z "$line" ] || existing+=("$line")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          xcrun notarytool store-credentials droppen-notary --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_PASSWORD" --keychain "$keychain" >/dev/null
+          desktop/notarise.sh --check
+      - name: Sign, notarise and staple (desktop/notarise.sh)
+        env:
+          DROPPEN_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: desktop/notarise.sh "$RUNNER_TEMP/desktop" "$PLAIN"
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          if [ -n "${DROPPEN_NOTARY_KEYCHAIN:-}" ] && [ -e "$DROPPEN_NOTARY_KEYCHAIN" ]; then
+            security delete-keychain "$DROPPEN_NOTARY_KEYCHAIN"
+          fi
+      - name: Pack the signed app and DMG
+        id: pack
+        run: |
+          set -euo pipefail
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/signed-app.tar" -C "$RUNNER_TEMP/desktop" Droppen.app "Droppen-$PLAIN.dmg"
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/signed-app.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-app
+          path: ${{ runner.temp }}/signed-app.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The updater's files (desktop/updater-artifacts.sh) from the stapled app:
+  # Droppen.app.tar.gz, its minisign signature by the updater key, and
+  # latest.json. The signer (tauri-cli) and droppen-update-manifest are built
+  # here, from pinned versions and locked sources, before the key is in reach;
+  # nothing from an artifact is run.
+  sign-updater:
+    needs: [meta, sign-apple]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+    env:
+      PLAIN: ${{ needs.meta.outputs.plain }}
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Build the signer and the manifest tool
+        run: |
+          set -euo pipefail
+          signer=$RUNNER_TEMP/signer
+          tauri=$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)
+          cargo install --locked tauri-cli --version "$tauri" --root "$signer"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-manifest" cargo build --release --locked \
+            --manifest-path desktop/Cargo.toml -p droppen-desktop-core --bin droppen-update-manifest
+          cp "$RUNNER_TEMP/target-manifest/release/droppen-update-manifest" "$signer/bin/"
+          {
+            echo "DROPPEN_TOOLS_DIR=$signer"
+            echo "DROPPEN_UPDATE_MANIFEST=$signer/bin/droppen-update-manifest"
+          } >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-app
+          path: ${{ runner.temp }}/dl/signed-app
+      - name: Unpack
+        env:
+          SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
+        run: .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/signed-app/signed-app.tar" "$SIGNED_SHA" "$RUNNER_TEMP/desktop" "$ALLOW_SIGNED"
+      - name: The updater's files (desktop/updater-artifacts.sh)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The app's licence and notices were checked with the names in
+          # sign-apple; here "Kilerd" only.
+          DROPPEN_RELEASE_NAMES_DEFERRED: "1"
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || missing+=(TAURI_SIGNING_PRIVATE_KEY)
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] || missing+=(TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::the release environment lacks the secrets ${missing[*]} (docs/releasing.md, \"Once: the release environment\")"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/out"
+          desktop/updater-artifacts.sh "$RUNNER_TEMP/desktop/Droppen.app" "$PLAIN" --out "$RUNNER_TEMP/out/updater"
+      - name: Pack the updater's files
+        id: pack
+        run: |
+          set -euo pipefail
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/updater.tar" -C "$RUNNER_TEMP/out" \
+            updater/Droppen.app.tar.gz updater/Droppen.app.tar.gz.sig updater/latest.json
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/updater.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: updater
+          path: ${{ runner.temp }}/updater.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The release as scripts/publish-release.sh will publish it, checked
+  # against this repository's releases (read-only): every check of a --dry-run,
+  # latest.json against its archive and the key included, with
+  # droppen-update-manifest built here. No secret; its SHA256SUMS binds what
+  # attest attests to what was checked here.
+  verify:
+    needs: [meta, stage, smoke-linux, desktop, sign-apple, sign-updater]
+    if: >-
+      ${{ !cancelled() && needs.meta.result == 'success' && needs.stage.result == 'success'
+      && needs.smoke-linux.result == 'success'
+      && (needs.meta.outputs.desktop != 'true' || needs.sign-updater.result == 'success') }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PLAIN: ${{ needs.meta.outputs.plain }}
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+      DESKTOP: ${{ needs.meta.outputs.desktop }}
+    outputs:
+      sums_sha: ${{ steps.check.outputs.sums_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Build the manifest tool
+        run: |
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-manifest" cargo build --release --locked \
+            --manifest-path desktop/Cargo.toml -p droppen-desktop-core --bin droppen-update-manifest
+          echo "DROPPEN_UPDATE_MANIFEST=$RUNNER_TEMP/target-manifest/release/droppen-update-manifest" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: signed-app
+          path: ${{ runner.temp }}/dl/signed-app
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: updater
+          path: ${{ runner.temp }}/dl/updater
+      - name: Unpack
+        env:
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+          SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
+          UPDATER_SHA: ${{ needs.sign-updater.outputs.sha }}
+        run: .github/scripts/unpack-release.sh
+      - name: Check the release (scripts/publish-release.sh --dry-run)
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=("$VERSION" --server "$RUNNER_TEMP/a/staged/release" --dry-run --sums-out "$RUNNER_TEMP/SHA256SUMS")
+          [ "$DESKTOP" != true ] || args+=(--desktop "$RUNNER_TEMP/a/desktop")
+          if [ "$PUBLISH" != true ] && gh release view "$VERSION" --repo "$DROPPEN_RELEASE_REPO" >/dev/null 2>&1; then
+            echo "::notice::$DROPPEN_RELEASE_REPO has $VERSION already: this dry run checks the files only (--local-only)"
+            args+=(--local-only)
+          fi
+          scripts/publish-release.sh "${args[@]}"
+          echo "sums_sha=$(shasum -a 256 "$RUNNER_TEMP/SHA256SUMS" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+          cp "$RUNNER_TEMP/SHA256SUMS" "$RUNNER_TEMP/a/SHA256SUMS"
+      # What a dry run made, for a look; short-lived.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUBLISH != 'true'
+        with:
+          name: dry-run-${{ needs.meta.outputs.version }}
           path: |
-            dist/*.tar.gz
-            dist/SHA256SUMS
+            ${{ runner.temp }}/a/staged/release
+            ${{ runner.temp }}/a/desktop
+            ${{ runner.temp }}/a/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
 
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+  # Build provenance for every file the release publishes (a carried DMG or
+  # latest.json is not this run's: its own release attests it), and the web
+  # manifest once more on its own, whose bundle droppen.app's verifier
+  # fetches (scripts/verify-web.mjs). Only when publishing: dry runs make no
+  # attestation. Holds the OIDC token, so it runs only our scripts, shasum,
+  # gh and Apple's stapler: SHA256SUMS by publish-release.sh --sums-only
+  # (which runs no manifest tool), held to the one verify checked.
+  attest:
+    needs: [meta, stage, sign-apple, sign-updater, verify]
+    if: ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.verify.result == 'success' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PLAIN: ${{ needs.meta.outputs.plain }}
+      DESKTOP: ${{ needs.meta.outputs.desktop }}
+    outputs:
+      sums_sha: ${{ steps.pack.outputs.sums_sha }}
+      bundles_sha: ${{ steps.pack.outputs.bundles_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          generate_release_notes: true
-          files: |
-            dist/*.tar.gz
-            dist/SHA256SUMS
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: signed-app
+          path: ${{ runner.temp }}/dl/signed-app
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: updater
+          path: ${{ runner.temp }}/dl/updater
+      - name: Unpack
+        env:
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+          SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
+          UPDATER_SHA: ${{ needs.sign-updater.outputs.sha }}
+        run: .github/scripts/unpack-release.sh
+      - name: SHA256SUMS, and the files to attest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_SUMS_SHA: ${{ needs.verify.outputs.sums_sha }}
+        run: |
+          set -euo pipefail
+          out=$RUNNER_TEMP/attest
+          mkdir -p "$out"
+          args=("$VERSION" --server "$RUNNER_TEMP/a/staged/release" --sums-only "$out/SHA256SUMS")
+          [ "$DESKTOP" != true ] || args+=(--desktop "$RUNNER_TEMP/a/desktop")
+          scripts/publish-release.sh "${args[@]}"
+          got=$(shasum -a 256 "$out/SHA256SUMS" | cut -d' ' -f1)
+          [ "$got" = "$VERIFIED_SUMS_SHA" ] || { echo "::error::SHA256SUMS is not the one the verify job checked ($got, not $VERIFIED_SUMS_SHA)"; exit 1; }
+          rel=$RUNNER_TEMP/a/staged/release
+          ln "$rel"/*.tar.gz "$rel/LICENSE" "$rel/THIRD_PARTY_NOTICES" "$rel/web-manifest.json" "$rel/install.sh" "$rel"/INSTALL-*.txt "$out/"
+          if [ "$DESKTOP" = true ]; then
+            d=$RUNNER_TEMP/a/desktop
+            ln "$d/Droppen-$PLAIN.dmg" "$d/updater/Droppen.app.tar.gz" "$d/updater/Droppen.app.tar.gz.sig" "$d/updater/latest.json" "$out/"
+          fi
+          (cd "$out" && shasum -a 256 ./*) | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: attest-all
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/attest/*
+      - id: attest-web
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/a/staged/release/web-manifest.json
+      - name: Pack SHA256SUMS and the bundles
+        id: pack
+        env:
+          ALL_BUNDLE: ${{ steps.attest-all.outputs.bundle-path }}
+          WEB_BUNDLE: ${{ steps.attest-web.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          # Published beside the files, so they can be checked with
+          # `gh attestation verify --bundle` too.
+          mkdir -p "$RUNNER_TEMP/bundles"
+          cp "$ALL_BUNDLE" "$RUNNER_TEMP/bundles/droppen-$VERSION.sigstore.json"
+          cp "$WEB_BUNDLE" "$RUNNER_TEMP/bundles/web-manifest.sigstore.json"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/sums.tar" -C "$RUNNER_TEMP/attest" SHA256SUMS
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/bundles.tar" -C "$RUNNER_TEMP" bundles
+          {
+            echo "sums_sha=$(shasum -a 256 "$RUNNER_TEMP/sums.tar" | cut -d' ' -f1)"
+            echo "bundles_sha=$(shasum -a 256 "$RUNNER_TEMP/bundles.tar" | cut -d' ' -f1)"
+          } | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sums
+          path: ${{ runner.temp }}/sums.tar
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundles
+          path: ${{ runner.temp }}/bundles.tar
+          if-no-files-found: error
+          retention-days: 14
+
+  # Publishing (scripts/publish-release.sh) as this repository's release of
+  # the tag: a draft with every file (the attestation bundles too), latest.json
+  # last, checked, then published once and marked latest; nothing is added
+  # after (releases are immutable). The attested SHA256SUMS. Runs our scripts,
+  # gh and Apple's stapler, nothing built; the manifest checks were verify's.
+  publish:
+    needs: [meta, stage, sign-apple, sign-updater, verify, attest]
+    if: ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.attest.result == 'success' }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      # The release, with the job's own token: only here, after the approval.
+      contents: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PLAIN: ${{ needs.meta.outputs.plain }}
+      DESKTOP: ${{ needs.meta.outputs.desktop }}
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged
+          path: ${{ runner.temp }}/dl/staged
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: signed-app
+          path: ${{ runner.temp }}/dl/signed-app
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESKTOP == 'true'
+        with:
+          name: updater
+          path: ${{ runner.temp }}/dl/updater
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sums
+          path: ${{ runner.temp }}/dl/sums
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundles
+          path: ${{ runner.temp }}/dl/bundles
+      - name: Unpack
+        env:
+          STAGED_SHA: ${{ needs.stage.outputs.sha }}
+          SIGNED_SHA: ${{ needs.sign-apple.outputs.sha }}
+          UPDATER_SHA: ${{ needs.sign-updater.outputs.sha }}
+          SUMS_SHA: ${{ needs.attest.outputs.sums_sha }}
+          BUNDLES_SHA: ${{ needs.attest.outputs.bundles_sha }}
+        run: |
+          set -euo pipefail
+          .github/scripts/unpack-release.sh
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/sums/sums.tar" "$SUMS_SHA" "$RUNNER_TEMP/a/sums" "$ALLOW_SUMS"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/bundles/bundles.tar" "$BUNDLES_SHA" "$RUNNER_TEMP/a/bundles" "$ALLOW_BUNDLES"
+          # Published with the server's files.
+          cp "$RUNNER_TEMP/a/bundles/bundles/"*.sigstore.json "$RUNNER_TEMP/a/staged/release/"
+      - name: The secrets this job needs
+        env:
+          RELEASE_FORBIDDEN_ENV: ${{ secrets.RELEASE_FORBIDDEN_ENV }}
+        run: |
+          if [ -z "$RELEASE_FORBIDDEN_ENV" ]; then
+            echo "::error::the release environment lacks the secret RELEASE_FORBIDDEN_ENV (docs/releasing.md, \"Once: the release environment\")"
+            exit 1
+          fi
+          echo "ok: the secrets this job needs are set"
+      - name: The text check's names
+        env:
+          RELEASE_FORBIDDEN_ENV: ${{ secrets.RELEASE_FORBIDDEN_ENV }}
+        run: .github/scripts/release-names.sh
+      - name: Text check of the staged release
+        run: .github/scripts/release-text-check-staged.sh "$RUNNER_TEMP/a/staged/release"
+      - name: Publish (scripts/publish-release.sh)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The release of the very tag this run is on. The SHA256SUMS
+          # published is the one attested; the manifest checks were the
+          # verify job's, whose SHA256SUMS it is.
+          args=("$VERSION" --server "$RUNNER_TEMP/a/staged/release" --verify-tag --skip-manifest-check --sums-expected "$RUNNER_TEMP/a/sums/SHA256SUMS")
+          [ "$DESKTOP" != true ] || args+=(--desktop "$RUNNER_TEMP/a/desktop")
+          scripts/publish-release.sh "${args[@]}"
+          echo "Published: https://github.com/$DROPPEN_RELEASE_REPO/releases/tag/$VERSION" >> "$GITHUB_STEP_SUMMARY"

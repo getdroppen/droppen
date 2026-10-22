@@ -22,7 +22,19 @@
 # The release operator sets both variables: personal names other than the
 # copyright holder's are not written into this repository. A release refuses
 # to start unless DROPPEN_RELEASE_FORBIDDEN is the expected list
-# (release_text_names_ok).
+# (release_text_names_ok), or the names are deferred
+# (release_text_names_deferred).
+#
+# In GitHub Actions (.github/workflows/release.yml) the names come from the
+# `release` environment's secret RELEASE_FORBIDDEN_ENV, and only the release
+# job has them. Two variables are for that workflow:
+#   DROPPEN_RELEASE_NAMES_DEFERRED=1  the build jobs, which run dependency
+#       code and so are not given the names: the scripts check "Kilerd" only
+#       and leave the names to the release job, which checks every staged text
+#       file with them (.github/scripts/release-text-check-staged.sh) before
+#       anything is signed or published. Ignored once the names are set.
+#   DROPPEN_RELEASE_TEXT_QUIET=1  a hit is reported by its line number only,
+#       never with the line, which names the person: the logs are public.
 
 COPYRIGHT_KILERD='^[[:space:]]*Copyright \([Cc]\) [0-9]{4}(-[0-9]{4})? Kilerd$'
 NOTICE_KILERD='https?://github\.com/Kilerd/(gotcha|mofa|oas)(\.git)?/?([[:space:]]|$)'
@@ -55,6 +67,13 @@ release_text_sha256() {
 # Whether DROPPEN_RELEASE_FORBIDDEN is the expected list.
 release_text_names_ok() {
   [ "$(release_text_names | release_text_sha256)" = "$RELEASE_TEXT_NAMES_SHA256" ]
+}
+
+# Whether the names are left to a later check (DROPPEN_RELEASE_NAMES_DEFERRED=1,
+# CI's build jobs; see the top of this file) because this one does not have
+# them. Names that are set are always checked.
+release_text_names_deferred() {
+  [ "${DROPPEN_RELEASE_NAMES_DEFERRED:-}" = 1 ] && [ -z "${DROPPEN_RELEASE_FORBIDDEN:-}" ]
 }
 
 # Whether every pattern of DROPPEN_RELEASE_NOTICE_ALLOW is one whole copyright
@@ -143,6 +162,15 @@ release_text_app_legal_problems() { # app
 }
 
 release_text_hits() { # file, [notices]
+  if [ "${DROPPEN_RELEASE_TEXT_QUIET:-}" = 1 ]; then
+    # The line numbers only (see the top of this file).
+    release_text_hits_lines "$@" | sed -E 's/^([0-9]+):.*/\1: (the line is not shown: DROPPEN_RELEASE_TEXT_QUIET)/'
+  else
+    release_text_hits_lines "$@"
+  fi
+}
+
+release_text_hits_lines() { # file, [notices]
   local file=$1 notices=${2:-} extra allowed=" "
   if ! [ -f "$file" ] || ! [ -r "$file" ]; then
     printf '%s: cannot be read\n' "$file"

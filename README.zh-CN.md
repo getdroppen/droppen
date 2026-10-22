@@ -386,12 +386,15 @@ ticket 只活 60 秒。
 curl -fsSL https://droppen.app/install.sh | sh
 ```
 
-`droppen.app/install.sh` 只是 302 到公开仓库
-[getdroppen/releases](https://github.com/getdroppen/releases) 里的 `install.sh`（本仓库的
-副本在 [`scripts/install.sh`](scripts/install.sh)），二进制也只从那个仓库的 Releases 下载，hub
-不分发任何二进制。公开发布包用 [`scripts/release-public.sh`](scripts/release-public.sh) 在本机
-构建（公开发行版、aarch64 + x86_64 + universal），它不自动发布，只打印发布命令：
-[`scripts/publish-release.sh`](scripts/publish-release.sh) 先建草稿、把桌面 App 的 `latest.json`
+`droppen.app/install.sh` 只是 302 到本仓库最新发版里的 `install.sh`
+（`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`，源码是
+[`scripts/install.sh`](scripts/install.sh)），二进制也只从本仓库的
+[Releases](https://github.com/getdroppen/droppen/releases) 下载，hub 不分发任何二进制（v0.2.126 及以前的发版在
+[getdroppen/releases](https://github.com/getdroppen/releases)）。公开发布包由 GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）
+从本仓库的源码构建（公开发行版；macOS aarch64 + x86_64 + universal、Linux、桌面 App），每个文件都附
+构建来源证明，可以用 `gh attestation verify <文件> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/<版本>` 验证
+（[`docs/releasing.md`](docs/releasing.md)）。它用的仍是 [`scripts/release-public.sh`](scripts/release-public.sh)
+和 [`scripts/publish-release.sh`](scripts/publish-release.sh)：先建草稿、把桌面 App 的 `latest.json`
 （没有新桌面 App 时沿用当前最新版本里的那份，连同它的 DMG）最后上传，然后才发布并标为最新版本
 （[`desktop/SIGNING.md`](desktop/SIGNING.md)「Making a release」）。安装脚本用
 `default` 实例和 launchd 标签 `app.droppen.server`（见下文[开机自启](#开机自启launchd)），发现本机
@@ -412,20 +415,21 @@ curl -fsSL https://droppen.app/install.sh | DROPPEN_CODE=<code> sh
 脚本再经 stdin 交给 `remote-hand-server agent enroll -`，所以不出现在任何进程的参数里。登录账号和
 入网都先用下载好、尚未替换的新二进制完成，失败时设备保持原样；替换后标记 `restart=1`，直到服务
 真正重启进新版本。没有显示器时不打开浏览器，本地页面只给出经 SSH 隧道访问的端口。Linux 二进制由
-[`scripts/build-linux.sh`](scripts/build-linux.sh) 在一次性 pod 里用 cargo-zigbuild 构建（对
-glibc 2.28 链接；集群由 `DROPPEN_K8S_CONTEXT`、`DROPPEN_K8S_NAMESPACE` 指定），
-`release-public.sh` 会一并打包并在 Debian 10 容器里冒烟测试
+[`scripts/build-linux-in-container.sh`](scripts/build-linux-in-container.sh) 在固定版本的镜像里用
+cargo-zigbuild 构建（对 glibc 2.28 链接）：发版时由 `release.yml` 运行，在本机兜底时由
+[`scripts/build-linux.sh`](scripts/build-linux.sh) 放进一次性 pod（集群由 `DROPPEN_K8S_CONTEXT`、
+`DROPPEN_K8S_NAMESPACE` 指定）；打包后在 Debian 10 容器里冒烟测试
 （[`.github/scripts/smoke-linux.sh`](.github/scripts/smoke-linux.sh)）。
 
 手动安装：前端已经嵌进可执行文件里，**整个服务端就是这一个文件**，不装
-运行时、不装依赖。从 [Releases](https://github.com/getdroppen/releases/releases) 下载
+运行时、不装依赖。从 [Releases](https://github.com/getdroppen/droppen/releases) 下载
 `droppen-<tag>-macos-aarch64.tar.gz`（Apple Silicon；Intel 用 `-x86_64`，两者通用的是 `-universal`）。
 包里的 `droppen` 和 `remote-hand-server` 是同一个文件（硬链接）、同一个程序；旧名字的
 `remote-hand-<tag>-…tar.gz`（只有 `remote-hand-server`）给旧版安装脚本用，至少发到 2027-01-31：
 
 ```bash
-curl -fsSL -O https://github.com/getdroppen/releases/releases/latest/download/droppen-<tag>-macos-aarch64.tar.gz
-shasum -a 256 -c <(curl -fsSL https://github.com/getdroppen/releases/releases/latest/download/SHA256SUMS \
+curl -fsSL -O https://github.com/getdroppen/droppen/releases/latest/download/droppen-<tag>-macos-aarch64.tar.gz
+shasum -a 256 -c <(curl -fsSL https://github.com/getdroppen/droppen/releases/latest/download/SHA256SUMS \
   | grep droppen-.*-macos-aarch64)
 
 mkdir -p ~/.local/share/remote-hand/bin
@@ -502,9 +506,9 @@ curl -sS -X POST http://127.0.0.1:8700/api/server/self-upgrade \
 拉起新的——终端和正在跑的 agent 全程不断。旧的留成 `.prev`，坏了自动回滚。所以装完这一次
 之后，后续升级不必再碰 `~/.local/share/remote-hand/bin/`，也不必重启 launchd job。
 
-发版：服务端的 tar 包（macOS、Linux）、桌面 App 的 DMG 和 `SHA256SUMS` 都发布在
-[getdroppen/releases](https://github.com/getdroppen/releases)，由上文的 `scripts/release-public.sh`
-构建、`scripts/publish-release.sh` 发布。新装和升级都可以直接（重）跑
+发版：服务端的 tar 包（macOS、Linux）、桌面 App 的 DMG、安装脚本和 `SHA256SUMS` 都发布在
+本仓库的 [Releases](https://github.com/getdroppen/droppen/releases)，由 GitHub Actions 从本仓库构建并发布，
+每个文件都附构建来源证明（[`docs/releasing.md`](docs/releasing.md)）。新装和升级都可以直接（重）跑
 `curl -fsSL https://droppen.app/install.sh | sh`。二进制的版本号形如 `0.1.0+g<commit>`：构建时
 取环境变量 `DROPPEN_BUILD_REV`（旧名 `RH_BUILD_REV` 照样认），没有就用 `git rev-parse --short HEAD`
 （树里有未提交的改动时加 `-dirty`）。自我更新正是靠这个后缀区分同一个 crate 版本的两次构建，

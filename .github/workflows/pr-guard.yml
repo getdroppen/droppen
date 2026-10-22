@@ -1,0 +1,51 @@
+name: pr-guard
+
+# What a pull request would write into main's history that stops workflows.
+# A CI skip marker (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`,
+# `[actions skip]`) or a `skip-checks: true` trailer in the message of the
+# commit a release tag points at means GitHub runs no workflow for the tag's
+# push, and the release never starts (docs/releasing.md). The message is the
+# pull request's title or one of its commits' (squash: the title, or the only
+# commit's, and the commits' messages; merge and rebase: the commits'), so all
+# are checked, again whenever the title is edited.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  no-skip-markers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: No CI skip marker in the title or any commit message
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          markers='\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^[[:space:]]*skip-checks:[[:space:]]*true'
+          found=0
+          if printf '%s\n' "$TITLE" | grep -iE "$markers" >/dev/null; then
+            echo "::error::the pull request's title has a CI skip marker"
+            found=1
+          fi
+          # One line per commit: its sha and its message, base64.
+          gh api --paginate "repos/$GH_REPO/pulls/$NUMBER/commits" --jq '.[] | .sha + " " + (.commit.message | @base64)' > "$RUNNER_TEMP/commits"
+          [ -s "$RUNNER_TEMP/commits" ] || { echo "::error::cannot list the pull request's commits"; exit 1; }
+          while read -r sha message; do
+            if printf '%s' "$message" | base64 -d | grep -iE "$markers" >/dev/null; then
+              echo "::error::commit $sha's message has a CI skip marker or a skip-checks trailer"
+              found=1
+            fi
+          done < "$RUNNER_TEMP/commits"
+          if [ "$found" = 1 ]; then
+            echo "Take it out (reword the commit, edit the title): on main it would stop every workflow of that commit, a release tag's included (docs/releasing.md)." >&2
+            exit 1
+          fi
+          echo "ok: no CI skip marker in the title or in any of the pull request's commits"

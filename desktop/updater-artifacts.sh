@@ -16,7 +16,7 @@
 #                 version (Info.plist) must be the same.
 #   --out         where the three files go; must be empty or absent.
 #   --notes-url   the release notes the app links to (default: the release page
-#                 https://github.com/getdroppen/releases/releases/tag/v<version>).
+#                 https://github.com/getdroppen/droppen/releases/tag/v<version>).
 #   --key         the updater's private key file (default: TAURI_SIGNING_PRIVATE_KEY
 #                 when that is set, as in GitHub Actions; else
 #                 ~/.config/droppen/tauri-updater.key). A file's password is read
@@ -34,7 +34,7 @@
 #                 -new one around a rotation) or CI's, by any name or copy, nor
 #                 a .pub of the same key id. Never uploaded.
 #   --base-url    with --test-build: where the archive is served instead of
-#                 https://github.com/getdroppen/releases/releases/download/v<version>.
+#                 https://github.com/getdroppen/droppen/releases/download/v<version>.
 #   --pubkey      with --test-build: the throwaway key's .pub file, verified with
 #                 instead of the key in desktop/src-tauri/tauri.conf.json.
 #
@@ -45,7 +45,9 @@
 #                                       tauri-updater.key; an Actions secret)
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (an Actions secret)
 #   DROPPEN_TOOLS_DIR      where the pinned tauri-cli is (~/.cache/droppen-desktop/tools)
-#   DROPPEN_RELEASE_REPO   the public repository (getdroppen/releases)
+#   DROPPEN_UPDATE_MANIFEST  a built droppen-update-manifest to use instead of
+#                          `cargo run` in desktop/
+#   DROPPEN_RELEASE_REPO   the repository releases are published in (getdroppen/droppen)
 set -euo pipefail
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -120,7 +122,10 @@ DESKTOP=$(cd "$(dirname "$0")" && pwd -P)
 . "$DESKTOP/../scripts/release-text-check.sh"
 # The operator's file, read as data (never run), when the names are not set.
 release_text_load_names "$HOME/.config/droppen/release-forbidden.env"
-if [ "$TEST" = 0 ]; then
+if [ "$TEST" = 0 ] && release_text_names_deferred; then
+  # Only release.yml's dry run without the names (docs/releasing.md) gets here.
+  echo "note: DROPPEN_RELEASE_NAMES_DEFERRED: the text checks look for \"Kilerd\" only, not for the names"
+elif [ "$TEST" = 0 ]; then
   release_text_names_ok \
     || die "DROPPEN_RELEASE_FORBIDDEN is not the expected list of names (set it, or keep it in ~/.config/droppen/release-forbidden.env; its sha256 is RELEASE_TEXT_NAMES_SHA256 in scripts/release-text-check.sh)"
   release_text_allow_ok \
@@ -128,7 +133,7 @@ if [ "$TEST" = 0 ]; then
 elif ! release_text_names_ok; then
   echo "note: DROPPEN_RELEASE_FORBIDDEN is not the release list; this test build checks only \"Kilerd\" and $(id -un)"
 fi
-REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/releases}
+REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 TOOLS=${DROPPEN_TOOLS_DIR:-$HOME/.cache/droppen-desktop/tools}
 TAURI_CLI_VERSION=$(sed -n 's/^TAURI_CLI_VERSION=//p' "$DESKTOP/build.sh")
 ARCHIVE=Droppen.app.tar.gz
@@ -203,8 +208,14 @@ if [ "$("$TOOLS/bin/cargo-tauri" --version 2>/dev/null | awk '{ print $2 }')" !=
   cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked --root "$TOOLS"
 fi
 
-# The manifest tool of this checkout (desktop/core).
+# The manifest tool of this checkout (desktop/core), or a build of it
+# (DROPPEN_UPDATE_MANIFEST: release.yml builds it in a job of its own, so that
+# no build script runs where the key is).
 manifest_tool() {
+  if [ -n "${DROPPEN_UPDATE_MANIFEST:-}" ]; then
+    "$DROPPEN_UPDATE_MANIFEST" "$@"
+    return
+  fi
   cargo run --quiet --release --locked --manifest-path "$DESKTOP/Cargo.toml" -p droppen-desktop-core --bin droppen-update-manifest -- "$@"
 }
 

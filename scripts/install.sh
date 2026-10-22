@@ -1,5 +1,5 @@
 #!/bin/sh
-# Droppen server installer for macOS and Linux: https://github.com/getdroppen/releases
+# Droppen server installer for macOS and Linux: https://github.com/getdroppen/droppen
 #
 # This installs the Droppen server, to run in the background or on a device
 # with no screen. For everyday use on a Mac the Droppen desktop App, on the
@@ -13,7 +13,7 @@
 #
 # What it does, for the user who runs it:
 #   1. downloads the latest release (or $DROPPEN_VERSION) for this OS and CPU from
-#      github.com/getdroppen/releases and checks it against the release's SHA256SUMS;
+#      github.com/getdroppen/droppen/releases and checks it against the release's SHA256SUMS;
 #   2. creates the first account for the server's local page (you choose the
 #      password; without a terminal one is generated and shown once, or saved
 #      to a file only you can read when nobody is watching the output);
@@ -53,7 +53,7 @@
 #   DROPPEN_SERVICE_PATH=...   the PATH the server runs with (default: your
 #                              current PATH, then common tool directories)
 #   DROPPEN_RELEASE_BASE=...   where releases come from
-#                              (default https://github.com/getdroppen/releases/releases)
+#                              (default https://github.com/getdroppen/droppen/releases)
 #   DROPPEN_LABEL=...          the launchd label or systemd unit name
 #                              (default app.droppen.server / droppen)
 #
@@ -64,7 +64,7 @@
 
 set -eu
 
-RELEASES_URL=https://github.com/getdroppen/releases
+RELEASES_URL=https://github.com/getdroppen/droppen
 INSTALL_CMD="curl -fsSL https://droppen.app/install.sh | sh"
 BASE=${DROPPEN_RELEASE_BASE:-$RELEASES_URL/releases}
 HUB=${DROPPEN_HUB:-wss://droppen.app}
@@ -90,7 +90,7 @@ usage() {
   cat <<'EOF'
 Droppen server installer for macOS and Linux, for background and headless use.
 On a Mac, the Droppen desktop App is the recommended way for everyday use:
-https://github.com/getdroppen/releases/releases/latest
+https://github.com/getdroppen/droppen/releases/latest
 
   curl -fsSL https://droppen.app/install.sh | sh                        install or upgrade
   curl -fsSL https://droppen.app/install.sh | DROPPEN_CODE=<code> sh    ... and join your account
@@ -117,7 +117,7 @@ Settings (environment):
   DROPPEN_RELEASE_BASE=...  where releases come from
   DROPPEN_LABEL=...         the launchd label or systemd unit name
 
-More: https://github.com/getdroppen/releases#readme
+More: https://github.com/getdroppen/droppen#readme
 EOF
 }
 

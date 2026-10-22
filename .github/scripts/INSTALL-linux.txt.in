@@ -57,4 +57,4 @@ from droppen.app, or through an SSH tunnel to that port. Under systemd, set
 KillMode=process: terminals and agent runs outlive a server restart.
 
 Everything else, including how to uninstall:
-https://github.com/getdroppen/releases#readme
+https://github.com/getdroppen/droppen#readme

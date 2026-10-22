@@ -20,12 +20,12 @@ static routes' 600 per 10 s and 3,000 a minute per address (README).
 
 ### `GET /install.sh` — tooling
 `302 Found` to
-`https://raw.githubusercontent.com/getdroppen/releases/main/install.sh`, with
-`Cache-Control: no-store` and no body (`HEAD` the same; other methods `405`).
-This is what `curl -fsSL https://droppen.app/install.sh | sh` fetches: the
-server installer for macOS and Linux, kept at the root of the public binaries
-repository
-`getdroppen/releases`. The installer downloads a release from that repository
+`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`,
+with `Cache-Control: no-store` and no body (`HEAD` the same; other methods
+`405`). This is what `curl -fsSL https://droppen.app/install.sh | sh` fetches:
+the server installer for macOS and Linux, a file of the latest release of
+`getdroppen/droppen` (attested, and never changed once published:
+docs/releasing.md). The installer downloads a release from that repository
 and checks it against the release's `SHA256SUMS` before installing anything.
 The hub never serves the script or a binary itself, only this address, so what
 a computer runs is what anyone can read there. Limited like `/healthz` (the

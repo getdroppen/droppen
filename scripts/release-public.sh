@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Build the public Droppen distribution for macOS and Linux and stage a release
-# for the public binaries repository, getdroppen/releases. Nothing is published: the
+# for getdroppen/droppen's releases. Nothing is published: the
 # last thing this prints is the scripts/publish-release.sh command for a human to
 # review and run (after the desktop app, when the release has one).
 #
+# Releases are made by .github/workflows/release.yml (docs/releasing.md), which
+# runs this with --prebuilt; run by hand, it is the release Mac's fallback.
+#
 #   scripts/release-public.sh <version> [--ref <git-ref>] [--out <dir>] [--snapshot] [--no-linux] [--keep-work]
+#                             [--prebuilt <dir>] [--no-linux-smoke]
 #
 #   <version>   the release tag, e.g. v0.2.119. It must match the server
 #               crate's version at the ref.
@@ -17,6 +21,15 @@
 #   --no-linux  with --snapshot only: skip the Linux builds (which need a
 #               Kubernetes pod); a release always has them
 #   --keep-work keep the build directory (sources, node_modules, cargo output)
+#   --prebuilt  take the server binaries from <dir> instead of building them:
+#               <dir>/<target>/remote-hand-server for each macOS target and
+#               <dir>/linux/<arch>/remote-hand-server for each Linux one, built
+#               from the same ref as below (with web/dist of the same build
+#               embedded). .github/workflows/release.yml builds them in jobs of
+#               their own; everything else here is the same.
+#   --no-linux-smoke  leave the Linux smoke tests (Docker) to the caller:
+#               release.yml runs .github/scripts/smoke-linux.sh on Linux
+#               runners, on the binaries unpacked from both tarballs
 #
 # Needs: Node as in .nvmrc, rustup, cargo-about 0.9.2
 # (`cargo install --locked cargo-about@0.9.2 --features cli`), and for Linux
@@ -24,8 +37,7 @@
 # DROPPEN_K8S_NAMESPACE) and Docker to smoke-test the Linux binaries
 # (.github/scripts/smoke-linux.sh).
 #
-# What it does, mirroring .github/workflows/release.yml (which builds only the
-# aarch64 macOS tarball, and publishes nothing to getdroppen/releases):
+# What it does (with --prebuilt, steps 3's builds are release.yml's jobs):
 #
 #   1. exports the ref to a scratch directory under /tmp;
 #   2. builds the web app as the PUBLIC distribution — DROPPEN_DISTRIBUTION is
@@ -53,7 +65,9 @@
 #                                                  for installers that know only it
 #      plus `INSTALL.txt`, `LICENSE` (AGPL-3.0) and `THIRD_PARTY_NOTICES`, listed
 #      by name, with COPYFILE_DISABLE=1 — and `SHA256SUMS` over every tarball,
-#      and LICENSE and THIRD_PARTY_NOTICES as release files of their own;
+#      and LICENSE, THIRD_PARTY_NOTICES, the ref's scripts/install.sh (the
+#      installer https://droppen.app/install.sh redirects to) and
+#      INSTALL-macos.txt / INSTALL-linux.txt as release files of their own;
 #   8. unpacks every tarball and checks it again: exactly its members, each
 #      program the very binary checked and smoke-tested above, the step-4
 #      checks on each program, and a smoke test of the unpacked `droppen` (the
@@ -73,7 +87,7 @@
 #   DROPPEN_MIN_FREE_GB      refuse to start, and stop a build, when the volume
 #                            holding the scratch directory has less free (25)
 #   DROPPEN_RELEASE_WORK     the scratch directory (/tmp/droppen-public-build)
-#   DROPPEN_RELEASE_REPO     the public repository (getdroppen/releases)
+#   DROPPEN_RELEASE_REPO     the repository releases are published in (getdroppen/droppen)
 #   DROPPEN_ALLOW_NODE_MISMATCH=1  build with a Node other than .nvmrc's (the
 #                            web manifest may then not match droppen.app's)
 #   DROPPEN_RELEASE_FORBIDDEN  required: the personal names no staged text file
@@ -90,9 +104,13 @@
 #                            one whole third-party copyright line written out:
 #                            ^Copyright …$ with its metacharacters escaped,
 #                            nothing else; set by the operator with the names
+#   DROPPEN_RELEASE_NAMES_DEFERRED=1  release.yml's build jobs only: without
+#                            the names, check "Kilerd" only and leave the names
+#                            to the release job (scripts/release-text-check.sh)
 #
-# The install script itself (scripts/install.sh here, install.sh at the root of
-# the public repository) downloads `SHA256SUMS` and then
+# The install script itself (scripts/install.sh, published with every release
+# as its file install.sh: https://github.com/getdroppen/droppen/releases/latest/download/install.sh,
+# where https://droppen.app/install.sh redirects) downloads `SHA256SUMS` and then
 # `droppen-<version>-<macos|linux>-<arch>.tar.gz`, or, when that is missing,
 # `remote-hand-<version>-<macos|linux>-<arch>.tar.gz` — which every older copy
 # of it (and README's by-hand steps) asks for: keep publishing both names until
@@ -107,6 +125,8 @@ OUT=/tmp/droppen-public-release
 KEEP_WORK=0
 SNAPSHOT=0
 LINUX=1
+PREBUILT=""
+LINUX_SMOKE=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=${2:?--ref needs a value}; shift 2 ;;
@@ -114,6 +134,8 @@ while [ $# -gt 0 ]; do
     --keep-work) KEEP_WORK=1; shift ;;
     --snapshot) SNAPSHOT=1; shift ;;
     --no-linux) LINUX=0; shift ;;
+    --prebuilt) PREBUILT=${2:?--prebuilt needs a directory}; shift 2 ;;
+    --no-linux-smoke) LINUX_SMOKE=0; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) [ -z "$VERSION" ] || usage; VERSION=$1; shift ;;
@@ -123,7 +145,7 @@ done
 [ "$LINUX" = 1 ] || [ "$SNAPSHOT" = 1 ] || { echo "--no-linux is for --snapshot dry runs only: a release carries the Linux builds" >&2; exit 2; }
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "version must look like v1.2.3, not $VERSION" >&2; exit 2; }
 
-PUBLIC_REPO=${DROPPEN_RELEASE_REPO:-getdroppen/releases}
+PUBLIC_REPO=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 MIN_FREE_GB=${DROPPEN_MIN_FREE_GB:-25}
 WORK=${DROPPEN_RELEASE_WORK:-/tmp/droppen-public-build}
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
@@ -148,9 +170,12 @@ die() { printf 'release-public: %s\n' "$*" >&2; exit 1; }
 for tool in git cargo rustup lipo shasum tar node npx file; do
   command -v "$tool" >/dev/null || die "missing $tool"
 done
+if [ -n "$PREBUILT" ]; then
+  PREBUILT=$(cd "$PREBUILT" 2>/dev/null && pwd -P) || die "--prebuilt: no such directory"
+fi
 if [ "$LINUX" = 1 ]; then
-  command -v kubectl >/dev/null || die "the Linux builds need kubectl (or pass --no-linux)"
-  docker info >/dev/null 2>&1 || die "the Linux smoke tests need Docker (or pass --no-linux)"
+  [ -n "$PREBUILT" ] || command -v kubectl >/dev/null || die "the Linux builds need kubectl (or pass --no-linux)"
+  [ "$LINUX_SMOKE" = 0 ] || docker info >/dev/null 2>&1 || die "the Linux smoke tests need Docker (or pass --no-linux)"
 fi
 [ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
   || die "needs cargo-about $ABOUT_VERSION: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
@@ -183,8 +208,12 @@ fi
 . "$REPO/scripts/release-text-check.sh"
 # Unset, they are read from the operator's file, as data (never run).
 release_text_load_names "$HOME/.config/droppen/release-forbidden.env"
-release_text_names_ok \
-  || die "DROPPEN_RELEASE_FORBIDDEN is not the expected list of names (its sha256 is RELEASE_TEXT_NAMES_SHA256 in scripts/release-text-check.sh; see Environment in this script's header)"
+if release_text_names_deferred; then
+  echo "note: DROPPEN_RELEASE_NAMES_DEFERRED: the text checks look for \"Kilerd\" only; the names are checked later, by whoever has them"
+else
+  release_text_names_ok \
+    || die "DROPPEN_RELEASE_FORBIDDEN is not the expected list of names (its sha256 is RELEASE_TEXT_NAMES_SHA256 in scripts/release-text-check.sh; see Environment in this script's header)"
+fi
 release_text_allow_ok \
   || die "DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped"
 
@@ -253,11 +282,13 @@ mkdir -p "$WORK/src" "$STAGE"
 git -C "$REPO" archive --format=tar "$SHA" | tar -x -C "$WORK/src"
 SRC=$WORK/src
 
-say "rust targets"
-installed=$(rustup target list --installed)
-for target in "${TARGETS[@]}"; do
-  grep -qx "$target" <<<"$installed" || rustup target add "$target"
-done
+if [ -z "$PREBUILT" ]; then
+  say "rust targets"
+  installed=$(rustup target list --installed)
+  for target in "${TARGETS[@]}"; do
+    grep -qx "$target" <<<"$installed" || rustup target add "$target"
+  done
+fi
 
 say "web app: the public distribution"
 PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
@@ -279,15 +310,35 @@ node -e '
 ' "$SRC/web/dist/plugins/manifest.json" || die "web/dist is not the public distribution"
 node "$SRC/scripts/web-manifest.mjs" "$SRC/web/dist" --commit "$SHA" --ref "refs/tags/$VERSION" --out "$STAGE/web-manifest.json"
 
-if [ "$LINUX" = 1 ]; then
+if [ "$LINUX" = 1 ] && [ -z "$PREBUILT" ]; then
   say "server: Linux ${LINUX_ARCHES[*]}, in a pod, alongside the macOS builds"
   "$REPO/scripts/build-linux.sh" "$SRC" "$WORK/linux" "$REV" > "$WORK/linux-build.log" 2>&1 &
   LINUX_PID=$!
 fi
 
-say "server: ${TARGETS[*]}"
 CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
-for target in "${TARGETS[@]}"; do
+if [ -n "$PREBUILT" ]; then
+  say "server: prebuilt, from $PREBUILT"
+  # Where the builds below would have left them, so that everything after
+  # treats them alike.
+  for target in "${TARGETS[@]}"; do
+    [ -x "$PREBUILT/$target/$BIN_NAME" ] || die "--prebuilt: no executable $PREBUILT/$target/$BIN_NAME"
+    mkdir -p "$WORK/target/$target/release"
+    cp "$PREBUILT/$target/$BIN_NAME" "$WORK/target/$target/release/"
+  done
+  if [ "$LINUX" = 1 ]; then
+    for arch in "${LINUX_ARCHES[@]}"; do
+      [ -x "$PREBUILT/linux/$arch/$BIN_NAME" ] || die "--prebuilt: no executable $PREBUILT/linux/$arch/$BIN_NAME"
+      mkdir -p "$WORK/linux/$arch"
+      cp "$PREBUILT/linux/$arch/$BIN_NAME" "$WORK/linux/$arch/"
+    done
+  fi
+  TARGETS_TO_BUILD=()
+else
+  say "server: ${TARGETS[*]}"
+  TARGETS_TO_BUILD=("${TARGETS[@]}")
+fi
+for target in ${TARGETS_TO_BUILD[@]+"${TARGETS_TO_BUILD[@]}"}; do
   # A dedicated target and build dir under the scratch directory, so the
   # cleanup takes every byte of it; the remaps keep the builder's paths
   # (and with them the user name) out of panic locations. The commit goes in
@@ -301,7 +352,7 @@ for target in "${TARGETS[@]}"; do
     cargo build --release --locked --target "$target" --manifest-path "$SRC/server-rs/Cargo.toml"
 done
 
-if [ "$LINUX" = 1 ]; then
+if [ "$LINUX" = 1 ] && [ -z "$PREBUILT" ]; then
   say "server: waiting for the Linux builds"
   if ! wait "$LINUX_PID"; then
     LINUX_PID=
@@ -359,7 +410,11 @@ LICENSE_FILE=$SRC/LICENSE
 [ -f "$LICENSE_FILE" ] || LICENSE_FILE=$REPO/LICENSE
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$LICENSE_FILE" || die "$LICENSE_FILE is not the AGPL-3.0 text"
 # The targets come from about.toml: the macOS and Linux ones built here, so one
-# file covers every binary of the release.
+# file covers every binary of the release. Every target's crates are fetched
+# first: cargo-about reads their licences from the sources (--frozen), and
+# prebuilt binaries leave none behind on this machine.
+run_watched cargo fetch --locked --manifest-path "$SRC/server-rs/Cargo.toml" >/dev/null \
+  || die "cannot fetch the server's crates for the licences"
 cargo about generate --frozen --fail -c "$REPO/about.toml" \
   -m "$SRC/server-rs/Cargo.toml" --format json -o "$WORK/about.json" \
   || die "cargo-about refused a Rust licence (see above; the allow-list is about.toml's accepted)"
@@ -409,11 +464,13 @@ for arch in universal aarch64 x86_64; do
     -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR -u REMOTE_HAND_DATA_DIR -u REMOTE_HAND_CONFIG_DIR \
     bash "$SRC/.github/scripts/smoke-macos.sh" "$bin"
 done
-if [ "$LINUX" = 1 ]; then
+if [ "$LINUX" = 1 ] && [ "$LINUX_SMOKE" = 1 ]; then
   for arch in "${LINUX_ARCHES[@]}"; do
     EXPECT_VERSION="+g$REV" bash "$REPO/.github/scripts/smoke-linux.sh" "$WORK/linux/$arch/$BIN_NAME" "$arch" \
       || die "the Linux $arch binary failed its smoke test"
   done
+elif [ "$LINUX" = 1 ]; then
+  echo "skip: the Linux smoke tests (--no-linux-smoke: the caller runs them)"
 fi
 
 say "package"
@@ -519,7 +576,7 @@ for arch in universal aarch64 x86_64; do
     -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR -u REMOTE_HAND_DATA_DIR -u REMOTE_HAND_CONFIG_DIR \
     bash "$SRC/.github/scripts/smoke-macos.sh" "$bin"
 done
-if [ "$LINUX" = 1 ]; then
+if [ "$LINUX" = 1 ] && [ "$LINUX_SMOKE" = 1 ]; then
   for arch in "${LINUX_ARCHES[@]}"; do
     EXPECT_VERSION="+g$REV" bash "$REPO/.github/scripts/smoke-linux.sh" "$UNPACKED/$NEW_NAME-${VERSION}-linux-$arch/$NEW_NAME" "$arch" \
       || die "the unpacked Linux $arch $NEW_NAME failed its smoke test"
@@ -529,6 +586,13 @@ fi
 (cd "$STAGE" && shasum -a 256 ./*.tar.gz > SHA256SUMS && cat SHA256SUMS)
 cp "$LICENSE_FILE" "$STAGE/LICENSE"
 cp "$NOTICES" "$STAGE/THIRD_PARTY_NOTICES"
+# The installer of this very ref, and the tarballs' INSTALL texts for every
+# architecture at once (each tarball has its own).
+cp "$SRC/scripts/install.sh" "$STAGE/install.sh"
+sed -e "s/@ARCH@/Apple silicon and Intel/" -e "s/@CONTENTS@/${CONTENTS_NEW}/" "$REPO/.github/scripts/INSTALL.txt.in" > "$STAGE/INSTALL-macos.txt"
+if [ "$LINUX" = 1 ]; then
+  sed -e "s/@ARCH@/x86_64 and aarch64/" -e "s/@CONTENTS@/${CONTENTS_NEW}/" "$REPO/.github/scripts/INSTALL-linux.txt.in" > "$STAGE/INSTALL-linux.txt"
+fi
 
 ROWS="| \`$NEW_NAME-${VERSION}-macos-aarch64.tar.gz\` | Apple silicon |
 | \`$NEW_NAME-${VERSION}-macos-x86_64.tar.gz\` | Intel Mac |
@@ -544,6 +608,12 @@ if [ "$LINUX" = 1 ]; then
 fi
 ROWS="$ROWS
 | $OLD_ROWS | the same server under its old name only, for older copies of the installer (on every release until at least $OLD_ASSETS_UNTIL) |"
+# Built by .github/workflows/release.yml, every file gets an attestation.
+ATTESTED=""
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  ATTESTED="| \`droppen-${VERSION}.sigstore.json\`, \`web-manifest.sigstore.json\` | the build provenance attestations: every file here was built by this repository's release workflow from the commit below. Check one with \`gh attestation verify <file> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/${VERSION}\` |
+"
+fi
 cat > "$STAGE/NOTES.md" <<EOF
 Droppen ${VERSION}: the server for ${PLATFORMS}.
 
@@ -563,10 +633,12 @@ same program under its old name, which the installed service keeps.
 | file | for |
 |---|---|
 ${ROWS}
+| \`install.sh\` | the installer above (https://droppen.app/install.sh redirects to the latest release's) |
+| \`INSTALL-macos.txt\`, \`INSTALL-linux.txt\` | installing by hand (each tarball has its own \`INSTALL.txt\`) |
 | \`LICENSE\` | Droppen's licence: AGPL-3.0-only |
 | \`THIRD_PARTY_NOTICES\` | the third-party software in the server, with its licences |
 | \`web-manifest.json\` | the embedded web app's files and digest |
-
+${ATTESTED}
 Droppen is licensed under AGPL-3.0-only. The source of this release is
 https://github.com/getdroppen/droppen/tree/${SHA}.
 
@@ -597,9 +669,13 @@ check_text() { # file, [notices]
   [ -z "$hits" ] || die "$1 names a person it should not:
 $hits"
 }
-for file in "$WORK"/pkg/*/INSTALL.txt "$STAGE/NOTES.md" "$STAGE/LICENSE" "$STAGE/web-manifest.json"; do check_text "$file"; done
+for file in "$WORK"/pkg/*/INSTALL.txt "$STAGE"/INSTALL-*.txt "$STAGE/install.sh" "$STAGE/NOTES.md" "$STAGE/LICENSE" "$STAGE/web-manifest.json"; do check_text "$file"; done
 check_text "$STAGE/THIRD_PARTY_NOTICES" notices
-echo "ok: no personal names in INSTALL.txt, NOTES.md, LICENSE, web-manifest.json or THIRD_PARTY_NOTICES"
+if release_text_names_deferred; then
+  echo "ok: \"Kilerd\" only on the copyright lines of INSTALL.txt, NOTES.md, LICENSE, web-manifest.json and THIRD_PARTY_NOTICES (the names: DROPPEN_RELEASE_NAMES_DEFERRED, checked later)"
+else
+  echo "ok: no personal names in INSTALL.txt, NOTES.md, LICENSE, web-manifest.json or THIRD_PARTY_NOTICES"
+fi
 
 mkdir -p "$OUT"
 mv "$STAGE"/* "$OUT"/
@@ -613,10 +689,9 @@ cat <<EOF
 
 Nothing has been published.
 
-The installer people run is install.sh at the root of ${PUBLIC_REPO}
-(https://droppen.app/install.sh redirects there). If scripts/install.sh changed,
-copy it there and push it first; the two should be the same file:
-  $(shasum -a 256 "$REPO/scripts/install.sh" | awk '{ print $1 }')  scripts/install.sh
+The installer people run is the latest release's install.sh, staged above
+from the ref (https://droppen.app/install.sh redirects to
+https://github.com/${PUBLIC_REPO}/releases/latest/download/install.sh).
 
 To publish, review the files above. If this release has the desktop app,
 build, sign and notarise it first (desktop/SIGNING.md: build.sh, notarise.sh,

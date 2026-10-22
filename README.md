@@ -46,13 +46,18 @@ droppen.app also serves the web app, built from `web/`; see
 
 ## Install
 
-Releases are published at
-[github.com/getdroppen/releases](https://github.com/getdroppen/releases): the
-desktop app, the server for macOS and Linux, `SHA256SUMS`, `LICENSE` and
-`THIRD_PARTY_NOTICES`.
+Releases are published as this repository's
+[releases](https://github.com/getdroppen/droppen/releases): the desktop app,
+the server for macOS and Linux, the installer, `SHA256SUMS`, `LICENSE` and
+`THIRD_PARTY_NOTICES`. They are built here by GitHub Actions, and each file
+has a build provenance attestation:
+`gh attestation verify <file> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/<version>`
+checks that this repository's release workflow built it for that tag
+([docs/releasing.md](docs/releasing.md)). Releases up to v0.2.126 are at
+[getdroppen/releases](https://github.com/getdroppen/releases).
 
 **Desktop app (macOS 13 or later).** Download `Droppen-<version>.dmg` from the
-[latest release](https://github.com/getdroppen/releases/releases/latest) and
+[latest release](https://github.com/getdroppen/droppen/releases/latest) and
 install it. The app starts its own copy of the local program, logs in to it for
 you and keeps itself up to date.
 
@@ -70,9 +75,11 @@ creates the first local account, installs the program to
 (`app.droppen.server`) on macOS, or a systemd user service (`droppen.service`)
 on Linux (x86_64 and aarch64, glibc 2.28 or later). Run it again to upgrade;
 `curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall` removes it
-and keeps your data. `droppen.app/install.sh` redirects to the copy in
-getdroppen/releases; the source is [`scripts/install.sh`](scripts/install.sh),
-which lists every option in its header.
+and keeps your data. `droppen.app/install.sh` redirects to the latest
+release's `install.sh`
+(`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`);
+the source is [`scripts/install.sh`](scripts/install.sh), which lists every
+option in its header.
 
 To join the computer to your Droppen account in the same step, pass the
 one-time code droppen.app shows under

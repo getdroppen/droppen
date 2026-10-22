@@ -407,7 +407,7 @@ droppen.app 的「设备」页与「机器页」合成一页：**我的设备**�
 
 **「添加可运行 AI 的设备」是一个不用人带的引导**（`web/src/features/cloud/add-computer.tsx`）：
 
-1. 在那台设备上安装 Droppen App（macOS，`getdroppen/releases` 的 `Droppen-<版本>.dmg`；打开即启动，没有登录页），与分发仓库的约定都在 `web/src/features/landing/get-droppen.ts`。第一个 App 发布前（`APP_AVAILABLE` 关），这一步是安装命令 `curl -fsSL https://droppen.app/install.sh | sh`（后台运行）并写明「App 即将推出」，不链接不存在的文件。
+1. 在那台设备上安装 Droppen App（macOS，`getdroppen/droppen` 发版里的 `Droppen-<版本>.dmg`；打开即启动，没有登录页），与分发仓库的约定都在 `web/src/features/landing/get-droppen.ts`。第一个 App 发布前（`APP_AVAILABLE` 关），这一步是安装命令 `curl -fsSL https://droppen.app/install.sh | sh`（后台运行）并写明「App 即将推出」，不链接不存在的文件。
 2. 在 App 里（或后台安装时它自己打开的本机页面上）点「登录 Droppen」（S1-3 的 `/link` 弹窗）：在 droppen.app 窗口里登录这个账户、核对两边的指纹、点「加入这台设备」；那个浏览器还不是账户里的设备时，先在引导里「添加浏览器或手机」配对它。
 3. 「正在等新设备上线…」：只看 shell 的机器列表（链跟随）和在线状态，不拨号；新设备出现并在线后，账户里还有别的可运行 AI 的设备，就显示「现在可以把两台设备放进同一个屏幕」，按钮在主设备上用屏幕 API 建一个左右分屏（每格写自己的 `PaneContent.machine`）并打开：每格直接打开那台设备最近的会话（来自它的索引副本），没有会话就在那台设备上开一个终端，连不上才退回到那台设备的选择器。
 
@@ -1128,7 +1128,7 @@ crate 名不改。本机包名暂不改，只把 `[[bin]]` 改名为 `droppen`�
 
 读的一侧已经两种前缀都认。写的一侧一项一项改，每一项都要等读它的程序普遍升级以后再改。两种前缀后面的部分完全一样，所以哪里被旧程序拒绝，把前缀改回旧的就能用。
 
-1. 先改安装命令：「添加设备」对话框里那条 `DROPPEN_CODE=… sh` 命令，等认 `DR1-` 的版本成了 getdroppen/releases 上的最新版，就可以写 `DR1-`，因为安装脚本总是下载最新版。例外是用 `DROPPEN_VERSION` 钉住旧版本的安装，它会拒绝这个码。
+1. 先改安装命令：「添加设备」对话框里那条 `DROPPEN_CODE=… sh` 命令，等认 `DR1-` 的版本成了 getdroppen/droppen 上的最新版，就可以写 `DR1-`，因为安装脚本总是下载最新版。例外是用 `DROPPEN_VERSION` 钉住旧版本的安装，它会拒绝这个码。
 2. 过一两个版本再改配对文本（`RHP1-` → `DRP1-`）。读它的是另一台设备上的页面，可能是缓存的旧页面或旧的 PWA，会说「不是配对码」；所以同时加一句提示，让对方刷新页面。
 3. 本机「登录 Droppen」弹窗交回本机页面的码，只在知道打开它的本机服务（agent）版本够新时才写 `DR1-`。旧的本机页面会把这条消息当成无效，直接忽略。
 4. 「用别的方式装的」那条从标准输入读码的命令（对方服务的版本不知道）放到最后，也可以一直不改。

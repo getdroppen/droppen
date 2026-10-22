@@ -107,7 +107,7 @@ function shell(machines: MachineInfo[], acct = account(machines.map((m) => m.key
 
 test("the agreed way onto a computer: the install line, the release page, and the uninstall flag", () => {
   assert.equal(INSTALL_COMMAND, "curl -fsSL https://droppen.app/install.sh | sh");
-  assert.equal(RELEASES_URL, "https://github.com/getdroppen/releases/releases/latest");
+  assert.equal(RELEASES_URL, "https://github.com/getdroppen/droppen/releases/latest");
   assert.equal(UNINSTALL_COMMAND, "curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall");
   assert.equal(DOWNLOAD_PATH, "/download");
   assert.ok(!otherHub("https://droppen.app") && !otherHub("https://droppen.app/"));

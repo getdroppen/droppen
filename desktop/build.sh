@@ -64,7 +64,7 @@
 #                            (~/.cache/droppen-desktop/tools)
 #   DROPPEN_BUILD_JOBS       cargo -j (default: half the cores)
 #   DROPPEN_ALLOW_NODE_MISMATCH=1  build with a Node other than .nvmrc's
-#   DROPPEN_RELEASE_REPO     where the DMG is uploaded (getdroppen/releases)
+#   DROPPEN_RELEASE_REPO     where the DMG is published (getdroppen/droppen)
 #   APPLE_SIGNING_IDENTITY   sign with this identity instead of ad hoc (see
 #                            SIGNING.md); APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID
 #                            then also notarise, through Tauri
@@ -76,7 +76,10 @@
 #                            ~/.config/droppen/release-forbidden.env. Required,
 #                            and checked against its hash, for every build but
 #                            --e2e; the allowed lines must each be one whole
-#                            copyright line written out (^Copyright ...$)
+#                            copyright line written out (^Copyright ...$).
+#                            DROPPEN_RELEASE_NAMES_DEFERRED=1 (release.yml's
+#                            build job, which is not given the names): check
+#                            "Kilerd" only, and leave the names to notarise.sh
 set -euo pipefail
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -109,7 +112,7 @@ done
 TAURI_CLI_VERSION=2.12.3
 ABOUT_VERSION=0.9.2
 BIN_NAME=remote-hand-server
-PUBLIC_REPO=${DROPPEN_RELEASE_REPO:-getdroppen/releases}
+PUBLIC_REPO=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 MIN_FREE_GB=${DROPPEN_MIN_FREE_GB:-25}
 WORK=${DROPPEN_DESKTOP_WORK:-/tmp/droppen-desktop-build/work}
 TOOLS=${DROPPEN_TOOLS_DIR:-$HOME/.cache/droppen-desktop/tools}
@@ -156,8 +159,12 @@ if [ "$E2E" = 0 ]; then
   # never run: run, it could redefine the check or its hash.
   NAMES_FILE=$HOME/.config/droppen/release-forbidden.env
   release_text_load_names "$NAMES_FILE"
-  release_text_names_ok \
-    || die "DROPPEN_RELEASE_FORBIDDEN is not the expected list of names (set it, or keep it in $NAMES_FILE; its sha256 is RELEASE_TEXT_NAMES_SHA256 in scripts/release-text-check.sh)"
+  if release_text_names_deferred; then
+    echo "note: DROPPEN_RELEASE_NAMES_DEFERRED: LICENSE and THIRD_PARTY_NOTICES are checked for \"Kilerd\" only here; the names are checked later, by whoever has them (desktop/notarise.sh does)"
+  else
+    release_text_names_ok \
+      || die "DROPPEN_RELEASE_FORBIDDEN is not the expected list of names (set it, or keep it in $NAMES_FILE; its sha256 is RELEASE_TEXT_NAMES_SHA256 in scripts/release-text-check.sh)"
+  fi
   release_text_allow_ok \
     || die "DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped"
 fi

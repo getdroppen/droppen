@@ -284,7 +284,7 @@ head -c 65536 /dev/urandom | gzip >"$SERVE/broken/Droppen.app.tar.gz"
 env TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" "$TAURI" signer sign -f "$KEYS/test.key" --app-version "$NEW_V" "$SERVE/broken/Droppen.app.tar.gz" >/dev/null 2>&1
 "$MANIFEST_TOOL" write --version "$NEW_V" --archive "$SERVE/broken/Droppen.app.tar.gz" \
   --signature "$SERVE/broken/Droppen.app.tar.gz.sig" --pubkey "$KEYS/test.key.pub" \
-  --url "http://127.0.0.1:$PORT/broken/Droppen.app.tar.gz" --notes "https://github.com/getdroppen/releases/releases/tag/v$NEW_V" \
+  --url "http://127.0.0.1:$PORT/broken/Droppen.app.tar.gz" --notes "https://github.com/getdroppen/droppen/releases/tag/v$NEW_V" \
   --out "$ROOT/broken/latest.json" --loopback-http >/dev/null
 # The update server: plain http on loopback, the archive sent slowly enough
 # (a few seconds) for the menu's progress to be seen.
@@ -371,7 +371,7 @@ check "ready: restart to update to $NEW_V, the dot, the download kept" \
 check "still nothing on screen, nothing installed" '[ "$(jget "$STATE" windowVisible)" = false ] && [ "$(bundle_version)" = "$OLD_V" ]'
 BEFORE=$(count "would open the release notes")
 command update-notes >/dev/null
-check "Release Notes opens the release's page" 'sleep 1; [ "$(count "would open the release notes https://github.com/getdroppen/releases/releases/tag/v$NEW_V")" -gt "$BEFORE" ]'
+check "Release Notes opens the release's page" 'sleep 1; [ "$(count "would open the release notes https://github.com/getdroppen/droppen/releases/tag/v$NEW_V")" -gt "$BEFORE" ]'
 # The web app's entry, photographed in both themes: the only time the window shows.
 BEFORE=$(probes)
 command show >/dev/null

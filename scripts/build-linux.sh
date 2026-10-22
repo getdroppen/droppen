@@ -11,13 +11,15 @@
 #   <rev>      the short commit, passed to the build as DROPPEN_BUILD_REV (and
 #              as RH_BUILD_REV, for a commit from before the rename to Droppen)
 #
-# How: rust:1.98.1-bookworm (pinned by digest) with zig and cargo-zigbuild,
-# both pinned (zig's tarball checked against its sha256). cargo-zigbuild links against glibc 2.28
-# for both targets from one x86_64 node: one toolchain for the C in aws-lc-sys,
-# ring and SQLite, and binaries that run on Debian 10, Ubuntu 20.04, RHEL 8 and
-# anything newer. The source goes in with tar over `kubectl exec` (tracked files
-# and web/dist, no .git, no credentials); the binaries come back the same way;
-# the pod is deleted by name whatever happens.
+# How: rust:1.98.1-bookworm (IMAGE, pinned by digest) runs
+# scripts/build-linux-in-container.sh, which builds with zig and cargo-zigbuild,
+# both pinned (zig's tarball checked against its sha256). cargo-zigbuild links
+# against glibc 2.28 for both targets from one x86_64 node: one toolchain for
+# the C in aws-lc-sys, ring and SQLite, and binaries that run on Debian 10,
+# Ubuntu 20.04, RHEL 8 and anything newer. The source goes in with tar over
+# `kubectl exec` (tracked files and web/dist, no .git, no credentials); the
+# binaries come back the same way; the pod is deleted by name whatever happens.
+# (.github/workflows/release.yml runs the same script in the same image.)
 #
 # Environment (the cluster is the operator's; nothing here defaults to one):
 #   DROPPEN_K8S_CONTEXT         kubectl context to create the pod in (required)
@@ -36,10 +38,7 @@ PRIORITY=${DROPPEN_K8S_PRIORITY_CLASS:-}
   exit 2
 }
 IMAGE=rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
-ZIG_VERSION=0.13.0
-ZIG_SHA256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea
-ZIGBUILD_VERSION=0.23.4
-GLIBC=2.28
+INSIDE=$(cd "$(dirname "$0")" && pwd)/build-linux-in-container.sh
 K=(kubectl --context "$CONTEXT" -n "$NAMESPACE")
 
 [ -f "$SRC/web/dist/index.html" ] || { echo "build-linux: $SRC/web/dist is missing; build the web app first" >&2; exit 2; }
@@ -106,28 +105,7 @@ tar -C "$SRC" -cf - --exclude ./node_modules --exclude ./web/node_modules --excl
   --exclude ./packages/plugin-sdk/node_modules . | x tar -x -C /work/src
 echo "build-linux: source uploaded; building"
 
-x env DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" ZIG_VERSION="$ZIG_VERSION" ZIG_SHA256="$ZIG_SHA256" \
-  ZIGBUILD_VERSION="$ZIGBUILD_VERSION" GLIBC="$GLIBC" bash -s <<'SH' 2>&1 | tee "$OUT/build.log"
-set -euo pipefail
-cd /tmp
-curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-echo "${ZIG_SHA256}  zig.tar.xz" | sha256sum -c -
-tar -xJf zig.tar.xz -C /opt
-export PATH="/opt/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-zig version
-export CARGO_TARGET_DIR=/work/target
-cargo install --locked --quiet cargo-zigbuild --version "${ZIGBUILD_VERSION}"
-rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-cd /work/src/server-rs
-for arch in x86_64 aarch64; do
-  echo "== ${arch}-unknown-linux-gnu.${GLIBC}"
-  RUSTFLAGS="--remap-path-prefix=/work/src=/droppen --remap-path-prefix=${CARGO_HOME:-/usr/local/cargo}=/cargo" \
-    cargo zigbuild --release --locked --target "${arch}-unknown-linux-gnu.${GLIBC}" -p remote-hand-server
-  mkdir -p "/work/out/${arch}"
-  cp "/work/target/${arch}-unknown-linux-gnu/release/remote-hand-server" "/work/out/${arch}/"
-done
-ls -l /work/out/*
-SH
+x env DROPPEN_BUILD_REV="$REV" bash -s <"$INSIDE" 2>&1 | tee "$OUT/build.log"
 
 x tar -C /work/out -cf - x86_64 aarch64 | tar -x -C "$OUT"
 ls -l "$OUT"/x86_64/remote-hand-server "$OUT"/aarch64/remote-hand-server

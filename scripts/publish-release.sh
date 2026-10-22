@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Publish a release on the public binaries repository, getdroppen/releases:
-# the server scripts/release-public.sh staged and, with --desktop, the desktop
+# Publish a release on getdroppen/droppen (the source repository's own
+# releases; DROPPEN_RELEASE_REPO names another, as scripts/bridge-release.sh
+# does): the server scripts/release-public.sh staged and, with --desktop, the desktop
 # app desktop/SIGNING.md made (notarised DMG, updater archive, signature,
 # latest.json). Installed desktop apps read `latest.json` from the repository's
 # *latest* release, so every release carries one, uploaded last, and a release
@@ -31,7 +32,10 @@
 #
 #   scripts/publish-release.sh <version> --server <dir> [--desktop <dir>]
 #                              [--manifest-from <tag> | --no-manifest]
-#                              [--verify-pubkey <file>] [--dry-run]
+#                              [--verify-pubkey <file>] [--dry-run [--local-only]]
+#                              [--sums-out <file>] [--sums-expected <file>]
+#                              [--skip-manifest-check] [--sums-only <file>]
+#                              [--verify-tag]
 #
 #   <version>        the tag, e.g. v0.2.125: the one release-public.sh was given
 #   --server         release-public.sh's --out directory
@@ -51,6 +55,29 @@
 #   --dry-run        read and check everything (the carried manifest and its
 #                    archive are downloaded and verified) and print the writes
 #                    instead of making them
+#   --local-only     with --dry-run only: check the files of step 1 and stop,
+#                    asking the repository nothing (a dry run of a version
+#                    that is published already: release.yml's dry runs of
+#                    itself). --sums-out then lists no carried files.
+#   --sums-out       also write the release's SHA256SUMS (the server's
+#                    tarballs, then the desktop app's or the carried files,
+#                    and latest.json) to <file>, with --dry-run too
+#   --sums-expected  stop before the first write unless the release's
+#                    SHA256SUMS is <file>, byte for byte: release.yml attests
+#                    every file it publishes before publishing, SHA256SUMS
+#                    made by a --dry-run --sums-out among them
+#   --skip-manifest-check  do not run droppen-update-manifest (latest.json
+#                    against its archive and the key): for a caller that ran
+#                    these checks in a job of its own and holds this run to
+#                    their result with --sums-expected (release.yml: the job
+#                    that publishes runs nothing built from dependencies)
+#   --verify-tag     the tag must exist in the repository already, and the
+#                    release is made for it (in the source repository, whose
+#                    tag release.yml runs on; without it, publishing a release
+#                    creates its tag at the default branch's head)
+#   --sums-only      write the release's SHA256SUMS to <file> and stop: the
+#                    checks of a --dry-run but those of --skip-manifest-check,
+#                    and nothing written (release.yml's attest job)
 #
 # A prerelease version (v1.2.3-rc.1) is published as a GitHub prerelease,
 # never marked latest, with no latest.json and no desktop app: installed apps
@@ -64,7 +91,7 @@
 # curl, and cargo for the desktop workspace (droppen-update-manifest).
 #
 # Environment:
-#   DROPPEN_RELEASE_REPO     the public repository (getdroppen/releases)
+#   DROPPEN_RELEASE_REPO     the repository to publish in (getdroppen/droppen)
 #   DROPPEN_UPDATE_MANIFEST  a built droppen-update-manifest to use instead of
 #                            `cargo run` in desktop/
 #   DROPPEN_PUBLISH_RETRY_SECONDS  the pause between the last step's six tries (5)
@@ -82,6 +109,12 @@ DESKTOP=""
 MANIFEST_FROM=""
 NO_MANIFEST=0
 DRY_RUN=0
+LOCAL_ONLY=0
+SKIP_MANIFEST_CHECK=0
+SUMS_ONLY=0
+VERIFY_TAG=0
+SUMS_OUT=""
+SUMS_EXPECTED=""
 VERIFY_PUBKEY=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -90,6 +123,12 @@ while [ $# -gt 0 ]; do
     --manifest-from) MANIFEST_FROM=${2:?--manifest-from needs a tag}; shift 2 ;;
     --no-manifest) NO_MANIFEST=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --local-only) LOCAL_ONLY=1; shift ;;
+    --sums-out) SUMS_OUT=${2:?--sums-out needs a file}; shift 2 ;;
+    --sums-expected) SUMS_EXPECTED=${2:?--sums-expected needs a file}; shift 2 ;;
+    --skip-manifest-check) SKIP_MANIFEST_CHECK=1; shift ;;
+    --verify-tag) VERIFY_TAG=1; shift ;;
+    --sums-only) SUMS_ONLY=1; DRY_RUN=1; SKIP_MANIFEST_CHECK=1; SUMS_OUT=${2:?--sums-only needs a file}; shift 2 ;;
     --verify-pubkey) VERIFY_PUBKEY=${2:?--verify-pubkey needs a path}; shift 2 ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
@@ -105,6 +144,9 @@ if [ -n "$DESKTOP" ] && { [ -n "$MANIFEST_FROM" ] || [ "$NO_MANIFEST" = 1 ]; }; 
   die "--desktop brings its own latest.json; --manifest-from and --no-manifest are for a release without the desktop app"
 fi
 [ -z "$MANIFEST_FROM" ] || [ "$NO_MANIFEST" = 0 ] || die "--manifest-from and --no-manifest are exclusive"
+[ "$LOCAL_ONLY" = 0 ] || [ "$DRY_RUN" = 1 ] || die "--local-only is for a --dry-run: a release is published only after every check"
+[ -z "$SUMS_EXPECTED" ] || [ -f "$SUMS_EXPECTED" ] || die "--sums-expected $SUMS_EXPECTED: no such file"
+[ "$SKIP_MANIFEST_CHECK" = 0 ] || [ -z "$VERIFY_PUBKEY" ] || die "--verify-pubkey is a manifest check; it does not go with --skip-manifest-check or --sums-only"
 if [ "$PRERELEASE" = 1 ] && { [ -n "$DESKTOP" ] || [ -n "$MANIFEST_FROM" ]; }; then
   die "$VERSION is a prerelease: it never becomes the latest release, so it carries neither the desktop app's update nor latest.json"
 fi
@@ -114,7 +156,7 @@ if [ -n "$DESKTOP" ] && [ "$(uname -s)" != Darwin ]; then
   die "--desktop needs a Mac: the DMG's notarisation ticket is checked with xcrun stapler"
 fi
 
-REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/releases}
+REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 PUBKEY_CONF=$ROOT/desktop/src-tauri/tauri.conf.json
 [ -z "$VERIFY_PUBKEY" ] || [ -f "$VERIFY_PUBKEY" ] || die "--verify-pubkey $VERIFY_PUBKEY: no such file"
@@ -141,6 +183,15 @@ update_manifest() {
     MANIFEST_TOOL_BUILT=1
   fi
   cargo run "${cargo_args[@]}" -- "$@"
+}
+
+# A check by the manifest tool, unless --skip-manifest-check.
+manifest_check() {
+  if [ "$SKIP_MANIFEST_CHECK" = 1 ]; then
+    echo "skip: droppen-update-manifest $1 ${2:-} (--skip-manifest-check: checked by the caller)"
+    return 0
+  fi
+  update_manifest "$@"
 }
 
 # One field of a JSON file (a dotted path), or nothing.
@@ -226,7 +277,14 @@ for tarball in "$SERVER"/droppen-"$VERSION"-*.tar.gz "$SERVER"/remote-hand-"$VER
   [ -f "$tarball" ] && SERVER_ASSETS+=("$tarball")
 done
 [ "${#SERVER_ASSETS[@]}" -gt 0 ] || die "$SERVER has no droppen-$VERSION-*.tar.gz: it was staged for another version"
+# Published as they are when there: the installer and the INSTALL texts
+# (release-public.sh stages them), and release.yml's attestation bundles.
+EXTRAS=()
+for name in install.sh INSTALL-macos.txt INSTALL-linux.txt web-manifest.sigstore.json "droppen-$VERSION.sigstore.json"; do
+  [ ! -e "$SERVER/$name" ] || EXTRAS+=("$SERVER/$name")
+done
 STRAY=$(cd "$SERVER" && ls | grep -v -x -e NOTES.md -e SHA256SUMS -e LICENSE -e THIRD_PARTY_NOTICES -e web-manifest.json \
+  -e install.sh -e INSTALL-macos.txt -e INSTALL-linux.txt -e web-manifest.sigstore.json -e "droppen-$VERSION\.sigstore\.json" \
   -e "droppen-$VERSION-.*\.tar\.gz" -e "remote-hand-$VERSION-.*\.tar\.gz" || true)
 [ -z "$STRAY" ] || die "$SERVER holds files release-public.sh does not make: $(echo "$STRAY" | tr '\n' ' ')"
 # SHA256SUMS lists exactly the tarballs, and they match.
@@ -253,10 +311,38 @@ if [ -n "$DESKTOP" ]; then
   SIGNED=$(json_field "$UPDATER/latest.json" platforms.darwin-aarch64.signature)
   [ "$SIGNED" = "$(tr -d '\r\n' <"$UPDATER/Droppen.app.tar.gz.sig")" ] \
     || die "$UPDATER/latest.json names another signature than Droppen.app.tar.gz.sig"
-  update_manifest check "$UPDATER/latest.json" --pubkey "$PUBKEY_CONF" --archive "$UPDATER/Droppen.app.tar.gz" \
+  manifest_check check "$UPDATER/latest.json" --pubkey "$PUBKEY_CONF" --archive "$UPDATER/Droppen.app.tar.gz" \
     || die "$UPDATER/latest.json was refused"
   DESKTOP_ASSETS=("$DMG" "$UPDATER/Droppen.app.tar.gz" "$UPDATER/Droppen.app.tar.gz.sig")
   MANIFEST=$UPDATER/latest.json
+fi
+
+# SHA256SUMS of the release: the server's tarballs, then the desktop app's
+# files (or the carried DMG) and latest.json, as $WORK/SHA256SUMS; written to
+# --sums-out, and held to --sums-expected.
+make_sums() { # the files after the server's tarballs
+  local file
+  cp "$SERVER/SHA256SUMS" "$WORK/SHA256SUMS"
+  for file in "$@"; do
+    printf '%s  ./%s\n' "$(shasum -a 256 "$file" | awk '{ print $1 }')" "$(basename "$file")" >>"$WORK/SHA256SUMS"
+  done
+  cat "$WORK/SHA256SUMS"
+  if [ -n "$SUMS_OUT" ]; then
+    cp "$WORK/SHA256SUMS" "$SUMS_OUT"
+    echo "(written to $SUMS_OUT)"
+  fi
+  if [ -n "$SUMS_EXPECTED" ]; then
+    cmp -s "$WORK/SHA256SUMS" "$SUMS_EXPECTED" \
+      || die "the release's SHA256SUMS is not $SUMS_EXPECTED byte for byte (the files changed since it was made): nothing was written"
+    echo "ok: the same as $SUMS_EXPECTED"
+  fi
+}
+
+if [ "$LOCAL_ONLY" = 1 ]; then
+  say "SHA256SUMS (--local-only: without carried files)"
+  make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
+  printf '\nA dry run of the files only (--local-only): %s was not asked anything, and nothing was written.\n' "$REPO_PUBLIC"
+  exit 0
 fi
 
 say "the releases of $REPO_PUBLIC"
@@ -288,7 +374,7 @@ elif [ -n "$DESKTOP" ]; then
   echo "latest.json: the desktop app's, checked above"
 elif [ "$NO_MANIFEST" = 1 ]; then
   [ -z "$CARRYING" ] \
-    || die "--no-manifest, but $CARRYING has a latest.json: a release without one leaves every installed app's checks failing (and a failed check still installs a download). Carry it forward instead (to stop a bad update: desktop/SIGNING.md, \"Rollback\")"
+    || die "--no-manifest, but $CARRYING has a latest.json: a release without one leaves every installed app's checks failing (and a failed check still installs a download). Carry it forward instead (a bad update is fixed forward: desktop/SIGNING.md, \"Rollback\")"
   MANIFEST=""
   CARRY_DMG_FROM=$LATEST
   echo "no latest.json: no published release has had one yet"
@@ -332,7 +418,7 @@ else
   [ "$draft" = false ] && [ "$prerelease" = false ] || die "latest.json names the archive of v$ANNOUNCED, which is a draft or a prerelease"
   gh release download "v$ANNOUNCED" --repo "$REPO_PUBLIC" --pattern Droppen.app.tar.gz --dir "$WORK/carried" \
     || die "cannot download Droppen.app.tar.gz from v$ANNOUNCED"
-  update_manifest check "$MANIFEST" --pubkey "$PUBKEY_CONF" --archive "$WORK/carried/Droppen.app.tar.gz" \
+  manifest_check check "$MANIFEST" --pubkey "$PUBKEY_CONF" --archive "$WORK/carried/Droppen.app.tar.gz" \
     || die "$FROM's latest.json was refused: it does not verify against v$ANNOUNCED's archive with $(basename "$PUBKEY_CONF")'s key (after a key rotation, see desktop/SIGNING.md, \"Rotating the key\")"
   echo "ok: $FROM's latest.json (Droppen $ANNOUNCED) goes on $VERSION unchanged"
   CARRY_DMG_FROM=$FROM
@@ -347,7 +433,7 @@ if [ -n "$CARRY_DMG_FROM" ]; then
     0) echo "WARNING: $CARRY_DMG_FROM has no Droppen-<version>.dmg, so $VERSION will have none for the download page" ;;
     1)
       if [ -n "$MANIFEST" ] && [ "$DMGS" != "Droppen-$ANNOUNCED.dmg" ]; then
-        die "$CARRY_DMG_FROM has $DMGS, but its latest.json announces $ANNOUNCED: the DMG and the update would differ (after a rollback the bad release takes the good DMG too: desktop/SIGNING.md, \"Rollback\")"
+        die "$CARRY_DMG_FROM has $DMGS, but its latest.json announces $ANNOUNCED: the DMG and the update would differ"
       fi
       mkdir -p "$WORK/carried"
       gh release download "$CARRY_DMG_FROM" --repo "$REPO_PUBLIC" --pattern "$DMGS" --dir "$WORK/carried" \
@@ -367,16 +453,18 @@ fi
 
 say "SHA256SUMS"
 # The server's tarballs, then the desktop app's files and latest.json.
-cp "$SERVER/SHA256SUMS" "$WORK/SHA256SUMS"
-for file in ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}; do
-  printf '%s  ./%s\n' "$(shasum -a 256 "$file" | awk '{ print $1 }')" "$(basename "$file")" >>"$WORK/SHA256SUMS"
-done
-cat "$WORK/SHA256SUMS"
+make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
 
-FIRST=("${SERVER_ASSETS[@]}" "$WORK/SHA256SUMS" "$SERVER/LICENSE" "$SERVER/THIRD_PARTY_NOTICES" "$SERVER/web-manifest.json")
+FIRST=("${SERVER_ASSETS[@]}" "$WORK/SHA256SUMS" "$SERVER/LICENSE" "$SERVER/THIRD_PARTY_NOTICES" "$SERVER/web-manifest.json" ${EXTRAS[@]+"${EXTRAS[@]}"})
 EXPECTED=("${FIRST[@]}" ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"})
 PRE_FLAG=()
 [ "$PRERELEASE" = 0 ] || PRE_FLAG=(--prerelease)
+[ "$VERIFY_TAG" = 0 ] || PRE_FLAG+=(--verify-tag)
+
+if [ "$SUMS_ONLY" = 1 ]; then
+  printf '\nSHA256SUMS only (--sums-only): written to %s; nothing was written to %s.\n' "$SUMS_OUT" "$REPO_PUBLIC"
+  exit 0
+fi
 
 say "1/4 a draft with the server's files"
 write gh release create "$VERSION" --repo "$REPO_PUBLIC" --draft ${PRE_FLAG[@]+"${PRE_FLAG[@]}"} \

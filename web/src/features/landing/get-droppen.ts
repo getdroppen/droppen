@@ -1,6 +1,6 @@
 /*
  * How Droppen gets onto a computer — the interface agreed with the
- * distribution work (the public `getdroppen/releases` repository), written
+ * distribution work (the public `getdroppen/droppen` repository), written
  * once here and shown by the download page (`download.tsx`) and by
  * droppen.app's 「添加可运行 AI 的设备」 guide (`features/cloud/add-computer.tsx`):
  *
@@ -72,7 +72,7 @@ export function osOfSearch(search: string): DownloadOs | null {
 }
 
 /** Every release, with its files (the App's `Droppen-<version>.dmg` among them) and their SHA-256 checksums. */
-export const RELEASES_URL = "https://github.com/getdroppen/releases/releases/latest";
+export const RELEASES_URL = "https://github.com/getdroppen/droppen/releases/latest";
 
 /** Where the App's download button goes: the latest release, whose universal `.dmg` is the one to take. */
 export const APP_DOWNLOAD_URL = RELEASES_URL;

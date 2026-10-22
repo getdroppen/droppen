@@ -226,5 +226,30 @@ done
 expect "LICENSE passes" "" "$ROOT/LICENSE"
 expect "attributions.txt passes as notices" "" "$ROOT/scripts/notices/attributions.txt" notices
 
+# CI: quiet hits (the line numbers, never the lines), and names deferred by
+# the build jobs, which do not have them.
+export DROPPEN_RELEASE_FORBIDDEN="alice example"
+f=$(mkfile quiet.txt "nothing" "written by Alice Example" "Kilerd wrote this")
+export DROPPEN_RELEASE_TEXT_QUIET=1
+expect "quiet: the same hits" "2 3" "$f"
+check_value "quiet: no line is shown" "" "$(release_text_hits "$f" | grep -iE 'alice|kilerd' || true)"
+unset DROPPEN_RELEASE_TEXT_QUIET
+check_value "not quiet: the lines are shown" "1" "$(release_text_hits "$f" | grep -ic 'alice')"
+check_deferred() { # want (yes or no), description
+  local got=no
+  release_text_names_deferred && got=yes
+  if [ "$got" = "$1" ]; then PASSED=$((PASSED + 1)); else FAILED=$((FAILED + 1)); echo "FAIL: deferred, $2: want $1, got $got" >&2; fi
+}
+unset DROPPEN_RELEASE_FORBIDDEN DROPPEN_RELEASE_NAMES_DEFERRED
+check_deferred no "neither names nor the variable"
+export DROPPEN_RELEASE_NAMES_DEFERRED=yes
+check_deferred no "a value other than 1"
+export DROPPEN_RELEASE_NAMES_DEFERRED=1
+check_deferred yes "deferred, without names"
+expect "deferred: \"Kilerd\" is still checked" "3" "$f"
+export DROPPEN_RELEASE_FORBIDDEN="alice example"
+check_deferred no "names that are set are checked"
+unset DROPPEN_RELEASE_NAMES_DEFERRED
+
 echo "release-text-check: $PASSED passed, $FAILED failed"
 [ "$FAILED" = 0 ]

@@ -3,7 +3,7 @@ Droppen server — macOS (@ARCH@)
 
 This is the Droppen server, for running Droppen in the background or on a
 device with no screen. For everyday use, the Droppen desktop App is the
-recommended way: https://github.com/getdroppen/releases/releases/latest
+recommended way: https://github.com/getdroppen/droppen/releases/latest
 
 Droppen was called remote-hand. The server is now `droppen`; the binary its
 supervisor runs, `<data>/bin/remote-hand-server`, and its data directory keep
@@ -52,4 +52,4 @@ and starts the server at login with launchd:
     curl -fsSL https://droppen.app/install.sh | sh
 
 Everything else, including how to uninstall:
-https://github.com/getdroppen/releases#readme
+https://github.com/getdroppen/droppen#readme

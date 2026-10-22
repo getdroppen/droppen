@@ -34,7 +34,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFDQjc5MDcwOTg4NjA0QkYKUldTL0JJYVljSkMzSE01T3NEMnB1bkVDMzBTSHhpc1pBdFRxOXZoNmtPWjhscUdDaWJJQjk1OXYK",
-      "endpoints": ["https://github.com/getdroppen/releases/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/getdroppen/droppen/releases/latest/download/latest.json"],
       "requireSignedVersion": true
     }
   }

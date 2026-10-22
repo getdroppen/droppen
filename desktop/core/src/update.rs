@@ -16,7 +16,7 @@
 //!
 //! # What a release publishes
 //!
-//! On the GitHub release `v<version>` of `getdroppen/releases`, beside the DMG:
+//! On the GitHub release `v<version>` of `getdroppen/droppen`, beside the DMG:
 //! `Droppen.app.tar.gz` (the final, notarised and stapled app — universal, so
 //! one archive serves both of the updater's macOS targets), its minisign
 //! signature `Droppen.app.tar.gz.sig` made with the updater key, and
@@ -34,12 +34,14 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// The public repository the releases are published in.
-pub const RELEASES_REPO: &str = "getdroppen/releases";
+/// The public repository the releases are published in: the source's own.
+/// (Up to v0.2.126 it was `getdroppen/releases`, which v0.2.127 bridged:
+/// docs/releasing.md.)
+pub const RELEASES_REPO: &str = "getdroppen/droppen";
 
 /// Where the app looks for the newest release's manifest (also in
 /// `src-tauri/tauri.conf.json`, `plugins.updater.endpoints`).
-pub const ENDPOINT: &str = "https://github.com/getdroppen/releases/releases/latest/download/latest.json";
+pub const ENDPOINT: &str = "https://github.com/getdroppen/droppen/releases/latest/download/latest.json";
 
 /// The manifest's file name on a release.
 pub const MANIFEST: &str = "latest.json";
@@ -91,7 +93,8 @@ fn allowed_notes(notes: &str) -> Option<String> {
         return None;
     }
     let allowed = match url.host_str()? {
-        "github.com" => url.path().starts_with(&format!("/{RELEASES_REPO}/")),
+        // The repository's releases only, not the rest of the source's pages.
+        "github.com" => url.path().starts_with(&format!("/{RELEASES_REPO}/releases/")),
         "droppen.app" | "www.droppen.app" => true,
         _ => false,
     };
@@ -717,7 +720,7 @@ impl Manifest {
         }
         if allowed_notes(&self.notes).as_deref() != Some(self.notes.as_str()) {
             problems.push(format!(
-                "notes {:?} is not an https page of github.com/{RELEASES_REPO} or droppen.app (the app would link to the release page instead)",
+                "notes {:?} is not an https page of github.com/{RELEASES_REPO}/releases or droppen.app (the app would link to the release page instead)",
                 self.notes
             ));
         }
@@ -1066,7 +1069,7 @@ mod tests {
             serde_json::json!({
                 "current": "0.2.124",
                 "state": "ready",
-                "release": { "version": "0.2.125", "notes": "https://github.com/getdroppen/releases/releases/tag/v0.2.125" },
+                "release": { "version": "0.2.125", "notes": "https://github.com/getdroppen/droppen/releases/tag/v0.2.125" },
                 "place": "updatable",
                 "lastChecked": "2026-10-19T08:00:00Z",
                 "problem": null,
@@ -1105,7 +1108,7 @@ mod tests {
 
     #[test]
     fn release_notes_are_linked_only_to_the_release_or_droppen_app() {
-        let page = "https://github.com/getdroppen/releases/releases/tag/v0.2.125";
+        let page = "https://github.com/getdroppen/droppen/releases/tag/v0.2.125";
         assert_eq!(release_page("0.2.125"), page);
         assert_eq!(notes_link(Some(page), "0.2.125"), page);
         assert_eq!(
@@ -1113,9 +1116,12 @@ mod tests {
             "https://droppen.app/changelog#0.2.125"
         );
         for hostile in [
-            "http://github.com/getdroppen/releases/releases/tag/v0.2.125",
+            "http://github.com/getdroppen/droppen/releases/tag/v0.2.125",
             "https://github.com/someone-else/releases/tag/v0.2.125",
-            "https://github.com.evil.example/getdroppen/releases/",
+            "https://github.com.evil.example/getdroppen/droppen/releases/",
+            "https://github.com/getdroppen/droppen/blob/main/README.md",
+            "https://github.com/getdroppen/droppen/issues/1",
+            "https://github.com/getdroppen/releases/releases/tag/v0.2.125",
             "https://user@droppen.app/",
             "https://droppen.app:8443/",
             "javascript:alert(1)",
@@ -1214,9 +1220,9 @@ mod tests {
         let manifest = manifest();
         assert_eq!(manifest.check(&rules(Some(fixture::ARCHIVE))), Vec::<String>::new());
         let json: serde_json::Value = serde_json::from_str(&manifest.to_json()).expect("json");
-        let url = "https://github.com/getdroppen/releases/releases/download/v0.0.2-test/Droppen.app.tar.gz";
+        let url = "https://github.com/getdroppen/droppen/releases/download/v0.0.2-test/Droppen.app.tar.gz";
         assert_eq!(json["version"], "0.0.2-test");
-        assert_eq!(json["notes"], "https://github.com/getdroppen/releases/releases/tag/v0.0.2-test");
+        assert_eq!(json["notes"], "https://github.com/getdroppen/droppen/releases/tag/v0.0.2-test");
         assert_eq!(json["pub_date"], "2026-10-19T08:00:00Z");
         for target in TARGETS {
             assert_eq!(json["platforms"][target]["url"], url);
@@ -1309,7 +1315,9 @@ mod tests {
         for wrong in [
             archive_url("0.2.124"),
             "https://example.com/v0.2.125/Droppen.app.tar.gz".to_string(),
-            "http://github.com/getdroppen/releases/releases/download/v0.2.125/Droppen.app.tar.gz".to_string(),
+            "http://github.com/getdroppen/droppen/releases/download/v0.2.125/Droppen.app.tar.gz".to_string(),
+            // The repository releases came from up to v0.2.126.
+            "https://github.com/getdroppen/releases/releases/download/v0.2.125/Droppen.app.tar.gz".to_string(),
             "http://127.0.0.1:8123/v0.2.125/Droppen.app.tar.gz".to_string(),
         ] {
             assert!(check_download_url(&wrong, "0.2.125", false).is_err(), "{wrong}");

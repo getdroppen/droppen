@@ -15,7 +15,7 @@ import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 
-const ready = (version: unknown) => ({ current: "0.2.124", state: "ready", release: { version, notes: "https://github.com/getdroppen/releases/releases/tag/v0.2.125" } });
+const ready = (version: unknown) => ({ current: "0.2.124", state: "ready", release: { version, notes: "https://github.com/getdroppen/droppen/releases/tag/v0.2.125" } });
 
 test("only a ready update shows, and only until its version is put away", () => {
   assert.equal(readyVersion(ready("0.2.125"), null), "0.2.125");

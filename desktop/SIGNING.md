@@ -9,9 +9,17 @@ Application** certificate and has Apple notarise it. Then
 ([The updater](#the-updater)), and `scripts/publish-release.sh` publishes the
 release, so installed apps update themselves to it.
 
+Releases are made by GitHub Actions: `.github/workflows/release.yml` runs
+these same scripts on GitHub's runners, with the secrets below in the
+protected `release` environment ([docs/releasing.md](../docs/releasing.md)).
+Run by hand on a Mac, as described here, they are the fallback.
+
 ## What the release Mac needs
 
-Three things, all on the Mac that makes releases. `desktop/notarise.sh --check`
+For a release made by hand (GitHub Actions has these as the `release`
+environment's secrets: [The release secrets in GitHub
+Actions](#the-release-secrets-in-github-actions)). Three things, all on the
+Mac that makes releases. `desktop/notarise.sh --check`
 checks the first two and says exactly what is missing; `desktop/build.sh`
 (with `APPLE_SIGNING_IDENTITY`), `desktop/notarise.sh` and
 `desktop/updater-artifacts.sh` refuse to go on without them and point here.
@@ -77,10 +85,12 @@ checks the first two and says exactly what is missing; `desktop/build.sh`
 
 ### The release secrets in GitHub Actions
 
-The same material is kept as Actions secrets of `getdroppen/droppen`, the
-public repository-to-be, under the names Tauri's GitHub action reads, for a
-release workflow there. None runs yet: today's release is made on the Mac,
-from its keychain and `~/.config/droppen/`.
+The same material is kept as secrets of the **`release` environment** of
+`getdroppen/droppen`, under the names Tauri's GitHub action reads. Only the
+`sign-apple`, `sign-updater` and `publish` jobs of
+`.github/workflows/release.yml` read them, each only its own, after a person
+approves it ([docs/releasing.md](../docs/releasing.md), which also says how
+to set them):
 
 | secret | what it holds |
 |---|---|
@@ -93,22 +103,24 @@ from its keychain and `~/.config/droppen/`.
 | `APPLE_PASSWORD` | an app-specific password of that Apple ID (not its own password) |
 | `TAURI_SIGNING_PRIVATE_KEY` | the updater key, the contents of `tauri-updater.key` ([The key](#the-key)) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password |
+| `RELEASE_FORBIDDEN_ENV` | the release text check's lists: the contents of `~/.config/droppen/release-forbidden.env` |
 
 An Actions secret can be replaced but never read back: none of them is a
 backup of the certificate or the updater key.
 
-**Before any workflow uses them**, move them out of the repository-wide
-secrets: the repository is public, and these sign what every Mac runs.
-
-- Put the updater key and the Developer ID secrets in a protected
-  **`release` environment**: required reviewers, and deployments only from
-  release tags (`v*`), so a job reaches them only once a person approves a
-  tagged release. Keep no copy among the repository's own secrets.
+- They live in the protected **`release` environment** only (required
+  reviewers, deployments only from release tags, `v*`), so a job reaches them
+  only once a person approves it. Keep no copy among the repository's own
+  secrets: the repository is public, and these sign what every Mac runs.
 - Never use them from `pull_request_target`, or from any job that runs code a
   fork can change (a pull request's checkout, its scripts, its dependencies,
-  a cache it can write): the release job checks out the tag and nothing else.
+  a cache it can write): the jobs that hold them check out the tag, run
+  nothing from another job's artifacts, and use no cache.
 
 ## Making a release
+
+This is the release by hand, on the Mac; `.github/workflows/release.yml` does
+the same steps ([docs/releasing.md](../docs/releasing.md)).
 
 ```sh
 VERSION=0.2.125
@@ -187,14 +199,21 @@ only it makes and notarises the DMG.
 ## The updater
 
 Installed apps update themselves (`desktop/README.md`, "Updates"): they read
-`latest.json` from the *latest* release of `getdroppen/releases`
-(`https://github.com/getdroppen/releases/releases/latest/download/latest.json`,
+`latest.json` from the *latest* release of `getdroppen/droppen`
+(`https://github.com/getdroppen/droppen/releases/latest/download/latest.json`,
 `plugins.updater.endpoints` in `src-tauri/tauri.conf.json`), download
 `Droppen.app.tar.gz` from the release it names, and install it only if its
 minisign signature verifies with the public key in `tauri.conf.json`
 (`plugins.updater.pubkey`) and was made for the version `latest.json`
 announces (`requireSignedVersion`). This key pair is the updater's own,
 separate from the Apple certificate.
+
+Up to 0.2.126 the app read `getdroppen/releases` instead, and downloaded only
+from that repository's releases. v0.2.127, the first release of
+`getdroppen/droppen`, is also published there once by hand, the same signed
+files with a `latest.json` pointing there (`scripts/bridge-release.sh`,
+[docs/releasing.md](../docs/releasing.md)), so those apps update to it; then
+`getdroppen/releases` is archived.
 
 ### The key
 
@@ -213,8 +232,8 @@ to it, and `desktop/build.sh` checks that the built app carries it.
       `plugins.updater.pubkey`.
 
     `desktop/updater-artifacts.sh` reads these by default.
-  - **GitHub Actions secrets** of `getdroppen/droppen`, the public
-    repository-to-be (with the Apple ones: [The release secrets in GitHub
+  - **GitHub Actions secrets** of `getdroppen/droppen`'s `release`
+    environment (with the Apple ones: [The release secrets in GitHub
     Actions](#the-release-secrets-in-github-actions)):
     - `TAURI_SIGNING_PRIVATE_KEY`: the contents of `tauri-updater.key`;
     - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the contents of the password file.
@@ -222,8 +241,7 @@ to it, and `desktop/build.sh` checks that the built app carries it.
     These are the variables `tauri signer sign` reads.
     `desktop/updater-artifacts.sh` signs with them when
     `TAURI_SIGNING_PRIVATE_KEY` is set and no `--key` is given, and puts
-    neither on a command line. No workflow signs updates yet: the release
-    runs on the Mac.
+    neither on a command line: that is how `release.yml` signs updates.
 - **Keep an offline backup. This is the owner's job.** Neither place above is
   a backup: the Mac can be reimaged (that is how the previous key was lost),
   and an Actions secret can be replaced but never read back. Copy both files
@@ -247,6 +265,11 @@ to it, and `desktop/build.sh` checks that the built app carries it.
   wherever the key is used.
 
 ### Rotating the key
+
+`.github/workflows/release.yml` does not rotate keys: it checks against
+`tauri.conf.json`'s key only. The transition release below, and every
+server-only release until the first app after it, are made by hand
+([Making a release](#making-a-release)).
 
 An app trusts exactly one key, the one built into it, and the updater plugin
 takes no second one. So a new key reaches installed apps only through a
@@ -284,8 +307,8 @@ one for the release that needs it:
    mv tauri-updater-new.key.pub      tauri-updater.key.pub
    ```
 
-   Then replace the two `TAURI_SIGNING_*` Actions secrets of
-   `getdroppen/droppen`. Until the first release after N that has a desktop
+   Then replace the two `TAURI_SIGNING_*` secrets of `getdroppen/droppen`'s
+   `release` environment. Until the first release after N that has a desktop
    app, a server-only release carries N's `latest.json`, which the old key
    signed: publish those with
    `--verify-pubkey ~/.config/droppen/tauri-updater-old.key.pub`.
@@ -325,18 +348,18 @@ password goes to the signer through its environment only), and writes
 ```json
 {
   "version": "0.2.125",
-  "notes": "https://github.com/getdroppen/releases/releases/tag/v0.2.125",
+  "notes": "https://github.com/getdroppen/droppen/releases/tag/v0.2.125",
   "pub_date": "2026-10-19T08:00:00Z",
   "platforms": {
-    "darwin-aarch64": { "signature": "<Droppen.app.tar.gz.sig>", "url": "https://github.com/getdroppen/releases/releases/download/v0.2.125/Droppen.app.tar.gz" },
+    "darwin-aarch64": { "signature": "<Droppen.app.tar.gz.sig>", "url": "https://github.com/getdroppen/droppen/releases/download/v0.2.125/Droppen.app.tar.gz" },
     "darwin-x86_64":  { "signature": "<the same>",                "url": "<the same: one universal app>" }
   }
 }
 ```
 
-`notes` is the address the app links *Release Notes* to (only pages of the
-release repository or droppen.app are opened; anything else falls back to the
-release page). The manifest itself is not signed, so the app trusts nothing in
+`notes` is the address the app links *Release Notes* to (only pages under
+`github.com/getdroppen/droppen/releases/` or droppen.app are opened; anything
+else falls back to the release page). The manifest itself is not signed, so the app trusts nothing in
 it but what the signature binds: the archive and its version.
 
 ### Rules for a release
@@ -395,36 +418,21 @@ it but what the signature binds: the archive and its version.
 
 **There is none: a bad release is fixed forward.** Once an installed app has
 swapped in an update, it deletes the previous bundle, and nothing switches back
-if the new version will not start. What a bad release calls for:
+if the new version will not start. And a published release of
+getdroppen/droppen is immutable: none of its files, `latest.json` included,
+can be replaced or deleted. What a bad release calls for:
 
-1. **Stop it reaching more apps:** put the last good release's `latest.json`
-   and DMG on the bad release in place of its own. The good files go up
-   under other names first and the bad `latest.json` is replaced by a rename,
-   so it is missing for a moment only. (`gh release upload --clobber` deletes
-   first; if its upload then failed, the release would have none.)
-
-   ```sh
-   R=getdroppen/releases GOOD=0.2.125 BAD=0.2.126
-   mkdir -p /tmp/rollback && cd /tmp/rollback
-   gh release download v$GOOD --repo $R --pattern latest.json --pattern Droppen-$GOOD.dmg
-   mv latest.json latest-good.json
-   gh release upload v$BAD --repo $R latest-good.json Droppen-$GOOD.dmg
-   gh release delete-asset v$BAD latest.json --repo $R --yes
-   gh api -X PATCH "$(gh release view v$BAD --repo $R --json assets --jq '.assets[] | select(.name == "latest-good.json") | .apiUrl')" -f name=latest.json
-   gh release delete-asset v$BAD Droppen-$BAD.dmg --repo $R --yes
-   ```
-
-   If a step fails, finish it at once: until `latest.json` is back, every
-   app's check fails, and a failed check keeps a downloaded update.
-
-   The good `latest.json` announces a version no newer than the apps still on
-   the good one, so they find nothing to download, and an app that has
-   downloaded the bad update but not installed it throws it away at its next
-   check (an app that quits before then installs it). Deleting `latest.json`
-   instead would not stop the installs of downloads already made. (The bad
-   release's `SHA256SUMS` still lists its own files.) A server-only release
-   before the fix carries the good `latest.json` and DMG forward as usual.
-2. **Publish a fixed, higher version** the usual way.
-3. Users whose app no longer starts download the fixed DMG by hand.
+1. **Publish a higher version at once**, the usual way
+   ([docs/releasing.md](../docs/releasing.md)): the fix, or, while the fix
+   takes longer, the last good source again (revert the bad change on main,
+   bump the version, say so in the notes). Installed apps update to it at
+   their next check, those on the bad version too while it still starts; an
+   app that has downloaded the bad update but not installed it finds the
+   newer one at its next check and takes that instead (one that quits before
+   then installs the bad one first).
+2. Users whose app no longer starts download the fixed DMG by hand.
+3. Leave the bad release as it is: until the fixed one is published it is the
+   latest release, and the latest release must have its `latest.json`
+   ([Rules for a release](#rules-for-a-release)).
 
 Keeping the previous bundle and switching back automatically is not built.

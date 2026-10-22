@@ -263,13 +263,13 @@ describe("verify-web.mjs against a hub", () => {
     }
   });
 
-  test("releases come from getdroppen/releases unless --repo names another", async () => {
+  test("releases come from getdroppen/droppen unless --repo names another", async () => {
     const site = await hub();
     const env = { DROPPEN_VERIFY_GITHUB_API: github, DROPPEN_VERIFY_GITHUB: github };
     // The fake GitHub only knows o/r: the default repository is asked, and is not there.
     const r = await verify(["--site", site], env);
     assert.equal(r.code, 2, r.out);
-    assert.match(r.out, /\/repos\/getdroppen\/releases\/releases\?per_page=30: HTTP 404/);
+    assert.match(r.out, /\/repos\/getdroppen\/droppen\/releases\?per_page=30: HTTP 404/);
   });
 
   test("--signer-repo must be OWNER/NAME", async () => {

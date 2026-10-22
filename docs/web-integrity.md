@@ -30,7 +30,7 @@ node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub
 脚本做这几件事：
 
 1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。
-2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版文件在 getdroppen/releases（`--repo`），它的清单由 `scripts/release-public.sh` 在本机生成：文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名和构建时间），而 bundle 签的是字节。所以那里的发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
+2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版在 getdroppen/droppen（`--repo`）：从 v0.2.127 起，`release.yml` 构建、签名并发布每一次发版，清单和它的 bundle（`web-manifest.sigstore.json`）就在同一个发版上。v0.2.126 及以前的发版在 getdroppen/releases（`--repo getdroppen/releases`），清单由 `scripts/release-public.sh` 在本机生成，文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名），而 bundle 签的是字节。所以发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
 3. 下载清单里的每个文件，再取 `/`、`/link`、`/signin` 三个路由的页面外壳，逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
 4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是站点自己的（`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出。字节相同、却指向别的 Hub 的页面，不算同一个页面。
 5. 检查每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。
@@ -61,21 +61,21 @@ cd web/dist && find . -type f | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum
 
 **可复现构建。** Node 钉在 `.nvmrc`（22.23.3），Hub 的镜像构建网页时用同一版本；pnpm 是 `packageManager` 里的 10.6.3；依赖由 `pnpm-lock.yaml` 钉死。公开发行版不设 `DROPPEN_DISTRIBUTION`，只用仓库里的 `distribution.json`（不含插件）。构建产物里没有时间戳和本机路径；发版和 CI 仍设 `SOURCE_DATE_EPOCH`（提交时间），留给以后读时间的工具。
 
-CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同目录、不同时区分别构建，`web/dist` 必须逐字节相同。Hub 的镜像用同样的命令构建同一份网页，构建出的字节要与发版清单相同（这项检查在 Hub 的仓库里）。`web-reproducible-macos` 再在 macOS 上构建一次，必须与 Linux 的清单相同。发版时 macOS 任务还核对二进制内嵌的网页与清单相同。验证脚本自己的测试（`node --test scripts/verify-web.test.mjs`）也在这个任务里跑。
+CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同目录、不同时区分别构建，`web/dist` 必须逐字节相同。Hub 的镜像用同样的命令构建同一份网页，构建出的字节要与发版清单相同（这项检查在 Hub 的仓库里）。`web-reproducible-macos` 再在 macOS 上构建一次，必须与 Linux 的清单相同。发版时 `stage` 任务还核对：写清单的那次构建（macOS 上）与二进制内嵌的那份网页（`web` 任务在 Linux 上构建）逐字节相同。验证脚本自己的测试（`node --test scripts/verify-web.test.mjs`）也在这个任务里跑。
 
-**清单。** 每次发版，`release.yml` 的 `web` 任务按 Hub 镜像构建网页时同样的命令构建，用 `scripts/web-manifest.mjs` 写出 `web-manifest.json`，作为构建产物交给下一个任务：
+**清单。** 每次发版，`release.yml` 的 `web` 任务按 Hub 镜像构建网页时同样的命令构建，作为构建产物交给构建二进制的任务；`stage` 任务里的 `scripts/release-public.sh` 用同样的命令再构建一次，用 `scripts/web-manifest.mjs` 写出 `web-manifest.json`（[`docs/releasing.md`](releasing.md)）：
 
 - `files`：每个文件的路径、大小、sha256；
 - `digest`：构建摘要。每个文件一行 `<sha256>  <路径>\n`（即 `sha256sum` 的输出），按路径逐字节排序，整体再取 sha256；
 - `commit`、`ref`、`repository`，以及构建输入：Node 和 pnpm 版本、`SOURCE_DATE_EPOCH`、`.nvmrc`、`package.json`、`pnpm-lock.yaml`、`distribution.json` 的哈希。
 
-签名与构建分开。构建任务要跑依赖代码（安装、vite），所以没有签名权限（没有 `id-token`）。签名的 `web-release` 任务不检出代码、不装依赖：只下载清单，用 GitHub 自己的 `actions/attest-build-provenance` 生成 SLSA 构建来源证明，再用 runner 自带的 `gh` 把清单和 bundle（`web-manifest.sigstore.json`）挂到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
+签名与构建分开。构建任务要跑依赖代码（安装、vite、cargo），所以没有签名权限（没有 `id-token`），也拿不到任何密钥。签名的 `attest` 任务只在真正发版时运行（试运行不生成证明），不装依赖、不编译，也不运行任何构建出来的程序，构建产物都先按产出它的任务给的 sha256 核对：它用 GitHub 自己的 `actions/attest-build-provenance` 为发版的每个文件（清单也在内）生成 SLSA 构建来源证明，再为清单单独生成一份；`publish` 任务把清单和这份 bundle（`web-manifest.sigstore.json`）连同发版的其他文件一起发布到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
 
 **Hub 报告自己跑的构建。** Hub 启动时对它加载的文件（外壳取加标记之前的原样）算同一个摘要，在 `GET /.well-known/droppen-build` 返回 `{commit, web: {digest, files}}`（`docs/hub-api/http.md`）。提交是构建这个 Hub 时记下的那个。发版提交通常只改 Cargo 版本号，所以 Hub 部署的提交与发版标签不同也没关系：验证按摘要找清单，不按提交。
 
 ## 4. 现状和剩下的风险
 
-- **公开之前的发版没有证明。** 私有仓库用不了构建证明，所以仓库公开之前打的标签只附了未证明的 `web-manifest.json`；`attest` 步骤从公开后的第一个标签起才运行。对照更早的发版要加 `--allow-unattested`，或者拿自己重建的清单来比（`--manifest`）。
+- **v0.2.127 之前的发版没有证明。** 它们在发版用的 Mac 上构建，私有仓库也用不了构建证明，所以只附了未证明的 `web-manifest.json`；从 v0.2.127 起，每次发版都由 `release.yml` 构建并证明。对照更早的发版要加 `--allow-unattested`，或者拿自己重建的清单来比（`--manifest`）。
 - **Hub 可能跑着没发过版的网页。** Hub 由运营者手动从选定的提交部署，`/.well-known/droppen-build` 报告的就是这个提交；它不一定是发版标签。如果这个提交里 `web/` 有还没发版的改动，站点的摘要就不在任何发版里，验证会失败。这时按站点报告的提交自己重建。只从发版标签部署 Hub 能彻底避免这种情况。
 - **只核对列出的文件。** Hub 可以多放别的路径，但开源代码不会去加载它们，除非外壳或已核对的 JS 引用。外壳只抽查了三个路由；Hub 理论上能在别的路由上给出不同的外壳。
 - **CSP 只检查脚本来源。** 其它指令和响应头不在证明范围内。

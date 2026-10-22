@@ -144,8 +144,13 @@ $(printf '      %s\n' "${NOT_FOUND[@]}")
     \"What the release Mac needs\".")
 fi
 
-release_text_names_ok \
-  || PROBLEMS+=("the release text check's names are not the expected list: set DROPPEN_RELEASE_FORBIDDEN, or keep it in ~/.config/droppen/release-forbidden.env (desktop/SIGNING.md, \"What the release Mac needs\")")
+if release_text_names_deferred; then
+  # Only release.yml's dry run without the names (docs/releasing.md) gets here.
+  echo "note: DROPPEN_RELEASE_NAMES_DEFERRED: the app's licence and notices are checked for \"Kilerd\" only, not for the names"
+else
+  release_text_names_ok \
+    || PROBLEMS+=("the release text check's names are not the expected list: set DROPPEN_RELEASE_FORBIDDEN, or keep it in ~/.config/droppen/release-forbidden.env (desktop/SIGNING.md, \"What the release Mac needs\")")
+fi
 release_text_allow_ok 2>/dev/null \
   || PROBLEMS+=("DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped")
 

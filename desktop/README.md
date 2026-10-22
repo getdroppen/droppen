@@ -174,7 +174,7 @@ The app updates itself without asking anything and without a window
 (`src-tauri/src/updater.rs`, the decisions in `core/src/update.rs`):
 
 - **Checks** 15 s after launch and every six hours of wall-clock time, from
-  `latest.json` on the newest release of `getdroppen/releases`
+  `latest.json` on the newest release of `getdroppen/droppen`
   (`plugins.updater` in `tauri.conf.json`). A failed check is tried again in
   half an hour, silently.
 - **Downloads** a newer release in the background — not on a metered network

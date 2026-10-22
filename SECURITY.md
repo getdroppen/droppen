@@ -35,7 +35,8 @@ In scope:
 - the hosted service at droppen.app: the Hub, the web app it serves and the
   relays it lists;
 - the installer (`https://droppen.app/install.sh`) and the release files at
-  [getdroppen/releases](https://github.com/getdroppen/releases).
+  [getdroppen/droppen's releases](https://github.com/getdroppen/droppen/releases)
+  (and, up to v0.2.127, [getdroppen/releases](https://github.com/getdroppen/releases)).
 
 The design assumes a malicious Hub. A way for the Hub, a relay or someone on
 the network to read or change what should be end-to-end encrypted, or for a

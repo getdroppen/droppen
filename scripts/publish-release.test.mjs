@@ -55,7 +55,7 @@ const find = (t) => state.releases.find((r) => r.tag_name === t);
 const positional = () => {
   const out = [];
   for (let i = 3; i < args.length; i++) {
-    if (args[i].startsWith("--")) { if (!args[i].includes("=") && !["--draft", "--prerelease", "--latest"].includes(args[i])) i++; continue; }
+    if (args[i].startsWith("--")) { if (!args[i].includes("=") && !["--draft", "--prerelease", "--latest", "--verify-tag"].includes(args[i])) i++; continue; }
     out.push(args[i]);
   }
   return out;
@@ -151,11 +151,11 @@ console.log(file + ": Droppen " + manifest.version + " is fit to publish");
 `;
 
 function manifest(version) {
-  const platform = { signature: `SIG-${version}`, url: `https://github.com/getdroppen/releases/releases/download/v${version}/Droppen.app.tar.gz` };
+  const platform = { signature: `SIG-${version}`, url: `https://github.com/getdroppen/droppen/releases/download/v${version}/Droppen.app.tar.gz` };
   return `${JSON.stringify(
     {
       version,
-      notes: `https://github.com/getdroppen/releases/releases/tag/v${version}`,
+      notes: `https://github.com/getdroppen/droppen/releases/tag/v${version}`,
       pub_date: "2026-10-20T08:00:00Z",
       platforms: { "darwin-aarch64": platform, "darwin-x86_64": platform },
     },
@@ -632,5 +632,108 @@ describe("a draft that is not right is never published", () => {
     const s = state();
     assert.equal(s.latest, "v0.2.125");
     assert.equal(s.releases.find((x) => x.tag_name === "v0.2.126").draft, true);
+  });
+});
+
+describe("what release.yml attests", () => {
+  test("--sums-out writes the SHA256SUMS that is published, and --sums-expected holds the release to it", async () => {
+    const server = serverDir("v0.2.126");
+    const desktop = desktopDir("0.2.126");
+    const sums = join(root, "SHA256SUMS.attested");
+    const dry = await run(["v0.2.126", "--server", server, "--desktop", desktop, "--dry-run", "--sums-out", sums]);
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.deepEqual(writes(), []);
+    const r = await run(["v0.2.126", "--server", server, "--desktop", desktop, "--sums-expected", sums]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(join(filesDir, "v0.2.126", "SHA256SUMS"), "utf8"), readFileSync(sums, "utf8"));
+    assert.match(readFileSync(sums, "utf8"), / {2}\.\/latest\.json\n$/);
+  });
+
+  test("a release whose SHA256SUMS is not the one expected writes nothing", async () => {
+    const sums = join(root, "SHA256SUMS.attested");
+    writeFileSync(sums, "something else\n");
+    const r = await run(["v0.2.126", "--server", serverDir("v0.2.126"), "--desktop", desktopDir("0.2.126"), "--sums-expected", sums]);
+    assert.notEqual(r.code, 0, r.stdout);
+    assert.match(r.stderr, /is not .*SHA256SUMS\.attested byte for byte .*nothing was written/);
+    assert.deepEqual(writes(), []);
+  });
+
+  test("--local-only checks the files and asks the repository nothing", async () => {
+    // v0.2.125 is published already: a dry run of it can only check its files.
+    const sums = join(root, "SHA256SUMS.local");
+    const r = await run(["v0.2.125", "--server", serverDir("v0.2.125"), "--desktop", desktopDir("0.2.125"), "--dry-run", "--local-only", "--sums-out", sums]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(calls(), []);
+    assert.match(r.stdout, /was not asked anything, and nothing was written/);
+    const listed = readFileSync(sums, "utf8").trim().split("\n").map((line) => line.split("  ./")[1]);
+    assert.deepEqual(listed, [
+      "droppen-v0.2.125-macos-universal.tar.gz",
+      "remote-hand-v0.2.125-macos-universal.tar.gz",
+      "Droppen-0.2.125.dmg",
+      "Droppen.app.tar.gz",
+      "Droppen.app.tar.gz.sig",
+      "latest.json",
+    ]);
+    const bad = await run(["v0.2.125", "--server", join(root, "server-v0.2.125"), "--local-only"]);
+    assert.notEqual(bad.code, 0);
+    assert.match(bad.stderr, /--local-only is for a --dry-run/);
+  });
+});
+
+describe("release.yml's jobs: the manifest tool only where nothing else is at stake", () => {
+  const toolCalls = () => (existsSync(env.FAKE_TOOL_LOG) ? readFileSync(env.FAKE_TOOL_LOG, "utf8").trim().split("\n").filter(Boolean) : []);
+
+  test("--sums-only writes the SHA256SUMS a checked dry run writes, runs no manifest tool and writes nothing", async () => {
+    // Server-only: the carried latest.json and DMG are in it too.
+    const server = serverDir("v0.2.126");
+    const checked = join(root, "SHA256SUMS.checked");
+    const dry = await run(["v0.2.126", "--server", server, "--dry-run", "--sums-out", checked]);
+    assert.equal(dry.code, 0, dry.stderr);
+    rmSync(env.FAKE_TOOL_LOG, { force: true });
+    const only = join(root, "SHA256SUMS.only");
+    const r = await run(["v0.2.126", "--server", server, "--sums-only", only]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(toolCalls(), []);
+    assert.deepEqual(writes(), []);
+    assert.equal(readFileSync(only, "utf8"), readFileSync(checked, "utf8"));
+    assert.match(readFileSync(only, "utf8"), /\.\/Droppen-0\.2\.125\.dmg\n.*\.\/latest\.json\n$/s);
+  });
+
+  test("--skip-manifest-check publishes without the tool, held to --sums-expected", async () => {
+    const server = serverDir("v0.2.126");
+    const desktop = desktopDir("0.2.126");
+    const sums = join(root, "SHA256SUMS.attested");
+    assert.equal((await run(["v0.2.126", "--server", server, "--desktop", desktop, "--sums-only", sums])).code, 0);
+    rmSync(env.FAKE_TOOL_LOG, { force: true });
+    const r = await run(["v0.2.126", "--server", server, "--desktop", desktop, "--skip-manifest-check", "--sums-expected", sums]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(toolCalls(), []);
+    assert.equal(state().latest, "v0.2.126");
+    const rotation = await run(["v0.2.127", "--server", server, "--skip-manifest-check", "--verify-pubkey", sums]);
+    assert.notEqual(rotation.code, 0);
+    assert.match(rotation.stderr, /--verify-pubkey is a manifest check/);
+  });
+});
+
+describe("publishing in the source repository", () => {
+  test("the installer, the INSTALL texts and the attestation bundles go up in the draft; --verify-tag makes it for the existing tag", async () => {
+    const server = serverDir("v0.2.126");
+    for (const name of ["install.sh", "INSTALL-macos.txt", "INSTALL-linux.txt", "web-manifest.sigstore.json", "droppen-v0.2.126.sigstore.json"]) {
+      writeFileSync(join(server, name), `${name}\n`);
+    }
+    const r = await run(["v0.2.126", "--server", server, "--desktop", desktopDir("0.2.126"), "--verify-tag"]);
+    assert.equal(r.code, 0, r.stderr);
+    const create = writes()[0];
+    assert.ok(create.includes("--verify-tag") && create.includes("--draft"), JSON.stringify(create));
+    const names = state().releases.find((x) => x.tag_name === "v0.2.126").assets.map((a) => a.name);
+    for (const name of ["install.sh", "INSTALL-macos.txt", "INSTALL-linux.txt", "web-manifest.sigstore.json", "droppen-v0.2.126.sigstore.json"]) {
+      assert.ok(names.includes(name), name);
+    }
+    assert.equal(names.at(-1), "latest.json");
+    // Anything else is still refused.
+    writeFileSync(join(server, "INSTALL-windows.txt"), "no\n");
+    const stray = await run(["v0.2.126", "--server", server, "--dry-run"]);
+    assert.notEqual(stray.code, 0);
+    assert.match(stray.stderr, /holds files release-public\.sh does not make: INSTALL-windows\.txt/);
   });
 });

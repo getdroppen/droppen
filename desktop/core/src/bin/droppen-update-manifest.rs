@@ -13,7 +13,7 @@
 //! signature against the archive and the key, and refuses to write a manifest
 //! the app would not accept; `check` reads one back the same way (without
 //! `--archive`, the signature's form and fields only). `--url` defaults to the
-//! archive on the release `v<version>` of getdroppen/releases, `--notes` to
+//! archive on the release `v<version>` of getdroppen/droppen, `--notes` to
 //! that release's page. `--loopback-http` lets `--url` be
 //! `http://127.0.0.1:<port>/…`: the updater's end-to-end test, never a release.
 //! `key-id` prints the key's minisign key id, as `tauri signer` shows it.

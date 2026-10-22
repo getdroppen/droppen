@@ -11,7 +11,7 @@
 //                                                      yourself (scripts/web-manifest.mjs)
 //
 // Options:
-//   --repo OWNER/NAME        where releases come from (default getdroppen/releases)
+//   --repo OWNER/NAME        where releases come from (default getdroppen/droppen)
 //   --signer-repo OWNER/NAME whose .github/workflows/release.yml built and attested
 //                            the manifest (default getdroppen/droppen, the source)
 //   --bundle FILE            the Sigstore bundle for --manifest FILE
@@ -28,10 +28,11 @@
 //   2. takes the release manifest with that digest (or the one named), and
 //      checks its attestation with `gh attestation verify --bundle` — that
 //      needs `gh` installed but no GitHub login. A release without a bundle
-//      of its own (getdroppen/releases: its manifest is staged by the release
-//      script, the same files but not the bytes CI signed) is checked through
-//      the signer repository's release of the same tag: its manifest, which
-//      must have the same digest, and that manifest's bundle;
+//      of its own (getdroppen/releases, up to v0.2.126: its manifest was
+//      staged by the release script, the same files but not the bytes CI
+//      signed) is checked through the signer repository's release of the same
+//      tag: its manifest, which must have the same digest, and that
+//      manifest's bundle;
 //   3. fetches every file the manifest lists, and the shell at a few routes,
 //      and compares sha256s. The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
@@ -76,7 +77,7 @@ function parseArgs(argv) {
     site: "https://droppen.app",
     // The release files live in the public binaries repository; the workflow
     // that builds and attests them runs in the source repository.
-    repo: "getdroppen/releases",
+    repo: "getdroppen/droppen",
     signerRepo: "getdroppen/droppen",
     releases: 30,
     requireAttestation: false,
@@ -185,8 +186,9 @@ async function releaseManifest(opts, digest) {
 
 /**
  * The signed copy of a release's manifest, for a release that carries no
- * Sigstore bundle of its own. The files of getdroppen/releases are staged by
- * scripts/release-public.sh, whose manifest lists the same files as the one
+ * Sigstore bundle of its own. The files of getdroppen/releases (where releases
+ * were published up to v0.2.126) were staged by scripts/release-public.sh on
+ * the release Mac, whose manifest lists the same files as the one
  * release.yml builds and attests in the signer repository, but is not the
  * same bytes (CI's also names the repository and the build time); a bundle
  * signs bytes. So both are taken from the signer repository's release of the
