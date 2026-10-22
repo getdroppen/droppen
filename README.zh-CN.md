@@ -107,8 +107,8 @@ pnpm build:web    # 必须先于 build:server：SPA 要嵌进二进制
 pnpm build:server # cargo build --release
 ```
 
-`pnpm test` 里的 `cargo test` 是多线程跑的，在 macOS 上随手跑一遍没问题；CI 和提 PR 前要过的是单线程
-（在 `server-rs/` 里 `cargo test -- --test-threads=1`：这些测试会改进程的环境变量，Linux 上多线程跑可能卡住），
+`pnpm test` 里的 `cargo test` 是单进程多线程跑的，在 macOS 上随手跑一遍没问题；CI 和提 PR 前要过的是 cargo-nextest
+（在 `server-rs/` 里 `cargo nextest run`，每个测试一个进程：这些测试会改进程的环境变量，Linux 上同一进程里多线程跑可能卡住），
 具体命令见 [`CONTRIBUTING.md`](CONTRIBUTING.md#run-the-tests-before-you-open-a-pull-request)。
 
 ## 契约更新流程

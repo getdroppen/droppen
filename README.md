@@ -162,9 +162,9 @@ pnpm gen:api      # after changing the server's routes or types:
                   # regenerates openapi/openapi.json and web/src/api/schema.d.ts
 ```
 
-`pnpm test` runs the server's tests on several threads, which is fine for a
-quick run on macOS. CI runs them on one thread
-(`cargo test -- --test-threads=1` in `server-rs/`), and that is what a pull
+`pnpm test` runs the server's tests on several threads of one process, which is
+fine for a quick run on macOS. CI runs them with cargo-nextest, one process per
+test (`cargo nextest run` in `server-rs/`), and that is what a pull
 request has to pass; [CONTRIBUTING.md](CONTRIBUTING.md#run-the-tests-before-you-open-a-pull-request)
 has the exact commands. The desktop app's tests run with
 `cargo test --workspace` in `desktop/`.

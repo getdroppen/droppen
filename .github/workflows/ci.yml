@@ -36,10 +36,36 @@ jobs:
       - run: pnpm test:boundary
       - run: pnpm typecheck
       - run: pnpm --filter @droppen/plugin-sdk test
-      - run: pnpm --filter @remote-hand/web test
+      # The web app's own tests run in the three `web-tests` shards below.
       # The open distribution (distribution.json): no plugins.
       - run: pnpm --filter @remote-hand/web build
       - run: node -e "const m=require('./web/dist/plugins/manifest.json'); if (m.plugins.length) { console.error('the open build bundles plugins:', m.plugins.map(p=>p.id)); process.exit(1) }"
+
+  # The web app's tests (`pnpm --filter @remote-hand/web test`), split by test
+  # file into three shards that run side by side: Node's `--test-shard=i/3`
+  # (via the `test:shard` script) hands each shard every third file of the same
+  # sorted list, so each file runs in exactly one shard. The small runner has
+  # two cores, which is why one run of all of them took longer than anything
+  # else in the `web` job. Only the web app and what it depends on is
+  # installed; typecheck, build and the checks run once, in `web`.
+  # A shard that fails does not cancel the others: all three report.
+  web-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      TEST_SHARD: ${{ matrix.shard }}/3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+      - run: pnpm --filter @remote-hand/web test:shard
 
   # The public web build (what droppen.app serves) is reproducible: two fresh
   # checkouts in different directories, built apart under different time
@@ -133,6 +159,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # cargo-nextest, pinned twice: the action by commit, the tool by version
+      # (the action checks the download against the checksum it carries for
+      # that version).
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.148
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server-rs -> target
@@ -146,33 +178,41 @@ jobs:
       - run: node ../scripts/check-open-boundary.mjs
       # No `cargo fmt --check` or clippy gate while the product is young:
       # development speed first; bring them back once it settles.
-      # The cloud protocol crate: pure functions and in-memory state machines, no
-      # processes, so it runs threaded and on its own.
-      - run: cargo test -p rh-proto
+      # The tests run under cargo-nextest, which runs every test in its own
+      # process (settings: server-rs/.config/nextest.toml, profile `ci`).
+      # That is what makes them safe to run in parallel: the harness mutates
+      # PATH and tests read the process environment from server threads, and
+      # on glibc a concurrent setenv/getenv is undefined behaviour that wedged
+      # this job on 2026-08-27 (macOS libc tolerates it, which is why it never
+      # showed locally). `cargo test` had to run `--test-threads=1` for that;
+      # with a process per test no test can write the environment another is
+      # reading. Each step keeps its own crate and feature set, as before.
+      # nextest does not run doctests, and no crate in the workspace has one
+      # (`cargo test` ran zero): a crate that gets one needs a
+      # `cargo test --doc -p <crate>` step.
+      # The cloud protocol crate: pure functions and in-memory state machines,
+      # no processes.
+      - run: cargo nextest run --profile ci -p rh-proto
       # The device side of the hub API (sign-in, the client link, reading and
       # folding streams), shared by the test device and the local install.
-      - run: cargo test -p rh-client
+      - run: cargo nextest run --profile ci -p rh-client
       # The relay whole: its rules (rh-relay), and droppen-relay's
       # `tests/relay.rs` from the outside — tickets, sign-ins, revocation, the
       # outage grace, metering, limits — against a fake Hub and the
       # `droppen-relay` binary. No database.
-      - run: cargo test -p rh-relay -p droppen-relay
+      - run: cargo nextest run --profile ci -p rh-relay -p droppen-relay
         timeout-minutes: 10
       # The test device with its direct-path probe built in (a feature the
       # default build leaves out, so nothing else compiles it).
-      - run: cargo test -p rh-devkit --features p2p-probe
+      - run: cargo nextest run --profile ci -p rh-devkit --features p2p-probe
         timeout-minutes: 10
       # The plugin contract crate: pure types and checks, run on their own, and
       # a tree that may reach neither the host nor the hosted service.
-      - run: cargo test -p droppen-plugin-sdk
+      - run: cargo nextest run --profile ci -p droppen-plugin-sdk
       - run: ../scripts/check-sdk-crate-deps.sh
-      # Single-threaded: the harness mutates PATH and tests read the process
-      # environment from server threads; on glibc a concurrent setenv/getenv
-      # is undefined behaviour and wedged this job on 2026-08-27 (macOS libc
-      # tolerates it, which is why it never showed locally). Serial tests
-      # leave no concurrent reader while the environment is written.
+      # The server itself (the root package; a bare run here means it alone).
       # The timeout keeps any future wedge to minutes, not the 6-hour cap.
-      - run: cargo test -- --test-threads=1
+      - run: cargo nextest run --profile ci
         timeout-minutes: 20
       - name: Report Rust build storage
         if: always()

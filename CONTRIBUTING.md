@@ -80,22 +80,25 @@ pnpm --filter @remote-hand/web typecheck
 pnpm --filter @remote-hand/web test
 ```
 
-The local program and the crates, in `server-rs/`, as CI runs them:
+The local program and the crates, in `server-rs/`, as CI runs them, with
+[cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`):
 
 ```sh
 cd server-rs
-DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo test -- --test-threads=1   # the local program
-DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo test -p rh-proto           # and each crate you changed
+DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo nextest run                # the local program
+DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo nextest run -p rh-proto    # and each crate you changed
 ```
 
 `DROPPEN_ALLOW_MISSING_WEB_DIST=1` lets the server build without a built web app.
-The local program's tests run on one thread because they change the process
-environment, which is not safe to do while other threads read it: on Linux,
-running them on several threads can hang.
+nextest runs every test in its own process. The local program's tests change
+the process environment, which is not safe to do while other threads read it
+(on Linux, running them on several threads of one process can hang), and one
+process per test is what makes them safe to run in parallel. Without nextest,
+`cargo test -- --test-threads=1` is the same check on one thread, and slower.
 
 `pnpm test` at the repository root is a shortcut for a quick local run: it runs
 the web app's tests, then `cargo test` for the local program on several
-threads. It does not replace the single-threaded run above. `pnpm typecheck`
+threads. It does not replace the run above. `pnpm typecheck`
 type-checks every package. The plugin SDK has its own tests
 (`pnpm test:sdk`), and the desktop app's tests run with
 `cargo test --workspace` in `desktop/`.

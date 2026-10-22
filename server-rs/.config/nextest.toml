@@ -1,0 +1,38 @@
+# cargo-nextest settings for the server workspace (docs: https://nexte.st).
+# CI runs `cargo nextest run --profile ci ...` from server-rs/ (see
+# .github/workflows/ci.yml); locally `cargo nextest run` uses the default
+# profile.
+#
+# Why nextest: it runs every test in its own process. Some tests write the
+# process environment (PATH and the like) while server threads read it, and on
+# glibc a concurrent setenv/getenv is undefined behaviour (it wedged CI on
+# 2026-08-27). With one process per test no test can write the environment
+# another one is reading, so tests run in parallel; `cargo test` could only be
+# made safe with `--test-threads=1`.
+#
+# Tests that ever need to run one at a time (a fixed port, a shared file) go
+# in a test group, not back to a single thread for everything:
+#
+#   [test-groups]
+#   some-resource = { max-threads = 1 }
+#
+#   [[profile.default.overrides]]
+#   filter = 'test(/that_one_test/)'
+#   test-group = 'some-resource'
+#
+# None needed yet: the suite passes repeatedly in parallel, including on two
+# cores with more tests in flight than cores.
+
+[profile.ci]
+# Report every failing test, not just the first one.
+fail-fast = false
+# Most tests wait on timers, child processes and sockets rather than on the
+# CPU, and the hosted runner has two cores: more tests in flight than cores
+# keeps them busy (101 s against 171 s for the server crate's tests on two
+# cores at 8 against 2 threads).
+test-threads = 8
+# A hung test is killed on its own, and named, after 10 minutes, instead of
+# taking the step's timeout with it.
+slow-timeout = { period = "120s", terminate-after = 5 }
+# Failures print as they happen and once more at the end.
+failure-output = "immediate-final"
