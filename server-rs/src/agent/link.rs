@@ -376,22 +376,45 @@ pub fn start(
     })
 }
 
+/// How long [`renew_push`] waits before each try again: then every last one.
+const PUSH_RENEW_AGAIN: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(30),
+    Duration::from_secs(300),
+];
+
 /// R6 review: once a renewed identity key was promoted, a new VAPID
 /// keypair and every stored push subscription forgotten
 /// ([`crate::push::store::renew_vapid`]) — whoever copied the old VAPID key
 /// and endpoints reaches no device that subscribes again. Noted done only
 /// once it is (and by this link only while it runs: else the next start
-/// does it again, which is harmless).
+/// does it again, which is harmless). Until then the push key is refused
+/// (503 `push_renewing`, [`bridge::push_key_route`]), so a try that fails is
+/// tried again while the link runs ([`PUSH_RENEW_AGAIN`]), not only at the
+/// next start (review of the renewal fixes).
 async fn renew_push(shared: Arc<Shared>) {
-    match crate::push::store::renew_vapid(&shared.paths).await {
-        Ok(forgotten) => {
-            tracing::warn!(forgotten, "renewed the push keys with the identity key: every device subscribes again");
-            if !shared.cancel.is_cancelled() {
-                shared.state.lock().expect("agent state").rotation.push_renew = false;
-                shared.save();
+    let mut tries = 0usize;
+    loop {
+        match crate::push::store::renew_vapid(&shared.paths).await {
+            Ok(forgotten) => {
+                tracing::warn!(forgotten, "renewed the push keys with the identity key: every device subscribes again");
+                if !shared.cancel.is_cancelled() {
+                    shared.state.lock().expect("agent state").rotation.push_renew = false;
+                    shared.save();
+                }
+                return;
+            }
+            Err(error) => {
+                let wait = PUSH_RENEW_AGAIN[tries.min(PUSH_RENEW_AGAIN.len() - 1)];
+                tries += 1;
+                tracing::error!(%error, tries, ?wait, "cannot renew the push keys with the identity key; trying again");
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => {}
+                    () = shared.cancel.cancelled() => return,
+                }
             }
         }
-        Err(error) => tracing::error!(%error, "cannot renew the push keys with the identity key; trying again at the next start"),
     }
 }
 
@@ -3007,6 +3030,37 @@ mod tests {
         let (status, body) = rpc(&admin, "GET", "/api/push/vapid", b"").await.expect("an answer");
         assert_eq!((status, body["publicKey"].as_str()), (200, Some("KEY-IN-USE")));
         assert_eq!(*reached.lock().unwrap(), vec!["GET /api/push/vapid HTTP/1.1".to_string()]);
+    }
+
+    /// Review of the renewal fixes: a renewal of the push keys that fails
+    /// ([`renew_push`]; the state database refusing the write, here) is tried
+    /// again while the link runs, after a back-off — not only at the next
+    /// start, the push key refused until then — and `push_renew` clears once
+    /// it is done.
+    #[tokio::test(start_paused = true)]
+    async fn the_push_keys_are_renewed_again_after_a_failure_without_a_restart() {
+        let a = account();
+        let paths = a.shared.paths.clone();
+        let old = crate::push::store::vapid_public(&paths).await.unwrap();
+        let db = crate::db::at(paths.instance_db());
+        db.write(|tx| tx.execute_batch("CREATE TRIGGER refuse_push BEFORE UPDATE ON kv WHEN NEW.scope = 'push' BEGIN SELECT RAISE(ABORT, 'refused (test)'); END;"))
+            .unwrap();
+        a.shared.state.lock().unwrap().rotation.push_renew = true;
+        let task = tokio::spawn(renew_push(a.shared.clone()));
+        // The first try fails.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(a.shared.state.lock().unwrap().rotation.push_renew);
+        assert_eq!(crate::push::store::vapid_public(&paths).await.unwrap(), old);
+        db.write(|tx| tx.execute_batch("DROP TRIGGER refuse_push")).unwrap();
+        // Without a restart: tried again, renewed, noted done.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(
+            !a.shared.state.lock().unwrap().rotation.push_renew,
+            "not tried again: the push key stays refused until the next start"
+        );
+        assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
+        assert!(!AgentState::load(&paths).unwrap().unwrap().rotation.push_renew, "saved");
+        tokio::time::timeout(Duration::from_secs(1), task).await.expect("done").unwrap();
     }
 
     /// Review D3: a device whose handshake this agent accepts is recorded
