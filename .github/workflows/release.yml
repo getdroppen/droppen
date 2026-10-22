@@ -870,8 +870,12 @@ jobs:
           UPDATER_SHA: ${{ needs.sign-updater.outputs.sha }}
         run: .github/scripts/unpack-release.sh
       # stage ran npm install scripts: the files the release takes from the
-      # source must be the source's, byte for byte.
-      - name: install.sh, LICENSE and the INSTALL texts are the source's
+      # source must be the source's, byte for byte, and NOTES.md (the release's
+      # page, install command and all) what the source writes.
+      - name: install.sh, LICENSE, the INSTALL texts and NOTES.md are the source's
+        env:
+          SHA: ${{ needs.meta.outputs.sha }}
+          REV: ${{ needs.meta.outputs.rev }}
         run: |
           set -euo pipefail
           rel=$RUNNER_TEMP/a/staged/release
@@ -889,6 +893,11 @@ jobs:
           same LICENSE LICENSE
           same "$RUNNER_TEMP/INSTALL-macos.txt" INSTALL-macos.txt
           same "$RUNNER_TEMP/INSTALL-linux.txt" INSTALL-linux.txt
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          notes_args=("$VERSION" "$SHA" "$REV" "$crate" 1)
+          [ ! -f "docs/releases/$VERSION.md" ] || notes_args+=("docs/releases/$VERSION.md")
+          scripts/release-notes.sh "${notes_args[@]}" >"$RUNNER_TEMP/NOTES.md"
+          same "$RUNNER_TEMP/NOTES.md" NOTES.md
           [ "$bad" = 0 ]
       - name: Check the release (scripts/publish-release.sh --dry-run)
         id: check

@@ -128,7 +128,7 @@ the fallback whenever GitHub Actions cannot be used.
 | `desktop` | macOS | nothing | `desktop/build.sh --sidecar` with the staged universal server (unsigned) |
 | `sign-apple` | macOS | the Developer ID, the notary's password, the names | the text check with the names; `desktop/notarise.sh`: the app and the DMG signed, notarised, stapled; the keychain deleted right after |
 | `sign-updater` | macOS | the updater key | `desktop/updater-artifacts.sh`: `Droppen.app.tar.gz`, its signature, `latest.json`, with `signer`'s two programs (checked by sha256); it compiles nothing |
-| `verify` | macOS | nothing | `install.sh`, `LICENSE` and the INSTALL texts are the source's, byte for byte; `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only |
+| `verify` | macOS | nothing | `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` (the release's page: `scripts/release-notes.sh` writes it again) are the source's, byte for byte; `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only |
 | `approve` | Linux | nothing | a server-only release only: waits for the approval before anything is attested (with the app, `sign-apple` and `sign-updater` were approved already) |
 | `attest` | macOS | the OIDC token (when publishing) | `SHA256SUMS` (`publish-release.sh --sums-only`, held to verify's) and a build provenance attestation for every file published |
 | `publish` | macOS | `contents: write`, the names | the text check with the names; `scripts/publish-release.sh --verify-tag` with the attested `SHA256SUMS`: the release of the tag, made once |
@@ -151,8 +151,8 @@ The trust boundaries:
   `sign-apple` only has `codesign`, `notarytool`, `stapler`, `hdiutil` and
   `spctl` read and sign the app; `publish` runs the repository's scripts,
   `gh` and `stapler`; the staged tarballs are read member by member, never
-  unpacked by their own paths, and `install.sh`, `LICENSE` and the INSTALL
-  texts are compared with the source. The two programs that do run with a
+  unpacked by their own paths, and `install.sh`, `LICENSE`, the INSTALL
+  texts and `NOTES.md` are compared with the source. The two programs that do run with a
   secret, tauri-cli's signer and `droppen-update-manifest` in
   `sign-updater`, are built by `signer`, a job of their own with no secret
   that builds nothing else, from pinned versions and locked sources
@@ -164,10 +164,12 @@ The trust boundaries:
   update only from a release of this repository, which only `publish` makes.
   (Later: a small signer in this repository, with few dependencies, instead
   of tauri-cli.)
-- **One secret per job, each approved.** The Developer ID keychain lives only
-  through `sign-apple`'s signing and is deleted right after; the updater key
-  is only in `sign-updater`'s signing step; the write token only in
-  `publish`. Each of these jobs waits for a person's approval.
+- **One secret per job, each approved.** A job gets all the secrets it
+  names when it starts, for its whole run, so the secrets are split by job:
+  the Developer ID and the notary's password reach only `sign-apple` (its
+  keychain is deleted right after the signing), the updater key only
+  `sign-updater`, the write token only `publish`. Each of these jobs waits for
+  a person's approval.
 - **The OIDC token only where nothing built runs, after an approval.**
   `attest` runs the repository's scripts, `shasum`, `gh` and `stapler`, and
   GitHub's attest action. It runs only when publishing (dry runs make no
