@@ -1908,6 +1908,84 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "以{{party}}的視角：本頁隱去了 {{count}} 個值。",
     "{{party}}の立場で表示中：このページの値のうち {{count}} 個を伏せています。",
   ],
+  [
+    "Two words this page uses",
+    "本页用到的两个词",
+    "本頁用到的兩個詞",
+    "このページで使う 2 つの言葉",
+  ],
+  [
+    "What it is",
+    "是什么",
+    "是什麼",
+    "何か",
+  ],
+  [
+    "Keys it holds",
+    "握有的钥",
+    "握有的金鑰",
+    "持つ鍵",
+  ],
+  [
+    "What it may do",
+    "能做什么",
+    "能做什麼",
+    "できること",
+  ],
+  [
+    "A device running the droppen program or the desktop app: your AI sessions run there, and so do their commands.",
+    "运行 droppen 程序或桌面应用的设备：你的 AI 会话在那里运行，它们的命令也在那里执行。",
+    "執行 droppen 程式或桌面應用程式的裝置：你的 AI 工作階段在那裡執行，它們的指令也在那裡執行。",
+    "droppen プログラムかデスクトップアプリが動くデバイス。AI のセッションはそこで動き、そのコマンドもそこで実行されます。",
+  ],
+  [
+    "Its identity key, and its content keys, which encrypt its offline copies.",
+    "它的身份密钥，以及加密它离线副本的内容密钥。",
+    "它的身分金鑰，以及加密它離線副本的內容金鑰。",
+    "自分の ID 鍵と、オフラインコピーを暗号化するコンテンツ鍵。",
+  ],
+  [
+    "Be controlled by your full devices, and by another device only if its accept list allows it. It is never a full device: it signs no chain entry and holds no user key.",
+    "受你的完整设备控制；别的设备只有在它的接受名单允许时才行。它永远不是完整设备：不签任何链条目，也不持有用户钥。",
+    "受你的完整裝置控制；別的裝置只有在它的接受名單允許時才行。它永遠不是完整裝置：不簽任何鏈項目，也不持有使用者金鑰。",
+    "あなたのフルデバイスから操作されます。ほかのデバイスからは、受け入れリストが許すときだけ。フルデバイスになることはなく、チェーンのエントリに署名せず、ユーザー鍵も持ちません。",
+  ],
+  [
+    "Where you watch and control from: droppen.app or the local web app, in a browser or on a phone.",
+    "你查看和操控的地方：浏览器或手机上的 droppen.app 或本地网页版。",
+    "你查看和操控的地方：瀏覽器或手機上的 droppen.app 或本地網頁版。",
+    "見たり操作したりする場所。ブラウザやスマホで開く droppen.app か、ローカルのウェブアプリ。",
+  ],
+  [
+    "Its device key, and the user key, which opens every content key in the account's keyring.",
+    "它的设备钥，以及能打开账户钥环里每一把内容密钥的用户钥。",
+    "它的裝置金鑰，以及能打開帳戶金鑰環裡每一把內容金鑰的使用者金鑰。",
+    "自分のデバイス鍵と、アカウントのキーリングにあるすべてのコンテンツ鍵を開けるユーザー鍵。",
+  ],
+  [
+    "Each one you pair now is a full device: it adds, approves and removes devices, vouches for the chain, and may control your devices that run AI.",
+    "你现在配对的每一台都是完整设备：它能添加、批准和移除设备，为链作证，并可以控制你的可运行 AI 的设备。",
+    "你現在配對的每一台都是完整裝置：它能新增、核准和移除裝置，為鏈作證，並可以控制你的可執行 AI 的裝置。",
+    "いまペアリングするものはすべてフルデバイスです。デバイスの追加・承認・削除、チェーンの証明ができ、AI を実行できるあなたのデバイスを操作できます。",
+  ],
+  [
+    "Term",
+    "术语",
+    "術語",
+    "用語",
+  ],
+  [
+    "A device running the droppen program or the desktop app, where your AI sessions run. It holds its identity key and its content keys, and it is never a full device.",
+    "运行 droppen 程序或桌面应用的设备，你的 AI 会话在那里运行。它握有自己的身份密钥和内容密钥，永远不是完整设备。",
+    "執行 droppen 程式或桌面應用程式的裝置，你的 AI 工作階段在那裡執行。它握有自己的身分金鑰和內容金鑰，永遠不是完整裝置。",
+    "droppen プログラムかデスクトップアプリが動くデバイスで、AI のセッションはそこで動きます。自分の ID 鍵とコンテンツ鍵を持ち、フルデバイスになることはありません。",
+  ],
+  [
+    "Where you watch and control from: droppen.app or the local web app. Each one you pair now is a full device: it holds the user key and signs the account's chain entries.",
+    "你查看和操控的地方：droppen.app 或本地网页版。你现在配对的每一台都是完整设备：它持有用户钥，并签署账户的链条目。",
+    "你查看和操控的地方：droppen.app 或本地網頁版。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
+    "見たり操作したりする場所：droppen.app かローカルのウェブアプリ。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
+  ],
 ];
 
 const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));

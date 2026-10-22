@@ -38,7 +38,7 @@ export function Section({ id, children, className }: { id?: string; children: Re
   );
 }
 
-export function SectionHead({ label, title, lead, className }: { label: string; title: string; lead?: ReactNode; className?: string }) {
+export function SectionHead({ label, title, lead, className }: { label: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
       <CapsLabel>{label}</CapsLabel>

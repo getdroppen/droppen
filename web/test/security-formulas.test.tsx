@@ -9,7 +9,9 @@
 // occurrence; the flow is read off the formula's shape (kek is made by
 // HKDF-SHA256 and taken by AES-256-GCM); the formulas still read and copy as
 // the plain text they were; every term is focusable and described for screen
-// readers, in every language. Pointer, keyboard and touch:
+// readers, in every language; the page's two kinds of device are defined at
+// its top, and every later mention of either explains itself, in every
+// language. Pointer, keyboard and touch:
 // `security-formulas-dom.test.tsx`.
 import * as React from "react";
 import assert from "node:assert/strict";
@@ -23,7 +25,7 @@ import { landingBundles } from "../src/features/landing/copy.js";
 import { SECURITY_PATH } from "../src/features/landing/route.js";
 import { BLOCKS, type BlockId, type FormulaBlock, KINDS, LANGS, PARTIES, TERMS } from "../src/features/landing/security/formula-data.js";
 import { analyze, flowOf, lights } from "../src/features/landing/security/formula-model.js";
-import { KIND_CLASS, LIT_CLASS, HIDDEN_CLASS } from "../src/features/landing/security/formula.js";
+import { CONCEPT_WORDS, KIND_CLASS, LIT_CLASS, HIDDEN_CLASS } from "../src/features/landing/security/formula.js";
 import SecurityPage from "../src/features/landing/security/security.js";
 import { securityBundles } from "../src/features/landing/security/security-copy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -226,4 +228,47 @@ test("a formula's parts stay selectable, so a formula copies whole: no user-sele
   }
   // The rule still reaches what it is for.
   assert.ok(none.some(([, sel]) => control!.matches(sel!.trim())) && none.some(([, sel]) => button!.matches(sel!.trim())));
+});
+
+test("the two kinds of device are defined at the top, and every later mention explains itself, in every language", () => {
+  for (const lng of LANGS) {
+    const html = draw(lng);
+    const doc = new JSDOM(html).window.document;
+    const defs = doc.querySelector('[data-testid="security-terms"]');
+    assert.ok(defs, `${lng}: the definitions`);
+    assert.deepEqual([...defs.querySelectorAll("[data-concept-def]")].map((d) => d.getAttribute("data-concept-def")), ["host", "client"]);
+    assert.equal(defs.querySelectorAll("dfn").length, 2);
+    assert.equal(defs.querySelectorAll("dt").length, 6, `${lng}: what it is, its keys, what it may do`);
+    // Before the table of contents and every section: the start of the page.
+    const order = [...doc.querySelectorAll('[data-testid="security-terms"], [data-testid="security-contents"], section[id]')].map((e) => e.getAttribute("data-testid") ?? e.id);
+    assert.equal(order[0], "security-terms", lng);
+
+    // Every mention outside the definitions: wrapped, focusable, described.
+    const unwrapped: string[] = [];
+    const walker = doc.createTreeWalker(doc.body, 4 /* SHOW_TEXT */);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement!;
+      // Not inside a word already explained, the definitions themselves, the glossary, a formula, a link (the
+      // table of contents: no control inside a link) or the overview figure's drawing (an image with its own label).
+      if (parent.closest("[data-concept], [data-concept-def], [hidden], [data-formula], a, svg")) continue;
+      for (const m of node.textContent!.matchAll(new RegExp(CONCEPT_WORDS))) unwrapped.push(m[0]);
+    }
+    assert.deepEqual(unwrapped, [], `${lng}: a mention that does not explain itself`);
+    const wrapped = [...doc.querySelectorAll<HTMLElement>("[data-concept]")];
+    const count = (id: string) => wrapped.filter((w) => w.dataset.concept === id).length;
+    assert.ok(count("host") >= 40 && count("client") >= 8, `${lng}: ${count("host")} and ${count("client")} mentions`);
+    for (const w of wrapped) {
+      assert.equal(w.getAttribute("role"), "button");
+      assert.equal(w.getAttribute("tabindex"), "0");
+      assert.ok(w.textContent!.match(new RegExp(CONCEPT_WORDS)), w.textContent!);
+      const described = doc.getElementById(w.getAttribute("aria-describedby")!);
+      assert.ok(described && described.textContent!.length > 20, `${lng}: described`);
+      assert.equal(w.closest("a"), null, "never inside a link");
+    }
+    // What the left-out places hold: only the table of contents' links and the drawing.
+    for (const el of doc.querySelectorAll("a, svg")) {
+      if (!new RegExp(CONCEPT_WORDS).test(el.textContent!)) continue;
+      assert.ok(el.closest('[data-testid="security-contents"]') || el.closest("svg[role=img]"), `${lng}: ${el.outerHTML.slice(0, 80)}`);
+    }
+  }
 });

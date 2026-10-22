@@ -234,6 +234,26 @@ test("one live region for the whole page says what a view hides", async () => {
   assert.equal(announcer.textContent, "Showing every value.");
 });
 
+test("a mention of a device that runs AI explains itself: every mention lights, and its card says what it is", async () => {
+  const mentions = [...container.querySelectorAll<HTMLElement>('main [data-concept="host"]')];
+  const mention = mentions.find((m) => m.closest("#overview"))!;
+  assert.ok(mention && mentions.length > 40);
+  await act(async () => void document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+  await focus(mention);
+  assert.ok(mentions.every((m) => m.getAttribute("data-lit") === "same"), "every mention lights");
+  assert.equal(container.querySelector('[data-concept="client"][data-lit]'), null, "not the other word");
+  const [card] = cards();
+  assert.ok(card!.textContent!.includes("A device that runs AI"));
+  assert.ok(card!.textContent!.includes("it is never a full device"));
+  await key(mention, "Enter");
+  assert.equal(mention.getAttribute("aria-pressed"), "true");
+  await key(mention, "Escape");
+  assert.equal(mention.getAttribute("aria-pressed"), "false");
+  assert.equal(cards().length, 0);
+  await blur(mention);
+  assert.ok(document.getElementById("fx-c-host")!.textContent!.startsWith("A device that runs AI: "));
+});
+
 test("a card stays inside the viewport: above its block when there is room, below it when not, moved in from the edge", async () => {
   type Box = { x: number; y: number; w: number; h: number };
   const rect = ({ x, y, w, h }: Box) => ({ x, y, left: x, top: y, width: w, height: h, right: x + w, bottom: y + h, toJSON: () => ({}) }) as DOMRect;

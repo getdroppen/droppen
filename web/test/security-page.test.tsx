@@ -66,6 +66,8 @@ const draw = (lng: string, signedIn = false) => render(<SecurityPage signedIn={s
 const text = (html: string) =>
   html
     .replace(/<\/?(?:strong|a)\b[^>]*>/g, "")
+    // A word that explains itself (`withConcepts`) is part of its sentence.
+    .replace(/<span role="button"[^>]*data-concept="[^"]*"[^>]*>([^<]*)<\/span>/g, "$1")
     .replace(/<[^>]+>/g, " ")
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')

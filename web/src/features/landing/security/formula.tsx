@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Check, Minus, Pin } from "lucide-react";
@@ -65,6 +65,11 @@ class FormulaStore {
 
   litOf(occ: string): Lit {
     return this.lit.get(occ) ?? "";
+  }
+
+  /** Whether one of `concept`'s words on the page is pointed at, focused or pinned: then all of them light. */
+  conceptLit(concept: ConceptId): boolean {
+    return [this.pin, this.passing()].some((occ) => occ?.startsWith(`c:${concept}:`));
   }
 
   togglePin(occ: string) {
@@ -142,6 +147,31 @@ function hiddenFrom(block: BlockId, term: string, view: Party | null): boolean {
   return !!view && !!rolesOf(block) && !TERMS[term]!.known.includes(view);
 }
 
+/** Pointing shows a card, focusing from the keyboard too; a click, a tap, Enter or Space pins it. */
+function interactions(store: FormulaStore, occ: string) {
+  return {
+    onPointerEnter: (e: ReactPointerEvent) => {
+      if (e.pointerType === "mouse") store.update({ hover: occ, dismissed: null });
+    },
+    onPointerLeave: (e: ReactPointerEvent) => {
+      if (e.pointerType === "mouse" && store.hover === occ) store.update({ hover: null });
+    },
+    onFocus: () => {
+      if (!store.pointing) store.update({ focus: occ, dismissed: null });
+    },
+    onBlur: () => {
+      if (store.focus === occ) store.update({ focus: null });
+    },
+    onClick: () => store.togglePin(occ),
+    onKeyDown: (e: ReactKeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        store.togglePin(occ);
+      }
+    },
+  };
+}
+
 function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; text: string; tabbable: boolean }) {
   const store = useStore();
   const term = ANALYSIS.occurrences.get(occ)!.term;
@@ -170,28 +200,107 @@ function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; tex
         hidden && HIDDEN_CLASS,
         pinned === "1" && "outline-2 outline-solid outline-fg",
       )}
-      onPointerEnter={(e) => {
-        if (e.pointerType === "mouse") store.update({ hover: occ, dismissed: null });
-      }}
-      onPointerLeave={(e) => {
-        if (e.pointerType === "mouse" && store.hover === occ) store.update({ hover: null });
-      }}
-      onFocus={(e) => {
-        if (!store.pointing) store.update({ focus: occ, dismissed: null });
-      }}
-      onBlur={() => {
-        if (store.focus === occ) store.update({ focus: null });
-      }}
-      onClick={() => store.togglePin(occ)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          store.togglePin(occ);
-        }
-      }}
+      {...interactions(store, occ)}
     >
       {text}
     </span>
+  );
+}
+
+/*
+ * The page's two words for the two kinds of device — a device that runs AI
+ * (the chain's host) and your browsers and phones (its full devices) — are
+ * defined once at the top (`Definitions` in security.tsx) and explain
+ * themselves wherever the page says them, with the same cards.
+ */
+
+export const CONCEPTS = ["host", "client"] as const;
+export type ConceptId = (typeof CONCEPTS)[number];
+
+/**
+ * The two words as the page spells them in each language: a device (or
+ * devices) that run(s) AI, and browsers and phones (or a browser or phone).
+ */
+export const CONCEPT_WORDS =
+  /(\b[Dd]evices? that runs? AI\b|可运行 AI 的设备|可執行 AI 的裝置|AI を実行できる(?:あなたの|どの|各|すべての|別の|ほかの)?デバイス)|(\b[Bb]rowsers? (?:and|or) phones?\b|\b[Pp]hones? or browsers?\b|浏览器(?:和|或|、)手机|手机或浏览器|瀏覽器(?:和|或|、)手機|手機或瀏覽器|ブラウザ(?:や|と|、|・)スマホ|スマホ(?:や|と)ブラウザ)/g;
+
+/** `text` with each of the two words made explorable. */
+export function withConcepts(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const m of text.matchAll(new RegExp(CONCEPT_WORDS))) {
+    const index = m.index!;
+    if (index > at) out.push(text.slice(at, index));
+    out.push(
+      <Concept key={index} id={m[1] ? "host" : "client"}>
+        {m[0]}
+      </Concept>,
+    );
+    at = index + m[0].length;
+  }
+  if (out.length === 0) return text;
+  if (at < text.length) out.push(text.slice(at));
+  return <Fragment>{out}</Fragment>;
+}
+
+function useConceptWords(): Record<ConceptId, { name: string; says: string }> {
+  const { t } = useTranslation();
+  return {
+    host: {
+      name: t("A device that runs AI"),
+      says: t("A device running the droppen program or the desktop app, where your AI sessions run. It holds its identity key and its content keys, and it is never a full device."),
+    },
+    client: {
+      name: t("Your browsers and phones"),
+      says: t("Where you watch and control from: droppen.app or the local web app. Each one you pair now is a full device: it holds the user key and signs the account's chain entries."),
+    },
+  };
+}
+
+const conceptDescId = (concept: ConceptId) => `fx-c-${concept}`;
+
+function Concept({ id, children }: { id: ConceptId; children: string }) {
+  const store = useStore();
+  const occ = `c:${id}:${useId()}`;
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    () => `${store.conceptLit(id) ? 1 : 0}|${store.pin === occ ? 1 : 0}`,
+    () => "0|0",
+  );
+  const [lit, pinned] = snapshot.split("|");
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      data-occ={occ}
+      data-concept={id}
+      data-lit={lit === "1" ? "same" : undefined}
+      aria-pressed={pinned === "1"}
+      aria-describedby={conceptDescId(id)}
+      className={cn(
+        "cursor-help underline decoration-dotted decoration-1 underline-offset-4 outline-offset-1 transition-[background-color,outline-color] duration-100 motion-reduce:transition-none",
+        lit === "1" && "bg-fg/10",
+        pinned === "1" && "outline-2 outline-solid outline-fg",
+      )}
+      {...interactions(store, occ)}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ConceptCard({ concept, pinned }: { concept: ConceptId; pinned: boolean }) {
+  const { t } = useTranslation();
+  const words = useConceptWords()[concept];
+  return (
+    <>
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs leading-[18px] font-semibold text-fg">{words.name}</span>
+        <span className="label-caps text-[10px] leading-[14px] text-muted">{t("Term")}</span>
+        {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
+      </div>
+      <p className="text-xs leading-[18px] text-fg">{words.says}</p>
+    </>
   );
 }
 
@@ -369,8 +478,14 @@ function Glossary() {
   const { t } = useTranslation();
   const describe = useDescribe();
   const names = usePartyName();
+  const concepts = useConceptWords();
   return (
     <div hidden data-formula-glossary="">
+      {CONCEPTS.map((concept) => (
+        <span key={concept} id={conceptDescId(concept)}>
+          {`${concepts[concept].name}: ${concepts[concept].says}`}
+        </span>
+      ))}
       <span id={HINT_ID}>{t("Point at or focus any part of a formula to see what it is and where its value goes; the arrow keys move between its parts. Click it or press Enter to pin it; Esc unpins.")}</span>
       {PARTIES.map((party) => (
         <span key={party} id={hiddenId(party)}>
@@ -386,18 +501,10 @@ function Glossary() {
   );
 }
 
-/** A card beside a block: above it, or below when there is no room or the other card is above. */
+/** A card beside a block (or a word of the page): above it, or below when there is no room or the other card is above. */
 function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boolean }) {
-  const { t } = useTranslation();
-  const lang = useLang();
-  const kinds = useKindName();
-  const names = usePartyName();
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
-  const o = ANALYSIS.occurrences.get(occ)!;
-  const def = TERMS[o.term]!;
-  const { madeBy, usedBy } = flowOf(ANALYSIS, o.term);
-  const roles = !!rolesOf(o.block);
 
   useLayoutEffect(() => {
     const place = () => {
@@ -445,6 +552,23 @@ function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boo
       style={at ? { left: at.left, top: at.top } : { left: 0, top: 0, visibility: "hidden" }}
       className="fixed z-50 flex w-max max-w-[min(26rem,calc(100vw-16px))] flex-col gap-1.5 border border-border-strong bg-bg px-3 py-2.5 text-left font-sans"
     >
+      {occ.startsWith("c:") ? <ConceptCard concept={occ.split(":")[1] as ConceptId} pinned={pinned} /> : <TermCard occ={occ} pinned={pinned} />}
+    </div>,
+    document.body,
+  );
+}
+
+function TermCard({ occ, pinned }: { occ: string; pinned: boolean }) {
+  const { t } = useTranslation();
+  const lang = useLang();
+  const kinds = useKindName();
+  const names = usePartyName();
+  const o = ANALYSIS.occurrences.get(occ)!;
+  const def = TERMS[o.term]!;
+  const { madeBy, usedBy } = flowOf(ANALYSIS, o.term);
+  const roles = !!rolesOf(o.block);
+  return (
+    <>
       <div className="flex items-baseline gap-2">
         <code className={cn("font-mono text-xs decoration-1 underline-offset-[3px]", KIND_CLASS[def.kind])}>{o.text}</code>
         <span className="label-caps text-[10px] leading-[14px] text-muted">{kinds[def.kind]}</span>
@@ -474,8 +598,7 @@ function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boo
           })}
         </ul>
       )}
-    </div>,
-    document.body,
+    </>
   );
 }
 

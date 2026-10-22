@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { Fragment, type ReactNode, useEffect } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { Info } from "lucide-react";
@@ -6,7 +6,7 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
 import { FooterLine, PublicHeader, Section, SectionHead } from "../page-kit";
-import { Formula, FormulaProvider } from "./formula";
+import { Formula, FormulaProvider, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
 import { securityBundles } from "./security-copy";
 
@@ -98,12 +98,12 @@ const MARKUP = /\*\*(.+?)\*\*|\[\[([^\]|]+)(?:\|([^\]|]+))?\]\]/g;
 
 /** One line's key terms, their reasons and its cross-references. */
 function inline(line: string): ReactNode {
-  if (!line.includes("**") && !line.includes("[[")) return line;
+  if (!line.includes("**") && !line.includes("[[")) return withConcepts(line);
   const out: ReactNode[] = [];
   const marks = new RegExp(MARKUP);
   let at = 0;
   for (let m = marks.exec(line); m; m = marks.exec(line)) {
-    if (m.index > at) out.push(line.slice(at, m.index));
+    if (m.index > at) out.push(<Fragment key={`t${at}`}>{withConcepts(line.slice(at, m.index))}</Fragment>);
     if (m[1] !== undefined) {
       out.push(
         <strong key={m.index} className="font-semibold text-fg">
@@ -135,7 +135,7 @@ function inline(line: string): ReactNode {
     }
     at = marks.lastIndex;
   }
-  if (at < line.length) out.push(line.slice(at));
+  if (at < line.length) out.push(<Fragment key={`t${at}`}>{withConcepts(line.slice(at))}</Fragment>);
   return out;
 }
 
@@ -209,7 +209,7 @@ function Topic({ id, n, title, children }: { id?: string; n: string; title: stri
     <div id={id ?? `t${n.replace(".", "-")}`} className="grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]">
       <div className="flex gap-3 px-6 pt-6 max-md:px-4 max-md:pt-5 lg:pb-6">
         <span className="w-7 shrink-0 font-mono text-2xs leading-5 text-faint tabular-nums">{n}</span>
-        <h3 className="text-[13px] leading-5 font-semibold text-balance text-fg">{title}</h3>
+        <h3 className="text-[13px] leading-5 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
       </div>
       <div className="flex min-w-0 flex-col gap-4 px-6 pt-3 pb-6 max-md:px-4 max-md:pb-5 lg:border-l lg:border-border lg:pt-6">{children}</div>
     </div>
@@ -222,7 +222,7 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
     <div className="grid max-w-[60em] gap-6 md:grid-cols-2">
       {[left, right].map((side) => (
         <div key={side.title} className="flex min-w-0 flex-col gap-3">
-          <span className="text-xs leading-5 font-semibold text-fg">{side.title}</span>
+          <span className="text-xs leading-5 font-semibold text-fg">{withConcepts(side.title)}</span>
           <List items={side.items} />
         </div>
       ))}
@@ -292,6 +292,54 @@ function Hero() {
         {t("A technical description for anyone who wants to check our claims: who holds which key, how your devices agree on who belongs to your account, what our servers can and cannot see, and what each of them could still do if it turned against you. It describes what Droppen does today; the parts that are not live yet are marked as such.")}
       </p>
       <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
+    </div>
+  );
+}
+
+/**
+ * The page's two kinds of device, defined before anything else says them:
+ * what each is, which keys it holds, what it may do (the chain's host and
+ * admin flags, `rh-proto` chain.rs: a host is never an admin, an admin may
+ * control any host; the keys table below). Every later mention explains
+ * itself with the same words (`withConcepts`).
+ */
+function Definitions() {
+  const { t } = useTranslation();
+  const cards = [
+    {
+      id: "host",
+      name: t("A device that runs AI"),
+      rows: [
+        [t("What it is"), t("A device running the droppen program or the desktop app: your AI sessions run there, and so do their commands.")],
+        [t("Keys it holds"), t("Its identity key, and its content keys, which encrypt its offline copies.")],
+        [t("What it may do"), t("Be controlled by your full devices, and by another device only if its accept list allows it. It is never a full device: it signs no chain entry and holds no user key.")],
+      ],
+    },
+    {
+      id: "client",
+      name: t("Your browsers and phones"),
+      rows: [
+        [t("What it is"), t("Where you watch and control from: droppen.app or the local web app, in a browser or on a phone.")],
+        [t("Keys it holds"), t("Its device key, and the user key, which opens every content key in the account's keyring.")],
+        [t("What it may do"), t("Each one you pair now is a full device: it adds, approves and removes devices, vouches for the chain, and may control your devices that run AI.")],
+      ],
+    },
+  ];
+  return (
+    <div role="group" aria-label={t("Two words this page uses")} data-testid="security-terms" className="grid border-t border-border md:grid-cols-2">
+      {cards.map((card, i) => (
+        <div key={card.id} data-concept-def={card.id} className={cn("flex flex-col gap-2.5 border-border px-6 py-5 max-md:px-4", i > 0 && "max-md:border-t md:border-l")}>
+          <dfn className="text-[13px] leading-5 font-semibold text-fg not-italic">{card.name}</dfn>
+          <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+            {card.rows.map(([label, text]) => (
+              <div key={label} className="contents">
+                <dt className="label-caps pt-[3px] text-[10px] leading-[14px] text-faint">{label}</dt>
+                <dd className="text-xs leading-5 text-muted">{withConcepts(text!)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ))}
     </div>
   );
 }
@@ -403,7 +451,7 @@ function Overview() {
         ].map(({ c, next }, i) => (
           <li key={c.title} className="flex flex-col">
             <div className="flex flex-col gap-1 border border-border-strong px-3 py-2.5">
-              <span className="text-[13px] leading-5 font-semibold text-fg">{c.title}</span>
+              <span className="text-[13px] leading-5 font-semibold text-fg">{withConcepts(c.title)}</span>
               {c.lines.map((line) => (
                 <span key={line} className="font-mono text-2xs leading-4 text-muted">
                   {line}
@@ -413,7 +461,7 @@ function Overview() {
             <span className="py-1.5 pl-3 font-mono text-[10px] leading-4 text-muted">
               {i < 3 ? "↓ " : "↑ "}
               {next}
-              {i === 3 ? ` → ${devices.title}` : ""}
+              {i === 3 && <> → {withConcepts(devices.title)}</>}
             </span>
           </li>
         ))}
@@ -428,8 +476,8 @@ function OverviewSection() {
     <Section id="overview">
       <SectionHead
         label={`01 · ${t("Overview")}`}
-        title={t("Your devices hold the keys. Our servers carry ciphertext.")}
-        lead={t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything.")}
+        title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
+        lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything."))}
       />
       <Overview />
       <Topic n="1.1" title={t("What Droppen Hub sees, and what it never sees")}>
@@ -495,7 +543,7 @@ function ChainFigure() {
         >
           <span className="font-mono text-2xs leading-4 text-faint tabular-nums">#{i}</span>
           <span className="font-mono text-xs leading-4 font-semibold text-fg [overflow-wrap:anywhere]">{e.kind}</span>
-          <span className="text-2xs leading-4 text-muted">{e.what}</span>
+          <span className="text-2xs leading-4 text-muted">{withConcepts(e.what)}</span>
           <span className="text-2xs leading-4 text-muted">{e.by}</span>
           <span className="mt-auto pt-1 font-mono text-[10px] leading-[14px] text-faint">{i === 0 ? t("prev: none") : `prev: H(#${i - 1})`}</span>
         </li>
@@ -510,8 +558,8 @@ function ChainSection() {
     <Section id="chain">
       <SectionHead
         label={`02 · ${t("The device chain")}`}
-        title={t("One signed list decides who is in your account.")}
-        lead={t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules written twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot write to it.")}
+        title={withConcepts(t("One signed list decides who is in your account."))}
+        lead={withConcepts(t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules written twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot write to it."))}
       />
       <ChainFigure />
       <Topic n="2.1" title={t("Entries")}>
@@ -570,8 +618,8 @@ function KeysSection() {
     <Section id="keys">
       <SectionHead
         label={`03 · ${t("Keys")}`}
-        title={t("Every key, where it lives, and what it opens.")}
-        lead={t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every browser and phone and have no recovery words, the copies on Droppen Hub can never be read again, by us either; only what is still on your devices that run AI remains.")}
+        title={withConcepts(t("Every key, where it lives, and what it opens."))}
+        lead={withConcepts(t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every browser and phone and have no recovery words, the copies on Droppen Hub can never be read again, by us either; only what is still on your devices that run AI remains."))}
       />
       <Table label={t("The keys")} heads={heads} rows={rows} />
       <Topic n="3.1" title={t("Delivering a key")}>
@@ -619,8 +667,8 @@ function ChannelsSection() {
     <Section id="channels">
       <SectionHead
         label={`04 · ${t("Channels and relays")}`}
-        title={t("Every channel is end to end, whichever way it goes.")}
-        lead={t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay, or Droppen Hub where no relay carries the channel, only forwards its frames; when the two ends can reach each other, the same channel can also take a direct path.")}
+        title={withConcepts(t("Every channel is end to end, whichever way it goes."))}
+        lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay, or Droppen Hub where no relay carries the channel, only forwards its frames; when the two ends can reach each other, the same channel can also take a direct path."))}
       />
       <Topic n="4.1" title={t("The handshake")}>
         <P>{t("Noise IK with X25519, AES-256-GCM and SHA-256: WebCrypto in the browser, snow in Rust. The browser starts it with the other side's static key taken from the chain, and the other side admits the browser by its own copy of the chain. The prologue **binds the account and both ids**, so neither a relay nor Droppen Hub can **splice two sessions together**. Keys are renewed every hour or every 2^20 messages, whichever comes first.")}</P>
@@ -650,8 +698,8 @@ function OfflineSection() {
     <Section id="offline">
       <SectionHead
         label={`05 · ${t("Offline copies")}`}
-        title={t("History you can read while the device is off, and only you.")}
-        lead={t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and check every record against that device's own signature.")}
+        title={withConcepts(t("History you can read while the device is off, and only you."))}
+        lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and check every record against that device's own signature."))}
       />
       <Topic n="5.1" title={t("Records")}>
         <P>{t("Each record is sealed with AES-256-GCM under a stream key derived from the content key. The AAD binds the stream, the sequence number and the epoch, so Droppen Hub **cannot move or reorder records**, and each record's plaintext carries a hash link to the one before. Records are padded to fixed sizes. A stream's name is an HMAC under a key derived from the content key, so it **cannot be matched to a session**.")}</P>
@@ -678,11 +726,11 @@ function RenewalSection() {
     <Section id="renewal">
       <SectionHead
         label={`06 · ${t("Identity renewal")}`}
-        title={t("Renewing the identity key of a device that runs AI.")}
+        title={withConcepts(t("Renewing the identity key of a device that runs AI."))}
         lead={
           <span className="flex flex-col items-start gap-3">
             <Chip>{t("Not live yet")}</Chip>
-            <span>{t("Not switched on yet. This section describes the design as it is being built and reviewed, not as live; parts of it may still change. Until it is on, a device that runs AI whose identity key may have been copied is removed and added again.")}</span>
+            <span>{withConcepts(t("Not switched on yet. This section describes the design as it is being built and reviewed, not as live; parts of it may still change. Until it is on, a device that runs AI whose identity key may have been copied is removed and added again."))}</span>
           </span>
         }
       />
@@ -798,8 +846,8 @@ function ThreatsSection() {
     <Section id="threats">
       <SectionHead
         label={`07 · ${t("Threat model")}`}
-        title={t("Who could attack, and what each of them can do.")}
-        lead={t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today.")}
+        title={withConcepts(t("Who could attack, and what each of them can do."))}
+        lead={withConcepts(t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today."))}
       />
       <Table label={t("Threat model")} heads={heads} rows={rows} />
       <Topic n="7.1" title={t("The web-delivery gap")}>
@@ -848,8 +896,8 @@ function VerifySection() {
     <Section id="verify">
       <SectionHead
         label={`08 · ${t("Verify it yourself")}`}
-        title={t("Don't take our word for it.")}
-        lead={t("Every statement on this page comes from the protocol's code and its design notes. Here is where to look.")}
+        title={withConcepts(t("Don't take our word for it."))}
+        lead={withConcepts(t("Every statement on this page comes from the protocol's code and its design notes. Here is where to look."))}
       />
       <Topic n="8.1" title={t("Algorithms")}>
         <dl className="grid max-w-[46em] grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
@@ -924,6 +972,7 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
         <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
           <FormulaProvider>
             <Hero />
+            <Definitions />
             <Contents />
             <OverviewSection />
             <ChainSection />
