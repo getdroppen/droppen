@@ -160,8 +160,9 @@ pub struct Prepared {
     auth: Arc<crate::auth::Auth>,
     /// This server's claim on its instance directory. Held for the whole of
     /// `serve`; dropping it would let a second server adopt what this one owns.
-    /// Shared with [`crate::api::AppState`] so the self-upgrade handler can ask
-    /// whether the claim still means anything before replacing the binary.
+    /// Shared, weakly, with [`crate::api::AppState`] so the self-upgrade handler
+    /// can ask whether the claim still means anything before replacing the
+    /// binary. This is the only strong reference: see [`crate::api::AppState::lock`].
     _lock: Option<Arc<InstanceLock>>,
 }
 
@@ -203,7 +204,7 @@ impl RemoteHandApp {
             // The handler that replaces the binary needs to ask whether this
             // claim still holds; a state built without a lock (export-openapi,
             // tests) leaves the cell empty and that handler refuses.
-            let _ = state.lock.set(lock.clone());
+            let _ = state.lock.set(Arc::downgrade(lock));
         }
         // Adoption is the first thing the *owner* does, and it happens before
         // the listener exists: `GET /api/terminals` must never answer from a
@@ -591,5 +592,46 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(GotchaError::Io(error)),
         Err(error) => Err(GotchaError::message(error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The instance is free as soon as the serve task ends, whatever still holds
+    /// the server's state.
+    ///
+    /// The state is cloned into every handler and background task, and some of
+    /// them end after the serve task does. While the state held the lock
+    /// strongly, the instance stayed claimed until the last of them ended, and a
+    /// server restarted in the same process (which is what the restart tests
+    /// do) was refused on a busy machine.
+    #[tokio::test]
+    async fn the_instance_is_released_when_serving_ends_while_the_state_lives_on() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let prepared = RemoteHandApp {
+            home_override: Some(home.path().to_path_buf()),
+            port_override: Some(0),
+            auth_enabled_override: Some(false),
+            ..Default::default()
+        }
+        .prepare()
+        .await
+        .expect("prepare");
+        // The router carries the state, as every handler does. Kept past the
+        // serve task, it stands in for whichever holder happens to end last.
+        let lingering = prepared.router.clone();
+        let cancel = prepared.cancel();
+        let cleanups = prepared.cleanups();
+        let serving = tokio::spawn(prepared.serve_task());
+        cancel.cancel();
+        cleanups.run();
+        serving.await.expect("the serve task").expect("serve");
+
+        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), crate::instance::DEFAULT_INSTANCE)
+            .expect("the default instance name is valid");
+        InstanceLock::acquire(&dirs).expect("the instance is free once its server has stopped serving");
+        drop(lingering);
     }
 }

@@ -659,16 +659,10 @@ async fn a_second_server_on_one_instance_is_refused_and_told_the_pid() {
     elsewhere.halt_and_kill().await;
 
     running.halt_and_kill().await;
-    // Released with the server that held it, once its last task has let go:
-    // on a busy runner that can be a moment after the server itself stopped.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let _lock = loop {
-        match InstanceLock::acquire(&dirs(home.path(), DEFAULT_INSTANCE)) {
-            Ok(lock) => break lock,
-            Err(_) if std::time::Instant::now() < deadline => tokio::time::sleep(Duration::from_millis(50)).await,
-            Err(held) => panic!("the lock is free again: {held:?}"),
-        }
-    };
+    // Released with the server that held it: the serve task holds the only
+    // strong reference to the lock, so it is free once that task has ended,
+    // however long the server's other tasks take to wind down.
+    let _lock = InstanceLock::acquire(&dirs(home.path(), DEFAULT_INSTANCE)).expect("the lock is free again");
 }
 
 /// A server that skipped the lock has no business in the instance directory.

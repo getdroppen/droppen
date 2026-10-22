@@ -117,7 +117,14 @@ pub struct AppState {
     /// [`crate::app::RemoteHandApp::prepare`] once the flock is held. Empty in
     /// lock-less servers (`export-openapi`, tests), whose self-upgrade handler
     /// therefore refuses: replacing the shared binary is an owner's move.
-    pub lock: Arc<std::sync::OnceLock<Arc<crate::instance::InstanceLock>>>,
+    ///
+    /// Weak, because this state is cloned into every handler and background
+    /// task, and some of those outlive the serve task. A strong reference here
+    /// kept the flock until the last of them ended, so an instance stayed
+    /// claimed after its server had stopped serving, for as long as that took.
+    /// The serve task holds the only strong reference
+    /// ([`crate::app::Prepared::serve_task`]).
+    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<crate::instance::InstanceLock>>>,
     /// The hub link: started at boot for an enrolled instance, and at any
     /// time after by an enrollment from the local settings
     /// ([`crate::agent::control`]). Inert in a server that does not own its

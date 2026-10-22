@@ -209,7 +209,9 @@ pub async fn self_upgrade(State(state): State<AppState>, multipart: Multipart) -
     // restarting is an owner's move, and the flock is only meaningful while
     // its file is the one on disk. A lost or absent claim means another server
     // may own this instance now — refuse, cheaply and loudly.
-    match state.lock.get() {
+    // A claim that no longer upgrades belongs to a server that has stopped
+    // serving, which is no owner either.
+    match state.lock.get().and_then(std::sync::Weak::upgrade) {
         None => {
             return Err(ApiError::with_body(
                 gotcha::axum::http::StatusCode::CONFLICT,
