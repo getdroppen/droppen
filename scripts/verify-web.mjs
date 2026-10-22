@@ -27,7 +27,9 @@
 //   1. asks the site which build it serves (`/.well-known/droppen-build`);
 //   2. takes the release manifest with that digest (or the one named), and
 //      checks its attestation with `gh attestation verify --bundle` — that
-//      needs `gh` installed but no GitHub login;
+//      needs `gh` installed but no GitHub login. The bundle is the release's
+//      own, or else the one on the signer repository's release of the same
+//      tag;
 //   3. fetches every file the manifest lists, and the shell at a few routes,
 //      and compares sha256s. The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
@@ -177,6 +179,21 @@ async function releaseManifest(opts, digest) {
     if (found?.manifest?.digest === digest) return found;
   }
   return null;
+}
+
+/**
+ * The Sigstore bundle for a release's manifest: attached to the release in the
+ * repository the files come from or, failing that, to the release of the same
+ * tag in the signer repository, where `release.yml` attaches it when it
+ * attests the manifest. Where it was downloaded from proves nothing either
+ * way: `gh attestation verify` checks it against the manifest's own bytes,
+ * the signer's workflow and the tag.
+ */
+async function releaseBundle(opts, tag) {
+  const at = (repo) => `${GITHUB}/${repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`;
+  const bundle = await download(at(opts.repo));
+  if (bundle || opts.signerRepo === opts.repo) return bundle;
+  return download(at(opts.signerRepo));
 }
 
 /** `gh attestation verify` against the bundle; `{ok, note}`. */
@@ -351,7 +368,7 @@ async function main(argv) {
       return 1;
     }
     ({ tag, bytes: manifestBytes } = found);
-    bundleBytes = await download(`${GITHUB}/${opts.repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`);
+    bundleBytes = await releaseBundle(opts, tag);
     source = `release ${tag} of ${opts.repo}`;
   }
   const manifest = checkManifest(JSON.parse(manifestBytes.toString("utf8")), source);

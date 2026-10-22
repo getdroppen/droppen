@@ -109,7 +109,14 @@ function fakeHub({ marker = "self", csp = () => HUB_CSP } = {}) {
   return listen(server);
 }
 
-/** A GitHub with one release whose manifest is ours and no Sigstore bundle. */
+/** The Sigstore bundle the signer repository s/r attached to its release v9.9.9. */
+const SIGNER_BUNDLE = '{"bundle":"from s/r"}';
+
+/**
+ * A GitHub with one release in o/r whose manifest is ours and no Sigstore
+ * bundle, and the signer repository s/r's release of the same tag, which has
+ * the bundle.
+ */
 function fakeGitHub() {
   const server = createServer((req, res) => {
     if (req.url.startsWith("/repos/o/r/releases")) {
@@ -117,6 +124,7 @@ function fakeGitHub() {
       return res.end(JSON.stringify([{ tag_name: "v9.9.9", draft: false, assets: [{ name: "web-manifest.json" }] }]));
     }
     if (req.url === "/o/r/releases/download/v9.9.9/web-manifest.json") return res.end(JSON.stringify(manifest));
+    if (req.url === "/s/r/releases/download/v9.9.9/web-manifest.sigstore.json") return res.end(SIGNER_BUNDLE);
     res.statusCode = 404;
     res.end("not found");
   });
@@ -224,5 +232,45 @@ describe("verify-web.mjs against a hub", () => {
     const lax = await verify(["--site", site, "--repo", "o/r", "--allow-unattested"], env);
     assert.equal(lax.code, 0, lax.out);
     assert.match(lax.out, /release v9\.9\.9 of o\/r/);
+  });
+
+  test("a release without its own bundle is checked with the signer repository's bundle for the same tag", async () => {
+    const site = await hub();
+    // A stand-in `gh` that accepts any attestation and records what it was given.
+    const bin = mkdtempSync(join(tmpdir(), "verify-web-gh-"));
+    try {
+      writeFileSync(
+        join(bin, "gh"),
+        [
+          "#!/bin/sh",
+          '[ "$1" = --version ] && exit 0',
+          'printf "%s\\n" "$@" > "$GH_ARGS"',
+          'while [ $# -gt 0 ]; do [ "$1" = --bundle ] && cp "$2" "$GH_BUNDLE"; shift; done',
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const env = {
+        DROPPEN_VERIFY_GITHUB_API: github,
+        DROPPEN_VERIFY_GITHUB: github,
+        PATH: `${bin}:${process.env.PATH}`,
+        GH_ARGS: join(bin, "args"),
+        GH_BUNDLE: join(bin, "bundle"),
+      };
+      const r = await verify(["--site", site, "--repo", "o/r", "--signer-repo", "s/r"], env);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /verified: built by s\/r\/\.github\/workflows\/release\.yml at v9\.9\.9/);
+      assert.equal(readFileSync(join(bin, "bundle"), "utf8"), SIGNER_BUNDLE);
+      const args = readFileSync(join(bin, "args"), "utf8").trim().split("\n");
+      for (const [flag, value] of [["--repo", "s/r"], ["--signer-workflow", "s/r/.github/workflows/release.yml"], ["--source-ref", "refs/tags/v9.9.9"]])
+        assert.equal(args[args.indexOf(flag) + 1], value, flag);
+      // Without a signer repository of its own, nothing else is asked.
+      const same = await verify(["--site", site, "--repo", "o/r", "--signer-repo", "o/r"], env);
+      assert.equal(same.code, 1, same.out);
+      assert.match(same.out, /no Sigstore bundle published with this release/);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

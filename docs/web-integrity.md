@@ -30,7 +30,7 @@ node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub
 脚本做这几件事：
 
 1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。
-2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
+2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版文件在 getdroppen/releases（`--repo`）；那里的发版没附 bundle 时，取签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上 `release.yml` 挂的那份。bundle 从哪里下载都一样：`gh attestation verify` 拿它核对的是清单本身的字节、签名的工作流和标签。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
 3. 下载清单里的每个文件，再取 `/`、`/link`、`/signin` 三个路由的页面外壳，逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
 4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是站点自己的（`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出。字节相同、却指向别的 Hub 的页面，不算同一个页面。
 5. 检查每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。
@@ -69,7 +69,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 - `digest`：构建摘要。每个文件一行 `<sha256>  <路径>\n`（即 `sha256sum` 的输出），按路径逐字节排序，整体再取 sha256；
 - `commit`、`ref`、`repository`，以及构建输入：Node 和 pnpm 版本、`SOURCE_DATE_EPOCH`、`.nvmrc`、`package.json`、`pnpm-lock.yaml`、`distribution.json` 的哈希。
 
-签名与构建分开。构建任务要跑依赖代码（安装、vite），所以没有签名权限（没有 `id-token`）。签名的 `web-release` 任务不检出代码、不装依赖：只下载清单，用 GitHub 自己的 `actions/attest-build-provenance` 生成 SLSA 构建来源证明，再用 runner 自带的 `gh` 把清单和 bundle（`web-manifest.sigstore.json`）挂到 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
+签名与构建分开。构建任务要跑依赖代码（安装、vite），所以没有签名权限（没有 `id-token`）。签名的 `web-release` 任务不检出代码、不装依赖：只下载清单，用 GitHub 自己的 `actions/attest-build-provenance` 生成 SLSA 构建来源证明，再用 runner 自带的 `gh` 把清单和 bundle（`web-manifest.sigstore.json`）挂到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
 
 **Hub 报告自己跑的构建。** Hub 启动时对它加载的文件（外壳取加标记之前的原样）算同一个摘要，在 `GET /.well-known/droppen-build` 返回 `{commit, web: {digest, files}}`（`docs/hub-api/http.md`）。提交是构建这个 Hub 时记下的那个。发版提交通常只改 Cargo 版本号，所以 Hub 部署的提交与发版标签不同也没关系：验证按摘要找清单，不按提交。
 
