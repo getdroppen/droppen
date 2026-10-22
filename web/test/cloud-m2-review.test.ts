@@ -1471,3 +1471,44 @@ test("#183 re-review: an open page takes in a pin another page made — as the s
     });
   }
 });
+
+test("#183 re-review: a store that twice will not take the pin of the genesis this device just made leaves it in localStorage — the first user key is kept — and the next view takes it into the store", async (t) => {
+  t.mock.method(console, "warn", () => undefined);
+  const hub = new FakeKeysHub();
+  const store = new MemoryKeyStore();
+  const storage = browserStorage(store);
+  const seen = browserSeen(store);
+  let failing = 2;
+  const flaky: SeenStore = {
+    get atomic() {
+      return seen.atomic;
+    },
+    get: (account) => seen.get(account),
+    // Each write of a pin fails as long as `failing` lasts (the connection lost, say).
+    update: (account, change) =>
+      seen.update(account, (stored) => {
+        const next = change(stored) as { genesis?: string | null } | undefined;
+        if (next?.genesis && failing > 0) {
+          failing--;
+          throw new DOMException("Connection to Indexed Database server lost. Refresh the page to try again", "UnknownError");
+        }
+        return next;
+      }),
+    watch: (heard) => seen.watch(heard),
+  };
+  const login = await hub.api().login("someone@example.test", "a password");
+  const a = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, storage, seen: flaky });
+  await a.createGenesis(false);
+  const genesis = hex(a.chain!.hashAt(0)!);
+  assert.equal(failing, 0, "tried twice");
+  assert.ok(a.pinned);
+  assert.equal(storage.getItem(`rh.hub.genesis.${a.account}`), genesis, "pinned where older pages keep it");
+  assert.equal(storedGenesis(seen, a.account), null, "and not in the store yet");
+  assert.equal(await a.lacksKeys(), false, "the account's first user key is kept");
+  await a.append({ type: "setRecoveryKey", key: null });
+  assert.equal(storedGenesis(seen, a.account), genesis, "the next view takes the pin into the store");
+  assert.equal(seenRecord(seen, a.account).seenThrough, a.chain!.seq, "with its record");
+  const again = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen });
+  assert.ok(again.pinned, "a reload trusts it");
+  assert.equal(again.chain!.seq, a.chain!.seq);
+});
