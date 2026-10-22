@@ -68,9 +68,9 @@ const text = (html: string) =>
     .replace(/&gt;/g, ">")
     .replace(/\s+/g, " ");
 
-/** Every `t("…")` key in the page's source. */
+/** Every `t("…")` key in the page's source: the page and its formulas (`formula.tsx`). */
 function pageKeys(): string[] {
-  const source = readFileSync(new URL("../src/features/landing/security/security.tsx", import.meta.url), "utf8");
+  const source = ["security.tsx", "formula.tsx"].map((file) => readFileSync(new URL(`../src/features/landing/security/${file}`, import.meta.url), "utf8")).join("\n");
   return [...new Set([...source.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string))];
 }
 

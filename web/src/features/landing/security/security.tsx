@@ -6,6 +6,7 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
 import { FooterLine, PublicHeader, Section, SectionHead } from "../page-kit";
+import { Formula, FormulaProvider } from "./formula";
 import { securityBundles } from "./security-copy";
 
 /*
@@ -25,8 +26,10 @@ import { securityBundles } from "./security-copy";
  * docs/hub-api/, SECURITY.md, the README's "What the Hub sees"); the
  * renewal section follows docs/host-identity-rotation.md. The labels and
  * formulas in the mono blocks are the code's own bytes, quoted, so they are
- * not translated. Product words as elsewhere: a device, a device that runs AI
- * (the chain's host), a full device (its admin), the content key (`MK`).
+ * not translated; every part of them explains itself on hover, focus or tap
+ * (`formula.tsx`, its words and code references in `formula-data.ts`).
+ * Product words as elsewhere: a device, a device that runs AI (the chain's
+ * host), a full device (its admin), the content key (`MK`).
  */
 
 // Added, never overwriting: a key the app already translates keeps its wording.
@@ -84,7 +87,7 @@ function List({ items }: { items: ReactNode[] }) {
   );
 }
 
-/** The code's own bytes: labels and formulas, quoted, never translated. */
+/** The code's own bytes, quoted, never translated (the formulas: `Formula`). */
 function Spec({ children }: { children: ReactNode }) {
   return <div className="flex max-w-[46em] flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
 }
@@ -410,11 +413,7 @@ function ChainSection() {
       <ChainFigure />
       <Topic n="2.1" title={t("Entries")}>
         <P>{t("Each entry carries its sequence number, the hash of the entry before it, the time, who signed it and one action. The signature covers that fixed binary structure behind a fixed label, so it can never be read as any other signature in the protocol. Ids are never reused, and every public key must be canonical, on the curve and not of small order.")}</P>
-        <Spec>
-          <Line>{"entry = version | account | seq | prev | time | signer | kind | action | signature"}</Line>
-          <Line>{"signature = Ed25519(signer, \"rh/v1 chain-entry\\0\" ‖ version | account | seq | prev | time | signer | kind | action)"}</Line>
-          <Line>{"next.prev = SHA-256(\"rh/v1 chain-hash\\0\" ‖ entry)"}</Line>
-        </Spec>
+        <Formula block="chain" />
       </Topic>
       <Topic n="2.2" title={t("The genesis and the account key")}>
         <P>{t("The first browser makes the account key AK (Ed25519), signs the genesis entry with it, and throws the private key away: it is never stored and signs nothing else. Its fingerprint is the account's root identity. Each device that runs AI pins it when it joins; a new browser pins the genesis only once a pairing secret or the recovery words tie it to the real account, so Droppen Hub cannot hand it a chain of its own making. A new account starts on chain v3: the genesis names the first full device, and the entry after it commits the first user key.")}</P>
@@ -432,10 +431,7 @@ function ChainSection() {
       <Topic n="2.6" title={t("Freshness and attestations")}>
         <P>{t("A Hub that withholds a removal could let the removed device keep control. So full devices sign an attestation of the chain head they see when they connect, whenever the chain changes, and every 3 hours while open. A device that runs AI opens a channel only if a full device other than the one asking (or that one, if it is the only full device) attested its current head within 7 days; requests over a channel that manage it (handing over a content key, renaming, re-encrypting, changing its settings, AI accounts or software) need such an attestation within 12 hours. A content key sent by mail needs none: it is taken only if the chain committed it. A channel already open closes once its last valid attestation is 7 days old.")}</P>
         <P>{t("An honest Hub revokes a removed device's sessions and relay tickets at once; the 7 days bound only a Hub that is itself compromised. The documented limit: if the Hub also freezes every other full device on that same head, they keep vouching for it, and a removed device keeps control until one of them notices it is frozen; a new channel, which needs an attestation of exactly the current head, has the same limit.")}</P>
-        <Spec>
-          <Line>{"attest = Ed25519(admin, \"rh/v1 chain-attest\\0\" ‖ account | device | seq | head | time)"}</Line>
-          <Line>{"CONTROL_FRESHNESS_MS = 7 d · MANAGE_FRESHNESS_MS = 12 h · ATTEST_EVERY_MS = 3 h"}</Line>
-        </Spec>
+        <Formula block="attest" />
       </Topic>
       <Topic n="2.7" title={t("Every change is announced")}>
         <P>{t("Adding or removing a device, a recovery join, an activation, an approval, a change to who may control a device that runs AI or to which devices are full or run AI, a passkey slot added or removed, new recovery words and a key epoch written on its own all raise an alert on every device (a banner to confirm that it was you) and on every device that runs AI (its log, and a push where push or Bark is set up). They read it from their own copy of the chain, so Droppen Hub can delay it, not hide it.")}</P>
@@ -478,11 +474,7 @@ function KeysSection() {
       <Topic n="3.1" title={t("Delivering a key")}>
         <P>{t("A key sent to one device is sealed to its X25519 key with sender authentication, in the manner of HPKE's Auth mode: the key-encryption key depends on the sender's static key as well as a fresh one, and the context (purpose, account, sender, recipient, epoch) is both an input to the KDF and the AAD. Keys go through Droppen Hub's mailbox; a content key for its own device that runs AI goes straight over the end-to-end channel when that device is online.")}</P>
         <P>{t("A recipient takes a key only if it is addressed to itself, in this account, from a current full device, and matches the hash the chain committed for that epoch. So neither Droppen Hub nor a removed device can slip in a key of its own choosing, or push an epoch forward.")}</P>
-        <Spec>
-          <Line>{"kek = HKDF-SHA256(salt = \"rh/v1 seal-auth\", X25519(e, R) ‖ X25519(S, R), info = e ‖ S ‖ R ‖ ctx)"}</Line>
-          <Line>{"ctx = \"rh/v1 seal\\0\" | purpose | account | sender | recipient | epoch;  AES-256-GCM(kek, AAD = ctx)"}</Line>
-          <Line>{"commit = SHA-256(\"rh/v1 key-commit\\0\" ‖ kind | account | id | epoch | key)"}</Line>
-        </Spec>
+        <Formula block="seal" />
       </Topic>
       <Topic n="3.2" title={t("Adding a device")}>
         <List
@@ -529,10 +521,7 @@ function ChannelsSection() {
       />
       <Topic n="4.1" title={t("The handshake")}>
         <P>{t("Noise IK with X25519, AES-256-GCM and SHA-256: WebCrypto in the browser, snow in Rust. The browser starts it with the other side's static key taken from the chain, and the other side admits the browser by its own copy of the chain. The prologue binds the account and both ids, so neither a relay nor Droppen Hub can splice two sessions together. Keys are renewed every hour or every 2^20 messages, whichever comes first.")}</P>
-        <Spec>
-          <Line>{"Noise_IK_25519_AESGCM_SHA256"}</Line>
-          <Line>{"prologue = \"rh/v1\\0\" | account | device | host"}</Line>
-        </Spec>
+        <Formula block="noise" />
       </Topic>
       <Topic n="4.2" title={t("The first message asks for nothing")}>
         <P>{t("An IK first message can be replayed, and whoever holds the responder's static key could forge one in any device's name. So it carries only the device's view of the chain and its latest entries; anything that changes state waits for the first transport message, which needs the device's own private key. The device that runs AI merges the entries first (a conflict is a fork alarm), then checks that the device is current, on its accept list and fresh, and only then the replay window: 10 minutes back, 60 seconds ahead. Its reply carries its own view and the entries the device lacks.")}</P>
@@ -546,9 +535,7 @@ function ChannelsSection() {
       </Topic>
       <Topic n="4.4" title={t("Direct paths")}>
         <P>{t("When both ends can reach each other, the channel adds a WebRTC DataChannel. Its signalling (offers, candidates, DTLS fingerprints) travels inside the Noise channel, and a fresh Noise IK handshake runs over the DataChannel, bound to both DTLS fingerprints and to the relayed channel's handshake, with the same admission rules. It closes with its channel. STUN servers (Cloudflare, Google) see each end's public address; there is no TURN. Turn off “Allow direct connections” on a device, and it and your devices that run AI never learn each other's IP address.")}</P>
-        <Spec>
-          <Line>{"prologue = \"rh/v1 direct\\0\" | account | device | host | channel_hash | nonce | device_fp | host_fp"}</Line>
-        </Spec>
+        <Formula block="direct" />
       </Topic>
     </Section>
   );
@@ -565,25 +552,15 @@ function OfflineSection() {
       />
       <Topic n="5.1" title={t("Records")}>
         <P>{t("Each record is sealed with AES-256-GCM under a stream key derived from the content key. The AAD binds the stream, the sequence number and the epoch, so Droppen Hub cannot move or reorder records, and each record's plaintext carries a hash link to the one before. Records are padded to fixed sizes. A stream's name is an HMAC under a key derived from the content key, so it cannot be matched to a session.")}</P>
-        <Spec>
-          <Line>{"SK = HKDF-SHA256(salt = \"rh/v1 stream-key\", MK_e, info = stream_id)"}</Line>
-          <Line>{"AAD = \"rh/v1 record\\0\" ‖ stream ‖ seq ‖ epoch"}</Line>
-          <Line>{"link_n = SHA-256(\"rh/v1 record-link\\0\" ‖ stream ‖ link_n−1 ‖ record_n)"}</Line>
-          <Line>{"BUCKETS = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 61440]"}</Line>
-        </Spec>
+        <Formula block="stream" />
       </Topic>
       <Topic n="5.2" title={t("Signed stream heads")}>
         <P>{t("After every append, and as a heartbeat every 5 minutes, the device that runs AI signs the head of the stream: how many records it holds, the epoch, the link value and the time. Readers release only records a signed head covers. A head beyond the records received means Droppen Hub is holding some back; a link that does not match means a record was forged or replaced; the newest head's time is how current the copy is, shown as “as of”. A removed device that still holds an old stream key can seal a record, but not sign a head, so nobody accepts what it writes.")}</P>
-        <Spec>
-          <Line>{"head = Ed25519(host, \"rh/v1 stream-head\\0\" ‖ stream | next_seq | epoch | link | time)"}</Line>
-        </Spec>
+        <Formula block="head" />
       </Topic>
       <Topic n="5.3" title={t("Snapshots and rollback")}>
         <P>{t("Older history is compacted into immutable pages named by their SHA-256 and listed in a manifest, which the device that runs AI signs once more over a signed head. A reader starts only from a signed head and checks every page against the manifest. A browser keeps its copy together with the signed head it accepted, in one IndexedDB transaction, and checks that signature again when it loads; the local program's reader also keeps the newest head it accepted as a floor, and refuses a Droppen Hub that replays the device's own older heads.")}</P>
-        <Spec>
-          <Line>{"page = AES-256-GCM(SK, AAD = \"rh/v1 page\\0\" ‖ stream ‖ epoch);  name = SHA-256(page)"}</Line>
-          <Line>{"manifest = Ed25519(host, \"rh/v1 stream-manifest\\0\" ‖ head | count | pages[])"}</Line>
-        </Spec>
+        <Formula block="pages" />
       </Topic>
       <Topic n="5.4" title={t("When keys change")}>
         <P>{t("Each content key epoch has its own stream names. With re-encryption the device that runs AI rebuilds its streams from its own transcripts under the new key, and Droppen Hub is asked to delete the old ciphertext. Drafts still being written are sent only to live readers, never stored, signed by the device that runs AI and accepted only under the current epoch.")}</P>
@@ -612,12 +589,7 @@ function RenewalSection() {
       <Topic id="renewal-entry" n="6.2" title={t("The signed RotateHostKey entry")}>
         <P>{t("A renewal is a chain v3 entry of kind 20, RotateHostKey, signed by a full device and followed at once by that device's next content key commitment. Both the old and the new identity key sign one proof: the account, the device, the chain position it was made against (a sequence number and that entry's hash), all four public keys, a nonce and the assurance level. The entry carries the new keys, that position, the nonce, the assurance and both signatures; each verifier rebuilds the proof with the account and the old keys from its own chain. So neither a stolen full device alone nor whoever holds the old key alone can move the id to another key.")}</P>
         <P>{t("Both verifiers check that the device is a current device that runs AI, that neither new key is one any device on the chain holds or ever held, that the hash matches the chain at that position, and both signatures. Retired keys stay on the chain and can never join or be activated again. The released verifiers already read entry kind 20, and Droppen Hub refuses to store it until renewal is switched on. Entry kinds 21 and 22 (below) arrive with renewal itself, and the Hub holds them back the same way.")}</P>
-        <Spec>
-          <Line>{"proof = account | host | staged_seq | staged_head | old_sign | old_dh | new_sign | new_dh | nonce | assurance"}</Line>
-          <Line>{"old_sig = Ed25519(old, \"rh/v1 host-rotate\\0\" ‖ proof)"}</Line>
-          <Line>{"new_sig = Ed25519(new, \"rh/v1 host-rotate\\0\" ‖ proof)"}</Line>
-          <Line>{"[RotateHostKey{host, new_sign, new_dh, …, old_sig, new_sig}, KeyEpochs{host: next}] ← admin, \"rh/v1 chain-entry\\0\""}</Line>
-        </Spec>
+        <Formula block="rotate" />
       </Topic>
       <Topic id="renewal-staging" n="6.3" title={t("Staging on the real device, and confirming it")}>
         <List
@@ -644,11 +616,7 @@ function RenewalSection() {
             ],
           }}
         />
-        <Spec>
-          <Line>{"mac = HMAC-SHA256(X25519(new_dh, eph), \"rh/v1 rotate-confirm\\0\" ‖ proof)"}</Line>
-          <Line>{"ack = Ed25519(new, \"rh/v1 rotate-ack\\0\" ‖ account | host | SHA-256(proof) | login_nonce)"}</Line>
-          <Line>{"code = base32(SHA-256(\"rh/v1 rotate-sas\\0\" ‖ proof)[0..5])  →  XXXX-XXXX"}</Line>
-        </Spec>
+        <Formula block="confirm" />
       </Topic>
       <Topic id="renewal-policy" n="6.4" title={t("“Always confirm on the device”")}>
         <P>{t("An account-wide setting, written on the chain by a full device as an entry of kind 21 (SetRenewalPolicy). While it is on, both verifiers refuse any renewal that was not confirmed on the device, so a colluding Hub cannot switch it off for you; turning it off is an alert on every device. Your devices start no renewal, and Droppen Hub opens none, until a full device has chosen this setting once. Each browser can also refuse, for itself, to sign any renewal not confirmed on the device.")}</P>
@@ -662,9 +630,7 @@ function RenewalSection() {
             t("A key retired by a confirmed renewal never isolates, so a stolen old key can force at most one confirmation. If the real device holds only the retired key, it cannot recover in place: remove it, and add it again with a new identity."),
           ]}
         />
-        <Spec>
-          <Line>{"dispute = Ed25519(retired, \"rh/v1 rotate-dispute\\0\" ‖ account | host | seq | entry_hash | new_sign)"}</Line>
-        </Spec>
+        <Formula block="dispute" />
       </Topic>
       <Topic id="renewal-groups" n="6.6" title={t("Exposed groups: controllers first, and a pause")}>
         <P>{t("If a lost device could control A, and A may control B, a copy of A's key reaches B as well: B is exposed too. Controllers renew first: when B lets A in, A renews before B, so by the time B renews, A's old key is already useless.")}</P>
@@ -794,11 +760,7 @@ function VerifySection() {
       </Topic>
       <Topic n="8.2" title={t("Labels")}>
         <P>{t("Every Ed25519 signature in the protocol covers a fixed binary structure behind a fixed label that ends in a NUL byte, so no label is a prefix of another; no key ever signs bytes Droppen Hub chose, and its sign-in challenge sits inside a structure of our own. The signature labels:")}</P>
-        <Spec>
-          <Line>{"rh/v1 chain-entry · rh/v1 chain-attest · rh/v1 stream-head · rh/v1 stream-manifest · rh/v1 stream-draft"}</Line>
-          <Line>{"rh/v1 hub-login · rh/v1 push · rh/v1 recovery-proof · rh/v1 passkey-proof"}</Line>
-          <Line>{"rh/v1 relay-ticket · rh/v1 relay-origin · rh/v1 host-rotate · rh/v1 rotate-ack"}</Line>
-        </Spec>
+        <Formula block="labels" />
         <P>{t("Renewal adds one more, {{label}} ([[section 06|renewal]]).", { label: "rh/v1 rotate-dispute" })}</P>
       </Topic>
       <Topic n="8.3" title={t("The code")}>
@@ -853,16 +815,18 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
-          <Hero />
-          <Contents />
-          <OverviewSection />
-          <ChainSection />
-          <KeysSection />
-          <ChannelsSection />
-          <OfflineSection />
-          <RenewalSection />
-          <ThreatsSection />
-          <VerifySection />
+          <FormulaProvider>
+            <Hero />
+            <Contents />
+            <OverviewSection />
+            <ChainSection />
+            <KeysSection />
+            <ChannelsSection />
+            <OfflineSection />
+            <RenewalSection />
+            <ThreatsSection />
+            <VerifySection />
+          </FormulaProvider>
           <FooterLine />
         </main>
       </div>

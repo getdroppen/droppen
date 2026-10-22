@@ -51,7 +51,6 @@ const ALLOWED: Allowed[] = [
   { file: "lib/droppen-command.ts", text: "remote-hand-server", why: "the command for a server too old to report droppenPath, which answers to its old name only (docs/local-aggregator.md §7.4)" },
   { file: "lib/droppen-command.ts", text: "REMOTE_HAND_DATA_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_DATA_DIR" },
   { file: "lib/droppen-command.ts", text: "REMOTE_HAND_CONFIG_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_CONFIG_DIR" },
-  { file: "features/landing/security/security.tsx", text: "rh/v1", why: "the protocol's signature and key-derivation labels, quoted byte for byte so a reader can check them against the code; they change only with the protocol (docs/local-aggregator.md §7.2)" },
   { file: "features/landing/security/security.tsx", text: "server-rs/crates/rh-", why: "where the protocol, relay and client crates are in the source tree, for a reader checking the code; renamed with the crates (docs/local-aggregator.md §7.2)" },
 ];
 

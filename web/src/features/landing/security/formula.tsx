@@ -1,0 +1,507 @@
+import { type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
+import { Check, Minus, Pin } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { BLOCKS, type BlockId, type FormulaBlock, type Kind, KINDS, type Lang, LANGS, PARTIES, type Party, type Roles, TERMS, type Words } from "./formula-data";
+import { type Analysis, analyze, flowOf, type Lit, lights } from "./formula-model";
+
+/*
+ * The formulas of droppen.app/security, explorable (data: `formula-data.ts`,
+ * tokens and flow: `formula-model.ts`).
+ *
+ * Every part of a formula is a focusable term, drawn by its kind (colour, and
+ * weight and underline for whoever cannot tell the colours apart). Pointing
+ * at one, or focusing it from the keyboard, lights the same value in every
+ * formula on the page, inks where it is defined, outlines the calls that make
+ * it and take it, and shows a short card: what it is and why it is there,
+ * where it comes from and goes, who can know it. A click, a tap or Enter pins
+ * the card, so two can be read side by side; Esc or a click elsewhere
+ * unpins. Above each block, "view as" hides every value that party cannot
+ * know. Screen readers get the same through `aria-describedby` (the hidden
+ * glossary). Nothing moves: highlights are backgrounds and outlines, the
+ * cards float in a portal, and the formula's text, selected and copied, is
+ * the formula.
+ */
+
+const ANALYSIS: Analysis = analyze();
+
+const RANK: Record<Lit, number> = { def: 3, same: 2, flow: 1, "": 0 };
+
+/** Who is pointing where, what is pinned, and whose view: the page's one state, read token by token. */
+class FormulaStore {
+  hover: string | null = null;
+  focus: string | null = null;
+  pin: string | null = null;
+  /** The occurrence whose passing card was dismissed (Esc, or unpinned by a click) until the pointer or focus moves on. */
+  dismissed: string | null = null;
+  view: Party | null = null;
+  /** Whether the last input was a pointer: a term focused by a click or a tap shows no passing card (the click pins it). */
+  pointing = false;
+  private lit = new Map<string, Lit>();
+  private readonly listeners = new Set<() => void>();
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => void this.listeners.delete(listener);
+  };
+
+  /** The card that is showing because of the pointer or the keyboard, not a pin. */
+  passing(): string | null {
+    const at = this.hover ?? this.focus;
+    return at && at !== this.dismissed ? at : null;
+  }
+
+  update(patch: Partial<Pick<FormulaStore, "hover" | "focus" | "pin" | "dismissed" | "view">>) {
+    Object.assign(this, patch);
+    const lit = new Map<string, Lit>();
+    for (const active of new Set([this.pin, this.passing()])) {
+      if (!active) continue;
+      for (const [key, value] of lights(ANALYSIS, active)) if (RANK[value] > RANK[lit.get(key) ?? ""]) lit.set(key, value);
+    }
+    this.lit = lit;
+    for (const listener of this.listeners) listener();
+  }
+
+  litOf(occ: string): Lit {
+    return this.lit.get(occ) ?? "";
+  }
+
+  togglePin(occ: string) {
+    if (this.pin === occ) this.update({ pin: null, dismissed: occ });
+    else this.update({ pin: occ, dismissed: null });
+  }
+}
+
+const StoreContext = createContext<FormulaStore | null>(null);
+
+function useStore(): FormulaStore {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("a formula outside <FormulaProvider>");
+  return store;
+}
+
+/** The page's language as the formulas' words know it. */
+function useLang(): Lang {
+  const { i18n } = useTranslation();
+  const lng = i18n.language ?? "en";
+  if (lng.startsWith("zh")) return /TW|HK|MO|Hant/i.test(lng) ? "zh-TW" : "zh-CN";
+  return (LANGS as readonly string[]).includes(lng) ? (lng as Lang) : lng.startsWith("ja") ? "ja" : "en";
+}
+
+const say = (words: Words, lang: Lang) => words[LANGS.indexOf(lang)] || words[0];
+
+/** Each kind's look: colour, and weight and underline so that colour is never the only cue. */
+export const KIND_CLASS: Record<Kind, string> = {
+  secret: "text-key-secret font-semibold underline decoration-solid",
+  derived: "text-key-derived font-semibold underline decoration-double",
+  public: "text-key-public underline decoration-dashed",
+  value: "text-fg underline decoration-dotted",
+  label: "text-muted underline decoration-dotted",
+  fn: "text-fg font-semibold underline decoration-dotted",
+  op: "text-muted underline decoration-dotted",
+};
+
+export const LIT_CLASS: Record<Lit, string> = {
+  def: "bg-fg text-bg! decoration-bg!",
+  same: "bg-fg/15 outline outline-1 outline-fg/50",
+  flow: "outline outline-1 outline-dashed outline-fg/70",
+  "": "",
+};
+
+/** Hatched in place of a value the chosen party cannot know: the text stays, for copying and for screen readers. */
+export const HIDDEN_CLASS = "text-transparent! decoration-transparent! [background-image:repeating-linear-gradient(135deg,var(--color-border-strong)_0_1.5px,transparent_1.5px_4px)]";
+
+function useKindName(): Record<Kind, string> {
+  const { t } = useTranslation();
+  return {
+    secret: t("Secret key"),
+    derived: t("Derived secret"),
+    public: t("Public key"),
+    value: t("Public value"),
+    label: t("Label or constant"),
+    fn: t("Function"),
+    op: t("Operator"),
+  };
+}
+
+function usePartyName(): Record<Party, string> {
+  const { t } = useTranslation();
+  return { me: t("Your device"), other: t("The other device"), hub: "Droppen Hub", relay: t("Relay") };
+}
+
+const descId = (term: string) => `fx-${term.replace(/[^\w-]/g, "-")}`;
+const hiddenId = (party: Party) => `fx-hidden-${party}`;
+const HINT_ID = "fx-hint";
+
+/** Who "your device" and "the other device" are in `block`; a block of labels has no parties. */
+const rolesOf = (block: BlockId): Roles | undefined => (BLOCKS[block] as FormulaBlock).roles;
+
+/** Whether `term`, in a block with parties, is a value `view` cannot know. */
+function hiddenFrom(block: BlockId, term: string, view: Party | null): boolean {
+  return !!view && !!rolesOf(block) && !TERMS[term]!.known.includes(view);
+}
+
+function Term({ block, occ, text }: { block: BlockId; occ: string; text: string }) {
+  const store = useStore();
+  const term = ANALYSIS.occurrences.get(occ)!.term;
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    () => `${store.litOf(occ)}|${hiddenFrom(block, term, store.view) ? store.view : ""}|${store.pin === occ ? 1 : 0}`,
+    () => "||0",
+  );
+  const [lit, hidden, pinned] = snapshot.split("|") as [Lit, Party | "", string];
+  const kind = TERMS[term]!.kind;
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      data-occ={occ}
+      data-term={term}
+      data-kind={kind}
+      data-lit={lit || undefined}
+      data-hidden-from={hidden || undefined}
+      aria-pressed={pinned === "1"}
+      aria-describedby={hidden ? `${descId(term)} ${hiddenId(hidden)}` : descId(term)}
+      className={cn(
+        "cursor-help decoration-1 underline-offset-[3px] outline-offset-1 transition-[background-color,color,outline-color] duration-100 motion-reduce:transition-none",
+        KIND_CLASS[kind],
+        LIT_CLASS[lit],
+        hidden && HIDDEN_CLASS,
+        pinned === "1" && "outline-2 outline-solid outline-fg",
+      )}
+      onPointerEnter={(e) => {
+        if (e.pointerType === "mouse") store.update({ hover: occ, dismissed: null });
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse" && store.hover === occ) store.update({ hover: null });
+      }}
+      onFocus={(e) => {
+        if (!store.pointing) store.update({ focus: occ, dismissed: null });
+      }}
+      onBlur={() => {
+        if (store.focus === occ) store.update({ focus: null });
+      }}
+      onClick={() => store.togglePin(occ)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          store.togglePin(occ);
+        }
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+/** "View as", with this block's roles, and the legend. */
+function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; legendId: string; showLegend: boolean; onLegend: () => void }) {
+  const { t } = useTranslation();
+  const store = useStore();
+  const lang = useLang();
+  const names = usePartyName();
+  const view = useSyncExternalStore(store.subscribe, () => store.view, () => null);
+  const labelId = useId();
+  const roles = rolesOf(block);
+  const options: (Party | null)[] = [null, ...PARTIES];
+  const hiddenCount = view
+    ? ANALYSIS.lines[block].flat().filter((tok) => tok.occ && hiddenFrom(block, tok.term!, view)).length
+    : 0;
+  const choose = (party: Party | null) => store.update({ view: party });
+  const role = view === "me" ? roles?.me : view === "other" ? roles?.other : undefined;
+  return (
+    <div data-formula-tools="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-sans">
+      {roles && (
+        <>
+          <span id={labelId} className="label-caps text-[10px] leading-[14px] text-faint">
+            {t("View as")}
+          </span>
+          <div
+            role="radiogroup"
+            aria-labelledby={labelId}
+            className="flex flex-wrap"
+            onKeyDown={(e) => {
+              const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+              if (!step) return;
+              e.preventDefault();
+              const next = options[(options.indexOf(view) + step + options.length) % options.length]!;
+              choose(next);
+              (e.currentTarget.querySelector(`[data-party="${next ?? "all"}"]`) as HTMLElement | null)?.focus();
+            }}
+          >
+            {options.map((party) => (
+              <button
+                key={party ?? "all"}
+                type="button"
+                role="radio"
+                data-party={party ?? "all"}
+                aria-checked={view === party}
+                tabIndex={view === party ? 0 : -1}
+                onClick={() => choose(party)}
+                className={cn(
+                  "-ml-px h-6 border border-border-strong px-2 font-mono text-[10px] leading-none text-muted first:ml-0 hover:text-fg focus-visible:relative focus-visible:-outline-offset-2",
+                  view === party && "border-fg bg-fg text-bg hover:text-bg",
+                )}
+              >
+                {party ? names[party] : t("All")}
+              </button>
+            ))}
+          </div>
+          <span aria-live="polite" className="text-[10px] leading-[14px] text-muted">
+            {role && say(role, lang)}
+            {role && view && " · "}
+            {view && t("Hidden here: {{count}}", { count: hiddenCount })}
+          </span>
+        </>
+      )}
+      <button
+        type="button"
+        aria-expanded={showLegend}
+        aria-controls={legendId}
+        onClick={onLegend}
+        className="ml-auto label-caps text-[10px] leading-[14px] text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg"
+      >
+        {t("Legend")}
+      </button>
+    </div>
+  );
+}
+
+function Legend({ id, open }: { id: string; open: boolean }) {
+  const { t } = useTranslation();
+  const kinds = useKindName();
+  const sample = "font-mono text-[10px] leading-4 decoration-1 underline-offset-[3px]";
+  return (
+    <ul id={id} hidden={!open} className="flex flex-wrap gap-x-3 gap-y-1 font-sans">
+      {KINDS.map((kind) => (
+        <li key={kind} className={cn(sample, KIND_CLASS[kind])}>
+          {kinds[kind]}
+        </li>
+      ))}
+      <li className={cn(sample, "text-fg", LIT_CLASS.same)}>{t("Same value")}</li>
+      <li className={cn(sample, LIT_CLASS.def)}>{t("Where it is defined")}</li>
+      <li className={cn(sample, "text-fg", LIT_CLASS.flow)}>{t("Made by or used by")}</li>
+      <li className={cn(sample, "text-muted")}>
+        <span className={cn("inline-block w-6 align-middle", HIDDEN_CLASS)}>&nbsp;</span> {t("Hidden from this party")}
+      </li>
+    </ul>
+  );
+}
+
+/** One formula block, in the page's mono-block style, every part of it explorable. */
+export function Formula({ block }: { block: BlockId }) {
+  const { t } = useTranslation();
+  const [legend, setLegend] = useState(false);
+  const legendId = useId();
+  return (
+    <div data-formula={block} className="flex max-w-[46em] flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
+      <Tools block={block} legendId={legendId} showLegend={legend} onLegend={() => setLegend((on) => !on)} />
+      <Legend id={legendId} open={legend} />
+      <div role="group" aria-label={t("Formula")} aria-describedby={HINT_ID} className="flex flex-col gap-1 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">
+        {ANALYSIS.lines[block].map((tokens, li) => (
+          <code key={li} className="block">
+            {tokens.map((tok, ti) => (tok.occ ? <Term key={ti} block={block} occ={tok.occ} text={tok.text} /> : tok.text))}
+          </code>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** What a screen reader hears for a term: its kind, what it is, its flow, who knows it. */
+function useDescribe(): (term: string) => string {
+  const { t } = useTranslation();
+  const lang = useLang();
+  const kinds = useKindName();
+  const names = usePartyName();
+  const list = (items: string[]) => items.join(lang === "en" ? ", " : "、");
+  return (term) => {
+    const def = TERMS[term]!;
+    const { madeBy, usedBy } = flowOf(ANALYSIS, term);
+    const unknown = PARTIES.filter((p) => !def.known.includes(p));
+    const parts = [`${kinds[def.kind]}.`, say(def.says, lang)];
+    if (madeBy.length) parts.push(t("Made by {{fns}}.", { fns: list(madeBy) }));
+    if (usedBy.length) parts.push(t("Used by {{fns}}.", { fns: list(usedBy) }));
+    if (def.kind === "label" || def.kind === "fn" || def.kind === "op") parts.push(t("Public: everyone can know it."));
+    else {
+      parts.push(t("Known to: {{parties}}.", { parties: list(def.known.map((p) => names[p])) }));
+      if (unknown.length) parts.push(t("Not known to: {{parties}}.", { parties: list(unknown.map((p) => names[p])) }));
+    }
+    return parts.join(" ");
+  };
+}
+
+/** The descriptions `aria-describedby` points at: one per term on the page, never shown. */
+function Glossary() {
+  const { t } = useTranslation();
+  const describe = useDescribe();
+  const names = usePartyName();
+  return (
+    <div hidden data-formula-glossary="">
+      <span id={HINT_ID}>{t("Point at or focus any part of a formula to see what it is and where its value goes. Click it or press Enter to pin it; Esc unpins.")}</span>
+      {PARTIES.map((party) => (
+        <span key={party} id={hiddenId(party)}>
+          {t("{{party}} cannot know this value.", { party: names[party] })}
+        </span>
+      ))}
+      {[...ANALYSIS.byTerm.keys()].map((term) => (
+        <span key={term} id={descId(term)}>
+          {describe(term)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A card beside a block: above it, or below when there is no room or the other card is above. */
+function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boolean }) {
+  const { t } = useTranslation();
+  const lang = useLang();
+  const kinds = useKindName();
+  const names = usePartyName();
+  const ref = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const o = ANALYSIS.occurrences.get(occ)!;
+  const def = TERMS[o.term]!;
+  const { madeBy, usedBy } = flowOf(ANALYSIS, o.term);
+  const roles = !!rolesOf(o.block);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const anchor = document.querySelector(`[data-occ="${occ}"]`);
+      const card = ref.current;
+      if (!anchor || !card) return;
+      const a = anchor.getBoundingClientRect();
+      const b = (anchor.closest("[data-formula]") ?? anchor).getBoundingClientRect();
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      const w = card.offsetWidth;
+      const h = card.offsetHeight;
+      const m = 8;
+      const gap = 6;
+      const above = b.top - gap - h;
+      const under = b.bottom + gap;
+      const fitsAbove = above >= m;
+      const fitsUnder = under + h <= vh - m;
+      let top = below ? (fitsUnder || !fitsAbove ? under : above) : fitsAbove || !fitsUnder ? above : under;
+      if (!fitsAbove && !fitsUnder) top = b.top - m > vh - b.bottom - m ? Math.max(m, above) : Math.min(under, vh - h - m);
+      const left = Math.max(m, Math.min(a.left, vw - w - m));
+      setAt({ left, top });
+    };
+    place();
+    let frame = 0;
+    const later = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(place);
+    };
+    window.addEventListener("resize", later);
+    document.addEventListener("scroll", later, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", later);
+      document.removeEventListener("scroll", later, true);
+    };
+  }, [occ, below]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-formula-popup={occ}
+      data-pinned={pinned ? "" : undefined}
+      aria-hidden="true"
+      style={at ? { left: at.left, top: at.top } : { left: 0, top: 0, visibility: "hidden" }}
+      className="fixed z-50 flex w-max max-w-[min(26rem,calc(100vw-16px))] flex-col gap-1.5 border border-border-strong bg-bg px-3 py-2.5 text-left font-sans"
+    >
+      <div className="flex items-baseline gap-2">
+        <code className={cn("font-mono text-xs decoration-1 underline-offset-[3px]", KIND_CLASS[def.kind])}>{o.text}</code>
+        <span className="label-caps text-[10px] leading-[14px] text-muted">{kinds[def.kind]}</span>
+        {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
+      </div>
+      <p className="text-xs leading-[18px] text-fg">{say(def.says, lang)}</p>
+      {(madeBy.length > 0 || usedBy.length > 0) && (
+        <p className="font-mono text-[10px] leading-[14px] text-muted">
+          {madeBy.length > 0 && `${madeBy.join(", ")} → `}
+          <span className="text-fg">{o.text}</span>
+          {usedBy.length > 0 && ` → ${usedBy.join(", ")}`}
+        </p>
+      )}
+      {def.kind === "label" || def.kind === "fn" || def.kind === "op" || !roles ? (
+        <p className="text-[10px] leading-[14px] text-muted">{t("Public: everyone can know it.")}</p>
+      ) : (
+        <ul className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px] leading-[14px]">
+          {PARTIES.map((party) => {
+            const knows = def.known.includes(party);
+            const Icon = knows ? Check : Minus;
+            return (
+              <li key={party} className={cn("inline-flex items-center gap-0.5", knows ? "text-fg" : "text-faint line-through")}>
+                <Icon className="size-2.5 shrink-0" />
+                {names[party]}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+function Cards() {
+  const store = useStore();
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    () => `${store.pin ?? ""}|${store.passing() ?? ""}`,
+    () => "|",
+  );
+  const [pin, passing] = snapshot.split("|").map((s) => s || null) as [string | null, string | null];
+
+  useEffect(() => {
+    if (!pin && !passing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") store.update({ pin: null, dismissed: store.passing() ?? store.dismissed });
+    };
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (store.pin && !target?.closest?.("[data-occ],[data-formula-popup],[data-formula-tools]")) store.update({ pin: null });
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown, true);
+    };
+  }, [pin, passing, store]);
+
+  const sameBlock = (a: string | null, b: string | null) => !!a && !!b && a.split(":")[0] === b.split(":")[0];
+  return (
+    <>
+      {pin && <Card key={`pin-${pin}`} occ={pin} pinned below={false} />}
+      {passing && passing !== pin && <Card key={`pass-${passing}`} occ={passing} pinned={false} below={sameBlock(pin, passing)} />}
+    </>
+  );
+}
+
+/** The page's formulas share one state: what is lit and pinned, and whose view. */
+export function FormulaProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(() => new FormulaStore());
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    const pointer = () => void (store.pointing = true);
+    const keyboard = () => void (store.pointing = false);
+    document.addEventListener("pointerdown", pointer, true);
+    document.addEventListener("keydown", keyboard, true);
+    return () => {
+      document.removeEventListener("pointerdown", pointer, true);
+      document.removeEventListener("keydown", keyboard, true);
+    };
+  }, [store]);
+  return (
+    <StoreContext.Provider value={store}>
+      {children}
+      <Glossary />
+      {mounted && <Cards />}
+    </StoreContext.Provider>
+  );
+}

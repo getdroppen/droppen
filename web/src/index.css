@@ -37,6 +37,12 @@
   --color-danger: #d42a1f;
   /* Text on a signal fill (the amber "asking you" chip): ink in both themes. */
   --color-on-signal: #0a0a0a;
+  /* The security page's formulas (security/formula.tsx): a token's kind,
+     always with a weight or an underline style beside the hue. Checked for
+     colour-vision deficiency and for text contrast, in both themes. */
+  --color-key-secret: #c2410c;
+  --color-key-derived: #9333ea;
+  --color-key-public: #047857;
   /* Unread is ink — a solid square, the second loudest thing after asking —
      so a count never reads as working (ok) or asking (warn). */
   --color-unread: #0a0a0a;
@@ -95,6 +101,9 @@
   --color-warn-fg: #f5b031;
   --color-danger: #ff5c50;
   --color-unread: #f5f5f5;
+  --color-key-secret: #fb923c;
+  --color-key-derived: #c084fc;
+  --color-key-public: #34d399;
   --color-claude: #a3a3a3;
   --color-codex: #a3a3a3;
 }
