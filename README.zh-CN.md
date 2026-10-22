@@ -522,9 +522,15 @@ docker run -p 8080:8080 \
   -e DROPPEN_RELAY_HUB=https://<Hub 的源> \
   -e DROPPEN_RELAY_ORIGIN=wss://<这个中继对外的源> \
   -e DROPPEN_RELAY_KEY=<上面的钥> \
-  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<Hub 发的一次性令牌，只有第一次启动要> \
+  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<Hub 为这个中继发的一次性令牌> \
+  -e DROPPEN_RELAY_TRUST_PROXY=railway \
   droppen-relay
 ```
+
+注册令牌只在第一次启动时被 Hub 接受一次；之后也请留着它，因为中继的 id 就取自它，或者改设 `DROPPEN_RELAY_ID`。
+中继按地址限流，要拿到每个客户端自己的地址：放在反向代理后面时设 `DROPPEN_RELAY_TRUST_PROXY=railway`，并让代理用客户端的地址
+**覆盖** `X-Real-IP`（不能把客户端自己带来的值传进来）；在 Fly.io 上设 `fly`（`Fly-Client-IP`）。不设时中继用连接的地址，
+放在代理后面就是代理的地址，所有客户端共用一个。
 
 所有变量见 [`server-rs/crates/rh-relay/src/config.rs`](server-rs/crates/rh-relay/src/config.rs)，中继与 Hub 之间的协议见
 [`docs/relay-and-plans.md`](docs/relay-and-plans.md)。中继只按自己的 Hub 签发的票配对通道，所以它只服务注册它的那个 Hub

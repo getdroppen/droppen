@@ -123,9 +123,19 @@ docker run -p 8080:8080 \
   -e DROPPEN_RELAY_HUB=https://<the Hub's origin> \
   -e DROPPEN_RELAY_ORIGIN=wss://<this relay's public origin> \
   -e DROPPEN_RELAY_KEY=<the key> \
-  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<the Hub's one-time token; first start only> \
+  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<the one-time token the Hub issued for this relay> \
+  -e DROPPEN_RELAY_TRUST_PROXY=railway \
   droppen-relay
 ```
+
+The Hub accepts the registration token once, on the first start. Keep it set
+afterwards all the same, since it also names the relay, or set
+`DROPPEN_RELAY_ID` instead. The relay's per-address limits need each client's
+own address: behind a proxy, set `DROPPEN_RELAY_TRUST_PROXY=railway` and make
+the proxy overwrite `X-Real-IP` with the client's address (never pass on a
+value the client sent), or `fly` on Fly.io (`Fly-Client-IP`). Left unset, the
+relay takes the socket's address, which behind a proxy is the proxy's for
+every client.
 
 Every variable is described in
 [`server-rs/crates/rh-relay/src/config.rs`](server-rs/crates/rh-relay/src/config.rs),
