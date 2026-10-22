@@ -54,7 +54,7 @@ import { AGENT_HANDSHAKE_REFUSED, ChannelIsolated, MachineChannel } from "../src
 import { MachineMirror } from "../src/lib/hub/mirror.js";
 import { type IndexState, indexFold, StreamClient, type StreamClientOptions } from "../src/lib/hub/streams.js";
 import { tunnelTransport } from "../src/lib/transport/tunnel.js";
-import { FakeKv, FakeStreamLink, flush, makeMachine, type Machine, putCopy, StreamWriter, until } from "./stream-fixtures.js";
+import { FakeKv, FakeStreamLink, flush, makeMachine, type Machine, putCopy, rotate, StreamWriter, until } from "./stream-fixtures.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
@@ -264,6 +264,47 @@ test("the copy source picks up the host's new key when the account's chain chang
   assert.equal(acct.syncs, 0, "the account told it: nothing to sync");
   source.close();
   assert.equal(acct.watchers, 0, "a closed source no longer listens");
+});
+
+test("the host's new key reaches every stream at once — not behind an earlier change's key loading that a hub stalls with page fetches", async () => {
+  const [old, cur] = [await signer(0), await signer(1)];
+  const acct = await account("removalKeys");
+  const machine = await makeMachine();
+  let fetches = 0;
+  const { link, source, client } = await following(acct, machine, { fetchPage: () => (fetches++, new Promise<Bytes>(() => undefined)) });
+  try {
+    assert.equal(hex(client.machineSignKey), hex(old.pub));
+    // Stream A: the hub hands a checkpoint and never the pages it names — A's queue waits on the fetch.
+    const a = await StreamWriter.open(machine, await indexStream(machine.mk), FMT_INDEX_V1);
+    await a.append({ upserts: [row("a", "2026-10-15T00:00:00.000Z")], removed: [], asOf: 1 });
+    client.subscribe(a.stream, indexFold, {});
+    await until(() => link.subs().length === 1);
+    const stalled = await a.manifest([{ upserts: [row("a", "2026-10-15T00:00:00.000Z")], removed: [], asOf: 1 }], 1_000, old.key);
+    link.deliver({ type: "checkpoint", ch: link.lastSub().ch, stream: a.stream, uptoSeq: stalled.upto, manifest: stalled.manifest });
+    await until(() => fetches > 0);
+    // Stream B: another stream of the host, followed meanwhile.
+    const b = await StreamWriter.open(machine, crypto.getRandomValues(new Uint8Array(32)), FMT_INDEX_V1);
+    await b.append({ upserts: [row("b", "2026-10-15T00:00:00.000Z")], removed: [], asOf: 1 });
+    const states: IndexState[] = [];
+    const errors: unknown[] = [];
+    client.subscribe(b.stream, indexFold, { onState: (s) => states.push(s), onError: (e) => errors.push(e) });
+    await until(() => link.subs().length === 2);
+    const subB = link.lastSub();
+    // A new key epoch: its loading waits on every stream's queue, A's among them.
+    await rotate(machine, 1);
+    acct.poke();
+    await flush();
+    // The renewal lands next; then the hub (or whoever holds the retired key) serves B a head under the old key: refused.
+    await acct.advance("rotateKey");
+    link.deliver({ type: "recs", ch: subB.ch, stream: b.stream, records: b.records });
+    link.deliver({ type: "head", ch: subB.ch, head: await b.head(2_000, undefined, old.key) });
+    await until(() => states.length + errors.length > 0);
+    assert.equal(states.length, 0, "nothing under the retired key is handed out");
+    assert.ok(badHead(errors[0]), String(errors[0]));
+    assert.equal(hex(client.machineSignKey), hex(cur.pub), "the client holds the chain's new key, whatever is still loading");
+  } finally {
+    source.close();
+  }
 });
 
 test("a position this device kept under the host's retired key still holds after the renewal (keysAt), and is read on from", async () => {

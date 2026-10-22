@@ -337,12 +337,24 @@ export class HubCopySource implements CopySource {
     let retries = 0;
     let retry: ReturnType<typeof setTimeout> | undefined;
     return new HubCopySource(null, opts.budget ?? null, (source) => {
+      // The machine renewed its identity key: what the hub sends from now on must carry the new one — at once, as the
+      // account changes, never queued behind an earlier change's key loading (which waits on every stream's queue, and
+      // a hub can stall those with page fetches while another stream would still take heads under the old key).
+      const followKey = () => {
+        try {
+          const info = opts.account.machine(opts.machine);
+          if (info && source.keys && !source.closed) source.keys.client.setMachineSignKey(info.signKey);
+        } catch (error) {
+          console.warn("cloud: machine key:", error);
+        }
+      };
       const sync = () => {
+        followKey();
         running = running.then(async () => {
           try {
             const info = opts.account.machine(opts.machine);
-            // The machine renewed its identity key: what the hub sends from now on must carry the new one.
-            if (info && source.keys && !source.closed) source.keys.client.setMachineSignKey(info.signKey);
+            // Again here: a client made by an earlier turn of this queue, after the change was heard.
+            followKey();
             const epochs = info ? await opts.keys() : new Map<number, MachineKey>();
             if (source.closed) return;
             if (source.keys) {
