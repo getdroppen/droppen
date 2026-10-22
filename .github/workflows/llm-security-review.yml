@@ -11,6 +11,12 @@ name: llm-security-review
 # reviews such a pull request by hand (or pushes its commits to a branch here,
 # where the review runs).
 #
+# Runs triggered by Dependabot are skipped: GitHub gives them only Dependabot's
+# own secrets, so the review could not reach the gateway, and their diff is a
+# lockfile version bump the review cannot judge (CI and Dependabot's advisories
+# do). The trigger, not the pull request's author, decides: a person pushing to
+# a Dependabot branch triggers the review as usual.
+#
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true. The job is
 # skipped otherwise. Needs the secrets OPENROUTER_BASE_URL (an
 # Anthropic-compatible gateway, without /v1) and OPENROUTER_API_KEY (a key on
@@ -32,7 +38,7 @@ concurrency:
 
 jobs:
   llm-security-review:
-    if: ${{ !github.event.pull_request.draft && vars.LLM_REVIEW_ENABLED == 'true' }}
+    if: ${{ !github.event.pull_request.draft && vars.LLM_REVIEW_ENABLED == 'true' && github.actor != 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
