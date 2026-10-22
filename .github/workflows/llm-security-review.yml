@@ -11,9 +11,11 @@ name: llm-security-review
 # the check fails closed: a maintainer has to review those by hand.
 #
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true. The job is
-# skipped otherwise. Needs the secret OPENROUTER_API_KEY. Third-party actions
-# are pinned to commit SHAs; a transient API failure is retried once, then
-# the check fails closed.
+# skipped otherwise. Needs the secrets LLM_REVIEW_BASE_URL (an
+# Anthropic-compatible gateway, without /v1) and LLM_REVIEW_API_KEY (a key on
+# it); the variable LLM_REVIEW_MODEL names the model (default
+# claude-sonnet-5-5). Third-party actions are pinned to commit SHAs; a
+# transient API failure is retried once, then the check fails closed.
 
 on:
   pull_request:
@@ -79,7 +81,7 @@ jobs:
            PASS. Never block on style or taste.
         5. Finish by returning the structured output (verdict, summary, findings).
       REVIEW_ARGS: |
-        --model anthropic/claude-sonnet-5.5
+        --model ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
         --max-turns 30
         --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
         --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["PASS","BLOCK"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["CRITICAL","HIGH","MEDIUM","LOW"]},"file":{"type":"string"},"title":{"type":"string"}},"required":["severity","file","title"]}}},"required":["verdict","summary","findings"]}'
@@ -94,13 +96,16 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@58985842b834ed26087302ba27d07bc24ca8697a # v1 (2.1.292)
         env:
-          # Claude through the OpenRouter gateway (bearer auth), scoped to this step. The
-          # anthropic_api_key input only satisfies the action's launch check; the
-          # Authorization header comes from ANTHROPIC_AUTH_TOKEN.
-          ANTHROPIC_BASE_URL: https://openrouter.ai/api
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
+          # Claude through our own Anthropic-compatible gateway (new-api, bearer auth),
+          # which meters and caps this key; scoped to this step. The anthropic_api_key
+          # input only satisfies the action's launch check; the Authorization header
+          # comes from ANTHROPIC_AUTH_TOKEN. Background calls use the same model, so
+          # the gateway only has to serve one.
+          ANTHROPIC_BASE_URL: ${{ secrets.LLM_REVIEW_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LLM_REVIEW_API_KEY }}
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
         with:
-          anthropic_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          anthropic_api_key: ${{ secrets.LLM_REVIEW_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
           classify_inline_comments: false
@@ -113,10 +118,11 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@58985842b834ed26087302ba27d07bc24ca8697a # v1 (2.1.292)
         env:
-          ANTHROPIC_BASE_URL: https://openrouter.ai/api
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.LLM_REVIEW_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LLM_REVIEW_API_KEY }}
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
         with:
-          anthropic_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          anthropic_api_key: ${{ secrets.LLM_REVIEW_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
           classify_inline_comments: false
