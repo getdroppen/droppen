@@ -685,6 +685,8 @@ async fn a_client_that_stops_reading_is_disconnected_rather_than_waited_for() {
 
     let mut slow = probe.attach(&info.id).await;
     let mut fast = probe.attach(&info.id).await;
+    // Where a failure got to, printed with the test's output only when it fails.
+    let started = std::time::Instant::now();
 
     // `slow` is never polled, so its queue grows past the cap; `fast` drains as
     // fast as it can, which is what proves the reader was never held up.
@@ -695,16 +697,30 @@ async fn a_client_that_stops_reading_is_disconnected_rather_than_waited_for() {
             None => panic!("the fast client was closed after {drained} bytes; only the slow one should be"),
         }
     }
+    eprintln!("{:?}: the fast client has read {drained} bytes", started.elapsed());
 
     // Now read the slow client out: its backlog, then the note, then the close.
     // Bounded, so an unbounded queue fails the test instead of hanging it.
+    //
+    // It reads at an unhurried pace and says something after every frame, the
+    // way a browser answers pings and sends keystrokes. That keeps the server's
+    // buffer full, so sending the note waits, and whatever the client said
+    // during that wait is still unread when the server is done. A server that
+    // dropped the socket straight after its close frame then got a reset out
+    // of the kernel, which threw away everything not yet transmitted, the note
+    // included. Answering the client's close first is what keeps the tail.
     let mut told_why = false;
     let mut backlog = 0usize;
     while let Some(text) = slow.next_text().await {
         told_why |= text.contains(remote_hand_server::terminals::SLOW_NOTE.trim());
         backlog += text.len();
         assert!(backlog < 32 * 1024 * 1024, "the slow client's queue is not bounded at all");
+        // Unchecked: whether the server is still there to read it is the
+        // question the read loop answers.
+        let _ = slow.0.send(Message::Text(r#"{"type":"still-here"}"#.into())).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
+    eprintln!("{:?}: the slow client read {backlog} bytes and was closed", started.elapsed());
     assert!(told_why, "a disconnected client must be told why");
 
     // The fast client is untouched by its neighbour's disconnection.

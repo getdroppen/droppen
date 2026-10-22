@@ -230,7 +230,48 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
             _ = state.cancel.cancelled() => break,
         }
     }
+    // Nothing more is sent to this client, so it stops collecting output now
+    // rather than for as long as the goodbye takes.
+    drop(attachment);
+    close_gracefully(sender, receiver, &state.cancel).await;
+}
+
+/// How long a closing socket waits for the client to answer its close.
+///
+/// Long enough for a client that is still reading to get through a full
+/// queue (`LISTENER_QUEUE_CAP`) and the kernel's buffers on a loaded machine:
+/// with 10 s, a test client reading at a measured pace on two busy CPUs ran
+/// out of it once in seven runs.
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Send a close frame, and keep reading until the client answers it.
+///
+/// Dropping the socket right after the close frame could lose the end of the
+/// stream. If the client sent anything that had not been read yet (a pong, a
+/// keystroke), or sends something afterwards, the kernel answers with a reset
+/// and discards whatever it had not transmitted. For a client cut off for
+/// being too slow, that is most of its backlog and the note saying why. The
+/// client answers the close only after reading everything sent before it, so
+/// waiting for that answer means waiting until the stream has arrived. The
+/// wait is bounded, because a client that has stopped reading may never
+/// answer, and a server on its way down does not wait at all.
+async fn close_gracefully(
+    mut sender: futures_util::stream::SplitSink<WebSocket, Message>,
+    mut receiver: futures_util::stream::SplitStream<WebSocket>,
+    shutdown: &tokio_util::sync::CancellationToken,
+) {
     let _ = sender.close().await;
+    let answered = async {
+        while let Some(Ok(message)) = receiver.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    };
+    tokio::select! {
+        _ = tokio::time::timeout(CLOSE_GRACE, answered) => {}
+        () = shutdown.cancelled() => {}
+    }
 }
 
 /// Apply one control frame, and say whether it went nowhere because the link to
