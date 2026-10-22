@@ -1,4 +1,4 @@
-// The seen record's stores (`lib/hub/seen-store.ts`, #183): IndexedDB, where
+// The seen record's stores (`lib/hub/seen-store.ts`): IndexedDB, where
 // a read-compare-write is one transaction and so one step across every page
 // of the browser; the `BroadcastChannel` the pages tell one another on; and
 // the `localStorage` fallback where IndexedDB is not to be had.

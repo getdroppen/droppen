@@ -2634,7 +2634,7 @@ fn r1_a_retired_key_never_names_a_device_again() {
     assert_eq!(same, state);
 }
 
-/// Security review (R1b): a pending join made with a host's key
+/// Security review: a pending join made with a host's key
 /// before its renewal does not come alive after it — not approved by an
 /// admin, not activated with the recovery words, not activated by its passkey
 /// (a thief with the old key and a synced passkey would otherwise join early
@@ -2705,7 +2705,7 @@ fn r1b_a_retired_key_never_activates_a_device() {
     try_push(&other, by0(), k0, Action::ApproveDevice("d-ok".into())).expect("fresh keys are approved");
 }
 
-/// §3.8 「证据：退役钥签的争议声明」 (R1c): the key a renewal retired signs a
+/// §3.8 「证据：退役钥签的争议声明」: the key a renewal retired signs a
 /// statement bound to that renewal's hash, and a verifier checks it against
 /// its own chain — no clocks to compare. Only that entry, that hash, that new
 /// key, and the key that entry retired make one that verifies.
@@ -2763,7 +2763,7 @@ fn r1c_a_dispute_names_the_renewal_by_its_hash() {
     assert!(!state.verify_rotate_dispute("h-2", rotate, &r.old_sig));
 }
 
-/// §3.4 rule 9 (R1d): the account's renewal policy is on the chain. Only an
+/// §3.4 rule 9: the account's renewal policy is on the chain. Only an
 /// active admin sets it; while it is on, a renewal that was not confirmed on
 /// the device is refused, an assured one goes through; turned off, automatic
 /// renewals go through again. Kind 21 exists in v3 only, its byte is 0 or 1.

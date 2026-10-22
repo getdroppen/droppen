@@ -591,7 +591,7 @@ test("a host renewing its identity key is a note, with the new fingerprint once 
   // (This file draws zh-CN and ja; zh-TW is the table's word.)
   assert.equal(cloudDevicesZhTW["{{device}} renewed its identity key · new fingerprint {{fingerprint}}"], "{{device}} 更換了身分金鑰 · 新指紋 {{fingerprint}}");
   assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, "ja").includes("m-2 が ID 鍵を更新しました"));
-  // R1b: a renewal confirmed on the device says so, as the agent's notice does.
+  // A renewal confirmed on the device says so, as the agent's notice does.
   const assured = { ...renewal, renewed: { ...renewal.renewed, onDevice: true } };
   assert.equal(alertLevel(assured), "info");
   assert.equal(alertText(assured, t, "ABCD-EFGH-IJKL-MNOP"), "m-2 renewed its identity key, confirmed on the device · new fingerprint ABCD-EFGH-IJKL-MNOP");
@@ -603,7 +603,7 @@ test("a host renewing its identity key is a note, with the new fingerprint once 
   assert.equal(cloudDevicesZhTW["{{device}} renewed its identity key, confirmed on the device"], "{{device}} 更換了身分金鑰（已在那台裝置上確認）");
 });
 
-test("R1d / #178 L1: the account's renewal policy on the chain — turned on, a note; turned off, “is this you?” on every device", () => {
+test("the account's renewal policy on the chain — turned on, a note; turned off, “is this you?” on every device", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const policy = (on: boolean) => ({ seq: 14, by: "d-1", atMs: 0, remove: null, kind: "renewalPolicy", subject: null, on }) as const;
   assert.equal(alertLevel(policy(true)), "info");
@@ -616,7 +616,7 @@ test("R1d / #178 L1: the account's renewal policy on the chain — turned on, a 
   assert.equal(cloudDevicesZhTW["identity key renewals may be automatic again (set by {{by}})"], "更換身分金鑰又可以自動進行了（由 {{by}} 設定）");
 });
 
-test("R1e: control paused over hosts while identity keys are renewed is a note — paused, resumes, ended", () => {
+test("control paused over hosts while identity keys are renewed is a note — paused, resumes, ended", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const removals = [
     { host: "m-1", ids: ["m-2", "d-3"] },

@@ -177,7 +177,7 @@ test("only what ships is described as live: the renewal is not live yet, nor a p
   const words = text(draw("en"));
   assert.ok(words.includes("Not switched on yet."));
   assert.ok(words.includes("Not live: a passkey letting a new device in without a full device's approval"));
-  // What #190 shipped: a passkey's slot lets a new browser ask; a full device approves it by pairing.
+  // What has shipped: a passkey's slot lets a new browser ask; a full device approves it by pairing.
   assert.ok(words.includes("It gets no key until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen"));
   // On by default only for a passkey added on a full device (with PRF); the sign-up passkey only once switched on.
   assert.ok(words.includes("when you add one on a full device it does, unless you untick that (it needs a passkey that supports PRF); the passkey you signed up with does only once you switch it on"));

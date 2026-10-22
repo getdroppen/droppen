@@ -970,7 +970,7 @@ export class StreamSubscription<S> {
     const before = this.state;
     if (!reader || before === null) throw new RecordError("outOfOrder", "a head arrived with no starting point");
     // A refused head leaves the reader as it was, so it can be tried again. The chain's seq is noted as the key is
-    // set for the check (Codex round 7): the position is kept with the seq whose key verified it, not a later one.
+    // set for the check: the position is kept with the seq whose key verified it, not a later one.
     const at: { seq: number | null } = { seq: null };
     // Held to the client's current key, not whatever the reader was built with (M2).
     const released = await this.underCurrentKey(this.client.machineSignKey, (key) => {

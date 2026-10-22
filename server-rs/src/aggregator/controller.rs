@@ -343,7 +343,7 @@ struct Controller {
     hub_removed: Option<(String, String, u64)>,
     /// Mail whose key could not be stored: id → rounds tried ([`MAX_PUT_TRIES`]).
     put_failures: HashMap<i64, u32>,
-    /// Parked (R6 review A4): the hub suspended the device role while this
+    /// Parked (R6 review): the hub suspended the device role while this
     /// computer's identity renewal is pending (`rotation_pending`) at this
     /// chain version; no round until the chain moves, or until (ms).
     suspended: Option<(u64, u64)>,
@@ -472,7 +472,7 @@ impl Controller {
             Err(HubError::Suspended) => {
                 // Parked until the chain moves — the renewal committed (the
                 // link then restarts with the new key) — or REFUSED_EVERY:
-                // not retried on the back-off meanwhile (R6 review A4).
+                // not retried on the back-off meanwhile (R6 review).
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
                 self.suspended = Some((*self.env.chain.borrow(), now_ms() + REFUSED_EVERY.as_millis() as u64));
                 self.report(&view, Some(HubError::Suspended.to_string()));
@@ -1499,7 +1499,7 @@ mod tests {
         r.task.await.unwrap();
     }
 
-    /// R6 review A4: while this computer's identity renewal is pending the
+    /// R6 review: while this computer's identity renewal is pending the
     /// hub suspends its device role (`403 rotation_pending`). The controller
     /// parks — pushed mail does not wake it into another sign-in — until the
     /// chain moves (the renewal written), then signs in again.

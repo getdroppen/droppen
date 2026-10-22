@@ -1131,7 +1131,7 @@ export class HubApi {
       // an empty body: nothing
     }
     const view = rotationsView(raw);
-    // The hub's clock, for judging the rows' ages (R6 W3): `now_ms`, else the answer's Date header.
+    // The hub's clock, for judging the rows' ages (R6 review): `now_ms`, else the answer's Date header.
     if (view.nowMs === null) {
       const date = Date.parse(res.headers?.get("date") ?? "");
       if (Number.isFinite(date)) view.nowMs = date;

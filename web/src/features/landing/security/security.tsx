@@ -15,8 +15,8 @@ import { securityBundles } from "./security-copy";
  * of a device that runs AI (not live yet: described as designed, marked so),
  * the threat model, and how to check all of it. Signed in or not; its own
  * lazy chunk with its own words (`security-copy.ts`), drawn like the other
- * public pages (design/DESIGN.md): numbered sections with an on-page table of
- * contents, each mechanism in a section of its own with an anchor.
+ * public pages: numbered sections with an on-page table of contents, each
+ * mechanism in a section of its own with an anchor.
  *
  * Only what main ships is described as live; every claim traces to the
  * protocol code (`server-rs/crates/rh-proto`, `web/src/lib/e2e`) or the

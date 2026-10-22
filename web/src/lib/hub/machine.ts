@@ -458,7 +458,7 @@ export class MachineChannel implements PipeOpener {
 
   /** The running channel, opening one if there is none. */
   ensure(): Promise<ChannelDriver> {
-    // Never reused to a host isolated meanwhile — another tab may have kept the dispute (Codex round 1) — nor to a key renewed away.
+    // Never reused to a host isolated meanwhile — another tab may have kept the dispute — nor to a key renewed away.
     this.checkKey();
     if (this.account.isolated?.(this.machine) && !this.options.isolatedRenewal) return Promise.reject(new ChannelIsolated(this.machine));
     const driver = this.live();

@@ -58,7 +58,7 @@ pub struct Published {
     /// with `seq`, where a page's copy stands.
     pub(super) epoch: u32,
     /// The host identity key its stream task verifies heads under, when one
-    /// does (Codex review M3): never published, nor delivered, once the host
+    /// does: never published, nor delivered, once the host
     /// renewed it ([`LiveCopies::set_signers`]).
     pub(super) signer: Option<[u8; 32]>,
 }
@@ -271,8 +271,7 @@ struct Inner {
 /// from the store) may be shown for `host`: only under the host's identity
 /// key now. A stream task of a host that renewed it since — cancelled, but a
 /// ready frame may have won its race with the cancel — shows nothing, and
-/// neither does one before the copies task said which key that is (Codex
-/// review M3).
+/// neither does one before the copies task said which key that is.
 fn signer_holds(inner: &Inner, host: &str, signer: Option<[u8; 32]>) -> bool {
     match signer {
         Some(signer) => inner.signers.get(host) == Some(&signer),
@@ -523,7 +522,7 @@ impl LiveCopies {
         self.send_dir(dir);
     }
 
-    /// Each followed host's identity key now (Codex review M3): set before
+    /// Each followed host's identity key now: set before
     /// the stream tasks of a host that renewed it are cancelled, so a task
     /// verifying under the old key shows nothing from then on — not by its
     /// own publication, nor by delivering to one published before.
@@ -1139,7 +1138,7 @@ mod tests {
         assert!(live.opened().is_empty());
     }
 
-    /// Codex review M3: once the copies task says a host's identity key is a
+    /// Once the copies task says a host's identity key is a
     /// new one, a stream task still verifying under the old key — cancelled,
     /// but a ready frame won its race with the cancel — shows nothing: it
     /// publishes nothing, delivers nothing to a copy it published before, and

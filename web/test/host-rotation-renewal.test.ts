@@ -1,5 +1,5 @@
 // Renewing a host's identity key from the browser (docs/host-identity-rotation.md
-// §3.1–§3.8, §4.1–§4.3; contract §1, §4, §6), against the fake hub and fake agents.
+// §3.1–§3.8, §4.1–§4.3), against the fake hub and fake agents.
 //
 // What these pin: which hosts must renew (`hostsToRotate`: the losses, and
 // transitively every host that let an exposed one control it — X → H → H2 —
@@ -12,7 +12,7 @@
 // is sealed no host keys and let control no other host; the runner renews one
 // host at a time, the ones a waiting host depends on first, retries after 1, 5
 // and 30 minutes and then asks, and waits for an offline host to come back;
-// PR #117's re-enroll warning stays only for hosts that cannot renew.
+// The re-enroll warning stays only for hosts that cannot renew.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, encodeEntry, fromHex, hex, MAX_PAUSE_ENTRY_LEN, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
@@ -151,7 +151,7 @@ async function isolatingEvidence(a: CloudAccount, host: string, h: { signPrivate
 
 /** A retired key's sign-in as the hub records it (§3.8): `HubLogin` signed by `key`, for `host`, retired at `retiredSeq`. */
 async function disputeJson(a: CloudAccount, host: string, key: CryptoKey, signKey: Uint8Array, retiredSeq: number, timeMs?: number) {
-  // Signed after the renewal, past the clock skew allowed (R6 W2) — unless a test says when.
+  // Signed after the renewal, past the clock skew allowed (R6 review) — unless a test says when.
   const after = (a.chain!.entryAt(retiredSeq)?.draft.createdMs ?? Date.now()) + 6 * 60_000;
   const login = { role: "agent" as const, account: a.account, id: host, hub: HUB_ORIGIN, nonce: crypto.getRandomValues(new Uint8Array(32)), timeMs: timeMs ?? after };
   const sig = await signHubLogin(login, key);
@@ -694,7 +694,7 @@ test("confirmed on the device: the code must be typed, and be the one its screen
     renewal("wrongCode"),
   );
   assert.equal(asked, 1);
-  assert.ok(hub.rotationDeletes.includes("m-1"), "a wrong code withdraws the attempt (R6 L1)");
+  assert.ok(hub.rotationDeletes.includes("m-1"), "a wrong code withdraws the attempt (R6 review)");
   await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async () => null, ...quick }), renewal("cancelled"));
   assert.deepEqual(rotated(a), []);
   // Typed as people type it (lower case, no dash): it goes, as assurance 1.
@@ -764,14 +764,14 @@ test("a staging the hub voided (another holder of the old key: not_acked) is not
   runner.stop();
 });
 
-test("#6: a dispute statement signed by the retired key isolates the host — checked on this page's chain, not taken on the hub's word — until a renewal confirmed on the device, or its removal", async () => {
+test("a dispute statement signed by the retired key isolates the host — checked on this page's chain, not taken on the hub's word — until a renewal confirmed on the device, or its removal", async () => {
   const { hub, a, agents, x, h1 } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
   const seq = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
   const json = await statementJson(a, "m-1", h1.signPrivate);
   const checked = await checkStatement(a.chain!, hostDispute(json)!);
-  assert.deepEqual(checked, { host: "m-1", seq, sig: json.sig }, "kept with its signature (R6 L6)");
+  assert.deepEqual(checked, { host: "m-1", seq, sig: json.sig }, "kept with its signature (R6 review)");
   assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], ["m-1"]);
   // Signed by the new key, by another device, about another entry, or not a signature: nothing.
   const current = agents.current("m-1")!;
@@ -800,7 +800,7 @@ test("#6: a dispute statement signed by the retired key isolates the host — ch
   await runner.idle();
   assert.equal(a.isolated("m-1"), false);
   assert.deepEqual([...isolatedHosts(a.chain!, [checked!])], [], "an assurance-1 renewal after the disputed one");
-  // A statement disputing that renewal (confirmed on the device) isolates nothing (R6 M1).
+  // A statement disputing that renewal (confirmed on the device) isolates nothing (R6 review).
   const assured = await checkStatement(a.chain!, hostDispute(await statementJson(a, "m-1", current.sign))!);
   assert.deepEqual({ host: assured?.host, seq: assured?.seq }, { host: "m-1", seq: a.chain!.deviceRecord("m-1")!.rotatedSeq! });
   assert.deepEqual([...isolatedHosts(a.chain!, [assured!])], []);
@@ -810,7 +810,7 @@ test("#6: a dispute statement signed by the retired key isolates the host — ch
   runner.stop();
 });
 
-test("#6: a sign-in with a retired key is information only — never isolation, whenever it was signed", async () => {
+test("a sign-in with a retired key is information only — never isolation, whenever it was signed", async () => {
   const { hub, a, agents, x, h1 } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -851,7 +851,7 @@ test("a host waiting to renew, or isolated, is sealed no host keys (purpose 5, n
   assert.equal(a.keysWithheldFrom("m-1"), true);
 });
 
-test("an exposed host that can renew is let control no other host until it did; PR #117's warning stays only for hosts that cannot renew", async () => {
+test("an exposed host that can renew is let control no other host until it did; the re-enroll warning stays only for hosts that cannot renew", async () => {
   const { a, x } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   assert.deepEqual([...a.reEnrollWarnings().keys()], ["m-1"], "the re-enroll warning while it cannot renew");
@@ -937,7 +937,7 @@ test("the runner: an older agent is not tried again; the account's setting asks 
   // 「总在设备上确认」: nothing goes on its own.
   const other = await account({ chain: false });
   await other.a.removeDevice(other.x.deviceId, new FakeCourier());
-  // The account's policy, on the chain (R1d's setRenewalPolicy).
+  // The account's policy, on the chain (setRenewalPolicy).
   await other.a.setRenewalPolicy(true);
   const l2 = new FakeLink();
   l2.set("m-1", "online");
@@ -1104,9 +1104,9 @@ test("the hub's refusals of a renewal: conflict and window are tried again later
   assert.deepEqual(rotationPush({ t: "rotation", host: "m-1", state: "none" }), { host: "m-1", state: "none", reason: null });
 });
 
-// ------------------------------------------------------------ the R6 security review (contract §11)
+// ------------------------------------------------------------ the R6 security review
 
-test("R6 W1: the hub's isolated flag alone isolates nothing — keys are withheld and only the code renews it, but no “remove it first”", async () => {
+test("R6 review: the hub's isolated flag alone isolates nothing — keys are withheld and only the code renews it, but no “remove it first”", async () => {
   const { hub, a, agents } = await account({ chain: false });
   // The hub says m-1 is isolated, and shows no evidence this page can check.
   hub.rotationRows.set("m-1", { host: "m-1", state: "committed", assurance: 0, requested_ms: Date.now(), requested_by: "d-gone", committed_ms: Date.now(), committed_seq: null, needs_assurance: false, isolated: true, failure: null });
@@ -1116,13 +1116,13 @@ test("R6 W1: the hub's isolated flag alone isolates nothing — keys are withhel
   assert.equal(a.isolated("m-1"), false, "no evidence checked here");
   assert.equal(a.flagged("m-1"), true);
   assert.equal(a.keysWithheldFrom("m-1"), true, "withholding keys from it is fine");
-  assert.equal(a.mustRenewFirst("m-1"), true, "but let control no other host (R6 L5)");
+  assert.equal(a.mustRenewFirst("m-1"), true, "but let control no other host (R6 review)");
   assert.notEqual(runner.status("m-1").kind, "isolated", "not the isolated state, with its removal first");
   assert.equal(runner.needsCode("m-1"), "evidence", "renewed only confirmed on the device");
   runner.stop();
 });
 
-test("R6 W3: rows' ages are judged by the hub's clock (now_ms), never the page's", async () => {
+test("R6 review: rows' ages are judged by the hub's clock (now_ms), never the page's", async () => {
   // The page's clock two hours ahead: another page's staging still live by the hub is not abandoned.
   {
     const { hub, a, agents, x } = await account({ chain: false });
@@ -1154,7 +1154,7 @@ test("R6 W3: rows' ages are judged by the hub's clock (now_ms), never the page's
   }
 });
 
-test("R6 #8: a staging voided as interrupted or replaced is tried again with a fresh nonce — never the code; not_acked still asks for it", async () => {
+test("R6 review: a staging voided as interrupted or replaced is tried again with a fresh nonce — never the code; not_acked still asks for it", async () => {
   for (const reason of ["interrupted", "replaced"]) {
     const { hub, a, agents, x } = await account({ chain: false });
     await a.removeDevice(x.deviceId, new FakeCourier());
@@ -1178,7 +1178,7 @@ test("R6 #8: a staging voided as interrupted or replaced is tried again with a f
   }
 });
 
-test("R6 info: a host that lets an isolated host control it says to remove that one first", async () => {
+test("R6 review: a host that lets an isolated host control it says to remove that one first", async () => {
   const { hub, a, agents, x, h1 } = await account();
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -1226,7 +1226,7 @@ function pushEnv(over: { permission?: NotificationPermission; vapid?: string; su
   return { env, log, values, setVapid: (v: string) => void (vapid = v) };
 }
 
-test("R6 W4: a renewal of the device this browser's notifications come from drops the old subscription and subscribes again against its new VAPID key", async () => {
+test("R6 review: a renewal of the device this browser's notifications come from drops the old subscription and subscribes again against its new VAPID key", async () => {
   const subscribed = (seq: number | null = null) => JSON.stringify({ machine: "m-1", vapid: "AAAA", seq });
   // Notifications allowed: no prompt, no tap.
   const ok = pushEnv();
@@ -1263,7 +1263,7 @@ test("R6 W4: a renewal of the device this browser's notifications come from drop
   off();
 });
 
-test("#7: isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {
+test("isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {
   const { hub, a, agents, x, h1 } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -1304,7 +1304,7 @@ test("#7: isolation this page verified stays — the hub omitting the evidence, 
   assert.equal((await hub.reload(a)).isolated("m-1"), false, "and stays cleared after a reload");
 });
 
-test("R1d: the account's policy lives on the chain — written as setRenewalPolicy, read back from the verified chain, and while on no automatic renewal is signed", async () => {
+test("the account's policy lives on the chain — written as setRenewalPolicy, read back from the verified chain, and while on no automatic renewal is signed", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   assert.equal(a.alwaysAssured, false, "off until an admin turns it on");
@@ -1326,7 +1326,7 @@ test("R1d: the account's policy lives on the chain — written as setRenewalPoli
   assert.equal(a.chain!.allEntries().filter((e) => e.draft.action.type === "setRenewalPolicy").length, 3, "setting it to what it is writes nothing");
 });
 
-test("R1d: this device's own guard — on it, no automatic renewal is signed here, whatever the chain or the hub says", async () => {
+test("this device's own guard — on it, no automatic renewal is signed here, whatever the chain or the hub says", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());
   a.setLocalAssured(true);
@@ -1556,7 +1556,7 @@ test("Codex 5: this device's guard, or isolation learned while a renewal waits, 
   }
 });
 
-test("#178 L2: nothing renews until an admin chose the account's renewal policy, either way", async () => {
+test("nothing renews until an admin chose the account's renewal policy, either way", async () => {
   const { a, agents, x } = await account({ policy: false });
   assert.equal(a.chain!.renewalPolicySeq, null);
   assert.equal(a.renewalPolicyChosen, false);
@@ -1624,7 +1624,7 @@ test("main's fork latch holds renewals too: a forked page asks nothing of the ho
   }
 });
 
-test("R6 L6: kept disputes carry their signature and are verified again when read back: a tampered one isolates nothing once checked; a real one survives a reload", async () => {
+test("R6 review: kept disputes carry their signature and are verified again when read back: a tampered one isolates nothing once checked; a real one survives a reload", async () => {
   const { hub, a, agents, x, h1 } = await account();
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -1650,7 +1650,7 @@ test("R6 L6: kept disputes carry their signature and are verified again when rea
   assert.ok(again.keptDisputes().some((d) => d.sig === d1.sig));
 });
 
-test("R6 L5: a host the hub flags isolated is let control no other host either", async () => {
+test("R6 review: a host the hub flags isolated is let control no other host either", async () => {
   const { a } = await account({ chain: false });
   a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set(), flagged: new Set(["m-1"]) });
   assert.equal(a.flagged("m-1"), true);

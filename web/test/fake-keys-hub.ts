@@ -164,7 +164,7 @@ export class FakeKeysHub {
   hostDevices = new Set<string>();
   /**
    * Identity key renewals as rh-hub keeps them (docs/host-identity-rotation.md
-   * §3.3; contract §1): `DROPPEN_HUB_HOST_ROTATION`, the window T, the
+   * §3.3): `DROPPEN_HUB_HOST_ROTATION`, the window T, the
    * account's 「总在设备上确认」, the hosts whose agents declared `rotate/1`,
    * each host's row (as `GET /v1/rotations` answers it) and the disputes.
    */
@@ -878,7 +878,7 @@ export interface AgentIdentity {
 /**
  * The account's agents as a courier sees them (`RenewalCourier`): machine
  * keys as {@link FakeCourier} takes them, and `POST /rh/rotate` answered as
- * R3's agent answers it (docs/host-identity-rotation.md §3.2; contract §4) —
+ * R3's agent answers it (docs/host-identity-rotation.md §3.2) —
  * a new seed's keys, both keys' signatures over the proof, the MAC under the
  * new DH key and the admin's ephemeral one, the staging at the hub — or
  * however a test makes it misbehave. A staged identity becomes the host's

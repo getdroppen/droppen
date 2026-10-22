@@ -115,16 +115,16 @@ pub struct RotationNote {
     pub refused_ms: Option<u64>,
     /// When the hub took this machine's dispute statement — its retired
     /// key's signature over the renewal that replaced it elsewhere
-    /// (contract §12 #6, [`super::dispute`]).
+    /// ([`super::dispute`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ms: Option<u64>,
     /// When its own verified chain renewed this machine to keys only a staged
-    /// seed that does not read may hold (R6 review A7): never taken for a
+    /// seed that does not read may hold (R6 review): never taken for a
     /// replacement elsewhere; the link stops until the file is put right.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unreadable_ms: Option<u64>,
     /// A renewed key was promoted and the push keys have not been renewed
-    /// with it yet (R6 review W4): the next link start makes a new VAPID
+    /// with it yet (R6 review): the next link start makes a new VAPID
     /// keypair and forgets every stored push subscription.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub push_renew: bool,

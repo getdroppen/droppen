@@ -344,7 +344,7 @@ impl FileSeedStore {
         self.files_with(&self.expired_prefix())
     }
 
-    /// Set the staging of `nonce` aside as expired (R6 review A2): what this
+    /// Set the staging of `nonce` aside as expired (R6 review): what this
     /// device saw says no renewal can take it any more — but a hub's word is
     /// part of that, so it is renamed, never deleted: never tried at sign-in
     /// again, and taken back ([`FileSeedStore::restore`]) if this device's own
@@ -380,7 +380,7 @@ impl FileSeedStore {
 
     /// The staging files — waiting, or set aside as expired — that do not
     /// read (or that others can read): never used, and never taken for
-    /// proof that this device holds no staged key (R6 review A7).
+    /// proof that this device holds no staged key (R6 review).
     pub fn unreadable(&self) -> Vec<PathBuf> {
         let mut files = self.staging_files();
         files.extend(self.expired_files());
@@ -480,7 +480,7 @@ impl SeedStore for FileSeedStore {
         // Written whole beside the seed in use, then renamed into place: a
         // half-written staged seed is never what the next run finds, and the
         // seed in use is never touched. The rename is flushed before the hub
-        // hears of it (R6 review A6): a staging the hub takes survives a crash.
+        // hears of it (R6 review): a staging the hub takes survives a crash.
         let path = self.staging_path(&staged.nonce);
         write_private(&path, &file)?;
         sync_dir(&path);
@@ -538,7 +538,7 @@ thread_local! {
     static DIR_SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How often this thread flushed a directory (tests: R6 review A6).
+/// How often this thread flushed a directory (tests: R6 review).
 #[cfg(test)]
 pub(crate) fn dir_syncs() -> usize {
     DIR_SYNCS.with(std::cell::Cell::get)
@@ -1127,7 +1127,7 @@ mod tests {
     /// point in between the store holds the old seed (alone, or with staged
     /// ones) or the new one (at worst with staged ones never used): what a
     /// crash leaves.
-    /// R6 review A6: every write or rename of a staging — staging it, setting
+    /// R6 review: every write or rename of a staging — staging it, setting
     /// it aside, taking it back, promoting it — flushes the directory, so a
     /// crash right after never loses it (nor brings an old one back). A2:
     /// one set aside is never among the stagings; a promotion forgets it.

@@ -376,7 +376,7 @@ pub fn start(
     })
 }
 
-/// R6 review W4: once a renewed identity key was promoted, a new VAPID
+/// R6 review: once a renewed identity key was promoted, a new VAPID
 /// keypair and every stored push subscription forgotten
 /// ([`crate::push::store::renew_vapid`]) — whoever copied the old VAPID key
 /// and endpoints reaches no device that subscribes again. Noted done only
@@ -658,7 +658,7 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 return Err("the hub refuses a staged identity key as renewed: not signing in with the key in use".into());
             }
             Err(hub::LoginError::Refused { code, message }) if staged_key.is_some() && code != "denied" => {
-                // R6 review A5: only the hub's `denied` — it does not know the
+                // R6 review: only the hub's `denied` — it does not know the
                 // staged key — lets the next key try. Anything else
                 // (`unavailable`: its own trouble) is transient: retried
                 // with the back-off, the key in use never tried on it.
@@ -691,7 +691,7 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
                 staged_key = None;
             }
             Err(hub::LoginError::Refused { code, message }) if code == "rotated" => {
-                // Not evidence (contract §10): the hub's word that the key in
+                // Not evidence: the hub's word that the key in
                 // use was renewed means "read the chain first". It serves the
                 // chain up to the renewal on this same socket; only what
                 // verifies on this device's own chain counts.
@@ -740,7 +740,7 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     if staged_key.is_none() {
         // Signed in with the key in use: a hub that refused it as `rotated`
         // before takes it again — and no staging that expired before now was
-        // committed, nor should be (set aside, not deleted: R6 review A2).
+        // committed, nor should be (set aside, not deleted: R6 review).
         let named = super::rotation::named_keys(&shared.state.lock().expect("agent state"));
         super::rotation::set_aside_expired(&shared.paths, named, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
@@ -909,10 +909,10 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
 }
 
 /// How long a hub that refused the key in use as `rotated` has to serve the
-/// chain on that socket (contract §10: it keeps it open 10 s).
+/// chain on that socket (it keeps it open 10 s).
 const ROTATED_SYNC: Duration = Duration::from_secs(10);
 
-/// A sign-in the hub refused as `rotated` (contract §10): ask for the chain
+/// A sign-in the hub refused as `rotated`: ask for the chain
 /// past this device's head on that same socket and take what verifies —
 /// the hub serves it up to the renewal that retired the key and its machine
 /// key epoch, then closes. What the entries say is judged by the caller
@@ -3308,7 +3308,7 @@ mod tests {
         (routes.contains_key(&ch), closes(&mut out_rx))
     }
 
-    /// Contract §15 (`docs/host-identity-rotation.md` §3.4 rule 10): a
+    /// `docs/host-identity-rotation.md` §3.4 rule 10: a
     /// renewal pause is an overlay on who may control a host. While one that
     /// removes m-1←d-3 is open, d-3's open channel is closed (and its next
     /// stream not served), and a new one is refused on the hub's path and on

@@ -44,7 +44,7 @@ pub enum HubError {
     /// `403 not_in_chain`: the hub's chain does not list this computer yet.
     NotInChain,
     /// `403 rotation_pending`: this computer's identity renewal is pending
-    /// and the hub suspends its device role until it is done (R6 review A4:
+    /// and the hub suspends its device role until it is done (R6 review:
     /// parked until its chain moves, not retried on the back-off).
     Suspended,
     /// The network, a timeout, a hub that is down.
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(DeviceClient::judge(403, &body("not_in_chain")), Err(HubError::NotInChain));
         // Host identity renewal: while this computer's renewal is pending
         // its device role is suspended — its own refusal, parked until the
-        // chain moves (R6 review A4), never a removal; a retired key's
+        // chain moves (R6 review), never a removal; a retired key's
         // session is only unauthorized (sync the chain first).
         assert_eq!(DeviceClient::judge(403, &body("rotation_pending")), Err(HubError::Suspended));
         assert_eq!(DeviceClient::judge(401, &body("rotated")), Err(HubError::Unauthorized));

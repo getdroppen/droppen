@@ -1,8 +1,8 @@
 //! Renewing this device's identity key against fake hubs
-//! (`docs/host-identity-rotation.md` §3.2–§3.8, the cross-phase contract §2,
-//! §4, §5): the request, the staging, the sign-in confirmation, the order of
-//! sign-ins with a staged seed, promotion only on a verified entry, a
-//! renewal by somebody else, and a crash between any two steps.
+//! (`docs/host-identity-rotation.md` §3.2–§3.8): the request, the staging,
+//! the sign-in confirmation, the order of sign-ins with a staged seed,
+//! promotion only on a verified entry, a renewal by somebody else, and a
+//! crash between any two steps.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -264,7 +264,7 @@ struct Script {
     /// …but these get `error rotated`…
     rotated: Vec<[u8; 32]>,
     /// …and these `error unavailable` and close 1011: the hub's own trouble
-    /// (its database), whatever the key (contract §11).
+    /// (its database), whatever the key.
     unavailable: Vec<[u8; 32]>,
     stage: StageAnswer,
     /// What `POST /v1/rotations/{host}/disputes` answers, in turn (then 200).
@@ -392,7 +392,7 @@ impl FakeHub {
                     let error = json!({"t": "error", "code": code, "message": "sign-in refused"});
                     let _ = sink.send(Message::Text(error.to_string().into())).await;
                     if code == "rotated" {
-                        // Contract §10: one `chain_sub` on this socket is
+                        // One `chain_sub` on this socket is
                         // answered with the chain it serves, then it closes.
                         if let Ok(Some(Ok(Message::Text(text)))) = tokio::time::timeout(Duration::from_secs(2), source.next()).await {
                             let v: Value = serde_json::from_str(text.as_str()).unwrap_or_default();
@@ -520,8 +520,8 @@ async fn starts_with_post(tcp: &tokio::net::TcpStream) -> bool {
     false
 }
 
-/// `POST /v1/rotations/{host}/disputes`, as the hub answers it (contract
-/// §12 #6): the next scripted status (then 200), the body kept.
+/// `POST /v1/rotations/{host}/disputes`, as the hub answers it: the next
+/// scripted status (then 200), the body kept.
 async fn serve_dispute(mut tcp: tokio::net::TcpStream, script: Arc<Mutex<Script>>, disputes: Arc<Mutex<Vec<(String, Value)>>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut buf = Vec::new();
@@ -595,7 +595,7 @@ async fn rotate(shared: &Arc<Shared>, body: &[u8]) -> (u16, Value) {
     rotation::rotate(shared, "d-1", body).await
 }
 
-/// The contract's §4: a new seed is staged beside the one in use (never over
+/// A new seed is staged beside the one in use (never over
 /// it), the hub stages the proof over this connection, and the answer carries
 /// both keys' signatures over the R1 proof and the DH confirmation MAC; the
 /// same nonce gets the same answer, a new one replaces the staged seed, and a
@@ -855,7 +855,7 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     let _ = task.await;
 }
 
-/// §3.5 / contract §5: the chain entry naming exactly the staged keys (then
+/// §3.5: the chain entry naming exactly the staged keys (then
 /// 4005): the agent signs in with the new key, sees the entry on its verified
 /// chain, renames the staged seed into place and asks for its link to be
 /// restarted — and only in that order.
@@ -891,12 +891,12 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(logins[0].by(&old, &hub.url));
     let st = AgentState::load(&a.paths).unwrap().unwrap();
     assert!(st.rotation.renewed_ms.is_some());
-    assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review W4)");
+    assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
     assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
-    // R6 re-review N3: its own renewal is disputed by nobody — no statement
+    // R6 re-review: its own renewal is disputed by nobody — no statement
     // signed, kept or delivered, and the promoted key has none to make.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
@@ -905,7 +905,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
 }
 
-/// R6 re-review N1: the device role never signs in once this computer's own
+/// R6 re-review: the device role never signs in once this computer's own
 /// chain names other keys for it (a renewal not taken yet, or made
 /// elsewhere) — even with no staged seed at all — nor once a renewal is
 /// committed while the connection with the key in use still looks up.
@@ -935,7 +935,7 @@ async fn the_device_role_never_signs_in_with_a_key_renewed_away_or_committed() {
     let _ = task.await;
 }
 
-/// R6 re-review N2: with the account's renewal policy on
+/// R6 re-review: with the account's renewal policy on
 /// (`SetRenewalPolicy { always_assured: true }`), a renewal that would not
 /// be confirmed on the device is refused before anything is staged (409
 /// `assurance_required`) — the chain would never take it; one that would be
@@ -958,7 +958,7 @@ async fn with_the_renewal_policy_on_only_a_renewal_confirmed_on_the_device_is_st
     let _ = task.await;
 }
 
-/// Contract §5: a 4005 alone (the entry not seen on this connection) also
+/// A 4005 alone (the entry not seen on this connection) also
 /// makes the staged key sign in at once — and promote once the chain it
 /// then reads from the hub names it.
 #[tokio::test]
@@ -1331,7 +1331,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     rotation::set_aside_expired(&a.paths, named, &machine(), made + rotation::ATTEMPT_MS + 1);
     assert_eq!(a.nonces(), vec![[7; 16]]);
     let aside: Vec<[u8; 16]> = FileSeedStore::for_instance(&a.paths).expired().iter().map(|s| s.nonce).collect();
-    assert_eq!(aside, vec![[9; 16]], "set aside, never deleted (R6 review A2)");
+    assert_eq!(aside, vec![[9; 16]], "set aside, never deleted (R6 review)");
     shared.cancel.cancel();
     let _ = task.await;
 }
@@ -1366,7 +1366,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert!(shared.cancel.is_cancelled());
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "the old seed stays");
     assert_eq!(restarts.load(Ordering::SeqCst), 0, "nothing promoted");
-    // Contract §12 #6: the evidence is the retired key's dispute statement
+    // The evidence is the retired key's dispute statement
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
@@ -1414,7 +1414,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert_eq!(hub.disputes().len(), 3);
 }
 
-/// The undelivered statement survives "disconnect" (#6 follow-up): a real
+/// The undelivered statement survives "disconnect": a real
 /// host told "replaced elsewhere" whose user disconnects instead of adding
 /// it again would otherwise delete the only evidence before the hub has it.
 /// Everything else in `agent/` goes; the statement is delivered after the
@@ -1463,7 +1463,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     assert!(!file.parent().unwrap().exists());
 }
 
-/// Contract §10: a hub refusing the key in use as `rotated` is not
+/// A hub refusing the key in use as `rotated` is not
 /// evidence. The agent asks for the chain on that socket; a hostile hub that
 /// shows no valid renewal gets `refused` — retried with backoff, the seed in
 /// use kept, no fresh seed, no alarm, nothing archived — and an honest one
@@ -1524,7 +1524,7 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
     drop(st);
     // That refused sign-in is no evidence; the retired key's dispute
-    // statement is, delivered on its own — no other sign-in (contract §12 #6).
+    // statement is, delivered on its own — no other sign-in.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
     let (_, body) = hub.disputes()[0].clone();
     assert!(b.hub.verify_rotate_dispute("m-1", renewal[0].seq(), &unhex64(body["sig"].as_str().unwrap())));
@@ -1592,7 +1592,7 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     }
 }
 
-/// R6 review A2: a staging set aside as expired — judged on the hub's word
+/// R6 review: a staging set aside as expired — judged on the hub's word
 /// (it took the key in use after the staging's day was over) — is never
 /// tried at sign-in; but when this device's own verified chain names it
 /// after all (a hub that committed it late), it is taken back, signed in
@@ -1632,7 +1632,7 @@ async fn a_staging_set_aside_as_expired_is_taken_back_when_the_chain_names_it() 
     assert!(logins[1..].iter().all(|l| l.by(&new, &hub.url)), "{logins:?}");
 }
 
-/// R6 review A5 (contract §11): the hub's own trouble — `error
+/// R6 review: the hub's own trouble — `error
 /// unavailable`, close 1011 — is transient: the staged key is tried again
 /// after the back-off, and the key in use never signs in on it. Only the
 /// hub's `denied` (it does not know the staged key) lets the key in use try.
@@ -1662,7 +1662,7 @@ async fn a_hub_in_trouble_never_makes_the_key_in_use_sign_in() {
     let _ = task.await;
 }
 
-/// R6 review A7: the chain renews this device to keys it holds in no
+/// R6 review: the chain renews this device to keys it holds in no
 /// staging that reads, while a staged file does not read. Not "replaced
 /// elsewhere" — no such alarm, nothing offered, no sign-in on purpose with
 /// the old key — but "staged key unreadable": alarmed, and the link stops

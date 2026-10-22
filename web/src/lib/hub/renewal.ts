@@ -7,7 +7,7 @@
  * - **What is due**: the chain says (`hostsToRotate`: the losses, and every
  *   host that let an exposed one control it); a host whose agent declared
  *   `rotate/1`, on a v3 account whose hub takes renewals, renews — any other
- *   keeps PR #117's re-enroll warning (`CloudAccount.reEnrollWarnings`).
+ *   keeps the re-enroll warning (`CloudAccount.reEnrollWarnings`).
  * - **Marked first**: each exposed host is registered `pending` at the hub
  *   (`PUT /v1/rotations/{host}` without a nonce) as soon as this page sees it:
  *   the hub suspends its device role meanwhile (§4.3) and every admin page
@@ -161,7 +161,7 @@ export interface RenewalRunnerOptions {
  */
 export async function checkStatement(chain: ChainState, d: HostDispute): Promise<KeptDispute | null> {
   if (d.kind !== "disputed" || d.seq === null || !d.sig) return null;
-  // Kept with its signature (R6 L6): what reads it back verifies it again.
+  // Kept with its signature (R6 review): what reads it back verifies it again.
   return (await chain.verifyRotateDispute(d.host, d.seq, d.sig)) ? { host: d.host, seq: d.seq, sig: hex(d.sig) } : null;
 }
 
@@ -194,8 +194,8 @@ export function assuredAfter(chain: ChainState, host: string, seq: number): bool
 /**
  * The current hosts isolated (§3.8, §7 decision 2): only by a dispute
  * statement checked here, of an automatic renewal with no renewal confirmed
- * on the device after it (R6 M1: `disputeIsolates`). The hub's `isolated`
- * flag alone is a note, never this (R6 W1: it does not lead the person to
+ * on the device after it (R6 review: `disputeIsolates`). The hub's `isolated`
+ * flag alone is a note, never this (R6 review: it does not lead the person to
  * remove the device): {@link flaggedHosts}.
  */
 export function isolatedHosts(chain: ChainState, statements: readonly KeptDispute[]): Set<string> {
@@ -206,7 +206,7 @@ export function isolatedHosts(chain: ChainState, statements: readonly KeptDisput
 
 /**
  * The current hosts the hub flags isolated without evidence checked here (an
- * unverified note, R6 W1): sealed no keys and renewed only confirmed on the
+ * unverified note, R6 review): sealed no keys and renewed only confirmed on the
  * device — the stricter side — but not isolated on this page. Not once a
  * renewal confirmed on the device is its latest.
  */
@@ -278,7 +278,7 @@ export class RenewalRunner {
     return (this.opts.now ?? Date.now)();
   }
 
-  /** The hub's clock now, as `GET /v1/rotations` last told it (`now_ms`, else its Date header); the page's clock only before any (R6 W3). */
+  /** The hub's clock now, as `GET /v1/rotations` last told it (`now_ms`, else its Date header); the page's clock only before any (R6 review). */
   hubNow(): number {
     const view = this.view;
     if (!view || view.nowMs === null) return this.now();
@@ -366,7 +366,7 @@ export class RenewalRunner {
       }
       this.checked = checked;
       this.retiredLogins = logins;
-      // Kept in this browser, only ever added to: the hub omitting them later (or a 404) undoes nothing (#7).
+      // Kept in this browser, only ever added to: the hub omitting them later (or a 404) undoes nothing.
       account.keepDisputes(checked);
       this.note();
       this.emit();
@@ -537,7 +537,7 @@ export class RenewalRunner {
     const now = this.hubNow();
     const evidence =
       row?.needsAssurance === true ||
-      // The hub's isolation flag with no evidence checked here: the stricter side, without isolating (R6 W1).
+      // The hub's isolation flag with no evidence checked here: the stricter side, without isolating (R6 review).
       this.opts.account.flagged?.(host) === true ||
       (row?.failure && (row.failure.reason === "not_acked" || row.failure.reason === "conflict")) ||
       this.runs.get(host)?.outcome === "needsCode" ||

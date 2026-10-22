@@ -580,7 +580,7 @@ test("alerts name chain v3's changes, with the flags in words for an addition an
   assert.ok(!c.alerts().some((x) => x.kind === "keyEpochs"), "the keys that come with an addition or a removal are not alerts of their own");
 });
 
-test("R1e: a renewal pause's alerts — its start names what it pauses; its completion only the control that comes back", async () => {
+test("a renewal pause's alerts — its start names what it pauses; its completion only the control that comes back", async () => {
   const { hub, a } = await account();
   const c = await pairAs(hub, a, { admin: true });
   await c.receiveMail();

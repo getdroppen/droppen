@@ -295,7 +295,7 @@ export class LogReader {
   private freshest: number | null;
   /** The newest signed head at exactly {@link confirmed}: what a saved reader restarts from. */
   private anchor: SignedHead | null;
-  /** Bumped by every change of {@link machineKey}: a head checked under one key never commits under the next (Codex round 7). */
+  /** Bumped by every change of {@link machineKey}: a head checked under one key never commits under the next. */
   private keyGen = 0;
 
   private constructor(

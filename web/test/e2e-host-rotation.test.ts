@@ -341,7 +341,7 @@ test("a retired key never names a device again — added, enrolled, back with th
   await tryPush(await upto("removalKeys"), add("d-k", fresh.signKey, old.dhKey));
 });
 
-test("R1b: a pending join made with a host's key before its renewal is neither approved nor activated after it", async () => {
+test("a pending join made with a host's key before its renewal is neither approved nor activated after it", async () => {
   const base = await upto("removalKeys");
   const k0 = await dev0();
   const oldHost = await fixtureKeys(R.hostKeys[0]);
@@ -384,7 +384,7 @@ test("R1b: a pending join made with a host's key before its renewal is neither a
   await tryPush(other, { type: "approveDevice", id: "d-ok" });
 });
 
-test("R1c: Rust's disputes verify here and re-sign to the same bytes; the ones that must not, do not", async () => {
+test("Rust's disputes verify here and re-sign to the same bytes; the ones that must not, do not", async () => {
   const state = await ChainState.verify(entriesOf(R.entries), undefined, hist());
   const d = R.disputes;
   assert.ok(d.valid.length >= 2 && d.invalid.length >= 7);
@@ -398,7 +398,7 @@ test("R1c: Rust's disputes verify here and re-sign to the same bytes; the ones t
   for (const c of d.invalid) assert.equal(await state.verifyRotateDispute(c.host, c.seq, h(c.signature)), false, c.name);
 });
 
-test("R1c: a dispute names the renewal by its hash, signed by the key that renewal retired", async () => {
+test("a dispute names the renewal by its hash, signed by the key that renewal retired", async () => {
   const entries = entriesOf(R.entries);
   const state = await ChainState.verify(entries, undefined, hist());
   const [old, first] = await Promise.all(R.hostKeys.slice(0, 2).map(fixtureKeys));
@@ -429,7 +429,7 @@ test("R1c: a dispute names the renewal by its hash, signed by the key that renew
   assert.throws(() => rotateDisputeBody("acct-1", "h-2", rotate, hashOf(rotate), new Uint8Array(33)), /32-byte/);
 });
 
-test("R1d: Rust's renewal policy chain verifies here step by step, and says what the policy is", async () => {
+test("Rust's renewal policy chain verifies here step by step, and says what the policy is", async () => {
   const p = R.policy;
   const entries = entriesOf(p.entries);
   entries.forEach((e, i) => assert.equal(hex(encodeEntry(e)), p.entries[i], `entry ${i} round-trips`));
@@ -444,7 +444,7 @@ test("R1d: Rust's renewal policy chain verifies here step by step, and says what
   for (const which of ["on", "off"]) assert.deepEqual(decodeEntry(h(p.encoding[which])).draft.action, { type: "setRenewalPolicy", alwaysAssured: which === "on" });
 });
 
-test("R1d: while the account asks for it, only renewals confirmed on the device go through; only an admin sets it", async () => {
+test("while the account asks for it, only renewals confirmed on the device go through; only an admin sets it", async () => {
   const st = await upto("removalKeys");
   assert.equal(st.alwaysAssured, false, "off until an admin turns it on");
   assert.equal(st.renewalPolicySeq, null);
@@ -492,7 +492,7 @@ test("R1d: while the account asks for it, only renewals confirmed on the device 
   assert.equal(on.clone().alwaysAssured, true);
 });
 
-test("R1e: Rust's renewal pause chain verifies here step by step — the same open pauses, bases, paused edges and control", async () => {
+test("Rust's renewal pause chain verifies here step by step — the same open pauses, bases, paused edges and control", async () => {
   const p = R.pause;
   const entries = entriesOf(p.entries);
   entries.forEach((e, i) => assert.equal(hex(encodeEntry(e)), p.entries[i], `entry ${i} round-trips`));
@@ -519,7 +519,7 @@ test("R1e: Rust's renewal pause chain verifies here step by step — the same op
   assert.equal(p.maxEntryLen, MAX_PAUSE_ENTRY_LEN, "one size bound on both sides");
 });
 
-test("R1e: a renewal pause overlays the accept policy — never an admin — and leaves the base alone; any admin ends it", async () => {
+test("a renewal pause overlays the accept policy — never an admin — and leaves the base alone; any admin ends it", async () => {
   const st = (await upto("removalKeys")).clone();
   const k0 = (await dev0()).key;
   const da = await freshKeys("d-a");
@@ -639,7 +639,7 @@ test("R1e: a renewal pause overlays the accept policy — never an admin — and
   assert.deepEqual(open.pausedEdges("m-1"), ["dev-2"]);
 });
 
-test("R1e: the largest renewal pauses fit every transport; a longer entry or count is refused, never cut", async () => {
+test("the largest renewal pauses fit every transport; a longer entry or count is refused, never cut", async () => {
   // As in Rust (handshake.rs): MAX_HELLO_ENTRIES pauses of MAX_PAUSE_ENTRY_LEN bytes fill a hello and a reply beside the
   // most info, within what a handshake message carries; one fills a `chain` frame.
   const st = await upto("removalKeys");
@@ -677,7 +677,7 @@ test("R1e: the largest renewal pauses fit every transport; a longer entry or cou
   assert.throws(() => encodeDraft(st.draft(byDev0, { type: "setAccept", host: "m-1", from: { type: "devices", ids: longList } }, 1)), /does not fit a u16/);
 });
 
-test("R1b: a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {
+test("a renewal's nonce is 16 bytes, in the proof and in the entry", async () => {
   const base = await upto("removalKeys");
   const oldHost = await fixtureKeys(R.hostKeys[0]);
   const good = await renewal(base, "h-2", oldHost.key, await freshKeys("nonce"));

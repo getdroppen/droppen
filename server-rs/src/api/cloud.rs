@@ -2013,7 +2013,7 @@ mod tests {
         assert!(dir.join("keys.json").exists());
     }
 
-    /// Contract §9 (`docs/host-identity-rotation.md` §3.8 「只剩退役钥时」):
+    /// `docs/host-identity-rotation.md` §3.8 「只剩退役钥时」:
     /// only a computer whose identity key was renewed elsewhere starts again
     /// with a new identity — its seed archived, never used again, the
     /// enrollment forgotten, a fresh seed — and is then signed in like a new one.

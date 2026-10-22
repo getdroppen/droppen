@@ -1,5 +1,5 @@
 //! The retired key's dispute statement (`docs/host-identity-rotation.md`
-//! §3.8 「证据：退役钥签的争议声明」, contract §12 #6).
+//! §3.8 「证据：退役钥签的争议声明」).
 //!
 //! When this device's own verified chain renewed it to keys it does not hold
 //! ([`super::rotation::Verdict::Foreign`]), whoever else held its key won. A
@@ -105,7 +105,7 @@ impl Statement {
 }
 
 /// `<instance dir>/agent/rotation-dispute-<seq>-<id>.json`, `<id>` naming the
-/// account, the host and the disputed entry's hash (Codex review 7): a seq is
+/// account, the host and the disputed entry's hash: a seq is
 /// only a place on one account's chain, and this instance may have disputed
 /// renewals in more than one enrollment (added again, signed up elsewhere).
 pub fn path(paths: &Paths, account: &str, host: &str, seq: u64, entry_hash: &str) -> PathBuf {
@@ -156,8 +156,8 @@ pub fn statement(st: &AgentState, current: &MachineIdentity, now: u64) -> Option
 
 /// Keep `s` (0600, written whole, the directory flushed) unless this very
 /// statement is kept already: `true` when it was written now. What is in its
-/// place is read and compared, never taken for it by its name alone (Codex
-/// review 7); one that does not read, or is another statement, gives way.
+/// place is read and compared, never taken for it by its name alone; one that
+/// does not read, or is another statement, gives way.
 pub fn keep(paths: &Paths, s: &Statement) -> Result<bool, String> {
     let path = s.path(paths);
     match std::fs::read(&path) {
@@ -579,7 +579,7 @@ mod tests {
         assert!(statement(&AgentState::enrolling("wss://hub.example", "a-1", "m-1", [0; 16], 5), &k0, 77).is_none());
     }
 
-    /// Codex review 7: a statement with the same seq from another enrollment
+    /// A statement with the same seq from another enrollment
     /// (another account, or this instance added again) is another statement —
     /// kept beside the first and delivered too, never dropped as a duplicate
     /// by its seq; the very same statement again is one; a file in its place

@@ -1788,7 +1788,7 @@ function RotateKeys({ account, link, due }: { account: CloudAccount; link: HubLi
 export function alertLevel(alert: ChainAlert): "confirm" | "high" | "info" {
   if (alert.kind === "setAdmin") return alert.on ? "high" : "info";
   if (alert.kind === "setHost" || alert.kind === "setAccept" || alert.kind === "removeDevice" || alert.kind === "keyEpochs" || alert.kind === "upgrade" || alert.kind === "rotateHostKey" || alert.kind === "renewalPause") return "info";
-  // Renewals confirmed on the device turned off (or never on): "is this you?" on every device (#178 L1). Turned on: a note.
+  // Renewals confirmed on the device turned off (or never on): "is this you?" on every device. Turned on: a note.
   if (alert.kind === "renewalPolicy") return alert.on ? "info" : "confirm";
   if (alert.kind === "passkey") return alert.passkey === "join" || alert.passkey === "slotSet" ? "confirm" : "info";
   return "confirm";

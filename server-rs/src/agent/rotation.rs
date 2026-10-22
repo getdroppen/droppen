@@ -35,7 +35,7 @@
 //!   place (the others go), and restarts its link — relays, control end and
 //!   the streams' writer with it — in this process ([`promote`]), which then
 //!   renews the push keys too (a new VAPID keypair, every subscription
-//!   forgotten: R6 review W4). AI sessions and terminals do not notice. A lying hub cannot make it give
+//!   forgotten: R6 review). AI sessions and terminals do not notice. A lying hub cannot make it give
 //!   up its seed: only its own verified chain promotes.
 //! - **Crash safety** — at start, staged seeds sign in first (the one the
 //!   chain names, then the newest); a hub that takes none of them — its
@@ -47,7 +47,7 @@
 //!   before the old key signed in again, or more than [`MAX_STAGINGS`]) is
 //!   set aside (`machine-key.expired-<nonce>.json`), never deleted: never
 //!   tried at sign-in, and taken back and promoted if the verified chain
-//!   names it after all ([`set_aside_expired`], R6 review A2).
+//!   names it after all ([`set_aside_expired`], R6 review).
 //! - **Replaced elsewhere** — a verified entry on its own chain renewing
 //!   this device's id to keys it did not stage (waiting or set aside): this
 //!   computer came back from a backup made before a renewal, or another copy
@@ -106,7 +106,7 @@ pub const STAGED_FOR_MS: u64 = 24 * 60 * 60 * 1000;
 /// the hub may still commit the earlier staging: each one it took stays
 /// until it expires, so that renewal is this device's, never "elsewhere".
 pub const MAX_STAGINGS: usize = 4;
-/// How long an attempt the page registered on the hub lives (contract §1):
+/// How long an attempt the page registered on the hub lives:
 /// a staging the hub did not answer within [`STAGE_WAIT`] is kept — unshown —
 /// this long from when it was made, in case the hub staged it after all.
 pub const ATTEMPT_MS: u64 = 10 * 60 * 1000;
@@ -331,7 +331,7 @@ pub enum Verdict {
     /// Renewed to keys that are neither the ones it runs with nor any staged
     /// seed's that reads — while a staged seed's file does not read: the
     /// renewal may be to that one. Never taken for a replacement elsewhere
-    /// (R6 review A7): alarmed, and the link stops until the file is put right.
+    /// (R6 review): alarmed, and the link stops until the file is put right.
     Unreadable,
 }
 
@@ -378,7 +378,7 @@ fn kept_stagings(store: &FileSeedStore, current: &MachineIdentity) -> Vec<Staged
 }
 
 /// [`verdict`] from this instance's files, changing none: every staging it
-/// keeps, waiting or set aside as expired (R6 review A1, A2).
+/// keeps, waiting or set aside as expired (R6 review).
 fn stored_verdict(paths: &Paths, st: &AgentState, current: &MachineIdentity) -> Verdict {
     let store = FileSeedStore::for_instance(paths);
     let kept = kept_stagings(&store, current);
@@ -394,7 +394,7 @@ pub(super) fn named_keys(st: &AgentState) -> Option<([u8; 32], [u8; 32])> {
 /// A staging set aside as expired whose keys are the ones the chain names
 /// (`keys`) after all — a renewal committed later than this device judged
 /// possible: taken back among the stagings, to be signed in with and
-/// promoted (R6 review A2).
+/// promoted (R6 review).
 fn restore_named(store: &FileSeedStore, keys: ([u8; 32], [u8; 32]), current: &MachineIdentity) {
     let uuid = store.load().ok().flatten().map(|s| s.uuid);
     let staged = store.expired().into_iter().find(|s| {
@@ -425,7 +425,7 @@ pub const FOREIGN_RENEWED_ELSEWHERE: &str = "renewed_elsewhere";
 /// `link.rotation.reason` of state `refused`: the hub refuses the key in
 /// use as `rotated`, and no chain it served shows a renewal (yet).
 pub const REFUSED_ROTATED: &str = "rotated";
-/// `link.rotation.reason` of state `unreadable` (R6 review A7).
+/// `link.rotation.reason` of state `unreadable` (R6 review).
 pub const UNREADABLE_REASON: &str = "staged_key_unreadable";
 
 /// What this device says about holding only a retired key — in the alarm,
@@ -483,7 +483,7 @@ fn expiry(staged: &StagedSeed) -> u64 {
 /// commit retires it in the same step — so no staging that expired before
 /// `since` was ever committed, nor can be by an honest hub. But that rests
 /// on the hub's word (it took the sign-in), so those are set aside, never
-/// deleted (R6 review A2): never tried at sign-in again, and taken back if
+/// deleted (R6 review): never tried at sign-in again, and taken back if
 /// this device's own verified chain names one after all ([`on_chain`]). One
 /// whose keys that chain names now (`named`, [`named_keys`]) is never set aside.
 pub(super) fn set_aside_expired(paths: &Paths, named: Option<([u8; 32], [u8; 32])>, current: &MachineIdentity, since: u64) {
@@ -719,7 +719,7 @@ pub(super) fn late_answer(shared: &Shared, value: &Value) {
 /// once its attempt's ten minutes are over by `now`; one it took stays until
 /// it expired before `since` — when the key in use signed in, so nothing
 /// committed it — and beyond [`MAX_STAGINGS`] the oldest the hub took goes.
-/// "Goes" is set aside, never deleted (R6 review A2, [`set_aside_expired`]):
+/// "Goes" is set aside, never deleted (R6 review, [`set_aside_expired`]):
 /// only asked while the chain names the key in use, so it names none of them.
 fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u64) {
     let mut kept: Vec<&StagedSeed> = Vec::new();
@@ -781,7 +781,7 @@ fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16,
     }
     // The account's renewal policy (`SetRenewalPolicy`, §3.4 rule 9): every
     // renewal confirmed on the device. The chain would never take another
-    // (R6 re-review N2): nothing is staged for one.
+    // (R6 re-review): nothing is staged for one.
     if chain.always_assured() && req.assurance != Assurance::OnDevice {
         return Err((
             409,
@@ -905,7 +905,7 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
 /// (which offer to add this device again under a new identity,
 /// [`re_enroll_fresh`]), and the link stops; the old seed stays until then.
 ///
-/// The evidence (contract §12 #6): a statement the retired key signs over
+/// The evidence: a statement the retired key signs over
 /// the hash of the renewal that retired it, kept here and delivered to the
 /// hub until it takes it ([`super::dispute`]). No sign-in with the retired
 /// key is made for it.
@@ -946,7 +946,7 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     }
 }
 
-/// R6 review A7: the chain renewed this device to keys it does not hold
+/// R6 review: the chain renewed this device to keys it does not hold
 /// while a staged seed's file does not read — the renewal may be to that
 /// one. Not "replaced elsewhere": nothing archived, nothing offered; alarmed
 /// ("staged key unreadable", the files named in the log), noted for the
@@ -972,7 +972,7 @@ fn unreadable(shared: &Arc<Shared>, store: &FileSeedStore) {
 }
 
 /// What this device says when a staged key it may have been renewed to does
-/// not read (R6 review A7).
+/// not read (R6 review).
 pub const STAGED_KEY_UNREADABLE: &str = "Staged key unreadable: this device's identity key was renewed, and the staged key it may \
      have been renewed to does not read (a damaged file beside its key). It stopped connecting: put the file right, or remove \
      this device and add it again.";
@@ -997,7 +997,7 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
 /// that key retired, and the hub keeps a retired key's sign-in as evidence
 /// against this very device. Never once its own chain names other keys for
 /// it ([`renewed_away`]: a renewal the link has not taken yet, or one made
-/// elsewhere) — R6 re-review N1.
+/// elsewhere) — R6 re-review.
 pub(super) fn device_role_may_sign_in(shared: &Shared) -> bool {
     device_role_may_sign_in_at(shared, now_ms())
 }
@@ -1015,7 +1015,7 @@ pub(super) fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
 /// archived ([`re_enroll_fresh`]), or one the chain it knows (`state.json`'s)
 /// renewed away to keys it holds in no staging, waiting or set aside
 /// ([`Verdict::Foreign`]). Never one the chain renewed to a key it staged —
-/// its own renewal, to be taken, not wiped (R6 review A1) — nor one whose
+/// its own renewal, to be taken, not wiped (R6 review) — nor one whose
 /// renewal a staged seed that does not read may hold ([`Verdict::Unreadable`]).
 pub fn seed_retired(paths: &Paths, identity: &MachineIdentity) -> bool {
     if archived(paths, identity) {
@@ -1060,7 +1060,7 @@ pub fn identity_for_enrolling(paths: &Paths) -> Result<MachineIdentity, String> 
 }
 
 /// `<instance dir>/agent/re-enroll-fresh.json`: [`re_enroll_fresh`] began and
-/// has not finished (R6 review, Info): whatever start comes next finishes it
+/// has not finished (R6 review): whatever start comes next finishes it
 /// ([`finish_re_enroll`]).
 fn re_enroll_marker(paths: &Paths) -> std::path::PathBuf {
     super::key_path(paths).with_file_name("re-enroll-fresh.json")
@@ -1073,7 +1073,7 @@ fn re_enroll_marker(paths: &Paths) -> std::path::PathBuf {
 /// Refused when this device's own chain renewed it to a key it staged
 /// (waiting, or set aside as expired) — that is its own renewal, which it
 /// takes; nothing is archived or forgotten — or when a staged key that does
-/// not read may be the one (R6 review A1, A7).
+/// not read may be the one (R6 review).
 ///
 /// Otherwise the seed in use is archived as `machine-key.retired-<ms>.json` —
 /// kept, never loaded again — and the staged ones dropped; the old enrollment
@@ -1202,7 +1202,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
         staged.clone()
     };
     let previous = super::control::machine_fingerprint(&shared.identity);
-    // The push keys follow the identity key (R6 review W4): noted before the
+    // The push keys follow the identity key (R6 review): noted before the
     // rename, so a crash after it still renews them at the next start.
     {
         shared.state.lock().expect("agent state").rotation.push_renew = true;
@@ -1377,7 +1377,7 @@ mod tests {
         let now = 100 * STAGED_FOR_MS;
         let st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
         let nonces = |store: &FileSeedStore| -> Vec<u8> { store.stagings().unwrap().iter().map(|s| s.nonce[0]).collect() };
-        // What "goes" is set aside, never deleted (R6 review A2).
+        // What "goes" is set aside, never deleted (R6 review).
         let aside = |store: &FileSeedStore| -> Vec<u8> {
             let mut n: Vec<u8> = store.expired().iter().map(|s| s.nonce[0]).collect();
             n.sort_unstable();
@@ -1420,7 +1420,7 @@ mod tests {
         assert_eq!(nonces(&store), vec![4, 5, 6]);
     }
 
-    /// §3.8 「只剩退役钥时」 (contract §9): "add this device again with a new
+    /// §3.8 「只剩退役钥时」: "add this device again with a new
     /// identity" archives the seed in use — kept, never loaded again —
     /// forgets the enrollment and whatever was staged, and makes a fresh seed.
     #[test]
@@ -1449,7 +1449,7 @@ mod tests {
         assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
     }
 
-    /// Contract §10: an archived (retired) seed is never loaded again — not
+    /// An archived (retired) seed is never loaded again — not
     /// by `load_or_create`, not after a crash left only the archive — and
     /// every enrollment signs up with a fresh seed when the one in use is
     /// retired on the chain this device knows, or one it archived.
@@ -1551,7 +1551,7 @@ mod tests {
         st
     }
 
-    /// R6 review A1: an honest host whose own renewal was committed — its
+    /// R6 review: an honest host whose own renewal was committed — its
     /// chain names a key it staged, waiting or set aside as expired — is
     /// never taken for one replaced elsewhere: no sign-in path (the local
     /// settings' sign-in, `agent enroll`) and no "add again" wipes it.
@@ -1601,7 +1601,7 @@ mod tests {
         assert!(archived(&paths, &current));
     }
 
-    /// R6 review A7: a staged seed whose file does not read, while the chain
+    /// R6 review: a staged seed whose file does not read, while the chain
     /// renewed this device to keys it holds in no other: its own verdict,
     /// never "replaced elsewhere" — the seed in use is not retired, and
     /// adding the device again is refused until the file is put right.
@@ -1631,7 +1631,7 @@ mod tests {
         assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Renewed);
     }
 
-    /// R6 review, Info: a crash inside "add this device again" — the seed
+    /// R6 review: a crash inside "add this device again" — the seed
     /// archived, `state.json` still there — is finished at the next start
     /// (or sign-up): never the old enrollment without its seed.
     #[test]
@@ -1682,7 +1682,7 @@ mod tests {
         }
     }
 
-    /// R6 review, Info: the confirmation code is never logged at WARN (nor
+    /// R6 review: the confirmation code is never logged at WARN (nor
     /// INFO) — the person reads it in the settings — only at DEBUG.
     #[test]
     fn the_confirmation_code_is_logged_at_debug_at_most() {

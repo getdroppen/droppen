@@ -2,10 +2,10 @@
  * Where this browser keeps, for each account it is a device of, the genesis
  * it pinned and what it verified of the account's chain since (the seen
  * record, `CloudAccount`): shared by every page of the browser, the pin set
- * once and the record moving forward only (#172, #182).
+ * once and the record moving forward only.
  *
  * That makes every write a read-compare-write, and it has to be one step
- * across pages (#183). IndexedDB `readwrite` transactions whose scopes
+ * across pages. IndexedDB `readwrite` transactions whose scopes
  * overlap run one after another across every page of the origin, each seeing
  * what the one before it committed: a compare done inside the transaction is
  * against what is stored, not against a page's own copy of it — which is all

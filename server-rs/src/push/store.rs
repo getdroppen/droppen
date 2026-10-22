@@ -343,7 +343,7 @@ pub async fn subscriptions(paths: &Paths) -> Vec<Subscription> {
 
 /// A new VAPID keypair, and every stored subscription forgotten — in one
 /// transaction — once this computer renewed its identity key
-/// (`docs/host-identity-rotation.md` §2.2, R6 review W4): whoever copied the
+/// (`docs/host-identity-rotation.md` §2.2, R6 review): whoever copied the
 /// old VAPID key and the endpoints can no longer reach a device that
 /// subscribes again, against the new key (`GET /api/push/vapid`). The one
 /// rotation [`vapid_key`] refuses to do by accident. An install that never
@@ -449,7 +449,7 @@ mod tests {
         assert_ne!(stored, first);
     }
 
-    /// R6 review W4: once the identity key is renewed, the VAPID key is new
+    /// R6 review: once the identity key is renewed, the VAPID key is new
     /// and every subscription made against the old one is gone — a copy of
     /// the old key and endpoints is useless once the pages subscribe again.
     #[tokio::test]

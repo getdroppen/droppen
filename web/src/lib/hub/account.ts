@@ -41,7 +41,7 @@
  *   differ where they overlap are a fork. It is kept in IndexedDB with the
  *   pinned genesis, and every write of either is a read-compare-write in one
  *   transaction, so no tab's stale view can lower it or pin over it
- *   (`seen-store.ts`, #183).
+ *   (`seen-store.ts`).
  * - **Alerts.** Every device-changing entry this device did not sign itself
  *   (another device added or removed, a recovery join, new recovery words) is
  *   an alert until it is acknowledged here.
@@ -255,7 +255,7 @@ const localAssuredKey = (account: string) => `rh.hub.renewal.localAssured.${acco
 const RENEW_RESTARTS = 3;
 
 /**
- * At most this many RESOLVED disputes kept (Codex round 1): a dispute that
+ * At most this many RESOLVED disputes kept: a dispute that
  * still isolates its host on this page's chain is never evicted, however many
  * come — an alarm is logged instead — so copies of one statement, or many of
  * another host's, cannot push out the one that isolates a host.
@@ -264,7 +264,7 @@ const MAX_KEPT_DISPUTES = 512;
 
 /**
  * How the tabs of this browser tell each other of disputes one of them
- * verified (§3.8, the Codex round): what one tab keeps reaches the others at
+ * verified (§3.8): what one tab keeps reaches the others at
  * once — their channels to a host isolated now close — even where storage
  * cannot be written. `null`: no other tab to tell.
  */
@@ -1080,21 +1080,21 @@ export class CloudAccount {
   private keptRaw: string | null | undefined = undefined;
   private keptParsed: KeptDispute[] = [];
   /**
-   * Every dispute this page kept or heard of from another tab, in memory too
-   * (Codex round 1): a storage write that fails — full, or not allowed — never
+   * Every dispute this page kept or heard of from another tab, in memory too:
+   * a storage write that fails — full, or not allowed — never
    * loses one, nor does another tab writing over it.
    */
   private keptMemory: KeptDispute[] = [];
   /**
-   * What re-verifying a kept dispute on this page's chain found (R6 L6), by
+   * What re-verifying a kept dispute on this page's chain found (R6 review), by
    * {@link disputeId}: `ok`, `bad` (dropped: it isolates nothing), or
    * `checking`. One not looked at yet — or that the chain cannot judge yet —
    * still counts, as a wait: isolation fails safe.
    */
   private keptChecks = new Map<string, "ok" | "bad" | "checking">();
   /**
-   * Bumped whenever what an automatic renewal may not go past changes (Codex
-   * round 5): this device's guard turned on, a dispute kept or heard of, the
+   * Bumped whenever what an automatic renewal may not go past changes:
+   * this device's guard turned on, a dispute kept or heard of, the
    * hub's isolated hosts. An attempt in flight that sees it move checks again
    * at once — and every attempt checks once more right before publication.
    */
@@ -3806,7 +3806,7 @@ export class CloudAccount {
     const { admitted, shutOut } = acceptChange(chain, host, accept);
     // A host that may have had its identity key copied, or is isolated, is let control no other one until it renewed it (§4.1, §7
     // decision 8). One that cannot renew (an older agent, the hub not taking renewals yet) stays under the re-enroll warning instead.
-    // Checked here, and again on the chain every (re)built batch goes on (Codex round 6).
+    // Checked here, and again on the chain every (re)built batch goes on.
     this.refuseExposedAdmission(chain, host, accept);
     const setAccept: Action = { type: "setAccept", host, from: accept };
     const checked = (c: ChainState): Action[] => {
@@ -4069,7 +4069,7 @@ export class CloudAccount {
   }
 
   /**
-   * Keep disputes this page verified (§3.8, the second-opinion review #7), so
+   * Keep disputes this page verified (§3.8), so
    * that what isolated a host here stays isolating it — whatever the hub says
    * or omits later, across reloads and tabs: read, merged, written, never
    * shrunk here. Isolation follows from them on this page's own chain
@@ -4123,13 +4123,13 @@ export class CloudAccount {
       this.keptParsed = parsed;
     }
     const all = this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
-    // Each read back is verified again on this page's chain (R6 L6); one that does not check out counts for nothing.
+    // Each read back is verified again on this page's chain (R6 review); one that does not check out counts for nothing.
     for (const d of all) this.checkKept(d);
     return all.filter((d) => this.keptChecks.get(disputeId(d)) !== "bad");
   }
 
   /**
-   * Verify kept dispute `d` on this page's chain, once (R6 L6): the statement
+   * Verify kept dispute `d` on this page's chain, once (R6 review): the statement
    * must be signed by the key the renewal at `d.seq` retired. A chain that
    * has no such entry yet cannot judge it: it is looked at again when asked
    * once the chain has it — until then it counts.
@@ -4165,7 +4165,7 @@ export class CloudAccount {
 
   /**
    * Whether the hub flags host `id` isolated with no evidence this page checked
-   * (R6 W1): an unverified note — keys are withheld from it and it renews only
+   * (R6 review): an unverified note — keys are withheld from it and it renews only
    * confirmed on the device, but nothing here treats it as isolated.
    */
   flagged(id: string): boolean {
@@ -4226,8 +4226,8 @@ export class CloudAccount {
 
   /**
    * Whether `host`'s renewal may be written on `chain` — the very chain the
-   * batch is signed on, on each build and every try on a newer head (Codex
-   * rounds 3–5): still a host; never ahead of an exposed host it lets control
+   * batch is signed on, on each build and every try on a newer head:
+   * still a host; never ahead of an exposed host it lets control
    * it; no device that could control it lost after the view its new key was
    * staged on (`superseded`: started again); and, unless it is confirmed on
    * the device, not isolated and not refused by the account's policy or this
@@ -4343,7 +4343,7 @@ export class CloudAccount {
                 this.checkRenewalOn(chain, host, rotation, assurance);
                 return [{ type: "rotateHostKey", rotation }];
               },
-              // …and once more right before publication, after the signing's awaits (Codex round 5): the guard or a dispute
+              // …and once more right before publication, after the signing's awaits: the guard or a dispute
               // that arrived meanwhile stops it there.
               (build) => this.appendBatch(build, { beforePublish: (base) => this.checkRenewalOn(base, host, rotation, assurance) }),
             );
@@ -4573,8 +4573,8 @@ export class CloudAccount {
 
   /**
    * {@link mustRenewFirst} on `chain` — the chain a batch is being built on
-   * (Codex round 6: a 409's rebuild goes on a newer one). The hub's isolated
-   * flag holds a host back too (R6 L5): unverified, it is no proof — but no
+   * (a 409's rebuild goes on a newer one). The hub's isolated
+   * flag holds a host back too (R6 review): unverified, it is no proof — but no
    * reason to let it control another host either.
    */
   mustRenewFirstOn(chain: ChainState, id: string): boolean {
@@ -4617,7 +4617,7 @@ export class CloudAccount {
 
   /**
    * What ending open pause `op` now would give back, and what stops it
-   * (§4.1 「卡住的暂停」, R6 L4): the edges that come back, the hosts among
+   * (§4.1 「卡住的暂停」, R6 review): the edges that come back, the hosts among
    * them whose base lets every device in, and each edge that must stay held,
    * with why — judged on this page's chain alone (`edgeHeld`). `null`: no
    * such open pause.
@@ -5962,7 +5962,7 @@ export function renewalHelps(x: Exposure): boolean {
  *   another renew once each.
  *
  * `renews` says which hosts can renew (every one when not given: the chain
- * alone). Nothing a host's own record says (PR #117's `controllers`) takes a
+ * alone). Nothing a host's own record says (its status's `controllers`) takes a
  * host out: a renewal is cheap, and a device that did connect could have
  * edited that record.
  */
@@ -6077,7 +6077,7 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       }
       case "rotateHostKey": {
         // A new identity: nothing anyone copied up to the view its seed was staged on is a pass to it any more. A loss
-        // after `staged_seq` is no remedy of this one (§4.1 「清除」, Codex round 4): the seed was made before it.
+        // after `staged_seq` is no remedy of this one (§4.1 「清除」): the seed was made before it.
         const upTo = Math.min(a.rotation.stagedSeq, seq);
         const x = exposed.get(a.rotation.host);
         if (x) {
@@ -6202,7 +6202,7 @@ export interface KeptDispute {
   seq: number;
   /**
    * The statement's signature (hex), by the key the renewal at `seq` retired
-   * (R6 L6): kept with it, so that whatever reads it back — a reload, another
+   * (R6 review): kept with it, so that whatever reads it back — a reload, another
    * tab — verifies it again on its own chain (`verifyRotateDispute`) before it
    * counts for anything but a wait.
    */
@@ -6269,7 +6269,7 @@ export function assuredRenewalAfter(chain: Pick<ChainState, "seq" | "entryAt">, 
 
 /**
  * Whether a verified dispute of the renewal at `d.seq` isolates `d.host` on
- * `chain` (§3.8, R6 M1): that renewal was automatic, no renewal confirmed on
+ * `chain` (§3.8, R6 review): that renewal was automatic, no renewal confirmed on
  * the device came after it, and the host is still one. A chain behind the one
  * it was verified on (no entry at `d.seq` yet) keeps it isolated: it cannot
  * know better.
@@ -6290,7 +6290,7 @@ export interface RenewalNote {
   pending: ReadonlySet<string>;
   /** The hosts isolated after their retired key showed up again (§3.8): by evidence this page checked only. */
   isolated: ReadonlySet<string>;
-  /** The hosts the hub flags isolated without evidence checked here (R6 W1): withheld keys, not isolated. */
+  /** The hosts the hub flags isolated without evidence checked here (R6 review): withheld keys, not isolated. */
   flagged?: ReadonlySet<string>;
 }
 

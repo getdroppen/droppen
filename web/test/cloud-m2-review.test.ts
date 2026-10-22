@@ -508,7 +508,7 @@ function pageStorage(backing: Map<string, string>) {
   };
 }
 
-test("review of #172, #183: a page on a stale copy of localStorage no longer lowers the record — it holds its view against the record as stored", async () => {
+test("review: a page on a stale copy of localStorage no longer lowers the record — it holds its view against the record as stored", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const backing = browserStorage(a.store).values;
@@ -535,7 +535,7 @@ test("review of #172, #183: a page on a stale copy of localStorage no longer low
   hub.chain = full;
 });
 
-test("review of #172: the pin is read, compared and written under one Web Lock per account, and the seen record with it", async () => {
+test("review: the pin is read, compared and written under one Web Lock per account, and the seen record with it", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const storage = browserStorage(a.store);
@@ -743,7 +743,7 @@ test("re-review: two first set-ups at once: the genesis pinned first stands, wit
   assert.deepEqual(seenRecord(seen, tabB.account), record, "and B's record");
 });
 
-test("re-review of #172, #183: an open page puts a lowered record back when another page writes it (the store says so), when it comes back into view, and as it starts watching", async () => {
+test("re-review: an open page puts a lowered record back when another page writes it (the store says so), when it comes back into view, and as it starts watching", async () => {
   const { hub, a } = await setup();
   await a.sync();
   await a.append({ type: "setRecoveryKey", key: null });
@@ -1036,7 +1036,7 @@ test("third look: a first load retries only a checkpoint still moving; a contrad
   assert.equal(served, 1, "not fetched again");
 });
 
-// ---- #183: the seen record in IndexedDB ---------------------------------
+// ---- the seen record in IndexedDB ---------------------------------
 
 /** One page's handle on the browser's seen records, which counts (and says) the updates the page asks for. */
 function pageSeen(seen: MemorySeenStore) {
@@ -1062,7 +1062,7 @@ async function until(done: () => boolean, what: string): Promise<void> {
   assert.ok(done(), what);
 }
 
-test("#183: two pages writing the seen record at once never leave it lower, whichever goes first", async () => {
+test("two pages writing the seen record at once never leave it lower, whichever goes first", async () => {
   for (const higherFirst of [true, false]) {
     const { hub, a, b } = await setup();
     await a.sync();
@@ -1098,7 +1098,7 @@ test("#183: two pages writing the seen record at once never leave it lower, whic
   }
 });
 
-test("#183: an older page's record in localStorage counts where it is proven one chain with the store's and goes past it, never lower, is a fork where it disagrees, and is left there", async () => {
+test("an older page's record in localStorage counts where it is proven one chain with the store's and goes past it, never lower, is a fork where it disagrees, and is left there", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const storage = browserStorage(a.store);
@@ -1131,7 +1131,7 @@ test("#183: an older page's record in localStorage counts where it is proven one
   assert.equal(seenRecord(seen, a.account).head, after.head, "the store's record stays as it was");
 });
 
-test("#183 review: an older page's higher record that does not show it holds the store's checkpoint is not taken for it — both are held, and a chain missing either is a fork", async () => {
+test("review: an older page's higher record that does not show it holds the store's checkpoint is not taken for it — both are held, and a chain missing either is a fork", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   await b.sync();
@@ -1174,7 +1174,7 @@ test("#183 review: an older page's higher record that does not show it holds the
   assert.equal(seenRecord(seen, a.account).head, ours);
 });
 
-test("#183 review: an older page's newer record, written after this page's copy of localStorage was taken, is not deleted", async () => {
+test("review: an older page's newer record, written after this page's copy of localStorage was taken, is not deleted", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -1204,7 +1204,7 @@ test("#183 review: an older page's newer record, written after this page's copy 
   assert.equal(seenRecord(seen, a.account).seenThrough, r2.seenThrough);
 });
 
-test("#183 review: the pin is decided in the store — a page whose copy of localStorage shows no pin cannot pin another genesis over another page's", async () => {
+test("review: the pin is decided in the store — a page whose copy of localStorage shows no pin cannot pin another genesis over another page's", async () => {
   const hub = new FakeKeysHub();
   const first = await hub.device("tok");
   const seen = browserSeen(first.store);
@@ -1233,7 +1233,7 @@ test("#183 review: the pin is decided in the store — a page whose copy of loca
   assert.deepEqual(seenRecord(seen, tabB.account), record, "with B's record");
 });
 
-test("#183 review: a pin only older pages kept (localStorage) is taken into the store; another one beside the store's is a fork", async () => {
+test("review: a pin only older pages kept (localStorage) is taken into the store; another one beside the store's is a fork", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -1248,7 +1248,7 @@ test("#183 review: a pin only older pages kept (localStorage) is taken into the 
   await assert.rejects(hub.reload(a), isFork);
 });
 
-test("#183 review: a view whose record could not be written is not installed, and is tried again", async () => {
+test("review: a view whose record could not be written is not installed, and is tried again", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -1280,7 +1280,7 @@ test("#183 review: a view whose record could not be written is not installed, an
   assert.equal(seenRecord(seen, a.account).seenThrough, seq + 1);
 });
 
-test("#183 review: a store that fails on the set-up screen is tried again, not taken for another chain", async () => {
+test("review: a store that fails on the set-up screen is tried again, not taken for another chain", async () => {
   const hub = new FakeKeysHub();
   const tabA = await hub.device("tok");
   const seen = browserSeen(tabA.store);
@@ -1306,7 +1306,7 @@ test("#183 review: a store that fails on the set-up screen is tried again, not t
   assert.equal(tabB.forked, null);
 });
 
-test("#183: a page pinning on a stale copy of localStorage (no pin in it yet) keeps another page's record of the same chain", async () => {
+test("a page pinning on a stale copy of localStorage (no pin in it yet) keeps another page's record of the same chain", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const backing = browserStorage(a.store).values;
@@ -1325,7 +1325,7 @@ test("#183: a page pinning on a stale copy of localStorage (no pin in it yet) ke
   assert.equal(seenRecord(seen, a.account).seenThrough, seq + 2, "not replaced by the stale page's lower view");
 });
 
-test("#183: a page hears another page's write of the record through the store, and holds it against its own view", async () => {
+test("a page hears another page's write of the record through the store, and holds it against its own view", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const listening = pageSeen(browserSeen(a.store));
@@ -1342,7 +1342,7 @@ test("#183: a page hears another page's write of the record through the store, a
   assert.equal(listening.updates, stopped, "and no more once it stopped watching");
 });
 
-test("#183: where IndexedDB is not to be had, the record stays in localStorage, as before", async () => {
+test("where IndexedDB is not to be had, the record stays in localStorage, as before", async () => {
   const hub = new FakeKeysHub();
   const store = new MemoryKeyStore();
   const storage = browserStorage(store);
@@ -1358,7 +1358,7 @@ test("#183: where IndexedDB is not to be had, the record stays in localStorage, 
   hub.chain = full;
 });
 
-// ---- #183 re-review: a pin another page made ------------------------------
+// ---- re-review: a pin another page made ------------------------------
 
 /** `seen` as a page that hears nothing of other pages' writes has it (a message lost; an older page writing only localStorage). */
 function deafSeen(seen: MemorySeenStore): SeenStore {
@@ -1429,7 +1429,7 @@ async function pairTwoPages(
   return { first, second };
 }
 
-test("#183 re-review: a page that took the chain naming its device just before another page pinned the account still vouches for nothing behind the record", async () => {
+test("re-review: a page that took the chain naming its device just before another page pinned the account still vouches for nothing behind the record", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await a.createGenesis(false);
@@ -1446,7 +1446,7 @@ test("#183 re-review: a page that took the chain naming its device just before a
   hub.chainServed = null;
 });
 
-test("#183 re-review: an open page takes in a pin another page made — as the store says it was written, or as the page comes back into view — and is not sent to pair again", async (t) => {
+test("re-review: an open page takes in a pin another page made — as the store says it was written, or as the page comes back into view — and is not sent to pair again", async (t) => {
   for (const heard of ["store", "visibility", "unwatched"] as const) {
     await t.test(heard, async () => {
       const hub = new FakeKeysHub();
@@ -1474,7 +1474,7 @@ test("#183 re-review: an open page takes in a pin another page made — as the s
   }
 });
 
-test("#183 re-review: a store that twice will not take the pin of the genesis this device just made leaves it in localStorage — the first user key is kept — and the next view takes it into the store", async (t) => {
+test("re-review: a store that twice will not take the pin of the genesis this device just made leaves it in localStorage — the first user key is kept — and the next view takes it into the store", async (t) => {
   t.mock.method(console, "warn", () => undefined);
   const hub = new FakeKeysHub();
   const store = new MemoryKeyStore();
@@ -1515,9 +1515,9 @@ test("#183 re-review: a store that twice will not take the pin of the genesis th
   assert.equal(again.chain!.seq, a.chain!.seq);
 });
 
-// ---- #183 third review ------------------------------------------------------
+// ---- third review ------------------------------------------------------
 
-test("#183 third review: what a page records is written where older pages read it too, so one of them that a hub keeps behind vouches for nothing", async () => {
+test("third review: what a page records is written where older pages read it too, so one of them that a hub keeps behind vouches for nothing", async () => {
   const { hub, a } = await setup();
   await a.sync();
   const storage = browserStorage(a.store);
@@ -1534,7 +1534,7 @@ test("#183 third review: what a page records is written where older pages read i
   assert.equal((JSON.parse(storage.getItem(`rh.hub.seen.${a.account}`)!) as StoredSeen).seenThrough, a.chain!.seq, "the record raised where older pages read it");
 });
 
-test("#183 third review: what a page records where older pages read it never lowers theirs, nor replaces one it cannot prove is the same chain", async (t) => {
+test("third review: what a page records where older pages read it never lowers theirs, nor replaces one it cannot prove is the same chain", async (t) => {
   await t.test("higher, not proven", async () => {
     const { a } = await setup();
     await a.sync();
@@ -1566,7 +1566,7 @@ test("#183 third review: what a page records where older pages read it never low
   });
 });
 
-test("#183 third review: a page whose newer view could not be recorded vouches for nothing — not for the older head it still shows — until it takes that view", async () => {
+test("third review: a page whose newer view could not be recorded vouches for nothing — not for the older head it still shows — until it takes that view", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   const seen = browserSeen(a.store);
@@ -1598,7 +1598,7 @@ test("#183 third review: a page whose newer view could not be recorded vouches f
   assert.equal(vouched.seq, seq + 1, "once the store takes the record, it takes the view and vouches for that");
 });
 
-test("#183 third review: a page whose chain does not start with the genesis this browser pinned, or contradicts the record at its own head, vouches for nothing: a fork", async (t) => {
+test("third review: a page whose chain does not start with the genesis this browser pinned, or contradicts the record at its own head, vouches for nothing: a fork", async (t) => {
   await t.test("another genesis pinned", async () => {
     const { a } = await setup();
     await a.sync();
@@ -1619,7 +1619,7 @@ test("#183 third review: a page whose chain does not start with the genesis this
   });
 });
 
-test("#183 third review: a sync that takes in more entries than the record keeps hashes of still raises the record where older pages read it", async () => {
+test("third review: a sync that takes in more entries than the record keeps hashes of still raises the record where older pages read it", async () => {
   const { hub, a, b } = await setup();
   await a.sync();
   const storage = browserStorage(a.store);

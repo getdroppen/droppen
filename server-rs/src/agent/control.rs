@@ -259,12 +259,12 @@ impl Control {
     pub fn attach(&self, env: LinkEnv) {
         crate::aggregator::sweep_deleted(&self.paths);
         // Adding this device again under a new identity, cut short by a
-        // crash: finished before anything starts (R6 review, Info).
+        // crash: finished before anything starts (R6 review).
         if let Err(error) = super::rotation::finish_re_enroll(&self.paths) {
             tracing::error!(%error, "cannot finish adding this device again under a new identity");
         }
         // A dispute statement the hub has not taken yet: delivered again
-        // (it outlives the enrollment it disputes: contract §12 #6).
+        // (it outlives the enrollment it disputes).
         super::dispute::deliver(&self.paths);
         let _ = self.env.set(env);
     }
@@ -491,7 +491,7 @@ impl Control {
     /// Before a sign-in shows this computer's keys: when the seed in use is
     /// one it must never use again — archived, or replaced elsewhere on the
     /// chain it knows ([`super::rotation::seed_retired`]: never its own
-    /// renewal to a key it staged, R6 review A1) — it never signs up again:
+    /// renewal to a key it staged, R6 review) — it never signs up again:
     /// the link stops, the seed is archived, the old enrollment forgotten and
     /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
     pub async fn renew_retired_seed(&self) -> Result<bool, ControlError> {
@@ -919,7 +919,7 @@ mod tests {
             .unwrap();
         store.promote(&[1; 16]).unwrap();
         let new = MachineIdentity::from_seed(&[9; 32]);
-        // R6 review W4: the promotion noted that the push keys follow; a
+        // R6 review: the promotion noted that the push keys follow; a
         // device subscribed against the old VAPID key.
         let old_vapid = crate::push::store::vapid_public(&paths).await.unwrap();
         let point = {
@@ -957,7 +957,7 @@ mod tests {
         assert!(!server.is_cancelled() && !session.is_cancelled());
     }
 
-    /// R6 review, Info: "add this device again" cut short by a crash after
+    /// R6 review: "add this device again" cut short by a crash after
     /// the seed was archived (its `state.json` still there) is finished when
     /// the control comes up: the instance is not enrolled, with a fresh seed,
     /// and the link does not start as the old enrollment.

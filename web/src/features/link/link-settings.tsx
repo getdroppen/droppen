@@ -626,7 +626,7 @@ export function AggregatorLine({
 
 /**
  * `GET /api/cloud`'s `link.rotation` (the agent, R3; docs/host-identity-rotation.md
- * §3.5, §3.7, §3.8 and contract §4, §10): `staged` with the code a renewal
+ * §3.5, §3.7, §3.8): `staged` with the code a renewal
  * confirmed on the device shows while it lasts, `renewed` after one, `foreign`
  * once a verified renewal of its own id names keys it never made (`reason`
  * `renewed_elsewhere`: its own backup from before a renewal looks the same), and

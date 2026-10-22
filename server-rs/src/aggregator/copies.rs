@@ -343,7 +343,7 @@ enum Update {
 }
 
 /// What a stream's task sends: the host identity key it verifies heads
-/// under, and the update (Codex review M3).
+/// under, and the update.
 type Report = ([u8; 32], Update);
 
 /// Where a stream's task fetches pages: the device session, renewed in place.
@@ -443,7 +443,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
     let key = Key::new(&want.host, want.kind, &want.name);
     let (mut follower, fold) = started(&want, machine_key, &retired, &keys, start);
     // Everything this task tells, and every copy it shows, carries the host
-    // key it verifies under (Codex review M3): once the host renewed it, a
+    // key it verifies under: once the host renewed it, a
     // task cancelled for that — but still running a frame that won the race
     // with the cancel — has nothing taken from it, by the copies task
     // ([`Live::admits`]) or the gateway ([`LiveCopies::set_signers`]).
@@ -735,7 +735,7 @@ struct Copies {
     /// No connection before this (ms): `device_removed`, `host_devices_off`,
     /// `rotation_pending`.
     quiet_until: Option<u64>,
-    /// Parked (R6 review A4): `rotation_pending` at this chain version — the
+    /// Parked (R6 review): `rotation_pending` at this chain version — the
     /// quiet ends as soon as the chain moves ([`Copies::unpark_if_moved`]).
     parked: Option<u64>,
     /// The device session and when (ms) it expires.
@@ -1015,7 +1015,7 @@ impl Copies {
                 // This computer's identity renewal is pending: parked until
                 // the chain moves (the renewal written) or REFUSED_EVERY —
                 // never a removal, nothing deleted, and not retried on the
-                // back-off meanwhile (R6 review A4).
+                // back-off meanwhile (R6 review).
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
                 self.session = None;
                 self.parked = Some(*self.env.chain.borrow());
@@ -1258,7 +1258,7 @@ impl Live {
     /// Whether an update about `want` still counts: its stream is followed
     /// now, as that very want, for a host followed now — and, from a stream
     /// task (`signer`: the host key it verifies under), under the host's
-    /// identity key now (Codex review M3): a renewal cancels the old tasks and
+    /// identity key now: a renewal cancels the old tasks and
     /// follows the same want again, and what the old ones had queued is
     /// theirs, not the new ones'.
     fn admits(&self, want: &Want, signer: Option<[u8; 32]>) -> bool {
@@ -1566,7 +1566,7 @@ impl Live {
             }
             Update::Failed { want, error, unauthorized } => {
                 // A task cancelled for its host's renewal fails on what the
-                // new key signs: not the new task's failure (Codex review M3).
+                // new key signs: not the new task's failure.
                 if signer.is_some_and(|k| self.host(&want.host).is_some_and(|h| h.machine_key != k)) {
                     return Ok(());
                 }
@@ -1879,8 +1879,8 @@ mod tests {
     /// Host identity renewal (the hub phase's constraint): while this
     /// computer's renewal is pending the hub suspends its device role —
     /// `rotation_pending` on `/v1/session` or `/v1/client`. Not a removal:
-    /// nothing is deleted, nothing goes quiet for an hour. Parked (R6 review
-    /// A4) — no connection on the back-off — until the chain moves.
+    /// nothing is deleted, nothing goes quiet for an hour. Parked — no connection
+    /// on the back-off — until the chain moves (R6 review).
     #[tokio::test]
     async fn a_suspended_device_role_is_parked_until_the_chain_moves_not_taken_for_a_removal() {
         let dir = tempfile::tempdir().unwrap();
@@ -2190,7 +2190,7 @@ mod tests {
         assert_eq!(resume_key(&hosts[0], None), joined.sign_public());
     }
 
-    /// Codex review M3: a host renewed its identity key — its stream tasks
+    /// A host renewed its identity key — its stream tasks
     /// are cancelled and the same wants followed again under the new key.
     /// What an old task had queued (a copy, a heartbeat, a failure) is not
     /// taken for the new task's: not stored, not labelled with the new key,
