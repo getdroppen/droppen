@@ -14,11 +14,12 @@
 // a modified page can do anything the browser can, keys included; the
 // cross-references are links to anchors that exist; its enumerations are
 // lists and its key terms bold, by a markup that leaves nothing unrendered,
-// with every translation in its English line's shape; vulnerabilities go to
-// the security address; it names no Hub setting.
+// with every translation in its English line's shape; every path in the
+// repository it names links there on GitHub; vulnerabilities go to the
+// security address; it names no Hub setting.
 import * as React from "react";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -30,6 +31,7 @@ import PricingPage from "../src/features/landing/pricing.js";
 import PrivacyPage from "../src/features/landing/privacy.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, publicPage, SECURITY_PATH } from "../src/features/landing/route.js";
 import SecurityPage, { linked, RENEWAL_PARTS, SECURITY_EMAIL, SECURITY_SECTIONS, SECURITY_UPDATED } from "../src/features/landing/security/security.js";
+import { buildCommit, repoHref } from "../src/features/landing/security/repo-link.js";
 import { securityBundles } from "../src/features/landing/security/security-copy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
@@ -60,10 +62,10 @@ function render(element: React.ReactElement, lng: string): string {
 }
 const draw = (lng: string, signedIn = false) => render(<SecurityPage signedIn={signedIn} />, lng);
 
-// A key term's `<strong>` sits inside its sentence: no space for it.
+// A key term's `<strong>` and a link sit inside their sentence: no space for them.
 const text = (html: string) =>
   html
-    .replace(/<\/?strong\b[^>]*>/g, "")
+    .replace(/<\/?(?:strong|a)\b[^>]*>/g, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -256,8 +258,13 @@ function misnested(html: string): string[] {
   return bad;
 }
 
-/** A translated line's shape: its lines, list items and key terms. */
-const shape = (line: string) => ({ lines: line.split("\n").length, items: (line.match(/(?:^|\n)- /g) ?? []).length, bold: (line.match(/\*\*/g) ?? []).length / 2 });
+/** A translated line's shape: its lines, list items, key terms and links. */
+const shape = (line: string) => ({
+  lines: line.split("\n").length,
+  items: (line.match(/(?:^|\n)- /g) ?? []).length,
+  bold: (line.match(/\*\*/g) ?? []).length / 2,
+  links: (line.match(/\[\[/g) ?? []).length,
+});
 
 test("the markup: key terms bold, a reason after a term muted, list items in a real list after their lead-in", () => {
   const html = renderToStaticMarkup(<div>{linked("Lead with **a term** and [[a link|t2-6]]:\n- **one** (why, see [[2.6|t2-6]])\n- **二**（理由（内））\n- three\nA closing line.")}</div>);
@@ -307,7 +314,7 @@ test("the markup is all rendered in every language, as valid HTML", () => {
   }
 });
 
-test("every translation has its English line's shape: the same lines, list items and key terms", () => {
+test("every translation has its English line's shape: the same lines, list items, key terms and links", () => {
   const keys = pageKeys();
   assert.ok(keys.filter((k) => k.includes("\n- ") || k.startsWith("- ")).length >= 25);
   assert.ok(keys.filter((k) => k.includes("**")).length >= 100);
@@ -316,6 +323,42 @@ test("every translation has its English line's shape: the same lines, list items
       const line = securityBundles[lng][key];
       if (line !== undefined) assert.deepEqual(shape(line), shape(key), `${lng}: ${key.slice(0, 80)}`);
     }
+  }
+});
+
+const REPO = "https://github.com/getdroppen/droppen";
+
+test("every repository path on the page links to it on GitHub, at `main` until the served build names its commit; the repository's name links to the repository", () => {
+  // Which commit a `/.well-known/droppen-build` answer names, and where a path links at a revision.
+  assert.equal(buildCommit({ commit: "0123abcd", web: { digest: "sha256:00" } }), "0123abcd");
+  for (const answer of [{ commit: null }, { commit: "main" }, { commit: "0123abcd/../x" }, { commit: "0123ab" }, {}, null, "0123abcd"]) assert.equal(buildCommit(answer), null);
+  assert.equal(repoHref("scripts/verify-web.mjs", "0123abcd"), `${REPO}/blob/0123abcd/scripts/verify-web.mjs`);
+  assert.equal(repoHref("server-rs/crates/rh-proto", "main"), `${REPO}/tree/main/server-rs/crates/rh-proto`);
+  assert.equal(repoHref("/", "0123abcd"), REPO);
+
+  const root = new URL("../../", import.meta.url);
+  for (const lng of ["en", ...LANGS]) {
+    // Up to the footer, whose own "Source code" link is not a path.
+    const html = draw(lng);
+    const page = html.slice(0, html.lastIndexOf("<a ", html.indexOf('data-testid="footer-source"')));
+    const links = [...page.matchAll(/<a href="(https:\/\/github\.com\/[^"]*)"[^>]*>([^<]*)<\/a>/g)].map(([, href, label]) => ({ href: href!, label: label! }));
+    const paths = links.filter((l) => l.href !== REPO);
+    assert.ok(paths.length >= 11, `${lng}: ${paths.length} paths`);
+    for (const { href, label } of paths) {
+      // A static render never asks the server: `main`; `tree/` for a directory, `blob/` for a file, that exists.
+      const [, kind, path] = href.match(/^https:\/\/github\.com\/getdroppen\/droppen\/(tree|blob)\/main\/(.+)$/) ?? [];
+      assert.ok(kind && path, `${lng}: ${href}`);
+      assert.ok(path.endsWith(label), `${lng}: "${label}" links ${path}`);
+      assert.equal(kind, statSync(new URL(path, root)).isDirectory() ? "tree" : "blob", path);
+    }
+    // The repository's name, wherever the page gives it (the source in 8.3, its Security tab in 8.6).
+    const repo = links.filter((l) => l.href === REPO);
+    assert.equal(repo.length, 2, lng);
+    assert.ok(repo.every((l) => l.label === "github.com/getdroppen/droppen"), lng);
+    // No path-looking word left unlinked: only the protocol's labels and a release's asset, which are not paths in it.
+    const words = text(page.replace(/<a href="https:\/\/github\.com\/[^"]*"[^>]*>[^<]*<\/a>/g, " "));
+    const left = [...words.matchAll(/(?<![\w./-])(?:[\w-]+\/)+[\w.-]+|[\w-]+\.(?:md|mjs|sh|json|rs|tsx?)\b|github\.com\/\S+/g)].map((m) => m[0]);
+    assert.deepEqual([...new Set(left)].filter((w) => w !== "rh/v1" && w !== "web-manifest.json"), [], lng);
   }
 });
 

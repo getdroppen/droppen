@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
 import { FooterLine, PublicHeader, Section, SectionHead } from "../page-kit";
 import { Formula, FormulaProvider } from "./formula";
+import { RepoLink } from "./repo-link";
 import { securityBundles } from "./security-copy";
 
 /*
@@ -54,6 +55,8 @@ const prose = "max-w-[46em] text-[13px] leading-[21px] text-muted";
  * A translated line in the page's mini-markup, written the same way in every
  * language, so each line stays one key (the English):
  * - `[[text|anchor]]`, a cross-reference: `<a href="#anchor">text</a>`;
+ * - `[[path]]` or `[[text|path]]` (a target that is not an anchor): a path
+ *   in the repository, linked on GitHub (`RepoLink`); `|/` is the repository;
  * - `**term**`, a key term: `<strong>` (it may hold a cross-reference);
  * - `**term** (reason)` or `**term**（理由）`: a parenthesis that follows a key
  *   term at once (after one space, or none) is that term's reason, kept in
@@ -91,7 +94,7 @@ function hasLines(node: ReactNode): node is string {
   return typeof node === "string" && node.includes("\n");
 }
 
-const MARKUP = /\*\*(.+?)\*\*|\[\[([^\]|]+)\|([a-z0-9-]+)\]\]/g;
+const MARKUP = /\*\*(.+?)\*\*|\[\[([^\]|]+)(?:\|([^\]|]+))?\]\]/g;
 
 /** One line's key terms, their reasons and its cross-references. */
 function inline(line: string): ReactNode {
@@ -117,11 +120,17 @@ function inline(line: string): ReactNode {
         );
         marks.lastIndex = why.end;
       }
-    } else {
+    } else if (/^[a-z0-9-]+$/.test(m[3] ?? m[2]!)) {
       out.push(
-        <a key={m.index} href={`#${m[3]}`} className="text-fg underline underline-offset-4 hover:no-underline">
+        <a key={m.index} href={`#${m[3] ?? m[2]}`} className="text-fg underline underline-offset-4 hover:no-underline">
           {m[2]}
         </a>,
+      );
+    } else {
+      out.push(
+        <RepoLink key={m.index} path={m[3] ?? m[2]!}>
+          {m[2]}
+        </RepoLink>,
       );
     }
     at = marks.lastIndex;
@@ -797,7 +806,7 @@ function ThreatsSection() {
         <P>{t("The app at droppen.app comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
         <List
           items={[
-            t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, written when the release is built (scripts/release-public.sh); the page's Content-Security-Policy allows only its own scripts. A script, scripts/verify-web.mjs, compares what droppen.app serves with a release's manifest."),
+            t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, written when the release is built ([[scripts/release-public.sh]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest."),
             t("A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one."),
             t("For high assurance, **use the local web app** that the droppen program serves from its own binary, or the **desktop app**."),
           ]}
@@ -858,21 +867,25 @@ function VerifySection() {
         <P>{t("Renewal adds one more, {{label}} ([[section 06|renewal]]).", { label: "rh/v1 rotate-dispute" })}</P>
       </Topic>
       <Topic n="8.3" title={t("The code")}>
-        <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the **AGPL-3.0**, and the protocol and client libraries ({{crates}}) under **MIT or Apache-2.0**; their source code is at github.com/getdroppen/droppen. Droppen Hub is not open source.", { crates: "rh-proto, rh-relay, rh-client" })}</P>
+        <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the **AGPL-3.0**, and the protocol and client libraries ({{crates}}) under **MIT or Apache-2.0**; their source code is at [[github.com/getdroppen/droppen|/]]. Droppen Hub is not open source.", { crates: "rh-proto, rh-relay, rh-client" })}</P>
         <Spec>
-          <Line>{"server-rs/crates/rh-proto (Rust) · web/src/lib/e2e (TypeScript)"}</Line>
-          <Line>{"server-rs/crates/rh-relay · server-rs/crates/droppen-relay · server-rs/crates/rh-client"}</Line>
+          <Line>
+            <RepoLink path="server-rs/crates/rh-proto" /> (Rust) · <RepoLink path="web/src/lib/e2e" /> (TypeScript)
+          </Line>
+          <Line>
+            <RepoLink path="server-rs/crates/rh-relay" /> · <RepoLink path="server-rs/crates/droppen-relay" /> · <RepoLink path="server-rs/crates/rh-client" />
+          </Line>
         </Spec>
       </Topic>
       <Topic n="8.4" title={t("Shared test vectors")}>
-        <P>{t("Each implementation writes test vectors (vectors/rust.json, vectors/ts.json) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains in which every refusal gives the same error\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.")}</P>
+        <P>{t("Each implementation writes test vectors ([[vectors/rust.json|server-rs/crates/rh-proto/vectors/rust.json]], [[vectors/ts.json|server-rs/crates/rh-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains in which every refusal gives the same error\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.")}</P>
       </Topic>
       <Topic n="8.5" title={t("The page you are reading")}>
-        <P>{t("node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match (docs/web-integrity.md).")}</P>
+        <P>{t("node [[scripts/verify-web.mjs]] checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).")}</P>
       </Topic>
       <Topic n="8.6" title={t("Report a vulnerability")}>
         <P>
-          {t("Please report privately, not in a public issue: use GitHub's private vulnerability reporting at github.com/getdroppen/droppen (its Security tab), or write to")} {mail}
+          {linked(t("Please report privately, not in a public issue: use GitHub's private vulnerability reporting at [[github.com/getdroppen/droppen|/]] (its Security tab), or write to"))} {mail}
         </P>
         <P>{t("The design assumes a malicious Hub: a way for Droppen Hub, a relay or the network to read or change what should be end-to-end encrypted, or for a device not on your account to act on your account or your devices, **is a vulnerability**. When testing droppen.app, **use only accounts you own, and no load testing**.")}</P>
       </Topic>

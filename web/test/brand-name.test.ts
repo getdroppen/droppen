@@ -52,6 +52,11 @@ const ALLOWED: Allowed[] = [
   { file: "lib/droppen-command.ts", text: "REMOTE_HAND_DATA_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_DATA_DIR" },
   { file: "lib/droppen-command.ts", text: "REMOTE_HAND_CONFIG_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_CONFIG_DIR" },
   { file: "features/landing/security/security.tsx", text: "server-rs/crates/rh-", why: "where the protocol, relay and client crates are in the source tree, for a reader checking the code; renamed with the crates (docs/local-aggregator.md §7.2)" },
+  ...(["zh-CN", "zh-TW", "ja"] as const).map((file) => ({
+    file,
+    text: "server-rs/crates/rh-proto/vectors/",
+    why: "the security page's link behind the test vectors' names (vectors/rust.json, vectors/ts.json), which shows only those names: where the files are in the source tree; renamed with the crates (docs/local-aggregator.md §7.2)",
+  })),
 ];
 
 const TABLES: Record<string, Record<string, string>> = {
