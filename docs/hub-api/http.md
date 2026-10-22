@@ -655,7 +655,7 @@ runs none).
 ### Identity key renewals
 
 A host's identity key is renewed without enrolling it again
-(`docs/host-identity-rotation.md`; `rh_hub::rotations`): an admin device
+(`docs/host-identity-rotation.md`): an admin device
 registers a request here, asks the host over its end-to-end channel
 (`POST /rh/rotate`), the host's agent stages its proof on its own `/v1/agent`
 connection (`rotation_stage`, websocket.md), and once the window T is over
