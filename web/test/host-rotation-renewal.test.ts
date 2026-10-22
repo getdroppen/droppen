@@ -19,7 +19,7 @@ import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, encodeEntry, from
 import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal, splitPauseRemovals } from "../src/lib/hub/account.js";
 import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush } from "../src/lib/hub/api.js";
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
-import { followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
+import { enablePush, followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
 
@@ -1193,10 +1193,10 @@ test("R6 review: a host that lets an isolated host control it says to remove tha
 });
 
 /** A browser's push side, played: its worker's subscription, the permission, its storage, and the device's push routes. */
-function pushEnv(over: { permission?: NotificationPermission; vapid?: string; subscribeFails?: boolean } = {}) {
+function pushEnv(over: { permission?: NotificationPermission; vapid?: string; subscribeFails?: boolean; renewalOf?: (machine: string) => number | null } = {}) {
   const values = new Map<string, string>();
   const log: string[] = [];
-  let vapid = over.vapid ?? "BBBB";
+  let vapid: string | null = over.vapid ?? "BBBB";
   const sub = (endpoint: string) => ({
     endpoint,
     unsubscribe: async () => (log.push(`unsubscribe ${endpoint}`), true),
@@ -1219,11 +1219,13 @@ function pushEnv(over: { permission?: NotificationPermission; vapid?: string; su
     permission: () => over.permission ?? "granted",
     storage: { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => void values.set(k, v), removeItem: (k) => void values.delete(k) },
     api: () => ({
-      GET: async () => ({ data: { publicKey: vapid } }),
+      // `null`: the agent still renewing it (503 `push_renewing`).
+      GET: async () => (log.push(`get ${vapid ?? "503"}`), vapid === null ? ({ error: { error: "push_renewing" } } as never) : { data: { publicKey: vapid } }),
       POST: async (_path, init) => (log.push(`post ${init.body.endpoint}`), {}),
     }),
+    ...(over.renewalOf ? { renewalOf: over.renewalOf } : {}),
   };
-  return { env, log, values, setVapid: (v: string) => void (vapid = v) };
+  return { env, log, values, setVapid: (v: string | null) => void (vapid = v) };
 }
 
 test("R6 review: a renewal of the device this browser's notifications come from drops the old subscription and subscribes again against its new VAPID key", async () => {
@@ -1232,15 +1234,19 @@ test("R6 review: a renewal of the device this browser's notifications come from 
   const ok = pushEnv();
   ok.values.set("rh.hub.push.subscribed", subscribed());
   assert.equal(await followRenewedKey("m-1", 12, ok.env), "renewed");
-  assert.deepEqual(ok.log, ["unsubscribe https://push.example/old", "subscribe", "post https://push.example/new"]);
+  assert.deepEqual(ok.log, ["get BBBB", "unsubscribe https://push.example/old", "subscribe", "post https://push.example/new"]);
   assert.deepEqual(readPushRecord(ok.env), { machine: "m-1", vapid: "BBBB", seq: 12 });
   assert.equal(await followRenewedKey("m-1", 12, ok.env), "none", "once per renewal");
   // Another device's renewal, or the same VAPID key: nothing dropped.
   const other = pushEnv({ vapid: "AAAA" });
   other.values.set("rh.hub.push.subscribed", subscribed());
   assert.equal(await followRenewedKey("m-2", 12, other.env), "none");
-  assert.equal(await followRenewedKey("m-1", 12, other.env), "current");
-  assert.deepEqual(other.log, []);
+  // The same key: its agent has not made the new one yet — nothing recorded, looked at again; current only when told so (the last look).
+  assert.equal(await followRenewedKey("m-1", 12, other.env), "pending");
+  assert.equal(readPushRecord(other.env)?.seq, null);
+  assert.equal(await followRenewedKey("m-1", 12, other.env, { acceptUnchanged: true }), "current");
+  assert.equal(readPushRecord(other.env)?.seq, 12);
+  assert.deepEqual(other.log, ["get AAAA", "get AAAA"]);
   // Not allowed now, or the browser wants a tap to subscribe: the old one goes all the same, and a tap is asked for.
   for (const env of [pushEnv({ permission: "default" }), pushEnv({ subscribeFails: true })]) {
     env.values.set("rh.hub.push.subscribed", subscribed());
@@ -1465,6 +1471,55 @@ test("a host the hub would not renew while another host's Droppen was too old (`
   await runner.idle();
   assert.equal(runner.status("m-1").kind, "renewed");
   runner.stop();
+});
+
+test("push key after a renewal: a key asked for before the agent made its new one is not taken for current — looked at again until it changes, then followed", async () => {
+  // Subscribed against AAAA before m-1 renewed (entry 9); its agent makes the new push key in the background once it runs with its new identity key.
+  const env = pushEnv({ vapid: "AAAA" });
+  env.values.set("rh.hub.push.subscribed", JSON.stringify({ machine: "m-1", vapid: "AAAA", seq: 5 }));
+  let rotatedSeq: number | null = 5;
+  const listeners = new Set<() => void>();
+  const account = { chain: { machine: () => ({ rotatedSeq }) }, onChange: (fn: () => void) => (listeners.add(fn), () => listeners.delete(fn)) };
+  const off = followPushRenewals(account, env.env, [5, 5, 5, 5, 5]);
+  rotatedSeq = 9;
+  for (const fn of listeners) fn();
+  // Still the old key: nothing recorded, nothing dropped.
+  await until(() => env.log.filter((l) => l === "get AAAA").length >= 2);
+  assert.equal(readPushRecord(env.env)?.seq, 5, "the old key is not recorded as current for the renewal");
+  assert.ok(!env.log.includes("unsubscribe https://push.example/old"));
+  // A change of the account meanwhile does not ask again at once (only the scheduled looks do).
+  const asked = env.log.length;
+  for (const fn of listeners) fn();
+  assert.equal(env.log.length, asked);
+  // The agent renewing (503 push_renewing), then its new key: followed.
+  env.setVapid(null);
+  await until(() => env.log.includes("get 503"));
+  env.setVapid("BBBB");
+  await until(() => env.log.includes("post https://push.example/new"));
+  assert.deepEqual(readPushRecord(env.env), { machine: "m-1", vapid: "BBBB", seq: 9 });
+  assert.ok(env.log.indexOf("unsubscribe https://push.example/old") < env.log.indexOf("subscribe"), "the old endpoint is dropped first");
+  off();
+});
+
+test("push key after a renewal: a key that stays the same through every look is taken as current at the last, and nothing is asked after", async () => {
+  const env = pushEnv({ vapid: "AAAA" });
+  env.values.set("rh.hub.push.subscribed", JSON.stringify({ machine: "m-1", vapid: "AAAA", seq: null }));
+  const off = followPushRenewals({ chain: { machine: () => ({ rotatedSeq: 9 }) }, onChange: () => () => undefined }, env.env, [1, 1, 1]);
+  await until(() => readPushRecord(env.env)?.seq === 9);
+  assert.deepEqual(env.log, ["get AAAA", "get AAAA", "get AAAA", "get AAAA"], "the first look and three more, the last taking it");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(env.log.length, 4);
+  off();
+});
+
+test("push key after a renewal: a subscription made after the device renewed is current for that renewal — not followed again", async () => {
+  const env = pushEnv({ vapid: "BBBB", renewalOf: (m) => (m === "m-1" ? 9 : null) });
+  env.values.clear();
+  await enablePush("m-1", { ...env.env, ready: async () => ({ pushManager: { getSubscription: async () => null, subscribe: (await env.env.ready())!.pushManager.subscribe } }) as never });
+  assert.deepEqual(readPushRecord(env.env), { machine: "m-1", vapid: "BBBB", seq: 9 });
+  env.log.length = 0;
+  assert.equal(await followRenewedKey("m-1", 9, env.env), "none");
+  assert.deepEqual(env.log, [], "the device is not asked again");
 });
 
 test("isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {

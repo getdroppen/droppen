@@ -36,6 +36,13 @@ export interface PushEnv {
   permission(): NotificationPermission | "unsupported";
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
   api(machine: MachineKey): PushApi;
+  /**
+   * The device's latest identity key renewal (its chain entry) as this page
+   * knows it, if any: what a subscription made now is current for
+   * ({@link enablePush}). Unknown (`null`, or not given): the next renewal
+   * seen is looked at ({@link followRenewedKey}).
+   */
+  renewalOf?(machine: MachineKey): number | null;
 }
 
 /** The two routes of the device's API a subscription uses. */
@@ -85,8 +92,12 @@ export function browserPushEnv(): PushEnv {
     permission: () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission),
     storage: pageStorage(),
     api: (machine) => apiFor(machine) as unknown as PushApi,
+    renewalOf: (machine) => followedRenewalOf?.(machine) ?? null,
   };
 }
+
+/** The account {@link followPushRenewals} follows: each device's latest renewal, as its chain says. */
+let followedRenewalOf: ((machine: MachineKey) => number | null) | null = null;
 
 export function readPushRecord(env: Pick<PushEnv, "storage"> = browserPushEnv()): PushRecord | null {
   try {
@@ -177,7 +188,8 @@ export async function enablePush(machine: MachineKey, env: PushEnv = browserPush
   const old = await reg.pushManager.getSubscription();
   if (old && pushRenewalNeeded(env) !== null) await old.unsubscribe().catch(() => false);
   await subscribeAgainst(machine, reg, key.data.publicKey, env);
-  writePushRecord(env, { machine, vapid: key.data.publicKey, seq: null });
+  // Current for the device's latest renewal this page knows of: not one to follow again (its agent refuses the key while it still renews it).
+  writePushRecord(env, { machine, vapid: key.data.publicKey, seq: env.renewalOf?.(machine) ?? null });
   setRenewal(env, null);
 }
 
@@ -199,6 +211,14 @@ export async function disablePush(machine: MachineKey, env: PushEnv = browserPus
 }
 
 /**
+ * When to look again at a renewed device's push key that was not new yet (or
+ * the device out of reach): its agent makes the new one in the background,
+ * once it runs with its new identity key (and answers 503 `push_renewing`
+ * meanwhile). After the last, a key still the same is taken as current.
+ */
+export const PUSH_RENEW_RETRY_MS: readonly number[] = [5_000, 15_000, 30_000, 60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000];
+
+/**
  * `machine` renewed its identity key (its chain entry `rotatedSeq`): when this
  * browser's subscription is for it and its VAPID key changed (the agent makes a
  * new one, and forgets every subscription, as it renews), drop the old
@@ -207,13 +227,26 @@ export async function disablePush(machine: MachineKey, env: PushEnv = browserPus
  * are allowed already; where the browser refuses to without a tap (or they are
  * not allowed), the old one is dropped all the same and a tap is asked for
  * ({@link pushRenewalNeeded}).
+ *
+ * The same key as before is the agent not done yet (it makes the new one in
+ * the background, after it took its new identity key): `pending`, nothing
+ * recorded — taken for current only when `acceptUnchanged` (the last look,
+ * {@link followPushRenewals}). Recorded current, a key the agent then
+ * replaced would never be followed: notifications would stop for good, and
+ * the old endpoint stay subscribed.
  */
-export async function followRenewedKey(machine: MachineKey, rotatedSeq: number | null, env: PushEnv = browserPushEnv()): Promise<"none" | "current" | "renewed" | "needsTap"> {
+export async function followRenewedKey(
+  machine: MachineKey,
+  rotatedSeq: number | null,
+  env: PushEnv = browserPushEnv(),
+  opts: { acceptUnchanged?: boolean } = {},
+): Promise<"none" | "pending" | "current" | "renewed" | "needsTap"> {
   const record = readPushRecord(env);
   if (!record || record.machine !== machine || rotatedSeq === null || (record.seq !== null && record.seq >= rotatedSeq)) return "none";
   const key = await env.api(machine).GET("/api/push/vapid");
   if (!key.data) throw new Error("the device did not return a VAPID key");
   if (key.data.publicKey === record.vapid) {
+    if (!opts.acceptUnchanged) return "pending";
     writePushRecord(env, { ...record, seq: rotatedSeq });
     return "current";
   }
@@ -238,25 +271,65 @@ export async function followRenewedKey(machine: MachineKey, rotatedSeq: number |
 /**
  * Follow `account`'s chain for a renewal of the device this browser's
  * subscription is for ({@link followRenewedKey}): now, and on every change.
- * One at a time; a device out of reach is looked at again on the next change.
+ * One at a time. A key not new yet, or a device out of reach, is looked at
+ * again after each of `retryMs` (not on every change meanwhile); a key still
+ * the same at the last look is taken as current. A later renewal starts over.
  */
 export function followPushRenewals(
   account: { chain: { machine(id: string): { rotatedSeq: number | null } | undefined } | null; onChange(fn: () => void): () => void },
   env: PushEnv = browserPushEnv(),
+  retryMs: readonly number[] = PUSH_RENEW_RETRY_MS,
 ): () => void {
+  const renewalOf = (machine: MachineKey) => account.chain?.machine(machine)?.rotatedSeq ?? null;
+  followedRenewalOf = renewalOf;
   let running = false;
-  const check = () => {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  /** The renewal being followed (`machine@seq`), and how many looks again were scheduled for it. */
+  let following: { key: string; tries: number } | null = null;
+  const again = () => {
+    const f = following;
+    if (stopped || !f || f.tries >= retryMs.length) return;
+    const delay = retryMs[f.tries++]!;
+    timer = setTimeout(() => {
+      timer = null;
+      check(true);
+    }, delay);
+    (timer as { unref?: () => void }).unref?.();
+  };
+  const check = (scheduled = false) => {
     const record = readPushRecord(env);
-    if (!record || running) return;
-    const seq = account.chain?.machine(record.machine)?.rotatedSeq ?? null;
+    if (!record || running || stopped) return;
+    const seq = renewalOf(record.machine);
     if (seq === null || (record.seq !== null && record.seq >= seq)) return;
+    const key = `${record.machine}@${seq}`;
+    let f = following;
+    if (!f || f.key !== key) {
+      following = f = { key, tries: 0 };
+      if (timer) clearTimeout(timer);
+      timer = null;
+    } else if (!scheduled) return;
     running = true;
-    void followRenewedKey(record.machine, seq, env)
-      .catch((error: unknown) => console.warn("push: following a renewal:", error))
+    void followRenewedKey(record.machine, seq, env, { acceptUnchanged: f.tries >= retryMs.length })
+      .then(
+        (result) => {
+          if (result === "pending") again();
+        },
+        (error: unknown) => {
+          console.warn("push: following a renewal:", error);
+          again();
+        },
+      )
       .finally(() => {
         running = false;
       });
   };
   check();
-  return account.onChange(check);
+  const off = account.onChange(() => check());
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    if (followedRenewalOf === renewalOf) followedRenewalOf = null;
+    off();
+  };
 }
