@@ -176,6 +176,21 @@ jobs:
       - name: Smoke-test the native binary
         run: ./.github/scripts/smoke-macos.sh server-rs/target/aarch64-apple-darwin/release/remote-hand-server
 
+      # The tarball's THIRD_PARTY_NOTICES (INSTALL.txt points to it), as
+      # scripts/release-public.sh writes it: the licences of every crate and
+      # npm package the binary carries. Only for what gets packaged.
+      - name: Third-party notices
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        env:
+          ABOUT_VERSION: 0.9.2
+          VERSION: ${{ steps.meta.outputs.version }}
+          REV: ${{ steps.meta.outputs.rev }}
+        run: |
+          cargo install --locked "cargo-about@${ABOUT_VERSION}" --features cli
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          ./.github/scripts/third-party-notices.sh "$RUNNER_TEMP/THIRD_PARTY_NOTICES" \
+            "THIRD_PARTY_NOTICES for Droppen ${VERSION} (remote-hand-server ${crate}+g${REV})"
+
       - name: Package
         # Main builds only warm the cache and smoke-test; they do not publish.
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
@@ -194,8 +209,8 @@ jobs:
           sed -e "s/@ARCH@/aarch64/" \
             -e 's/@CONTENTS@/`remote-hand-server` in this archive is the same program as `droppen`./' \
             .github/scripts/INSTALL.txt.in > dist/aarch64/INSTALL.txt
-          members=(remote-hand-server INSTALL.txt)
-          if [ -f LICENSE ]; then cp LICENSE dist/aarch64/; members+=(LICENSE); fi
+          cp LICENSE "$RUNNER_TEMP/THIRD_PARTY_NOTICES" dist/aarch64/
+          members=(remote-hand-server INSTALL.txt LICENSE THIRD_PARTY_NOTICES)
           # Members listed by name rather than `.`, so the archive holds
           # `remote-hand-server` and not `./remote-hand-server` — the README
           # tells people to extract that one member by name, and a `./`
