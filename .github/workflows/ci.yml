@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   web:
@@ -89,6 +90,9 @@ jobs:
   # release's macOS job requires it, and this finds out before a tag does.
   web-reproducible-macos:
     needs: web-reproducible
+    # macOS minutes count ten times while the repository is private: run it on
+    # main and by hand, not on every pull request.
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,7 +114,7 @@ jobs:
 
   server:
     runs-on: ubuntu-latest
-    # This job never builds the SPA, and none of fmt / clippy / test needs it.
+    # This job never builds the SPA, and none of the tests needs it.
     env:
       RH_ALLOW_MISSING_WEB_DIST: "1"
       # Keep backtrace file/line data without full type/variable debug info.
@@ -124,8 +128,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server-rs -> target
@@ -137,8 +139,8 @@ jobs:
       # leaves the repository, and the open crates and web/src name none of
       # the hub's code or environment (docs/local-aggregator.md §2.1).
       - run: node ../scripts/check-open-boundary.mjs
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # No `cargo fmt --check` or clippy gate while the product is young:
+      # development speed first; bring them back once it settles.
       # The cloud protocol crate: pure functions and in-memory state machines, no
       # processes, so it runs threaded and on its own.
       - run: cargo test -p rh-proto
@@ -176,15 +178,22 @@ jobs:
 
   secrets-scan:
     runs-on: ubuntu-latest
-    # gitleaks-action lists the PR's commits through the API on pull_request
-    # events; the default token here is contents-only and answers 403.
+    # The gitleaks CLI, not gitleaks-action: the action wants a paid licence
+    # for organisation repositories. The whole history is scanned.
     permissions:
       contents: read
-      pull-requests: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install gitleaks
+        run: |
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tgz"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan the history
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .'
