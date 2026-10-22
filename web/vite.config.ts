@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { droppenPlugins, isPluginModule } from "./build/droppen-plugins";
+import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 
 /**
  * Which server `pnpm dev` talks to.
@@ -113,6 +114,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     precacheBootSet(),
+    // `THIRD_PARTY_NOTICES.txt`: the licences of the npm packages in this build.
+    thirdPartyNotices(),
   ],
   resolve: {
     alias: {

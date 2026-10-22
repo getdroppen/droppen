@@ -3,7 +3,7 @@
 # (`cargo about generate --fail`, cargo-about 0.9.2). Only licences that may be
 # shipped inside an AGPL-3.0-only binary: permissive ones, and MPL-2.0, which
 # is file-level. Keep `accepted` in step with ALLOWED in
-# scripts/notices/web-notices.mjs. Where a crate offers a choice, the first
+# web/build/third-party-notices.mjs. Where a crate offers a choice, the first
 # accepted licence in this order is the one taken.
 accepted = [
     "MIT",

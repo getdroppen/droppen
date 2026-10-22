@@ -113,7 +113,10 @@ export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: 
   );
 }
 
-/** The last line of every public page: the mark, and the other public pages. */
+/** The licences of the npm packages in this build, beside `index.html` in every build. */
+export const NOTICES_PATH = "/THIRD_PARTY_NOTICES.txt";
+
+/** The last line of every public page: the mark, the other public pages and the licences. */
 export function FooterLine() {
   const { t } = useTranslation();
   return (
@@ -128,6 +131,10 @@ export function FooterLine() {
         <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        {/* Every build writes it (web/build/third-party-notices.mjs): the licences of the packages in this page. */}
+        <a href={NOTICES_PATH} data-testid="footer-licences" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+          {t("Third-party licences")}
+        </a>
       </div>
     </Section>
   );
