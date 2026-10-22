@@ -15,8 +15,8 @@
 // PR #117's re-enroll warning stays only for hosts that cannot renew.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, fromHex, hex, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
-import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal } from "../src/lib/hub/account.js";
+import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, encodeEntry, fromHex, hex, MAX_PAUSE_ENTRY_LEN, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
+import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal, splitPauseRemovals } from "../src/lib/hub/account.js";
 import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush } from "../src/lib/hub/api.js";
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
 import { followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
@@ -1887,4 +1887,57 @@ test("D2: when a pause ends, a device only paused is sealed the host's committed
   const after = hub.mailLog.filter((m) => m.recipient === x.deviceId && m.purpose === MAIL_HOST_KEY);
   assert.ok(after.length > before, "sealed once it is let in again");
   assert.ok(after.some((m) => m.epoch === issued.mkEpoch), "the epoch issued while it was paused among them");
+});
+
+test("M6: removals too large for one entry are cut into canonical pauses, a host's ids split only when they alone do not fit", () => {
+  const removals = [
+    { host: "m-1", ids: ["m-2", "m-3", "m-4"] },
+    { host: "m-2", ids: ["m-1"] },
+    { host: "m-3", ids: ["m-1", "m-2"] },
+  ];
+  const parts = splitPauseRemovals(removals, (r) => r.reduce((n, x) => n + x.ids.length, 0) <= 2);
+  assert.deepEqual(parts, [
+    [{ host: "m-1", ids: ["m-2", "m-3"] }],
+    [{ host: "m-1", ids: ["m-4"] }, { host: "m-2", ids: ["m-1"] }],
+    [{ host: "m-3", ids: ["m-1", "m-2"] }],
+  ]);
+  const edges = (list: { host: string; ids: string[] }[]) => list.flatMap((r) => r.ids.map((id) => `${r.host}<${id}`));
+  assert.deepEqual(parts.flatMap(edges), edges(removals), "every edge, once, in order");
+});
+
+test("M6: a cycle too large for one RenewalPause is paused by several, each within MAX_PAUSE_ENTRY_LEN, in ONE batch before any host of it renews", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  const agents = new FakeAgents(hub, () => a.chain);
+  // Eight hosts with long ids, each letting every other one control it: 56 edges, more than one entry holds.
+  const ids = Array.from({ length: 8 }, (_, i) => `m-${i}-${"x".repeat(58)}`);
+  const first = await hub.enroll(a, ids[0]!);
+  await a.upgradeToV3({ writable: true });
+  const hosts = [first];
+  for (const id of ids.slice(1)) hosts.push(await hub.enroll(a, id, { writable: true }));
+  for (const h of hosts) {
+    agents.hold(h.id, { sign: h.signPrivate, signPublic: h.sign, dhPublic: h.dh.publicKey });
+    hub.rotates.add(h.id);
+  }
+  await a.setRenewalPolicy(false);
+  const x = await pairAs(hub, a, { admin: false });
+  for (const id of ids) await a.setAccept(id, { type: "devices", ids: [...(id === ids[0] ? [x.deviceId] : []), ...ids.filter((o) => o !== id)] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const removedAt = a.chain!.seq;
+  const link = new FakeLink();
+  for (const id of ids) link.set(id, "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf(Object.fromEntries(ids.map((id) => [id, true]))), renewOptions: quick });
+  runner.start();
+  await until(() => rotated(a).length > 0, 20_000);
+  runner.stop();
+  const after = a.chain!.allEntries().slice(removedAt + 1);
+  const firstRotate = after.findIndex((e) => e.draft.action.type === "rotateHostKey");
+  const starts = after.slice(0, firstRotate).filter((e) => e.draft.action.type === "renewalPause");
+  assert.ok(starts.length >= 2, `split into ${starts.length} pauses`);
+  // One batch, before any renewal: consecutive entries.
+  assert.deepEqual(after.slice(0, starts.length).map((e) => e.draft.action.type), starts.map(() => "renewalPause"));
+  for (const e of starts) assert.ok(encodeEntry(e).length <= MAX_PAUSE_ENTRY_LEN, `${encodeEntry(e).length} bytes`);
+  const edges = new Set(starts.flatMap((e) => (e.draft.action.type === "renewalPause" ? e.draft.action.removals.flatMap((r) => r.ids.map((id) => `${r.host}<${id}`)) : [])));
+  assert.equal(edges.size, 56, "every edge of the cycle paused");
 });

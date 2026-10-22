@@ -37,7 +37,7 @@
  * The page reads it all through {@link RenewalRunner.status}; the account is
  * told what the chain does not say (`noteRenewals`).
  */
-import { type Action, ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, type OpenPause, PAUSE_COMPLETED, PAUSE_START, type PauseRemoval, Serial, verifyHubLogin } from "@/lib/e2e";
+import { type Action, ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, MAX_PAUSE_ENTRY_LEN, type OpenPause, PAUSE_COMPLETED, PAUSE_START, type PauseRemoval, Serial, verifyHubLogin } from "@/lib/e2e";
 import {
   assuredRenewalAfter,
   type CloudAccount,
@@ -45,7 +45,9 @@ import {
   type Exposure,
   exposedControllers,
   edgeHeld,
+  compareUtf8Ids,
   groupNarrowing,
+  splitPauseRemovals,
   pauseReturns,
   hostsToRotate,
   type PauseEnding,
@@ -400,11 +402,16 @@ export class RenewalRunner {
     const chain = account.chain;
     const renews = (h: string) => account.renews(h);
     if (!chain || !groupNarrowing(chain, account.hostsToRotate(), renews).length) return "none";
-    const op = crypto.getRandomValues(new Uint8Array(16));
+    const ops: Uint8Array[] = [];
     try {
       const wrote = await account.writePause((c) => {
         const cycle = groupNarrowing(c, hostsToRotate(c, renews), renews)[0];
-        return cycle ? [{ type: "renewalPause", op, phase: PAUSE_START, removals: cycle.removals }] : [];
+        if (!cycle) return [];
+        // M6: a cycle too large for one entry goes in several pauses, each within `MAX_PAUSE_ENTRY_LEN` — all in ONE batch,
+        // so no host of it renews before every one of its edges is paused.
+        const parts = splitPauseRemovals(cycle.removals, (r) => account.pauseEntryLen(c, r) <= MAX_PAUSE_ENTRY_LEN);
+        while (ops.length < parts.length) ops.push(crypto.getRandomValues(new Uint8Array(16)));
+        return parts.map((removals, i) => ({ type: "renewalPause", op: ops[i]!, phase: PAUSE_START, removals }) as Action);
       });
       return wrote ? "written" : "none";
     } catch (error) {
@@ -468,7 +475,8 @@ export class RenewalRunner {
     if (edges.length && held.length === edges.length) return null;
     const byHost = new Map<string, string[]>();
     for (const e of held) byHost.set(e.host, [...(byHost.get(e.host) ?? []), e.id]);
-    return { keep: [...byHost].map(([host, ids]) => ({ host, ids: ids.sort() })).sort((x, y) => (x.host < y.host ? -1 : 1)) };
+    // Canonical: hosts, and each host's ids, ascending by bytes.
+    return { keep: [...byHost].map(([host, ids]) => ({ host, ids: ids.sort(compareUtf8Ids) })).sort((x, y) => compareUtf8Ids(x.host, y.host)) };
   }
 
   /**
