@@ -517,6 +517,10 @@ async fn the_exit_hook_fires_once_on_a_kill() {
     });
     let info = probe.terminals.create_terminal_with(spec).await.expect("create terminal");
     let mut socket = probe.attach(&info.id).await;
+    // The server attaches after the upgrade response the client has already
+    // read, and its first frame (the replay) is what says it has. A kill that
+    // arrived before that would earn `[terminal not found]` instead.
+    socket.next_text().await.expect("the replay frame");
 
     assert!(probe.terminals.kill_terminal(&info.id));
     assert_eq!(calls.load(Ordering::SeqCst), 1, "the kill fires the hook synchronously");

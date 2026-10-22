@@ -116,6 +116,13 @@ const RECONNECT_MAX: Duration = Duration::from_secs(10);
 /// How long a killed terminal's tombstone is waited for before the sidecars are
 /// swept anyway.
 const TOMBSTONE_GRACE: Duration = Duration::from_secs(3);
+/// How long a killed terminal's link task is given, once the tombstone is
+/// there, to receive the shim's exit frame before [`reap_killed`] stops it.
+///
+/// The shim allows its reader half a second to drain the pty between the two
+/// (`pty_shim::child::DRAIN_GRACE`); this leaves room for a busy machine on
+/// top of that.
+const EXIT_FRAME_GRACE: Duration = Duration::from_secs(2);
 
 /// A live terminal, as the API describes it.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -332,6 +339,14 @@ struct Entry {
     flushed: AtomicU64,
     /// Cancelling this detaches the link and leaves the shim running.
     detach: CancellationToken,
+    /// [`Registry::kill_terminal`] ended this terminal.
+    ///
+    /// What tells the two reasons for cancelling [`Entry::detach`] apart.
+    /// Shutdown detaches so that the next server can adopt a shell that is still
+    /// running, and has nothing to tell anyone. A kill detaches only as a
+    /// backstop, once the shell is already gone, and the clients still attached
+    /// are owed the same exit note a natural exit gives them. See [`Entry::cut`].
+    killed: AtomicBool,
     /// This terminal's width is the server's business, not a browser pane's.
     /// See [`CreateSpec::size`].
     size_locked: AtomicBool,
@@ -376,6 +391,21 @@ impl Entry {
             truncate_front(&mut replay.buffer, BUFFER_CAP);
         }
         self.broadcast(EXIT_NOTE);
+    }
+
+    /// What the link task does when [`Entry::detach`] stops it before the shim
+    /// has reported an exit.
+    ///
+    /// On shutdown the shell lives on, so this flushes and says nothing more. On
+    /// a killed terminal the shell is gone, and leaving out the exit note would
+    /// leave every attached client with a frozen pane that still looks live, on
+    /// a terminal no longer in the list.
+    fn cut(&self) {
+        self.set_linked(false);
+        self.flush();
+        if self.killed.load(Ordering::SeqCst) && !self.exited.load(Ordering::SeqCst) {
+            self.note_exit();
+        }
     }
 
     /// Run the exit hook, whether the process died on its own or was killed.
@@ -833,6 +863,7 @@ impl Registry {
         // asynchronous, and a crash in the middle must not leave behind a meta
         // file that the next boot would adopt as a terminal the user closed.
         entry.sidecars.remove_server_owned();
+        entry.killed.store(true, Ordering::SeqCst);
         entry.tell(Frame::empty(proto::KILL));
         // -1: killed, so there is no exit status the wizard could report.
         entry.finish(-1);
@@ -943,6 +974,7 @@ impl Registry {
             cursor: AtomicU64::new(0),
             flushed: AtomicU64::new(0),
             detach: CancellationToken::new(),
+            killed: AtomicBool::new(false),
             size_locked: AtomicBool::new(false),
         });
         // Registered before the link task starts, so a shell that exits
@@ -1223,8 +1255,7 @@ async fn run_link(
             tokio::select! {
                 biased;
                 () = entry.detach.cancelled() => {
-                    entry.set_linked(false);
-                    entry.flush();
+                    entry.cut();
                     return;
                 }
                 frame = link.recv() => match frame {
@@ -1286,7 +1317,7 @@ async fn run_link(
             }
             Relinked::Exited(code) => break 'linked code,
             Relinked::Detached => {
-                entry.flush();
+                entry.cut();
                 return;
             }
         }
@@ -1436,6 +1467,18 @@ async fn reap_killed(registry: Weak<Registry>, entry: Arc<Entry>) {
     if !entry.sidecars.tombstoned() {
         tracing::warn!(id = entry.sidecars.id(), "a killed terminal left no exit file; signalling it directly");
         entry.signal_directly();
+    }
+    // The tombstone is the shim's first act on the way out, not its last: the
+    // `x` frame follows it once the shim's reader has drained the pty
+    // (`pty_shim::child::run`, steps 1 and 2). Cancelling `detach` as soon as
+    // the tombstone appeared used to beat that frame on a busy machine, and
+    // the link task, which checks `detach` first, stopped without noting the
+    // exit. So the link task is given time to carry the frame itself and is
+    // only cut when it has not, and a cut on a killed terminal still notes
+    // the exit (`Entry::cut`).
+    let deadline = Instant::now() + EXIT_FRAME_GRACE;
+    while Instant::now() < deadline && !entry.exited.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
     entry.detach.cancel();
     entry.sidecars.remove_all();
@@ -1644,6 +1687,7 @@ mod tests {
             cursor: AtomicU64::new(0),
             flushed: AtomicU64::new(0),
             detach: CancellationToken::new(),
+            killed: AtomicBool::new(false),
             size_locked: AtomicBool::new(false),
         });
         (entry, outbound_rx)
@@ -1771,6 +1815,126 @@ mod tests {
         entry.set_linked(true);
         changes.changed().await.expect("the entry outlives its attachment");
         assert!(*changes.borrow_and_update(), "the client learns the terminal is usable again");
+    }
+
+    /// A stand-in shim on `sidecars`' socket that ends its shell on a `k` frame
+    /// the way a real one does, tombstone first and `x` frame second, but takes
+    /// `announce` to get from one to the other. That gap is what a busy machine
+    /// produces, here with a fixed length. `None` never sends the frame at all.
+    ///
+    /// It reports shell pid 0, so neither the fallback kill nor a liveness
+    /// probe can reach a real process.
+    fn slow_exiting_shim(sidecars: &Sidecars, announce: Option<Duration>) {
+        sidecars.ensure_socket_dir().expect("the shim socket directory");
+        let listener = tokio::net::UnixListener::bind(sidecars.socket()).expect("bind the shim socket");
+        let tombstone = sidecars.exit();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("the server dials in");
+            let (mut reader, mut writer) = stream.into_split();
+            let hello = proto::read_frame(&mut reader).await.expect("read the hello").expect("a hello");
+            assert_eq!(hello.kind, proto::HELLO);
+            let reply = Frame::json(proto::HELLO, &proto::Hello2 { shell_pid: 0, total: 0 });
+            proto::write_frame(&mut writer, &reply).await.expect("answer the hello");
+            while let Ok(Some(frame)) = proto::read_frame(&mut reader).await {
+                if frame.kind != proto::KILL {
+                    continue;
+                }
+                let record = proto::Tombstone {
+                    exit_code: -1,
+                    at: "2026-01-01T00:00:00.000Z".into(),
+                };
+                std::fs::write(&tombstone, serde_json::to_vec(&record).expect("encode")).expect("write the tombstone");
+                let Some(delay) = announce else {
+                    // The link stays open and nothing more is said.
+                    std::future::pending::<()>().await;
+                    return;
+                };
+                tokio::time::sleep(delay).await;
+                let _ = proto::write_frame(&mut writer, &Frame::raw(proto::OUTPUT, b"bye\r\n".to_vec())).await;
+                let _ = proto::write_frame(&mut writer, &Frame::json(proto::EXIT, &proto::Exit { code: -1 })).await;
+                return;
+            }
+        });
+    }
+
+    /// A terminal on a [`slow_exiting_shim`], with one client attached.
+    async fn terminal_with_a_client(home: &Path, announce: Option<Duration>) -> (Arc<Registry>, String, Attachment) {
+        let registry = registry(home, "kill");
+        // A fresh id each time: the socket is named after it, and may sit in a
+        // directory every test in this process shares.
+        let id = uuid::Uuid::new_v4().to_string();
+        let sidecars = Sidecars::new(registry.instance.pty_shims(), &id);
+        slow_exiting_shim(&sidecars, announce);
+        let link = client::connect(&sidecars.socket(), 0).await.expect("link to the stand-in shim");
+        let info = TerminalInfo {
+            id: id.clone(),
+            title: "terminal 1".into(),
+            cwd: home.to_string_lossy().into_owned(),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        let (entry, outbound) = registry.register(info, 0, sidecars, 0, &link, None);
+        start_link(Arc::downgrade(&registry), entry, link, outbound, None, Vec::new());
+        let attachment = registry.attach(&id).expect("attachable");
+        (registry, id, attachment)
+    }
+
+    /// Everything a client is sent up to and including the exit note.
+    async fn read_through_the_exit_note(attachment: &mut Attachment, within: Duration) -> String {
+        let deadline = Instant::now() + within;
+        let mut seen = String::new();
+        while !seen.contains(EXIT_NOTE) {
+            match tokio::time::timeout_at(deadline, attachment.next_chunk()).await {
+                Ok(Some(Chunk::Data(data))) => seen.push_str(&data),
+                Ok(other) => panic!("the stream ended without the exit note ({other:?}); saw {seen:?}"),
+                Err(_) => panic!("no exit note within {within:?}; saw {seen:?}"),
+            }
+        }
+        seen
+    }
+
+    /// The race that left a killed terminal's clients waiting forever: the shim
+    /// writes its tombstone, then drains the pty, then sends `x`. `reap_killed`
+    /// saw the tombstone and cut the link in between, and the link task left
+    /// without noting the exit. Here that gap is a fixed 300 ms, well past
+    /// the reaper's 25 ms poll.
+    #[tokio::test]
+    async fn a_kill_waits_for_the_exit_frame_that_trails_the_tombstone() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), Some(Duration::from_millis(300))).await;
+
+        assert!(registry.kill_terminal(&id));
+        let seen = read_through_the_exit_note(&mut attachment, Duration::from_secs(5)).await;
+        assert_eq!(
+            seen,
+            format!("bye\r\n{EXIT_NOTE}"),
+            "the shell's last output reaches the client, and then the note"
+        );
+    }
+
+    /// A shim that never sends `x` cannot keep the note from a client either:
+    /// when the reaper stops waiting and cuts the link, the cut notes the exit.
+    #[tokio::test]
+    async fn a_killed_terminal_whose_shim_never_announces_still_tells_its_clients() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), None).await;
+
+        assert!(registry.kill_terminal(&id));
+        let seen = read_through_the_exit_note(&mut attachment, EXIT_FRAME_GRACE + Duration::from_secs(5)).await;
+        assert_eq!(seen, EXIT_NOTE);
+    }
+
+    /// A detach on shutdown must not note an exit: the shell is still running,
+    /// and the next server adopts it.
+    #[tokio::test]
+    async fn a_shutdown_detach_tells_clients_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (registry, _id, mut attachment) = terminal_with_a_client(home.path(), None).await;
+
+        assert_eq!(registry.shutdown_all(), 1);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), attachment.next_chunk()).await.is_err(),
+            "no exit note for a shell that lives on"
+        );
     }
 
     #[test]
