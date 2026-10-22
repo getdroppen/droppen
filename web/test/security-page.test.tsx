@@ -330,8 +330,10 @@ const REPO = "https://github.com/getdroppen/droppen";
 
 test("every repository path on the page links to it on GitHub, at `main` until the served build names its commit; the repository's name links to the repository", () => {
   // Which commit a `/.well-known/droppen-build` answer names, and where a path links at a revision.
-  assert.equal(buildCommit({ commit: "0123abcd", web: { digest: "sha256:00" } }), "0123abcd");
-  for (const answer of [{ commit: null }, { commit: "main" }, { commit: "0123abcd/../x" }, { commit: "0123ab" }, {}, null, "0123abcd"]) assert.equal(buildCommit(answer), null);
+  assert.equal(buildCommit({ commit: "0123abcd", repo: "getdroppen/droppen", web: { digest: "sha256:00" } }), "0123abcd");
+  for (const answer of [{ commit: null, repo: "getdroppen/droppen" }, { commit: "main", repo: "getdroppen/droppen" }, { commit: "0123abcd/../x", repo: "getdroppen/droppen" }, { commit: "0123ab", repo: "getdroppen/droppen" }, {}, null, "0123abcd"]) assert.equal(buildCommit(answer), null);
+  // A commit the answer does not tie to this repository (a Hub's own, say) would lead nowhere: `main` instead.
+  for (const repo of [undefined, "someone/fork", "getdroppen/droppen-fork"]) assert.equal(buildCommit({ commit: "0123abcd", repo }), null, String(repo));
   assert.equal(repoHref("scripts/verify-web.mjs", "0123abcd"), `${REPO}/blob/0123abcd/scripts/verify-web.mjs`);
   assert.equal(repoHref("server-rs/crates/rh-proto", "main"), `${REPO}/tree/main/server-rs/crates/rh-proto`);
   assert.equal(repoHref("/", "0123abcd"), REPO);

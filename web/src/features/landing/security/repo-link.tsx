@@ -9,16 +9,23 @@ import { SOURCE_URL } from "../page-kit";
  * deployed it (docs/web-integrity.md). So the page asks the server that
  * served it, once: Droppen Hub names the commit at `/.well-known/droppen-build`
  * (docs/hub-api/http.md). Until it answers, and where nothing does (the local
- * program), the links point at `main`. Never asked in a static render.
+ * program), the links point at `main`; so they do when the answer does not
+ * say the commit is this repository's (`repo: "getdroppen/droppen"`), since a
+ * commit of another repository would lead nowhere here. Never asked in a
+ * static render.
  */
+
+/** The repository the links lead into, as the build answer names it. */
+export const SOURCE_REPO = "getdroppen/droppen";
 
 /** Where the server says which build it serves. */
 export const BUILD_INFO_PATH = "/.well-known/droppen-build";
 
-/** The commit a `/.well-known/droppen-build` answer names, when it is one (7 to 64 hex digits); else null. */
+/** The commit a `/.well-known/droppen-build` answer names, when it is one (7 to 64 hex digits) of this repository; else null. */
 export function buildCommit(answer: unknown): string | null {
-  const commit = answer !== null && typeof answer === "object" ? (answer as { commit?: unknown }).commit : undefined;
-  return typeof commit === "string" && /^[0-9a-f]{7,64}$/.test(commit) ? commit : null;
+  if (answer === null || typeof answer !== "object") return null;
+  const { commit, repo } = answer as { commit?: unknown; repo?: unknown };
+  return repo === SOURCE_REPO && typeof commit === "string" && /^[0-9a-f]{7,64}$/.test(commit) ? commit : null;
 }
 
 /** A path in the repository on GitHub at `rev`: `blob/` for a file (its last part has a dot), `tree/` for a directory; "/" is the repository itself. */

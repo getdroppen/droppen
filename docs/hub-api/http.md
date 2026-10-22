@@ -47,10 +47,12 @@ The page, and the 404 for anything else on that host, count against the
 static routes' share per address, as does a redirected host's `308`.
 
 ### `GET /.well-known/droppen-build` — only when the hub serves the web app
-→ `{commit: null | "<hex>", web: {digest: "sha256:<hex>", files}}`, with
+→ `{commit: null | "<hex>", repo?: "getdroppen/droppen", web: {digest: "sha256:<hex>", files}}`, with
 `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. Which build of
-the web app this hub serves: the commit its image was built from
-(`null` when the hub does not know it) and the digest of the files as built — one
+the web app this hub serves: the commit of this repository its web app was
+built from (`null` when the hub does not know it; `repo` names the repository
+whenever `commit` is set, and a reader trusts a commit only with it) and the
+digest of the files as built — one
 `<sha256>  <path>\n` line per file, sorted by path bytewise, hashed; the shell
 before the hub adds its `rh-hub` marker. A release's `web-manifest.json` has
 the same `digest`; `scripts/verify-web.mjs` uses this to pick the manifest and
