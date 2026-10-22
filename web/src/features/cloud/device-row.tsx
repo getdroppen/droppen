@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import type { Accept } from "@/lib/e2e";
+import { compatModeActive } from "@/lib/e2e/compat";
 import { formatAsOf, formatExactTime, formatRelative } from "@/lib/format";
 import type { PauseEnding, PromoteBlock, ReEnrollLine } from "@/lib/hub/account";
 import type { PresenceState } from "@/lib/hub/link";
@@ -314,6 +315,11 @@ function RowBadges({ view, warn }: { view: DeviceRowView; warn: ReactNode }) {
   return (
     <>
       {view.self && <Badge variant="outline" className={badge}>{t("this device")}</Badge>}
+      {view.self && compatModeActive() && (
+        <Badge data-testid="compat-mode-row" variant="outline" title={t("This browser runs Droppen's encryption in JavaScript: this device's private keys are in the page's memory.")} className={badge}>
+          {t("compatibility mode")}
+        </Badge>
+      )}
       {view.host && (
         <Badge data-testid="runs-ai" variant="outline" className={badge}>
           {t("can run AI")}

@@ -2,7 +2,8 @@ import { lazy, type ReactNode, Suspense, useCallback, useEffect, useId, useMemo,
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import { indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
+import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
+import { compatConsent, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
 import { AccountError, CloudAccount, KeysUnreadableError } from "@/lib/hub/account";
 import { authErrorKind, clearSession, HubApi, HubApiError, type HubSession, loadSession, type PasskeySignedIn, PASSWORD_MIN_CHARS, saveSession, type SignedIn, type SignupConfig } from "@/lib/hub/api";
 import {
@@ -34,6 +35,7 @@ import { PendingScreen, RecoveryWords } from "./recovery";
 import { clearDeviceCopies, type HeldSession, pairingResume, signInAgainToPair, signOut, takeSignOutFailures } from "./sign-out";
 import { authErrorText, Centered, CloudPage, danger, ErrorLine, errorText, Field, field, Note, Panel, primary, quiet, Tabs } from "./ui";
 import { CheckEmailScreen, VerifyEmailPage } from "./email-verify";
+import { UnsupportedBrowserScreen } from "./browser-support";
 import { Turnstile } from "./turnstile";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
@@ -107,6 +109,12 @@ type Phase =
   | { kind: "shell"; account: CloudAccount; link: HubLink; shell: HubShell }
   /** The account's chain as served conflicts with what this browser verified (`CloudAccount.forked`): everything stopped. */
   | { kind: "fork"; message: string; held?: HeldSession }
+  /**
+   * This browser cannot run the end-to-end encryption (`missing`): nothing read
+   * or made. `compat`: compatibility mode could stand in, once the person
+   * agrees; `session` goes on then.
+   */
+  | { kind: "unsupported"; missing: string[]; compat: boolean; session: HubSession; held: HeldSession }
   /** This browser's device keys did not come (`reason`): nothing replaced; try again, or (chosen) a new device. */
   | { kind: "keysUnreadable"; session: HubSession; reason: UnreadableReason; message: string }
   /** `held`: the hub session the page was using, ended by this screen's sign-out (no account is open to end it). */
@@ -127,11 +135,29 @@ function startLink(account: CloudAccount, origin: string): HubLink {
   return link;
 }
 
-export function CloudApp({ children }: { children: ReactNode }) {
+/**
+ * `store` and `keyReadRetryMs` stand in for this browser's IndexedDB and the
+ * waits between reads of it (tests); the page uses its own.
+ */
+export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { children: ReactNode; store?: KeyStore; keyReadRetryMs?: readonly number[] }) {
   const origin = hubOrigin()!;
   const api = useMemo(() => new HubApi(), []);
-  const store = useMemo<KeyStore>(() => indexedDbKeyStore(), []);
+  const store = useMemo<KeyStore>(() => givenStore ?? indexedDbKeyStore(), [givenStore]);
   const [phase, setPhase] = useState<Phase>({ kind: "boot" });
+  // Whether this browser can run the end-to-end encryption: checked once, as
+  // the page starts, before any key is read or made (`lib/e2e/support.ts`).
+  const supportCheck = useRef<Promise<E2eSupport> | null>(null);
+  const checkSupport = useCallback(() => (supportCheck.current ??= checkE2eSupport()), []);
+  const [support, setSupport] = useState<E2eSupport | null>(null);
+  // Compatibility mode agreed to on this browser (`lib/e2e/compat.ts`).
+  const [consented, setConsented] = useState(() => compatConsent() !== null);
+  useEffect(() => {
+    let live = true;
+    void checkSupport().then((s) => live && setSupport(s));
+    return () => {
+      live = false;
+    };
+  }, [checkSupport]);
   const booted = useRef(false);
   const opened = useRef<CloudAccount | null>(null);
   const queryClient = useQueryClient();
@@ -176,7 +202,14 @@ export function CloudApp({ children }: { children: ReactNode }) {
   const proceed = useCallback(
     async (session: HubSession, { replaceUnreadableKeys = false }: { replaceUnreadableKeys?: boolean } = {}) => {
       try {
-        const account = await CloudAccount.open(api, session, store, { origin, onSession: saveSession, replaceUnreadableKeys });
+        // Before any key is read or made: a browser that cannot run the
+        // encryption says so (or, agreed to before, goes on in compatibility
+        // mode), instead of failing at its keys as if its storage had.
+        const ready = await e2eReadiness(await checkSupport());
+        if (ready.kind === "unsupported") {
+          return setPhase({ kind: "unsupported", missing: ready.missing, compat: ready.compat, session, held: { api, token: session.token } });
+        }
+        const account = await CloudAccount.open(api, session, store, { origin, onSession: saveSession, replaceUnreadableKeys, keyReadRetryMs });
         // The page's account from before (a screen moving on) renews nothing any more: this one does.
         if (opened.current && opened.current !== account) opened.current.stopSession();
         opened.current = account;
@@ -273,11 +306,16 @@ export function CloudApp({ children }: { children: ReactNode }) {
         // The session the page was using (renewed, if the account opened), for these screens' sign-out to end.
         const held: HeldSession = { api, token: (opened.current?.account === session.account && opened.current.session.token) || session.token };
         if (error instanceof AccountError && error.kind === "fork") return setPhase({ kind: "fork", message: error.message, held });
+        // An algorithm the browser turned out not to know, past the check: the same screen, never "storage did not answer".
+        if (error instanceof E2eUnsupportedError) {
+          const compat = !compatModeActive() && compatCovers({ ok: false, missing: error.missing });
+          return setPhase({ kind: "unsupported", missing: error.missing, compat, session, held });
+        }
         if (error instanceof KeysUnreadableError) return setPhase({ kind: "keysUnreadable", session, reason: error.reason, message: error.message });
         setPhase({ kind: "error", message: errorText(error), held });
       }
     },
-    [api, store, origin, queryClient, refused, forked],
+    [api, store, origin, queryClient, refused, forked, checkSupport, keyReadRetryMs],
   );
 
   useEffect(() => {
@@ -345,6 +383,26 @@ export function CloudApp({ children }: { children: ReactNode }) {
       const front = frontPage(pathname);
       if (front) return <FrontPageView page={front} signedIn={false} api={api} />;
       if (page === "verify") return <VerifyEmailPage api={api} />;
+      // A browser that cannot run the encryption is told so first, before an
+      // account is signed in to (or made) that it could not open here.
+      if (!support) return <Centered><Loader2 className="size-4 animate-spin text-faint" /></Centered>;
+      if (!support.ok && !(consented && compatCovers(support))) {
+        const compat = compatCovers(support);
+        return (
+          <UnsupportedBrowserScreen
+            missing={support.missing}
+            compat={compat}
+            onTrust={
+              compat
+                ? () => {
+                    consentToCompat(support.missing);
+                    setConsented(true);
+                  }
+                : undefined
+            }
+          />
+        );
+      }
       return (
         <AuthScreen
           api={api}
@@ -412,6 +470,26 @@ export function CloudApp({ children }: { children: ReactNode }) {
       );
     case "fork":
       return <ForkScreen message={phase.message} held={phase.held} />;
+    case "unsupported": {
+      const { session } = phase;
+      return (
+        <UnsupportedBrowserScreen
+          missing={phase.missing}
+          compat={phase.compat}
+          held={phase.held}
+          onTrust={
+            phase.compat
+              ? () => {
+                  consentToCompat(phase.missing);
+                  setConsented(true);
+                  setPhase({ kind: "boot" });
+                  void proceed(session);
+                }
+              : undefined
+          }
+        />
+      );
+    }
     case "keysUnreadable": {
       const { session } = phase;
       return (

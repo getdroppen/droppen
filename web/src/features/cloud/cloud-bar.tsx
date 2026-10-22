@@ -31,6 +31,7 @@ import { PendingPasskeyBanner } from "./passkey-join";
 import { cityName, noticeText } from "./relays";
 import { BarMachineName } from "./machine-name";
 import { RegisteredDeviceAlerts, SignInChangeAlerts, storageFullText, useMe } from "./plan";
+import { CompatBadge } from "./browser-support";
 import { storageView } from "@/lib/hub/plan";
 import { signOut } from "./sign-out";
 import { addressOn, type HubMachine, type HubShell, hubShell, useFocusedMachine, useShellMachines } from "./hub-shell";
@@ -145,6 +146,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
         )}
         {state.label === "e2e" && <LivePathIndicator channel={machine.channel} relays={shell.relays} />}
         <span className="flex-1" />
+        <CompatBadge className="max-md:hidden" />
         <DevicesButton />
         <AccountButton />
         <button

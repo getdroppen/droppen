@@ -29,9 +29,11 @@ const proxyTarget = process.env.RH_DEV_PROXY ?? "http://127.0.0.1:8700";
  * between chunks runs one before the other's exports exist (a finer split
  * failed to boot). xterm imports nothing else, so it alone gets its own chunk.
  * The QR encoder and decoder (pairing a device, cloud mode only) import
- * nothing either and are loaded on demand, so they stay out of it altogether.
+ * nothing either and are loaded on demand, so they stay out of it altogether,
+ * as do compatibility mode's curves (`@noble/curves` and its hashes, reached
+ * only from `lib/e2e/soft25519.ts`, on a browser without them natively).
  */
-const LAZY_PACKAGES = ["jsqr/", "qrcode-generator/"];
+const LAZY_PACKAGES = ["jsqr/", "qrcode-generator/", "@noble/"];
 
 /**
  * Bundled plugins (`build/droppen-plugins.ts`) live in `node_modules` too, but

@@ -102,7 +102,11 @@ let probe: Promise<CryptoKeyPair> | null = null;
 
 /** Whether `key` is a low-order X25519 public key (any shared secret with it is zero). */
 export async function isLowOrderX25519(key: Uint8Array): Promise<boolean> {
-  probe ??= subtle().generateKey({ name: "X25519" }, false, ["deriveBits"]) as Promise<CryptoKeyPair>;
+  // A probe the browser would not make (no X25519 before compatibility mode) is not kept: the next call tries again.
+  probe ??= (subtle().generateKey({ name: "X25519" }, false, ["deriveBits"]) as Promise<CryptoKeyPair>).catch((error: unknown) => {
+    probe = null;
+    throw error;
+  });
   try {
     await dh((await probe).privateKey, key);
     return false;

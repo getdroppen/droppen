@@ -68,3 +68,45 @@ export async function checkE2eSupport(env: { crypto?: Crypto; indexedDB?: IDBFac
   if (env.requireIndexedDb !== false && !(env.indexedDB ?? globalThis.indexedDB)) missing.push("IndexedDB");
   return { ok: missing.length === 0, missing };
 }
+
+/** The two algorithms compatibility mode can stand in for (`compat.ts`); nothing else ever is. */
+export const SOFT_ALGORITHMS = ["X25519", "Ed25519"] as const;
+export type SoftAlgorithm = (typeof SOFT_ALGORITHMS)[number];
+
+/**
+ * Whether only X25519 and/or Ed25519 are missing — everything else (AES-GCM,
+ * HKDF, HMAC, raw deflate, IndexedDB) native — so compatibility mode could
+ * stand in. Anything else missing: no.
+ */
+export function compatCovers(support: E2eSupport): boolean {
+  return !support.ok && support.missing.length > 0 && support.missing.every((m) => (SOFT_ALGORITHMS as readonly string[]).includes(m));
+}
+
+/**
+ * Whether `error` is a browser saying it does not know an algorithm
+ * (`NotSupportedError`, Chromium's "Algorithm: Unrecognized name"), as
+ * opposed to a store or a key that failed: no retry ever helps it.
+ */
+export function isAlgorithmUnsupported(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { name, message } = error as { name?: unknown; message?: unknown };
+  return name === "NotSupportedError" || (typeof message === "string" && /unrecognized (?:algorithm )?name|algorithm(?: is)? not supported|unsupported algorithm/i.test(message));
+}
+
+/** This browser cannot do the end-to-end encryption (`missing`, as {@link checkE2eSupport} names it): nothing was read or made. */
+export class E2eUnsupportedError extends Error {
+  constructor(
+    readonly missing: string[],
+    detail?: string,
+  ) {
+    super(`this browser cannot run the end-to-end encryption${missing.length ? ` (missing: ${missing.join(", ")})` : ""}${detail ? `: ${detail}` : ""}`);
+    this.name = "E2eUnsupportedError";
+  }
+}
+
+/** `error` (an algorithm this browser does not know) as an {@link E2eUnsupportedError} naming what is missing, checked afresh. */
+export async function unsupportedFrom(error: unknown): Promise<E2eUnsupportedError> {
+  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const { missing } = await checkE2eSupport({ requireIndexedDb: false });
+  return new E2eUnsupportedError(missing, detail);
+}
