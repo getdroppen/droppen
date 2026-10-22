@@ -11,8 +11,8 @@ name: llm-security-review
 # the check fails closed: a maintainer has to review those by hand.
 #
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true. The job is
-# skipped otherwise. Needs the secrets LLM_REVIEW_BASE_URL (an
-# Anthropic-compatible gateway, without /v1) and LLM_REVIEW_API_KEY (a key on
+# skipped otherwise. Needs the secrets OPENROUTER_BASE_URL (an
+# Anthropic-compatible gateway, without /v1) and OPENROUTER_API_KEY (a key on
 # it); the variable LLM_REVIEW_MODEL names the model (default
 # claude-sonnet-5-5). Third-party actions are pinned to commit SHAs; a
 # transient API failure is retried once, then the check fails closed.
@@ -101,11 +101,11 @@ jobs:
           # input only satisfies the action's launch check; the Authorization header
           # comes from ANTHROPIC_AUTH_TOKEN. Background calls use the same model, so
           # the gateway only has to serve one.
-          ANTHROPIC_BASE_URL: ${{ secrets.LLM_REVIEW_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LLM_REVIEW_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
           ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
         with:
-          anthropic_api_key: ${{ secrets.LLM_REVIEW_API_KEY }}
+          anthropic_api_key: ${{ secrets.OPENROUTER_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
           classify_inline_comments: false
@@ -118,11 +118,11 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@58985842b834ed26087302ba27d07bc24ca8697a # v1 (2.1.292)
         env:
-          ANTHROPIC_BASE_URL: ${{ secrets.LLM_REVIEW_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LLM_REVIEW_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
           ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
         with:
-          anthropic_api_key: ${{ secrets.LLM_REVIEW_API_KEY }}
+          anthropic_api_key: ${{ secrets.OPENROUTER_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
           classify_inline_comments: false
