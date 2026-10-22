@@ -1365,9 +1365,10 @@ export class CloudAccount {
    * everything as it was. Nothing is written when nothing changed. Resolves
    * once it is committed, and rejects (a {@link SeenStoreError}) when it was
    * not: then nothing that hangs on it may go on. Once committed, the pin and
-   * the record are put where older pages read them too ({@link mirrorHeld}).
+   * the record are put where older pages read them too ({@link mirrorHeld}:
+   * `view`, the view `make` held against them, may prove them one chain).
    */
-  private async updateHeld(make: (held: Held) => { genesis?: string; record?: SeenRecord } | undefined): Promise<void> {
+  private async updateHeld(make: (held: Held) => { genesis?: string; record?: SeenRecord } | undefined, view?: ChainState): Promise<void> {
     const step: { genesis: string | null; record: SeenRecord | null } = { genesis: null, record: null };
     await this.atStore(() =>
       this.seen.update(this.account, (raw) => {
@@ -1380,7 +1381,7 @@ export class CloudAccount {
       }),
     );
     this.pinnedAt = step.genesis;
-    if (step.genesis !== null) this.mirrorHeld(step.genesis, step.record);
+    if (step.genesis !== null) this.mirrorHeld(step.genesis, step.record, view);
   }
 
   /**
@@ -1389,14 +1390,16 @@ export class CloudAccount {
    * IndexedDB): else a page of an older version knows nothing of what newer
    * pages verified, and a hub could keep it behind that — its word for an
    * old head, a load of an old chain. The pin where there is none; the
-   * record only where it raises theirs and is proven one chain with it —
+   * record only where it raises theirs and is proven one chain with it — by
+   * the two records, or by `view` (a verified view holding the head of
+   * both: a view that went further than the record keeps hashes of, say) —
    * never over a higher one, nor one kept apart (which is a checkpoint of
    * its own), nor under another pin. New pages only ever fold that record
    * in ({@link trustFrom}). Best effort, under the caller's seen-record lock
    * (as older pages write it); as `localStorage` goes, a page's copy of it
    * can be stale, as it always could.
    */
-  private mirrorHeld(genesis: string, record: SeenRecord | null): void {
+  private mirrorHeld(genesis: string, record: SeenRecord | null, view?: ChainState): void {
     const theirGenesis = this.read(genesisKey(this.account));
     if (theirGenesis === null) this.write(genesisKey(this.account), genesis);
     else if (theirGenesis !== genesis) return;
@@ -1407,7 +1410,9 @@ export class CloudAccount {
     if (theirs) {
       if (theirs.seenThrough >= record.seenThrough) return;
       const both = higherSeen(record, theirs);
-      if ("forkAt" in both || both.apart) return;
+      if ("forkAt" in both) return;
+      const holds = (mark: SeenRecord) => !!view && view.seq >= mark.seenThrough && hex(view.hashAt(mark.seenThrough)!) === mark.head;
+      if (both.apart && !(holds(record) && holds(theirs))) return;
     }
     this.write(seenKey(this.account), JSON.stringify(record));
   }
@@ -1605,7 +1610,7 @@ export class CloudAccount {
       // Kept only under the pin it is of (a chain this browser never pinned is not recorded).
       const genesis = hex(next.hashAt(0)!);
       try {
-        await this.updateHeld((held) => (held.genesis === genesis ? { record: this.nextRecord(next, held, clock) } : undefined));
+        await this.updateHeld((held) => (held.genesis === genesis ? { record: this.nextRecord(next, held, clock) } : undefined), next);
       } catch (error) {
         // Verified, not taken: this page's word for the older head it still shows is no good meanwhile.
         if (error instanceof SeenStoreError) this.unrecordedThrough = Math.max(this.unrecordedThrough, next.seq);

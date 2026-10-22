@@ -1618,3 +1618,24 @@ test("#183 third review: a page whose chain does not start with the genesis this
     await assert.rejects(a.attestation(), isFork);
   });
 });
+
+test("#183 third review: a sync that takes in more entries than the record keeps hashes of still raises the record where older pages read it", async () => {
+  const { hub, a, b } = await setup();
+  await a.sync();
+  const storage = browserStorage(a.store);
+  const key = `rh.hub.seen.${a.account}`;
+  // A page of this browser that keeps the record in localStorage (an older version of the app).
+  const older = await openPage(hub, a, storage, null, localStorageSeenStore(storage, null));
+  const seq = older.chain!.seq;
+  assert.equal((JSON.parse(storage.getItem(key)!) as StoredSeen).seenThrough, seq);
+  // Another device goes on by more than the record keeps hashes of; this page takes it all in one view.
+  for (let i = 0; i < 300; i++) await b.append({ type: "setRecoveryKey", key: null });
+  await a.sync();
+  assert.equal(a.chain!.seq, seq + 300);
+  // The hub keeps the newer entries from the older page.
+  const full = hub.chain.slice();
+  hub.chainServed = async () => full.slice(0, seq + 1);
+  await assert.rejects(older.attestation(), isFork, "not its word for the old head");
+  hub.chainServed = null;
+  assert.equal((JSON.parse(storage.getItem(key)!) as StoredSeen).seenThrough, a.chain!.seq, "the view that holds both proved them one chain");
+});
