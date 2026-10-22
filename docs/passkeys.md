@@ -1,6 +1,6 @@
 # Droppen 通行密钥：用 passkey 登录，并可选地用它解锁新设备
 
-> 设计稿，2026-10-17（基于 v0.2.102，`1623e74`，参考 `docs/local-aggregator.md`）。只写设计，不改代码。
+> 设计稿，2026-10-17（基于 v0.2.102，参考 `docs/local-aggregator.md`）。只写设计，不改代码。
 >
 > 前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）、`docs/relay-and-plans.md`（下称「中继文档」）和 `docs/local-aggregator.md`（下称「聚合器文档」）。
 >
@@ -297,7 +297,7 @@ prf_input = "rh/v1 passkey-unlock\0" ‖ salt_nonce          （浏览器再自�
 - 每个槽一个随机 salt（Yubico 的建议也是每把凭据一个随机 salt [17]），所以同一把通行密钥在作废后可以换 salt 重开（§4.7），不必重建通行密钥。
 - 新设备**从链上的 `PasskeySlotSet` 取 salt**，不另信 Hub 给的字段。Hub 给错链或错 salt，派生出的 `PAK` 就对不上链上的公钥，新设备拒绝（§4.6 第 3 步）。
 
-**派生**（Rust `rh_proto::passkey`、TS `W/lib/e2e/passkey.ts`，双向互通向量）：
+**派生**（Rust 在 `rh_proto::chain`、TS 在 `W/lib/e2e/passkey-unlock.ts`，双向互通向量）：
 
 ```
 prf  = PRF(credential, prf_input)                                       32 字节，只在内存

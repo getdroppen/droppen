@@ -56,7 +56,7 @@ app's first-run guide offers, does not run on anything older.
   what macOS says once the user removed the item with − — is shown as off. The
   status is read again (at most every 2 s) when the pointer reaches the
   menu-bar item.
-  **On by default** (`docs/desktop-onboarding.md` §10, Q2): a new install's
+  **On by default**: a new install's
   first launch turns *Start at Login* on, once, and records that in
   `state.json` (`loginDefault`); no later launch turns it on again, so what
   the user chooses afterwards stands. An install that ran before this (its

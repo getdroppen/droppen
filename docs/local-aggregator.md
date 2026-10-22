@@ -1,6 +1,6 @@
 # Droppen：一切都是设备、在本机登录、多台电脑同屏
 
-> 设计稿，2026-10-17（基于 v0.2.102，`1623e74`）。只写设计，不改代码。
+> 设计稿，2026-10-17（基于 v0.2.102）。只写设计，不改代码。
 >
 > 前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）和 `docs/relay-and-plans.md`（下称「中继文档」）。相关的另外两件事：SPA 的完整性（`docs/web-integrity.md`），云端宽屏与「需要你」。
 >
@@ -58,7 +58,7 @@
 | SPA 的单机假设 | 全局唯一 `transport()`；`api` 单例；`feedHub`、`GlobalFeedStore` 是单例，行键 `source/id`；查询键、路由、`PaneContent` 都不含机器；换机器靠 `location.reload()` | `W/lib/transport/index.ts:18-34`、`W/api/client.ts:31`、`W/app/global-feed.tsx:25-191`、`W/app/pane-tree.ts:7-33`、`W/features/cloud/context.ts:48-72` | §6 的改造面 |
 | 已按机器取址的 | 云端副本的 IndexedDB 键 `stream/<账户>/<机器>/…`；`StatusReaders` 同时读所有机器；`MachineChannel` 可以同时开多条 | `W/lib/hub/mirror.ts:167-169`、`W/features/cloud/machine-name.tsx:215-303`、`W/lib/hub/machine.ts:246-275` | 可以直接复用 |
 | 打包 | 资产 `remote-hand-<版本>-macos-aarch64.tar.gz`；自升级是推送式上传；托管副本写死 `<数据>/bin/remote-hand-server`；示例 launchd 标签带个人前缀（`com.<名字>.remote-hand`） | `.github/workflows/release.yml`、`S/selfupdate/store.rs:39`、`S/selfupdate/mod.rs:183-200` | §7 |
-| 仓库与依赖方向 | 一个工作区含 `rh-hub`；没有任何开源 crate 依赖 `rh-hub`；但 `cloud-e2e.sh` 从源码构建 Hub；Hub 的路由表只在它的文档注释里 | `server-rs/Cargo.toml:13`、`C/rh-devkit/scripts/cloud-e2e.sh:100-105` | §2.1 |
+| 仓库与依赖方向 | 一个工作区含 `rh-hub`；没有任何开源 crate 依赖 `rh-hub`；但本地端到端脚本从源码构建 Hub；Hub 的路由表只在它的文档注释里 | `server-rs/Cargo.toml` 的工作区成员、`C/rh-devkit/scripts/` 里的本地端到端脚本 | §2.1 |
 
 ## 2. 三个程序
 
@@ -114,7 +114,7 @@
 - **测试不需要 Hub 源码**：
   - 契约测试：两边用同一份 Schema；
   - 端到端：拉一个固定版本、只含二进制的 Hub 镜像。
-- **仓库拆分**：`C/rh-hub` 移到私有仓库，照常依赖开源的 `rh-proto` 与 `rh-relay`（闭源依赖开源，方向正确）。
+- **仓库拆分**：Hub（`rh-hub`）移到私有仓库，照常依赖开源的 `rh-proto` 与 `rh-relay`（闭源依赖开源，方向正确）。
 
 ## 3. 一切都是设备（链 v3）
 
@@ -969,14 +969,14 @@ interface AppShell {
 | `C/rh-client`（新） | 设备端在 `rh-devkit` 里 | 抽出来，`rh-devkit` 与本机共用 |
 | Hub（闭源） | 设备与机器分开；`devices.max` 只数完整设备 | 应用 v3；`devices.max`、`hosts.max`；`chain/3` 门槛；host 设备可同时以设备身份登录、领设备票据；用途 4 放开给非 admin；`retire`；拒绝已移除设备的 agent 登录（对外的部分见 `docs/hub-api/`） |
 | `docs/hub-api/`（新，开源） | 只在 Hub 的注释里 | 完整的公开 API，附 JSON Schema |
-| `C/rh-devkit/scripts/{cloud-e2e,cloud-dev}.sh` | 从源码构建 Hub | 拉固定版本的 Hub 镜像 |
+| `C/rh-devkit/scripts/` 里的本地端到端脚本与 `cloud-dev.sh` | 从源码构建 Hub | 拉固定版本的 Hub 镜像 |
 
 ### 6.7 渐进迁移，不破坏单机本地模式
 
 **统一验收**（每一步都要过）：
 
 - 现有测试全部通过；
-- `ui-consistency` 扫描前后截图一致；
+- 界面一致性扫描（内部工具，不在公开仓库）前后截图一致；
 - 本机走一遍：新建会话、终端、分屏、屏幕持久化、离线缓存冷启动；
 - 旧 URL 与旧屏幕 JSON 照常打开。
 
@@ -995,13 +995,13 @@ interface AppShell {
 - **列表 feed 按设备计数**：`GlobalFeedProvider` 改为取 `machineFeed(machine)`（`perMachine`），第一个使用者 `start()`，最后一个离开才 `stop()`；store 跟着设备留着，重新挂上时行立刻在。窗格里有 B 的会话，就一定有 B 的列表在跑，满足 S3-1 遗留的「列表停过之后 feed 只排队」。
 - **占用**：`MachineRuntime.hold()` 返回释放函数，`useEnsureLive` 改为占用。窗格内容（选择器除外）、`/m/<设备>` 路由、新建会话对话框里选中的设备都占用它。第一步里没有 `hold` 的驱动退回 `ensureLive()`，行为与今天相同；第二步 `HubMachine` 计数：被占用时不放通道，最后一个占用离开、又不在看，才开始 5 分钟计时；被占用的设备在副本里跟随本页打开过的会话（`setFollowSessions(在看 || 被占用)`），照旧受 `StreamBudget`（192）约束。屏幕的叶子是常驻的（访问过就一直挂着，直到删掉屏幕），所以它们的设备一直算占用——与它们的终端 socket 本来就占着通道一致。
 - **`home` 的含义**：改为「主设备」，只管存储与默认——布局、屏幕、插件文档、旧地址。栏上切换设备改为导航到 `/m/<设备>/<同一栏>`（`home` 用旧地址），导航栏、屏幕、窗格都不动、不重建。`RootLayout` 仍以 `home` 为 key：只有主设备真的换了（用户改选，或它离开账户）才重建，那时旧地址下的每个视图、每块屏幕确实都是另一台的了。初始主设备取这个浏览器上次在看的那台（`rh.hub.machine.<账户>`），升级后旧地址与已有屏幕仍在原来的设备上打开；都没有时取账户链上第一台可运行 AI 的设备；切换器里加「设为主设备」（先确认）。`HubShell.focus` 改为「路由所在的设备」（从路由同步），「在看」= 路由设备 ∪ 被占用的设备。
-- **导航栏**：会话、即时聊天、终端、文件、设置、用量跟着路由所在的设备走；屏幕、应用、插件、新建菜单仍是 `home` 的；健康点读路由设备的 feed。本机只有 `local`（就是 `home`），所以一切不变，ui-consistency 截图前后一致。
+- **导航栏**：会话、即时聊天、终端、文件、设置、用量跟着路由所在的设备走；屏幕、应用、插件、新建菜单仍是 `home` 的；健康点读路由设备的 feed。本机只有 `local`（就是 `home`），所以一切不变，界面一致性扫描的截图前后一致。
 - **新建会话**：两台以上设备时对话框顶部有设备选择，默认顺序：当前叶子或路由的设备 → 上次用的（`rh.hub.new-session-device`）→ `home`；离线、`stale` 的置灰并写原因。选中即占用（拨号），模型、账号、目录、最近目录都走所选设备的 `api`；建好后在那台打开（`/m/<设备>/sessions/…`，或叶子带上 `machine`）。窗格里的新终端、文件同理走叶子的设备。
 - **设置**：`/m/<设备>/settings`；两台以上设备时设置页标题行有设备选择。字号与语言只由主设备的偏好决定（`PrefsSync`），所以只在主设备的设置里出现；其它设备的设置里换成一行说明和去主设备设置的链接。
 - **不串号**：查询、feed、草稿、发件箱、回执检查、排队提示、终端、上传本来就按 `useMachine()` 与 `sessionKey` 取址，换成叶子或路由的 provider 即可；新键都在 `rh.hub.` 下；`check:machines` 保持通过。
 - **服务端也要认 `machine`**：屏幕的清洗（`server-rs/src/screens`）按已知字段重建每个叶子，读和写都过它，原来会把 `machine` 丢掉。现在它在 `session`、`chat`、`terminal`、`files`、`picker` 上保留一个能用的 `machine`（非空、不超过 200 字、无控制字符，与 id 同样只存不解），退化成选择器的内容不带。droppen.app 上屏幕存在主设备的 agent 里，所以主设备的 agent 要升级到这一版，跨设备的屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示（`machinesDropped`），窗格回到主设备。
 - **回滚**：旧版本（网页或 agent）读到带 `machine` 的叶子会在 `home` 上找那个 id：会话「找不到」、终端「已退出」、文件落在 `home` 的同一路径，都不崩；旧 agent 读时就丢掉 `machine`，下一次保存把它写没。`/m/…` 地址在旧版本里是未知路由。除了可选的 `machine`，存储格式不变。
-- **拆成两步**：第一步是路由、叶子与屏幕 JSON（含服务端清洗）、`MachineView`、按设备计数的列表 feed、`hold()` 接口、导航栏、新建会话的设备选择、设置的设备选择、ui-consistency 预览的 `uiDevices=1`、测试；第二步是 `hub-shell.ts`（占用计数、focus 从路由来、主设备固定与「设为主设备」、`select` 改为导航）、`cloud-bar.tsx`、`cloud-app.tsx`、仪表盘 `openAt` 改用 `/m/` 地址、`sw.js` 的离线壳路由加 `m/`、`ui-wording` 测试收进新文案表、浏览器验收与云端 e2e。
+- **拆成两步**：第一步是路由、叶子与屏幕 JSON（含服务端清洗）、`MachineView`、按设备计数的列表 feed、`hold()` 接口、导航栏、新建会话的设备选择、设置的设备选择、一致性预览的 `uiDevices=1`、测试；第二步是 `hub-shell.ts`（占用计数、focus 从路由来、主设备固定与「设为主设备」、`select` 改为导航）、`cloud-bar.tsx`、`cloud-app.tsx`、仪表盘 `openAt` 改用 `/m/` 地址、`sw.js` 的离线壳路由加 `m/`、`ui-wording` 测试收进新文案表、浏览器验收与云端 e2e。
 
 **M-0、M-1 落地时的取舍**（S1-6）：
 
@@ -1028,7 +1028,7 @@ interface AppShell {
 
 **S3-2 落地时的取舍**（设备仪表盘与跨设备「需要你」）：
 
-- 仪表盘就是机器页（`W/features/cloud/devices-dashboard.tsx`，`MachinesScreen` 是它的别名）：「我的设备 · 可运行 AI」。≥1680 三栏（左栏摘要、筛选、添加电脑；中间面板网格与「需要你」台账；右栏选中设备的会话与设备信息），1280–1679 摘要变成顶部横条、右栏仍在，更窄时只剩横条与面板（窄于 1280 时点面板直接打开设备）。面板网格 `auto-fill, minmax(340px, 1fr)`，1440 / 1920 / 2560 下是 2 / 3 / 4 列。
+- 仪表盘就是机器页（当时是 `devices-dashboard.tsx`，`MachinesScreen` 是它的别名；后来由 `W/features/cloud/my-devices.tsx` 取代，见下）：「我的设备 · 可运行 AI」。≥1680 三栏（左栏摘要、筛选、添加电脑；中间面板网格与「需要你」台账；右栏选中设备的会话与设备信息），1280–1679 摘要变成顶部横条、右栏仍在，更窄时只剩横条与面板（窄于 1280 时点面板直接打开设备）。面板网格 `auto-fill, minmax(340px, 1fr)`，1440 / 1920 / 2560 下是 2 / 3 / 4 列。
 - 与本机共用的部分在 `W/features/machines/`：选择器 `needs-you.ts`（`needsYou`、`unreadAcross`、`ledgerKind`，建在 `session-attention.ts` 的 `groupAttention` / `unreadCountOf` 之上）、每台的会话列表 `device-sessions.ts`（`useDeviceSessions`：live 的那台来自它的 feed，其余来自副本索引）与 `copy-sessions.ts`、组件 `NeedsYouLedger`、`MachinePanel`、`DeviceDetail`、`UnreadSignals`。本机只有 `local`，这次只用到选择器：标题栏与 app badge 的数字走 `unreadAcross([local])`，与以前的 `totalUnread` 相同，截图前后一致；台账与面板等 S1-7 的 `GatewayShell` 有了多台设备再挂到本机页上。
 - 不拨号：仪表盘的一切来自 `info()`、状态副本与索引副本。`HubMachine.sessions`（`copySessions(mirror)`）把索引变成一个 store，索引变了才换。索引行就是完整的 `SessionSummary`（`asking`、`activity`、`resident`、`unreadCount`、`attentionAt`、`scope` 都在），所以台账不需要任何会话流，`StreamBudget` 不变：浏览器实测 4 台在线 = 8 个订阅（各自的索引与状态），四条通道都是 `idle`；后台那台的「在问你」1.9 秒出现在台账顶部（agent 每 3 秒列一次）。不在线的设备照应用显示副本的样子「静止」（`restingRow`）：它的会话不算工作中、不算在问你，未读照算——停在问题上掉线的机器不会一直顶在台账上；实测停掉那台，它的问题立刻离开台账，重新上线 0.6 秒后回来。
 - 索引缺的只有一样：问题本身的文字。右栏与台账只能显示会话标题；最小的改动是索引行加一个截断的 `askingText`（问题的前 160 字，随 `asking` 一起清空），不必订阅会话流。`os`、`agentVersion` 取自状态流里已有的 `settings.platform`、`settings.serverVersion`（`darwin` 显示为 macOS），没有版本号与架构；S1-5 给状态流加字段后再细化，没有时那一行不显示。
@@ -1037,7 +1037,7 @@ interface AppShell {
 - 只有在线的设备算进标题与 badge（`unreadAcross`）：离线、未知、副本过期的设备（`away`）的未读照旧留在它的面板与「需要你」台账里，但不进标题——在这页上读不掉它，一台合上放进抽屉的笔记本不该让 badge 永远挂着 `(N)`。所以设备离线时，左栏的「未读」可能大于标题的数字。
 - 副本过期：设备说自己在线，但它的索引副本超过 15 分钟没动（agent 每 5 分钟给每条流签一次心跳头，`HEARTBEAT_EVERY`；三次没到），就和离线一样「静止」显示，面板写「副本 · 截至 …」——流写入卡住、被拒、本设备缺某个密钥纪元时，旧的问题不会一直顶在台账上。
 - 已知的出入：副本索引只含最近 30 天、自己的会话（`RH_AGENT_SYNC_DAYS`，`agent/streams/content.rs` 的 `admits`），feed 没有这个窗口，所以 home 在 feed 与副本之间切换时，总数可能因为 30 天前的未读而变一下；读掉一条后，别的设备上的数字要等那台 agent 下一次列表（每 3 秒，`LIST_EVERY`）再经 Hub 才更新。两者都接受，不改。
-- 12 台设备的预览：ui-consistency harness 的 `?uiCloud=machines-many`（另有 `machines`、`machines-empty`）；`scan.mjs` 默认视图加了 1920×1080 与 2560×1440。
+- 12 台设备的预览：界面一致性预览的 `?uiCloud=machines-many`（另有 `machines`、`machines-empty`）；扫描默认视图加了 1920×1080 与 2560×1440。
 - 没做：设备页右栏的密钥状态与设备链时间线；768–1279 用面板网格代替设计稿里的机器台账表；「可更新」标记；按最近活动排序（面板保持链上的顺序，不会随会话跳动）。
 
 **「我的设备」落地时的取舍**（§3.7，设备页与机器页合成一页）：
@@ -1082,7 +1082,7 @@ interface AppShell {
   - 栏切换、「设为主设备」、「我的设备」⇄ `/m/B/…` ⇄ 普通地址的前进后退，都不刷新页面（页面上的标记一直在）。
   - 两台设备上同 id 的会话各显示各的内容：只追加到 B 的金丝雀，在 A 上看不到。
   - 新建会话选 B：请求到了 B（只有 B 的 home 里有的目录被接受），B 去启动 CLI；验收里的 agent 故意没有 claude 在 PATH 上，以免用到本机钥匙串里的凭据，所以停在启动那一步。
-  - `cloud-e2e.sh` 通过。
+  - 本地端到端通过。
 - **没做**：本机 `GatewayShell` 一侧（S1-7、S2-2 之后）、插件待办跨设备、推送 URL 带设备（droppen.app 没有推送）、`/m/` 下的应用与插件页。
 
 **主设备按账户落地时的取舍**（M-2 的后续；`docs/hub-api/http.md` `/v1/main-device`）：
@@ -1312,7 +1312,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
     - 跟随计划：最新 5 个会话、轮次名字的取舍、订阅预算；
     - 守卫：关闭、停止、删除之后都不写回。
   - Hub（自己起的容器）：host 的设备角色经 `/v1/client` 订阅另一台 host 的流并取页；被移除后订阅被拒。
-  - cloud-e2e 加一段，3 台 host（真实 agent，其中 1 台离线）加本机安装：
+  - 本地端到端加一段，3 台 host（真实 agent，其中 1 台离线）加本机安装：
     - 5 秒内拿到三份索引；
     - 新会话 5 秒内进副本（索引与会话流）；
     - Hub 重启后自己续上；
@@ -1396,8 +1396,8 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 - **测试**：
   - Rust 单测：`LiveCopies` 的发布与投递顺序（快照与增量不重不漏）、三种快照与 TS fold 等价（含窗口页与 `fp`）、纪元不倒退、收窄与清空发 `gone`、兴趣计数与 5 分钟余留、兴趣表上限、按字节的发送队列、「读 `dir` 时放订阅」不死锁（带超时的回归测试）；`access::plan` 把打开的会话排在最新 5 个之前、受预算约束、最新的不占名额、行随之保留；网关的准入（`cloud:*`、鉴权关、没权限、所有者、被授权、收回后 `bye`、登录退出后 `bye`、没有所有者与 `cloud.json` 读不出时谁也不给）、认领、协议解析、上限与限速、索引里没有的会话；`FeedCopy` 的 `fp`；票据记下签发的登录、路径与桥接分类。
   - Web 单测与渲染测试：`GatewayCopySource`（reset、增量、`missing`、`overrun` 后重订、重连后带 `from` 重订）、`GatewayShell`（开关 runtime、`ShellKind`、不写 IndexedDB、不碰 `crypto.subtle`）、`feed-persist` 只为 `local` 落盘、列表模型（混排顺序、分组键）、多设备列表（筛选条、远端行的设备名、离线的「截至」、在问你）、单机列表与改前逐字相同、Droppen 的权限开关、只读输入框。
-  - cloud-e2e（只在本地 Hub，接在 S1-5 第 1 段之后）：所有者经网关拿到三台 host 的 `dir`（离线的那台 `offline` 且带 `copyAsOfMs`）与三份索引；在 s15one 上的一个会话里问一个问题，网关上的索引行在 5 秒内变成 `asking`（计时）；以局域网 IP 作 Host/Origin 连同一个网关；第二个本机账号没有远端权限时 `seesOtherDevices` 为假、网关 403，授权后能连，收回后 1 秒内收到 `bye`；订阅远端会话读到金丝雀，本机日志里没有。
-  - 浏览器：ui-consistency 预览加 `?uiGateway=1`（假的 `/api/agg/ws`：两台远端，一台在问你、一台离线），截单机与多设备、中文与英文、1440 与 390；再用局域网 IP 打开预览页验证不依赖安全上下文。
+  - 本地端到端（只在本地 Hub，接在 S1-5 第 1 段之后）：所有者经网关拿到三台 host 的 `dir`（离线的那台 `offline` 且带 `copyAsOfMs`）与三份索引；在 s15one 上的一个会话里问一个问题，网关上的索引行在 5 秒内变成 `asking`（计时）；以局域网 IP 作 Host/Origin 连同一个网关；第二个本机账号没有远端权限时 `seesOtherDevices` 为假、网关 403，授权后能连，收回后 1 秒内收到 `bye`；订阅远端会话读到金丝雀，本机日志里没有。
+  - 浏览器：一致性预览加 `?uiGateway=1`（假的 `/api/agg/ws`：两台远端，一台在问你、一台离线），截单机与多设备、中文与英文、1440 与 390；再用局域网 IP 打开预览页验证不依赖安全上下文。
 
 **S1-7 落地时的取舍**（网关一侧、页面一侧）
 
@@ -1415,7 +1415,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
   - 页面一侧的副本：一条叠加的 `copy` 落在页面没有的副本上（快照丢了）不硬叠，退订后从头再订；折不进 fold 的同样从头再订，间隔 1、2、5、10、30 秒；`overrun` 与 `busy` 1 秒后原样再订；`gone`、`no_device` 时若这台设备还在名单里，过一会儿再订（名单被清空又列回来时）；其它 `copy_error` 就此结束（服务端已放下，页面再发一次 `unsub` 兜底）。
   - 打开过的会话的兴趣只在内存里，重启后要再打开一次才跟随。
 - **与「新建会话改成空会话视图」合在一起**：远端只读会话在 `ComposerBox` 的位置只显示那一行只读说明；新建会话视图的设备选择只列能新建会话的设备（`DevicePicker writable`，除这台设备外都是只读的远端时干脆不出现），默认设备不会是只读的远端，打开 `/m/<只读设备>/sessions/new` 会转到这台设备的新建会话；统一列表里的「新建会话」仍在这台设备上。
-- 验收记录（cloud-e2e 的计时、评审后的复跑、浏览器与截图）是内部记录，不在公开仓库。
+- 验收记录（本地端到端的计时、评审后的复跑、浏览器与截图）是内部记录，不在公开仓库。
 
 ### S2 在本机里直接操作其它设备
 
