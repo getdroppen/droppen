@@ -23,9 +23,18 @@ register(
 );
 
 const container = installFakeDom();
+// Every render, update and unmount here goes through React's `act` (below).
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 // Query caches, feeds and React's scheduler keep timers this file does not own: once every test has run, go.
 after(() => void setTimeout(() => process.exit(), 50));
-const flush = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Let `ms` pass for what runs outside React (a router's navigation), then
+ * return once React has drawn all it was set off to draw and run the effects
+ * after it (`act`). A fixed wait alone does not promise that: on a busy
+ * machine it can end between a commit and its effects (a view takes its hold
+ * in one), and the test reads a page half done.
+ */
+const flush = (ms = 20) => React.act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
 // After the stand-in DOM: React and the app's modules read it as they load.
 const { createRoot } = await import("react-dom/client");
@@ -66,19 +75,42 @@ function openCounted(key: string, name = key) {
   return counted;
 }
 
-function reset() {
-  registry.setShell("local", LOCAL);
-  for (const key of registry.openMachines()) if (key !== LOCAL) registry.closeMachine(key);
-}
+/** A change to what the page draws — a render, an unmount, a device opened or closed under a view: returns once React has drawn it and run the effects after it (`act`). */
+const change = (fn: () => void) => React.act(async () => fn());
 
-/** Render `node` into the stand-in page; returns the root and what it drew, as text. */
-function mount(node: React.ReactNode) {
+/** What is drawn on the stand-in page, until a test takes it down or `reset` does. */
+const drawn = new Set<import("react-dom/client").Root>();
+
+/**
+ * Back to the local page alone. What a test left drawn goes first — however
+ * the test ended: a test that fails halfway leaves nothing drawn, or held,
+ * under the next one, and no view is left on a device closed under it.
+ */
+const reset = () =>
+  change(() => {
+    for (const page of drawn) page.unmount();
+    drawn.clear();
+    registry.setShell("local", LOCAL);
+    for (const key of registry.openMachines()) if (key !== LOCAL) registry.closeMachine(key);
+  });
+
+/** Render `node` into the stand-in page; returns the root (its `render` and `unmount` are changes, above) and what it drew, as text. */
+async function mount(node: React.ReactNode) {
   const errors: unknown[] = [];
-  const root = createRoot(container as never, {
+  const page = createRoot(container as never, {
     onUncaughtError: (error) => void errors.push(error),
     onCaughtError: (error) => void errors.push(error),
   });
-  root.render(node);
+  drawn.add(page);
+  const root = {
+    render: (next: React.ReactNode) => change(() => page.render(next)),
+    unmount: () =>
+      change(() => {
+        page.unmount();
+        drawn.delete(page);
+      }),
+  };
+  await root.render(node);
   return { root, errors, text: () => (container as FakeNode).textContent };
 }
 
@@ -95,11 +127,10 @@ function withQueries(node: React.ReactNode) {
 const noop = () => undefined;
 
 test("B1a: the local page reading a screen arranged on droppen.app shows another device's pane as such, and does not crash", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   const content: PaneContent = { kind: "session", source: "claude", id: "s-1", machine: "d-elsewhere" };
-  const { root, errors, text } = mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} />));
-  t.after(() => root.unmount());
+  const { errors, text } = await mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} />));
   await flush();
   assert.deepEqual(errors, [], "nothing thrown");
   assert.match(text(), /this device is not on this page/);
@@ -109,17 +140,16 @@ test("B1a: the local page reading a screen arranged on droppen.app shows another
 });
 
 test("B1b: a device leaving droppen.app while a pane shows it turns the pane into a not-on-this-page one, not a crash", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   openCounted("m-b", "studio");
   registry.setShell("hub", "m-a");
   const content: PaneContent = { kind: "chat", chatKind: "api", id: "c-1", machine: "m-b" };
-  const { root, errors, text } = mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} />));
-  t.after(() => root.unmount());
+  const { errors, text } = await mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} />));
   await flush();
   assert.doesNotMatch(text(), /not on this page/, "on the page: its content");
-  registry.closeMachine("m-b");
+  await change(() => registry.closeMachine("m-b"));
   await flush();
   assert.deepEqual(errors, [], "nothing thrown");
   assert.match(text(), /this device is not on this page/);
@@ -127,14 +157,13 @@ test("B1b: a device leaving droppen.app while a pane shows it turns the pane int
 });
 
 test("B1c: a picker naming a device gone from the page picks from the routed view's device instead", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   openCounted("m-b", "studio");
   registry.setShell("hub", "m-a");
   const content: PaneContent = { kind: "picker", machine: "m-gone" };
-  const { root, errors } = mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} defaultMachine="m-b" />));
-  t.after(() => root.unmount());
+  const { errors } = await mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} defaultMachine="m-b" />));
   await flush();
   assert.deepEqual(errors, []);
   const trigger = (container as FakeNode).findAll("data-testid").find((n) => n.getAttribute("data-testid") === "device-picker");
@@ -143,7 +172,7 @@ test("B1c: a picker naming a device gone from the page picks from the routed vie
 });
 
 test("a pane whose content fails to draw keeps the failure to itself", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   function Broken(): React.ReactNode {
     throw new Error("drawing failed");
@@ -163,10 +192,9 @@ test("a pane whose content fails to draw keeps the failure to itself", async (t)
   };
   const actions: string[] = [];
   const api = paneTreeApi(state, (action) => void actions.push(action.type));
-  const { root, text } = mount(
+  const { text } = await mount(
     <PaneTreeView api={api} renderLeaf={(leaf) => (leaf.id === "bad" ? <Broken /> : <span>the other pane</span>)} />,
   );
-  t.after(() => root.unmount());
   await flush();
   assert.match(text(), /the other pane/, "the rest of the page draws");
   assert.match(text(), /this pane could not be drawn/);
@@ -175,14 +203,14 @@ test("a pane whose content fails to draw keeps the failure to itself", async (t)
 });
 
 test("holds follow what is mounted: a device's view holds it on mount, lets go on unmount, and moves with its content", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   const b = openCounted("m-b");
   const c = openCounted("m-c");
   registry.setShell("hub", "m-a");
   const Probe = () => <span>{useMachine()}</span>;
-  const { root, text } = mount(
+  const { root, text } = await mount(
     <MachineProvider machine="m-a">
       <MachineView machine="m-b" hold>
         <Probe />
@@ -192,7 +220,7 @@ test("holds follow what is mounted: a device's view holds it on mount, lets go o
   await flush();
   assert.equal(text(), "m-b", "the view is about its device");
   assert.equal(b.holds, 1, "held while mounted");
-  root.render(
+  await root.render(
     <MachineProvider machine="m-a">
       <MachineView machine="m-c" hold>
         <Probe />
@@ -201,7 +229,7 @@ test("holds follow what is mounted: a device's view holds it on mount, lets go o
   );
   await flush();
   assert.deepEqual([b.holds, c.holds], [0, 1], "content moved to another device: the hold moves with it");
-  root.render(
+  await root.render(
     <MachineProvider machine="m-a">
       <MachineView machine="m-c">
         <Probe />
@@ -210,7 +238,7 @@ test("holds follow what is mounted: a device's view holds it on mount, lets go o
   );
   await flush();
   assert.equal(c.holds, 0, "a view that does not use its device (a picker) holds nothing");
-  root.render(
+  await root.render(
     <MachineProvider machine="m-a">
       <MachineView machine="m-b" hold>
         <Probe />
@@ -219,13 +247,13 @@ test("holds follow what is mounted: a device's view holds it on mount, lets go o
   );
   await flush();
   assert.equal(b.holds, 1);
-  root.unmount();
+  await root.unmount();
   await flush();
   assert.deepEqual([b.holds, c.holds], [0, 0], "unmounted: nothing held");
 });
 
 test("a view of another device starts that device's list, and the last view to go stops it", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   openCounted("m-f");
@@ -240,18 +268,18 @@ test("a view of another device starts that device's list, and the last view to g
       ))}
     </MachineProvider>
   );
-  const { root } = mount(tree(2));
+  const { root } = await mount(tree(2));
   await flush();
   assert.equal(feed.holders, 2, "each view of it counts");
-  root.render(tree(1));
+  await root.render(tree(1));
   await flush();
   assert.equal(feed.holders, 1);
-  root.unmount();
+  await root.unmount();
   await flush();
   assert.equal(feed.holders, 0);
   // The home's own provider is the root's (`GlobalFeedProvider` under the home's `MachineProvider`).
   const home = machineFeedFor("m-a");
-  const second = mount(
+  const second = await mount(
     <MachineProvider machine="m-a">
       <GlobalFeedProvider>
         <span>home</span>
@@ -260,7 +288,7 @@ test("a view of another device starts that device's list, and the last view to g
   );
   await flush();
   assert.equal(home.holders, 1);
-  second.root.unmount();
+  await second.root.unmount();
   await flush();
   assert.equal(home.holders, 0);
 });
@@ -279,7 +307,7 @@ function machineRouter(at: string) {
 }
 
 test("/m/<device>: another device's page is about it and holds it; the home's goes to its plain address; an unknown device says so", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   const b = openCounted("m-b");
@@ -287,35 +315,35 @@ test("/m/<device>: another device's page is about it and holds it; the home's go
 
   const onB = machineRouter("/m/m-b/sessions");
   await onB.load();
-  const first = mount(<router.RouterProvider router={onB} />);
+  const first = await mount(<router.RouterProvider router={onB} />);
   await flush(50);
   assert.match(first.text(), /sessions of m-b/);
   assert.equal(b.holds, 1, "its page holds it");
   assert.equal(machineFeedFor("m-b").holders, 1, "and runs its list");
-  first.root.unmount();
+  await first.root.unmount();
   await flush();
   assert.equal(b.holds, 0);
 
   const onHome = machineRouter("/m/m-a/sessions?x=1");
   await onHome.load();
-  const second = mount(<router.RouterProvider router={onHome} />);
+  const second = await mount(<router.RouterProvider router={onHome} />);
   for (let i = 0; i < 100 && onHome.state.location.pathname !== "/sessions"; i++) await flush(10);
   await flush(50);
   assert.equal(onHome.state.location.pathname, "/sessions", "one address per page: the home's is plain");
   assert.equal(onHome.state.location.searchStr, "?x=1", "its search kept");
-  second.root.unmount();
+  await second.root.unmount();
 
   const unknown = machineRouter("/m/m-nowhere/sessions");
   await unknown.load();
-  const third = mount(<router.RouterProvider router={unknown} />);
+  const third = await mount(<router.RouterProvider router={unknown} />);
   await flush(50);
   assert.match(third.text(), /this device is not on this page/);
   assert.doesNotMatch(third.text(), /sessions of/);
-  third.root.unmount();
+  await third.root.unmount();
 });
 
 test("a pane of a device the page does not have does not make the other panes name their device", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   const state = {
     root: {
@@ -331,20 +359,19 @@ test("a pane of a device the page does not have does not make the other panes na
     focusedId: "here",
   };
   const Mixed = () => <span>{usePaneTreeMixed() ? "mixed" : "one"}|</span>;
-  const { root, text } = mount(<PaneTreeView api={paneTreeApi(state, noop)} renderLeaf={() => <Mixed />} />);
-  t.after(() => root.unmount());
+  const { root, text } = await mount(<PaneTreeView api={paneTreeApi(state, noop)} renderLeaf={() => <Mixed />} />);
   await flush();
   assert.equal(text(), "one|one|", "only the local page's own device is here");
   // A second device on the page: now the tree does show two.
-  openCounted("m-b");
+  await change(() => void openCounted("m-b"));
   const two = { ...state, root: { ...state.root, children: [state.root.children[0], { type: "leaf" as const, id: "b", content: { kind: "terminal", id: "t", machine: "m-b" } as PaneContent }] as [never, never] } };
-  root.render(<PaneTreeView api={paneTreeApi(two, noop)} renderLeaf={() => <Mixed />} />);
+  await root.render(<PaneTreeView api={paneTreeApi(two, noop)} renderLeaf={() => <Mixed />} />);
   await flush();
   assert.equal(text(), "mixed|mixed|");
 });
 
 test("a routed view that throws keeps the error to itself, and the next address draws afresh", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   const at = router.createRouter({
     routeTree: router.createRootRoute().addChildren([]),
@@ -364,20 +391,19 @@ test("a routed view that throws keeps the error to itself, and the next address 
       <span>|screens and apps</span>
     </router.RouterContextProvider>
   );
-  const { root, text } = mount(tree());
-  t.after(() => root.unmount());
+  const { root, text } = await mount(tree());
   await flush();
   assert.match(text(), /this pane could not be drawn/);
   assert.match(text(), /\|screens and apps/, "the layers beside the routed view stay");
   // A navigation (the rail, Back): the routed view's address moves, and it draws again.
-  await at.navigate({ to: "/next" as never });
-  root.render(tree());
+  await React.act(() => at.navigate({ to: "/next" as never }));
+  await root.render(tree());
   await flush();
   assert.equal(text(), "next view|screens and apps");
 });
 
 test("a device that goes between the commit and the effects is neither held nor started, and nothing throws", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   const b = openCounted("m-b");
@@ -387,7 +413,7 @@ test("a device that goes between the commit and the effects is neither held nor 
     React.useLayoutEffect(() => registry.closeMachine("m-b"), []);
     return null;
   }
-  const { root, errors } = mount(
+  const { errors } = await mount(
     <MachineProvider machine="m-a">
       <MachineView machine="m-b" hold>
         <span>b</span>
@@ -395,7 +421,6 @@ test("a device that goes between the commit and the effects is neither held nor 
       <Closer />
     </MachineProvider>,
   );
-  t.after(() => root.unmount());
   await flush();
   assert.deepEqual(errors, [], "nothing thrown");
   assert.equal(b.holds, 0);
@@ -403,7 +428,7 @@ test("a device that goes between the commit and the effects is neither held nor 
 });
 
 test("S2: font size and language are set on the main device's settings, and another device's say so", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   registry.openMachine("m-a", silent);
   registry.openMachine("m-b", silent);
@@ -416,14 +441,13 @@ test("S2: font size and language are set on the main device's settings, and anot
         </MachineProvider>,
       ),
     );
-  const onMain = draw("m-a");
+  const onMain = await draw("m-a");
   await flush();
   assert.match(onMain.text(), /font size/);
   assert.match(onMain.text(), /language/);
   assert.equal((container as FakeNode).findAll("data-appearance-on-main").length, 0);
-  onMain.root.unmount();
-  const onOther = draw("m-b");
-  t.after(() => onOther.root.unmount());
+  await onMain.root.unmount();
+  const onOther = await draw("m-b");
   await flush();
   assert.doesNotMatch(onOther.text(), /font size/);
   assert.match(onOther.text(), /follow the main device/);
@@ -431,7 +455,7 @@ test("S2: font size and language are set on the main device's settings, and anot
 });
 
 test("S1: the page draws at an address with escaped characters: the router caught up compares the address as the browser writes it", async (t) => {
-  reset();
+  await reset();
   t.after(reset);
   const { routerCaughtUp, useRouterCaughtUp } = await import("../src/app/machine-route.js");
   assert.equal(routerCaughtUp("/sessions/claude/a%20b?x=1", "/sessions/claude/a%20b"), true);
@@ -448,12 +472,11 @@ test("S1: the page draws at an address with escaped characters: the router caugh
   const at = router.createRouter({ routeTree: router.createRootRoute(), history: router.createMemoryHistory({ initialEntries: ["/sessions/claude/a%20b"] }) });
   await at.load();
   const Probe = () => <span>{useRouterCaughtUp() ? "drawn" : "blank"}</span>;
-  const { root, text } = mount(
+  const { text } = await mount(
     <router.RouterContextProvider router={at}>
       <Probe />
     </router.RouterContextProvider>,
   );
-  t.after(() => root.unmount());
   await flush();
   assert.equal(text(), "drawn");
 });
