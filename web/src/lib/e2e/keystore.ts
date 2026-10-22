@@ -296,6 +296,10 @@ async function keysAgree(keys: DeviceKeys): Promise<boolean> {
  */
 async function createV2(store: KeyStore, now: () => number, replacing = false): Promise<DeviceKeys> {
   const at = now();
+  // Made before anything is written or set aside: a browser that cannot make
+  // them (no Ed25519 or X25519, `support.ts`) leaves the store as it was.
+  const signPair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const dhPair = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
   const old = replacing ? await store.get(DEVICE_KEYS_V2) : undefined;
   // Kept but handed back as nothing: it cannot be kept aside, so it is not overwritten either.
   if (old === null) throw new DeviceKeysUnreadable("stored", "the browser handed back nothing for the stored device keys, so they cannot be kept aside and are not replaced");
@@ -321,8 +325,6 @@ async function createV2(store: KeyStore, now: () => number, replacing = false): 
     await store.put(wrapName, wrap);
   }
   const wrapKey = wrap as CryptoKey;
-  const signPair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
-  const dhPair = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
   const signPublic = new Uint8Array(await crypto.subtle.exportKey("raw", signPair.publicKey));
   const dhPublic = new Uint8Array(await crypto.subtle.exportKey("raw", dhPair.publicKey));
   const seal = async (which: "sign" | "dh", key: CryptoKey) => {

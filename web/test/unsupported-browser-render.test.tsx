@@ -114,6 +114,10 @@ class LoggedStore extends MemoryKeyStore {
     log.push(`store.put ${name}`);
     return super.put(name, value);
   }
+  override async delete(name: string): Promise<void> {
+    log.push(`store.delete ${name}`);
+    return super.delete(name);
+  }
 }
 
 /** Signed in on this browser before (a kept device session), opening the app. */
@@ -192,8 +196,11 @@ test("no Ed25519 only: compatibility mode is offered with its risk, and nothing 
   assert.equal(byTestId("unsupported-missing")!.textContent, "missing: Ed25519");
   const offer = byTestId("compat-offer");
   assert.ok(offer, "compatibility mode is offered");
-  assert.match(offer.textContent!, /private keys are then in the page's memory/);
-  assert.match(offer.textContent!, /could copy them, not just use them while the page is open/);
+  // What really changes, said as it is: not "could copy them", which code in the page can do natively too (by unsealing them).
+  assert.match(offer.textContent!, /private keys are plain bytes in the page's memory instead of keys the browser holds/);
+  assert.match(offer.textContent!, /not hardened against side channels/);
+  assert.match(offer.textContent!, /one more library is loaded into the page/);
+  assert.doesNotMatch(offer.textContent!, /copy them/);
   const trust = byTestId("compat-trust") as HTMLButtonElement;
   assert.equal(trust.disabled, true, "not before “I understand the risk”");
   await click(trust);
@@ -214,6 +221,9 @@ test("an algorithm failing when the keys are made, past the check: the same scre
   assert.ok(container.textContent!.includes("this browser cannot run Droppen's end-to-end encryption"));
   noRetryNoNewDevice();
   assert.ok(byTestId("unsupported-sign-out"));
+  // "Nothing was stored or changed" holds: the keys are made before anything is written or set aside.
+  assert.match(byTestId("unsupported-why")!.textContent!, /Nothing was stored or changed/);
+  assert.deepEqual(log.filter((l) => l.startsWith("store.put") || l.startsWith("store.delete")), []);
   assert.equal(await store.get("device-keys/v2"), undefined);
 });
 
@@ -302,13 +312,26 @@ test("agreed after signing in: the keys are made only then, in compatibility mod
   const v2 = (await store.get("device-keys/v2")) as { version: number; sign: { sealed: Uint8Array } };
   assert.equal(v2.version, 2, "kept as sealed PKCS #8, as natively");
   assert.equal(v2.sign.sealed.length, 48 + 16);
-  // From here on the page says so, in the bar and on this device's row.
-  const { renderToStaticMarkup } = await import("react-dom/server");
+  // From here on the page says so — in the bar, on a phone's width too (compact) — and tapped, offers to stop.
+  await act(async () => root?.unmount());
   const { CompatBadge } = await import("../src/features/cloud/browser-support.js");
-  const badge = renderToStaticMarkup(
-    <I18nextProvider i18n={i18n}>
-      <CompatBadge />
-    </I18nextProvider>,
+  root = createRoot(container);
+  await act(async () =>
+    root!.render(
+      <I18nextProvider i18n={i18n}>
+        <CompatBadge compact />
+      </I18nextProvider>,
+    ),
   );
-  assert.match(badge, /data-testid="compat-mode"[^>]*>compatibility mode</);
+  const badge = byTestId("compat-mode")!;
+  assert.deepEqual([...badge.querySelectorAll("span")].map((e) => [e.className, e.textContent]), [
+    ["md:hidden", "compat."],
+    ["max-md:hidden", "compatibility mode"],
+  ]);
+  await click(badge);
+  const withdraw = document.querySelector<HTMLElement>('[data-testid="compat-withdraw"]');
+  assert.ok(withdraw, "the badge opens what it means, with a way to stop");
+  assert.match(document.querySelector('[data-testid="compat-card"]')!.textContent!, /plain bytes in the page's memory/);
+  await click(withdraw);
+  assert.equal(localStorage.getItem(COMPAT_CONSENT_KEY), null, "the agreement is withdrawn: the next page asks again");
 });

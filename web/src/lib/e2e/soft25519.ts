@@ -18,9 +18,12 @@
  * sealed under a non-extractable AES-GCM key (`keystore.ts`), which stays
  * native.
  *
- * A key from here is not a `CryptoKey`: it has a `CryptoKey`'s `type`,
- * `extractable`, `algorithm` and `usages`, and only these methods take it.
- * Stored in IndexedDB it would keep those four fields and none of its bytes.
+ * A key from here is not a `CryptoKey`: it shows a `CryptoKey`'s `type`,
+ * `extractable`, `algorithm` and `usages`, frozen, and only these methods take
+ * it. What they go by is kept apart with its bytes, in a `WeakMap` keyed by
+ * the key object itself, so neither changing what a key shows nor making an
+ * object that looks like one gets past them. Stored in IndexedDB it would keep
+ * none of its bytes.
  */
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { ED25519_PKCS8_PREFIX, X25519_PKCS8_PREFIX } from "./keys";
@@ -29,7 +32,12 @@ import type { SoftAlgorithm } from "./support";
 const ED25519_SPKI_PREFIX = Uint8Array.from([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]);
 const X25519_SPKI_PREFIX = Uint8Array.from([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00]);
 
+/** What a key is, as the methods here go by it, whatever the key object shows. */
 interface Held {
+  type: "public" | "private";
+  extractable: boolean;
+  curve: SoftAlgorithm;
+  usages: readonly KeyUsage[];
   /** The Ed25519 seed or the X25519 scalar (private keys only). */
   secret?: Uint8Array;
   publicKey: Uint8Array;
@@ -37,22 +45,25 @@ interface Held {
 
 const held = new WeakMap<SoftKey, Held>();
 
-/** A key of compatibility mode: a `CryptoKey`'s fields, its bytes kept apart. */
+/** A key of compatibility mode: a `CryptoKey`'s fields, frozen, for show; what it is, and its bytes, kept apart. */
 class SoftKey {
+  readonly type: "public" | "private";
+  readonly extractable: boolean;
   readonly algorithm: KeyAlgorithm;
   readonly usages: KeyUsage[];
-  constructor(
-    readonly type: "public" | "private",
-    readonly extractable: boolean,
-    curve: SoftAlgorithm,
-    usages: KeyUsage[],
-    bytes: Held,
-  ) {
-    this.algorithm = Object.freeze({ name: curve });
-    this.usages = usages;
-    held.set(this, bytes);
+  constructor(what: Held) {
+    const kept: Held = Object.freeze({ ...what, usages: Object.freeze([...what.usages]) });
+    this.type = kept.type;
+    this.extractable = kept.extractable;
+    this.algorithm = Object.freeze({ name: kept.curve });
+    this.usages = Object.freeze([...kept.usages]) as KeyUsage[];
+    held.set(this, kept);
+    Object.freeze(this);
   }
 }
+
+/** What `key` is, if it is a key made here (by identity: a copy or a look-alike is not). */
+const heldBy = (key: unknown): Held | undefined => (typeof key === "object" && key !== null ? held.get(key as SoftKey) : undefined);
 
 const fail = (name: string, message: string) => new DOMException(message, name);
 
@@ -118,20 +129,52 @@ function checkUsages(curve: SoftAlgorithm, type: "public" | "private", usages: r
 
 function privateKey(curve: SoftAlgorithm, secret: Uint8Array, extractable: boolean, usages: KeyUsage[]): SoftKey {
   if (secret.length !== 32) throw fail("DataError", `a ${curve} private key is 32 bytes`);
-  return new SoftKey("private", extractable, curve, usages, { secret, publicKey: publicOf(curve, secret) });
+  return new SoftKey({ type: "private", extractable, curve, usages, secret, publicKey: publicOf(curve, secret) });
 }
 
 function publicKey(curve: SoftAlgorithm, raw: Uint8Array, extractable: boolean, usages: KeyUsage[]): SoftKey {
   if (raw.length !== 32) throw fail("DataError", `a ${curve} public key is 32 bytes`);
-  return new SoftKey("public", extractable, curve, usages, { publicKey: raw });
+  return new SoftKey({ type: "public", extractable, curve, usages, publicKey: raw });
 }
 
-/** `key`, held here, of `curve` and `type`, allowed `usage`. */
+/** `key`, made here, of `curve` and `type`, allowed `usage` — as made, not as it shows. */
 function own(key: unknown, curve: SoftAlgorithm, type: "public" | "private", usage?: KeyUsage): Held {
-  const bytes = key instanceof SoftKey ? held.get(key) : undefined;
-  if (!bytes || !(key instanceof SoftKey) || key.algorithm.name !== curve || key.type !== type) throw fail("InvalidAccessError", `not a ${curve} ${type} key`);
-  if (usage && !key.usages.includes(usage)) throw fail("InvalidAccessError", `the key may not ${usage}`);
-  return bytes;
+  const what = heldBy(key);
+  if (!what || what.curve !== curve || what.type !== type) throw fail("InvalidAccessError", `not a ${curve} ${type} key`);
+  if (usage && !what.usages.includes(usage)) throw fail("InvalidAccessError", `the key may not ${usage}`);
+  return what;
+}
+
+/** The order of the Ed25519 group. */
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+function littleEndian(bytes: Uint8Array): bigint {
+  let n = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]!);
+  return n;
+}
+
+/**
+ * The cofactorless equation `[S]B = R + [k]A`, `k = SHA-512(R ‖ A ‖ M) mod L`,
+ * which BoringSSL, OpenSSL and ed25519-dalek's `verify_strict` check. noble
+ * checks the cofactored one (`[8][S]B = [8]R + [8][k]A`), which also takes an
+ * `R` with a small-order part that those refuse: a signature only
+ * compatibility mode would accept would split the chain's view between
+ * browsers. Both must hold here. Encodings are canonical (checked before).
+ */
+async function cofactorless(digest: (alg: string, data: Uint8Array) => Promise<ArrayBuffer>, sig: Uint8Array, msg: Uint8Array, pub: Uint8Array): Promise<boolean> {
+  const { Point } = ed25519;
+  const r = sig.subarray(0, 32);
+  const s = littleEndian(sig.subarray(32));
+  if (s >= L) return false;
+  const R = Point.fromBytes(r, false);
+  const A = Point.fromBytes(pub, false);
+  const hashed = new Uint8Array(r.length + pub.length + msg.length);
+  hashed.set(r);
+  hashed.set(pub, r.length);
+  hashed.set(msg, r.length + pub.length);
+  const k = littleEndian(new Uint8Array(await digest("SHA-512", hashed))) % L;
+  return Point.BASE.multiplyUnsafe(s).equals(R.add(A.multiplyUnsafe(k)));
 }
 
 type Method = "generateKey" | "importKey" | "exportKey" | "sign" | "verify" | "deriveBits";
@@ -146,6 +189,7 @@ type Call = (...args: unknown[]) => Promise<unknown>;
 export function softSubtle(native: SubtleCrypto, curves: Iterable<SoftAlgorithm>): Record<Method, Call> {
   const active = curves instanceof Set ? (curves as Set<SoftAlgorithm>) : new Set(curves);
   const base = Object.fromEntries(METHODS.map((m) => [m, (native[m] as unknown as Call).bind(native)])) as Record<Method, Call>;
+  const digest = native.digest.bind(native) as (alg: string, data: Uint8Array) => Promise<ArrayBuffer>;
   const soft = (alg: unknown): SoftAlgorithm | null => {
     const curve = curveNamed(alg);
     return curve && active.has(curve) ? curve : null;
@@ -199,17 +243,18 @@ export function softSubtle(native: SubtleCrypto, curves: Iterable<SoftAlgorithm>
       throw fail("NotSupportedError", `${curve} keys do not import as ${String(format)}`);
     },
     async exportKey(format, key) {
-      if (!(key instanceof SoftKey)) return base.exportKey(format, key);
-      const curve = key.algorithm.name as SoftAlgorithm;
-      const bytes = held.get(key)!;
-      if (!key.extractable) throw fail("InvalidAccessError", "the key is not extractable");
+      const bytes = heldBy(key);
+      if (!bytes) return base.exportKey(format, key);
+      const curve = bytes.curve;
+      // As made, not as the key object shows: a key made non-extractable never exports.
+      if (!bytes.extractable) throw fail("InvalidAccessError", "the key is not extractable");
       if (format === "raw" || format === "spki") {
-        if (key.type !== "public") throw fail("InvalidAccessError", `a private key does not export as ${format}`);
+        if (bytes.type !== "public") throw fail("InvalidAccessError", `a private key does not export as ${format}`);
         const prefix = curve === "Ed25519" ? ED25519_SPKI_PREFIX : X25519_SPKI_PREFIX;
         return buffer(format === "raw" ? bytes.publicKey : Uint8Array.from([...prefix, ...bytes.publicKey]));
       }
       if (format === "pkcs8") {
-        if (key.type !== "private") throw fail("InvalidAccessError", "a public key does not export as pkcs8");
+        if (bytes.type !== "private") throw fail("InvalidAccessError", "a public key does not export as pkcs8");
         const prefix = curve === "Ed25519" ? ED25519_PKCS8_PREFIX : X25519_PKCS8_PREFIX;
         const der = new Uint8Array(prefix.length + 32);
         der.set(prefix);
@@ -217,8 +262,8 @@ export function softSubtle(native: SubtleCrypto, curves: Iterable<SoftAlgorithm>
         return der.buffer;
       }
       if (format === "jwk") {
-        const jwk: JsonWebKey = { kty: "OKP", crv: curve, x: base64Url(bytes.publicKey), key_ops: [...key.usages], ext: key.extractable };
-        if (key.type === "private") jwk.d = base64Url(bytes.secret!);
+        const jwk: JsonWebKey = { kty: "OKP", crv: curve, x: base64Url(bytes.publicKey), key_ops: [...bytes.usages], ext: bytes.extractable };
+        if (bytes.type === "private") jwk.d = base64Url(bytes.secret!);
         return jwk;
       }
       throw fail("NotSupportedError", `${curve} keys do not export as ${String(format)}`);
@@ -233,9 +278,11 @@ export function softSubtle(native: SubtleCrypto, curves: Iterable<SoftAlgorithm>
       const { publicKey: pub } = own(key, "Ed25519", "public", "verify");
       const sig = bytesOf(signature);
       if (sig.length !== 64) return false;
+      const msg = bytesOf(data);
       try {
-        // RFC 8032's checks (canonical encodings, a key not of small order), not ZIP 215's looser ones.
-        return ed25519.verify(sig, bytesOf(data), pub, { zip215: false });
+        // RFC 8032's checks (canonical encodings, a key not of small order), not ZIP 215's looser ones,
+        // and then the cofactorless equation the browsers and Rust check.
+        return ed25519.verify(sig, msg, pub, { zip215: false }) && (await cofactorless(digest, sig, msg, pub));
       } catch {
         return false;
       }
@@ -254,7 +301,10 @@ export function softSubtle(native: SubtleCrypto, curves: Iterable<SoftAlgorithm>
         throw fail("OperationError", "the X25519 result is all zero");
       }
       try {
-        if (shared.every((b) => b === 0)) throw fail("OperationError", "the X25519 result is all zero");
+        // Without an early exit on the secret's bytes.
+        let any = 0;
+        for (let i = 0; i < shared.length; i++) any |= shared[i]!;
+        if (any === 0) throw fail("OperationError", "the X25519 result is all zero");
         const out = shared.slice(0, Math.ceil(bits / 8));
         if (bits % 8) out[out.length - 1] = out[out.length - 1]! & (0xff << (8 - (bits % 8)));
         return out.buffer;

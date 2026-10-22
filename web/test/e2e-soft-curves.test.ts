@@ -3,12 +3,14 @@
 // does: RFC 8032's Ed25519 and RFC 7748's X25519 vectors on both, node's
 // WebCrypto against them both ways (keys made by one used by the other,
 // signatures made by one verified by the other, agreements both ways), the
-// low-order refusals the protocol's checks rest on, and what a key held in
-// the page may and may not do (`extractable`, its usages, structured clone).
+// low-order refusals the protocol's checks rest on, the edge cases of
+// "Taming the many EdDSAs" decided as the browsers and Rust's `verify_strict`
+// decide them, and what a key held in the page may and may not do
+// (`extractable`, its usages, structured clone — and changing what it shows).
 // The repo's own vectors run through them in `e2e-soft-interop.test.ts`.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { concat, ED25519_PKCS8_PREFIX, fromHex, hex, isLowOrderX25519, isValidX25519, X25519_PKCS8_PREFIX } from "../src/lib/e2e/index.js";
+import { concat, ED25519_PKCS8_PREFIX, ed25519VerifyStrict, fromHex, hex, isLowOrderX25519, isValidX25519, X25519_PKCS8_PREFIX } from "../src/lib/e2e/index.js";
 import { installSoftCurves, softCurvesOn, softSubtle, uninstallSoftCurves } from "../src/lib/e2e/soft25519.js";
 
 const native = crypto.subtle;
@@ -72,6 +74,30 @@ const LOW_ORDER = [
   "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
   "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 ];
+
+/**
+ * "Taming the many EdDSAs" (Chalkias, Garillot, Nikolaenko, CT-RSA 2021), the
+ * twelve cases of ed25519-speccheck's `cases.json`: message, public key,
+ * signature. Of them ed25519-dalek's `verify_strict` (the agent's, and what
+ * `ed25519VerifyStrict` matches) accepts case 3 only. Case 4 is the one a
+ * cofactored check alone accepts: its `R` has a small-order part.
+ */
+const SPECCHECK: [m: string, a: string, sig: string][] = [
+  ["8c93255d71dcab10e8f379c26200f3c7bd5f09d9bc3068d3ef4edeb4853022b6", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a0000000000000000000000000000000000000000000000000000000000000000"],
+  ["9bd9f44f4dcc75bd531b56b2cd280b0bb38fc1cd6d1230e14861d861de092e79", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43a5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04"],
+  ["aebf3f2601a0c8c5d39cc7d8911642f740b78168218da8471772b35f9d35b9ab", "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa8c4bd45aecaca5b24fb97bc10ac27ac8751a7dfe1baff8b953ec9f5833ca260e"],
+  ["9bd9f44f4dcc75bd531b56b2cd280b0bb38fc1cd6d1230e14861d861de092e79", "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d", "9046a64750444938de19f227bb80485e92b83fdb4b6506c160484c016cc1852f87909e14428a7a1d62e9f22f3d3ad7802db02eb2e688b6c52fcd6648a98bd009"],
+  ["e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c", "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d", "160a1cb0dc9c0258cd0a7d23e94d8fa878bcb1925f2c64246b2dee1796bed5125ec6bc982a269b723e0668e540911a9a6a58921d6925e434ab10aa7940551a09"],
+  ["e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c", "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d", "21122a84e0b5fca4052f5b1235c80a537878b38f3142356b2c2384ebad4668b7e40bc836dac0f71076f9abe3a53f9c03c1ceeeddb658d0030494ace586687405"],
+  ["85e241a07d148b41e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec40", "442aad9f089ad9e14647b1ef9099a1ff4798d78589e66f28eca69c11f582a623", "e96f66be976d82e60150baecff9906684aebb1ef181f67a7189ac78ea23b6c0e547f7690a0e2ddcd04d87dbc3490dc19b3b3052f7ff0538cb68afb369ba3a514"],
+  ["85e241a07d148b41e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec40", "442aad9f089ad9e14647b1ef9099a1ff4798d78589e66f28eca69c11f582a623", "8ce5b96c8f26d0ab6c47958c9e68b937104cd36e13c33566acd2fe8d38aa19427e71f98a473474f2f13f06f97c20d58cc3f54b8bd0d272f42b695dd7e89a8c22"],
+  ["9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41", "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03be9678ac102edcd92b0210bb34d7428d12ffc5df5f37e359941266a4e35f0f"],
+  ["9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41", "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffca8c5b64cd208982aa38d4936621a4775aa233aa0505711d8fdcfdaa943d4908"],
+  ["e96b7021eb39c1a163b6da4e3093dcd3f21387da4cc4572be588fafae23c155b", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "a9d55260f765261eb9b84e106f665e00b867287a761990d7135963ee0a7d59dca5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04"],
+  ["39a591f5321bbe07fd5a23dc2f39d025d74526615746727ceefd6e82ae65c06f", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "a9d55260f765261eb9b84e106f665e00b867287a761990d7135963ee0a7d59dca5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04"],
+];
+/** ed25519-dalek `verify_strict` on each case (ed25519-speccheck's table). */
+const DALEK_STRICT = [false, false, false, true, false, false, false, false, false, false, false, false];
 
 const edPrivate = (s: Subtle, seed: Uint8Array, extractable = false) => s.importKey("pkcs8", concat(ED25519_PKCS8_PREFIX, seed), ED, extractable, ["sign"]);
 const edPublic = (s: Subtle, raw: Uint8Array) => s.importKey("raw", raw, ED, true, ["verify"]);
@@ -143,6 +169,28 @@ test("keys made by one work in the other: signatures verify across, agreements m
   }
 });
 
+test("Taming the many EdDSAs: every case decided as natively and as Rust's verify_strict — a small-order part in R included", async () => {
+  // The protocol's verification (`ed25519VerifyStrict`: its own checks, then WebCrypto's), natively first.
+  const natively = [];
+  for (const [m, a, sig] of SPECCHECK) natively.push(await ed25519VerifyStrict(fromHex(a), fromHex(m), fromHex(sig)));
+  assert.deepEqual(natively, DALEK_STRICT, "native");
+  installSoftCurves(["Ed25519"]);
+  try {
+    const inCompat = [];
+    for (const [m, a, sig] of SPECCHECK) inCompat.push(await ed25519VerifyStrict(fromHex(a), fromHex(m), fromHex(sig)));
+    assert.deepEqual(inCompat, DALEK_STRICT, "compatibility mode");
+  } finally {
+    uninstallSoftCurves();
+  }
+  // Case 4 straight to the JavaScript verify, past the protocol's own checks: the cofactorless equation refuses it, as the browsers' do.
+  const [m, a, sig] = SPECCHECK[4]!;
+  assert.equal(await soft.verify(ED, await edPublic(soft, fromHex(a)), fromHex(sig), fromHex(m)), false, "soft, case 4");
+  assert.equal(await native.verify(ED, await edPublic(native, fromHex(a)), fromHex(sig), fromHex(m)), false, "native, case 4");
+  // And case 3, valid everywhere, verifies in both.
+  const [m3, a3, sig3] = SPECCHECK[3]!;
+  for (const [name, s] of both) assert.equal(await s.verify(ED, await edPublic(s, fromHex(a3)), fromHex(sig3), fromHex(m3)), true, `${name}, case 3`);
+});
+
 test("a low-order X25519 key is refused in compatibility mode as natively, and the protocol's checks say so", async () => {
   const mine = (await soft.generateKey(X, false, ["deriveBits"])) as CryptoKeyPair;
   const nativeMine = (await native.generateKey(X, false, ["deriveBits"])) as CryptoKeyPair;
@@ -184,10 +232,25 @@ test("a key held in the page keeps WebCrypto's rules: not extractable unless mad
   await assert.rejects(soft.generateKey(ED, false, ["deriveBits"]), { name: "SyntaxError" });
   await assert.rejects(soft.generateKey(X, false, ["sign"]), { name: "SyntaxError" });
   await assert.rejects(soft.generateKey(ED, false, ["verify"]), { name: "SyntaxError" }, "a private key with no usage");
-  // Structured clone (IndexedDB, postMessage) keeps the fields and none of the bytes.
+  // What a key shows cannot be changed, and changing a copy or a look-alike gets nothing either:
+  // the methods go by what the key was made as, kept apart from the object.
+  const shown = pair.privateKey as unknown as { extractable: boolean; usages: KeyUsage[]; type: string };
+  assert.throws(() => {
+    shown.extractable = true;
+  }, TypeError);
+  assert.throws(() => Object.defineProperty(shown, "extractable", { value: true }), TypeError);
+  assert.throws(() => shown.usages.push("verify"), TypeError);
+  assert.equal(pair.privateKey.extractable, false);
+  await assert.rejects(soft.exportKey("pkcs8", pair.privateKey), { name: "InvalidAccessError" });
+  const lookAlike = Object.create(Object.getPrototypeOf(pair.privateKey), { type: { value: "private" }, extractable: { value: true }, algorithm: { value: { name: "Ed25519" } }, usages: { value: ["sign"] } });
+  await assert.rejects(soft.exportKey("pkcs8", lookAlike), "a look-alike is no key of these");
+  await assert.rejects(soft.exportKey("pkcs8", { ...pair.privateKey, extractable: true } as unknown as CryptoKey));
+  await assert.rejects(soft.sign(ED, lookAlike, new Uint8Array(1)), { name: "InvalidAccessError" });
+  // Structured clone (IndexedDB, postMessage) keeps the fields and none of the bytes — and is no key either.
   const clone = structuredClone(pair.privateKey) as unknown as Record<string, unknown>;
   assert.deepEqual(Object.keys(clone).sort(), ["algorithm", "extractable", "type", "usages"]);
   assert.ok(!Object.values(clone).some((v) => v instanceof Uint8Array));
+  await assert.rejects(soft.sign(ED, clone as unknown as CryptoKey, new Uint8Array(1)), { name: "InvalidAccessError" });
   // Bad input is refused, not taken.
   await assert.rejects(soft.importKey("raw", new Uint8Array(31), ED, true, ["verify"]), { name: "DataError" });
   await assert.rejects(soft.importKey("pkcs8", concat(X25519_PKCS8_PREFIX, new Uint8Array(32)), ED, false, ["sign"]), { name: "DataError" });

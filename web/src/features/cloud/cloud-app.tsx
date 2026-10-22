@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
-import { compatConsent, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
+import { compatAgreedFor, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
 import { AccountError, CloudAccount, KeysUnreadableError } from "@/lib/hub/account";
 import { authErrorKind, clearSession, HubApi, HubApiError, type HubSession, loadSession, type PasskeySignedIn, PASSWORD_MIN_CHARS, saveSession, type SignedIn, type SignupConfig } from "@/lib/hub/api";
 import {
@@ -149,8 +149,8 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   const supportCheck = useRef<Promise<E2eSupport> | null>(null);
   const checkSupport = useCallback(() => (supportCheck.current ??= checkE2eSupport()), []);
   const [support, setSupport] = useState<E2eSupport | null>(null);
-  // Compatibility mode agreed to on this browser (`lib/e2e/compat.ts`).
-  const [consented, setConsented] = useState(() => compatConsent() !== null);
+  // Bumped when the person agrees to compatibility mode (`lib/e2e/compat.ts`), which is read from storage.
+  const [, setConsents] = useState(0);
   useEffect(() => {
     let live = true;
     void checkSupport().then((s) => live && setSupport(s));
@@ -386,7 +386,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
       // A browser that cannot run the encryption is told so first, before an
       // account is signed in to (or made) that it could not open here.
       if (!support) return <Centered><Loader2 className="size-4 animate-spin text-faint" /></Centered>;
-      if (!support.ok && !(consented && compatCovers(support))) {
+      if (!support.ok && !(compatCovers(support) && compatAgreedFor(support.missing))) {
         const compat = compatCovers(support);
         return (
           <UnsupportedBrowserScreen
@@ -396,7 +396,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
               compat
                 ? () => {
                     consentToCompat(support.missing);
-                    setConsented(true);
+                    setConsents((n) => n + 1);
                   }
                 : undefined
             }
@@ -481,7 +481,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
             phase.compat
               ? () => {
                   consentToCompat(phase.missing);
-                  setConsented(true);
+                  setConsents((n) => n + 1);
                   setPhase({ kind: "boot" });
                   void proceed(session);
                 }

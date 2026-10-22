@@ -29,6 +29,7 @@ import type { RenewalStatus } from "@/lib/hub/renewal";
 import type { DeviceAttention } from "@/features/machines/needs-you";
 import { ActivityChipView, StateCountChip, UnreadPill } from "@/features/sessions/attention-badges";
 import { unreadCountOf } from "@/features/sessions/session-attention";
+import { CompatBadge } from "./browser-support";
 import { Presence } from "./machine-name";
 import { pauseHeldText, RenewalLine } from "./renewal";
 
@@ -316,8 +317,8 @@ function RowBadges({ view, warn }: { view: DeviceRowView; warn: ReactNode }) {
     <>
       {view.self && <Badge variant="outline" className={badge}>{t("this device")}</Badge>}
       {view.self && compatModeActive() && (
-        <Badge data-testid="compat-mode-row" variant="outline" title={t("This browser runs Droppen's encryption in JavaScript: this device's private keys are in the page's memory.")} className={badge}>
-          {t("compatibility mode")}
+        <Badge data-testid="compat-mode-row" variant="outline" className={badge}>
+          <CompatBadge className="uppercase" />
         </Badge>
       )}
       {view.host && (

@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hex, type KeyStore, MemoryKeyStore, utf8 } from "../src/lib/e2e/index.js";
-import { compatConsent, compatModeActive, consentToCompat, COMPAT_CONSENT_KEY, e2eReadiness } from "../src/lib/e2e/compat.js";
+import { compatAgreedFor, compatConsent, compatModeActive, consentToCompat, COMPAT_CONSENT_KEY, e2eReadiness, forgetCompatConsent } from "../src/lib/e2e/compat.js";
 import { DeviceKeysUnreadable, loadDeviceKeys, readDeviceKeys } from "../src/lib/e2e/keystore.js";
 import { softCurvesOn, uninstallSoftCurves } from "../src/lib/e2e/soft25519.js";
 import { checkE2eSupport, compatCovers, E2eUnsupportedError } from "../src/lib/e2e/support.js";
@@ -58,6 +58,7 @@ test("no Ed25519 in WebCrypto: making the device keys fails as the browser lacki
     assert.deepEqual(error.missing, ["X25519", "Ed25519"]);
     assert.match(error.message, /NotSupportedError: .*Unrecognized name/);
     assert.equal(await store.get("device-keys/v2"), undefined, "no device keys stored");
+    assert.deepEqual(await store.list("device-keys/"), [], "nothing written at all: the keys are made before the store is touched");
     // Signing in on such a browser: the account says the same, not "keys unreadable".
     const hub = new FakeKeysHub();
     await assert.rejects(hub.device("tok", new MemoryKeyStore()), (e: unknown) => e instanceof E2eUnsupportedError && !(e instanceof KeysUnreadableError));
@@ -106,12 +107,31 @@ test("compatibility mode: offered only when just the curves are missing, and not
   }
 });
 
-test("the agreement is kept for this browser", () => {
+test("an agreement covers what the browser lacked then: lacking more, it is asked again", async () => {
+  const restore = removeNative(["Ed25519", "X25519"]);
+  try {
+    const storage = memoryStorage();
+    consentToCompat(["Ed25519"], storage);
+    assert.equal(compatAgreedFor(["Ed25519"], storage), true);
+    assert.equal(compatAgreedFor(["X25519", "Ed25519"], storage), false);
+    assert.deepEqual(await e2eReadiness(await check(), { storage, check }), { kind: "unsupported", missing: ["X25519", "Ed25519"], compat: true });
+    assert.equal(compatModeActive(), false, "not entered on an agreement to less");
+    assert.deepEqual(softCurvesOn(), []);
+  } finally {
+    restore();
+  }
+});
+
+test("the agreement is kept for this browser, and can be withdrawn", () => {
   const storage = memoryStorage();
+  forgetCompatConsent(storage); // this page's own memory of the last test's agreement
   assert.equal(compatConsent(storage), null);
   consentToCompat(["X25519", "Ed25519"], storage, () => 1_700_000_000_000);
   assert.deepEqual(JSON.parse(storage.values.get(COMPAT_CONSENT_KEY)!), { at: 1_700_000_000_000, missing: ["X25519", "Ed25519"] });
   assert.deepEqual(compatConsent(storage), { at: 1_700_000_000_000, missing: ["X25519", "Ed25519"] });
+  forgetCompatConsent(storage);
+  assert.equal(storage.values.size, 0);
+  assert.equal(compatConsent(storage), null);
 });
 
 /** Run the responder's rounds by hand until `done` (no timers). */

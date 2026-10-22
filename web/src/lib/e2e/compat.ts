@@ -36,6 +36,16 @@ export function compatConsent(storage: KeptIn | undefined = globalThis.localStor
   return consentedHere;
 }
 
+/**
+ * Whether the person agreed to compatibility mode on this browser for all of
+ * `missing`: agreed while it lacked Ed25519 only, a browser that now lacks
+ * X25519 too is asked again.
+ */
+export function compatAgreedFor(missing: readonly string[], storage: KeptIn | undefined = globalThis.localStorage): boolean {
+  const consent = compatConsent(storage);
+  return consent !== null && missing.every((m) => consent.missing.includes(m));
+}
+
 /** The person agreed to compatibility mode on this browser (lacking `missing`): kept for the next pages. */
 export function consentToCompat(missing: string[], storage: KeptIn | undefined = globalThis.localStorage, now: () => number = Date.now): void {
   consentedHere = { at: now(), missing: [...missing] };
@@ -46,7 +56,7 @@ export function consentToCompat(missing: string[], storage: KeptIn | undefined =
   }
 }
 
-/** Forget the agreement (tests). */
+/** Forget the agreement (the person withdrew it): the next page asks again before any key is used. */
 export function forgetCompatConsent(storage: KeptIn | undefined = globalThis.localStorage): void {
   consentedHere = null;
   try {
@@ -68,10 +78,19 @@ export function compatModeActive(): boolean {
   return soft.length > 0;
 }
 
+/** Why compatibility mode did not start: its code could not be fetched (offline, the first time). An i18n key. */
+export const COMPAT_LOAD_FAILED = "compatibility mode could not be loaded: connect to the internet, then reload the page";
+
 /** Do `algorithms` in JavaScript from now on, in this page (the code is loaded only here). */
 export async function enterCompatMode(algorithms: readonly SoftAlgorithm[]): Promise<void> {
-  const { installSoftCurves } = await import("./soft25519");
-  installSoftCurves(algorithms);
+  let loaded: typeof import("./soft25519");
+  try {
+    loaded = await import("./soft25519");
+  } catch (error) {
+    console.warn("compat: loading compatibility mode failed:", error);
+    throw new Error(COMPAT_LOAD_FAILED);
+  }
+  loaded.installSoftCurves(algorithms);
   soft = SOFT_ALGORITHMS.filter((a) => soft.includes(a) || algorithms.includes(a));
 }
 
@@ -89,7 +108,7 @@ export async function e2eReadiness(
 ): Promise<E2eReadiness> {
   if (support.ok) return { kind: "native" };
   if (!compatCovers(support)) return { kind: "unsupported", missing: support.missing, compat: false };
-  if (compatConsent(storage) === null) return { kind: "unsupported", missing: support.missing, compat: true };
+  if (!compatAgreedFor(support.missing, storage)) return { kind: "unsupported", missing: support.missing, compat: true };
   await enterCompatMode(support.missing as SoftAlgorithm[]);
   const again = await check();
   if (!again.ok) return { kind: "unsupported", missing: again.missing, compat: false };

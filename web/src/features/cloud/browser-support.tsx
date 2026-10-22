@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { compatModeActive } from "@/lib/e2e/compat";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { compatModeActive, forgetCompatConsent } from "@/lib/e2e/compat";
 import { MINIMUM_BROWSERS } from "@/lib/e2e/support";
 import { cn } from "@/lib/cn";
 import { type HeldSession, signOut } from "./sign-out";
@@ -93,7 +94,7 @@ export function UnsupportedBrowserScreen({
           <div data-testid="compat-offer" className="flex flex-col gap-2 border border-border p-3">
             <p className="text-xs leading-5 text-fg">
               {t(
-                "Or use this browser in compatibility mode: the same encryption, run in JavaScript. The risk: this device's private keys are then in the page's memory, so malicious code that gets into the page, such as a compromised extension or an injected script, could copy them, not just use them while the page is open.",
+                "Or use this browser in compatibility mode: the same encryption, done in JavaScript. What changes: this device's private keys are plain bytes in the page's memory instead of keys the browser holds; the JavaScript curve arithmetic is not hardened against side channels as the browser's own is; and one more library is loaded into the page.",
               )}
             </p>
             <label className="flex cursor-pointer items-start gap-2">
@@ -126,18 +127,45 @@ export function UnsupportedBrowserScreen({
   );
 }
 
-/** In the bar while this page runs in compatibility mode: unobtrusive, but always there. */
-export function CompatBadge({ className }: { className?: string }) {
+/**
+ * While this page runs in compatibility mode: in the bar (`compact` on a
+ * phone's width) and on this device's row in 「我的设备」. Tapped, it says what
+ * that means and offers to stop: the agreement is withdrawn and the page
+ * reloads, to ask again before the device keys are used (they stay stored).
+ */
+export function CompatBadge({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   if (!compatModeActive()) return null;
   return (
-    <span
-      data-testid="compat-mode"
-      data-signal="warn"
-      title={t("This browser runs Droppen's encryption in JavaScript: this device's private keys are in the page's memory.")}
-      className={cn("shrink-0 truncate text-warn-fg", className)}
-    >
-      {t("compatibility mode")}
-    </span>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger data-testid="compat-mode" data-signal="warn" className={cn("shrink-0 truncate text-warn-fg underline-offset-2 hover:underline", className)}>
+        {compact ? (
+          <>
+            <span className="md:hidden">{t("compat.")}</span>
+            <span className="max-md:hidden">{t("compatibility mode")}</span>
+          </>
+        ) : (
+          t("compatibility mode")
+        )}
+      </PopoverTrigger>
+      <PopoverContent side="bottom" className="w-72 max-w-[calc(100vw-2rem)]">
+        <div data-testid="compat-card" className="flex flex-col gap-2 text-xs leading-5 normal-case tracking-normal">
+          <p className="text-fg">{t("This browser runs Droppen's encryption in JavaScript: this device's private keys are plain bytes in the page's memory, not keys the browser holds.")}</p>
+          <button
+            type="button"
+            data-testid="compat-withdraw"
+            className={cn(quiet, "self-start")}
+            onClick={() => {
+              forgetCompatConsent();
+              location.reload();
+            }}
+          >
+            {t("stop using compatibility mode")}
+          </button>
+          <p className="text-2xs text-faint">{t("Its device keys stay stored in this browser; it asks again before it uses them.")}</p>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

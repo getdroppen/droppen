@@ -146,7 +146,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
         )}
         {state.label === "e2e" && <LivePathIndicator channel={machine.channel} relays={shell.relays} />}
         <span className="flex-1" />
-        <CompatBadge className="max-md:hidden" />
+        <CompatBadge compact />
         <DevicesButton />
         <AccountButton />
         <button
