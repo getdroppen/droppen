@@ -309,6 +309,8 @@ struct HubSeen {
     reports: BTreeMap<(String, u64), BTreeMap<String, u64>>,
     duplicates: usize,
     logins: usize,
+    /// What the relay named in its last `login` (`features`).
+    features: Value,
     links: Vec<tokio::sync::mpsc::UnboundedSender<String>>,
     /// Do not say `replayed` after the welcome (a Hub from before it).
     no_replay: bool,
@@ -350,6 +352,7 @@ async fn hub_conn(socket: WebSocket, seen: Arc<Mutex<HubSeen>>, origin: String, 
                         let no_replay = {
                             let mut s = seen.lock().unwrap();
                             s.logins += 1;
+                            s.features = v["features"].clone();
                             s.no_replay
                         };
                         let _ = tx.send(json!({"t": "welcome", "id": v["id"], "ticket_keys": [{"kid": 1, "key": hex(&hub_public())}]}).to_string());
@@ -623,6 +626,46 @@ async fn a_revoke_closes_its_connections_within_a_second_and_a_throttle_slows_th
     tokio::time::sleep(Duration::from_millis(5)).await;
     let fresh = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 31, &["m-1"]);
     let _ok = Client::login(o, &fresh).await;
+    hub.stop.cancel();
+}
+
+/// A revocation scoped to a ticket role (`revoke-role/1`, which the relay
+/// names when it signs in): a host's device-role tickets go and its agent's
+/// stay — the agent keeps its connection and still takes channels, the way a
+/// host whose identity key is being renewed stays reachable to be asked for
+/// it. An unscoped revocation still takes both; a role the relay does not
+/// know takes nothing.
+#[tokio::test]
+async fn a_revocation_scoped_to_the_device_role_leaves_the_hosts_agent_alone() {
+    let seen = Arc::new(Mutex::new(HubSeen::default()));
+    let hub = FakeHub::start_on(None, seen.clone()).await;
+    let r = relay("sin-1", Some(&hub.origin), Timing::default(), |_| {}).await;
+    assert!(eventually(SECS, || r.server.has_keys()).await, "keys from the Hub");
+    assert_eq!(seen.lock().unwrap().features, json!(["revoke-role/1"]), "the relay names what it takes");
+    let o = r.origin.as_str();
+    let host_agent = Holder::new("sin-1", "a-1", TicketRole::Agent, "h-1", 41, &[]);
+    let host_device = Holder::new("sin-1", "a-1", TicketRole::Device, "h-1", 41, &["h-2"]);
+    let admin_h = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 43, &["h-1"]);
+    let mut agent = Client::login(o, &host_agent).await;
+    let mut as_device = Client::login(o, &host_device).await;
+    let mut admin = Client::login(o, &admin_h).await;
+    hub.tell(json!({"t": "revoke", "account": "a-1", "id": "h-1", "role": "device", "at_ms": now_ms()}));
+    assert_eq!(as_device.closed_within(Duration::from_secs(1)).await, Some(4403), "its device role goes");
+    assert_eq!(agent.closed_within(Duration::from_millis(800)).await, None, "its agent stays");
+    // Its device-role ticket is refused from now on…
+    let mut again = Client::dial(o).await;
+    assert_eq!(again.login_with(&host_device, &host_device.text(), o).await["t"], "error");
+    // …and its agent still takes a channel: an admin reaches it.
+    let ch = pair(&mut admin, &mut agent, 1, "h-1").await;
+    traffic(&mut admin, &mut agent, 1, ch, 1000).await;
+    // A role this relay does not know revokes nothing.
+    hub.tell(json!({"t": "revoke", "account": "a-1", "id": "d-1", "role": "printer", "at_ms": now_ms()}));
+    assert_eq!(admin.closed_within(Duration::from_millis(500)).await, None);
+    // Unscoped, as before: every ticket of the id.
+    hub.tell(json!({"t": "revoke", "account": "a-1", "id": "h-1", "at_ms": now_ms()}));
+    assert_eq!(agent.closed_within(Duration::from_secs(1)).await, Some(4403));
+    let mut again = Client::dial(o).await;
+    assert_eq!(again.login_with(&host_agent, &host_agent.text(), o).await["t"], "error");
     hub.stop.cancel();
 }
 

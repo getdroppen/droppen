@@ -9,7 +9,9 @@
 //!
 //! Signed in, the relay sends `health` every 20 s and its usage reports
 //! ([`crate::meter`]) until each is acknowledged, and takes the Hub's
-//! `keys`, `revoke`, `throttle` and `drain`; on every sign-in the Hub replays
+//! `keys`, `revoke` (scoped to one ticket role when the Hub says so: the
+//! relay names `revoke-role/1` in its sign-in), `throttle` and `drain`; on
+//! every sign-in the Hub replays
 //! the revocations still in force (`revoke` each, then `replayed`) and its
 //! whole throttle table (`throttles`). The link reconnects with
 //! jittered backoff; while it is down the relay keeps working — tickets
@@ -23,6 +25,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use rh_proto::sig::{HubLogin, LoginRole};
+use rh_proto::ticket::TicketRole;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -36,6 +39,11 @@ pub type Sink = SplitSink<Ws, Message>;
 pub type Source = SplitStream<Ws>;
 
 const STEP: Duration = Duration::from_secs(20);
+/// What this relay takes from the Hub beyond the first control link,
+/// named in its `login` and `register` (`features`): `revoke-role/1`, a
+/// `revoke` scoped to one ticket role (`role: "device" | "agent"`). A Hub
+/// sends a scoped revocation only to a relay that names it.
+pub const FEATURE_REVOKE_ROLE: &str = "revoke-role/1";
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -154,7 +162,10 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
     let time_ms = now_ms();
     send(
         sink,
-        &json!({"t": "login", "id": config.id, "time_ms": time_ms, "sig": login_sig(&config.key, &config.id, &hub, nonce, time_ms), "version": VERSION}),
+        &json!({
+            "t": "login", "id": config.id, "time_ms": time_ms, "sig": login_sig(&config.key, &config.id, &hub, nonce, time_ms), "version": VERSION,
+            "features": [FEATURE_REVOKE_ROLE],
+        }),
     )
     .await?;
     let mut answer = next_json(source).await?;
@@ -172,6 +183,7 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
             &json!({
                 "t": "register", "token": token, "sign_key": hex(&config.key.verifying_key().to_bytes()), "origin": config.origin,
                 "version": VERSION, "time_ms": time_ms, "sig": login_sig(&config.key, &config.id, &hub, nonce, time_ms),
+                "features": [FEATURE_REVOKE_ROLE],
             }),
         )
         .await?;
@@ -284,7 +296,16 @@ fn on_message(server: &Server, v: &Value) -> Option<Ended> {
         Some("keys") => server.set_keys(keys_of(&v["ticket_keys"])),
         Some("revoke") => {
             if let Some(account) = v["account"].as_str() {
-                server.revoke(account, v["id"].as_str(), v["at_ms"].as_u64().unwrap_or_else(now_ms));
+                let at_ms = v["at_ms"].as_u64().unwrap_or_else(now_ms);
+                // Unscoped (no `role`, or null): every ticket of the id, as
+                // before `revoke-role/1`. A role this relay does not know has
+                // no tickets here: nothing to revoke.
+                match v["role"].as_str() {
+                    None => server.revoke(account, v["id"].as_str(), at_ms),
+                    Some("device") => server.revoke_role(account, v["id"].as_str(), Some(TicketRole::Device), at_ms),
+                    Some("agent") => server.revoke_role(account, v["id"].as_str(), Some(TicketRole::Agent), at_ms),
+                    Some(role) => tracing::warn!(%account, role, "a revocation for a ticket role this relay does not know: ignored"),
+                }
             }
         }
         Some("throttle") => {

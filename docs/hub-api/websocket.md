@@ -286,13 +286,20 @@ relay has signed in (`login` or `register`; a longer one is answered
 
 ```
 hub   → challenge {nonce, hub, version: 1}
-relay → login {id, time_ms, sig, version}
+relay → login {id, time_ms, sig, version, features?}
 hub   → welcome {id, ticket_keys: [{kid, key}]}
         — or error {code: "unknown_relay"}, and the relay may, once:
-relay → register {token, sign_key, origin, version, time_ms, sig}
+relay → register {token, sign_key, origin, version, time_ms, sig, features?}
 hub   → registered {id, ticket_keys}            (its key is pinned from now on)
 hub   → revoke × n, replayed {revocations}, throttle × n, throttles {accounts}
 ```
+
+`features` names what the relay takes beyond this link's first version:
+`revoke-role/1`, a `revoke` scoped to one ticket role (below). A hub sends a
+scoped revocation only to a relay that names it; to one that does not, it
+sends none (an unscoped one would take the other role's tickets too), so
+relays are released with `revoke-role/1` before a hub that scopes
+revocations.
 
 At registration the hub fetches `GET <origin>/v1/relay-id?nonce=…` to see
 that the relay answers at the origin it claims. A sign-in under a key that is
@@ -321,7 +328,7 @@ quietly becomes another. A relay signing in again closes its previous link
 | `welcome`, `registered` | `id`, `ticket_keys: [{kid, key}]` | the keys tickets are signed with |
 | `error` | `code`, `message` | `unknown_relay` (register next), `key_mismatch`, `denied`, `bad_token`, `bad_key`, `bad_origin`, `origin_proof` (the relay retries later), `origin_taken`, `refused`, `retired`, `too_many_attempts`, `bad_message`, `sign_in_first`, `unexpected`, `unavailable` |
 | `usage_ok` | `boot`, `seq` | a usage report is recorded |
-| `revoke` | `account`, `id` (`null`: the whole account), `at_ms` | close those connections and refuse tickets issued at or before `at_ms`; replayed at every sign-in while in force |
+| `revoke` | `account`, `id` (`null`: the whole account), `at_ms`, `role?` (`"device"` or `"agent"`: only the tickets of that role — a host's device-role and agent tickets carry the same id; absent: both) | close those connections and refuse tickets issued at or before `at_ms`; replayed at every sign-in while in force. `role` only to a relay that named `revoke-role/1`; a relay ignores a role it does not know |
 | `replayed` | `revocations` | the replay is complete (a relay that just started waits for this before taking sign-ins) |
 | `throttle` | `account`, `bytes_per_sec` (`null`: lifted) | one account's relayed rate |
 | `throttles` | `accounts: [{account, bytes_per_sec}]` | the whole throttle table: anything not in it is not throttled |

@@ -535,7 +535,8 @@
         "id": { "$ref": "#/$defs/relayId" },
         "time_ms": { "$ref": "#/$defs/ms" },
         "sig": { "$ref": "#/$defs/hex64" },
-        "version": { "type": "string" }
+        "version": { "type": "string" },
+        "features": { "type": "array", "items": { "type": "string" }, "description": "revoke-role/1: takes a revoke scoped to one ticket role" }
       }
     },
     "relay.c2s.register": {
@@ -548,7 +549,8 @@
         "origin": { "type": "string" },
         "version": { "type": "string" },
         "time_ms": { "$ref": "#/$defs/ms" },
-        "sig": { "$ref": "#/$defs/hex64" }
+        "sig": { "$ref": "#/$defs/hex64" },
+        "features": { "type": "array", "items": { "type": "string" }, "description": "as login's" }
       }
     },
     "relay.c2s.health": {
@@ -666,7 +668,8 @@
         "t": { "const": "revoke" },
         "account": { "$ref": "#/$defs/id" },
         "id": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }], "description": "a device or machine; null: every connection of the account" },
-        "at_ms": { "$ref": "#/$defs/ms" }
+        "at_ms": { "$ref": "#/$defs/ms" },
+        "role": { "enum": ["device", "agent"], "description": "only the tickets of this role (sent only to a relay that named revoke-role/1); absent: both" }
       }
     },
     "relay.s2c.replayed": {

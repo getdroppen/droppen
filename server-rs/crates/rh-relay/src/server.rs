@@ -91,6 +91,8 @@ pub struct ConnRate {
 struct Revocation {
     account: String,
     id: Option<String>,
+    /// Only the tickets of this role (`None`: both roles).
+    role: Option<TicketRole>,
     at_ms: u64,
     until_ms: u64,
 }
@@ -257,20 +259,19 @@ impl Server {
     pub fn check_ticket(&self, text: &str) -> Result<RelayTicket, TicketError> {
         let signed = SignedTicket::parse(text)?;
         let ticket = signed.verify(|kid| self.key_of(kid), &self.config.id, now_ms())?;
-        if self.revoked(&ticket.account, &ticket.id, ticket.issued_ms) {
+        if self.revoked(&ticket.account, &ticket.id, ticket.role, ticket.issued_ms) {
             return Err(TicketError::Malformed("revoked".into()));
         }
         Ok(ticket)
     }
 
-    fn revoked(&self, account: &str, id: &str, issued_ms: u64) -> bool {
+    fn revoked(&self, account: &str, id: &str, role: TicketRole, issued_ms: u64) -> bool {
         let now = now_ms();
         let mut inner = self.lock();
         inner.revoked.retain(|r| r.until_ms > now);
-        inner
-            .revoked
-            .iter()
-            .any(|r| r.account == account && r.id.as_deref().is_none_or(|i| i == id) && issued_ms <= r.at_ms)
+        inner.revoked.iter().any(|r| {
+            r.account == account && r.id.as_deref().is_none_or(|i| i == id) && r.role.is_none_or(|rr| rr == role) && issued_ms <= r.at_ms
+        })
     }
 
     /// A sign-in: `login {ticket, time_ms, sig}` against the challenge
@@ -530,18 +531,29 @@ impl Server {
     /// one heard again changes nothing, and a connection on a ticket issued
     /// after it (renewed since) is left alone.
     pub fn revoke(&self, account: &str, id: Option<&str>, at_ms: u64) {
+        self.revoke_role(account, id, None, at_ms);
+    }
+
+    /// [`Server::revoke`], for the tickets of `role` only when given: a
+    /// host's device-role tickets carry the same id as its agent's, and a
+    /// renewal of its identity key revokes the former and leaves the latter
+    /// (the agent must stay reachable to be asked for it). A Hub sends a
+    /// scoped revocation only to a relay that signed in with
+    /// [`crate::uplink::FEATURE_REVOKE_ROLE`].
+    pub fn revoke_role(&self, account: &str, id: Option<&str>, role: Option<TicketRole>, at_ms: u64) {
         let outs: Vec<Outbound> = {
             let mut inner = self.lock();
             let horizon = now_ms() + rh_proto::ticket::TICKET_TTL_MS + self.config.timing.renew_grace_ms;
             let known = inner
                 .revoked
                 .iter_mut()
-                .find(|r| r.account == account && r.id.as_deref() == id && r.at_ms == at_ms);
+                .find(|r| r.account == account && r.id.as_deref() == id && r.role == role && r.at_ms == at_ms);
             match known {
                 Some(r) => r.until_ms = r.until_ms.max(horizon),
                 None => inner.revoked.push(Revocation {
                     account: account.to_string(),
                     id: id.map(str::to_string),
+                    role,
                     at_ms,
                     until_ms: horizon,
                 }),
@@ -552,11 +564,11 @@ impl Server {
                 .into_iter()
                 .flatten()
                 .filter_map(|c| inner.conns.get(c))
-                .filter(|i| id.is_none_or(|id| i.id == id) && i.issued_ms <= at_ms)
+                .filter(|i| id.is_none_or(|id| i.id == id) && role.is_none_or(|r| i.role == r) && i.issued_ms <= at_ms)
                 .map(|i| i.out.clone())
                 .collect()
         };
-        tracing::info!(%account, ?id, closed = outs.len(), "revoked by the Hub");
+        tracing::info!(%account, ?id, ?role, closed = outs.len(), "revoked by the Hub");
         for out in outs {
             out.close(CLOSE_REVOKED, "removed from the account");
         }
