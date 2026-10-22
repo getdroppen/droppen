@@ -1291,6 +1291,7 @@ test("the runner withdraws an abandoned attempt, or a mark nothing exposes, by n
   await runner.idle();
   assert.deepEqual(hub.rotationDeletes, ["m-1"], "the abandoned attempt was withdrawn");
   assert.deepEqual(hub.rotationRows.get("m-1"), fresh, "the new attempt stays");
+  assert.equal(runner.row("m-1")?.nonceHash, "cd".repeat(32), "and the page reads it, not the row it withdrew");
   runner.stop();
   // m-3 is exposed by nothing: its mark is withdrawn — as another page turns that mark into an attempt first (same requested_ms).
   const mark = { host: "m-3", state: "pending", assurance: 0, requested_ms: now - 60_000, requested_by: "d-other", needs_assurance: false, isolated: false };
@@ -1311,6 +1312,35 @@ test("the runner withdraws an abandoned attempt, or a mark nothing exposes, by n
   assert.equal(hub.rotationRows.has("m-3"), false);
   second.stop();
   third.stop();
+});
+
+test("a host the hub keeps isolated is not withdrawn as an unexposed mark: it stays flagged, and a pause holding it stays", async () => {
+  const { hub, a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "offline");
+  const first = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  first.start();
+  await until(() => rotated(a).includes("m-1"));
+  await first.idle();
+  first.stop();
+  // m-2 renewed too (a person's renewal), before any runner ended the pause; then the hub flags m-2 isolated (no evidence shown here).
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const [pause] = a.chain!.openPauses();
+  assert.ok(pause);
+  hub.rotationRows.set("m-2", { host: "m-2", state: "pending", assurance: 1, requested_ms: Date.now(), requested_by: "hub", needs_assurance: true, isolated: true });
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await runner.idle();
+  assert.equal(a.flagged("m-2"), true, "still flagged");
+  assert.equal(a.chain!.pause(pause.op)?.end ?? null, null, "the pause stays open");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "m-2 is not let control m-1 again");
+  assert.equal(hub.rotationRows.get("m-2")?.isolated, true);
+  runner.stop();
 });
 
 test("isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {

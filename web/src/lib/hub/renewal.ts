@@ -615,13 +615,22 @@ export class RenewalRunner {
         : (row.state === "attempt" || row.state === "staged") && row.nonceHash
           ? { nonceHash: row.nonceHash }
           : undefined;
+    let withdrew = false;
     try {
       await account.api.deleteRotation(account.session.token, row.host, only);
-      const view: RotationsView | null = this.view;
-      if (view) this.view = { ...view, hosts: view.hosts.filter((r: HostRotationView) => r.host !== row.host) };
+      withdrew = true;
       for (const k of [...this.marked]) if (k.startsWith(`${row.host}@`)) this.marked.delete(k);
     } catch (error) {
       console.warn(`cloud: withdrawing ${row.host}'s renewal:`, error);
+    }
+    // What the hub has now, read again: a named withdrawal leaves what another page started meanwhile, and an
+    // isolated host stays `pending` — its row (and so its flag) must not be forgotten here.
+    try {
+      this.view = await account.api.rotations(account.session.token);
+      this.readAtMs = this.now();
+    } catch {
+      const view: RotationsView | null = this.view;
+      if (withdrew && view) this.view = { ...view, hosts: view.hosts.filter((r: HostRotationView) => r.host !== row.host || r.isolated) };
     }
   }
 
@@ -759,7 +768,8 @@ export class RenewalRunner {
     // Pending at the hub but exposed no more: withdrawn, its device role back — judged on the hub's head and rows read
     // just now, and only when this page's chain is at least that new (a mark another page made for an exposure this
     // page has not seen yet stays).
-    const unexposed = (this.view?.hosts ?? []).filter((row) => row.state === "pending" && chain!.machine(row.host) && !exposed.has(row.host));
+    // (Not a host the hub keeps isolated: that is no mark of a page's, and a withdrawal leaves it `pending`.)
+    const unexposed = (this.view?.hosts ?? []).filter((row) => row.state === "pending" && !row.isolated && chain!.machine(row.host) && !exposed.has(row.host));
     if (unexposed.length) await this.withdrawUnexposed(unexposed);
     // Nothing renews before an admin chose how renewals are confirmed (§5.6 「打开的顺序」): the rows say so, and the setting asks.
     if (chain.renewalPolicySeq === null) return;

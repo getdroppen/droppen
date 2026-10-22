@@ -531,6 +531,13 @@ export class FakeKeysHub {
           const live = now.state === "attempt" || now.state === "staged";
           const named = body?.nonce_hash !== undefined ? live && now.nonce_hash === body.nonce_hash : body?.requested_ms !== undefined ? now.state === "pending" && now.requested_ms === body.requested_ms : true;
           if (!named) return live ? this.json(409, { error: "rotation_in_progress", message: "another renewal of it is running" }) : this.json(200, {});
+          // An isolated host stays `pending` (only a renewal confirmed on the device, or its removal, clears it).
+          if (now.isolated === true) {
+            const kept: Record<string, unknown> = { ...now, state: "pending", assurance: 1, failure: null };
+            for (const k of ["nonce_hash", "attempt_expires_ms", "staged_ms", "ready_ms", "sign_key", "dh_key", "staged_seq"]) delete kept[k];
+            this.rotationRows.set(host, kept);
+            return this.json(200, {});
+          }
           this.rotationRows.delete(host);
         }
         return this.json(200, {});
