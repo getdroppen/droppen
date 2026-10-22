@@ -356,6 +356,7 @@ login session. Any other value is no hint.
 - `email`: `{address, verified, verification, due_ms, delivery: "pending"|"sent"|"failed"|null, delivery_error}`
   (`due_ms`: when an unverified account starts being refused; `delivery_error`, for a failed mail only, is generic — `the mail service refused to deliver to this address` or `the mail could not be sent in time` — the mail service's own words stay in the hub's log);
 - `plan`: the plan view (`{id, source, status, period_start_ms, period_end_ms, grace_plan, grace_until_ms, entitlements: {<key>: n|null}, usage: {storage_bytes, devices, hosts, machines, relays, transfer: {period_start_ms, period_end_ms, bytes, included, overage_bytes, throttled}}}`), or `null` if it cannot be read. `usage.devices` counts every current device of the chain, hosts included (`devices.max`); `usage.hosts` the ones that run AI (`hosts.max`); `usage.machines` and `entitlements["machines.max"]` are the old names, kept one version;
+- `plan.entitlements` keys (`null`: no limit; the values are the plan's, not documented here): `storage.retention_days` (days the cloud's encrypted copy is kept), `storage.bytes` (bytes of it an account may hold), `relay.max` (relays in use at once, the `limit` of `relay_set`), `devices.max` (every current device of the chain, hosts included), `hosts.max` (the devices that run AI; `machines.max` is its old name), `transfer.included_bytes` (relayed transfer a period includes), `transfer.overage` (what happens past it), `transfer.hard_cap_bytes`, `conn.bytes_per_sec` (a connection's inbound byte rate, websocket.md), `streams.records_per_sec`, `relay.beta` (sees hidden relays). A `409 limit` names the key it hit.
 - `chain_seq`: the newest chain entry the hub holds, `null` before genesis;
 - `relay_prefs`: `{standby}`, the account's relay preference (`PATCH /v1/relays/prefs`); a hub from before it leaves it out;
 - `chain_v3`: `{mode: "off"|"read"|"write", writable, waiting: [machine], in_use}` — whether the account may take its first v3 entries, or (once `in_use`) add a host, now (`docs/local-aggregator.md` §3.5): the hub must write them (`DROPPEN_HUB_CHAIN_V3=write`) and, before the first, every current host's agent must have declared `chain/3` and `policy/1` (`waiting` lists those that have not; once `in_use` they no longer hold the account back and are listed so the owner can update them); `in_use`: the chain already holds a v3 entry, so nothing that reads only v2 can follow it, and everything but a new host is taken in every mode. Before genesis (`chain_seq: null`) there is no host to wait for, and `writable` says whether the account can be created at all: the web app makes every new account on v3 (`Genesis3` and user key epoch 0 as v3, one batch) and makes none while it is `false`;
@@ -971,9 +972,8 @@ reauth_required | reauth_failed`, `409 last_credential`, `429 rate`.
 The `/v1/admin/*` routes are the hub operator's own tools. No open client
 uses them, so they are documented with the Hub, not here. `index.json` still
 lists their paths and auth (`admin`, a bearer token), so every route the hub
-serves is in the index. The entitlement keys that `/v1/me`'s
-`plan.entitlements` and a `409 limit` name are the Hub's too, and documented
-with it.
+serves is in the index. (The entitlement keys are not operator prose: they
+are named under `/v1/me`'s `plan`.)
 
 ## Served by a relay (`droppen-relay`)
 

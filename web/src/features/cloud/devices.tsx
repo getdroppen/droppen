@@ -2453,7 +2453,7 @@ export function ConfirmCandidate({
                   return;
                 }
               }
-              // Every browser or phone is a full device (the owner's decision of 2026-10-20).
+              // Every browser or phone is a full device (a decision of 2026-10-20).
               await account.pairDevice(candidate, { admin: true });
               onAdded();
               me?.soon();

@@ -5916,7 +5916,7 @@ export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { ho
 }
 
 /**
- * Why an edge a pause holds must stay held (§4.1 「结束之前」, Codex #136-2), judged on
+ * Why an edge a pause holds must stay held (§4.1 「结束之前」), judged on
  * `chain` alone — whatever an earlier renewal, or the hub's word on what can
  * renew, says: either end exposed on it, or held by isolation or the hub's
  * flag. `null`: it may come back.

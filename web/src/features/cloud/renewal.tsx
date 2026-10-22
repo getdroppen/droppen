@@ -179,7 +179,7 @@ export function RenewalLine({
             {t("An identity key {{id}} renewed away from signed in again — for example, it was restored from a backup made before the renewal, or another copy of its old key is in use. Nothing here connects to it until this is settled.", { id })}
           </span>
           {viewerAdmin && (
-            // §3.8 「页面」 (the owner's decision B after the R6 re-review): first look at Droppen on that device; what it shows
+            // §3.8 「页面」: first look at Droppen on that device; what it shows
             // picks the main action — "replaced elsewhere": remove the id, then add it again under a new identity; a code:
             // confirm on the device. Removing stays one click away in both, and the row says all along why it matters.
             <span data-testid={`renewal-fresh-${id}`} className="flex flex-col items-start gap-1.5 text-muted">

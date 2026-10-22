@@ -423,7 +423,7 @@ export class RenewalRunner {
   /**
    * End what may end of each open renewal pause (§4.1 「结束之前」), judged on
    * this page's chain alone — exposure as the chain has it now, whatever an
-   * earlier renewal or the hub's word on what can renew says (Codex #136-2):
+   * earlier renewal or the hub's word on what can renew says:
    *
    * - no edge it gives back has an end that is exposed, isolated or flagged:
    *   `completed`;

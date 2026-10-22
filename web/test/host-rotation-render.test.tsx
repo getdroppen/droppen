@@ -194,7 +194,7 @@ test("§4.1 “renew identity key” cannot be pressed while an exposed host it 
   assert.match(zh.blocked ?? "", /请先更换 m-1 的身份密钥/);
 });
 
-test("isolated (§3.8 「页面」, decision B): first look at Droppen on it; “replaced elsewhere” makes removing the main action, a code makes confirming it; removing is one click away in both", () => {
+test("isolated (§3.8 「页面」): first look at Droppen on it; “replaced elsewhere” makes removing the main action, a code makes confirming it; removing is one click away in both", () => {
   const calls: string[] = [];
   const props = { id: "m-1", status: { kind: "isolated" } as RenewalStatus, viewerAdmin: true, onCode: () => calls.push("code"), onRemove: () => calls.push("remove"), onAddComputer: () => calls.push("add") };
   const html = draw(<RenewalLine {...props} />);
@@ -405,7 +405,7 @@ test("R6: a host that lets an isolated one control it says to remove that one fi
   const html = rowHtml(host({ id: "m-2", isolatedControllers: ["m-1"] }));
   assert.match(html, /data-testid="isolated-controllers-m-2" data-signal="warn"/);
   assert.ok(html.includes("It lets m-1 control it, which is isolated: settle it on its row first."));
-  assert.doesNotMatch(html, /remove m-1 first/, "removing is not the only way any more (decision B)");
+  assert.doesNotMatch(html, /remove m-1 first/, "removing is not the only way any more");
   assert.ok(rowHtml(host({ id: "m-2", isolatedControllers: ["m-1"] }), {}, "zh-CN").includes("请先在那一行处理好它"));
   // A group renewing together (§4.1): control between them is paused, said on each row until the lists are back.
   const paused = rowHtml(host({ pausedWith: ["m-1", "m-2"] }));
