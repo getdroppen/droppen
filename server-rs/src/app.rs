@@ -147,6 +147,10 @@ impl GotchaApp for RemoteHandApp {
     }
 }
 
+/// The instance claims [`Prepared::claim_for_process`] keeps. A static is never
+/// dropped, so these are released by the process exiting and by nothing else.
+static PROCESS_CLAIMS: std::sync::Mutex<Vec<Arc<InstanceLock>>> = std::sync::Mutex::new(Vec::new());
+
 /// A fully assembled application: bound listener, router, and the token that
 /// stops both.
 pub struct Prepared {
@@ -162,7 +166,8 @@ pub struct Prepared {
     /// `serve`; dropping it would let a second server adopt what this one owns.
     /// Shared, weakly, with [`crate::api::AppState`] so the self-upgrade handler
     /// can ask whether the claim still means anything before replacing the
-    /// binary. This is the only strong reference: see [`crate::api::AppState::lock`].
+    /// binary. The serve task holds it, and a production server also keeps it
+    /// for the rest of its process: see [`Prepared::claim_for_process`].
     _lock: Option<Arc<InstanceLock>>,
 }
 
@@ -516,7 +521,11 @@ impl Prepared {
     }
 
     /// Serve in a task, and stop on the first SIGINT/SIGTERM.
+    ///
+    /// The instance stays claimed until this process exits, not merely until
+    /// the serve task ends; see [`Prepared::claim_for_process`].
     pub async fn serve_until_signalled(self) -> GotchaResult<()> {
+        self.claim_for_process();
         tracing::info!(addr = %self.addr, "Droppen server listening");
         let cancel = self.cancel.clone();
         let cleanups = self.cleanups.clone();
@@ -538,6 +547,29 @@ impl Prepared {
         }
     }
 
+    /// Keep this server's instance claim until the process exits.
+    ///
+    /// The serve task lets go of its claim when it returns. That suits a server
+    /// stopped inside a process that goes on running, which is what the
+    /// integration tests do between a halt and the next boot, after
+    /// cancelling it and running its cleanups. It does not suit the production
+    /// server, whose process can go on for a while after the serve task has
+    /// returned. When the serve task fails on its own, nothing has cancelled
+    /// the background tasks, and the scheduler's `fire` writes the instance
+    /// directory. Meanwhile `up` (`crate::supervisor`) starts a successor as
+    /// soon as the flock is free, because it counts on the flock going only
+    /// when its holder dies. Held here, it does.
+    ///
+    /// A static rather than a handle for `main` to keep: both callers of
+    /// [`RemoteHandApp::run_server`] (`serve` and `agent run`) return straight
+    /// into the end of `main`, so "until the process exits" is the lifetime
+    /// needed either way, and a static cannot be dropped early by a caller.
+    fn claim_for_process(&self) {
+        if let Some(lock) = &self._lock {
+            PROCESS_CLAIMS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(lock.clone());
+        }
+    }
+
     /// Serve until the token is cancelled, without installing a signal handler.
     /// Used by `export-openapi` and by the integration tests.
     pub fn serve_task(self) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
@@ -551,7 +583,8 @@ impl Prepared {
         } = self;
         async move {
             // `_lock` is moved in deliberately: the instance stays claimed for
-            // exactly as long as this server is serving.
+            // as long as this server is serving. A production server keeps it
+            // past that, until its process exits (`claim_for_process`).
             let _lock = _lock;
             // With the peer address, which `auth::guard` needs to accept the
             // cloud agent's bridge only from loopback.
@@ -633,5 +666,36 @@ mod tests {
             .expect("the default instance name is valid");
         InstanceLock::acquire(&dirs).expect("the instance is free once its server has stopped serving");
         drop(lingering);
+    }
+
+    /// A production server's claim outlives its serve task, so whatever its
+    /// process still runs before it exits never shares the instance with a
+    /// successor. `serve_until_signalled` takes this claim first thing; it is
+    /// taken directly here so the test does not install the process's signal
+    /// handlers.
+    #[tokio::test]
+    async fn a_production_claim_lasts_past_the_serve_task() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let prepared = RemoteHandApp {
+            home_override: Some(home.path().to_path_buf()),
+            port_override: Some(0),
+            auth_enabled_override: Some(false),
+            ..Default::default()
+        }
+        .prepare()
+        .await
+        .expect("prepare");
+        prepared.claim_for_process();
+        let cancel = prepared.cancel();
+        let cleanups = prepared.cleanups();
+        let serving = tokio::spawn(prepared.serve_task());
+        cancel.cancel();
+        cleanups.run();
+        serving.await.expect("the serve task").expect("serve");
+
+        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), crate::instance::DEFAULT_INSTANCE)
+            .expect("the default instance name is valid");
+        let refused = InstanceLock::acquire(&dirs).expect_err("the instance is still claimed after serving");
+        assert!(refused.to_string().contains(&format!("pid {}", std::process::id())), "by this process: {refused}");
     }
 }

@@ -122,8 +122,9 @@ pub struct AppState {
     /// task, and some of those outlive the serve task. A strong reference here
     /// kept the flock until the last of them ended, so an instance stayed
     /// claimed after its server had stopped serving, for as long as that took.
-    /// The serve task holds the only strong reference
-    /// ([`crate::app::Prepared::serve_task`]).
+    /// The serve task holds a strong reference
+    /// ([`crate::app::Prepared::serve_task`]), and a production server keeps
+    /// one more until its process exits (`Prepared::claim_for_process`).
     pub lock: Arc<std::sync::OnceLock<std::sync::Weak<crate::instance::InstanceLock>>>,
     /// The hub link: started at boot for an enrolled instance, and at any
     /// time after by an enrollment from the local settings
