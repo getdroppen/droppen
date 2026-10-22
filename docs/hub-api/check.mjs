@@ -449,15 +449,54 @@ function testRanges(toks) {
   return (at) => ranges.some(([a, b]) => at >= a && at <= b);
 }
 
+/** Whether `toks` (Rust) are `#[cfg(test)]` (`inner`: `#![cfg(test)]`) at `j`; the index after it, or -1. */
+function cfgTestAt(toks, j, inner) {
+  let k = j;
+  if (!is(toks[k++], "p", "#")) return -1;
+  if (inner && !is(toks[k++], "p", "!")) return -1;
+  const want = [["p", "["], ["id", "cfg"], ["p", "("], ["id", "test"], ["p", ")"], ["p", "]"]];
+  for (const [kind, v] of want) if (!is(toks[k++], kind, v)) return -1;
+  return k;
+}
+
+/**
+ * The Rust files `toks` (of the file at `full`) declare test-only:
+ * `#[cfg(test)] mod name;` — that module's `name.rs` or `name/mod.rs`. Such
+ * a file is a test as a whole, like an inline `#[cfg(test)]` block (its
+ * messages are the other end's, direction unknown), and so is one that says
+ * `#![cfg(test)]` itself.
+ */
+function testModules(full, toks) {
+  const out = [];
+  for (let j = 0; j < toks.length; j++) {
+    let k = cfgTestAt(toks, j, false);
+    if (k < 0) continue;
+    if (is(toks[k], "id", "pub")) {
+      k++;
+      if (is(toks[k], "p", "(")) k = matching(toks, k) + 1;
+    }
+    if (!(is(toks[k], "id", "mod") && is(toks[k + 1], "id") && is(toks[k + 2], "p", ";"))) continue;
+    const name = toks[k + 1].v;
+    const file = full.split(/[\\/]/).pop();
+    // A module's children sit beside `mod.rs` / `lib.rs` / `main.rs`, and in
+    // `foo/` for any other `foo.rs`.
+    const dir = ["mod.rs", "lib.rs", "main.rs"].includes(file) ? dirname(full) : join(dirname(full), file.replace(/\.rs$/, ""));
+    out.push(join(dir, `${name}.rs`), join(dir, name, "mod.rs"));
+  }
+  return out;
+}
+
 /**
  * Everything one file uses: `{routes: [{path, method, line}], ts: [{t, dir, line}]}`,
- * dir being "send", "recv" or "any" (unknown).
+ * dir being "send", "recv" or "any" (unknown). `test`: the file is test code
+ * as a whole ([`testModules`]).
  */
-function extract(src, lang) {
+function extract(src, lang, test = false) {
   const toks = lex(src, lang);
   const routes = [];
   const ts = [];
-  const inTest = lang === "rs" ? testRanges(toks) : () => false;
+  const wholeTest = lang === "rs" && (test || toks.some((_, j) => cfgTestAt(toks, j, true) >= 0));
+  const inTest = wholeTest ? () => true : lang === "rs" ? testRanges(toks) : () => false;
   const t = (value, dir, at) => ts.push({ t: value, dir: inTest(at) ? "any" : dir, line: toks[at].line });
 
   for (let j = 0; j < toks.length; j++) {
@@ -612,12 +651,20 @@ function walk(dir, out) {
 
 const found = { routes: new Map(), ts: new Map(), local: new Map() };
 let filesScanned = 0;
+// Test-only Rust files, from every `#[cfg(test)] mod name;` first (the
+// declaring file may come after the module's in the walk).
+const testFiles = new Set();
+for (const root of ROOTS) {
+  for (const full of walk(join(repo, root), [])) {
+    if (full.endsWith(".rs")) for (const t of testModules(full, lex(readFileSync(full, "utf8"), "rs"))) testFiles.add(t);
+  }
+}
 for (const root of ROOTS) {
   for (const full of walk(join(repo, root), [])) {
     const file = relative(repo, full).split("\\").join("/");
     filesScanned++;
     const lang = file.endsWith(".rs") ? "rs" : "ts";
-    const { routes: usedRoutes, ts: usedTs } = extract(readFileSync(full, "utf8"), lang);
+    const { routes: usedRoutes, ts: usedTs } = extract(readFileSync(full, "utf8"), lang, testFiles.has(full));
     const speaks = (SPEAKS.find(([prefix]) => file.startsWith(prefix)) ?? [null, []])[1];
     const hubSpeaks = speaks.filter(([channel]) => !LOCAL.has(channel));
     const onlyLocal = speaks.length > 0 && hubSpeaks.length === 0;
