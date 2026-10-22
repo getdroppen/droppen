@@ -1406,6 +1406,36 @@ test("renewals switched off at the hub: an open pause whose edges may all come b
   later.stop();
 });
 
+test("renewals switched off at the hub: a host the hub flags isolated keeps its flag — the pause over it is not ended, and it is not let control again", async () => {
+  const { hub, a, agents, x } = await account();
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  link.set("m-2", "offline");
+  const first = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  first.start();
+  await until(() => rotated(a).includes("m-1"));
+  await first.idle();
+  first.stop();
+  // Both renewed (m-2 by a person) with the pause still open; the hub flags m-2 isolated; then the switch goes off.
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const [pause] = a.chain!.openPauses();
+  assert.ok(pause);
+  hub.rotationRows.set("m-2", { host: "m-2", state: "pending", assurance: 1, requested_ms: Date.now(), requested_by: "hub", needs_assurance: true, isolated: true });
+  hub.rotationEnabled = false;
+  const off = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  off.start();
+  await off.idle();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await off.idle();
+  assert.equal(a.flagged("m-2"), true, "still flagged");
+  assert.equal(a.chain!.pause(pause.op)?.end ?? null, null, "the pause stays open");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "m-2 is not let control m-1 again");
+  assert.equal(hub.rotationRows.get("m-2")?.isolated, true);
+  off.stop();
+});
+
 test("a host the hub would not renew while another host's Droppen was too old (`waiting`) is tried again once that host updated", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());

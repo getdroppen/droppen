@@ -831,14 +831,16 @@ export class RenewalRunner {
    * under way: nothing renews now, so nothing kept for one stays. The marks
    * are withdrawn — a `pending` host has its keys withheld here (`note`) and
    * its device role suspended at the hub — and so are attempts nobody will
-   * finish. The open pauses end where nothing they hold must stay held, judged
+   * finish — but not a host the hub keeps isolated: no page's mark, it stays
+   * `pending` at the hub whatever is withdrawn, and its flag holds the pauses
+   * over it. The open pauses end where nothing they hold must stay held, judged
    * on the chain alone as ever ({@link restoreGroups}); one that must keep some
    * held would need a new start, which the hub refuses while off: it stays,
    * and its rows say why.
    */
   private async switchedOff(): Promise<void> {
     for (const row of [...(this.view?.hosts ?? [])]) {
-      if (this.running !== row.host && (row.state === "pending" || this.abandoned(row))) await this.withdraw(row);
+      if (this.running !== row.host && !row.isolated && (row.state === "pending" || this.abandoned(row))) await this.withdraw(row);
     }
     await this.restoreGroups();
     this.note();
