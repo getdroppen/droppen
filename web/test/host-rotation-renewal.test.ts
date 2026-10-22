@@ -1830,6 +1830,66 @@ test("H1: a pause end is judged again right before publication — the hub's fla
   }
 });
 
+test("H1 (the runner's own plan): an end of a pause with two edges, one of whose ends is flagged while it is signed, gives back neither — what was signed is judged, not a plan made again", async () => {
+  const { a, x, agents } = await account({ chain: false });
+  const renews = new Set(["m-1", "m-2", "m-3"]);
+  a.noteRenewals({ renews, pending: new Set(), isolated: new Set() });
+  await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2", "m-3"] });
+  const op = crypto.getRandomValues(new Uint8Array(16));
+  assert.ok(await a.writePause(() => [{ type: "renewalPause", op, phase: 0, removals: [{ host: "m-1", ids: ["m-2", "m-3"] }] }]));
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  // The runner's own end of its pauses (`restoreGroups`): nothing must stay held when it is built, so the batch it signs returns both edges.
+  const restore = (runner as unknown as { restoreGroups: () => Promise<boolean> }).restoreGroups.bind(runner);
+  const flagM2 = duringSigning(() => a.noteRenewals({ renews, pending: new Set(), isolated: new Set(), flagged: new Set(["m-2"]) }));
+  let wrote: boolean;
+  try {
+    wrote = await restore();
+  } finally {
+    flagM2();
+  }
+  assert.equal(a.flagged("m-2"), true);
+  assert.equal(wrote, false, "the signed batch is not published");
+  assert.equal(a.chain!.pause(op)?.end ?? null, null, "the pause stays open");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "m-2, flagged while the end was signed, is not let control m-1 again");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-3"), false);
+  // The next look builds on what is known now: m-1←m-2 kept held in a new pause, m-1←m-3 given back, in one batch.
+  assert.equal(await restore(), true);
+  assert.notEqual(a.chain!.pause(op)?.end ?? null, null);
+  assert.equal(admitsOn(a.chain!, "m-1", "m-2"), false, "still held");
+  assert.equal(admitsOn(a.chain!, "m-1", "m-3"), true, "given back");
+});
+
+for (const mode of ["404", "off"] as const) {
+  test(`switch off (${mode}): a removal that exposes hosts that control each other writes nothing new, asks the hub nothing, and keeps the re-enroll warning`, async () => {
+    const { hub, a, agents, x } = await account({ policy: false });
+    if (mode === "404") hub.rotationsGone = true;
+    else hub.rotationEnabled = false;
+    await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
+    const before = a.chain!.seq;
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const link = new FakeLink();
+    for (const h of ["m-1", "m-2", "m-3"]) link.set(h, "online");
+    const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+    runner.start();
+    await runner.idle();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runner.idle();
+    const kinds = a.chain!.allEntries().filter((e) => e.draft.seq > before).map((e) => e.draft.action.type);
+    assert.ok(!kinds.some((k) => k === "rotateHostKey" || k === "setRenewalPolicy" || k === "renewalPause"), kinds.join(","));
+    assert.deepEqual(hub.rotationPuts, []);
+    assert.deepEqual(agents.rotateCalls, []);
+    assert.ok(a.reEnrollWarnings().has("m-1"), "the re-enroll warning stands");
+    for (const h of ["m-1", "m-2"]) {
+      assert.equal(runner.status(h).kind, "none");
+      assert.equal(a.keysWithheldFrom(h), false);
+      assert.equal(a.mustRenewFirst(h), false);
+    }
+    // And a list naming an exposed host is written as before.
+    await a.setAccept("m-3", { type: "devices", ids: ["m-1"] });
+    runner.stop();
+  });
+}
+
 test("M7: 「结束暂停」 is bound to the exact control it showed — a 409 that reveals an overlapping pause ended meanwhile asks again", async () => {
   const { a, x } = await account({ chain: false });
   const p1 = crypto.getRandomValues(new Uint8Array(16));

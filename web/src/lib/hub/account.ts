@@ -4638,7 +4638,9 @@ export class CloudAccount {
    * - What it gives back is checked in the build and once more right before
    *   publication (H1), with the isolation and the hub's flags known then:
    *   one that must stay held aborts it (`exposed`; the runner tries again
-   *   on its next look, a person is told).
+   *   on its next look, a person is told). That last check is of the edges
+   *   the SIGNED batch gives back — never of a plan made again, which would
+   *   keep held what the signed batch returns all the same.
    * - `expect`: the exact edges a person was shown (M7). Anything else
    *   coming back — a base widened, an overlapping pause ended — refuses it
    *   (`pauseChanged`): ask again.
@@ -4655,37 +4657,52 @@ export class CloudAccount {
   ): Promise<{ host: string; id: string }[] | null> {
     const opHex = hex(op);
     const next: Bytes = opts.next ? copy(opts.next) : crypto.getRandomValues(new Uint8Array(16));
-    let returned: { host: string; id: string }[] = [];
-    const edgeKey = (e: { host: string; id: string }) => `${e.host}<${e.id}`;
-    // What ending it on `chain` gives back, held to everything it must be: the actions, or none.
-    const settle = (chain: ChainState): Action[] => {
-      const pause = chain.openPauses().find((p) => hex(p.op) === opHex);
-      if (!pause) return [];
-      const kept = plan(chain, pause);
-      if (!kept) return [];
-      const keep = new Set(kept.keep.flatMap((r) => r.ids.map((id) => edgeKey({ host: r.host, id }))));
-      const back = pauseReturns(chain, pause).edges.filter((e) => !keep.has(edgeKey(e)));
+    type Edge = { host: string; id: string };
+    const edgeKey = (e: Edge) => `${e.host}<${e.id}`;
+    const refuseHeld = (chain: ChainState, back: Edge[]) => {
       const held = this.heldEdges(chain, back);
       if (held.length) {
         throw new AccountError("exposed", "renew the identity key of {{ids}} first: ending the pause would let it control a device again", undefined, undefined, {
           ids: [...new Set(held.map((h) => h.who))].sort().join(", "),
         });
       }
+    };
+    // What ending it on `chain` gives back, held to everything it must be: the actions (none: nothing to write), and the edges they return.
+    const settle = (chain: ChainState): { actions: Action[]; back: Edge[] } => {
+      const pause = chain.openPauses().find((p) => hex(p.op) === opHex);
+      if (!pause) return { actions: [], back: [] };
+      const kept = plan(chain, pause);
+      if (!kept) return { actions: [], back: [] };
+      const keep = new Set(kept.keep.flatMap((r) => r.ids.map((id) => edgeKey({ host: r.host, id }))));
+      const back = pauseReturns(chain, pause).edges.filter((e) => !keep.has(edgeKey(e)));
+      refuseHeld(chain, back);
       if (opts.expect) {
         const want = new Set(opts.expect.map(edgeKey));
         if (want.size !== back.length || back.some((e) => !want.has(edgeKey(e)))) {
           throw new AccountError("pauseChanged", "what ending the pause gives back has changed: look at it again");
         }
       }
-      returned = back;
       const start: Action[] = kept.keep.length ? [{ type: "renewalPause", op: next, phase: PAUSE_START, removals: kept.keep }] : [];
-      return [...start, { type: "renewalPause", op: pause.op, phase, removals: [] }];
+      return { actions: [...start, { type: "renewalPause", op: pause.op, phase, removals: [] }], back };
     };
-    // Built, then signed; right before it goes out, the same judgement again on what is known by then (H1).
-    const wrote = await this.writePause(settle, (base) => {
-      if (!settle(base).length) throw new AccountError("pauseChanged", "what ending the pause gives back has changed: look at it again");
-    });
+    // The edges the batch being signed gives back: fixed when it is built (built again on a newer head, they are that build's).
+    let signed: Edge[] = [];
+    const wrote = await this.writePause(
+      (chain) => {
+        const built = settle(chain);
+        signed = built.back;
+        return built.actions;
+      },
+      (base) => {
+        // Right before it goes out (H1): exactly what the SIGNED batch gives back, judged with the isolation and the hub's
+        // flags known by then — not a plan made again, which would keep held an edge the signed batch returns anyway.
+        refuseHeld(base, signed);
+        // …and the plan still ends it at all.
+        if (!settle(base).actions.length) throw new AccountError("pauseChanged", "what ending the pause gives back has changed: look at it again");
+      },
+    );
     if (!wrote) return null;
+    const returned = signed;
     // D2: what a device only paused missed — the host's committed epochs — sealed to it now that it is let in again.
     for (const e of returned) {
       const to = this.state?.device(e.id);
