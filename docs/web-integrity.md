@@ -30,7 +30,7 @@ node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub
 脚本做这几件事：
 
 1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。
-2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版文件在 getdroppen/releases（`--repo`）；那里的发版没附 bundle 时，取签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上 `release.yml` 挂的那份。bundle 从哪里下载都一样：`gh attestation verify` 拿它核对的是清单本身的字节、签名的工作流和标签。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
+2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版文件在 getdroppen/releases（`--repo`），它的清单由 `scripts/release-public.sh` 在本机生成：文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名和构建时间），而 bundle 签的是字节。所以那里的发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
 3. 下载清单里的每个文件，再取 `/`、`/link`、`/signin` 三个路由的页面外壳，逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
 4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是站点自己的（`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出。字节相同、却指向别的 Hub 的页面，不算同一个页面。
 5. 检查每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。

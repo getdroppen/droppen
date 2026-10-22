@@ -27,9 +27,11 @@
 //   1. asks the site which build it serves (`/.well-known/droppen-build`);
 //   2. takes the release manifest with that digest (or the one named), and
 //      checks its attestation with `gh attestation verify --bundle` — that
-//      needs `gh` installed but no GitHub login. The bundle is the release's
-//      own, or else the one on the signer repository's release of the same
-//      tag;
+//      needs `gh` installed but no GitHub login. A release without a bundle
+//      of its own (getdroppen/releases: its manifest is staged by the release
+//      script, the same files but not the bytes CI signed) is checked through
+//      the signer repository's release of the same tag: its manifest, which
+//      must have the same digest, and that manifest's bundle;
 //   3. fetches every file the manifest lists, and the shell at a few routes,
 //      and compares sha256s. The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
@@ -182,18 +184,40 @@ async function releaseManifest(opts, digest) {
 }
 
 /**
- * The Sigstore bundle for a release's manifest: attached to the release in the
- * repository the files come from or, failing that, to the release of the same
- * tag in the signer repository, where `release.yml` attaches it when it
- * attests the manifest. Where it was downloaded from proves nothing either
- * way: `gh attestation verify` checks it against the manifest's own bytes,
- * the signer's workflow and the tag.
+ * The signed copy of a release's manifest, for a release that carries no
+ * Sigstore bundle of its own. The files of getdroppen/releases are staged by
+ * scripts/release-public.sh, whose manifest lists the same files as the one
+ * release.yml builds and attests in the signer repository, but is not the
+ * same bytes (CI's also names the repository and the build time); a bundle
+ * signs bytes. So both are taken from the signer repository's release of the
+ * same tag, the manifest and its bundle, and the manifest must have the
+ * release's digest: the site is then compared with the signed manifest.
+ *
+ * `{manifestBytes, bundleBytes}`; `{failure}` when the signer repository
+ * signs another build under that tag (or a manifest that is not one);
+ * `{missing}` when it has no signed copy to give (none published, or its
+ * release could not be read), which is a missing attestation, as when the
+ * release has no bundle.
  */
-async function releaseBundle(opts, tag) {
-  const at = (repo) => `${GITHUB}/${repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`;
-  const bundle = await download(at(opts.repo));
-  if (bundle || opts.signerRepo === opts.repo) return bundle;
-  return download(at(opts.signerRepo));
+async function signedCopy(opts, tag, digest) {
+  const at = (asset) => `${GITHUB}/${opts.signerRepo}/releases/download/${encodeURIComponent(tag)}/${asset}`;
+  let manifestBytes, bundleBytes;
+  try {
+    [manifestBytes, bundleBytes] = await Promise.all([download(at("web-manifest.json")), download(at(BUNDLE_ASSET))]);
+  } catch (error) {
+    return { missing: `no Sigstore bundle published with this release, and ${opts.signerRepo}'s release ${tag} could not be read (${error.message})` };
+  }
+  if (!manifestBytes || !bundleBytes)
+    return { missing: `no Sigstore bundle published with this release, nor a signed manifest with ${opts.signerRepo}'s release ${tag}` };
+  const where = `the signed manifest of ${opts.signerRepo}'s release ${tag}`;
+  let signed;
+  try {
+    signed = checkManifest(JSON.parse(manifestBytes.toString("utf8")), where);
+  } catch (error) {
+    return { failure: error instanceof Unchecked ? error.message : `${where}: ${error.message}` };
+  }
+  if (signed.digest !== digest) return { failure: `${where} is ${signed.digest}, not the release's ${digest}` };
+  return { manifestBytes, bundleBytes };
 }
 
 /** `gh attestation verify` against the bundle; `{ok, note}`. */
@@ -353,6 +377,7 @@ async function main(argv) {
   // 2. The attested manifest to compare with.
   let manifestBytes, bundleBytes, source;
   let tag = null;
+  let missing = null;
   if (opts.manifest) {
     manifestBytes = /^https?:\/\//.test(opts.manifest) ? await download(opts.manifest) : readFileSync(opts.manifest);
     if (!manifestBytes) throw new Unchecked(`${opts.manifest}: not found`);
@@ -368,8 +393,18 @@ async function main(argv) {
       return 1;
     }
     ({ tag, bytes: manifestBytes } = found);
-    bundleBytes = await releaseBundle(opts, tag);
+    bundleBytes = await download(`${GITHUB}/${opts.repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`);
     source = `release ${tag} of ${opts.repo}`;
+    // No bundle of its own: the signed copy of its manifest, from the signer repository.
+    if (!bundleBytes && opts.signerRepo !== opts.repo) {
+      const copy = await signedCopy(opts, tag, found.manifest?.digest);
+      if (copy.failure) failures.push(copy.failure);
+      else if (copy.missing) missing = copy.missing;
+      else {
+        ({ manifestBytes, bundleBytes } = copy);
+        source = `release ${tag} of ${opts.signerRepo}, the signed manifest of ${source}`;
+      }
+    }
   }
   const manifest = checkManifest(JSON.parse(manifestBytes.toString("utf8")), source);
   console.log(`  manifest:    ${source}: ${manifest.digest}${manifest.commit ? `, commit ${manifest.commit}` : ""}`);
@@ -381,6 +416,7 @@ async function main(argv) {
   // release is attested: not checking it is a failure unless asked otherwise.
   const requireAttestation = opts.requireAttestation || (!opts.allowUnattested && (!opts.manifest || Boolean(opts.bundle)));
   const attestation = attest(opts, manifestBytes, bundleBytes, tag);
+  if (!bundleBytes && missing) attestation.note = `not checked: ${missing}`;
   console.log(`  attestation: ${attestation.note}`);
   if (attestation.failed) failures.push(`attestation ${attestation.note}`);
   else if (requireAttestation && !attestation.ok)
