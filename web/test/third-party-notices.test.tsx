@@ -8,7 +8,7 @@
 // bundler's helpers to vite, and the app's own code to nothing; every package
 // is listed with its licence files in full, sorted, and one without a licence
 // or with a refused one fails the build; the footer links the file the build
-// writes, in every language.
+// writes and the source, in every language.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { collect, evaluate, failureText, NOTICES_FILE, recorder, render } from "../build/third-party-notices.mjs";
 import { landingBundles } from "../src/features/landing/copy.js";
-import { FooterLine, NOTICES_PATH } from "../src/features/landing/page-kit.js";
+import { FooterLine, NOTICES_PATH, SOURCE_URL } from "../src/features/landing/page-kit.js";
 
 test("the allow-list: permissive licences and MPL-2.0, never a copyleft one", () => {
   for (const ok of ["MIT", "(MIT OR Apache-2.0)", "Apache-2.0 WITH LLVM-exception", "MPL-2.0", "MIT OR GPL-3.0-only", "BSD-3-Clause AND ISC"])
@@ -92,8 +92,9 @@ test("what a build renders is mapped to its packages, listed with their licences
   }
 });
 
-test("every public page's footer links the notices the build writes, in every language", () => {
+test("every public page's footer links the notices the build writes and the source, in every language", () => {
   assert.equal(NOTICES_PATH, `/${NOTICES_FILE}`);
+  assert.equal(SOURCE_URL, "https://github.com/getdroppen/droppen");
   const i18n = i18next.createInstance();
   void i18n.use(initReactI18next).init({
     lng: "en",
@@ -107,8 +108,13 @@ test("every public page's footer links the notices the build writes, in every la
     keySeparator: false,
     nsSeparator: false,
   });
-  const words = { en: "Third-party licences", "zh-CN": "第三方许可证", "zh-TW": "第三方授權", ja: "サードパーティのライセンス" };
-  for (const [lng, label] of Object.entries(words)) {
+  const words = {
+    en: ["Third-party licences", "Source code"],
+    "zh-CN": ["第三方许可证", "源代码"],
+    "zh-TW": ["第三方授權", "原始碼"],
+    ja: ["サードパーティのライセンス", "ソースコード"],
+  };
+  for (const [lng, [label, source]] of Object.entries(words)) {
     void i18n.changeLanguage(lng);
     const html = renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
@@ -116,5 +122,6 @@ test("every public page's footer links the notices the build writes, in every la
       </I18nextProvider>,
     );
     assert.match(html, new RegExp(`<a href="/THIRD_PARTY_NOTICES\\.txt"[^>]*data-testid="footer-licences"[^>]*>${label}</a>`), lng);
+    assert.match(html, new RegExp(`<a href="https://github\\.com/getdroppen/droppen"[^>]*data-testid="footer-source"[^>]*>${source}</a>`), lng);
   }
 });

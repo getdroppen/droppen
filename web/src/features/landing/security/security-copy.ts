@@ -1682,10 +1682,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "コード",
   ],
   [
-    "The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the AGPL-3.0, and the protocol and client libraries ({{crates}}) under MIT or Apache-2.0; their source code will be published at github.com/getdroppen/droppen, and until then it is available on request. Droppen Hub is not open source.",
-    "协议实现了两遍，Rust 一份、TypeScript 一份，每一份都必须读懂对方的测试向量。应用、本地程序、桌面应用和中继程序采用 AGPL-3.0 许可，协议与客户端库（{{crates}}）采用 MIT 或 Apache-2.0 许可；源代码将发布在 github.com/getdroppen/droppen，在那之前可以索取。Droppen Hub 不开源。",
-    "協定實作了兩遍，Rust 一份、TypeScript 一份，每一份都必須讀懂對方的測試向量。應用程式、本地程式、桌面應用程式和中繼程式採用 AGPL-3.0 授權，協定與用戶端程式庫（{{crates}}）採用 MIT 或 Apache-2.0 授權；原始碼將發布在 github.com/getdroppen/droppen，在那之前可以索取。Droppen Hub 不開源。",
-    "プロトコルは Rust と TypeScript で 2 回書かれていて、それぞれが相手のテストベクターを読めなければなりません。アプリ、ローカルプログラム、デスクトップアプリ、中継プログラムは AGPL-3.0、プロトコルとクライアントのライブラリ（{{crates}}）は MIT または Apache-2.0 のライセンスです。ソースコードは github.com/getdroppen/droppen で公開予定で、それまではご依頼に応じて提供します。Droppen Hub はオープンソースではありません。",
+    "The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the AGPL-3.0, and the protocol and client libraries ({{crates}}) under MIT or Apache-2.0; their source code is at github.com/getdroppen/droppen. Droppen Hub is not open source.",
+    "协议实现了两遍，Rust 一份、TypeScript 一份，每一份都必须读懂对方的测试向量。应用、本地程序、桌面应用和中继程序采用 AGPL-3.0 许可，协议与客户端库（{{crates}}）采用 MIT 或 Apache-2.0 许可；源代码在 github.com/getdroppen/droppen。Droppen Hub 不开源。",
+    "協定實作了兩遍，Rust 一份、TypeScript 一份，每一份都必須讀懂對方的測試向量。應用程式、本地程式、桌面應用程式和中繼程式採用 AGPL-3.0 授權，協定與用戶端程式庫（{{crates}}）採用 MIT 或 Apache-2.0 授權；原始碼在 github.com/getdroppen/droppen。Droppen Hub 不開源。",
+    "プロトコルは Rust と TypeScript で 2 回書かれていて、それぞれが相手のテストベクターを読めなければなりません。アプリ、ローカルプログラム、デスクトップアプリ、中継プログラムは AGPL-3.0、プロトコルとクライアントのライブラリ（{{crates}}）は MIT または Apache-2.0 のライセンスです。ソースコードは github.com/getdroppen/droppen で公開しています。Droppen Hub はオープンソースではありません。",
   ],
   [
     "Shared test vectors",
@@ -1706,10 +1706,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "いま読んでいるこのページ",
   ],
   [
-    "node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Until the repository is public, release manifests carry no signed attestation, and the script and the source to rebuild from are available on request; Droppen Hub may also run a build that is not a release, which only a build of that commit can match (docs/web-integrity.md).",
-    "node scripts/verify-web.mjs 会拿 droppen.app 下发的内容和某次发版的清单比对；/.well-known/droppen-build 说明站点跑的是哪个构建。在仓库公开之前，发版清单没有签名的证明，这个脚本和用来重建的源代码可以索取；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（docs/web-integrity.md）。",
-    "node scripts/verify-web.mjs 會拿 droppen.app 下發的內容和某次發版的清單比對；/.well-known/droppen-build 說明站點跑的是哪個建置。在儲存庫公開之前，發版清單沒有簽章的證明，這個指令碼和用來重建的原始碼可以索取；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（docs/web-integrity.md）。",
-    "node scripts/verify-web.mjs は、droppen.app が配信するものをリリースのマニフェストと照合します。/.well-known/droppen-build はどのビルドかを示します。リポジトリが公開されるまでは、リリースのマニフェストに署名付きの証明はなく、このスクリプトと再ビルドに使うソースはご依頼に応じて提供します。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（docs/web-integrity.md）。",
+    "node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a signed attestation of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match (docs/web-integrity.md).",
+    "node scripts/verify-web.mjs 会拿 droppen.app 下发的内容和某次发版的清单比对；/.well-known/droppen-build 说明站点跑的是哪个构建。源码公开以后的发版，清单都带签名的证明；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（docs/web-integrity.md）。",
+    "node scripts/verify-web.mjs 會拿 droppen.app 下發的內容和某次發版的清單比對；/.well-known/droppen-build 說明站點跑的是哪個建置。原始碼公開以後的發版，清單都帶簽章的證明；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（docs/web-integrity.md）。",
+    "node scripts/verify-web.mjs は、droppen.app が配信するものをリリースのマニフェストと照合します。/.well-known/droppen-build はどのビルドかを示します。ソースの公開以降のリリースでは、マニフェストに署名付きの証明が付いています。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（docs/web-integrity.md）。",
   ],
   [
     "Report a vulnerability",
@@ -1718,10 +1718,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "脆弱性の報告",
   ],
   [
-    "Please report privately, not in a public issue. Once the repository is published, use GitHub's private vulnerability reporting there; until then, write to",
-    "请私下报告，不要开公开 issue。仓库发布后，请使用那里的 GitHub 私密漏洞报告；在那之前，请写信到",
-    "請私下回報，不要開公開 issue。儲存庫發布後，請使用那裡的 GitHub 私密漏洞回報；在那之前，請寫信到",
-    "公開の issue ではなく、非公開で報告してください。リポジトリの公開後はそこで GitHub の非公開の脆弱性報告を、それまでは次の宛先にメールを：",
+    "Please report privately, not in a public issue: use GitHub's private vulnerability reporting at github.com/getdroppen/droppen (its Security tab), or write to",
+    "请私下报告，不要开公开 issue：使用 github.com/getdroppen/droppen 的 GitHub 私密漏洞报告（Security 标签页），或者写信到",
+    "請私下回報，不要開公開 issue：使用 github.com/getdroppen/droppen 的 GitHub 私密漏洞回報（Security 分頁），或寫信到",
+    "公開の issue ではなく、非公開で報告してください。github.com/getdroppen/droppen の GitHub の非公開の脆弱性報告（Security タブ）を使うか、次の宛先にメールを：",
   ],
   [
     "The design assumes a malicious Hub: a way for Droppen Hub, a relay or the network to read or change what should be end-to-end encrypted, or for a device not on your account to act on your account or your devices, is a vulnerability. When testing droppen.app, use only accounts you own, and no load testing.",

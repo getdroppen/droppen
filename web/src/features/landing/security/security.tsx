@@ -37,7 +37,7 @@ for (const bundles of [landingBundles, securityBundles]) {
 /** When the page last changed, as the page says it. */
 export const SECURITY_UPDATED = "2026-10-22";
 
-/** Where to report a vulnerability until the repository is public (then also GitHub's private vulnerability reporting, SECURITY.md). */
+/** Where to report a vulnerability, besides GitHub's private vulnerability reporting (SECURITY.md). */
 export const SECURITY_EMAIL = "security@droppen.app";
 
 /** The page's sections, in order: the table of contents and the anchors. */
@@ -802,7 +802,7 @@ function VerifySection() {
         <P>{t("Renewal adds one more, {{label}} ([[section 06|renewal]]).", { label: "rh/v1 rotate-dispute" })}</P>
       </Topic>
       <Topic n="8.3" title={t("The code")}>
-        <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the AGPL-3.0, and the protocol and client libraries ({{crates}}) under MIT or Apache-2.0; their source code will be published at github.com/getdroppen/droppen, and until then it is available on request. Droppen Hub is not open source.", { crates: "rh-proto, rh-relay, rh-client" })}</P>
+        <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors. The app, the local program, the desktop app and the relay program are licensed under the AGPL-3.0, and the protocol and client libraries ({{crates}}) under MIT or Apache-2.0; their source code is at github.com/getdroppen/droppen. Droppen Hub is not open source.", { crates: "rh-proto, rh-relay, rh-client" })}</P>
         <Spec>
           <Line>{"server-rs/crates/rh-proto (Rust) · web/src/lib/e2e (TypeScript)"}</Line>
           <Line>{"server-rs/crates/rh-relay · server-rs/crates/droppen-relay · server-rs/crates/rh-client"}</Line>
@@ -812,11 +812,11 @@ function VerifySection() {
         <P>{t("Each implementation writes test vectors (vectors/rust.json, vectors/ts.json) and must read the other's: Noise transcripts through rekeys, chains in which every refusal gives the same error, key wraps, records and pages; the direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.")}</P>
       </Topic>
       <Topic n="8.5" title={t("The page you are reading")}>
-        <P>{t("node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Until the repository is public, release manifests carry no signed attestation, and the script and the source to rebuild from are available on request; Droppen Hub may also run a build that is not a release, which only a build of that commit can match (docs/web-integrity.md).")}</P>
+        <P>{t("node scripts/verify-web.mjs checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a signed attestation of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match (docs/web-integrity.md).")}</P>
       </Topic>
       <Topic n="8.6" title={t("Report a vulnerability")}>
         <P>
-          {t("Please report privately, not in a public issue. Once the repository is published, use GitHub's private vulnerability reporting there; until then, write to")} {mail}
+          {t("Please report privately, not in a public issue: use GitHub's private vulnerability reporting at github.com/getdroppen/droppen (its Security tab), or write to")} {mail}
         </P>
         <P>{t("The design assumes a malicious Hub: a way for Droppen Hub, a relay or the network to read or change what should be end-to-end encrypted, or for a device not on your account to act on your account or your devices, is a vulnerability. When testing droppen.app, use only accounts you own, and no load testing.")}</P>
       </Topic>

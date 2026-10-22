@@ -108,8 +108,8 @@ export const pricingZhCN: Bundle = {
   "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want your AI on your phone from anywhere, and all your devices on one screen.":
     "Droppen 跑在你的设备上，不需要账号。在这台设备或同一网络里的其他设备上用浏览器打开就能用，什么都不经过我们的服务器。想在外面用手机接着用 AI、把所有设备放进一个屏幕时，再登录 Droppen。",
   "Can I host it myself?": "可以自己部署吗？",
-  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code will be published at github.com/getdroppen/droppen; until then it is available on request. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
-    "Droppen 应用和服务端以 AGPL-3.0 授权，「仅本地」用法完全不依赖我们。源代码会发布在 github.com/getdroppen/droppen，在那之前可以向我们索取。连接你各台设备的 Droppen Hub（也就是 droppen.app 背后的服务）暂未开源，所以目前还不能自己部署。",
+  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code is at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
+    "Droppen 应用和服务端以 AGPL-3.0 授权，「仅本地」用法完全不依赖我们。源代码在 github.com/getdroppen/droppen。连接你各台设备的 Droppen Hub（也就是 droppen.app 背后的服务）暂未开源，所以目前还不能自己部署。",
   "When can I pay for Pro?": "什么时候能付费开通 Pro？",
   "Not yet: payments are on their way. Until then Pro is by waitlist: join it and we'll e-mail you when Pro opens. Nothing is charged before you choose to pay, and prices are in US dollars.":
     "还不行：付款功能正在准备中。在那之前，Pro 只能先加入等候名单，开放时我们会发邮件通知你。在你自己决定付款之前，不会产生任何费用；价格以美元计。",
@@ -240,8 +240,8 @@ export const pricingZhTW: Bundle = {
   "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want your AI on your phone from anywhere, and all your devices on one screen.":
     "Droppen 跑在你的裝置上，不需要帳號。在這台裝置或同一網路裡的其他裝置上用瀏覽器打開就能用，什麼都不經過我們的伺服器。想在外面用手機接著用 AI、把所有裝置放進一個畫面時，再登入 Droppen。",
   "Can I host it myself?": "可以自己架設嗎？",
-  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code will be published at github.com/getdroppen/droppen; until then it is available on request. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
-    "Droppen 應用程式和伺服器以 AGPL-3.0 授權，「僅本地」用法完全不依賴我們。原始碼會發布在 github.com/getdroppen/droppen，在那之前可以向我們索取。連接你各台裝置的 Droppen Hub（也就是 droppen.app 背後的服務）尚未開源，所以目前還不能自己架設。",
+  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code is at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
+    "Droppen 應用程式和伺服器以 AGPL-3.0 授權，「僅本地」用法完全不依賴我們。原始碼在 github.com/getdroppen/droppen。連接你各台裝置的 Droppen Hub（也就是 droppen.app 背後的服務）尚未開源，所以目前還不能自己架設。",
   "When can I pay for Pro?": "什麼時候能付費開通 Pro？",
   "Not yet: payments are on their way. Until then Pro is by waitlist: join it and we'll e-mail you when Pro opens. Nothing is charged before you choose to pay, and prices are in US dollars.":
     "還不行：付款功能正在準備中。在那之前，Pro 只能先加入等候名單，開放時我們會寄信通知你。在你自己決定付款之前，不會產生任何費用；價格以美元計。",
@@ -371,8 +371,8 @@ export const pricingJa: Bundle = {
   "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want your AI on your phone from anywhere, and all your devices on one screen.":
     "Droppen をアカウントなしでデバイス上で動かす使い方です。そのデバイスか、同じネットワークにある別のデバイスのブラウザで開いて使い、私たちのサーバーは一切通りません。外出先からスマホで AI の続きを使いたいとき、すべてのデバイスをひとつの画面にまとめたいときに、Droppen にログインしてください。",
   "Can I host it myself?": "セルフホストできますか？",
-  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code will be published at github.com/getdroppen/droppen; until then it is available on request. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
-    "Droppen のアプリとサーバーは AGPL-3.0 で提供しており、「ローカルのみ」なら私たちのサービスは何も要りません。ソースコードは github.com/getdroppen/droppen で公開予定で、それまではご依頼に応じて提供します。デバイス同士をつなぐ Droppen Hub（droppen.app のサービス）はまだオープンソースではないため、現時点ではセルフホストできません。",
+  "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code is at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
+    "Droppen のアプリとサーバーは AGPL-3.0 で提供しており、「ローカルのみ」なら私たちのサービスは何も要りません。ソースコードは github.com/getdroppen/droppen で公開しています。デバイス同士をつなぐ Droppen Hub（droppen.app のサービス）はまだオープンソースではないため、現時点ではセルフホストできません。",
   "When can I pay for Pro?": "Pro はいつ購入できますか？",
   "Not yet: payments are on their way. Until then Pro is by waitlist: join it and we'll e-mail you when Pro opens. Nothing is charged before you choose to pay, and prices are in US dollars.":
     "まだです。お支払いの仕組みを準備中で、それまで Pro はウェイトリスト制です。登録いただければ、Pro の開始時にメールでお知らせします。ご自身で支払うと決めるまで料金は一切かかりません。価格は米ドル建てです。",
