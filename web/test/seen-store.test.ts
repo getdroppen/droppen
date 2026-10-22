@@ -4,7 +4,7 @@
 // the `localStorage` fallback where IndexedDB is not to be had.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { indexedDbSeenStore, localStorageSeenStore, pageSeenStore, type SeenStore } from "../src/lib/hub/seen-store.js";
+import { indexedDbSeenStore, localStorageSeenStore, pageSeenStore, SEEN_IN_IDB, type SeenStore, SeenStoreError } from "../src/lib/hub/seen-store.js";
 
 const task = (fn: () => void) => void setTimeout(fn, 0);
 
@@ -181,11 +181,9 @@ test("IndexedDB: a change that throws writes nothing, and the update rejects wit
     (e: unknown) => e === fork,
   );
   assert.deepEqual(await page.get("a-1"), { seenThrough: 4 });
-  // Left as it is, and deleted.
+  // Left as it is.
   await page.update("a-1", () => undefined);
   assert.deepEqual(await page.get("a-1"), { seenThrough: 4 });
-  await page.update("a-1", () => null);
-  assert.equal(await page.get("a-1"), undefined);
 });
 
 test("IndexedDB: a page that writes the record says so on the channel; the other pages hear it, the writer does not, and nothing is said when nothing was written", async () => {
@@ -230,19 +228,50 @@ test("IndexedDB: an open that failed, or a connection the browser closed, is ope
   assert.equal(state.opened, opened + 2, "a closed connection is let go of");
 });
 
-test("IndexedDB not to be had (the first open says so): the record stays in localStorage, and the page says so", async (t) => {
+test("IndexedDB not to be had (the first open says so): the pin and the record stay in localStorage where older pages keep them, and the page says so", async (t) => {
   const warned = t.mock.method(console, "warn", () => undefined);
   const storage = memoryStorage();
-  storage.setItem("rh.hub.seen.a-1", JSON.stringify(4));
+  storage.setItem("rh.hub.genesis.a-1", "aa");
+  storage.setItem("rh.hub.seen.a-1", JSON.stringify({ seenThrough: 4 }));
   const { factory } = fakeIndexedDb(["InvalidStateError"]);
   const page = indexedDbSeenStore({ factory, dbName: "rh-hub-seen-test", channel: null, fallback: () => localStorageSeenStore(storage, null) });
-  assert.equal(await page.get("a-1"), 4, "what localStorage holds");
+  assert.deepEqual(await page.get("a-1"), { v: 1, genesis: "aa", seen: { seenThrough: 4 } }, "what localStorage holds, as one value");
   assert.equal(page.atomic, false, "not one step across pages any more");
-  await page.update("a-1", raiseTo(6));
-  assert.equal(storage.getItem("rh.hub.seen.a-1"), "6");
+  await page.update("a-1", (stored) => ({ ...(stored as object), seen: { seenThrough: 6 } }));
+  assert.equal(storage.getItem("rh.hub.seen.a-1"), JSON.stringify({ seenThrough: 6 }));
+  assert.equal(storage.getItem("rh.hub.genesis.a-1"), "aa");
+  await page.update("a-1", (stored) => ({ ...(stored as object), seen: null }));
+  assert.equal(storage.getItem("rh.hub.seen.a-1"), null, "a record forgotten");
+  assert.equal(storage.getItem("rh.hub.genesis.a-1"), "aa", "the pin never");
   assert.ok(
     warned.mock.calls.some((c) => /localStorage/.test(String(c.arguments[0]))),
     "said on the console",
+  );
+});
+
+test("a browser that kept its values in IndexedDB does not fall back to localStorage: every read fails, to be tried again", async () => {
+  const { factory } = fakeIndexedDb(["InvalidStateError"]);
+  let opened = 0;
+  const page = indexedDbSeenStore({ factory, dbName: "rh-hub-seen-test", channel: null, fallback: () => null, onOpen: () => opened++ });
+  await assert.rejects(page.get("a-1"), (e: unknown) => e instanceof SeenStoreError && /not read from localStorage/.test(e.message));
+  assert.equal(page.atomic, true);
+  await page.update("a-1", raiseTo(1));
+  assert.equal(await page.get("a-1"), 1, "the next open, which works, is used");
+  assert.equal(opened, 1, "and said once");
+});
+
+test("pageSeenStore: with no IndexedDB at all, the record stays in localStorage — unless this browser kept it in IndexedDB before", async (t) => {
+  t.mock.method(console, "warn", () => undefined);
+  if (typeof (globalThis as { indexedDB?: unknown }).indexedDB !== "undefined") return t.skip("this runner has IndexedDB");
+  const fresh = memoryStorage();
+  assert.equal(pageSeenStore(fresh).atomic, false, "the localStorage fallback");
+  const used = memoryStorage();
+  used.setItem(SEEN_IN_IDB, "1");
+  const refused = pageSeenStore(used);
+  await assert.rejects(refused.get("a-1"), (e: unknown) => e instanceof SeenStoreError);
+  await assert.rejects(
+    refused.update("a-1", () => 1),
+    (e: unknown) => e instanceof SeenStoreError,
   );
 });
 
@@ -253,16 +282,10 @@ test("localStorage fallback: pages hear one another through storage events", () 
   const heard: (string | null)[] = [];
   const stop = page.watch((account) => heard.push(account));
   events.dispatchEvent(Object.assign(new Event("storage"), { key: "rh.hub.seen.a-1" }));
-  events.dispatchEvent(Object.assign(new Event("storage"), { key: "rh.hub.genesis.a-1" }));
+  events.dispatchEvent(Object.assign(new Event("storage"), { key: "rh.hub.genesis.b-2" }));
+  events.dispatchEvent(Object.assign(new Event("storage"), { key: "rh.hub.device.a-1" }));
   events.dispatchEvent(Object.assign(new Event("storage"), { key: null }));
   stop();
   events.dispatchEvent(Object.assign(new Event("storage"), { key: "rh.hub.seen.a-1" }));
-  assert.deepEqual(heard, ["a-1", null]);
-});
-
-test("a page with no IndexedDB at all keeps the record in localStorage", (t) => {
-  t.mock.method(console, "warn", () => undefined);
-  if (typeof (globalThis as { indexedDB?: unknown }).indexedDB !== "undefined") return t.skip("this runner has IndexedDB");
-  const page = pageSeenStore(memoryStorage());
-  assert.equal(page.atomic, false);
+  assert.deepEqual(heard, ["a-1", "b-2", null]);
 });

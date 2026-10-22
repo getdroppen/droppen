@@ -38,9 +38,10 @@
  *   live clock rather than taking a join and its activation delivered
  *   together as history. Every tab shares the record, and it only moves
  *   forward: a tab left behind never lowers it, and two tabs whose chains
- *   differ where they overlap are a fork. It is kept in IndexedDB, and every
- *   write is a read-compare-write in one transaction, so no tab's stale view
- *   can lower it (`seen-store.ts`, #183).
+ *   differ where they overlap are a fork. It is kept in IndexedDB with the
+ *   pinned genesis, and every write of either is a read-compare-write in one
+ *   transaction, so no tab's stale view can lower it or pin over it
+ *   (`seen-store.ts`, #183).
  * - **Alerts.** Every device-changing entry this device did not sign itself
  *   (another device added or removed, a recovery join, new recovery words) is
  *   an alert until it is acknowledged here.
@@ -162,7 +163,7 @@ import {
 } from "./keyring";
 import { type Candidate, completePairing } from "./pairing";
 import { recoverySecret } from "./recovery-words";
-import { pageSeenStore, seenKey, type SeenStore } from "./seen-store";
+import { genesisKey, pageSeenStore, seenKey, type SeenStore, SeenStoreError } from "./seen-store";
 import type { ControllersRecord } from "./streams";
 
 const deviceKey = (account: string) => `rh.hub.device.${account}`;
@@ -174,7 +175,6 @@ const lostDeviceKey = (account: string) => `rh.hub.lost.${account}`;
 const lostWhyKey = (account: string) => `rh.hub.lost-why.${account}`;
 /** The device id whose pairing screen asked to sign in again: the next sign-in registers this browser afresh if the chain still does not name it. */
 const afreshKey = (account: string) => `rh.hub.afresh.${account}`;
-const genesisKey = (account: string) => `rh.hub.genesis.${account}`;
 /** A sign-in this close to the end of its device's code-pairing window registers the browser afresh too. */
 const REGISTER_AFRESH_MARGIN_MS = 60_000;
 /** When this browser signed its recovery join (its own clock), for "you can activate from …". */
@@ -254,9 +254,10 @@ export type AccountStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 
 /**
  * Web Locks (`navigator.locks`), as far as the seen record uses them: one
- * exclusive lock per account, across the browser's pages — around the pin
- * and the acknowledgements it starts, which are in `localStorage`, and around
- * the record itself where it is there too (the fallback, `seen-store.ts`).
+ * exclusive lock per account, across the browser's pages — around a pin and
+ * the acknowledgements it starts (those in `localStorage`), and around the
+ * pin and the record themselves where they are there too (the fallback,
+ * `seen-store.ts`).
  */
 export interface AccountLocks {
   request<T>(name: string, options: { mode: "exclusive" }, callback: () => T | Promise<T>): Promise<T>;
@@ -672,25 +673,63 @@ function earliestSightings(a: Iterable<[number, number]>, b: Iterable<[number, n
 }
 
 /**
- * Two seen records of the account as one: the higher, when they agree where
- * they overlap — the lower one's head is the higher one's hash at that height
- * — with the first sightings of both (the earliest of each); the higher as it
- * is when that cannot be told (it keeps no hash that far back, or predates
- * `heads`). `forkAt`: they do not agree there.
+ * Two seen records of the account (`a` the store's) as one, where that is
+ * proven: they agree where they overlap — the lower one's head is the higher
+ * one's hash at that height — and then the higher, with the first sightings
+ * of both (the earliest of each). Where it cannot be told (the higher keeps
+ * no hash that far back, or predates `heads`), missing overlap is no
+ * agreement: `a` stays the record and `b` is kept `apart`, a checkpoint every
+ * view is held against as well, until a verified chain holds both. `forkAt`:
+ * they do not agree.
  */
-function higherSeen(a: SeenRecord | null, b: SeenRecord | null): { record: SeenRecord | null } | { forkAt: number } {
-  if (!a || !b) return { record: a ?? b };
+function higherSeen(a: SeenRecord | null, b: SeenRecord | null): { record: SeenRecord | null; apart: SeenRecord | null } | { forkAt: number } {
+  if (!a || !b) return { record: a ?? b, apart: null };
   const [lo, hi] = a.seenThrough < b.seenThrough ? [a, b] : [b, a];
   const theirs = lo.seenThrough === hi.seenThrough ? hi.head : hi.heads?.find(([seq]) => seq === lo.seenThrough)?.[1];
-  if (theirs === undefined) return { record: hi };
+  if (theirs === undefined) return { record: a, apart: b };
   if (theirs !== lo.head) return { forkAt: lo.seenThrough };
   const heads = hi.heads ?? lo.heads;
-  return { record: { v: 1, seenThrough: hi.seenThrough, head: hi.head, ...(heads ? { heads } : {}), firstSeen: earliestSightings(hi.firstSeen, lo.firstSeen) } };
+  return { record: { v: 1, seenThrough: hi.seenThrough, head: hi.head, ...(heads ? { heads } : {}), firstSeen: earliestSightings(hi.firstSeen, lo.firstSeen) }, apart: null };
 }
 
-/** Whether two records say the same (both as `parseSeen` or `seenNext` lays them out). */
-function sameSeen(a: SeenRecord, b: SeenRecord): boolean {
+/** What the seen store keeps for an account: the genesis this browser pinned (hex), and what it verified of the chain under it. */
+interface StoredTrust {
+  v: 1;
+  genesis: string | null;
+  seen: SeenRecord | null;
+}
+
+/** What the store handed back, as a {@link StoredTrust}. A `null` is a value the browser kept and would not hand back (nothing here stores `null`): never taken for nothing stored. */
+function parseStored(raw: unknown): StoredTrust {
+  if (raw === undefined) return { v: 1, genesis: null, seen: null };
+  if (raw === null) throw new SeenStoreError("the browser handed back nothing for what it verified of the account: it is left as it is — try again");
+  const r = (typeof raw === "object" ? raw : {}) as { genesis?: unknown; seen?: unknown };
+  return { v: 1, genesis: typeof r.genesis === "string" ? r.genesis : null, seen: parseSeen(r.seen) };
+}
+
+/** Whether two stored values say the same (both as `parseStored`, `seenNext` or `higherSeen` lay them out). */
+function sameStored(a: StoredTrust, b: StoredTrust): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * What this browser holds for the account now: the genesis it pinned, the
+ * seen record, and an older page's record that could not be proven one chain
+ * with it (`apart`, see {@link higherSeen}) — every view is held against both.
+ */
+interface Held {
+  genesis: string | null;
+  record: SeenRecord | null;
+  apart: SeenRecord | null;
+}
+
+/** The checkpoints `held` holds: the record, and the one kept apart. */
+function checkpoints(held: Held): SeenRecord[] {
+  return [held.record, held.apart].filter((c): c is SeenRecord => c !== null);
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 /**
@@ -737,11 +776,11 @@ export interface AccountOptions {
   origin?: string;
   /** Told whenever this device's session changes (to keep it). */
   onSession?: (session: HubSession) => void;
-  /** Where the device id, the pinned genesis and acknowledgements are kept (`localStorage`). */
+  /** Where the device id and acknowledgements are kept (`localStorage`), and older pages' pin and seen record (read, never deleted). */
   storage?: AccountStorage;
-  /** Where the seen record is kept: what this device verified of the chain, and when it first saw each entry (`pageSeenStore`: IndexedDB). */
+  /** Where the pinned genesis and the seen record are kept: what this device trusts and verified of the chain, and when it first saw each entry (`pageSeenStore`: IndexedDB). */
   seen?: SeenStore;
-  /** What serialises the pin across pages, and the seen record where it is in `localStorage` (`navigator.locks`; `null`: none). */
+  /** What serialises a pin and the acknowledgements it starts across pages, and everything where the store is `localStorage` (`navigator.locks`; `null`: none). */
   locks?: AccountLocks | null;
   /**
    * Device keys that are stored but will not open are replaced, and this
@@ -808,6 +847,8 @@ export class CloudAccount {
   private unwatchSeen: (() => void) | null = null;
   /** This page's turn at the seen record: one read-compare-write of it at a time here, whether or not there are Web Locks. */
   private seenTurn: Promise<unknown> = Promise.resolve();
+  /** The genesis this browser pinned (hex), as the seen store said it when this page last read or wrote it (`pinned`). */
+  private pinnedAt: string | null = null;
   private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRenewal: { token: string; atMs: number } | null = null;
   /** What `HubApi.renew` is set to for this account (`open` sets it). */
@@ -1203,10 +1244,18 @@ export class CloudAccount {
 
   // ------------------------------------------------------------ the chain
 
-  /** Whether this browser pinned this account's genesis (and so trusts the chain enough to take keys). */
+  /**
+   * Whether this browser pinned this account's genesis (and so trusts the
+   * chain enough to take keys) — as the seen store said it last time this
+   * page read or wrote it (a pin, once set, never changes).
+   */
   get pinned(): boolean {
-    const pinned = this.read(genesisKey(this.account));
-    return !!pinned && !!this.state && pinned === hex(this.state.hashAt(0)!);
+    return this.pinnedAt !== null && !!this.state && this.pinnedAt === hex(this.state.hashAt(0)!);
+  }
+
+  /** The genesis this browser pinned for the account (hex), as the seen store holds it now. */
+  private async pinnedGenesis(): Promise<string | null> {
+    return (await this.readHeld()).genesis;
   }
 
   /** Trust this chain's genesis from now on (see the header: only for a reason). */
@@ -1214,107 +1263,151 @@ export class CloudAccount {
     if (!this.state) return;
     const state = this.state;
     const genesis = hex(state.hashAt(0)!);
-    // Under the seen record's lock, as every page pins: another page may have
-    // pinned another genesis since this one last looked (two first set-ups at
-    // once, a hub taking both). Then that pin stands, with its record.
+    // The pin and the record in one step: another page may have pinned
+    // another genesis since this one last looked (two first set-ups at once,
+    // a hub taking both). Then that pin stands, with its record.
     await this.withSeenLock(async () => {
-      const pinned = this.read(genesisKey(this.account));
-      if (pinned !== null && pinned !== genesis) throw this.latchFork("another page of this browser pinned a different genesis for this account");
-      // A record with no pin beside it says nothing of this chain — unless it
-      // is of this chain: another page's, pinning this very genesis a moment
-      // ago, which this page's copy of `localStorage` does not show yet. That
-      // one is kept (never lowered); any other is replaced.
-      const ofThisChain = (record: SeenRecord | null) => (pinned !== null || !record || !("forkAt" in compareSeen(state, record)) ? record : null);
-      try {
-        await this.updateSeen(
-          (stored) => seenNext(this.seenAgainst(state, stored), stored, this.clock),
-          (kept, old) => [ofThisChain(kept), ofThisChain(old)],
-        );
-      } catch (error) {
-        // A first pin does not wait on a record that says nothing of it yet: the store failed, it is told, the pin stands.
-        if (pinned !== null || error instanceof AccountError) throw error;
-        console.warn("cloud account: the seen record could not be read to pin the account; it is written with the next view:", error);
-      }
-      this.write(genesisKey(this.account), genesis);
+      await this.updateHeld((held) => {
+        if (held.genesis !== null && held.genesis !== genesis) throw this.latchFork("another page of this browser pinned a different genesis for this account");
+        return { genesis, record: this.nextRecord(state, held, this.clock) };
+      });
       // Alerts start from here: what happened before this device trusted the account is history.
       if (!this.readAck()) this.writeAck({ through: state.seq, extra: [] });
     });
   }
 
   /**
-   * What the store handed back (`raw`) as a record, and the record an older
-   * page left in `localStorage` beside it (`legacy`: as it is there) —
-   * looked for only where the store is not `localStorage` itself. A `null`
-   * from the store is a record the browser kept but would not hand back
-   * (nothing here stores `null`): never taken for no record, so never
-   * written over.
+   * Pin the genesis this device just made, which the hub holds by now: the
+   * account's first user key is kept only once it is pinned, and there is no
+   * making it again. A store that fails twice leaves the pin where older
+   * pages keep it (`localStorage`), which every read takes where the store
+   * has none — and a pin another page made meanwhile is a fork there — so the
+   * key is not lost; the record follows with the next view.
    */
-  private heldSeen(raw: unknown): { kept: SeenRecord | null; old: SeenRecord | null; legacy: string | null } {
-    if (!this.seen.atomic) return { kept: parseSeen(raw), old: null, legacy: null };
-    if (raw === null) throw new Error("the browser handed back nothing for this browser's seen record: it is left as it is");
-    const legacy = this.read(seenKey(this.account));
-    return { kept: parseSeen(raw), old: legacy === null ? null : parseSeenJson(legacy), legacy };
-  }
-
-  /**
-   * The store's record and an older page's from `localStorage` as one
-   * ({@link higherSeen}): what an older page wrote counts only as far as it
-   * goes past the record, never lower, and one that disagrees with the
-   * record where they overlap is a fork (latched and thrown).
-   */
-  private foldSeen(kept: SeenRecord | null, old: SeenRecord | null): SeenRecord | null {
-    const both = higherSeen(kept, old);
-    if ("forkAt" in both) throw this.latchFork(`the record an older page of this browser left forks at entry ${both.forkAt} from the one this browser keeps`);
-    return both.record;
-  }
-
-  /** The seen record as this browser holds it now (an older page's folded in: {@link foldSeen}). */
-  private async readSeen(): Promise<SeenRecord | null> {
-    const held = this.heldSeen(await this.seen.get(this.account));
-    return this.foldSeen(held.kept, held.old);
-  }
-
-  /**
-   * Read the seen record, make the next one of it (`make`; `undefined`:
-   * leave it), and write that — as one step across the browser's pages: the
-   * store's transaction, which no other page's comes between (where the
-   * record is in `localStorage`, only the Web Lock the caller holds). An
-   * older page's record in `localStorage` is folded in first ({@link
-   * foldSeen}; `only` says which of the two count) and dropped from there
-   * once the store holds it. `make` runs inside the transaction,
-   * synchronously; a fork it throws, or the fold finds, leaves everything as
-   * it was. Nothing is written when nothing changed. A store that fails once
-   * the record was held against (its write) is said, and the record stays as
-   * it was — never lower.
-   */
-  private async updateSeen(
-    make: (stored: SeenRecord | null) => SeenRecord | undefined,
-    only?: (kept: SeenRecord | null, old: SeenRecord | null) => [SeenRecord | null, SeenRecord | null],
-  ): Promise<void> {
-    const step = { legacy: null as string | null, compared: false };
-    try {
-      await this.seen.update(this.account, (raw) => {
-        step.compared = false;
-        const held = this.heldSeen(raw);
-        step.legacy = held.legacy;
-        const [kept, old] = only ? only(held.kept, held.old) : [held.kept, held.old];
-        const stored = this.foldSeen(kept, old);
-        const next = make(stored) ?? stored;
-        step.compared = true;
-        return next === null || (held.kept !== null && sameSeen(next, held.kept)) ? undefined : next;
-      });
-    } catch (error) {
-      if (!step.compared) throw error;
-      console.warn("cloud account: the seen record was held against this view but could not be written; it stays as it was:", error);
-      return;
+  private async pinMade(): Promise<void> {
+    for (let tries = 1; ; tries++) {
+      try {
+        return await this.pin();
+      } catch (error) {
+        if (!(error instanceof SeenStoreError)) throw error;
+        if (tries < 2) continue;
+        console.warn("cloud account: the seen store would not take the pin of the genesis this device made; it is kept in localStorage:", error);
+        const genesis = hex(this.state!.hashAt(0)!);
+        this.write(genesisKey(this.account), genesis);
+        this.pinnedAt = genesis;
+        if (!this.readAck()) this.writeAck({ through: this.state!.seq, extra: [] });
+        return;
+      }
     }
-    if (step.legacy !== null && this.read(seenKey(this.account)) === step.legacy) this.forget(seenKey(this.account));
   }
 
-  /** Forget the seen record (a wipe): the store's, and an older page's in `localStorage`. */
+  /**
+   * What this browser holds for the account, from what the store handed back
+   * (`raw`) — and, where the store is not `localStorage` itself, what older
+   * pages keep there, read every time (an older page may still be writing
+   * it) and never deleted: their pin counts where the store has none (and
+   * another one is a fork); their record, beside that same pin, is folded in
+   * only as far as it is proven one chain with the store's, and is otherwise
+   * kept apart, every view held against it as well ({@link higherSeen}). It
+   * never lowers the record; one that disagrees with it is a fork (latched
+   * and thrown). A record with no pin beside it says nothing of this chain.
+   */
+  private trustFrom(raw: unknown): { held: Held; stored: StoredTrust } {
+    const stored = parseStored(raw);
+    const none: Held = { genesis: null, record: null, apart: null };
+    if (!this.seen.atomic) return { held: stored.genesis === null ? none : { genesis: stored.genesis, record: stored.seen, apart: null }, stored };
+    const theirGenesis = this.read(genesisKey(this.account));
+    if (stored.genesis !== null && theirGenesis !== null && theirGenesis !== stored.genesis) {
+      throw this.latchFork("an older page of this browser pinned a different genesis for this account");
+    }
+    const genesis = stored.genesis ?? theirGenesis;
+    if (genesis === null) return { held: none, stored };
+    const theirRaw = theirGenesis === genesis ? this.read(seenKey(this.account)) : null;
+    const both = higherSeen(stored.seen, theirRaw === null ? null : parseSeenJson(theirRaw));
+    if ("forkAt" in both) throw this.latchFork(`the record an older page of this browser left forks at entry ${both.forkAt} from the one this browser keeps`);
+    return { held: { genesis, record: both.record, apart: both.apart }, stored };
+  }
+
+  /** `op` on the seen store; whatever fails there (not a fork) is a {@link SeenStoreError}: tried again, never taken for a fork. */
+  private async atStore<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (error) {
+      if (error instanceof AccountError || error instanceof SeenStoreError) throw error;
+      throw new SeenStoreError(`what this browser verified of the account could not be read or written (${describeError(error)}): try again`, { cause: error });
+    }
+  }
+
+  /** What this browser holds for the account now ({@link trustFrom}). */
+  private async readHeld(): Promise<Held> {
+    const { held } = this.trustFrom(await this.atStore(() => this.seen.get(this.account)));
+    this.pinnedAt = held.genesis;
+    return held;
+  }
+
+  /**
+   * Read what this browser holds for the account, make the next of it
+   * (`make`: a pin and a record; `undefined`: leave them), and write that —
+   * as one step across the browser's pages: the store's transaction, which no
+   * other page's comes between (where it is `localStorage`, only the Web Lock
+   * the caller holds). What older pages keep in `localStorage` is folded in
+   * as {@link trustFrom} says, and left there. `make` runs inside the
+   * transaction, synchronously; a fork it throws, or the fold finds, leaves
+   * everything as it was. Nothing is written when nothing changed. Resolves
+   * once it is committed, and rejects (a {@link SeenStoreError}) when it was
+   * not: then nothing that hangs on it may go on.
+   */
+  private async updateHeld(make: (held: Held) => { genesis?: string; record?: SeenRecord } | undefined): Promise<void> {
+    const step: { genesis: string | null } = { genesis: null };
+    await this.atStore(() =>
+      this.seen.update(this.account, (raw) => {
+        const { held, stored } = this.trustFrom(raw);
+        const change = make(held);
+        const next: StoredTrust = { v: 1, genesis: change?.genesis ?? held.genesis, seen: change?.record ?? held.record };
+        step.genesis = next.genesis;
+        return sameStored(next, stored) ? undefined : next;
+      }),
+    );
+    this.pinnedAt = step.genesis;
+    // The pin where older pages of this browser read it, too.
+    if (step.genesis !== null && this.read(genesisKey(this.account)) === null) this.write(genesisKey(this.account), step.genesis);
+  }
+
+  /**
+   * The record `state` makes of what this browser holds (`held`), once held
+   * against both its checkpoints (a fork latched and thrown): the record
+   * moved forward with this view's first sightings ({@link seenNext}), and an
+   * older page's kept apart folded in once that is proven one chain with it.
+   */
+  private nextRecord(state: ChainState, held: Held, clock: ChainClock): SeenRecord {
+    const next = seenNext(this.heldAgainst(state, held), held.record, clock);
+    if (!held.apart) return next;
+    const both = higherSeen(next, held.apart);
+    if ("forkAt" in both) throw this.latchFork(`this page's chain forks at entry ${both.forkAt} from the one an older page of this browser verified`);
+    return both.record!;
+  }
+
+  /** `state` held against what this browser holds ({@link seenAgainst}), the checkpoint kept apart as well. */
+  private heldAgainst(state: ChainState, held: Held): { record: Omit<SeenRecord, "firstSeen">; checked: boolean } {
+    const against = this.seenAgainst(state, held.record);
+    if (held.apart) {
+      const apart = compareSeen(state, held.apart);
+      if ("forkAt" in apart) throw this.latchFork(`this page's chain forks at entry ${apart.forkAt} from the one an older page of this browser verified`);
+    }
+    return against;
+  }
+
+  /** Forget the seen record (a wipe), in the store and where older pages keep it; the pin stays. */
   private async forgetSeen(): Promise<void> {
     try {
-      await this.withSeenLock(() => this.seen.update(this.account, () => null));
+      await this.withSeenLock(() =>
+        this.atStore(() =>
+          this.seen.update(this.account, (raw) => {
+            const stored = parseStored(raw);
+            return stored.seen === null ? undefined : { ...stored, seen: null };
+          }),
+        ),
+      );
     } catch (error) {
       console.warn("cloud account: could not forget the seen record:", error);
     }
@@ -1370,22 +1463,27 @@ export class CloudAccount {
   }
 
   /**
-   * Hold the seen record against this view again, and put back what this
-   * page verified where the record is lower (or gone) — said loudly: no
-   * page's write lowers it, so something else did (an older page before the
-   * record left `localStorage`, code in this origin, a wipe in another page).
-   * One that conflicts with this view is a fork.
+   * Hold what this browser holds against this view again, and put back what
+   * this page verified where the record is lower (or gone, or the pin with
+   * it) — said loudly: no page's write lowers it, so something else did (code
+   * in this origin, a wipe in another page). One that conflicts with this
+   * view, or another pin, is a fork.
    */
   private async recheckSeen(): Promise<void> {
     if (!this.state || !this.pinned || this.forkedWhy !== null || this.standing === "removed") return;
     await this.withSeenLock(() =>
-      this.updateSeen((stored) => {
+      this.updateHeld((held) => {
         const state = this.state!;
-        const against = this.seenAgainst(state, stored);
-        // Not lowered below this view; a conflict still shows (above).
-        if (stored && stored.seenThrough >= state.seq) return undefined;
-        console.error(`cloud account: ALARM: the seen record was ${stored ? `lowered to entry ${stored.seenThrough}` : "gone"} under this page's ${state.seq}; putting it back`);
-        return seenNext(against, stored, this.clock);
+        const genesis = hex(state.hashAt(0)!);
+        if (held.genesis !== null && held.genesis !== genesis) throw this.latchFork("another genesis was pinned for this account under this page");
+        if (held.genesis !== null && held.record && held.record.seenThrough >= state.seq) {
+          // Not lowered below this view; a conflict still shows.
+          this.heldAgainst(state, held);
+          return undefined;
+        }
+        const what = held.genesis === null ? "the pin and the seen record were gone" : held.record ? `the seen record was lowered to entry ${held.record.seenThrough}` : "the seen record was gone";
+        console.error(`cloud account: ALARM: ${what} under this page's ${state.seq}; putting it back`);
+        return { genesis, record: this.nextRecord(state, held.genesis === null ? { genesis: null, record: null, apart: null } : held, this.clock) };
       }),
     );
   }
@@ -1421,23 +1519,25 @@ export class CloudAccount {
 
   /**
    * Make `next` this view (with `clock`), if it extends it — and first hold
-   * it against the seen record, in the same step that writes it, so a view
-   * that conflicts with what this browser verified is never installed: the
-   * fork is latched and thrown, and this view stays as it was. `false`:
-   * `next` held nothing this view lacks (another call took it meanwhile).
+   * it against what this browser verified, in the same step that writes it,
+   * so a view that conflicts with it is never installed: the fork is latched
+   * and thrown, and this view stays as it was. Nor is a view whose record
+   * could not be written (the store failed: a {@link SeenStoreError}, to be
+   * tried again). `false`: `next` held nothing this view lacks (another call
+   * took it meanwhile).
    */
   private async install(next: ChainState, clock: ChainClock): Promise<boolean> {
     return this.withSeenLock(async () => {
       this.assertNotForked();
       const current = this.state;
-      const pinned = this.read(genesisKey(this.account));
       if (current) {
         if (next.seq <= current.seq) {
           if (!equal(current.hashAt(next.seq)!, next.head)) throw this.latchFork(`two views of the account's chain in this page differ at entry ${next.seq}`);
           // Nothing new — but held against the record all the same: another
           // page may have verified, since this view was taken, a chain this
           // one contradicts, and a handshake on it must not go on.
-          if (pinned !== null && pinned === hex(current.hashAt(0)!)) this.seenAgainst(current, await this.readSeen());
+          const held = await this.readHeld();
+          if (held.genesis === hex(current.hashAt(0)!)) this.heldAgainst(current, held);
           return false;
         }
         if (!equal(next.hashAt(current.seq)!, current.head)) throw this.latchFork(`two views of the account's chain in this page differ at entry ${current.seq}`);
@@ -1454,7 +1554,9 @@ export class CloudAccount {
       if (listed && (!equal(listed.info.signKey, this.keys.signPublic) || !equal(listed.info.dhKey, this.keys.dhPublic))) {
         throw this.latchFork(`the account's chain lists this device's id (${this.deviceId}) with keys that are not this browser's`);
       }
-      if (pinned !== null && pinned === hex(next.hashAt(0)!)) await this.updateSeen((stored) => seenNext(this.seenAgainst(next, stored), stored, clock));
+      // Kept only under the pin it is of (a chain this browser never pinned is not recorded).
+      const genesis = hex(next.hashAt(0)!);
+      await this.updateHeld((held) => (held.genesis === genesis ? { record: this.nextRecord(next, held, clock) } : undefined));
       // A fork latched meanwhile (another call of this page) installs nothing either.
       this.assertNotForked();
       this.state = next;
@@ -1535,7 +1637,7 @@ export class CloudAccount {
       const served = async () => (await this.api.chain(token, 0, opts)).entries.map((e) => decodeEntry(e));
       let decoded = await served();
       if (decoded.length === 0) {
-        if (this.read(genesisKey(this.account))) throw this.latchFork("the hub serves no chain for an account whose genesis this browser pinned");
+        if ((await this.pinnedGenesis()) !== null) throw this.latchFork("the hub serves no chain for an account whose genesis this browser pinned");
         return 0;
       }
       let verified: Awaited<ReturnType<CloudAccount["verifyServed"]>>;
@@ -1577,21 +1679,28 @@ export class CloudAccount {
    * sightings, and as far as that clock lets it.
    */
   private async verifyServed(decoded: Entry[], now: number): Promise<{ state: ChainState; clock: ChainClock; held: HeldBack | null }> {
-    const pinned = this.read(genesisKey(this.account));
-    const seen = pinned ? await this.readSeen() : null;
+    const trust = await this.readHeld();
+    const pinned = trust.genesis;
+    const seen = pinned ? trust.record : null;
     const clock = seen ? ChainClock.resume(now, seen.seenThrough, seen.firstSeen) : ChainClock.live(now, decoded.length);
     const { state, error } = await ChainState.verifyPrefix(decoded, undefined, clock);
     if (pinned && pinned !== hex(state.hashAt(0)!)) throw this.latchFork("the hub served a different genesis than this device pinned");
     const held = this.heldFrom(error, decoded);
-    if (seen && state.seq < seen.seenThrough) {
-      // Shorter than the record: a view another page of this browser went
-      // past a moment ago — a checkpoint still moving, to be looked at again
-      // — unless it contradicts the record where they overlap.
-      const theirs = seen.heads?.find(([seq]) => seq === state.seq)?.[1];
-      if (theirs !== undefined && theirs !== hex(state.head)) throw this.latchFork(`the hub served a chain that forks at entry ${state.seq} from the one this device saw`);
-      throw new MovingCheckpoint("the hub served less of the chain than this device has seen");
+    // Against every checkpoint this browser holds (an older page's kept apart too).
+    let behind = false;
+    for (const mark of pinned ? checkpoints(trust) : []) {
+      if (state.seq < mark.seenThrough) {
+        // Shorter than the record: a view another page of this browser went
+        // past a moment ago — a checkpoint still moving, to be looked at again
+        // — unless it contradicts the record where they overlap.
+        const theirs = mark.heads?.find(([seq]) => seq === state.seq)?.[1];
+        if (theirs !== undefined && theirs !== hex(state.head)) throw this.latchFork(`the hub served a chain that forks at entry ${state.seq} from the one this device saw`);
+        behind = true;
+      } else if (hex(state.hashAt(mark.seenThrough)!) !== mark.head) {
+        throw this.latchFork("the hub served a chain without the head this device saw");
+      }
     }
-    if (seen && hex(state.hashAt(seen.seenThrough)!) !== seen.head) throw this.latchFork("the hub served a chain without the head this device saw");
+    if (behind) throw new MovingCheckpoint("the hub served less of the chain than this device has seen");
     return { state, clock, held };
   }
 
@@ -2099,36 +2208,40 @@ export class CloudAccount {
    * other chain, or none, is a fork, latched.
    */
   private async refuseIfPinned(): Promise<void> {
-    const pinned = this.read(genesisKey(this.account));
-    if (pinned === null) return;
-    // A chain that cannot be read tells neither: that error goes up as it is, to be tried again.
+    // What this browser holds that cannot be read tells neither, nor a chain
+    // that cannot be read: those errors go up as they are, to be tried again.
+    const trust = await this.readHeld();
+    if (trust.genesis === null) return;
     const { entries } = await this.api.chain(this.session.token, 0);
-    if (await this.holdsRecord(entries, pinned)) {
+    if (await this.holdsRecord(entries, trust)) {
       throw new AccountError("setUpElsewhere", "this account was just set up in another tab of this browser: reload this page");
     }
     throw this.latchFork("this browser pinned a genesis for this account already: it does not make a new one");
   }
 
   /**
-   * Whether `served` is the chain this browser verified: it verifies as a
-   * whole, starts with the genesis `pinned`, and holds the seen record's head
-   * at its height — not merely the right first entry (a hub could serve that
-   * alone, or with another history after it).
+   * Whether `served` is the chain this browser verified (`trust`): it
+   * verifies as a whole, starts with the genesis pinned, and holds the head of
+   * every checkpoint at its height — not merely the right first entry (a hub
+   * could serve that alone, or with another history after it). Only the
+   * served chain's own failings make it `false`.
    */
-  private async holdsRecord(served: Uint8Array[], pinned: string): Promise<boolean> {
+  private async holdsRecord(served: Uint8Array[], trust: Held): Promise<boolean> {
+    let state: ChainState;
     try {
       if (served.length === 0) return false;
-      const { state, error } = await ChainState.verifyPrefix(
+      const verified = await ChainState.verifyPrefix(
         served.map((e) => decodeEntry(e)),
         undefined,
         ChainClock.history(),
       );
-      if (error || hex(state.hashAt(0)!) !== pinned) return false;
-      const seen = await this.readSeen();
-      return !seen || (state.seq >= seen.seenThrough && hex(state.hashAt(seen.seenThrough)!) === seen.head);
+      if (verified.error) return false;
+      state = verified.state;
     } catch {
       return false;
     }
+    if (hex(state.hashAt(0)!) !== trust.genesis) return false;
+    return checkpoints(trust).every((mark) => state.seq >= mark.seenThrough && hex(state.hashAt(mark.seenThrough)!) === mark.head);
   }
 
   /**
@@ -2176,7 +2289,7 @@ export class CloudAccount {
       const clock = ChainClock.live(now, 0);
       this.state = await ChainState.verify([genesis, keyEpochs], undefined, clock);
       this.clock = clock;
-      await this.pin();
+      await this.pinMade();
       // Committed: now it may be kept and sealed.
       await this.vault.put(0, uk);
       try {
@@ -3889,7 +4002,7 @@ export class CloudAccount {
   async recover(phrase: string): Promise<{ epochs: number[] }> {
     if (this.standing !== "absent") throw new AccountError("notInChain", "this device is already in the chain");
     const { chain, keys } = await this.recoveryFrom(phrase);
-    const pinned = this.read(genesisKey(this.account));
+    const pinned = await this.pinnedGenesis();
     if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
     await this.pin();
     await this.openRecoveryPackages(chain, keys.seal);
@@ -4034,7 +4147,7 @@ export class CloudAccount {
       if (!equal(pak, record.slot.key) || !(await verifyPasskeySlot(record.slot, this.account, chain.accountKey))) {
         throw new AccountError("wrongPasskey", "this passkey does not open this account here: pair this device from another one instead");
       }
-      const pinned = this.read(genesisKey(this.account));
+      const pinned = await this.pinnedGenesis();
       if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
       await this.pin();
       const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false } } };
@@ -4092,7 +4205,7 @@ export class CloudAccount {
     const chain = this.state;
     if (!chain) throw new AccountError("notInChain", "the account has no chain yet");
     for (const { epoch, key } of keys) await chain.checkUserKey(epoch, key);
-    const pinned = this.read(genesisKey(this.account));
+    const pinned = await this.pinnedGenesis();
     if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
     await this.pin();
     for (const { epoch, key } of keys) await this.vault.put(epoch, key);
@@ -4142,14 +4255,12 @@ export class CloudAccount {
     // freshly dated, for a head before (say) a removal is what a hub keeping
     // the newer entries from it would need. It catches up first; a hub that
     // will not let it is a fork.
-    const recorded = this.pinned ? await this.readSeen() : null;
-    if (recorded && recorded.seenThrough > this.state.seq) {
+    const recorded = this.pinned ? Math.max(-1, ...checkpoints(await this.readHeld()).map((mark) => mark.seenThrough)) : -1;
+    if (recorded > this.state.seq) {
       await this.sync();
-      if (this.state.seq < recorded.seenThrough) {
+      if (this.state.seq < recorded) {
         if (this.held) throw new AccountError("heldBack", "this page holds back entries another page of this browser took: it vouches for nothing until it takes them");
-        throw this.latchFork(
-          `the hub serves this page the account's chain through entry ${this.state.seq}, and another page of this browser verified it through ${recorded.seenThrough}`,
-        );
+        throw this.latchFork(`the hub serves this page the account's chain through entry ${this.state.seq}, and another page of this browser verified it through ${recorded}`);
       }
     }
     return createAttestation(this.state, this.deviceId, this.keys.sign.privateKey, Date.now());

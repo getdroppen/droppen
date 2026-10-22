@@ -1,34 +1,43 @@
 /*
- * Where this browser keeps the seen record of each account it is a device
- * of: what it verified of the account's chain (`CloudAccount`), shared by
- * every page of the browser, and moving forward only (#172, #182).
+ * Where this browser keeps, for each account it is a device of, the genesis
+ * it pinned and what it verified of the account's chain since (the seen
+ * record, `CloudAccount`): shared by every page of the browser, the pin set
+ * once and the record moving forward only (#172, #182).
  *
- * Moving forward only makes every write a read-compare-write, and that has to
- * be one step across pages (#183). IndexedDB `readwrite` transactions whose
- * scopes overlap run one after another across every page of the origin, each
- * seeing what the one before it committed: a compare done inside the
- * transaction is against the record as it is, not against a page's own copy
- * of it — which is all `localStorage` gives (each page reads its own copy,
- * brought into step by the browser only after the fact). The compare runs
- * synchronously inside the transaction, between its read and its write:
- * nothing in it waits on anything else, so it never commits half-way (WebKit
- * commits a transaction once the page yields with no request of it pending).
+ * That makes every write a read-compare-write, and it has to be one step
+ * across pages (#183). IndexedDB `readwrite` transactions whose scopes
+ * overlap run one after another across every page of the origin, each seeing
+ * what the one before it committed: a compare done inside the transaction is
+ * against what is stored, not against a page's own copy of it — which is all
+ * `localStorage` gives (each page reads its own copy, brought into step by
+ * the browser only after the fact). The pin and the record are one value, so
+ * which genesis is pinned and what is accepted under it are decided in the
+ * same transaction. The compare runs synchronously inside it, between its
+ * read and its write: nothing in it waits on anything else, so it never
+ * commits half-way (WebKit commits a transaction once the page yields with no
+ * request of it pending).
  *
- * IndexedDB has no change events: a page that writes a record says so on a
+ * IndexedDB has no change events: a page that writes a value says so on a
  * `BroadcastChannel`, and the pages open on the account hold it against what
  * they verified (`CloudAccount.watchSeenRecord`).
  *
  * Where IndexedDB is not there or will not open at all (some private modes),
- * the record stays in `localStorage` as before: read-compare-written under a
- * Web Lock, which a page's stale copy can still lower, and its pages hear one
- * another through `storage` events. That is said on the console.
+ * both stay in `localStorage` as before (`rh.hub.genesis.<account>`,
+ * `rh.hub.seen.<account>`): read-compare-written under a Web Lock, which a
+ * page's stale copy can still lower, and its pages hear one another through
+ * `storage` events. That is said on the console — and refused, as a failure
+ * to try again, in a browser that kept them in IndexedDB before.
  */
 
-/** Where the record was kept before (and still is, where IndexedDB will not open): `localStorage`'s key for `account`. */
+/** Where older pages keep the seen record (and this one, where IndexedDB will not open): `localStorage`'s key for `account`. */
 export const seenKey = (account: string) => `rh.hub.seen.${account}`;
-/** The IndexedDB database the records are in (one object store, keyed by account): a database of its own, so the key store's is never upgraded for it. */
+/** Where older pages keep the pinned genesis (hex), likewise. */
+export const genesisKey = (account: string) => `rh.hub.genesis.${account}`;
+/** Set in `localStorage` once IndexedDB opened in this browser: from then on its `localStorage` copies are never read instead. */
+export const SEEN_IN_IDB = "rh.hub.seen-in-idb";
+/** The IndexedDB database the values are in (one object store, keyed by account): a database of its own, so the key store's is never upgraded for it. */
 export const SEEN_DB = "rh-hub-seen";
-/** The `BroadcastChannel` a page says on that it wrote an account's record. */
+/** The `BroadcastChannel` a page says on that it wrote an account's value. */
 export const SEEN_CHANNEL = "rh.hub.seen";
 /** How long opening the database may take before that open counts as failed (the next call tries again). */
 export const SEEN_DB_OPEN_MS = 10_000;
@@ -39,7 +48,19 @@ export type SeenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 type EventTargetLike = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
-/** The browser's seen records, one per account, as stored (`CloudAccount` checks what it reads). */
+/**
+ * The store would not read or write what it keeps, or would not open: a
+ * failure that may pass, to be tried again — never taken for a fork, and
+ * never for there being nothing stored.
+ */
+export class SeenStoreError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SeenStoreError";
+  }
+}
+
+/** The browser's values, one per account (`{v, genesis, seen}`, as `CloudAccount` writes them and checks what it reads). */
 export interface SeenStore {
   /**
    * Whether `update` is one step across every page of the browser (IndexedDB,
@@ -47,19 +68,19 @@ export interface SeenStore {
    * the page's own copy of `localStorage` (the fallback).
    */
   readonly atomic: boolean;
-  /** `account`'s record as stored: `undefined` when there is none. */
+  /** `account`'s value as stored: `undefined` when there is none. */
   get(account: string): Promise<unknown>;
   /**
-   * Read `account`'s record and write what `change` makes of it, as one step
-   * no other page's update comes between. `change` is handed the record as
+   * Read `account`'s value and write what `change` makes of it, as one step
+   * no other page's update comes between. `change` is handed the value as
    * `get` would give it and runs synchronously, inside the step; it returns
-   * what to store — `undefined`: leave it as it is; `null`: delete it — or
-   * throws, and then nothing is written and the update rejects with what it
-   * threw. Resolves once what was written is committed; the other pages are
-   * told then.
+   * what to store — `undefined`: leave it as it is — or throws, and then
+   * nothing is written and the update rejects with what it threw. Resolves
+   * once what was written is committed (and rejects when it was not); the
+   * other pages are told then.
    */
   update(account: string, change: (stored: unknown) => unknown): Promise<void>;
-  /** Hear that another page may have written a record: its account, or `null` for any. Returns the stop. */
+  /** Hear that another page may have written a value: its account, or `null` for any. Returns the stop. */
   watch(heard: (account: string | null) => void): () => void;
 }
 
@@ -69,7 +90,7 @@ const unref = <T>(handle: T): T => {
 };
 
 /**
- * The records in memory: one browser's, for the tests. Updates run one after
+ * The values in memory: one browser's, for the tests. Updates run one after
  * another, as IndexedDB runs `readwrite` transactions on one store, and a
  * read waits for the updates asked for before it; every watcher (each page)
  * is told of every write.
@@ -96,8 +117,7 @@ export class MemorySeenStore implements SeenStore {
       await this.gate?.(account);
       const next = change(structuredClone(this.values.get(account)));
       if (next === undefined) return;
-      if (next === null) this.values.delete(account);
-      else this.values.set(account, structuredClone(next));
+      this.values.set(account, structuredClone(next));
       for (const heard of [...this.watchers]) queueMicrotask(() => heard(account));
     });
   }
@@ -116,20 +136,26 @@ export class MemorySeenStore implements SeenStore {
 }
 
 /**
- * The records in `localStorage` (`storage`), as they were kept before
- * IndexedDB: the fallback where it will not open. Not one step across pages
- * — the caller holds the Web Lock around `update`, and a page's stale copy
- * can still lower the record — and the pages hear one another through
- * `storage` events on `events` (the window).
+ * The values in `localStorage` (`storage`), as they were kept before
+ * IndexedDB — the pin under {@link genesisKey}, the record under {@link
+ * seenKey} — handed out and taken as one value: the fallback where IndexedDB
+ * will not open. Not one step across pages: the caller holds the Web Lock
+ * around `update`, and a page's stale copy can still lower the record. A pin
+ * is never removed. The pages hear one another through `storage` events on
+ * `events` (the window).
  */
 export function localStorageSeenStore(storage: SeenStorage, events: EventTargetLike | null = defaultEvents()): SeenStore {
   const read = (account: string): unknown => {
+    let genesis: string | null = null;
+    let seen: unknown = null;
     try {
+      genesis = storage.getItem(genesisKey(account));
       const raw = storage.getItem(seenKey(account));
-      return raw === null ? undefined : JSON.parse(raw);
+      seen = raw === null ? null : JSON.parse(raw);
     } catch {
-      return undefined;
+      // not readable: as if not there, as before
     }
+    return genesis === null && seen === null ? undefined : { v: 1, genesis, seen };
   };
   return {
     atomic: false,
@@ -137,27 +163,35 @@ export function localStorageSeenStore(storage: SeenStorage, events: EventTargetL
       return read(account);
     },
     async update(account, change) {
-      const next = change(read(account));
+      const next = change(read(account)) as { genesis?: unknown; seen?: unknown } | undefined;
       if (next === undefined) return;
       try {
-        if (next === null) storage.removeItem(seenKey(account));
-        else storage.setItem(seenKey(account), JSON.stringify(next));
+        if (typeof next.genesis === "string") storage.setItem(genesisKey(account), next.genesis);
+        if (next.seen === null || next.seen === undefined) storage.removeItem(seenKey(account));
+        else storage.setItem(seenKey(account), JSON.stringify(next.seen));
       } catch {
         // memory only for this tab
       }
     },
     watch(heard) {
       if (!events) return () => undefined;
-      const prefix = seenKey("");
+      const prefixes = [seenKey(""), genesisKey("")];
       const onStorage = (event: Event) => {
         const key = (event as Event & { key?: string | null }).key;
-        if (key === null || key === undefined) heard(null);
-        else if (key.startsWith(prefix)) heard(key.slice(prefix.length));
+        if (key === null || key === undefined) return heard(null);
+        const prefix = prefixes.find((p) => key.startsWith(p));
+        if (prefix) heard(key.slice(prefix.length));
       };
       events.addEventListener("storage", onStorage);
       return () => events.removeEventListener("storage", onStorage);
     },
   };
+}
+
+/** A store that will not be had at all here: every read and write fails with `why`, to be tried again (`SeenStoreError`). */
+export function refusedSeenStore(why: string): SeenStore {
+  const refuse = () => Promise.reject(new SeenStoreError(why));
+  return { atomic: true, get: refuse, update: refuse, watch: () => () => undefined };
 }
 
 /** The window, where there is one. */
@@ -185,8 +219,15 @@ export interface IndexedDbSeenOptions {
   dbName?: string;
   /** The channel other pages are told on ({@link SEEN_CHANNEL}; `null`: none). */
   channel?: string | null;
-  /** What to keep the records in instead when IndexedDB is not to be had here at all (its first open says so): the `localStorage` fallback. */
-  fallback?: () => SeenStore;
+  /**
+   * What to keep the values in instead when IndexedDB is not to be had here
+   * at all (its first open says so): the `localStorage` fallback — or `null`,
+   * none (the browser kept them in IndexedDB before), and the open's failure
+   * stands, to be tried again.
+   */
+  fallback?: () => SeenStore | null;
+  /** Told when the database opened in this page (the first time). */
+  onOpen?: () => void;
 }
 
 /**
@@ -262,12 +303,17 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
     if (fallen) return null;
     try {
       const conn = await open();
+      if (!opened) opts.onOpen?.();
       opened = true;
       return conn;
     } catch (error) {
       if (opened || !opts.fallback || !unavailable(error)) throw error;
       if (!fallen) {
-        fallen = opts.fallback();
+        const instead = opts.fallback();
+        if (!instead) {
+          throw new SeenStoreError(`IndexedDB is not to be had here (${describe(error)}), and this browser kept what it verified of the account there: it is not read from localStorage instead — try again`, { cause: error });
+        }
+        fallen = instead;
         console.warn(`seen record: IndexedDB is not to be had here (${describe(error)}): this page keeps the record in localStorage, where another page's stale copy can still lower it`);
         listening?.();
         listening = null;
@@ -372,8 +418,7 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
               try {
                 const next = change(read.result);
                 if (next === undefined) return;
-                if (next === null) store.delete(account);
-                else store.put(next, account);
+                store.put(next, account);
                 wrote = true;
               } catch (error) {
                 failed = { error };
@@ -416,9 +461,19 @@ let saidNoIndexedDb = false;
 /**
  * This page's seen store: IndexedDB (one for the page, however many
  * accounts it opens), or `localStorage` (`storage`) where IndexedDB is not
- * to be had — said once.
+ * to be had — said once — unless this browser kept its values in IndexedDB
+ * before ({@link SEEN_IN_IDB}): then `localStorage`'s copies, older than
+ * what IndexedDB holds, are not read instead, and every read fails, to be
+ * tried again.
  */
 export function pageSeenStore(storage: SeenStorage): SeenStore {
+  const keptInIdb = () => {
+    try {
+      return storage.getItem(SEEN_IN_IDB) !== null;
+    } catch {
+      return false;
+    }
+  };
   let factory: IDBFactory | null = null;
   try {
     factory = (globalThis as { indexedDB?: IDBFactory | null }).indexedDB ?? null;
@@ -426,12 +481,23 @@ export function pageSeenStore(storage: SeenStorage): SeenStore {
     // not allowed here
   }
   if (!factory) {
+    if (keptInIdb()) return refusedSeenStore("IndexedDB is not to be had here, and this browser kept what it verified of the account there: it is not read from localStorage instead — try again");
     if (!saidNoIndexedDb) {
       saidNoIndexedDb = true;
       console.warn("seen record: no IndexedDB here: the record stays in localStorage, where another page's stale copy can still lower it");
     }
     return localStorageSeenStore(storage);
   }
-  pageStore ??= indexedDbSeenStore({ factory, fallback: () => localStorageSeenStore(storage) });
+  pageStore ??= indexedDbSeenStore({
+    factory,
+    fallback: () => (keptInIdb() ? null : localStorageSeenStore(storage)),
+    onOpen: () => {
+      try {
+        storage.setItem(SEEN_IN_IDB, "1");
+      } catch {
+        // not kept: a later page with no IndexedDB falls back as before
+      }
+    },
+  });
   return pageStore;
 }
