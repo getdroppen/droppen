@@ -362,20 +362,28 @@ impl Entry {
 
     /// Move the pending output into the replay buffer and out to every listener.
     fn flush(&self) {
-        let chunk = {
-            let mut replay = self.replay.lock().expect("terminal replay poisoned");
-            if replay.pending.is_empty() {
-                return;
-            }
-            let chunk = std::mem::take(&mut replay.pending);
-            replay.buffer.push_str(&chunk);
-            truncate_front(&mut replay.buffer, BUFFER_CAP);
-            chunk
-        };
+        let mut replay = self.replay.lock().expect("terminal replay poisoned");
+        self.flush_locked(&mut replay);
+    }
+
+    /// [`Entry::flush`], for a caller already holding the replay lock.
+    ///
+    /// The broadcast happens under that lock too. [`Entry::attach`] takes it to
+    /// read the replay and register its listener as one step, so each chunk
+    /// either goes into that replay or onto that listener's queue, never both
+    /// and never neither.
+    fn flush_locked(&self, replay: &mut Replay) {
+        if replay.pending.is_empty() {
+            return;
+        }
+        let chunk = std::mem::take(&mut replay.pending);
+        replay.buffer.push_str(&chunk);
+        truncate_front(&mut replay.buffer, BUFFER_CAP);
         self.broadcast(&chunk);
     }
 
-    /// Send one already-flushed chunk to every attached client.
+    /// Send one already-flushed chunk to every attached client. Called with the
+    /// replay lock held; see [`Entry::flush_locked`].
     fn broadcast(&self, chunk: &str) {
         let chunk: Arc<str> = Arc::from(chunk);
         let mut listeners = self.listeners.lock().expect("terminal listeners poisoned");
@@ -385,11 +393,9 @@ impl Entry {
     /// Mark the process gone and append the note every client repaints.
     fn note_exit(&self) {
         self.exited.store(true, Ordering::SeqCst);
-        {
-            let mut replay = self.replay.lock().expect("terminal replay poisoned");
-            replay.buffer.push_str(EXIT_NOTE);
-            truncate_front(&mut replay.buffer, BUFFER_CAP);
-        }
+        let mut replay = self.replay.lock().expect("terminal replay poisoned");
+        replay.buffer.push_str(EXIT_NOTE);
+        truncate_front(&mut replay.buffer, BUFFER_CAP);
         self.broadcast(EXIT_NOTE);
     }
 
@@ -470,13 +476,17 @@ impl Entry {
     /// Split out of [`Registry::attach`] so it can be reached with an entry and
     /// nothing else, which is what the unit tests have.
     fn attach(self: &Arc<Self>) -> Attachment {
-        let replay = {
-            let replay = self.replay.lock().expect("terminal replay poisoned");
-            // Include not-yet-flushed output so the repaint is complete.
-            format!("{}{}", replay.buffer, replay.pending)
-        };
         let (tx, rx) = mpsc::unbounded_channel();
         let queued = Arc::new(AtomicUsize::new(0));
+        // The replay is read and the listener registered under one hold of the
+        // replay lock, which every flush also broadcasts under. Done as two
+        // steps, a flush between them sent its chunk to everyone but this
+        // client, after a replay that did not have it yet. And output still
+        // pending was sent twice: in the replay, then again by the flush.
+        let mut buffered = self.replay.lock().expect("terminal replay poisoned");
+        // Pending output goes out now, so the repaint is still complete.
+        self.flush_locked(&mut buffered);
+        let replay = buffered.buffer.clone();
         let listener_id = {
             let mut listeners = self.listeners.lock().expect("terminal listeners poisoned");
             listeners.next_id += 1;
@@ -488,6 +498,7 @@ impl Entry {
             });
             listener_id
         };
+        drop(buffered);
         Attachment {
             replay,
             entry: Arc::clone(self),
@@ -1815,6 +1826,75 @@ mod tests {
         entry.set_linked(true);
         changes.changed().await.expect("the entry outlives its attachment");
         assert!(*changes.borrow_and_update(), "the client learns the terminal is usable again");
+    }
+
+    /// An attachment's replay followed by everything already on its queue.
+    fn everything_sent(attachment: &mut Attachment) -> String {
+        let mut seen = attachment.replay.clone();
+        while let Ok(chunk) = attachment.rx.try_recv() {
+            match chunk {
+                Chunk::Data(data) => seen.push_str(&data),
+                Chunk::TooSlow => panic!("a client this small is never too slow"),
+            }
+        }
+        seen
+    }
+
+    /// A client that attaches while output waits out the coalescing interval
+    /// gets each byte exactly once. The replay used to include the pending
+    /// output, and the flush at the end of the interval then sent it again.
+    #[tokio::test]
+    async fn an_attach_mid_interval_gets_each_byte_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (entry, _outbound) = bare_entry(dir.path());
+
+        entry.push_pending("one ");
+        entry.flush();
+        // Held back: within an interval of the last flush.
+        entry.push_pending("two ");
+        let mut attachment = entry.attach();
+        // The interval ends.
+        entry.flush();
+        entry.push_pending("three");
+        entry.flush();
+
+        let seen = everything_sent(&mut attachment);
+        assert_eq!(seen, "one two three", "the replay and the queue together hold the stream once");
+    }
+
+    /// The other half of the same race, which only a second thread can reach:
+    /// a flush that landed between an attach's read of the replay and its
+    /// registration went to every client but that one, and was lost to it.
+    #[test]
+    fn attaches_racing_the_flushes_see_the_stream_whole() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (entry, _outbound) = bare_entry(dir.path());
+        let producer = {
+            let entry = entry.clone();
+            std::thread::spawn(move || {
+                // About 24 KiB in all, inside BUFFER_CAP, so the replay never
+                // drops its front and every client must end up with all of it.
+                for n in 0..5_000 {
+                    entry.push_pending(&format!("{n},"));
+                    if n % 3 == 0 {
+                        entry.flush();
+                    }
+                }
+                entry.flush();
+            })
+        };
+        let mut attachments = Vec::new();
+        while !producer.is_finished() && attachments.len() < 500 {
+            attachments.push(entry.attach());
+            std::thread::yield_now();
+        }
+        producer.join().expect("the producer");
+
+        let whole = entry.replay.lock().expect("replay").buffer.clone();
+        for (n, mut attachment) in attachments.into_iter().enumerate() {
+            let seen = everything_sent(&mut attachment);
+            assert!(seen == whole, "client {n} saw {} bytes of a {}-byte stream", seen.len(), whole.len());
+        }
     }
 
     /// A stand-in shim on `sidecars`' socket that ends its shell on a `k` frame
