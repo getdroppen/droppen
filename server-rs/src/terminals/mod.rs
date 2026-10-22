@@ -330,6 +330,9 @@ struct Entry {
     shim_pid: u32,
     /// The shell's pid — and process group — as the shim reported it.
     shell_pid: AtomicU32,
+    /// The link task saw the process exit: an `x` frame, a tombstone or a dead
+    /// shell. From then on the two pids above are history, and either may
+    /// already belong to an unrelated process.
     exited: AtomicBool,
     /// Server-side exit hook; taken once so it runs exactly once.
     on_exit: Mutex<Option<ExitHook>>,
@@ -393,6 +396,12 @@ impl Entry {
     /// Mark the process gone and append the note every client repaints.
     fn note_exit(&self) {
         self.exited.store(true, Ordering::SeqCst);
+        self.announce_exit();
+    }
+
+    /// Append the exit note every client repaints, and send it to those
+    /// attached now.
+    fn announce_exit(&self) {
         let mut replay = self.replay.lock().expect("terminal replay poisoned");
         replay.buffer.push_str(EXIT_NOTE);
         truncate_front(&mut replay.buffer, BUFFER_CAP);
@@ -406,11 +415,15 @@ impl Entry {
     /// a killed terminal the shell is gone, and leaving out the exit note would
     /// leave every attached client with a frozen pane that still looks live, on
     /// a terminal no longer in the list.
+    ///
+    /// The note is announced without marking the entry [`Entry::exited`]: a cut
+    /// link has not seen the process end, and the reaper and
+    /// [`Registry::kill_all`] may still have to signal it.
     fn cut(&self) {
         self.set_linked(false);
         self.flush();
         if self.killed.load(Ordering::SeqCst) && !self.exited.load(Ordering::SeqCst) {
-            self.note_exit();
+            self.announce_exit();
         }
     }
 
@@ -512,7 +525,13 @@ impl Entry {
     ///
     /// The order matters: killing the shim first would leave the shell orphaned
     /// with nothing holding its pty.
+    ///
+    /// Nothing at all once the exit has been seen: by then both pids may have
+    /// been reused, and a `SIGKILL` to the group would land on a stranger.
     fn signal_directly(&self) {
+        if self.exited.load(Ordering::SeqCst) {
+            return;
+        }
         let shell = self.shell_pid.load(Ordering::SeqCst);
         if shell > 1 {
             shim::child::kill_shell(shell, libc::SIGKILL);
@@ -870,6 +889,15 @@ impl Registry {
         let Some(entry) = self.entries.lock().expect("terminal registry poisoned").remove(id) else {
             return false;
         };
+        // A terminal whose process has already exited is only still registered
+        // so its clients can read the exit note (`REAP_AFTER`), and closing its
+        // tab in that window lands here. Taking it off the registry is all there
+        // is to do: its link task has swept the sidecars and fired the exit hook
+        // with the real status. A reaper would wait out a tombstone that is
+        // already gone and then signal pids that may have been reused.
+        if entry.exited.load(Ordering::SeqCst) {
+            return true;
+        }
         // The identity goes first and synchronously: everything after this is
         // asynchronous, and a crash in the middle must not leave behind a meta
         // file that the next boot would adopt as a terminal the user closed.
@@ -1897,54 +1925,83 @@ mod tests {
         }
     }
 
-    /// A stand-in shim on `sidecars`' socket that ends its shell on a `k` frame
-    /// the way a real one does, tombstone first and `x` frame second, but takes
-    /// `announce` to get from one to the other. That gap is what a busy machine
-    /// produces, here with a fixed length. `None` never sends the frame at all.
+    /// How a [`stand_in_shim`]'s shell ends.
+    enum ShellEnd {
+        /// On a `k` frame, the way a real shim ends it: tombstone first and `x`
+        /// frame second, but with this long between the two. That gap is what a
+        /// busy machine produces, here with a fixed length. `None` never sends
+        /// the frame at all.
+        Killed(Option<Duration>),
+        /// On its own, right after the hello: tombstone, last output, `x`.
+        Exits,
+    }
+
+    /// A stand-in shim on `sidecars`' socket, minding a shell it says is
+    /// `shell_pid` and that ends as `end` says.
     ///
-    /// It reports shell pid 0, so neither the fallback kill nor a liveness
-    /// probe can reach a real process.
-    fn slow_exiting_shim(sidecars: &Sidecars, announce: Option<Duration>) {
+    /// Nothing here signals anything. Pass pid 0 when no real process should
+    /// be reachable through the entry at all.
+    fn stand_in_shim(sidecars: &Sidecars, shell_pid: u32, end: ShellEnd) {
         sidecars.ensure_socket_dir().expect("the shim socket directory");
         let listener = tokio::net::UnixListener::bind(sidecars.socket()).expect("bind the shim socket");
         let tombstone = sidecars.exit();
+        let bury = move || {
+            let record = proto::Tombstone {
+                exit_code: -1,
+                at: "2026-01-01T00:00:00.000Z".into(),
+            };
+            std::fs::write(&tombstone, serde_json::to_vec(&record).expect("encode")).expect("write the tombstone");
+        };
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("the server dials in");
             let (mut reader, mut writer) = stream.into_split();
             let hello = proto::read_frame(&mut reader).await.expect("read the hello").expect("a hello");
             assert_eq!(hello.kind, proto::HELLO);
-            let reply = Frame::json(proto::HELLO, &proto::Hello2 { shell_pid: 0, total: 0 });
+            let reply = Frame::json(proto::HELLO, &proto::Hello2 { shell_pid, total: 0 });
             proto::write_frame(&mut writer, &reply).await.expect("answer the hello");
-            while let Ok(Some(frame)) = proto::read_frame(&mut reader).await {
-                if frame.kind != proto::KILL {
-                    continue;
+            let announce = match end {
+                ShellEnd::Exits => {
+                    bury();
+                    Duration::ZERO
                 }
-                let record = proto::Tombstone {
-                    exit_code: -1,
-                    at: "2026-01-01T00:00:00.000Z".into(),
-                };
-                std::fs::write(&tombstone, serde_json::to_vec(&record).expect("encode")).expect("write the tombstone");
-                let Some(delay) = announce else {
-                    // The link stays open and nothing more is said.
-                    std::future::pending::<()>().await;
-                    return;
-                };
-                tokio::time::sleep(delay).await;
-                let _ = proto::write_frame(&mut writer, &Frame::raw(proto::OUTPUT, b"bye\r\n".to_vec())).await;
-                let _ = proto::write_frame(&mut writer, &Frame::json(proto::EXIT, &proto::Exit { code: -1 })).await;
-                return;
-            }
+                ShellEnd::Killed(announce) => {
+                    loop {
+                        match proto::read_frame(&mut reader).await {
+                            Ok(Some(frame)) if frame.kind == proto::KILL => break,
+                            Ok(Some(_)) => continue,
+                            _ => return,
+                        }
+                    }
+                    bury();
+                    let Some(delay) = announce else {
+                        // The link stays open and nothing more is said.
+                        std::future::pending::<()>().await;
+                        return;
+                    };
+                    delay
+                }
+            };
+            tokio::time::sleep(announce).await;
+            let _ = proto::write_frame(&mut writer, &Frame::raw(proto::OUTPUT, b"bye\r\n".to_vec())).await;
+            let _ = proto::write_frame(&mut writer, &Frame::json(proto::EXIT, &proto::Exit { code: -1 })).await;
         });
     }
 
-    /// A terminal on a [`slow_exiting_shim`], with one client attached.
-    async fn terminal_with_a_client(home: &Path, announce: Option<Duration>) -> (Arc<Registry>, String, Attachment) {
+    /// A terminal on a [`stand_in_shim`] that ends as `end` says, with one client
+    /// attached. Neither of its pids reaches a real process.
+    async fn terminal_with_a_client(home: &Path, end: ShellEnd) -> (Arc<Registry>, String, Attachment) {
+        terminal_with_pids(home, 0, 0, end).await
+    }
+
+    /// [`terminal_with_a_client`], with the shell and shim pids the entry will
+    /// believe in.
+    async fn terminal_with_pids(home: &Path, shell_pid: u32, shim_pid: u32, end: ShellEnd) -> (Arc<Registry>, String, Attachment) {
         let registry = registry(home, "kill");
         // A fresh id each time: the socket is named after it, and may sit in a
         // directory every test in this process shares.
         let id = uuid::Uuid::new_v4().to_string();
         let sidecars = Sidecars::new(registry.instance.pty_shims(), &id);
-        slow_exiting_shim(&sidecars, announce);
+        stand_in_shim(&sidecars, shell_pid, end);
         let link = client::connect(&sidecars.socket(), 0).await.expect("link to the stand-in shim");
         let info = TerminalInfo {
             id: id.clone(),
@@ -1952,7 +2009,7 @@ mod tests {
             cwd: home.to_string_lossy().into_owned(),
             created_at: "2026-01-01T00:00:00.000Z".into(),
         };
-        let (entry, outbound) = registry.register(info, 0, sidecars, 0, &link, None);
+        let (entry, outbound) = registry.register(info, 0, sidecars, shim_pid, &link, None);
         start_link(Arc::downgrade(&registry), entry, link, outbound, None, Vec::new());
         let attachment = registry.attach(&id).expect("attachable");
         (registry, id, attachment)
@@ -1980,7 +2037,7 @@ mod tests {
     #[tokio::test]
     async fn a_kill_waits_for_the_exit_frame_that_trails_the_tombstone() {
         let home = tempfile::tempdir().expect("tempdir");
-        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), Some(Duration::from_millis(300))).await;
+        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), ShellEnd::Killed(Some(Duration::from_millis(300)))).await;
 
         assert!(registry.kill_terminal(&id));
         let seen = read_through_the_exit_note(&mut attachment, Duration::from_secs(5)).await;
@@ -1996,7 +2053,7 @@ mod tests {
     #[tokio::test]
     async fn a_killed_terminal_whose_shim_never_announces_still_tells_its_clients() {
         let home = tempfile::tempdir().expect("tempdir");
-        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), None).await;
+        let (registry, id, mut attachment) = terminal_with_a_client(home.path(), ShellEnd::Killed(None)).await;
 
         assert!(registry.kill_terminal(&id));
         let seen = read_through_the_exit_note(&mut attachment, EXIT_FRAME_GRACE + Duration::from_secs(5)).await;
@@ -2008,13 +2065,68 @@ mod tests {
     #[tokio::test]
     async fn a_shutdown_detach_tells_clients_nothing() {
         let home = tempfile::tempdir().expect("tempdir");
-        let (registry, _id, mut attachment) = terminal_with_a_client(home.path(), None).await;
+        let (registry, _id, mut attachment) = terminal_with_a_client(home.path(), ShellEnd::Killed(None)).await;
 
         assert_eq!(registry.shutdown_all(), 1);
         assert!(
             tokio::time::timeout(Duration::from_millis(300), attachment.next_chunk()).await.is_err(),
             "no exit note for a shell that lives on"
         );
+    }
+
+    /// A process this test owns, in a process group of its own, standing in
+    /// for whatever reused a dead terminal's pid.
+    fn bystander() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn a bystander")
+    }
+
+    /// Whether a bystander is still running, allowing a signal sent a moment
+    /// ago the time to land.
+    fn untouched(child: &mut std::process::Child) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        while std::time::Instant::now() < deadline {
+            if child.try_wait().expect("try_wait").is_some() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+
+    /// Closing a terminal that has already exited, within the [`REAP_AFTER`]
+    /// window its clients get to read the note in, used to start a reaper. The
+    /// reaper waited for a tombstone the link task had already swept, then
+    /// `SIGKILL`ed the dead shell's process group and `SIGTERM`ed the shim pid,
+    /// either of which may by then belong to an unrelated process. Here both
+    /// pids name live bystanders. The reaper's signals went through
+    /// [`Entry::signal_directly`], as [`Registry::kill_all`]'s do, and that call
+    /// makes the old behaviour show at once instead of three seconds later.
+    #[tokio::test]
+    async fn closing_a_terminal_that_already_exited_signals_nobody() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let mut shell = bystander();
+        let mut shim = bystander();
+        let (registry, id, mut attachment) = terminal_with_pids(home.path(), shell.id(), shim.id(), ShellEnd::Exits).await;
+        read_through_the_exit_note(&mut attachment, Duration::from_secs(5)).await;
+
+        assert!(registry.kill_terminal(&id), "a finished tab that is still listed for its note closes");
+        assert!(!registry.kill_terminal(&id), "and is gone once it has");
+        let reaping = !registry.dying.lock().expect("dying").is_empty();
+        registry.kill_all();
+
+        let (shell_ok, shim_ok) = (untouched(&mut shell), untouched(&mut shim));
+        for child in [&mut shell, &mut shim] {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        assert!(shell_ok, "the dead shell's process group was signalled");
+        assert!(shim_ok, "the dead terminal's shim pid was signalled");
+        assert!(!reaping, "no reaper for a process that is already gone");
     }
 
     #[test]
