@@ -1821,6 +1821,12 @@ impl bridge::Local for AgentLocal {
             self.route(device, method, path, body)
         })
     }
+
+    fn push_renewing(&self) -> bool {
+        // Set before a renewed identity key is taken, cleared once
+        // [`renew_push`] made the new push keys.
+        self.shared.state.lock().expect("agent state").rotation.push_renew
+    }
 }
 
 impl AgentLocal {
@@ -2568,6 +2574,11 @@ mod tests {
 
     /// [`account`], its streams' writer events going to `sync`.
     fn account_with(sync: super::super::streams::Handle) -> Account {
+        account_at(sync, "127.0.0.1:9".parse().unwrap())
+    }
+
+    /// [`account_with`], its loopback server at `loopback`.
+    fn account_at(sync: super::super::streams::Handle, loopback: std::net::SocketAddr) -> Account {
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let d1 = MachineIdentity::from_seed(&[2; 32]);
         let d2 = MachineIdentity::from_seed(&[3; 32]);
@@ -2597,7 +2608,7 @@ mod tests {
             paths,
             deferred_mail: Mutex::new(Vec::new()),
             identity: Arc::new(machine),
-            loopback: Arc::new(Loopback::new("127.0.0.1:9".parse().unwrap(), "test".into())),
+            loopback: Arc::new(Loopback::new(loopback, "test".into())),
             sync,
             state: Arc::new(Mutex::new(st)),
             guard: Mutex::new(guard),
@@ -2935,6 +2946,67 @@ mod tests {
         let (status, body) = rpc(&admin, "POST", "/rh/display-name", name).await.expect("an answer");
         assert_eq!((status, body["displayName"].as_str()), (200, Some("study")), "a fresh admin");
         assert_eq!(a.shared.state.lock().unwrap().display_name.as_deref(), Some("study"));
+    }
+
+    /// Final review of the renewal (#24, #25): while this computer renews
+    /// its push keys with its identity key (`rotation.push_renew`, until
+    /// [`renew_push`] is done), a device asking over a channel for the push
+    /// key, or subscribing against it, is answered 503 `push_renewing` — not
+    /// handed the key about to be replaced, which its page would keep as
+    /// current — and nothing reaches the server; once they are renewed, the
+    /// request reaches it again.
+    #[tokio::test]
+    async fn the_push_key_is_not_handed_out_while_it_is_renewed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // The local server: hands out the push key it holds, and counts the requests.
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = server.local_addr().unwrap();
+        let reached = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = reached.clone();
+        tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = server.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match tcp.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => request.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_string();
+                    seen.lock().unwrap().push(line);
+                    let body = r#"{"publicKey":"KEY-IN-USE"}"#;
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = tcp.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        let a = account_at(super::super::streams::Handle::detached(), addr);
+        attest(&a, "d-2", &d2(), 0);
+        let mut routes = Routes::new();
+        let admin = connect(&a, &a.d1, "d-1", 1, &mut routes).await.expect("an admin");
+        // A renewed identity key was taken: the push keys follow it.
+        a.shared.state.lock().unwrap().rotation.push_renew = true;
+        let (status, body) = rpc(&admin, "GET", "/api/push/vapid", b"").await.expect("an answer");
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (503, Some("push_renewing")),
+            "the key about to be replaced is not handed out: {body}"
+        );
+        let subscription = br#"{"endpoint":"https://push.example/x","keys":{"p256dh":"p","auth":"a"}}"#;
+        let (status, body) = rpc(&admin, "POST", "/api/push/subscriptions", subscription).await.expect("an answer");
+        assert_eq!((status, body["error"].as_str()), (503, Some("push_renewing")), "{body}");
+        assert!(reached.lock().unwrap().is_empty(), "nothing reached the server: {:?}", reached.lock().unwrap());
+        // Renewed: the page gets the key.
+        a.shared.state.lock().unwrap().rotation.push_renew = false;
+        let (status, body) = rpc(&admin, "GET", "/api/push/vapid", b"").await.expect("an answer");
+        assert_eq!((status, body["publicKey"].as_str()), (200, Some("KEY-IN-USE")));
+        assert_eq!(*reached.lock().unwrap(), vec!["GET /api/push/vapid HTTP/1.1".to_string()]);
     }
 
     /// Review D3: a device whose handshake this agent accepts is recorded

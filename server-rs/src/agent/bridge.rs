@@ -476,6 +476,46 @@ pub trait Local: Send + Sync {
         path: &'a str,
         body: &'a [u8],
     ) -> futures_util::future::BoxFuture<'a, (u16, serde_json::Value)>;
+
+    /// Whether this computer is renewing its push keys with its identity
+    /// key, and is not done yet: the [`push_key_route`]s are refused
+    /// meanwhile ([`PUSH_RENEWING`]).
+    fn push_renewing(&self) -> bool {
+        false
+    }
+}
+
+/// The error code a [`push_key_route`] is refused with (503) while this
+/// computer renews its push keys with its identity key.
+pub const PUSH_RENEWING: &str = "push_renewing";
+
+/// Whether `method path` hands out this computer's push key or takes a
+/// subscription made against it: `GET /api/push/vapid`, `POST
+/// /api/push/subscriptions` (judged as sent and percent-decoded). Once this
+/// computer took a renewed identity key, its push keys follow it, in the
+/// background, and every subscription is forgotten: until that is done, the
+/// key such a route would hand out is the one about to be replaced — a page
+/// would keep it as current, and miss every notification from then on — and a
+/// subscription it took would be forgotten with the others. So they are
+/// refused meanwhile (503 [`PUSH_RENEWING`]), and the page asks again.
+pub fn push_key_route(method: &str, path: &str) -> bool {
+    let method = method.to_ascii_uppercase();
+    let method = if method == "HEAD" { "GET" } else { method.as_str() };
+    let route = path.split(['?', '#']).next().unwrap_or_default();
+    [route.to_string(), decoded_by_segment(route)]
+        .iter()
+        .any(|r| matches!((method, r.as_str()), ("GET", "/api/push/vapid") | ("POST", "/api/push/subscriptions")))
+}
+
+/// The answer to a [`push_key_route`] while the push keys are renewed.
+fn push_renewing_answer() -> (u16, serde_json::Value) {
+    (
+        503,
+        serde_json::json!({
+            "error": PUSH_RENEWING,
+            "message": "this computer is renewing its push keys with its identity key: ask again in a moment",
+        }),
+    )
 }
 
 /// `%XX` escapes decoded (anything malformed left as it is).
@@ -711,6 +751,10 @@ async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loo
     let Some(stream) = still_served(stream, &head, device, local).await else {
         return;
     };
+    if push_key_route(&head.method, &head.path) && local.push_renewing() {
+        tracing::info!(%device, method = %head.method, "asked for the push key while it is renewed: to ask again");
+        return answer(stream, push_renewing_answer()).await;
+    }
     let Ok(method) = reqwest::Method::from_bytes(head.method.as_bytes()) else {
         return stream.close(CLOSE_BAD_REQUEST);
     };
@@ -865,6 +909,32 @@ mod tests {
         view: View::Stale,
         controls: true,
     };
+
+    /// The routes held back while the push keys are renewed: the key and a
+    /// subscription against it, however they are written — not forgetting a
+    /// subscription, nor anything else.
+    #[test]
+    fn the_push_key_routes_are_known_however_they_are_written() {
+        for (method, path) in [
+            ("GET", "/api/push/vapid"),
+            ("get", "/api/push/vapid?x=1"),
+            ("HEAD", "/api/push/vapid"),
+            ("GET", "/api/push/%76apid"),
+            ("POST", "/api/push/subscriptions"),
+            ("POST", "/api/push/sub%73criptions#x"),
+        ] {
+            assert!(push_key_route(method, path), "{method} {path}");
+        }
+        for (method, path) in [
+            ("DELETE", "/api/push/subscriptions"),
+            ("POST", "/api/push/vapid"),
+            ("GET", "/api/push/vapid/x"),
+            ("GET", "/api/prefs"),
+            ("POST", "/rh/rotate"),
+        ] {
+            assert!(!push_key_route(method, path), "{method} {path}");
+        }
+    }
 
     /// Checklist item 12: a device that is not an admin reaches every route
     /// that *uses* the computer, and none that changes who signs in, what
