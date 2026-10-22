@@ -252,16 +252,66 @@ function useConceptWords(): Record<ConceptId, { name: string; says: string }> {
     },
     client: {
       name: t("Your browsers and phones"),
-      says: t("Where you watch and control from: droppen.app or the local web app. Each one you pair now is a full device: it holds the user key and signs the account's chain entries."),
+      says: t("Where you watch and control from: droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries."),
     },
   };
 }
 
 const conceptDescId = (concept: ConceptId) => `fx-c-${concept}`;
 
+/**
+ * A part of the page (a section) in which the two words are one tab stop
+ * each: the first mention of each is reached with Tab, and the arrow keys
+ * move from mention to mention inside the part.
+ */
+interface MentionPart {
+  first: Map<ConceptId, string>;
+}
+
+const MentionContext = createContext<MentionPart | null>(null);
+
+export function MentionScope({ children }: { children: ReactNode }) {
+  const [part] = useState<MentionPart>(() => ({ first: new Map() }));
+  return (
+    <MentionContext.Provider value={part}>
+      <div
+        className="contents"
+        onKeyDown={(e) => {
+          const target = e.target as HTMLElement;
+          if (!target.dataset.concept) return;
+          const mentions = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-concept]")];
+          const at = mentions.indexOf(target);
+          const next =
+            e.key === "ArrowRight" || e.key === "ArrowDown"
+              ? mentions[at + 1]
+              : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                ? mentions[at - 1]
+                : e.key === "Home"
+                  ? mentions[0]
+                  : e.key === "End"
+                    ? mentions[mentions.length - 1]
+                    : undefined;
+          if (!next) return;
+          e.preventDefault();
+          next.focus();
+        }}
+      >
+        {children}
+      </div>
+    </MentionContext.Provider>
+  );
+}
+
 function Concept({ id, children }: { id: ConceptId; children: string }) {
   const store = useStore();
   const occ = `c:${id}:${useId()}`;
+  const part = useContext(MentionContext);
+  // The first mention of the word in its part is the tab stop (decided once, in render order: the same on the server).
+  const [stop] = useState(() => {
+    if (!part) return true;
+    if (!part.first.has(id)) part.first.set(id, occ);
+    return part.first.get(id) === occ;
+  });
   const snapshot = useSyncExternalStore(
     store.subscribe,
     () => `${store.conceptLit(id) ? 1 : 0}|${store.pin === occ ? 1 : 0}`,
@@ -271,7 +321,7 @@ function Concept({ id, children }: { id: ConceptId; children: string }) {
   return (
     <span
       role="button"
-      tabIndex={0}
+      tabIndex={stop ? 0 : -1}
       data-occ={occ}
       data-concept={id}
       data-lit={lit === "1" ? "same" : undefined}

@@ -1939,10 +1939,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "droppen プログラムかデスクトップアプリが動くデバイス。AI のセッションはそこで動き、そのコマンドもそこで実行されます。",
   ],
   [
-    "Its identity key, and its content keys, which encrypt its offline copies.",
-    "它的身份密钥，以及加密它离线副本的内容密钥。",
-    "它的身分金鑰，以及加密它離線副本的內容金鑰。",
-    "自分の ID 鍵と、オフラインコピーを暗号化するコンテンツ鍵。",
+    "Its identity key and its content keys. With local aggregation (on by default), also the content keys of the other devices that run AI whose accept list lets it in.",
+    "它的身份密钥和内容密钥。开着本地聚合时（默认开），还有接受名单放它进来的其它可运行 AI 的设备的内容密钥。",
+    "它的身分金鑰和內容金鑰。開著本地聚合時（預設開啟），還有接受名單放它進來的其他可執行 AI 的裝置的內容金鑰。",
+    "自分の ID 鍵とコンテンツ鍵。ローカル集約が有効なとき（既定で有効）は、受け入れリストで自分を入れているほかの AI を実行できるデバイスのコンテンツ鍵も。",
   ],
   [
     "Be controlled by your full devices, and by another device only if its accept list allows it. It is never a full device: it signs no chain entry and holds no user key.",
@@ -1951,10 +1951,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "あなたのフルデバイスから操作されます。ほかのデバイスからは、受け入れリストが許すときだけ。フルデバイスになることはなく、チェーンのエントリに署名せず、ユーザー鍵も持ちません。",
   ],
   [
-    "Where you watch and control from: droppen.app or the local web app, in a browser or on a phone.",
-    "你查看和操控的地方：浏览器或手机上的 droppen.app 或本地网页版。",
-    "你查看和操控的地方：瀏覽器或手機上的 droppen.app 或本地網頁版。",
-    "見たり操作したりする場所。ブラウザやスマホで開く droppen.app か、ローカルのウェブアプリ。",
+    "Where you watch and control from: droppen.app, in a browser or on a phone. The local web app is different: it shows the view of the device that serves it and holds no keys.",
+    "你查看和操控的地方：浏览器或手机上的 droppen.app。本地网页版不同：它显示的是提供它的那台设备的视图，自己不持有任何钥。",
+    "你查看和操控的地方：瀏覽器或手機上的 droppen.app。本地網頁版不同：它顯示的是提供它的那台裝置的視圖，自己不持有任何金鑰。",
+    "見たり操作したりする場所：ブラウザやスマホで開く droppen.app。ローカルのウェブアプリは別で、それを配信するデバイスの視点を表示し、自分では鍵を持ちません。",
   ],
   [
     "Its device key, and the user key, which opens every content key in the account's keyring.",
@@ -1981,10 +1981,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "droppen プログラムかデスクトップアプリが動くデバイスで、AI のセッションはそこで動きます。自分の ID 鍵とコンテンツ鍵を持ち、フルデバイスになることはありません。",
   ],
   [
-    "Where you watch and control from: droppen.app or the local web app. Each one you pair now is a full device: it holds the user key and signs the account's chain entries.",
-    "你查看和操控的地方：droppen.app 或本地网页版。你现在配对的每一台都是完整设备：它持有用户钥，并签署账户的链条目。",
-    "你查看和操控的地方：droppen.app 或本地網頁版。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
-    "見たり操作したりする場所：droppen.app かローカルのウェブアプリ。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
+    "Where you watch and control from: droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries.",
+    "你查看和操控的地方：浏览器或手机上的 droppen.app。你现在配对的每一台都是完整设备：它持有用户钥，并签署账户的链条目。",
+    "你查看和操控的地方：瀏覽器或手機上的 droppen.app。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
+    "見たり操作したりする場所：ブラウザやスマホで開く droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
 ];
 

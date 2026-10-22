@@ -217,14 +217,15 @@ test("every part of every formula is focusable and described, in every language"
   assert.ok(decode(draw("en")).includes("Made by HKDF-SHA256. Used by AES-256-GCM. Known to: Your device, The other device. Not known to: Droppen Hub, Relay."));
 });
 
-test("a formula's parts stay selectable, so a formula copies whole: no user-select: none rule reaches them", () => {
+test("a formula's parts and the explained words stay selectable, so formulas and paragraphs copy whole: no user-select: none rule reaches them", () => {
   const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const doc = new JSDOM('<span role="button" data-occ="seal:0:0">kek</span><span role="button">x</span><button>y</button>').window.document;
-  const [part, control, button] = [...doc.body.children];
+  const doc = new JSDOM('<span role="button" data-occ="seal:0:0">kek</span><span role="button">x</span><button>y</button><span role="button" data-occ="c:host:r1" data-concept="host">device that runs AI</span>').window.document;
+  const [part, control, button, mention] = [...doc.body.children];
   const none = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /(?:^|;)\s*(?:-webkit-)?user-select:\s*none/.test(m[2]!));
   assert.ok(none.length > 0, "the rule for controls is still there");
   for (const [, selectors] of none) {
     assert.ok(!part!.matches(selectors!.trim()), `${selectors!.trim()} makes a formula part unselectable`);
+    assert.ok(!mention!.matches(selectors!.trim()), `${selectors!.trim()} makes a mention unselectable: a paragraph would copy without it`);
   }
   // The rule still reaches what it is for.
   assert.ok(none.some(([, sel]) => control!.matches(sel!.trim())) && none.some(([, sel]) => button!.matches(sel!.trim())));
@@ -257,9 +258,16 @@ test("the two kinds of device are defined at the top, and every later mention ex
     const wrapped = [...doc.querySelectorAll<HTMLElement>("[data-concept]")];
     const count = (id: string) => wrapped.filter((w) => w.dataset.concept === id).length;
     assert.ok(count("host") >= 40 && count("client") >= 8, `${lng}: ${count("host")} and ${count("client")} mentions`);
+    // One tab stop per word in each section: its first mention there; the arrow keys reach the others.
+    for (const section of doc.querySelectorAll("main section[id]")) {
+      for (const id of ["host", "client"]) {
+        const here = [...section.querySelectorAll(`[data-concept="${id}"]`)];
+        if (here.length === 0) continue;
+        assert.deepEqual(here.map((w) => w.getAttribute("tabindex")), ["0", ...here.slice(1).map(() => "-1")], `${lng}: #${section.id} ${id}`);
+      }
+    }
     for (const w of wrapped) {
       assert.equal(w.getAttribute("role"), "button");
-      assert.equal(w.getAttribute("tabindex"), "0");
       assert.ok(w.textContent!.match(new RegExp(CONCEPT_WORDS)), w.textContent!);
       const described = doc.getElementById(w.getAttribute("aria-describedby")!);
       assert.ok(described && described.textContent!.length > 20, `${lng}: described`);

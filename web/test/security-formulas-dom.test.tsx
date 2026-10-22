@@ -250,7 +250,13 @@ test("a mention of a device that runs AI explains itself: every mention lights, 
   await key(mention, "Escape");
   assert.equal(mention.getAttribute("aria-pressed"), "false");
   assert.equal(cards().length, 0);
-  await blur(mention);
+  // The arrow keys move to the next mention in the section, whichever word.
+  const inOverview = [...container.querySelectorAll<HTMLElement>("#overview [data-concept]")];
+  await focus(inOverview[0]!);
+  await key(inOverview[0]!, "ArrowRight");
+  assert.equal(document.activeElement, inOverview[1]);
+  await key(inOverview[1]!, "Escape");
+  await blur(inOverview[1]!);
   assert.ok(document.getElementById("fx-c-host")!.textContent!.startsWith("A device that runs AI: "));
 });
 
