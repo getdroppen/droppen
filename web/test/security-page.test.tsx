@@ -12,8 +12,10 @@
 // approves by pairing), and the page says
 // where the source is; it says plainly that
 // a modified page can do anything the browser can, keys included; the
-// cross-references are links to anchors that exist; vulnerabilities go to the
-// security address; it names no Hub setting.
+// cross-references are links to anchors that exist; its enumerations are
+// lists and its key terms bold, by a markup that leaves nothing unrendered,
+// with every translation in its English line's shape; vulnerabilities go to
+// the security address; it names no Hub setting.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -27,7 +29,7 @@ import LandingPage from "../src/features/landing/landing.js";
 import PricingPage from "../src/features/landing/pricing.js";
 import PrivacyPage from "../src/features/landing/privacy.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, publicPage, SECURITY_PATH } from "../src/features/landing/route.js";
-import SecurityPage, { RENEWAL_PARTS, SECURITY_EMAIL, SECURITY_SECTIONS, SECURITY_UPDATED } from "../src/features/landing/security/security.js";
+import SecurityPage, { linked, RENEWAL_PARTS, SECURITY_EMAIL, SECURITY_SECTIONS, SECURITY_UPDATED } from "../src/features/landing/security/security.js";
 import { securityBundles } from "../src/features/landing/security/security-copy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
@@ -58,8 +60,10 @@ function render(element: React.ReactElement, lng: string): string {
 }
 const draw = (lng: string, signedIn = false) => render(<SecurityPage signedIn={signedIn} />, lng);
 
+// A key term's `<strong>` sits inside its sentence: no space for it.
 const text = (html: string) =>
   html
+    .replace(/<\/?strong\b[^>]*>/g, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -199,7 +203,7 @@ test("the web-delivery gap is said plainly: a modified page can do anything the 
   assert.ok(words.includes("Served to you once, do anything this browser can: read all history"));
   assert.ok(words.includes("export this browser's private keys and user keys"));
   // The Hub's own row says it serves the page, and its Cannot list holds only through the protocol.
-  assert.ok(words.includes("serve a modified page to a browser that uses droppen.app"));
+  assert.ok(words.includes("Serve a modified page to a browser that uses droppen.app"));
   assert.ok(words.includes("Through the protocol alone: decrypt content"));
   assert.ok(words.includes("use the local web app that the droppen program serves"));
   // The 7-day control bound and its documented limit.
@@ -227,6 +231,91 @@ test("every cross-reference is a link to an anchor on the page, in every languag
     const targets = [...html.matchAll(/<a href="#([a-z0-9-]+)"/g)].map((m) => m[1]!);
     assert.ok(targets.length > 15, lng);
     for (const id of targets) assert.match(html, new RegExp(`id="${id}"`), `${lng}: #${id}`);
+  }
+});
+
+/** Block elements opened inside phrasing-only ones (a `<ul>` in a `<p>`, a `<p>` in a `<span>`): invalid HTML, which a browser re-parents, so hydration would not match. */
+function misnested(html: string): string[] {
+  const phrasing = new Set(["p", "span", "a", "strong", "em", "code", "label", "button", "h1", "h2", "h3"]);
+  const block = new Set(["div", "p", "ul", "ol", "li", "dl", "dt", "dd", "nav", "section", "main", "header", "footer", "h1", "h2", "h3", "table"]);
+  const open: string[] = [];
+  const bad: string[] = [];
+  for (const [, closing, tag, self] of html.matchAll(/<(\/?)([a-z][a-z0-9-]*)\b[^>]*?(\/?)>/g)) {
+    if (closing) {
+      const at = open.lastIndexOf(tag!);
+      if (at >= 0) open.length = at;
+      continue;
+    }
+    if (self || tag === "br" || tag === "img" || tag === "input" || tag === "hr") continue;
+    if (block.has(tag!)) {
+      const inside = [...open].reverse().find((t) => phrasing.has(t));
+      if (inside) bad.push(`<${tag}> in <${inside}>`);
+    }
+    open.push(tag!);
+  }
+  return bad;
+}
+
+/** A translated line's shape: its lines, list items and key terms. */
+const shape = (line: string) => ({ lines: line.split("\n").length, items: (line.match(/(?:^|\n)- /g) ?? []).length, bold: (line.match(/\*\*/g) ?? []).length / 2 });
+
+test("the markup: key terms bold, a reason after a term muted, list items in a real list after their lead-in", () => {
+  const html = renderToStaticMarkup(<div>{linked("Lead with **a term** and [[a link|t2-6]]:\n- **one** (why, see [[2.6|t2-6]])\n- **二**（理由（内））\n- three\nA closing line.")}</div>);
+  assert.equal(
+    html,
+    '<div><div class="flex flex-col gap-2"><p>Lead with <strong class="font-semibold text-fg">a term</strong> and <a href="#t2-6" class="text-fg underline underline-offset-4 hover:no-underline">a link</a>:</p>' +
+      '<ul class="flex flex-col gap-2">' +
+      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0"><strong class="font-semibold text-fg">one</strong> <span class="font-normal text-muted">(why, see <a href="#t2-6" class="text-fg underline underline-offset-4 hover:no-underline">2.6</a>)</span></span></li>' +
+      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0"><strong class="font-semibold text-fg">二</strong><span class="font-normal text-muted">（理由（内））</span></span></li>' +
+      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0">three</span></li>' +
+      "</ul><p>A closing line.</p></div></div>",
+  );
+  // One line stays inline, and a line with no markup stays as it is.
+  assert.equal(renderToStaticMarkup(<p>{linked("A **term** here.")}</p>), '<p>A <strong class="font-semibold text-fg">term</strong> here.</p>');
+  assert.equal(linked("Plain words (and a parenthesis)."), "Plain words (and a parenthesis).");
+});
+
+test("enumerations render as lists and key terms in bold: the Hub's Cannot cell, in en and zh-CN", () => {
+  const cases = [
+    { lng: "en", lead: "Through the protocol alone:", first: "decrypt content", term: "forge commands", why: " (only devices on the chain are admitted, and the first message asks for nothing)" },
+    { lng: "zh-CN", lead: "仅凭协议本身：", first: "解密内容", term: "伪造命令", why: "（只有链上的设备能被准入，首包不带请求）" },
+  ];
+  for (const { lng, lead, first, term, why } of cases) {
+    const html = draw(lng);
+    const at = html.indexOf(`<p>${lead}</p><ul`);
+    assert.ok(at > 0, `${lng}: the lead-in, then a list`);
+    // The whole of a table cell, which is a block, not a span: its (narrow-screen) head, then the lead-in and the list.
+    assert.match(html.slice(html.lastIndexOf('<div role="cell"', at), at), /^<div role="cell"[^>]*><span[^>]*>[^<]+<\/span><div class="flex flex-col gap-1\.5">$/, lng);
+    const list = html.slice(at, html.indexOf("</ul>", at));
+    assert.equal(list.match(/<li\b/g)?.length, 6, `${lng}: six items`);
+    assert.match(list, new RegExp(`<li[^>]*><span[^>]*></span><span[^>]*><strong[^>]*>${first}</strong></span></li>`), `${lng}: ${first}`);
+    const reason = why.trimStart();
+    assert.ok(list.includes(`>${term}</strong>${why.startsWith(" ") ? " " : ""}<span class="font-normal text-muted">${reason}</span>`), `${lng}: ${term}, its reason muted`);
+  }
+});
+
+test("the markup is all rendered in every language, as valid HTML", () => {
+  for (const lng of ["en", ...LANGS]) {
+    const html = draw(lng);
+    assert.doesNotMatch(html, /\*\*/, `${lng}: an unrendered **`);
+    assert.doesNotMatch(html, /\[\[|\]\]/, `${lng}: an unrendered reference`);
+    assert.doesNotMatch(html, /\n- |>- /, `${lng}: an unrendered list item`);
+    assert.deepEqual(misnested(html), [], `${lng}: a block inside a <p> or a <span>`);
+    // Lists and bold terms are there in this language too.
+    assert.ok((html.match(/<strong\b/g) ?? []).length > 100, `${lng}: key terms`);
+    assert.ok((html.match(/<ul\b/g) ?? []).length > 25, `${lng}: lists`);
+  }
+});
+
+test("every translation has its English line's shape: the same lines, list items and key terms", () => {
+  const keys = pageKeys();
+  assert.ok(keys.filter((k) => k.includes("\n- ") || k.startsWith("- ")).length >= 25);
+  assert.ok(keys.filter((k) => k.includes("**")).length >= 100);
+  for (const lng of LANGS) {
+    for (const key of keys) {
+      const line = securityBundles[lng][key];
+      if (line !== undefined) assert.deepEqual(shape(line), shape(key), `${lng}: ${key.slice(0, 80)}`);
+    }
   }
 });
 
