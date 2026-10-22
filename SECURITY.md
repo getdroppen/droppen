@@ -2,10 +2,10 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately. Until this repository is public, e-mail
-**security@droppen.app**. Once it is public, use GitHub's private
-vulnerability reporting: open this repository's **Security** tab and choose
-**Report a vulnerability**. Only you and the maintainers can see the report.
+Report vulnerabilities privately, with GitHub's private vulnerability
+reporting: open this repository's **Security** tab and choose **Report a
+vulnerability**. Only you and the maintainers can see the report. If you
+cannot use GitHub, e-mail **security@droppen.app**.
 
 Please do not open a public issue, pull request or discussion about a
 vulnerability, and do not disclose it elsewhere until a fix has been released.

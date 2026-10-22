@@ -24,8 +24,8 @@
 # DROPPEN_K8S_NAMESPACE) and Docker to smoke-test the Linux binaries
 # (.github/scripts/smoke-linux.sh).
 #
-# What it does, mirroring .github/workflows/release.yml (which cannot run while
-# GitHub Actions is unavailable to the private repository):
+# What it does, mirroring .github/workflows/release.yml (which builds only the
+# aarch64 macOS tarball, and publishes nothing to getdroppen/releases):
 #
 #   1. exports the ref to a scratch directory under /tmp;
 #   2. builds the web app as the PUBLIC distribution — DROPPEN_DISTRIBUTION is
@@ -567,9 +567,8 @@ ${ROWS}
 | \`THIRD_PARTY_NOTICES\` | the third-party software in the server, with its licences |
 | \`web-manifest.json\` | the embedded web app's files and digest |
 
-Droppen is licensed under AGPL-3.0-only. The source will be published at
-https://github.com/getdroppen/droppen; until then, the source of this release
-is available on request: open an issue in https://github.com/${PUBLIC_REPO}.
+Droppen is licensed under AGPL-3.0-only. The source of this release is
+https://github.com/getdroppen/droppen/tree/${SHA}.
 
 Copyright (C) 2026 Kilerd
 
