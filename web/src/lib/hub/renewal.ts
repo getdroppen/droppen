@@ -135,6 +135,8 @@ interface HostRun {
   error: string | null;
   outcome: "tooOld" | "stuck" | "waiting" | "needsCode" | null;
   waiting: string[];
+  /** For `waiting`: the `/v1/me` read when the hub said so — only a newer one may say the hosts it waits for updated. */
+  waitingSeen?: AccountView | null;
   doneMs: number | null;
 }
 
@@ -473,6 +475,8 @@ export class RenewalRunner {
     const exposed = hostsToRotate(chain);
     const held = edges.filter((e) => edgeHeld(chain, e, { exposed, isolated: (id) => account.isolated(id), flagged: (id) => account.flagged(id) }));
     if (edges.length && held.length === edges.length) return null;
+    // Switched off at the hub, which refuses a new start then: only an end that keeps nothing held.
+    if (held.length && this.view?.enabled === false) return null;
     const byHost = new Map<string, string[]>();
     for (const e of held) byHost.set(e.host, [...(byHost.get(e.host) ?? []), e.id]);
     // Canonical: hosts, and each host's ids, ascending by bytes.
@@ -750,7 +754,9 @@ export class RenewalRunner {
     const { account } = this.opts;
     let chain = account.chain;
     this.note();
-    if (this.stopped || !account.isAdmin || !chain?.isV3 || !this.view?.enabled) return;
+    if (this.stopped || !account.isAdmin || !chain?.isV3 || !this.view) return;
+    // Switched off at the hub: nothing renews, so nothing kept for a renewal stays.
+    if (!this.view.enabled) return this.switchedOff();
     // A renewal the hub committed that this page's chain has not taken yet: the chain first. Marking that host on
     // the old view would set it back to `pending` at the hub and suspend it for nothing.
     if ((this.view.hosts ?? []).some((r) => r.state === "committed" && r.committedSeq !== null && r.committedSeq > chain!.seq)) {
@@ -796,6 +802,7 @@ export class RenewalRunner {
     }
     this.note();
     this.emit();
+    this.retryWaiting(chain);
     const now = this.now();
     const due = [...exposed.keys()].filter((host) => {
       const run = this.runs.get(host);
@@ -817,6 +824,44 @@ export class RenewalRunner {
     if (!next || !(await this.attempt(next, { assurance: ASSURANCE_AUTO }, true))) return;
     // Renewed: what it changed may make the next one due.
     this.again = true;
+  }
+
+  /**
+   * Renewals switched off at the hub (`enabled: false`), maybe while some were
+   * under way: nothing renews now, so nothing kept for one stays. The marks
+   * are withdrawn — a `pending` host has its keys withheld here (`note`) and
+   * its device role suspended at the hub — and so are attempts nobody will
+   * finish. The open pauses end where nothing they hold must stay held, judged
+   * on the chain alone as ever ({@link restoreGroups}); one that must keep some
+   * held would need a new start, which the hub refuses while off: it stays,
+   * and its rows say why.
+   */
+  private async switchedOff(): Promise<void> {
+    for (const row of [...(this.view?.hosts ?? [])]) {
+      if (this.running !== row.host && (row.state === "pending" || this.abandoned(row))) await this.withdraw(row);
+    }
+    await this.restoreGroups();
+    this.note();
+    this.emit();
+  }
+
+  /**
+   * A host the hub would not renew while other hosts ran a Droppen too old to
+   * follow a renewal (`waiting`) is due again once `/v1/me`, read since, says
+   * each of them declared `rotate/1` (or is no host of the account any more) —
+   * never by the clock alone: every try costs one of the hub's attempts.
+   */
+  private retryWaiting(chain: ChainState): void {
+    const me = this.opts.me?.view;
+    if (!me) return;
+    const updated = (host: string) => !chain.machine(host) || me.machines.some((m) => m.id === host && m.rotates);
+    for (const run of this.runs.values()) {
+      if (run.outcome !== "waiting" || run.waitingSeen === me || !run.waiting.every(updated)) continue;
+      run.outcome = null;
+      run.waiting = [];
+      run.waitingSeen = null;
+      run.nextMs = null;
+    }
   }
 
   /** Wake for the earliest retry that is due later. */
@@ -890,9 +935,11 @@ export class RenewalRunner {
         }
         break;
       case "waiting":
+        // Not its failure: tried again once the hosts it waits for updated (`retryWaiting`).
         run.outcome = "waiting";
         run.waiting = why.hosts ?? [];
-        run.nextMs = this.now() + RENEW_RETRY_MS[1];
+        run.waitingSeen = this.opts.me?.view ?? null;
+        run.nextMs = null;
         return;
       case "renewFirst":
       case "policyUnset":

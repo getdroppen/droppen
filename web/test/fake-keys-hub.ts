@@ -185,6 +185,12 @@ export class FakeKeysHub {
   nowMsOffset = 0;
   /** Answer `GET /v1/rotations` 404 (a hub that withholds what it showed before). */
   rotationsGone = false;
+  /**
+   * The renewal gate's `waiting` (as rh-hub's `check_gate`): while any of these
+   * is a current host, a renewal batch is refused 409 `rotation_not_ready`
+   * `waiting`, naming them (their agents have not declared `rotate/1`).
+   */
+  rotationWaiting = new Set<string>();
 
   /**
    * The host's agent staging a renewal on its hub connection
@@ -265,6 +271,10 @@ export class FakeKeysHub {
     if (notReady) return notReady;
     // As rh-hub (§3.3 提交): a renewal only as staged, its window passed.
     const renewals = decoded.flatMap((e) => (e.draft.action.type === "rotateHostKey" ? [{ seq: e.draft.seq, r: e.draft.action.rotation }] : []));
+    // As rh-hub (`gated`): a pause's start goes only while renewals are on; its end always does.
+    if (!this.rotationEnabled && decoded.some((e) => e.draft.action.type === "renewalPause" && e.draft.action.phase === 0)) return this.renewalNotReady("disabled");
+    const waiting = renewals.length ? [...this.rotationWaiting].filter((h) => this.state?.machine(h)).sort() : [];
+    if (waiting.length) return this.renewalNotReady("waiting", { waiting });
     for (const { r } of renewals) {
       if (!this.rotationEnabled) return this.renewalNotReady("disabled");
       const row = this.rotationRows.get(r.host);
