@@ -127,6 +127,14 @@ pub(crate) fn put_str16(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
 }
 
+/// Append a `u16` count. As with [`put_str16`], callers bound the count
+/// first (every list a decoder takes is far below `u16::MAX`); this never
+/// clamps, so a count can never disagree with the items that follow it.
+pub(crate) fn put_count(out: &mut Vec<u8>, count: usize) {
+    let count = u16::try_from(count).expect("list counts are bounded to fit a u16");
+    out.extend_from_slice(&count.to_be_bytes());
+}
+
 /// RFC 4648 base32, upper case, no padding: what a person types or reads aloud
 /// (enrollment codes, fingerprints). Decoding is case-insensitive.
 pub mod base32 {

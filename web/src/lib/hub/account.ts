@@ -69,6 +69,8 @@ import {
   type Accept,
   type Action,
   ASSURANCE_ON_DEVICE,
+  PAUSE_COMPLETED,
+  PAUSE_START,
   type Attestation,
   base32,
   type Bytes,
@@ -597,7 +599,12 @@ export interface HeldChange {
 export interface ChainAlert {
   seq: number;
   /** `upgrade`: the account's first chain v3 entry (a new user key written as v3: review D4). */
-  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy";
+  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause";
+  /**
+   * `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the
+   * ids it stopped accepting) — for `completed`, only what comes back (empty: none of it).
+   */
+  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[] }[] };
   /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
   by: string | null;
   /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」). */
@@ -1793,6 +1800,17 @@ export class CloudAccount {
           // The account's renewal policy (host identity rotation §3.4 rule 9): a note.
           out.push({ alert: { seq, kind: "renewalPolicy", by, subject: null, on: action.alwaysAssured, atMs, remove: null }, pending: false });
           break;
+        case "renewalPause": {
+          // Control paused over hosts while identity keys are renewed (§3.4 rule 10): a note. An ending marker names no
+          // removals; its start did. "Resumes" names only the control that comes back: never an edge the base has since
+          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds.
+          const phase = action.phase === PAUSE_START ? "start" : action.phase === PAUSE_COMPLETED ? "completed" : "cancelled";
+          const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? []))
+            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id)) : [...r.ids] }))
+            .filter((r) => r.ids.length > 0);
+          out.push({ alert: { seq, kind: "renewalPause", by, subject: null, pause: { phase, removals }, atMs, remove: null }, pending: false });
+          break;
+        }
         case "rotateHostKey": {
           // A note with the new fingerprint (host identity rotation §3.4): the renewal took the host's old key's
           // signature too, so no admin made it alone; the host itself is the one that can tell a renewal it did not stage.

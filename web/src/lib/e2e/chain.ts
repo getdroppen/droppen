@@ -51,7 +51,7 @@
  * Signing happens with non-extractable Ed25519 `CryptoKey`s. `apply` is
  * serialised: two concurrent calls must not both extend the same head.
  */
-import { base32, type Bytes, bytes, concat, copy, DecodeError, equal, Reader, utf8, Writer } from "./bytes";
+import { base32, type Bytes, bytes, concat, copy, DecodeError, equal, fromHex, hex, Reader, utf8, Writer } from "./bytes";
 import { dh, fingerprint, importEd25519Private, importX25519Private, isValidEd25519Key, isValidX25519, LowOrderKeyError, publicFromSecret, sha256 } from "./keys";
 import { Serial } from "./serial";
 import { CHAIN_ATTEST, CHAIN_ENTRY, HOST_ROTATE, PASSKEY_PROOF, RECOVERY_PROOF, ROTATE_ACK, ROTATE_DISPUTE, signLabelled, verifyLabelled } from "./sig";
@@ -434,7 +434,62 @@ export type Action =
   /** Kind 20: a current host renews its identity key (`docs/host-identity-rotation.md` §3.4). */
   | { type: "rotateHostKey"; rotation: HostRotation }
   /** Kind 21: the account's renewal policy (§3.4 rule 9) — while on, every renewal must be confirmed on the device. Byte 0 or 1. */
-  | { type: "setRenewalPolicy"; alwaysAssured: boolean };
+  | { type: "setRenewalPolicy"; alwaysAssured: boolean }
+  /**
+   * Kind 22: control paused over hosts while identity keys are renewed (§3.4 rule 10) — an overlay, not an edit: a start
+   * names, per host, the devices it stops accepting for now; while the pause is open, the host's effective accept is its
+   * `setAccept` base minus those (`mayControl`, so `authorizeControl`; `pausedEdges`); a completion or cancellation lifts
+   * it. A `setAccept` only ever changes the base. The whole entry fits every transport (`MAX_PAUSE_ENTRY_LEN`).
+   */
+  | { type: "renewalPause"; op: Bytes; phase: PausePhase; removals: PauseRemoval[] };
+
+/**
+ * One host and the ids it stops accepting while a renewal pause is open (Rust's `(host, ids)`): never a current admin;
+ * hosts, and each host's ids, in byte order.
+ */
+export interface PauseRemoval {
+  host: string;
+  ids: string[];
+}
+
+/** What a `renewalPause` marker says: `PAUSE_START` (0), `PAUSE_COMPLETED` (1), `PAUSE_CANCELLED` (2); any other byte does not decode. */
+export type PausePhase = 0 | 1 | 2;
+export const PAUSE_START = 0;
+export const PAUSE_COMPLETED = 1;
+export const PAUSE_CANCELLED = 2;
+/** The most hosts one renewal pause may name. */
+export const MAX_PAUSE_HOSTS = 256;
+/** The most edges (host, id) one renewal pause may remove. */
+export const MAX_PAUSE_EDGES = 1024;
+/**
+ * The most bytes a renewal pause entry may take, encoded with its signature (§3.4 rule 10, 大小上限; Rust's
+ * `MAX_PAUSE_ENTRY_LEN`, the same number): what every transport that carries chain entries holds — `MAX_HELLO_ENTRIES`
+ * of them, each behind its u16 length, fit a hello beside the most client info and a reply beside the most server info,
+ * and one fits a `chain` frame. A larger one is refused (`RULES.pauseTooLarge`): a cycle that needs more is split into
+ * several pauses (`encodeEntry(entry).length`, or `encodeDraft(draft).length + 64`, is what counts).
+ */
+export const MAX_PAUSE_ENTRY_LEN = 4000;
+
+/** A renewal pause as the chain has it (Rust's `PauseRecord`). */
+export interface PauseRecord {
+  /** Each host and the ids it stops accepting while the pause is open. */
+  removals: PauseRemoval[];
+  startSeq: number;
+  /** The admin that started it (it stays in force if that admin is later demoted or removed). */
+  signer: string;
+  /** How and where it ended, once it did. */
+  end: { phase: PausePhase; seq: number } | null;
+}
+
+/** A renewal pause still open (Rust's `OpenPause`). */
+export interface OpenPause {
+  op: Bytes;
+  startSeq: number;
+  signer: string;
+  removals: PauseRemoval[];
+}
+
+const copyRemovals = (removals: PauseRemoval[]): PauseRemoval[] => removals.map((r) => ({ host: r.host, ids: [...r.ids] }));
 
 /** `passkey` (v3 only): a passkey slot's `PAK`, for its own pending join and activation. */
 export type Signer = { type: "account" } | { type: "device"; id: string } | { type: "recovery" } | { type: "passkey"; slot: string };
@@ -520,6 +575,24 @@ export const RULES = {
   keyRetired: "a retired identity key never comes back",
   /** `setRenewalPolicy` (§3.4 rule 9): while the account's policy is on, a renewal not confirmed on the device is refused. */
   rotateNeedsAssurance: "the account asks for every renewal to be confirmed on the device",
+  /** `renewalPause` (§3.4 rule 10): a start names an op the chain never used. */
+  pauseOpReused: "a renewal pause starts under an op the chain never used",
+  /** A start names current hosts, at least one and at most `MAX_PAUSE_HOSTS`, each once, in byte order (one list, one encoding). */
+  pauseHosts: "a renewal pause names current hosts, at least one, each once, in byte order",
+  /** A start removes at most `MAX_PAUSE_EDGES` edges in all. */
+  pauseEdges: "a renewal pause removes too many edges",
+  /** A start, encoded with its signature, takes at most `MAX_PAUSE_ENTRY_LEN` bytes, so every transport carries it. */
+  pauseTooLarge: "a renewal pause is too large for every transport to carry",
+  /**
+   * From each host, a start removes devices the chain named, at least one, each once, in byte order — never the host
+   * itself, nor a current admin (D1: an admin's control does not go by any list; pausing it is not needed, and would
+   * escape the exposure check).
+   */
+  pauseIds: "a renewal pause removes, from each host, devices the chain named, at least one, each once, in byte order, never the host itself nor an admin",
+  /** A completion or cancellation ends an open pause, once. */
+  pauseNotOpen: "only an open renewal pause ends, and only once",
+  /** A completion or cancellation names no removals. */
+  pauseEndRemovals: "a renewal pause ends without naming removals",
 } as const;
 
 export class ChainError extends Error {
@@ -556,6 +629,7 @@ const KIND: Record<Action["type"], number> = {
   setAccept: 19,
   rotateHostKey: 20,
   setRenewalPolicy: 21,
+  renewalPause: 22,
 };
 
 /**
@@ -622,6 +696,30 @@ function getRotation(r: Reader): HostRotation {
   return { host, signKey, dhKey, stagedSeq, stagedHead, nonce, assurance, oldSig: r.bytes(64), newSig: r.bytes(64) };
 }
 
+/**
+ * `op 16 | u8 phase (0 start, 1 completed, 2 cancelled) | u16 n | (str16 host | u16 m | str16 id × m) × n`: at most
+ * `MAX_PAUSE_HOSTS` hosts and `MAX_PAUSE_EDGES` ids in all.
+ */
+function getPause(r: Reader): Action {
+  const op = r.bytes(16);
+  const phase = r.u8();
+  if (phase !== PAUSE_START && phase !== PAUSE_COMPLETED && phase !== PAUSE_CANCELLED) throw new DecodeError("invalid renewal pause phase");
+  const n = r.u16();
+  if (n > MAX_PAUSE_HOSTS) throw new DecodeError(`renewal pause hosts too large: ${n} > ${MAX_PAUSE_HOSTS}`);
+  const removals: PauseRemoval[] = [];
+  let edges = 0;
+  for (let i = 0; i < n; i++) {
+    const host = r.str16("device id", MAX_ID_LEN);
+    const m = r.u16();
+    edges += m;
+    if (edges > MAX_PAUSE_EDGES) throw new DecodeError(`renewal pause edges too large: ${edges} > ${MAX_PAUSE_EDGES}`);
+    const ids: string[] = [];
+    for (let j = 0; j < m; j++) ids.push(r.str16("device id", MAX_ID_LEN));
+    removals.push({ host, ids });
+  }
+  return { type: "renewalPause", op, phase, removals };
+}
+
 function getBool(r: Reader, what: string): boolean {
   const b = r.u8();
   if (b === 0) return false;
@@ -646,6 +744,12 @@ function getSlot(r: Reader): PasskeySlot {
   };
 }
 
+/** Whether `items` are strictly ascending by bytes: each once, in the one order a renewal pause's removals take (§3.4 rule 10). */
+function ascending(items: string[]): boolean {
+  for (let i = 1; i < items.length; i++) if (compareUtf8(items[i - 1]!, items[i]!) >= 0) return false;
+  return true;
+}
+
 /** Byte order of two strings' UTF-8 (what Rust's `as_bytes()` comparison is). */
 function compareUtf8(a: string, b: string): number {
   const x = utf8(a);
@@ -659,7 +763,7 @@ function putAccept(w: Writer, from: Accept): void {
   if (from.type === "admins") w.u8(0);
   else if (from.type === "all") w.u8(1);
   else {
-    w.u8(2).u16(Math.min(from.ids.length, 0xffff));
+    w.u8(2).u16(from.ids.length);
     for (const id of from.ids) w.str16(id);
   }
 }
@@ -691,7 +795,7 @@ function sameAccept(a: Accept, b: Accept): boolean {
 function putKeyCommits(w: Writer, user: KeyCommit | null, machines: MachineKeyCommit[]): void {
   if (user) w.u8(1).u32(user.epoch).raw(user.hash);
   else w.u8(0);
-  w.u16(Math.min(machines.length, 0xffff));
+  w.u16(machines.length);
   for (const m of machines) w.str16(m.machine).u32(m.epoch).raw(m.hash);
 }
 
@@ -797,6 +901,14 @@ export function encodeDraft(d: Draft): Bytes {
     case "setRenewalPolicy":
       w.u8(a.alwaysAssured ? 1 : 0);
       break;
+    case "renewalPause":
+      if (a.op.length !== 16) throw new Error("a renewal pause op is 16 bytes");
+      w.raw(a.op).u8(a.phase).u16(a.removals.length);
+      for (const { host, ids } of a.removals) {
+        w.str16(host).u16(ids.length);
+        for (const id of ids) w.str16(id);
+      }
+      break;
   }
   return w.finish();
 }
@@ -900,6 +1012,9 @@ export function decodeEntry(data: Uint8Array): Entry {
         break;
       case "3:21":
         action = { type: "setRenewalPolicy", alwaysAssured: getBool(r, "renewal policy") };
+        break;
+      case "3:22":
+        action = getPause(r);
         break;
       default:
         throw new DecodeError(`unknown chain action ${kind}`);
@@ -1183,6 +1298,8 @@ export class ChainState {
   /** The account's renewal policy (`setRenewalPolicy`), and the entry that last set it. */
   private alwaysAssuredOn = false;
   private renewalPolicySeqValue: number | null = null;
+  /** Every renewal pause the chain started, by op (hex). */
+  private readonly pauses = new Map<string, PauseRecord>();
 
   private constructor(
     readonly account: string,
@@ -1615,6 +1732,31 @@ export class ChainState {
         this.alwaysAssuredOn = a.alwaysAssured;
         this.renewalPolicySeqValue = seq;
         break;
+      case "renewalPause": {
+        // As in Rust (§3.4 rule 10): a current, active admin signs it — a start or an end, not necessarily the one that
+        // started it (checked above; a passkey or the recovery words sign nothing of it).
+        if (signerId === null) throw new Error("unreachable: an admin signs a renewal pause");
+        const op = hex(a.op);
+        if (a.phase === PAUSE_START) {
+          if (this.pauses.has(op)) throw notAllowed(RULES.pauseOpReused);
+          // Canonical: hosts, and each host's ids, strictly ascending by bytes — so each once, and one list has one encoding.
+          if (a.removals.length === 0 || a.removals.length > MAX_PAUSE_HOSTS || !ascending(a.removals.map((r) => r.host)) || a.removals.some((r) => !this.machine(r.host))) {
+            throw notAllowed(RULES.pauseHosts);
+          }
+          if (a.removals.reduce((n, r) => n + r.ids.length, 0) > MAX_PAUSE_EDGES) throw notAllowed(RULES.pauseEdges);
+          if (encodeEntry(entry).length > MAX_PAUSE_ENTRY_LEN) throw notAllowed(RULES.pauseTooLarge);
+          for (const { host, ids } of a.removals) {
+            if (ids.length === 0 || !ascending(ids) || ids.some((id) => id === host || !this.devices.has(id) || this.admin(id) !== undefined)) throw notAllowed(RULES.pauseIds);
+          }
+          this.pauses.set(op, { removals: copyRemovals(a.removals), startSeq: seq, signer: signerId, end: null });
+        } else {
+          const record = this.pauses.get(op);
+          if (!record || record.end !== null) throw notAllowed(RULES.pauseNotOpen);
+          if (a.removals.length !== 0) throw notAllowed(RULES.pauseEndRemovals);
+          record.end = { phase: a.phase, seq };
+        }
+        break;
+      }
     }
     this.hostKeyDueId = hostKeyDue;
     if (d.version === CHAIN_VERSION_3 && this.v3FromSeq === null) this.v3FromSeq = seq;
@@ -1759,6 +1901,7 @@ export class ChainState {
     c.recoverySetBy = this.recoverySetBy;
     c.alwaysAssuredOn = this.alwaysAssuredOn;
     c.renewalPolicySeqValue = this.renewalPolicySeqValue;
+    for (const [op, p] of this.pauses) c.pauses.set(op, { ...p, removals: copyRemovals(p.removals), end: p.end ? { ...p.end } : null });
     c.userKeys.push(...this.userKeys);
     for (const [m, keys] of this.machineKeys) c.machineKeys.set(m, [...keys]);
     for (const [id, d] of this.devices) c.devices.set(id, { ...d, status: { ...d.status }, retired: [...d.retired] });
@@ -1807,6 +1950,37 @@ export class ChainState {
   /** The entry that last set the renewal policy, if any did (Rust's `renewal_policy_seq()`). */
   get renewalPolicySeq(): number | null {
     return this.renewalPolicySeqValue;
+  }
+
+  /** The renewal pauses still open (§3.4 rule 10), oldest first (Rust's `open_pauses()`). */
+  openPauses(): OpenPause[] {
+    const open: OpenPause[] = [];
+    for (const [op, p] of this.pauses) if (p.end === null) open.push({ op: fromHex(op), startSeq: p.startSeq, signer: p.signer, removals: copyRemovals(p.removals) });
+    return open.sort((x, y) => x.startSeq - y.startSeq);
+  }
+
+  /** Any renewal pause the chain started, by op, open or ended (Rust's `pause(op)`). */
+  pause(op: Uint8Array): PauseRecord | undefined {
+    const p = this.pauses.get(hex(op));
+    return p ? { ...p, removals: copyRemovals(p.removals), end: p.end ? { ...p.end } : null } : undefined;
+  }
+
+  /**
+   * The ids host `host` stops accepting while renewal pauses are open (§3.4 rule 10): every open pause's removals for
+   * it, sorted by bytes, once each (Rust's `paused_edges`). `mayControl` refuses them, whatever `baseAccept` says.
+   */
+  pausedEdges(host: string): string[] {
+    const ids = new Set<string>();
+    for (const p of this.pauses.values()) {
+      if (p.end !== null) continue;
+      for (const r of p.removals) if (r.host === host) for (const id of r.ids) ids.add(id);
+    }
+    return [...ids].sort(compareUtf8);
+  }
+
+  /** The accept policy `setAccept` set for `host` — the base a renewal pause overlays, and never edits (Rust's `base_accept`). */
+  baseAccept(host: string): Accept {
+    return this.acceptPolicy(host);
   }
 
   /** How many user key epochs are committed (the next one's number). */
@@ -2005,6 +2179,10 @@ export class ChainState {
     if (!requester) throw new ChainError("unknownDevice", `device ${device} is not a current, active device of this account`);
     const refuse = (reason: string) => new ChainError("notAccepted", `device ${device} may not control ${host}: ${reason}`, { device, host });
     if (!this.machine(host)) throw refuse("not a current host of this account");
+    // As in Rust (§3.4 rule 10): while a renewal pause is open, the host's effective accept is its base minus the
+    // pause's removals. A start never names a current admin (D1); a device made admin while paused stays paused until
+    // the pause ends (a pause only ever narrows).
+    if (this.pausedEdges(host).includes(device)) throw refuse("control is paused while identity keys are renewed");
     if (requester.admin) return;
     const policy = this.accept.get(host);
     if (!policy || policy.type === "admins") throw refuse("the host accepts control only from admin devices");

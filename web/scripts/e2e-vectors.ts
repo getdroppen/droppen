@@ -108,6 +108,13 @@ import {
   importX25519Private,
   rotateAckBody,
   rotateConfirmFor,
+  encodeDraft,
+  MAX_PAUSE_ENTRY_LEN,
+  PAUSE_CANCELLED,
+  PAUSE_COMPLETED,
+  PAUSE_START,
+  type PausePhase,
+  type PauseRemoval,
   rotateDisputeBody,
   rotateSas,
   signHostRotate,
@@ -530,6 +537,23 @@ async function deviceFingerprintText(signKey: Uint8Array, dhKey: Uint8Array): Pr
 }
 
 /** A state as Rust's identity renewal vectors write it: `v3StateJson` and every device's keys, retired keys and last renewal. */
+/** The renewal pauses of a state, as Rust's `pause_state_json` writes them (`hosts`: whose base and paused edges; `pairs`: who may control whom). */
+export function pauseStateJson(state: ChainState, hosts: string[], pairs: [string, string][]) {
+  return {
+    openPauses: state.openPauses().map((p) => ({ op: hex(p.op), startSeq: p.startSeq, signer: p.signer, removals: p.removals.map((r) => ({ host: r.host, ids: r.ids })) })),
+    hosts: hosts.map((h) => ({ host: h, base: acceptJson(state.baseAccept(h)), paused: state.pausedEdges(h) })),
+    control: pairs.map(([device, h]) => {
+      try {
+        state.mayControl(device, h);
+        return { device, host: h, ok: true, error: null };
+      } catch (e) {
+        if (!(e instanceof ChainError)) throw e;
+        return { device, host: h, ok: false, error: e.kind };
+      }
+    }),
+  };
+}
+
 export function rotationStateJson(state: ChainState, hosts: string[]) {
   return {
     ...v3StateJson(state, hosts),
@@ -813,6 +837,122 @@ async function hostRotationVectors() {
     RULES.rotateNeedsAssurance,
   );
   await bad("a renewal policy set by a device that is not an admin", base, async () => ({ type: "setRenewalPolicy", alwaysAssured: true }), "notAllowed", RULES.onlyAdminSigns, plain);
+  // The renewal pause, an overlay (§3.4 rule 10): the other host accepts every device and the host accepts the other and
+  // the plain device (the bases); a second admin joins; a pause removes the other from the host, and the host and the
+  // plain device from the other (never an admin: D1; hosts and ids in byte order); a hand setAccept narrows the other's
+  // base during it; the host renews; the second admin completes the pause; it starts another, is demoted (the pause
+  // stays in force), and the first admin cancels it. Then two pauses overlap on the plain device over the other (the edge
+  // stays paused until both end); while the second is open, the other stops hosting and the plain device is removed;
+  // ending it gives back only what the base still holds.
+  const admin2 = await member("ts-r-admin2", 245);
+  const [opA, opB] = [new Uint8Array(16).fill(0xa1), new Uint8Array(16).fill(0xb2)];
+  const pauseHosts = [other.id, host.id];
+  const pairs: [string, string][] = [
+    [host.id, other.id],
+    [other.id, host.id],
+    [plain.id, other.id],
+    [plain.id, host.id],
+    [admin.id, other.id],
+    [admin.id, host.id],
+  ];
+  const marker = (op: Uint8Array, phase: PausePhase, removals: PauseRemoval[]): Action => ({ type: "renewalPause", op: copy(op), phase, removals });
+  const accept = (hostId: string, from: Accept): Action => ({ type: "setAccept", host: hostId, from });
+  const pause = await (async () => {
+    const st = await ChainState.verify(base, undefined, ChainClock.history());
+    const es = [...base];
+    const steps: { label: string; seq: number; state: ReturnType<typeof pauseStateJson> }[] = [];
+    const step = async (label: string, by: Member, action: Action) => {
+      const entry = await signDraft(st.draft({ type: "device", id: by.id }, action, 3_000 + st.seq), by.key);
+      await st.apply(entry, ChainClock.history());
+      es.push(entry);
+      steps.push({ label, seq: st.seq, state: pauseStateJson(st, pauseHosts, pairs) });
+    };
+    await step("acceptAll", admin, accept(other.id, { type: "all" }));
+    await step("acceptHost", admin, accept(host.id, { type: "devices", ids: [other.id, plain.id] }));
+    await step("addAdmin", admin, { type: "addDevice3", device: v3(admin2, false, true) });
+    await step("pauseStart", admin, marker(opA, PAUSE_START, [{ host: host.id, ids: [other.id] }, { host: other.id, ids: [host.id, plain.id] }]));
+    await step("handOther", admin, accept(other.id, { type: "devices", ids: [plain.id] }));
+    await step("handOtherKey", admin, await mk(other.id, st.machineKeyEpochs(other.id)));
+    await step("renew", admin, { type: "rotateHostKey", rotation: await renewal(st, host.id, host.key, renewed[0], st.seq, nonce(0x61), ASSURANCE_AUTO) });
+    await step("renewKey", admin, await mk(host.id, st.machineKeyEpochs(host.id)));
+    await step("pauseCompleted", admin2, marker(opA, PAUSE_COMPLETED, []));
+    await step("pause2Start", admin2, marker(opB, PAUSE_START, [{ host: other.id, ids: [plain.id] }]));
+    await step("demoteStarter", admin, { type: "setAdmin", id: admin2.id, admin: false });
+    if (st.pausedEdges(other.id).join() !== plain.id) throw new Error("a demoted starter's pause stays in force");
+    await step("pause2Cancelled", admin, marker(opB, PAUSE_CANCELLED, []));
+    if (st.openPauses().length !== 0 || st.pausedEdges(other.id).length !== 0) throw new Error("the pause chain ends with nothing open");
+    const [opD, opE] = [new Uint8Array(16).fill(0xd1), new Uint8Array(16).fill(0xe2)];
+    await step("overlapStart", admin, marker(opD, PAUSE_START, [{ host: other.id, ids: [plain.id] }]));
+    await step("overlap2Start", admin, marker(opE, PAUSE_START, [{ host: host.id, ids: [other.id, plain.id] }, { host: other.id, ids: [plain.id] }]));
+    await step("overlapCompleted", admin, marker(opD, PAUSE_COMPLETED, []));
+    if (st.pausedEdges(other.id).join() !== plain.id) throw new Error("still paused by the other pause");
+    await step("pausedHostStops", admin, { type: "setHost", id: other.id, host: false });
+    await step("pausedDeviceRemoved", admin, { type: "removeDevice3", id: plain.id });
+    await step("overlap2Completed", admin, marker(opE, PAUSE_COMPLETED, []));
+    if (st.openPauses().length !== 0 || st.pausedEdges(host.id).length !== 0) throw new Error("nothing open at the end");
+    st.mayControl(other.id, host.id);
+    return { entries: es, steps };
+  })();
+  const pauseSeq = (label: string) => pause.steps.find((s) => s.label === label)!.seq;
+  const pauseUpto = (label: string) => pause.entries.slice(0, pauseSeq(label) + 1);
+  const withEntry = async (chain: Entry[], signer: Signer, key: CryptoKey, action: Action): Promise<Entry[]> => {
+    const st = await ChainState.verify(chain, undefined, ChainClock.history());
+    const entry = await signDraft(st.draft(signer, action, 3_000 + st.seq), key);
+    await st.apply(entry, ChainClock.history());
+    return [...chain, entry];
+  };
+  const pendingChain = await withEntry(base, { type: "recovery" }, rk.signing, { type: "recoveryJoin3", device: v3({ ...back, id: "ts-r-pending" }, false, true) });
+  const removedChain = await withEntry(base, byAdmin, admin.key, { type: "removeDevice3", id: other.id });
+  const opC = new Uint8Array(16).fill(0xc1);
+  const one = (hostId: string, ids: string[]): PauseRemoval[] => [{ host: hostId, ids }];
+  for (const [name, chain, action, rule] of [
+    ["a renewal pause that starts under a used op", pauseUpto("pauseCompleted"), marker(opA, PAUSE_START, one(other.id, [plain.id])), RULES.pauseOpReused],
+    ["a renewal pause that starts under an open op", pauseUpto("pauseStart"), marker(opA, PAUSE_START, one(other.id, [plain.id])), RULES.pauseOpReused],
+    ["a renewal pause naming a pending device as a host", pendingChain, marker(opC, PAUSE_START, one("ts-r-pending", [other.id])), RULES.pauseHosts],
+    ["a renewal pause naming a removed host", removedChain, marker(opC, PAUSE_START, one(other.id, [plain.id])), RULES.pauseHosts],
+    ["a renewal pause naming a device that does not run AI as a host", base, marker(opC, PAUSE_START, one(plain.id, [other.id])), RULES.pauseHosts],
+    ["a renewal pause naming a host twice", base, marker(opC, PAUSE_START, [...one(other.id, [plain.id]), ...one(other.id, [host.id])]), RULES.pauseHosts],
+    ["a renewal pause with no removals", base, marker(opC, PAUSE_START, []), RULES.pauseHosts],
+    ["a renewal pause removing nothing from a host", base, marker(opC, PAUSE_START, one(other.id, [])), RULES.pauseIds],
+    ["a renewal pause removing a host from itself", base, marker(opC, PAUSE_START, one(other.id, [other.id])), RULES.pauseIds],
+    ["a renewal pause removing an unknown device", base, marker(opC, PAUSE_START, one(other.id, ["ts-nobody"])), RULES.pauseIds],
+    ["a renewal pause removing a device twice", base, marker(opC, PAUSE_START, one(other.id, [plain.id, plain.id])), RULES.pauseIds],
+    ["a renewal pause removing an admin", base, marker(opC, PAUSE_START, one(other.id, [admin.id])), RULES.pauseIds],
+    ["a renewal pause naming its hosts out of byte order", base, marker(opC, PAUSE_START, [...one(other.id, [plain.id]), ...one(host.id, [plain.id])]), RULES.pauseHosts],
+    ["a renewal pause removing ids out of byte order", base, marker(opC, PAUSE_START, one(other.id, [plain.id, host.id])), RULES.pauseIds],
+    ["a renewal pause that ends an unknown op", base, marker(new Uint8Array(16).fill(0xcc), PAUSE_CANCELLED, []), RULES.pauseNotOpen],
+    ["a renewal pause that ends twice", pauseUpto("pauseCompleted"), marker(opA, PAUSE_COMPLETED, []), RULES.pauseNotOpen],
+    ["a renewal pause that ends naming removals", pauseUpto("pauseStart"), marker(opA, PAUSE_COMPLETED, one(host.id, [other.id])), RULES.pauseEndRemovals],
+  ] as [string, Entry[], Action, string][]) {
+    await bad(name, chain, async () => action, "notAllowed", rule);
+  }
+  const startC = () => marker(opC, PAUSE_START, one(other.id, [plain.id]));
+  await bad("a renewal pause by a device that is not an admin", base, async () => startC(), "notAllowed", RULES.onlyAdminSigns, plain);
+  {
+    const qSeed = await seed(266);
+    const q = await importEd25519Private(qSeed);
+    const qPublic = await publicFromSecret("Ed25519", qSeed);
+    const [qCred, qSalt] = [await seed(267), await seed(268)];
+    const qSlot: PasskeySlot = { slot: "p-tsq", key: qPublic, proof: await passkeySlotProof(q, qPublic, account, akPublic, "p-tsq", qCred, qSalt), credHash: qCred, saltNonce: qSalt, grants: 0, selfActivate: true };
+    const slotted = await withEntry(base, byAdmin, admin.key, { type: "passkeySlotSet", slot: qSlot });
+    const byQ = await signDraft((await ChainState.verify(slotted, undefined, ChainClock.history())).draft({ type: "passkey", slot: "p-tsq" }, startC(), 3_000 + slotted.length - 1), q);
+    await refuse("a renewal pause signed by a passkey slot", slotted, byQ, "notAllowed", "a passkey slot signs only its own joins and activations");
+    const byRecovery = await signDraft((await ChainState.verify(base, undefined, ChainClock.history())).draft({ type: "recovery" }, startC(), 3_000 + base.length - 1), rk.signing);
+    await refuse("a renewal pause signed by the recovery key", base, byRecovery, "notAllowed", "the recovery key signs only recovery entries");
+  }
+  // The size bound (大小上限): one byte past it is refused for that alone; at it, the ids' own rule speaks (they name no
+  // devices).
+  const sized = (len: number) => async (st: ChainState): Promise<Action> => {
+    const length = (ids: string[]) => encodeDraft(st.draft(byAdmin, marker(opC, PAUSE_START, one(other.id, ids)), 0)).length + 64;
+    const ids: string[] = [];
+    while (length(ids) + 2 * 66 <= len) ids.push(`x${String(ids.length).padStart(63, "0")}`);
+    const rest = len - length(ids) - 4;
+    ids.push("y".repeat(Math.floor(rest / 2)), "z".repeat(rest - Math.floor(rest / 2)));
+    if (length(ids) !== len) throw new Error(`sized ${length(ids)}, not ${len}`);
+    return marker(opC, PAUSE_START, one(other.id, ids));
+  };
+  await bad("a renewal pause one byte too large for every transport", base, sized(MAX_PAUSE_ENTRY_LEN + 1), "notAllowed", RULES.pauseTooLarge);
+  await bad("a renewal pause of the largest size, removing no devices", base, sized(MAX_PAUSE_ENTRY_LEN), "notAllowed", RULES.pauseIds);
   // Bytes that do not decode: an assurance other than 0 or 1, kind 20 in a v2 entry.
   const rotateBytes = encodeEntry(entries[rotate]!);
   for (const [name, at, value] of [
@@ -828,6 +968,41 @@ async function hostRotationVectors() {
       if (!(e instanceof ChainError) || e.kind !== "decode") throw new Error(`${name}: ${e}`);
     }
     invalid.push({ name, entries: [...entries.slice(0, rotate).map((e) => hex(encodeEntry(e))), hex(b)], error: "decode", rule: null });
+  }
+  // Kind 22 with a phase other than 0, 1 or 2, under version 2, naming more than 256 hosts or removing more than 1024
+  // edges: none decodes.
+  const pauseBytes: [string, Bytes, Entry[]][] = [];
+  {
+    const completedBytes = encodeEntry(pause.entries[pauseSeq("pauseCompleted")]!);
+    const phaseAt = completedBytes.length - 64 - 2 - 1;
+    if (completedBytes[phaseAt - 17] !== 22 || completedBytes[phaseAt] !== 1) throw new Error("kind 22, op, then the phase");
+    const before = pause.entries.slice(0, pauseSeq("pauseCompleted"));
+    for (const [name, at, value] of [
+      ["a renewal pause with an unknown phase", phaseAt, 3],
+      ["a renewal pause inside a v2 entry", 0, CHAIN_VERSION],
+    ] as [string, number, number][]) {
+      const b = copy(completedBytes);
+      b[at] = value;
+      pauseBytes.push([name, b, before]);
+    }
+    const st = await ChainState.verify(base, undefined, ChainClock.history());
+    const tooMany = Array.from({ length: 257 }, (_, i) => ({ host: `h-${i}`, ids: [plain.id] }));
+    const tooWide = [{ host: other.id, ids: Array.from({ length: 1025 }, (_, i) => `d-${i}`) }];
+    for (const [name, removals] of [
+      ["a renewal pause naming more than 256 hosts", tooMany],
+      ["a renewal pause removing more than 1024 edges", tooWide],
+    ] as [string, PauseRemoval[]][]) {
+      pauseBytes.push([name, encodeEntry(await signDraft(st.draft(byAdmin, marker(opC, PAUSE_START, removals), 3_000 + st.seq), admin.key)), base]);
+    }
+  }
+  for (const [name, b, before] of pauseBytes) {
+    try {
+      decodeEntry(b);
+      throw new Error(`${name}: decoded`);
+    } catch (e) {
+      if (!(e instanceof ChainError) || e.kind !== "decode") throw new Error(`${name}: ${e}`);
+    }
+    invalid.push({ name, entries: [...before.map((e) => hex(encodeEntry(e))), hex(b)], error: "decode", rule: null });
   }
   // Kind 21 with a byte other than 0 or 1, and under version 2: neither decodes.
   const policyBytes = encodeEntry(policyOn[policyOn.length - 1]!);
@@ -917,6 +1092,18 @@ async function hostRotationVectors() {
     everNamed,
     invalid,
     disputes,
+    pause: {
+      entries: pause.entries.map((e) => hex(encodeEntry(e))),
+      steps: pause.steps,
+      hosts: pauseHosts,
+      pairs,
+      maxEntryLen: MAX_PAUSE_ENTRY_LEN,
+      encoding: {
+        start: hex(encodeEntry(pause.entries[pauseSeq("pauseStart")]!)),
+        completed: hex(encodeEntry(pause.entries[pauseSeq("pauseCompleted")]!)),
+        cancelled: hex(encodeEntry(pause.entries[pauseSeq("pause2Cancelled")]!)),
+      },
+    },
     policy: {
       entries: policy.entries.map((e) => hex(encodeEntry(e))),
       steps: policy.steps,
