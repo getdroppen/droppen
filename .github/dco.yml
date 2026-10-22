@@ -1,0 +1,5 @@
+# The DCO GitHub App (https://github.com/apps/dco): every commit of a pull
+# request needs a Signed-off-by line (CONTRIBUTING.md), except those of the
+# getdroppen organisation's members, who maintain the project.
+require:
+  members: false

@@ -29,9 +29,10 @@ sign-off, is public and kept for good. Read the
 Sign-off is enforced. A required check on every pull request (the DCO GitHub
 App, or an equivalent required status check) fails when any of its commits
 lacks a `Signed-off-by:` line, and a pull request cannot be merged until it
-passes. Pull requests are squash-merged, and the squash commit's message keeps
-the `Signed-off-by:` lines of the commits it combines, so every sign-off stays
-in the history.
+passes. The maintainers, members of the getdroppen organisation, are exempt
+(`.github/dco.yml`). Pull requests are squash-merged, and the squash commit's
+message keeps the `Signed-off-by:` lines of the commits it combines, so every
+sign-off stays in the history.
 
 ## Licence of contributions
 
