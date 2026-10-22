@@ -196,11 +196,13 @@ test("no Ed25519 only: compatibility mode is offered with its risk, and nothing 
   assert.equal(byTestId("unsupported-missing")!.textContent, "missing: Ed25519");
   const offer = byTestId("compat-offer");
   assert.ok(offer, "compatibility mode is offered");
-  // What really changes, said as it is: not "could copy them", which code in the page can do natively too (by unsealing them).
-  assert.match(offer.textContent!, /private keys are plain bytes in the page's memory instead of keys the browser holds/);
+  // What really changes, said as it is, ending with the risk — before the agreement is asked for.
   assert.match(offer.textContent!, /not hardened against side channels/);
   assert.match(offer.textContent!, /one more library is loaded into the page/);
-  assert.doesNotMatch(offer.textContent!, /copy them/);
+  assert.match(offer.textContent!, /private keys are plain bytes in the page's memory instead of keys the browser holds, so malicious code that gets into the page could copy them\./);
+  const said = offer.textContent!;
+  assert.ok(said.indexOf("could copy them") < said.indexOf("I understand the risk") && said.indexOf("I understand the risk") < said.indexOf("trust this browser"), "the risk, then the agreement");
+  assert.doesNotMatch(said, /not just use them/, "no contrast with native mode that does not hold");
   const trust = byTestId("compat-trust") as HTMLButtonElement;
   assert.equal(trust.disabled, true, "not before “I understand the risk”");
   await click(trust);

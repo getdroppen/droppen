@@ -94,7 +94,7 @@ export function UnsupportedBrowserScreen({
           <div data-testid="compat-offer" className="flex flex-col gap-2 border border-border p-3">
             <p className="text-xs leading-5 text-fg">
               {t(
-                "Or use this browser in compatibility mode: the same encryption, done in JavaScript. What changes: this device's private keys are plain bytes in the page's memory instead of keys the browser holds; the JavaScript curve arithmetic is not hardened against side channels as the browser's own is; and one more library is loaded into the page.",
+                "Or use this browser in compatibility mode: the same encryption, done in JavaScript. What changes: the JavaScript curve arithmetic is not hardened against side channels as the browser's own is; one more library is loaded into the page; and this device's private keys are plain bytes in the page's memory instead of keys the browser holds, so malicious code that gets into the page could copy them.",
               )}
             </p>
             <label className="flex cursor-pointer items-start gap-2">
