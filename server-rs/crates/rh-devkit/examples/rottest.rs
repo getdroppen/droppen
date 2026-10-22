@@ -24,6 +24,7 @@
 //! cargo run -p rh-devkit --example rottest -- rotate A 0      # an automatic renewal, end to end
 //! cargo run -p rh-devkit --example rottest -- rotate A 1 <code-file>   # confirmed on the device: the code it shows, typed into <code-file>
 //! cargo run -p rh-devkit --example rottest -- status | oldkey | asdevice | accept | pause | control | hostkeys | put | redispute | watch …
+//! cargo run -p rh-devkit --example rottest -- remove A B      # at the end: the hosts leave the account (it is kept)
 //! ```
 //!
 //! `rotate` with `ROTTEST_DEVICE_SEED=<the host's machine-key.json>` also signs
@@ -526,6 +527,7 @@ async fn rotate(args: &[String]) -> R<()> {
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let eph = DhKeypair::generate(&mut rand::rngs::OsRng);
     let nonce_hash = hex(&Sha256::digest(nonce));
+    let before = probe_device_role(&st, &host, "before the request", None).await;
     let (s, v) = call(
         &d.hub.http,
         Some(&d.token),
@@ -539,7 +541,7 @@ async fn rotate(args: &[String]) -> R<()> {
         return Err(format!("attempt refused: {s}"));
     }
     let t_put = now_ms();
-    probe_device_role(&st, &host, "attempt").await;
+    probe_device_role(&st, &host, "attempt", before.as_deref()).await;
     let withdraw = |d: &Device| {
         let (base, token, host) = (d.hub.http.clone(), d.token.clone(), host.clone());
         async move {
@@ -669,7 +671,7 @@ async fn rotate(args: &[String]) -> R<()> {
         ready_ms.saturating_sub(staged_row["staged_ms"].as_u64().unwrap_or(0)),
         hub_offset
     );
-    probe_device_role(&st, &host, "staged").await;
+    probe_device_role(&st, &host, "staged", before.as_deref()).await;
     let mk = rh_devkit::random_key();
     let epoch = chain.machine_key_epochs(&host);
     let batch = |rot: &HostRotation| {
@@ -793,17 +795,26 @@ async fn rotate(args: &[String]) -> R<()> {
 /// With `ROTTEST_DEVICE_SEED`: the host's device role (its own key) asks for
 /// a session and a relay ticket while its renewal is under way — both should
 /// be refused (`rotation_pending`).
-async fn probe_device_role(st: &State, host: &str, when: &str) {
-    let Ok(seed) = std::env::var("ROTTEST_DEVICE_SEED") else { return };
+async fn probe_device_role(st: &State, host: &str, when: &str, before: Option<&str>) -> Option<String> {
+    let seed = std::env::var("ROTTEST_DEVICE_SEED").ok()?;
     let id = match seed_identity(&seed) {
         Ok(id) => id,
-        Err(e) => return log!("device-role probe: {e}"),
+        Err(e) => {
+            log!("device-role probe: {e}");
+            return None;
+        }
     };
-    let Ok(hub) = HubUrl::parse(&st.hub) else { return };
+    let hub = HubUrl::parse(&st.hub).ok()?;
     let who = format!("{} device role ({when})", st.label(host));
-    if let Some(token) = session_signin(&st.hub, &hub, &st.account, host, id.signing_key(), &who).await {
-        ticket(&st.hub, &token, &who).await;
+    let fresh = session_signin(&st.hub, &hub, &st.account, host, id.signing_key(), &who).await;
+    // A session made before the renewal was asked for, used now.
+    if let Some(token) = before {
+        ticket(&st.hub, token, &format!("{who}, with a session from before")).await;
     }
+    if let Some(token) = &fresh {
+        ticket(&st.hub, token, &who).await;
+    }
+    fresh
 }
 
 /// Sign in with a key, raw, on the hub's `/v1/agent`; then one `chain_sub`.
@@ -976,6 +987,26 @@ async fn oldkey(args: &[String]) -> R<()> {
         )
         .await;
     }
+    Ok(())
+}
+
+/// A host's device role on a relay with a ticket saved by `asdevice`, signed with `seed`.
+async fn relaylogin(args: &[String]) -> R<()> {
+    let [label, seed, ticket_file] = args else { return Err("relaylogin <host> <seed-file> <ticket-file>".into()) };
+    let st = load()?;
+    let host = st.host(label);
+    let id = seed_identity(seed)?;
+    let t: Value = serde_json::from_str(&std::fs::read_to_string(ticket_file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    relay_signin(
+        t["origin"].as_str().unwrap_or(""),
+        t["ticket"].as_str().unwrap_or(""),
+        &st.account,
+        &host,
+        id.signing_key(),
+        LoginRole::RelayDevice,
+        &format!("{label} device role on relay {} with a ticket saved earlier (key {})", t["relay"], fp(&id.sign_public())),
+    )
+    .await;
     Ok(())
 }
 
@@ -1178,6 +1209,37 @@ async fn redispute(args: &[String]) -> R<()> {
     Ok(())
 }
 
+/// Remove hosts from the account (the end of a run: the free plan holds
+/// three, and an account kept for later runs should not keep dead ones).
+async fn remove(args: &[String]) -> R<()> {
+    if args.is_empty() {
+        return Err("remove <host>...".into());
+    }
+    let mut st = load()?;
+    let mut d = device(&st).await?;
+    let ids: Vec<String> = args.iter().map(|l| st.host(l)).collect();
+    let others = d.chain().ok_or("no chain")?.hosts().filter(|h| h.is_current_host() && !ids.contains(&h.info.id)).count();
+    if others == 0 {
+        match d.append_batch(ids.iter().map(|id| Action::RemoveDevice3(id.clone())).collect()).await {
+            Ok(seq) => log!("removed {:?} → seq {seq}", args),
+            Err(e) => return Err(format!("remove: {e}")),
+        }
+    } else {
+        for id in &ids {
+            let turned = d.remove3_and_rotate_hosts(id).await?;
+            log!("removed {} (the remaining hosts' machine keys turned over: {:?})", st.label(id), turned.iter().map(|(h, e, _)| (st.label(h), *e)).collect::<Vec<_>>());
+            for (h, e, k) in turned {
+                st.mks.entry(h).or_default().insert(e, hex(&k));
+            }
+        }
+    }
+    for id in &ids {
+        st.labels.retain(|_, v| v != id);
+        st.mks.remove(id);
+    }
+    save(&st)
+}
+
 async fn tickets_cmd(_: &[String]) -> R<()> {
     let st = load()?;
     let d = device(&st).await?;
@@ -1231,6 +1293,8 @@ async fn main() {
         "redispute" => redispute(rest).await,
         "tickets" => tickets_cmd(rest).await,
         "channel" => channel_cmd(rest).await,
+        "remove" => remove(rest).await,
+        "relaylogin" => relaylogin(rest).await,
         other => Err(format!("unknown command {other}")),
     };
     if let Err(e) = r {
