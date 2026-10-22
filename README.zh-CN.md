@@ -510,6 +510,26 @@ curl -sS -X POST http://127.0.0.1:8700/api/server/self-upgrade \
 （树里有未提交的改动时加 `-dirty`）。自我更新正是靠这个后缀区分同一个 crate 版本的两次构建，
 所以在没有 `.git` 的源码目录里构建时请自己传 `DROPPEN_BUILD_REV`，否则版本号只有光秃秃的 `0.1.0`。
 
+## 自己运行中继
+
+`droppen-relay` 是一个静态进程：不要数据库，也不写文件（除非用 `DROPPEN_RELAY_STATE_DIR` 指一个卷来存它的钥）。
+在仓库根目录构建镜像、生成钥，放在终结 TLS 的反向代理后面运行：
+
+```sh
+docker build -f server-rs/crates/rh-relay/Dockerfile -t droppen-relay .
+docker run --rm droppen-relay droppen-relay keygen   # 打印 DROPPEN_RELAY_KEY=…（保密）
+docker run -p 8080:8080 \
+  -e DROPPEN_RELAY_HUB=https://<Hub 的源> \
+  -e DROPPEN_RELAY_ORIGIN=wss://<这个中继对外的源> \
+  -e DROPPEN_RELAY_KEY=<上面的钥> \
+  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<Hub 发的一次性令牌，只有第一次启动要> \
+  droppen-relay
+```
+
+所有变量见 [`server-rs/crates/rh-relay/src/config.rs`](server-rs/crates/rh-relay/src/config.rs)，中继与 Hub 之间的协议见
+[`docs/relay-and-plans.md`](docs/relay-and-plans.md)。中继只按自己的 Hub 签发的票配对通道，所以它只服务注册它的那个 Hub
+的账户。droppen.app 只列出它自己运行的中继，暂不接入别人运行的中继。
+
 ## 安全边界
 
 - droppen.app 上的网页由闭源的 Hub 下发。它是 `web/` 的可复现构建，每次发版附带逐文件哈希清单；`node scripts/verify-web.mjs` 检查站点此刻下发的字节是否与之相同。它证明不了有针对性的一次性投递，高保障请用本机界面。见 [`docs/web-integrity.md`](docs/web-integrity.md)。
@@ -544,4 +564,6 @@ Copyright (C) 2026 Kilerd。
 
 公开发布包里附带 `LICENSE` 和 `THIRD_PARTY_NOTICES`（由
 [`scripts/release-public.sh`](scripts/release-public.sh) 用 cargo-about 和
-[`scripts/notices/`](scripts/notices) 生成，许可证白名单见 [`about.toml`](about.toml)）。
+[`scripts/notices/`](scripts/notices) 生成，许可证白名单见 [`about.toml`](about.toml)）。网页的每次构建都在
+`/THIRD_PARTY_NOTICES.txt` 提供其中 npm 包的许可证（droppen.app 上也是），公开页面的页脚有链接
+（[`web/build/third-party-notices.mjs`](web/build/third-party-notices.mjs)）。

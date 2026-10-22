@@ -109,6 +109,32 @@ scripts below do).
 The desktop app (macOS only) is built with `desktop/build.sh`; see
 [desktop/README.md](desktop/README.md).
 
+## Running a relay
+
+`droppen-relay` is one static process: no database and no files (unless
+`DROPPEN_RELAY_STATE_DIR` names a volume to keep its key in). Build its image
+from the repository root, make it a key, and run it behind a TLS-terminating
+proxy:
+
+```sh
+docker build -f server-rs/crates/rh-relay/Dockerfile -t droppen-relay .
+docker run --rm droppen-relay droppen-relay keygen   # prints DROPPEN_RELAY_KEY=… (a secret)
+docker run -p 8080:8080 \
+  -e DROPPEN_RELAY_HUB=https://<the Hub's origin> \
+  -e DROPPEN_RELAY_ORIGIN=wss://<this relay's public origin> \
+  -e DROPPEN_RELAY_KEY=<the key> \
+  -e DROPPEN_RELAY_REGISTRATION_TOKEN=<the Hub's one-time token; first start only> \
+  droppen-relay
+```
+
+Every variable is described in
+[`server-rs/crates/rh-relay/src/config.rs`](server-rs/crates/rh-relay/src/config.rs),
+and the protocol between a relay and its Hub in
+[docs/relay-and-plans.md](docs/relay-and-plans.md) (in Chinese). A relay pairs
+channels only on tickets its Hub signs, so it serves the accounts of the Hub
+that registered it. droppen.app lists only the relays it runs: it does not take
+relays run by others yet.
+
 ## Development
 
 ```sh
@@ -217,4 +243,6 @@ Copyright (C) 2026 Kilerd.
   links.
 
 Releases carry `LICENSE` and `THIRD_PARTY_NOTICES`, which lists the licences of
-every dependency compiled in.
+every dependency compiled in. Every build of the web app serves the licences of
+the npm packages in it at `/THIRD_PARTY_NOTICES.txt` (on droppen.app too),
+linked from the footer of its public pages.
