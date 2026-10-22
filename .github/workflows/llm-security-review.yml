@@ -2,13 +2,15 @@ name: llm-security-review
 
 # An automated, security-focused LLM review of every pull request before it
 # can reach main. Secrets are only used by jobs that run on main and on tags,
-# so what this guards is the way into main: a BLOCK verdict fails this check,
-# and once main requires it, the pull request cannot merge.
+# so what this guards is the way into main: a BLOCK verdict fails this check.
+# It is advisory until main can require it (branch protection: once the
+# repository is public, or on a paid plan).
 #
 # It does not stop a pull request's own workflows from running: on
-# `pull_request`, GitHub runs the workflow files of the pull request itself.
-# Fork pull requests get no secrets, so for them the review cannot run and
-# the check fails closed: a maintainer has to review those by hand.
+# `pull_request`, GitHub runs the workflow files of the pull request itself,
+# so a pull request can also change this one. Fork pull requests do not run
+# workflows while the repository is private; once it is public they get no
+# secrets, so the review cannot run and the check fails.
 #
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true. The job is
 # skipped otherwise. Needs the secrets OPENROUTER_BASE_URL (an
@@ -24,7 +26,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write
 
 concurrency:
   group: llm-security-review-${{ github.event.pull_request.number }}
@@ -91,6 +92,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: The gateway is configured
+        # An empty base URL would send the gateway's key to the default API host.
+        env:
+          BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+        run: |
+          case "$BASE_URL" in
+            https://?*) ;;
+            *) echo "::error::OPENROUTER_BASE_URL must be the gateway's https:// URL"; exit 1 ;;
+          esac
+
       - name: Claude security review
         id: review
         continue-on-error: true
@@ -111,6 +122,13 @@ jobs:
           classify_inline_comments: false
           prompt: ${{ env.REVIEW_PROMPT }}
           claude_args: ${{ env.REVIEW_ARGS }}
+
+      - name: Keep the first attempt's transcript apart
+        # Both attempts write the same file.
+        if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
+        env:
+          FIRST: ${{ steps.review.outputs.execution_file }}
+        run: cp "$FIRST" "$RUNNER_TEMP/claude-execution-output-first.json"
 
       - name: Claude security review (retry after a transient failure)
         id: review_retry
@@ -137,7 +155,7 @@ jobs:
         with:
           name: llm-security-review-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
           path: |
-            ${{ steps.review.outputs.execution_file }}
+            ${{ runner.temp }}/claude-execution-output-first.json
             ${{ steps.review_retry.outputs.execution_file }}
           retention-days: 30
           if-no-files-found: ignore
