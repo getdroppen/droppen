@@ -99,7 +99,17 @@ pub enum Event {
     Attached(String, bool),
     /// Round trips measured: the relays tried, and those that answered.
     Measured(Vec<String>, BTreeMap<String, u32>),
+    /// A relay refused this agent's ticket as revoked (or closed its
+    /// connection 4403): the hub revoked the tickets issued to this machine so
+    /// far, so that one is dropped and a fresh one asked for.
+    Revoked(String),
 }
+
+/// What a relay closes a connection with when the hub revoked the ticket's
+/// holder (`rh_relay::server::CLOSE_REVOKED`).
+const CLOSE_REVOKED: u16 = 4403;
+/// The relay refused this ticket as revoked ([`session`]'s error).
+const REVOKED: &str = "the relay refused the ticket as revoked";
 
 /// The manager's mailbox.
 #[derive(Clone)]
@@ -496,6 +506,18 @@ impl Manager {
                 }
                 self.report();
             }
+            Event::Revoked(id) => {
+                // Never try that ticket again: ask for a fresh one now (at
+                // most every 20 s, else at the next tick) — not only once it
+                // nears expiry, which kept this machine off the relay for
+                // minutes after a revocation.
+                tracing::info!(relay = %id, "a relay refused this machine's ticket as revoked; asking for a fresh one");
+                self.tickets.remove(&id);
+                if let Some(conn) = self.conns.get(&id) {
+                    conn.ticket.send_replace(None);
+                }
+                self.ask_tickets(false);
+            }
             Event::Measured(tried, rtts) => {
                 for id in tried {
                     match rtts.get(&id) {
@@ -694,6 +716,17 @@ async fn run(
                 channels.store(0, Ordering::Relaxed);
                 match result {
                     Ok(()) => tracing::info!(relay = %id, "relay connection closed; reconnecting"),
+                    Err(error) if error == REVOKED => {
+                        // Not with this ticket again: wait for the one the
+                        // manager asks for (it drops this one first).
+                        tracing::info!(relay = %id, "relay connection refused as revoked; waiting for a fresh ticket");
+                        let _ = events.send(Event::Revoked(id.clone()));
+                        tokio::select! {
+                            r = ticket.changed() => if r.is_err() { return },
+                            () = cancel.cancelled() => return,
+                        }
+                        continue;
+                    }
                     Err(error) => tracing::warn!(relay = %id, %error, "relay connection failed; reconnecting"),
                 }
             }
@@ -792,8 +825,15 @@ async fn session(
     ))
     .await
     .map_err(|e| e.to_string())?;
-    let welcome = next_json(&mut source).await?;
+    let welcome = match next_json(&mut source).await {
+        Ok(v) => v,
+        Err(e) if e.starts_with(&format!("the relay closed the connection: {CLOSE_REVOKED} ")) => return Err(REVOKED.into()),
+        Err(e) => return Err(e),
+    };
     if welcome["t"] != "welcome" {
+        if welcome["message"] == "revoked" {
+            return Err(REVOKED.into());
+        }
         return Err(format!("the relay refused the sign-in: {}", welcome["message"]));
     }
     tracing::info!(relay = %id, %origin, "signed in on a relay");
@@ -866,6 +906,9 @@ async fn session(
                     }
                     Message::Close(frame) => {
                         let code = frame.as_ref().map(|f| u16::from(f.code));
+                        if code == Some(CLOSE_REVOKED) {
+                            break Err(REVOKED.into());
+                        }
                         break Err(format!("closed ({code:?})"));
                     }
                     _ => {}
@@ -1138,6 +1181,130 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         addr
+    }
+
+    /// Production (2026-10-23): a relay that refuses this machine's ticket as
+    /// revoked (the hub revoked its tickets) is not asked again with that
+    /// ticket until it nears expiry: the manager hears `Revoked` at once, and
+    /// the connection waits for a fresh ticket, then signs in with it.
+    #[tokio::test]
+    async fn a_ticket_refused_as_revoked_is_not_tried_again() {
+        use axum::extract::ws::{CloseFrame, Message as WsMessage};
+        let logins: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen = logins.clone();
+        let relay = serve(axum::Router::new().route(
+            "/v1/connect",
+            get(move |ws: WebSocketUpgrade| {
+                let seen = seen.clone();
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let challenge = json!({"t": "challenge", "nonce": hex(&[7u8; 32])}).to_string();
+                        let _ = socket.send(WsMessage::Text(challenge.into())).await;
+                        let Some(Ok(WsMessage::Text(login))) = socket.recv().await else { return };
+                        let login: Value = serde_json::from_str(login.as_str()).unwrap();
+                        let ticket = login["ticket"].as_str().unwrap_or_default().to_string();
+                        seen.lock().unwrap().push(ticket.clone());
+                        if ticket == "revoked" {
+                            let error = json!({"t": "error", "code": "denied", "message": "revoked"}).to_string();
+                            let _ = socket.send(WsMessage::Text(error.into())).await;
+                            let close = CloseFrame { code: CLOSE_REVOKED, reason: "revoked".into() };
+                            let _ = socket.send(WsMessage::Close(Some(close))).await;
+                            return;
+                        }
+                        let welcome = json!({"t": "welcome", "relay": "r-1", "id": "m-1", "expires_ms": now_ms() + 600_000}).to_string();
+                        let _ = socket.send(WsMessage::Text(welcome.into())).await;
+                        while let Some(Ok(_)) = socket.recv().await {}
+                    })
+                }
+            }),
+        ))
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::sessions::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms());
+        let identity = rh_proto::identity::MachineIdentity::from_seed(&[5; 32]);
+        let shared = super::super::link::test_shared(
+            &paths,
+            st,
+            identity,
+            super::super::streams::Handle::detached(),
+            super::super::rotation::no_restart(),
+        );
+        let (tickets, rx) = watch::channel(Some(("revoked".to_string(), now_ms() + 600_000)));
+        let (events, mut heard) = mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let target = Target {
+            origin: format!("ws://{relay}"),
+            insecure: true,
+        };
+        tokio::spawn(run(shared, "r-1".into(), target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
+        // Refused once, and not again with that ticket (with backoff alone it
+        // would be tried again within a second or two).
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert_eq!(*logins.lock().unwrap(), vec!["revoked".to_string()], "the revoked ticket tried again");
+        // The manager heard it, to drop the ticket and ask for a fresh one.
+        let mut revoked = Vec::new();
+        while let Ok(event) = heard.try_recv() {
+            if let Event::Revoked(id) = event {
+                revoked.push(id);
+            }
+        }
+        assert_eq!(revoked, vec!["r-1".to_string()]);
+        // The manager drops it, then brings a fresh one: signed in with that.
+        tickets.send_replace(None);
+        tickets.send_replace(Some(("fresh".to_string(), now_ms() + 600_000)));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match heard.recv().await {
+                    Some(Event::Attached(id, true)) if id == "r-1" => break,
+                    Some(_) => continue,
+                    None => panic!("the connection ended"),
+                }
+            }
+        })
+        .await
+        .expect("signed in with the fresh ticket");
+        assert_eq!(*logins.lock().unwrap(), vec!["revoked".to_string(), "fresh".to_string()]);
+        cancel.cancel();
+    }
+
+    /// The manager, told a ticket was refused as revoked, drops it and asks
+    /// the hub for a fresh one at once — though the old one had long to run.
+    #[tokio::test]
+    async fn the_manager_asks_for_a_fresh_ticket_once_one_is_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::sessions::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms());
+        let shared = super::super::link::test_shared(
+            &paths,
+            st,
+            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            super::super::streams::Handle::detached(),
+            super::super::rotation::no_restart(),
+        );
+        let (hub, mut asked) = mpsc::unbounded_channel::<String>();
+        let mut m = Manager {
+            shared,
+            events: mpsc::unbounded_channel().0,
+            wanted: BTreeMap::from([("r-1".to_string(), Wanted { origin: "wss://r-1.relay.example".into() })]),
+            directory: BTreeMap::new(),
+            tickets: HashMap::from([("r-1".to_string(), ("old".to_string(), now_ms() + 14 * 60 * 1000))]),
+            conns: HashMap::new(),
+            hub: Some(hub),
+            attached: BTreeSet::new(),
+            rtts: BTreeMap::new(),
+            reported: None,
+            asked_ms: 0,
+            insecure: false,
+            http: None,
+            measuring: Measuring::default(),
+        };
+        m.ask_tickets(false);
+        assert!(asked.try_recv().is_err(), "a ticket with 14 minutes left is not asked for again");
+        m.on_event(Event::Revoked("r-1".into()));
+        assert!(!m.tickets.contains_key("r-1"), "the revoked ticket is dropped");
+        let request: Value = serde_json::from_str(&asked.try_recv().expect("a fresh ticket asked for")).unwrap();
+        assert_eq!(request, json!({"t": "relay_tickets", "relays": ["r-1"]}));
     }
 
     /// A `/v1/ping` that counts its hits.
