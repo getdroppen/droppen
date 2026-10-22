@@ -29,7 +29,7 @@ import { hex, type KeyStore } from "../src/lib/e2e/index.js";
 import { DeviceKeysUnreadable, forgetDeviceKeys, indexedDbKeyStore, keepStorage, loadDeviceKeys, readDeviceKeys, storeKeepsCryptoKeys } from "../src/lib/e2e/keystore.js";
 import { CloudAccount, KeysUnreadableError } from "../src/lib/hub/account.js";
 import { HostKeyVault, UserKeyVault } from "../src/lib/hub/keyring.js";
-import { browserStorage, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
+import { browserOf, browserSeen, browserStorage, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
 
 const WRAP = "device-keys/wrap";
 const V2 = "device-keys/v2";
@@ -276,14 +276,14 @@ test("a reload that cannot read its keys keeps the device: no new device, no los
   const registered = hub.registeredMs.size;
   store.outage = true;
   await assert.rejects(
-    CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, keyReadRetryMs: QUICK }),
+    CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen: browserSeen(store), keyReadRetryMs: QUICK }),
     (e: unknown) => e instanceof KeysUnreadableError && e.kind === "keysUnreadable" && e.reason === "stored",
   );
   assert.equal(storage.getItem(`rh.hub.device.${a.account}`), a.deviceId, "the device id is kept");
   assert.equal(storage.getItem(`rh.hub.lost.${a.account}`), null, "nothing is said to be lost");
   assert.equal(hub.registeredMs.size, registered, "no new device registered");
   store.outage = false;
-  const reloaded = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, keyReadRetryMs: QUICK });
+  const reloaded = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen: browserSeen(store), keyReadRetryMs: QUICK });
   assert.equal(reloaded.refusal, null, "the hub took its signature");
   assert.equal(reloaded.deviceId, a.deviceId, "the same device");
   assert.equal(reloaded.lostDevice, null);
@@ -297,7 +297,7 @@ test("a reload whose seal key reads back as nothing twice signs in as the same d
   const storage = browserStorage(store);
   const registered = hub.registeredMs.size;
   store.nulls.set(WRAP, 2);
-  const reloaded = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, keyReadRetryMs: QUICK });
+  const reloaded = await CloudAccount.open(hub.api(), { ...a.session }, store, { origin: HUB_ORIGIN, storage, seen: browserSeen(store), keyReadRetryMs: QUICK });
   assert.equal(reloaded.refusal, null);
   assert.equal(reloaded.deviceId, a.deviceId, "the same device");
   assert.equal(reloaded.lostDevice, null, "nothing said to be lost");
@@ -310,7 +310,7 @@ test("choosing to use the browser as a new device registers one and names the de
   const a = await hub.device("tok", store);
   await swapSealKey(store);
   const login = await hub.api().login("someone@example.test", "a password");
-  const b = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, storage: browserStorage(store), keyReadRetryMs: QUICK, replaceUnreadableKeys: true });
+  const b = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, ...browserOf(store), keyReadRetryMs: QUICK, replaceUnreadableKeys: true });
   assert.equal(b.refusal, null);
   assert.notEqual(b.deviceId, a.deviceId, "a new device");
   assert.equal(b.lostDevice, a.deviceId, "and it names the one it replaced");
@@ -332,7 +332,7 @@ test("a sign-in that replaces unreadable keys and then registers afresh never re
   const login = await hub.api().login("someone@example.test", "a password");
   // The person had chosen "use this browser as a new device": the second open (registered afresh) must not replace again.
   await assert.rejects(
-    CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, storage: browserStorage(store), keyReadRetryMs: QUICK, replaceUnreadableKeys: true }),
+    CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, ...browserOf(store), keyReadRetryMs: QUICK, replaceUnreadableKeys: true }),
     (e: unknown) => e instanceof KeysUnreadableError && e.reason === "gone",
   );
   assert.equal(hub.registeredMs.size, registered + 1, "registered afresh once, with the keys it signed with");

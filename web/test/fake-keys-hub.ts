@@ -30,6 +30,7 @@ import {
 import { type AccountStorage, CloudAccount } from "../src/lib/hub/account.js";
 import { HubApi } from "../src/lib/hub/api.js";
 import type { MachineKeyCourier } from "../src/lib/hub/deliver.js";
+import { MemorySeenStore } from "../src/lib/hub/seen-store.js";
 
 /** The hub origin the tests' pages dialled (what device-session signatures name). */
 export const HUB_ORIGIN = "wss://hub.test";
@@ -54,6 +55,23 @@ export function browserStorage(store: KeyStore): AccountStorage & { values: Map<
     storages.set(store, s);
   }
   return s;
+}
+
+/** A browser's seen records (IndexedDB, in memory), one per key store as its `localStorage` is. */
+const seenStores = new WeakMap<KeyStore, MemorySeenStore>();
+
+export function browserSeen(store: KeyStore): MemorySeenStore {
+  let s = seenStores.get(store);
+  if (!s) {
+    s = new MemorySeenStore();
+    seenStores.set(store, s);
+  }
+  return s;
+}
+
+/** What a page of the browser of key store `store` opens the account with: its `localStorage` and its seen records. */
+export function browserOf(store: KeyStore): { storage: AccountStorage; seen: MemorySeenStore } {
+  return { storage: browserStorage(store), seen: browserSeen(store) };
 }
 
 type Who = { kind: "login" } | { kind: "device"; device: string };
@@ -614,7 +632,7 @@ export class FakeKeysHub {
   async device(_login = "tok", store: KeyStore = new MemoryKeyStore()): Promise<CloudAccount> {
     const api = this.api();
     const login = await api.login("someone@example.test", "a password");
-    return CloudAccount.open(api, login, store, { origin: HUB_ORIGIN, storage: browserStorage(store) });
+    return CloudAccount.open(api, login, store, { origin: HUB_ORIGIN, ...browserOf(store) });
   }
 
   /**
@@ -630,7 +648,7 @@ export class FakeKeysHub {
 
   /** The same browser again with its device session kept from before (a reload). */
   async reload(account: CloudAccount): Promise<CloudAccount> {
-    return CloudAccount.open(this.api(), { ...account.session }, account.store, { origin: HUB_ORIGIN, storage: browserStorage(account.store) });
+    return CloudAccount.open(this.api(), { ...account.session }, account.store, { origin: HUB_ORIGIN, ...browserOf(account.store) });
   }
 
   /** Enroll a machine through `account`: the agent's keys, its proof checked, "add machine" signed (`opts`: the hub's say, `writable`). */

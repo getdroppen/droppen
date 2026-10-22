@@ -13,7 +13,7 @@ import test from "node:test";
 import { hex, MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { forgetDeviceKeys, loadDeviceKeys } from "../src/lib/e2e/keystore.js";
 import { CloudAccount } from "../src/lib/hub/account.js";
-import { browserStorage, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
+import { browserOf, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
 
 /** Whether `value` holds a private X25519 `CryptoKey` anywhere inside. */
 function holdsX25519Private(value: unknown, seen = new Set<unknown>()): boolean {
@@ -79,7 +79,7 @@ test("a browser whose device keys are gone registers as a new device and names t
   // The keys go (another account's wipe, a browser that dropped them); the stored device id stays.
   await forgetDeviceKeys(store);
   const login = await hub.api().login("someone@example.test", "a password");
-  const b = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, storage: browserStorage(store), keyReadRetryMs: [0] });
+  const b = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, ...browserOf(store), keyReadRetryMs: [0] });
   assert.equal(b.refusal, null, "not refused: it never signs for the old id with new keys");
   assert.notEqual(b.deviceId, lost, "registered as a new device");
   assert.equal(b.lostDevice, lost, "and says which device it lost");

@@ -14,7 +14,7 @@ import { CloudAccount } from "../src/lib/hub/account.js";
 import type { RegisteredDevice } from "../src/lib/hub/api.js";
 import { type Candidate, candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { IN_USE_MS, retireOffer } from "../src/features/cloud/devices.js";
-import { browserStorage, FakeCourier, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
+import { browserOf, FakeCourier, FakeKeysHub, HUB_ORIGIN } from "./fake-keys-hub.js";
 
 const PHONE = "iPhone · Chrome";
 
@@ -70,7 +70,7 @@ async function lostPhone(before?: (phone: CloudAccount) => Promise<unknown>) {
   // The phone's browser loses its keys; its next sign-in registers a new device.
   await forgetDeviceKeys(store);
   const login = await hub.api().login("someone@example.test", "a password");
-  const fresh = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, storage: browserStorage(store) });
+  const fresh = await CloudAccount.open(hub.api(), login, store, { origin: HUB_ORIGIN, ...browserOf(store) });
   hub.uaLabels.set(phone.deviceId, PHONE);
   hub.uaLabels.set(fresh.deviceId, PHONE);
   await add(computer, fresh);
