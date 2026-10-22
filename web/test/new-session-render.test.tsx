@@ -440,9 +440,10 @@ const ACCOUNT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const accountChip = () => first((n) => n.nodeName === "BUTTON" && n.getAttribute("aria-label") === "account");
 const notice = () => first((n) => n.hasAttribute("data-local-signed-out"));
-/** Wait for the page to show something, rather than for a fixed time: the device answers when it answers. */
+/** Wait for the page to show something, rather than for a fixed time: the device answers when it answers.
+ * Up to 10 s: it returns as soon as the page shows it, and a busy CI runner can take more than 2 s. */
 async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 500; i++) {
     if (check()) return;
     await flush(20);
   }
