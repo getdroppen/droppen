@@ -731,7 +731,21 @@ async fn mix(shim: Arc<Shim>, mut commands: mpsc::UnboundedReceiver<Command>, ou
                     _ => {}
                 },
                 Some(Command::Exit(code)) => {
-                    if attached && !pump(&shim, &mut cursor, &out) {
+                    // A client that has not said hello is owed a hello first,
+                    // and the server's handshake reads nothing else: the exit
+                    // frame in its place fails the handshake, the client hangs
+                    // up, and a shim whose only client has come and gone
+                    // unlinks its socket at once, so every retry finds none.
+                    // That is how a shell that exits as it starts (`true`,
+                    // `echo hi`) lost its terminal to a server that dialled in
+                    // the same instant. Nothing is lost by waiting: the exit
+                    // code was published before this was broadcast, so the
+                    // hello that follows is answered with the backlog and then
+                    // the exit (see the `HELLO` arm).
+                    if !attached {
+                        continue;
+                    }
+                    if !pump(&shim, &mut cursor, &out) {
                         return;
                     }
                     let _ = out.send(Some(Frame::json(proto::EXIT, &Exit { code })));
@@ -1623,6 +1637,39 @@ mod tests {
         assert_eq!(frames[0].payload, b"sk-ant-oat01-last-write");
         assert_eq!(frames[1].parse::<Exit>().expect("an exit frame").code, 0);
         assert_eq!(shim.exit_code.load(Ordering::SeqCst), 0, "and a late client is told the same");
+    }
+
+    /// A shell that exits as it starts, and a server that dials in the same
+    /// instant: the exit is announced to the new client before its hello has
+    /// been read. The client is owed its hello first (the server's handshake
+    /// reads nothing else), then the backlog, then the exit. With the exit sent
+    /// in the hello's place the handshake failed, the shim saw a client come
+    /// and go and unlinked its socket, and the terminal was never created.
+    #[tokio::test]
+    async fn an_exit_announced_before_the_clients_hello_does_not_take_its_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = test_shim(dir.path());
+        assert_eq!(shim.recorder().append(b"scanned\r\n"), Parsed::Screen);
+
+        let (commands, command_rx) = mpsc::unbounded_channel::<Command>();
+        let (frames, mut frame_rx) = mpsc::unbounded_channel::<Option<Frame>>();
+        // Registered the way `serve_client` registers it, before its hello has
+        // been read, so the announcement reaches it first.
+        shim.clients.lock().expect("clients").push(commands.clone());
+        let mut reader = parked_reader();
+        announce_exit(&shim, &mut reader, 7, Duration::from_millis(20)).await;
+        tokio::task::spawn_blocking(move || reader.stop()).await.expect("the reader stops");
+
+        tokio::spawn(mix(shim.clone(), command_rx, frames));
+        commands
+            .send(Command::Frame(Frame::json(proto::HELLO, &Hello { cursor: 0 })))
+            .expect("the mixer is listening");
+
+        let frames = until_half_closed(&mut frame_rx).await;
+        let kinds: Vec<u8> = frames.iter().map(|frame| frame.kind).collect();
+        assert_eq!(kinds, vec![proto::HELLO, proto::OUTPUT, proto::EXIT], "the hello comes first: {frames:?}");
+        assert_eq!(frames[1].payload, b"scanned\r\n");
+        assert_eq!(frames[2].parse::<Exit>().expect("an exit frame").code, 7);
     }
 
     /// And the wait is bounded: a reader that never reaches EOF, because a
