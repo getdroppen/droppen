@@ -114,6 +114,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job's token can write releases; nothing here needs it in .git/config.
+          persist-credentials: false
 
       # The tag names the artifacts; the short sha names the *binary*, via
       # `RH_BUILD_REV`. They are not the same thing and both matter: a release
