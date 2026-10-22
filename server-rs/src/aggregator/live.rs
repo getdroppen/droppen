@@ -57,6 +57,10 @@ pub struct Published {
     /// The machine-key epoch its stream is named under (set when published):
     /// with `seq`, where a page's copy stands.
     pub(super) epoch: u32,
+    /// The host identity key its stream task verifies heads under, when one
+    /// does (Codex review M3): never published, nor delivered, once the host
+    /// renewed it ([`LiveCopies::set_signers`]).
+    pub(super) signer: Option<[u8; 32]>,
 }
 
 impl Published {
@@ -66,7 +70,14 @@ impl Published {
             seq,
             time_ms,
             epoch: 0,
+            signer: None,
         }
+    }
+
+    /// [`Published::new`], for a stream task verifying under `signer`.
+    pub(super) fn signed_by(mut self, signer: [u8; 32]) -> Self {
+        self.signer = Some(signer);
+        self
     }
 }
 
@@ -251,6 +262,22 @@ struct Inner {
     /// Each directory made is numbered, in the order the changes happened
     /// (under this lock): one made earlier never goes out after a later one.
     dir_version: u64,
+    /// Each followed host's identity key now ([`LiveCopies::set_signers`]):
+    /// what a stream task's copy must be verified under to be shown.
+    signers: BTreeMap<String, [u8; 32]>,
+}
+
+/// Whether a copy verified under `signer` (`None`: no task's — read back
+/// from the store) may be shown for `host`: only under the host's identity
+/// key now. A stream task of a host that renewed it since — cancelled, but a
+/// ready frame may have won its race with the cancel — shows nothing, and
+/// neither does one before the copies task said which key that is (Codex
+/// review M3).
+fn signer_holds(inner: &Inner, host: &str, signer: Option<[u8; 32]>) -> bool {
+    match signer {
+        Some(signer) => inner.signers.get(host) == Some(&signer),
+        None => true,
+    }
 }
 
 /// A directory made under the registry's lock, and its place in line.
@@ -496,6 +523,15 @@ impl LiveCopies {
         self.send_dir(dir);
     }
 
+    /// Each followed host's identity key now (Codex review M3): set before
+    /// the stream tasks of a host that renewed it are cancelled, so a task
+    /// verifying under the old key shows nothing from then on — not by its
+    /// own publication, nor by delivering to one published before.
+    pub fn set_signers(&self, keys: &[(String, [u8; 32])]) {
+        let mut inner = self.lock();
+        inner.signers = keys.iter().cloned().collect();
+    }
+
     /// Whether `host` is online (`None`: not known).
     pub fn set_presence(&self, host: &str, online: Option<bool>) {
         let mut inner = self.lock();
@@ -531,6 +567,7 @@ impl LiveCopies {
     /// computer left its account. Every subscriber is told its device is gone.
     pub fn clear(&self) {
         let mut inner = self.lock();
+        inner.signers.clear();
         if inner.hosts.is_empty() && inner.entries.is_empty() && inner.interest.is_empty() {
             return;
         }
@@ -566,7 +603,7 @@ impl LiveCopies {
         let mut published = slot.lock().expect("slot");
         let waiting = {
             let mut inner = self.lock();
-            if !inner.hosts.contains_key(&key.host) {
+            if !inner.hosts.contains_key(&key.host) || !signer_holds(&inner, &key.host, published.signer) {
                 return false;
             }
             let entry = inner.entries.entry(key.clone()).or_default();
@@ -624,6 +661,9 @@ impl LiveCopies {
     pub fn deliver(&self, key: &Key, slot: &Slot, published: &Published, reset: bool, bodies: &[(u16, Vec<u8>)]) {
         let waiting = {
             let mut inner = self.lock();
+            if !signer_holds(&inner, &key.host, published.signer) {
+                return;
+            }
             let Some(entry) = inner.entries.get_mut(key) else { return };
             if !entry.slot.as_ref().is_some_and(|s| Arc::ptr_eq(s, slot)) {
                 return;
@@ -656,8 +696,13 @@ impl LiveCopies {
 
     /// The host has no such stream (yet): its subscribers hear so, and stay.
     pub fn missing(&self, key: &Key) {
+        self.missing_as(key, None);
+    }
+
+    /// [`LiveCopies::missing`], from a stream task verifying under `signer`.
+    pub fn missing_as(&self, key: &Key, signer: Option<[u8; 32]>) {
         let mut inner = self.lock();
-        if !inner.hosts.contains_key(&key.host) {
+        if !inner.hosts.contains_key(&key.host) || !signer_holds(&inner, &key.host, signer) {
             return;
         }
         let entry = inner.entries.entry(key.clone()).or_default();
@@ -670,8 +715,13 @@ impl LiveCopies {
 
     /// A session over the size limit: not kept; its subscribers are told and let go.
     pub fn too_large(&self, key: &Key) {
+        self.too_large_as(key, None);
+    }
+
+    /// [`LiveCopies::too_large`], from a stream task verifying under `signer`.
+    pub fn too_large_as(&self, key: &Key, signer: Option<[u8; 32]>) {
         let mut inner = self.lock();
-        if !inner.hosts.contains_key(&key.host) {
+        if !inner.hosts.contains_key(&key.host) || !signer_holds(&inner, &key.host, signer) {
             return;
         }
         let entry = inner.entries.entry(key.clone()).or_default();
@@ -1087,6 +1137,58 @@ mod tests {
         // The host leaves: its interest with it.
         live.set_hosts(&[]);
         assert!(live.opened().is_empty());
+    }
+
+    /// Codex review M3: once the copies task says a host's identity key is a
+    /// new one, a stream task still verifying under the old key — cancelled,
+    /// but a ready frame won its race with the cancel — shows nothing: it
+    /// publishes nothing, delivers nothing to a copy it published before, and
+    /// says nothing missing or too large. One under the new key does.
+    #[tokio::test]
+    async fn a_copy_verified_under_a_key_its_host_renewed_away_from_is_never_shown() {
+        let live = LiveCopies::new();
+        live.set_hosts(&["m-2".into()]);
+        let (old, new) = ([7; 32], [9; 32]);
+        let key = Key::new("m-2", Kind::Session, "claude/a");
+        let (out, mut rx) = Outbox::new(64, 1 << 30);
+        let _sub = live.subscribe(key.clone(), 1, &out, None, true).unwrap();
+        drain(&mut rx);
+        let feed = |text: &str| {
+            let mut feed = FeedCopy::default();
+            feed.apply(&json!({"fromIndex": 0, "items": [{"text": text}], "endIndex": 1, "fp": "f", "prefixFp": "p"}))
+                .unwrap();
+            Fold::Feed(feed, vec![10])
+        };
+        // Before the copies task said which key: nothing a task verified is shown.
+        let early: Slot = Arc::new(Mutex::new(Published::new(feed("EARLY"), 1, 5).signed_by(old)));
+        assert!(!live.publish(&key, 0, &early));
+        // Under the key now: shown.
+        live.set_signers(&[("m-2".into(), old)]);
+        let mine: Slot = Arc::new(Mutex::new(Published::new(feed("OLD"), 1, 5).signed_by(old)));
+        assert!(live.publish(&key, 0, &mine));
+        assert!(drain(&mut rx).iter().any(|m| m.to_string().contains("OLD")));
+        // The host renewed: the old task's frame that won the race shows nothing.
+        live.set_signers(&[("m-2".into(), new)]);
+        {
+            let held = mine.lock().unwrap();
+            live.deliver(
+                &key,
+                &mine,
+                &held,
+                false,
+                &[(rh_proto::record::FMT_FEED_V1, br#"{"fromIndex":1,"items":[{"text":"LATE"}],"endIndex":2}"#.to_vec())],
+            );
+        }
+        assert!(!live.publish(&key, 0, &Arc::new(Mutex::new(Published::new(feed("STALE"), 2, 6).signed_by(old)))));
+        live.missing_as(&key, Some(old));
+        live.too_large_as(&key, Some(old));
+        assert!(drain(&mut rx).is_empty(), "nothing from the old key's task");
+        // The new key's task: shown.
+        let theirs: Slot = Arc::new(Mutex::new(Published::new(feed("NEW"), 1, 7).signed_by(new)));
+        assert!(live.publish(&key, 0, &theirs));
+        assert!(drain(&mut rx).iter().any(|m| m.to_string().contains("NEW")));
+        // A copy read back from the store (no task's) is as before.
+        assert!(!live.preload(&key, 0, &Arc::new(Mutex::new(Published::new(feed("STORED"), 1, 1)))), "one is shown already");
     }
 
     #[tokio::test]

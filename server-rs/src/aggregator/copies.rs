@@ -203,6 +203,11 @@ pub(super) fn resume_key(host: &Host, head_key: Option<[u8; 32]>) -> [u8; 32] {
     head_key.unwrap_or(host.first_key)
 }
 
+/// Each host's identity key now, for the gateway ([`LiveCopies::set_signers`]).
+fn signers(hosts: &[Host]) -> Vec<(String, [u8; 32])> {
+    hosts.iter().map(|h| (h.id.clone(), h.machine_key)).collect()
+}
+
 /// The hosts this computer may follow: accepting its control (D2), with
 /// keys held — never itself.
 pub(super) fn followed(view: &View, ring: &KeyRing) -> Vec<Host> {
@@ -337,6 +342,10 @@ enum Update {
     Fresh { want: Want, head: SignedHead, at_ms: Option<u64> },
 }
 
+/// What a stream's task sends: the host identity key it verifies heads
+/// under, and the update (Codex review M3).
+type Report = ([u8; 32], Update);
+
 /// Where a stream's task fetches pages: the device session, renewed in place.
 #[derive(Clone)]
 struct PageSource {
@@ -383,7 +392,7 @@ struct Task {
     start: Start,
     link: Arc<Link>,
     pages: PageSource,
-    tx: mpsc::UnboundedSender<Update>,
+    tx: mpsc::UnboundedSender<Report>,
     /// Where the copy is published for the local gateway once caught up.
     live: Arc<LiveCopies>,
 }
@@ -433,7 +442,15 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
     } = task;
     let key = Key::new(&want.host, want.kind, &want.name);
     let (mut follower, fold) = started(&want, machine_key, &retired, &keys, start);
-    let slot: Slot = Arc::new(Mutex::new(Published::new(fold, follower.from_seq(), 0)));
+    // Everything this task tells, and every copy it shows, carries the host
+    // key it verifies under (Codex review M3): once the host renewed it, a
+    // task cancelled for that — but still running a frame that won the race
+    // with the cancel — has nothing taken from it, by the copies task
+    // ([`Live::admits`]) or the gateway ([`LiveCopies::set_signers`]).
+    let send = |update: Update| {
+        let _ = tx.send((machine_key, update));
+    };
+    let slot: Slot = Arc::new(Mutex::new(Published::new(fold, follower.from_seq(), 0).signed_by(machine_key)));
     // Whether the slot is the one the gateway shows (once caught up).
     let mut published = false;
     let (ch, mut rx) = link.reserve();
@@ -449,8 +466,8 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
         return;
     }
     let too_large = || {
-        live.too_large(&key);
-        let _ = tx.send(Update::TooLarge { want: want.clone() });
+        live.too_large_as(&key, Some(machine_key));
+        send(Update::TooLarge { want: want.clone() });
     };
     let emit = |follower: &Follower| -> Result<(), ()> {
         let (state, index) = {
@@ -465,7 +482,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
             too_large();
             return Err(());
         }
-        let _ = tx.send(Update::State(Box::new(Copied {
+        send(Update::State(Box::new(Copied {
             want: want.clone(),
             head: follower.head().cloned(),
             at_ms: follower.freshest_ms(),
@@ -475,7 +492,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
         Ok(())
     };
     let failed = |error: String, unauthorized: bool| {
-        let _ = tx.send(Update::Failed {
+        send(Update::Failed {
             want: want.clone(),
             error,
             unauthorized,
@@ -578,8 +595,8 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
         match step {
             Step::Nothing | Step::Checkpoint(_) => {}
             Step::Missing => {
-                live.missing(&key);
-                let _ = tx.send(Update::Missing { want: want.clone() });
+                live.missing_as(&key, Some(machine_key));
+                send(Update::Missing { want: want.clone() });
             }
             Step::Synced => {
                 dirty = false;
@@ -611,7 +628,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
                     if follower.synced() && !dirty && quiet {
                         if let Some(head) = follower.head().cloned() {
                             last_fresh = Some(tokio::time::Instant::now());
-                            let _ = tx.send(Update::Fresh {
+                            send(Update::Fresh {
                                 want: want.clone(),
                                 head,
                                 at_ms: follower.freshest_ms(),
@@ -856,6 +873,7 @@ impl Copies {
             return IDLE_EVERY;
         };
         self.env.live.set_hosts(&hosts.iter().map(|h| h.id.clone()).collect::<Vec<_>>());
+        self.env.live.set_signers(&signers(&hosts));
         self.unpark_if_moved();
         if let Some(until) = self.quiet_until {
             let now = now_ms();
@@ -1103,8 +1121,8 @@ impl Copies {
             }
             tokio::select! {
                 update = live.rx.recv() => {
-                    let Some(update) = update else { break Ended::Again("closed".into()) };
-                    if let Err(ended) = live.on_update(self, update) {
+                    let Some((signer, update)) = update else { break Ended::Again("closed".into()) };
+                    if let Err(ended) = live.on_update_from(self, Some(signer), update) {
                         break ended;
                     }
                 }
@@ -1167,8 +1185,8 @@ struct Live {
     hosts: Vec<Host>,
     link: Arc<Link>,
     pages: PageSource,
-    tx: mpsc::UnboundedSender<Update>,
-    rx: mpsc::UnboundedReceiver<Update>,
+    tx: mpsc::UnboundedSender<Report>,
+    rx: mpsc::UnboundedReceiver<Report>,
     subs: HashMap<StreamId, Sub>,
     /// Which names exist (from `stream_synced`).
     exists: HashMap<StreamId, bool>,
@@ -1238,9 +1256,16 @@ impl Live {
     }
 
     /// Whether an update about `want` still counts: its stream is followed
-    /// now, as that very want, for a host followed now.
-    fn admits(&self, want: &Want) -> bool {
-        self.subs.get(&want.stream).is_some_and(|s| &s.want == want) && self.host(&want.host).is_some()
+    /// now, as that very want, for a host followed now — and, from a stream
+    /// task (`signer`: the host key it verifies under), under the host's
+    /// identity key now (Codex review M3): a renewal cancels the old tasks and
+    /// follows the same want again, and what the old ones had queued is
+    /// theirs, not the new ones'.
+    fn admits(&self, want: &Want, signer: Option<[u8; 32]>) -> bool {
+        self.subs.get(&want.stream).is_some_and(|s| &s.want == want)
+            && self
+                .host(&want.host)
+                .is_some_and(|h| signer.is_none_or(|k| k == h.machine_key))
     }
 
     /// The chain or the keys changed: the same enrollment carries on with
@@ -1266,6 +1291,9 @@ impl Live {
         self.view = view;
         self.hosts = hosts;
         c.env.live.set_hosts(&self.hosts.iter().map(|h| h.id.clone()).collect::<Vec<_>>());
+        // Before any old task is cancelled: from now on the gateway shows
+        // nothing verified under a key a host renewed away from.
+        c.env.live.set_signers(&signers(&self.hosts));
         // Presence of devices no longer in the account goes.
         let chain = &self.view.chain;
         self.online.retain(|id, _| chain.machine(id).is_some());
@@ -1406,6 +1434,12 @@ impl Live {
     }
 
     fn on_update(&mut self, c: &mut Copies, update: Update) -> Result<(), Ended> {
+        self.on_update_from(c, None, update)
+    }
+
+    /// [`Live::on_update`], from a stream task verifying under `signer`
+    /// (`None`: from no task, as in tests and the store).
+    fn on_update_from(&mut self, c: &mut Copies, signer: Option<[u8; 32]>, update: Update) -> Result<(), Ended> {
         match update {
             Update::State(copied) => {
                 let Copied {
@@ -1415,7 +1449,7 @@ impl Live {
                     state,
                     index,
                 } = *copied;
-                if !self.admits(&want) {
+                if !self.admits(&want, signer) {
                     return Ok(());
                 }
                 self.exists.insert(want.stream, true);
@@ -1440,7 +1474,7 @@ impl Live {
                 );
                 // The host key its stream task verifies heads under: the key
                 // this head is checked with again when the copy carries on.
-                let head_key = self.host(&want.host).map(|h| h.machine_key);
+                let head_key = signer.or_else(|| self.host(&want.host).map(|h| h.machine_key));
                 self.pending.insert(
                     key,
                     Row {
@@ -1458,12 +1492,12 @@ impl Live {
                 );
             }
             Update::Missing { want } => {
-                if self.admits(&want) {
+                if self.admits(&want, signer) {
                     self.exists.insert(want.stream, false);
                 }
             }
             Update::Fresh { want, head, at_ms } => {
-                if !self.admits(&want) {
+                if !self.admits(&want, signer) {
                     return Ok(());
                 }
                 let key = (want.host.clone(), want.kind, want.name.clone());
@@ -1478,7 +1512,7 @@ impl Live {
                 }));
                 // A copy waiting to be written takes the newer head; one
                 // already written gets only its head and time moved.
-                let Some(head_key) = self.host(&want.host).map(|h| h.machine_key) else {
+                let Some(head_key) = signer.or_else(|| self.host(&want.host).map(|h| h.machine_key)) else {
                     return Ok(());
                 };
                 match self.pending.get_mut(&key) {
@@ -1497,7 +1531,7 @@ impl Live {
             Update::TooLarge { want } => {
                 // From a stream still followed for a host still followed only
                 // (a late update must not bring back a purged host's row).
-                if !self.admits(&want) {
+                if !self.admits(&want, signer) {
                     return Ok(());
                 }
                 self.subs.remove(&want.stream);
@@ -1531,6 +1565,11 @@ impl Live {
                 );
             }
             Update::Failed { want, error, unauthorized } => {
+                // A task cancelled for its host's renewal fails on what the
+                // new key signs: not the new task's failure (Codex review M3).
+                if signer.is_some_and(|k| self.host(&want.host).is_some_and(|h| h.machine_key != k)) {
+                    return Ok(());
+                }
                 if self.subs.get(&want.stream).is_some_and(|s| s.want == want) {
                     self.subs.remove(&want.stream);
                 }
@@ -1780,6 +1819,7 @@ mod tests {
             may_sign_in: None,
         };
         env.live.set_hosts(&hosts.iter().map(|h| h.to_string()).collect::<Vec<_>>());
+        env.live.set_signers(&hosts.iter().map(|h| (h.to_string(), [7; 32])).collect::<Vec<_>>());
         let c = Copies {
             store: Some(CopyStore::open(paths, "a-1", "m-me", Box::new(|| true)).unwrap()),
             interest: env.live.interest(),
@@ -1955,6 +1995,99 @@ mod tests {
         assert_eq!(f.from_seq(), 6);
     }
 
+    /// R6 review (the outbound direction of the pause overlay, §3.4 rule
+    /// 10): another host, m-2, pausing THIS computer's control of it — a
+    /// renewal pause removing m-2←m-me — stops this computer's device role
+    /// using m-2: the copies task no longer follows it, and the controller
+    /// neither asks for its keys nor counts it among the hosts that accept
+    /// it. Ending the pause gives it back.
+    #[test]
+    fn a_pause_of_this_computers_control_stops_its_device_role_until_it_ends() {
+        use rh_proto::chain::{Accept, Action, ChainClock, ChainState, DeviceV3, Flags, KeyCommit, KeyCommits, PausePhase, Signer};
+        let ak = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+        let admin = MachineIdentity::from_seed(&[2; 32]);
+        let genesis = rh_proto::chain::genesis3_draft(
+            "a-1",
+            ak.verifying_key().to_bytes(),
+            DeviceV3 {
+                id: "d-a".into(),
+                sign_key: admin.sign_public(),
+                dh_key: admin.dh_public(),
+                flags: Flags { host: false, admin: true },
+            },
+            None,
+            1,
+        )
+        .sign(&ak);
+        let mut chain = ChainState::genesis(&genesis, None).unwrap();
+        let push = |chain: &mut ChainState, action: Action| {
+            let e = chain.draft(Signer::Device("d-a".into()), action, 100 + chain.seq()).sign(admin.signing_key());
+            chain.apply(&e, &mut ChainClock::history()).unwrap();
+        };
+        for (id, seed) in [("m-me", 19u8), ("m-2", 20u8)] {
+            let k = MachineIdentity::from_seed(&[seed; 32]);
+            push(
+                &mut chain,
+                Action::AddDevice3(DeviceV3 {
+                    id: id.into(),
+                    sign_key: k.sign_public(),
+                    dh_key: k.dh_public(),
+                    flags: Flags { host: true, admin: false },
+                }),
+            );
+            push(
+                &mut chain,
+                Action::KeyEpochs(KeyCommits {
+                    user: None,
+                    machines: vec![(id.into(), KeyCommit { epoch: 0, hash: [0; 32] })],
+                }),
+            );
+        }
+        push(
+            &mut chain,
+            Action::SetAccept {
+                host: "m-2".into(),
+                from: Accept::Devices(vec!["m-me".into()]),
+            },
+        );
+        let ring = KeyRing {
+            account: "a-1".into(),
+            device: "m-me".into(),
+            hosts: BTreeMap::from([("m-2".to_string(), Keys(vec![(0, [8; 32])]))]),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "pauseout");
+        let keys = super::super::keys::HostKeys::load(&paths, "a-1", "m-me").unwrap();
+        let uses = |chain: &ChainState| {
+            let view = View {
+                hub: "ws://127.0.0.1:1".into(),
+                account: "a-1".into(),
+                me: "m-me".into(),
+                chain: chain.clone(),
+            };
+            let followed: Vec<String> = followed(&view, &ring).into_iter().map(|h| h.id).collect();
+            let asked: Vec<String> = super::super::controller::gaps(chain, "m-me", &keys).into_iter().map(|(h, _)| h).collect();
+            (followed, asked, chain.may_control("m-me", "m-2").is_ok())
+        };
+        let using = (vec!["m-2".to_string()], vec!["m-2".to_string()], true);
+        let stopped = (Vec::<String>::new(), Vec::<String>::new(), false);
+        assert_eq!(uses(&chain), using, "m-2 accepts this computer");
+        let pause = |op: u8, phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause {
+            op: [op; 16],
+            phase,
+            removals,
+        };
+        push(&mut chain, pause(1, PausePhase::Start, vec![("m-2".into(), vec!["m-me".into()])]));
+        assert_eq!(uses(&chain), stopped, "paused: not followed, no keys asked for, no control");
+        assert_eq!(chain.base_accept("m-2"), Accept::Devices(vec!["m-me".into()]), "the base stands");
+        push(&mut chain, pause(1, PausePhase::Completed, Vec::new()));
+        assert_eq!(uses(&chain), using, "the pause ended: in use again");
+        push(&mut chain, pause(2, PausePhase::Start, vec![("m-2".into(), vec!["m-me".into()])]));
+        assert_eq!(uses(&chain), stopped);
+        push(&mut chain, pause(2, PausePhase::Cancelled, Vec::new()));
+        assert_eq!(uses(&chain), using, "cancelled: in use again");
+    }
+
     /// The key a host joined with, from its own verified chain (`keys_at`
     /// the entry that added it), whatever it renewed to since.
     #[test]
@@ -2055,6 +2188,72 @@ mod tests {
         assert_eq!(hosts[0].retired, vec![joined.sign_public(), second.sign_public()]);
         assert_eq!(hosts[0].first_key, joined.sign_public());
         assert_eq!(resume_key(&hosts[0], None), joined.sign_public());
+    }
+
+    /// Codex review M3: a host renewed its identity key — its stream tasks
+    /// are cancelled and the same wants followed again under the new key.
+    /// What an old task had queued (a copy, a heartbeat, a failure) is not
+    /// taken for the new task's: not stored, not labelled with the new key,
+    /// no failure counted against the new task. The new task's is taken,
+    /// labelled with the key it verified under.
+    #[tokio::test]
+    async fn updates_queued_by_a_task_of_a_key_its_host_renewed_away_from_are_not_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "rekeytest");
+        let (mut c, mut live) = live(&paths, &["m-2"]);
+        let (old, new) = ([7; 32], [9; 32]);
+        let w = want("m-2", "s");
+        // Renewed: the same want followed again, under the new key.
+        live.hosts[0].machine_key = new;
+        live.hosts[0].retired = vec![old];
+        live.subs.insert(
+            w.stream,
+            Sub {
+                want: w.clone(),
+                stop: CancellationToken::new(),
+            },
+        );
+        let machine = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let head = rh_proto::record::StreamHead {
+            stream: w.stream,
+            next_seq: 3,
+            epoch: 0,
+            link: [5; 32],
+            time_ms: 1_700_000_000_000,
+        }
+        .sign(&machine);
+        // The old task's: none taken.
+        live.on_update_from(&mut c, Some(old), state(&w, "OLD")).ok().unwrap();
+        live.on_update_from(
+            &mut c,
+            Some(old),
+            Update::Fresh {
+                want: w.clone(),
+                head: head.clone(),
+                at_ms: Some(1),
+            },
+        )
+        .ok()
+        .unwrap();
+        live.on_update_from(
+            &mut c,
+            Some(old),
+            Update::Failed {
+                want: w.clone(),
+                error: "a head the new key signed".into(),
+                unauthorized: false,
+            },
+        )
+        .ok()
+        .unwrap();
+        assert!(live.pending.is_empty() && live.touches.is_empty(), "nothing of the old task's kept");
+        assert!(live.subs.contains_key(&w.stream), "the new task carries on");
+        assert!(c.failures.is_empty(), "no failure counted against it");
+        // The new task's: taken, labelled with the key it verified under.
+        live.on_update_from(&mut c, Some(new), state(&w, "NEW")).ok().unwrap();
+        let row = live.pending.values().next().expect("kept");
+        assert_eq!(row.head_key, Some(new));
+        assert!(row.state.as_deref().is_some_and(|s| s.contains("NEW")));
     }
 
     fn want(host: &str, name: &str) -> Want {
