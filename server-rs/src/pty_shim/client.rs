@@ -128,6 +128,35 @@ impl Link {
     }
 }
 
+#[cfg(test)]
+impl Link {
+    /// A link whose inbound `frames` are all queued before anything reads them,
+    /// for a test that needs a burst to be there at once. Writes go to a socket
+    /// nobody reads. The sender comes back so the link does not end when the
+    /// frames run out.
+    pub(crate) fn preloaded(frames: Vec<Frame>) -> std::io::Result<(Link, mpsc::UnboundedSender<Frame>)> {
+        let (ours, theirs) = UnixStream::pair()?;
+        let (_, writer) = ours.into_split();
+        let (inbound_tx, inbound) = mpsc::unbounded_channel();
+        for frame in frames {
+            let _ = inbound_tx.send(frame);
+        }
+        // Holds the far end open for as long as the link lives.
+        let reader = tokio::spawn(async move {
+            let _theirs = theirs;
+            std::future::pending::<()>().await;
+        });
+        let link = Link {
+            shell_pid: 0,
+            total: 0,
+            inbound,
+            writer,
+            reader,
+        };
+        Ok((link, inbound_tx))
+    }
+}
+
 /// Whether a process is still there.
 ///
 /// `kill(pid, 0)` performs the permission and existence checks and delivers

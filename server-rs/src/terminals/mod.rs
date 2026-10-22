@@ -1306,6 +1306,17 @@ async fn run_link(
                                 entry.flush();
                                 flush_at = None;
                                 flushed_at = Some(now);
+                                // A burst must not go out in one go. Frames
+                                // that piled up while this task waited for the
+                                // CPU are all ready at once, and one poll may
+                                // ingest a hundred of them at up to 256 KiB
+                                // each. That put more than `LISTENER_QUEUE_CAP`
+                                // into every client's queue before any socket
+                                // task had run, and cut off a client that was
+                                // keeping up perfectly well. Yielding after each
+                                // full flush gives every socket a turn, so the
+                                // cap measures the client, not the scheduler.
+                                tokio::task::yield_now().await;
                             } else if flush_at.is_none() {
                                 match flushed_at {
                                     Some(last) if now < last + FLUSH_INTERVAL => flush_at = Some(last + FLUSH_INTERVAL),
@@ -1923,6 +1934,32 @@ mod tests {
             let seen = everything_sent(&mut attachment);
             assert!(seen == whole, "client {n} saw {} bytes of a {}-byte stream", seen.len(), whole.len());
         }
+    }
+
+    /// A burst of output that is all there at once must not cut off a client
+    /// that takes every chunk as soon as it gets the chance. Here it is 6 MiB
+    /// already queued on the link, in the largest frames a shim sends, with
+    /// the client on the same thread as the link task, which is where it
+    /// stood when its process had been waiting for the CPU.
+    #[tokio::test]
+    async fn a_burst_does_not_cut_off_a_client_that_keeps_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (entry, outbound) = bare_entry(dir.path());
+        let mut attachment = entry.attach();
+        const BURST: usize = 6 * 1024 * 1024;
+        let frames = (0..BURST / (256 * 1024)).map(|_| Frame::raw(proto::OUTPUT, vec![b'y'; 256 * 1024])).collect();
+        let (link, _queued) = client::Link::preloaded(frames).expect("a preloaded link");
+        tokio::spawn(run_link(Weak::new(), "unit".into(), entry.clone(), link, outbound, None, Vec::new()));
+
+        let mut seen = 0;
+        while seen < BURST {
+            match tokio::time::timeout(Duration::from_secs(5), attachment.next_chunk()).await.expect("the burst arrives") {
+                Some(Chunk::Data(data)) => seen += data.len(),
+                Some(Chunk::TooSlow) => panic!("a client taking every chunk as it came was cut off after {seen} bytes"),
+                None => panic!("the stream ended after {seen} bytes"),
+            }
+        }
+        entry.detach.cancel();
     }
 
     /// How a [`stand_in_shim`]'s shell ends.
