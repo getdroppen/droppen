@@ -4294,8 +4294,9 @@ export class CloudAccount {
     const eph = (await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
     const ephPublic = await exportPublic(eph.publicKey);
     opts.onStep?.("requesting");
+    const nonceHash = await sha256(nonce);
     try {
-      await this.api.putRotation(this.session.token, host, { nonceHash: await sha256(nonce), assurance });
+      await this.api.putRotation(this.session.token, host, { nonceHash, assurance });
     } catch (error) {
       throw renewalRefusal(error);
     }
@@ -4409,8 +4410,9 @@ export class CloudAccount {
     } finally {
       if (!committed) {
         // Withdrawn: a staging nobody will write is void (an answer that did not check out may not have been the computer's).
+        // This attempt only: by now the host may have another page's newer one (this one ran out meanwhile), which stays.
         try {
-          await this.api.deleteRotation(this.session.token, host);
+          await this.api.deleteRotation(this.session.token, host, { nonceHash });
         } catch {
           // the attempt lapses in 10 minutes anyway
         }

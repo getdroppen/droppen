@@ -755,9 +755,10 @@ hosts: [Rotation], disputes: [Dispute]}` — `now_ms` the
 hub's clock, which every age here is measured against:
 - `Rotation`: `{host, state, assurance, requested_ms, requested_by,
   attempt_expires_ms?, staged_ms?, ready_ms?, sign_key?, dh_key?, staged_seq?,
-  committed_ms?, committed_seq?, failure?: {reason: "not_acked"|"conflict"|"expired"|"refused"|"interrupted"|"replaced", at_ms},
+  nonce_hash?, committed_ms?, committed_seq?, failure?: {reason: "not_acked"|"conflict"|"expired"|"refused"|"interrupted"|"replaced", at_ms},
   needs_assurance, isolated}` — `sign_key`, `dh_key`, `staged_seq` the
-  staged (or committed) new keys; `requested_by` the admin device, or `hub`
+  staged (or committed) new keys; `nonce_hash` (an attempt or staging) the
+  hash `PUT` opened it with; `requested_by` the admin device, or `hub`
   for a host isolated by evidence;
 - `Dispute`: `{host, kind: "disputed"|"retired_login"|"not_acked"|"conflict", seen_ms,
   seq?, entry_hash?, isolates?, retired_seq?, evidence?, role?: "agent"|"device"|"device_session", login?: {account,
@@ -790,9 +791,16 @@ the device — `SetRenewalPolicy`),
 host (`429 rate`; marking it pending is not one).
 
 #### `DELETE /v1/rotations/{host}` — requires a current full device
-→ `{}`: withdraw the renewal (its state goes; `rotation {state: "none"}`). A
-committed one stays its day; an isolated host stays `pending` (only a
-renewal confirmed on the device, or its removal, clears it).
+`{nonce_hash?, requested_ms?}` (or no body) → `{}`: withdraw the renewal
+(its state goes; `rotation {state: "none"}`). A committed one stays its
+day; an isolated host stays `pending` (only a renewal confirmed on the
+device, or its removal, clears it). With `nonce_hash`, only the attempt (or
+staging) opened with it is withdrawn; with `requested_ms`, only the
+`pending` mark made then — so a page cleaning up what it read earlier never
+withdraws what another page started on the host since. Anything else the
+host has stays: `409 rotation_in_progress` while an attempt or staging is
+open, `{}` when the one named is gone. Errors: `400 bad_request` (both
+given, a malformed or unknown field, or a body that is not an object).
 
 #### `POST /v1/rotations/{host}/disputes` — no session
 `{seq, entry_hash, sig}` → `{ok: true}`. A host whose identity key was

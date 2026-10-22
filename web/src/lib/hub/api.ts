@@ -109,6 +109,8 @@ export interface HostRotationView {
   needsAssurance: boolean;
   /** The hub's view: a key retired by an `assurance = 0` renewal signed in again, and no `assurance = 1` renewal since. */
   isolated: boolean;
+  /** While `attempt` or `staged`: the hash of that attempt's nonce (hex) — what names it to withdraw it ({@link HubApi.deleteRotation}). */
+  nonceHash: string | null;
 }
 
 /**
@@ -1156,9 +1158,17 @@ export class HubApi {
     return row;
   }
 
-  /** Withdraw host `host`'s renewal (`DELETE /v1/rotations/{host}`): back to none, unless a staging is committed. */
-  async deleteRotation(token: string, host: string): Promise<void> {
-    await this.call<unknown>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, { token });
+  /**
+   * Withdraw host `host`'s renewal (`DELETE /v1/rotations/{host}`): back to
+   * none, unless a staging is committed. `only` names what is withdrawn: the
+   * attempt (or staging) opened with that nonce's hash, or the `pending` mark
+   * made at `requestedMs` — anything else the host has by then (another
+   * page's newer attempt) stays: 409 `rotation_in_progress`, or `{}` when the
+   * one named is gone. A hub from before that withdraws whatever it has.
+   */
+  async deleteRotation(token: string, host: string, only?: { nonceHash: Uint8Array | string } | { requestedMs: number }): Promise<void> {
+    const body = !only ? undefined : "nonceHash" in only ? { nonce_hash: typeof only.nonceHash === "string" ? only.nonceHash : hex(only.nonceHash) } : { requested_ms: only.requestedMs };
+    await this.call<unknown>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, body ? { token, body } : { token });
   }
 
   /**
@@ -1538,6 +1548,7 @@ export function hostRotationView(raw: unknown): HostRotationView | null {
     failure: f && typeof f.reason === "string" ? { reason: f.reason, atMs: num(f.at_ms) ?? 0 } : null,
     needsAssurance: r.needs_assurance === true,
     isolated: r.isolated === true,
+    nonceHash: typeof r.nonce_hash === "string" && /^[0-9a-f]{64}$/.test(r.nonce_hash) ? r.nonce_hash : null,
   };
 }
 

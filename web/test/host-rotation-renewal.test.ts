@@ -1263,6 +1263,56 @@ test("R6 review: a renewal of the device this browser's notifications come from 
   off();
 });
 
+test("a failed renewal withdraws its own attempt only: another page's newer attempt on the host (this one ran out meanwhile) stays", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const theirs = { host: "m-1", state: "attempt", assurance: 0, requested_ms: Date.now(), requested_by: "d-other", nonce_hash: "ab".repeat(32), attempt_expires_ms: Date.now() + 600_000, needs_assurance: false, isolated: false };
+  // This page's attempt is slow to reach m-1; meanwhile it runs out and another page opens its own. Then this one fails.
+  agents.rotate = async () => {
+    hub.rotationRows.set("m-1", { ...theirs });
+    throw new Error("the channel failed");
+  };
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }));
+  assert.ok(hub.rotationDeletes.includes("m-1"), "it withdrew");
+  assert.deepEqual(hub.rotationRows.get("m-1"), theirs, "but not the other page's attempt");
+});
+
+test("the runner withdraws an abandoned attempt, or a mark nothing exposes, by name: what another page started on the host just before stays", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  const now = Date.now();
+  const row = (over: Record<string, unknown>) => ({ host: "m-1", assurance: 0, requested_ms: now - 60_000, requested_by: "d-other", needs_assurance: false, isolated: false, ...over });
+  // m-1 is exposed: an attempt another page abandoned (run out), withdrawn — as a new attempt of a third page lands first.
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const fresh = row({ state: "attempt", nonce_hash: "cd".repeat(32), attempt_expires_ms: now + 600_000 });
+  hub.rotationRows.set("m-1", row({ state: "attempt", nonce_hash: "ab".repeat(32), attempt_expires_ms: now - 1 }));
+  hub.beforeRotationDelete = (host) => void hub.rotationRows.set(host, { ...fresh });
+  const runner = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  await runner.refresh();
+  await runner.idle();
+  assert.deepEqual(hub.rotationDeletes, ["m-1"], "the abandoned attempt was withdrawn");
+  assert.deepEqual(hub.rotationRows.get("m-1"), fresh, "the new attempt stays");
+  runner.stop();
+  // m-3 is exposed by nothing: its mark is withdrawn — as another page turns that mark into an attempt first (same requested_ms).
+  const mark = { host: "m-3", state: "pending", assurance: 0, requested_ms: now - 60_000, requested_by: "d-other", needs_assurance: false, isolated: false };
+  const started = { ...mark, state: "attempt", nonce_hash: "ef".repeat(32), attempt_expires_ms: now + 600_000 };
+  hub.rotationRows.set("m-3", mark);
+  hub.beforeRotationDelete = (host) => void (host === "m-3" && hub.rotationRows.set(host, { ...started }));
+  const second = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  await second.refresh();
+  await second.idle();
+  assert.ok(hub.rotationDeletes.includes("m-3"), "the mark was withdrawn");
+  assert.deepEqual(hub.rotationRows.get("m-3"), started, "the attempt made on it stays");
+  // With nothing in between, the mark it names goes.
+  hub.beforeRotationDelete = null;
+  hub.rotationRows.set("m-3", { ...mark, requested_ms: now - 30_000 });
+  const third = new RenewalRunner({ account: a, link: new FakeLink() as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+  await third.refresh();
+  await third.idle();
+  assert.equal(hub.rotationRows.has("m-3"), false);
+  second.stop();
+  third.stop();
+});
+
 test("isolation this page verified stays — the hub omitting the evidence, a 404, a reload or a stale tab do not undo it; only an assured renewal or the removal does", async () => {
   const { hub, a, agents, x, h1 } = await account({ chain: false });
   await a.removeDevice(x.deviceId, new FakeCourier());

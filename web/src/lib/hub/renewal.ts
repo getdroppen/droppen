@@ -598,14 +598,25 @@ export class RenewalRunner {
     }
   }
 
-  /** Withdraw `row` at the hub (once per row) and forget it here. */
+  /**
+   * Withdraw `row` at the hub (once per row) and forget it here: that row only
+   * — its attempt, by its nonce's hash, or its mark, by when it was made — so
+   * that what another page started on the host since this page read it (a
+   * new attempt over an expired one, or over the mark) stays.
+   */
   private async withdraw(row: HostRotationView): Promise<void> {
     const { account } = this.opts;
     const key = `${row.host}@${row.requestedMs ?? ""}@${row.state}`;
     if (this.withdrawn.has(key)) return;
     this.withdrawn.add(key);
+    const only =
+      row.state === "pending" && row.requestedMs !== null
+        ? { requestedMs: row.requestedMs }
+        : (row.state === "attempt" || row.state === "staged") && row.nonceHash
+          ? { nonceHash: row.nonceHash }
+          : undefined;
     try {
-      await account.api.deleteRotation(account.session.token, row.host);
+      await account.api.deleteRotation(account.session.token, row.host, only);
       const view: RotationsView | null = this.view;
       if (view) this.view = { ...view, hosts: view.hosts.filter((r: HostRotationView) => r.host !== row.host) };
       for (const k of [...this.marked]) if (k.startsWith(`${row.host}@`)) this.marked.delete(k);

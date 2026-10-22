@@ -179,6 +179,8 @@ export class FakeKeysHub {
   rotationPuts: string[] = [];
   /** Every `DELETE /v1/rotations/{host}`. */
   rotationDeletes: string[] = [];
+  /** Told of every `DELETE /v1/rotations/{host}` before it is decided: another page acting just before it lands. */
+  beforeRotationDelete: ((host: string) => void) | null = null;
   /** How far the hub's `now_ms` is off this test's clock (its other clocks stay). */
   nowMsOffset = 0;
   /** Answer `GET /v1/rotations` 404 (a hub that withholds what it showed before). */
@@ -521,7 +523,16 @@ export class FakeKeysHub {
       const row = this.rotationRows.get(host);
       if (method === "DELETE") {
         this.rotationDeletes.push(host);
-        if (row && row.state !== "committed") this.rotationRows.delete(host);
+        this.beforeRotationDelete?.(host);
+        // As rh-hub: `nonce_hash` names the attempt (or staging) withdrawn, `requested_ms` the pending mark; anything else
+        // the host has by then stays — 409 `rotation_in_progress` while an attempt or staging is open, `{}` otherwise.
+        const now = this.rotationRows.get(host);
+        if (now && now.state !== "committed") {
+          const live = now.state === "attempt" || now.state === "staged";
+          const named = body?.nonce_hash !== undefined ? live && now.nonce_hash === body.nonce_hash : body?.requested_ms !== undefined ? now.state === "pending" && now.requested_ms === body.requested_ms : true;
+          if (!named) return live ? this.json(409, { error: "rotation_in_progress", message: "another renewal of it is running" }) : this.json(200, {});
+          this.rotationRows.delete(host);
+        }
         return this.json(200, {});
       }
       if (method !== "PUT") return this.json(405, { error: "method" });

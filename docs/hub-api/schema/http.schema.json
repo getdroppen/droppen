@@ -637,6 +637,10 @@
           "$ref": "#/$defs/count",
           "description": "staged or committed: the chain view the proof was made against"
         },
+        "nonce_hash": {
+          "$ref": "#/$defs/hex32",
+          "description": "attempt or staged: the SHA-256 of that attempt's nonce, as PUT took it — what names it to DELETE"
+        },
         "committed_ms": {
           "$ref": "#/$defs/ms"
         },
@@ -3070,6 +3074,21 @@
     },
     "DELETE /v1/rotations/{host}": {
       "$defs": {
+        "request": {
+          "type": "object",
+          "description": "Optional (no body: withdraw whatever the host has). At most one of the two: what is withdrawn, so that what another page started on the host since stays (409 rotation_in_progress while an attempt or staging is open, `{}` when the one named is gone)",
+          "additionalProperties": false,
+          "properties": {
+            "nonce_hash": {
+              "$ref": "#/$defs/hex32",
+              "description": "only the attempt (or staging) opened with this nonce hash"
+            },
+            "requested_ms": {
+              "$ref": "#/$defs/ms",
+              "description": "only the pending mark made then (`requested_ms` of the row)"
+            }
+          }
+        },
         "response": {
           "type": "object",
           "description": "`{}`"
