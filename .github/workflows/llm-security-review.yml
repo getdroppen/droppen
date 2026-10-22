@@ -130,7 +130,9 @@ jobs:
           claude_args: ${{ env.REVIEW_ARGS }}
 
       - name: Keep the review transcript
-        if: ${{ !cancelled() }}
+        # Private repositories only: the transcript carries gateway errors that
+        # name the gateway's host, and a public repository's artifacts are public.
+        if: ${{ !cancelled() && github.event.repository.private }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: llm-security-review-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
