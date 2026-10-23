@@ -1526,10 +1526,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "droppen.app のアプリは Droppen Hub から届くので、エンドツーエンド暗号化は Hub からデータを守れても、**Hub が変えたページからは守れません**。そうしたページは、このブラウザにできることを何でもできます。WebCrypto のエクスポート不可の鍵も、**同一オリジンのコードは止められません**。そのコードは本物のページと同じように、保存されたデバイス鍵とユーザー鍵を開け、どこへでも送れます。",
   ],
   [
-    "Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, written when the release is built ([[scripts/release-public.sh]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest.",
-    "每次发版都附带 **web-manifest.json**，即发版构建时（[[scripts/release-public.sh]]）记下的网页每个文件的 SHA-256；页面的 Content-Security-Policy 只允许它自己的脚本。验证脚本 [[scripts/verify-web.mjs]] 会拿 droppen.app 实际下发的内容和某次发版的清单比对。",
-    "每次發版都附帶 **web-manifest.json**，即發版建置時（[[scripts/release-public.sh]]）記下的網頁每個檔案的 SHA-256；頁面的 Content-Security-Policy 只允許它自己的指令碼。驗證指令碼 [[scripts/verify-web.mjs]] 會拿 droppen.app 實際下發的內容和某次發版的清單比對。",
-    "リリースにはそれぞれ **web-manifest.json** が付きます。リリースのビルド時（[[scripts/release-public.sh]]）に書かれた、ウェブアプリの全ファイルの SHA-256 です。ページの Content-Security-Policy は自分のスクリプトしか許しません。スクリプト [[scripts/verify-web.mjs]] が、droppen.app が実際に配信するものとリリースのマニフェストを比べます。",
+    "Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest ([[docs/web-integrity.md]] says how).",
+    "每次发版都附带 **web-manifest.json**，即网页每个文件的 SHA-256；从 v0.2.127 起还附带它的**签名证明**，两者都由发版流程（[[.github/workflows/release.yml]]）生成；页面的 Content-Security-Policy 只允许它自己的脚本。验证脚本 [[scripts/verify-web.mjs]] 会拿 droppen.app 实际下发的内容和某次发版的清单比对（做法见 [[docs/web-integrity.md]]）。",
+    "每次發版都附帶 **web-manifest.json**，即網頁每個檔案的 SHA-256；從 v0.2.127 起還附帶它的**簽章證明**，兩者都由發版流程（[[.github/workflows/release.yml]]）產生；頁面的 Content-Security-Policy 只允許它自己的指令碼。驗證指令碼 [[scripts/verify-web.mjs]] 會拿 droppen.app 實際下發的內容和某次發版的清單比對（做法見 [[docs/web-integrity.md]]）。",
+    "リリースにはそれぞれ **web-manifest.json** が付きます。ウェブアプリの全ファイルの SHA-256 で、v0.2.127 からはその**署名付きの証明**も付き、どちらもリリースのワークフロー（[[.github/workflows/release.yml]]）が作ります。ページの Content-Security-Policy は自分のスクリプトしか許しません。スクリプト [[scripts/verify-web.mjs]] が、droppen.app が実際に配信するものとリリースのマニフェストを比べます（手順は [[docs/web-integrity.md]]）。",
   ],
   [
     "A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one.",
@@ -1538,10 +1538,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "**1 人に 1 回だけ配信されたページは検査では見えず**、すでに悪いページをキャッシュしたブラウザをきれいにすることもできません。",
   ],
   [
-    "For high assurance, **use the local web app** that the droppen program serves from its own binary, or the **desktop app**.",
-    "要高保障，就用 droppen 程序从它自己的二进制里提供的**本地网页版**，或者**桌面应用**。",
-    "要高保障，就用 droppen 程式從它自己的二進位檔裡提供的**本地網頁版**，或者**桌面應用程式**。",
-    "高い保証が必要なら、droppen プログラムが自分のバイナリから配信する**ローカルのウェブアプリ**か、**デスクトップアプリ**を使ってください。",
+    "For high assurance, use the **desktop app**, signed with Apple's Developer ID and notarised, or the **local web app** that the droppen program serves from its own binary: neither loads code from Droppen Hub.",
+    "要高保障，就用经 Apple Developer ID 签名并公证的**桌面应用**，或者 droppen 程序从它自己的二进制里提供的**本地网页版**：两者都不从 Droppen Hub 加载代码。",
+    "要高保障，就用經 Apple Developer ID 簽章並公證的**桌面應用程式**，或者 droppen 程式從它自己的二進位檔裡提供的**本地網頁版**：兩者都不從 Droppen Hub 載入程式碼。",
+    "高い保証が必要なら、Apple の Developer ID で署名され公証された**デスクトップアプリ**か、droppen プログラムが自分のバイナリから配信する**ローカルのウェブアプリ**を使ってください。どちらも Droppen Hub からコードを読み込みません。",
   ],
   [
     "Limits we know of",

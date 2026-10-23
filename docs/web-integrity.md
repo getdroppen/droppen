@@ -15,7 +15,9 @@ droppen.app 的网页由闭源的 Hub 下发。端到端加密防得住 Hub 读�
 - **源码和依赖本身可信。** 可复现只说明「字节来自这份源码和这份 `pnpm-lock.yaml`」。依赖里的恶意代码会被如实复现出来。
 - **Hub 的接口说了真话。** 那是端到端加密和设备链的事（`docs/hub-api/README.md`「The hub is not trusted」），与本文无关。
 
-**高保障的做法**是不从 Hub 加载代码：用本机 `droppen` 二进制自带的界面（它内嵌同一份构建，发版时 CI 核对过两者字节相同），以后用签名的 Tauri 桌面应用。网页版适合方便，不适合对抗一个有针对性的 Hub。
+**高保障的做法**是不从 Hub 加载代码：用 Droppen 桌面应用（macOS，目前是 v0.2.128；用 Apple 的 Developer ID 签名并经 Apple 公证，安装后只接受更新密钥为那个版本签名的更新，见 [`docs/releasing.md`](releasing.md)「Verifying a download」），或本机 `droppen` 二进制自带的界面。桌面应用带着本机的 `droppen` 服务器，窗口里显示的是这个服务器内嵌的网页，不从 Hub 加载；`droppen` 二进制内嵌的网页，发版时 CI 核对过与发版清单逐字节相同（§3）。网页版适合方便，不适合对抗一个有针对性的 Hub。
+
+**检查 droppen.app** 用的是每次发版（v0.2.127 起）附带、经 GitHub Actions 证明的网页清单（`web-manifest.json` 和它的 Sigstore bundle `web-manifest.sigstore.json`），加上验证脚本 `scripts/verify-web.mjs`，步骤见下一节。droppen.app/security 的 7.1 和 8.5 节链接到这里。
 
 ## 2. 怎么验证
 
@@ -83,4 +85,4 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 ## 5. 以后
 
-浏览器扩展在每次加载时核对；独立的静态源加版本化的不可变 URL；把各次检查的结果记到公开日志里；本机界面作为默认入口；签名的 Tauri 与手机应用。
+浏览器扩展在每次加载时核对；独立的静态源加版本化的不可变 URL；把各次检查的结果记到公开日志里；本机界面作为默认入口；签名的手机应用。签名并公证的 macOS 桌面应用已经有了（§1）。

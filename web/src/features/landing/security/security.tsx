@@ -873,9 +873,9 @@ function ThreatsSection() {
           <P>{t("The app at droppen.app comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
           <List
             items={[
-              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, written when the release is built ([[scripts/release-public.sh]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest."),
+              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest ([[docs/web-integrity.md]] says how)."),
               t("A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one."),
-              t("For high assurance, **use the local web app** that the droppen program serves from its own binary, or the **desktop app**."),
+              t("For high assurance, use the **desktop app**, signed with Apple's Developer ID and notarised, or the **local web app** that the droppen program serves from its own binary: neither loads code from Droppen Hub."),
             ]}
           />
         </Topic>

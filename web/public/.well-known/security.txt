@@ -1,0 +1,8 @@
+# Droppen security contact (RFC 9116). Report vulnerabilities privately:
+# GitHub's private vulnerability reporting first, e-mail otherwise.
+Contact: https://github.com/getdroppen/droppen/security/advisories/new
+Contact: mailto:security@droppen.app
+Expires: 2027-10-01T00:00:00.000Z
+Policy: https://github.com/getdroppen/droppen/blob/main/SECURITY.md
+Preferred-Languages: en, zh
+Canonical: https://droppen.app/.well-known/security.txt

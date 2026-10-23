@@ -219,7 +219,7 @@ test("the web-delivery gap is said plainly: a modified page can do anything the 
   // The Hub's own row says it serves the page, and its Cannot list holds only through the protocol.
   assert.ok(words.includes("Serve a modified page to a browser that uses droppen.app"));
   assert.ok(words.includes("Through the protocol alone: decrypt content"));
-  assert.ok(words.includes("use the local web app that the droppen program serves"));
+  assert.ok(words.includes("use the desktop app, signed with Apple's Developer ID and notarised, or the local web app that the droppen program serves from its own binary: neither loads code from Droppen Hub"));
   // The 7-day control bound and its documented limit.
   assert.ok(words.includes("if the Hub also freezes every other full device on that same head, they keep vouching for it, and a removed device keeps control until one of them notices it is frozen"));
   assert.ok(words.includes("and longer if it also freezes every other full device on the same head until one of them notices"));
