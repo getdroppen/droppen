@@ -1,0 +1,20 @@
+# `cargo audit` for desktop/Cargo.lock (.github/workflows/audit.yml runs it
+# from this directory; update-signer/ has its own lockfile and no ignores).
+# Each entry below was checked against what is actually compiled for the
+# app's targets. Recheck an entry whenever the crate it names moves, and drop
+# it once a fixed version is in the lock.
+[advisories]
+ignore = [
+    # zip 4.6.1, through tauri-plugin-updater only: `ZipArchive::extract`
+    # writes symlinks, SUID/SGID bits and permissions from the archive. zip is
+    # a Windows-only dependency of the updater
+    # (`[target.'cfg(target_os = "windows")'.dependencies.zip]`), so the macOS
+    # app (the only one released) does not compile it:
+    #   cargo tree --workspace -i zip --target aarch64-apple-darwin   # nothing
+    # On Windows the updater extracts only bytes that `Update::download` has
+    # already checked against the app's minisign key (src-tauri/src/updater.rs
+    # calls `download`, then `install`). Fixed only in zip 9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]

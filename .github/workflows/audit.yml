@@ -1,0 +1,45 @@
+name: audit
+
+# RustSec advisories against every Rust lockfile in the repository
+# (server-rs/, desktop/, desktop/update-signer/). An advisory can land on any
+# day, whatever a pull request changes, so this also runs once a week on main.
+on:
+  pull_request:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo-audit, pinned twice: the action by commit, the tool by version
+      # (the action checks the download against the checksum it carries for
+      # that version).
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-audit@0.22.2
+      # Each lockfile is audited from its own directory, so the ignore list in
+      # that directory's `.cargo/audit.toml` applies to it and to no other; each
+      # entry there says why the advisory does not reach a built crate.
+      # Vulnerabilities fail the job; unmaintained, unsound and yanked crates
+      # are printed as warnings.
+      - name: cargo audit
+        run: |
+          status=0
+          for lock in $(git ls-files '*Cargo.lock'); do
+            dir=$(dirname "$lock")
+            echo "::group::$lock"
+            if ! (cd "$dir" && cargo audit); then
+              echo "::error file=$lock::cargo audit found vulnerabilities in $lock"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"
