@@ -164,6 +164,22 @@ test("M1's raw machine keys are deleted only once the hub holds a blob that unwr
   assert.equal(hex(await indexStream(keys.get(0)!)), hex(await indexStream(await importMachineKey(committed0!))));
 });
 
+test("a full device moves raw machine keys from before the keyring past an epoch already gone", async () => {
+  const hub = new FakeKeysHub();
+  const store = new RecordingKeyStore();
+  const a = await hub.device("tok", store);
+  await createV2Genesis(a, false);
+  await hub.enroll(a);
+  await a.rotate(new FakeCourier());
+  const mk1 = (await a.machineKeyBytes("m-1", 1))!;
+  // Epoch 0 went in a run cut short: only epoch 1 is left raw.
+  await store.put(legacyMachineKeyName("m-1", 1), hex(mk1));
+  const before = store.puts.length;
+  await hub.reload(a);
+  assert.equal(await store.get(legacyMachineKeyName("m-1", 1)), undefined, "moved, and the raw copy gone");
+  for (const { value } of store.puts.slice(before)) assert.ok(!containsBytes(value, mk1));
+});
+
 test("a wipe forgets every raw machine key from before the keyring — with no chain to name their hosts, and past a gap in their epochs", async () => {
   const raw = () => hex(crypto.getRandomValues(new Uint8Array(32)));
   // A page that could not open the account: no chain, only the store.

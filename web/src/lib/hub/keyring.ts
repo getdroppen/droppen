@@ -330,19 +330,22 @@ export class HostKeyVault {
     if (!Number.isInteger(epoch) || epoch < 0 || epoch > 0xffff_ffff) return Promise.reject(new Error(`not a key epoch: ${epoch}`));
     if (raw.length !== 32) return Promise.reject(new Error("a machine key is 32 bytes"));
     if (!host || host.length > 64) return Promise.reject(new Error("not a host id"));
-    return this.serial.run(async () => {
-      // The local key first (see UserKeyVault.put).
-      const local = await localWrapKey(this.store);
-      const index = await this.index();
-      const held = index[host] ?? [];
-      if (held.includes(epoch)) return false;
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: hkAad(this.account, host, epoch) }, local, copy(raw)));
-      const record: StoredUserKey = { v: 1, iv, ct };
-      await this.store.put(hkRecord(this.account, host, epoch), record);
-      await this.store.put(hkIndex(this.account), { ...index, [host]: [...held, epoch].sort((a, b) => a - b) });
-      return true;
-    });
+    // One page of the browser at a time (Web Locks): two writing the list at once would each drop the other's epoch.
+    return this.serial.run(() =>
+      underKeyStoreLock(this.lockName, async () => {
+        // The local key first (see UserKeyVault.put).
+        const local = await localWrapKey(this.store);
+        const index = await this.index();
+        const held = index[host] ?? [];
+        if (held.includes(epoch)) return false;
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: hkAad(this.account, host, epoch) }, local, copy(raw)));
+        const record: StoredUserKey = { v: 1, iv, ct };
+        await this.store.put(hkRecord(this.account, host, epoch), record);
+        await this.store.put(hkIndex(this.account), { ...index, [host]: [...held, epoch].sort((a, b) => a - b) });
+        return true;
+      }),
+    );
   }
 
   /** Host `host`'s epoch `epoch` as the record layer's non-extractable keys. */
@@ -373,13 +376,20 @@ export class HostKeyVault {
 
   /** Forget every host key of this account (a removed device's wipe). */
   wipe(): Promise<void> {
-    return this.serial.run(async () => {
-      for (const [host, epochs] of Object.entries(await this.index())) {
-        for (const epoch of epochs) await this.store.delete(hkRecord(this.account, host, epoch));
-      }
-      await this.store.delete(hkIndex(this.account));
-      this.inUse.clear();
-    });
+    return this.serial.run(() =>
+      underKeyStoreLock(this.lockName, async () => {
+        for (const [host, epochs] of Object.entries(await this.index())) {
+          for (const epoch of epochs) await this.store.delete(hkRecord(this.account, host, epoch));
+        }
+        await this.store.delete(hkIndex(this.account));
+        this.inUse.clear();
+      }),
+    );
+  }
+
+  /** The Web Lock its list is written under, across the browser's pages. */
+  private get lockName(): string {
+    return `rh-host-keys/${this.account}`;
   }
 }
 
@@ -934,10 +944,9 @@ export async function migrateLegacyMachineKeys(
 ): Promise<number> {
   const found: { machine: string; epoch: number; hex: string }[] = [];
   for (const machine of machines) {
-    for (let epoch = 0; epoch < maxEpochs; epoch++) {
+    for (const epoch of await legacyEpochs(store, machine, maxEpochs)) {
       const stored = await store.get(legacyMachineKeyName(machine, epoch));
-      if (typeof stored !== "string") break;
-      found.push({ machine, epoch, hex: stored });
+      if (typeof stored === "string") found.push({ machine, epoch, hex: stored });
     }
   }
   if (!found.length) return 0;
@@ -995,43 +1004,62 @@ export async function migrateLegacyMachineKeys(
 }
 
 /**
+ * The epochs of `machine` that M1/M2a left raw in `store`, ascending: every
+ * one it lists — none skipped past a gap (a run cut short may have moved an
+ * earlier one already) — or, in a store that cannot list, every one of the
+ * first `maxEpochs` that is there.
+ */
+async function legacyEpochs(store: KeyStore, machine: string, maxEpochs: number): Promise<number[]> {
+  const prefix = `${LEGACY_MACHINE_KEY_PREFIX}${machine}/`;
+  if (store.list) {
+    return (await store.list(prefix))
+      .map((name) => name.slice(prefix.length))
+      .filter((rest) => /^(0|[1-9][0-9]{0,9})$/.test(rest))
+      .map(Number)
+      .filter((epoch) => epoch <= 0xffff_ffff)
+      .sort((a, b) => a - b);
+  }
+  const epochs: number[] = [];
+  for (let epoch = 0; epoch < maxEpochs; epoch++) {
+    if (typeof (await store.get(legacyMachineKeyName(machine, epoch))) === "string") epochs.push(epoch);
+  }
+  return epochs;
+}
+
+/**
  * {@link migrateLegacyMachineKeys} for a device that does not manage the
  * account (chain v3): it holds no `UK`, and the hub takes keyring blobs only
  * from full devices — so M1/M2a's raw `mk/<machine>/<epoch>` entries of
  * `machines` go into its host-key vault instead, sealed under the
- * device-local key, as an admin's mail would put them there. Each is taken
- * only if it is exactly the key the chain committed for its machine and epoch
- * (`check` throws otherwise): one that is not — another account's (the key
- * store is the browser's), or garbage — is left where it is. Of the rest,
- * those of hosts that let this device in (`keep`) are kept in the vault, and
- * the raw copy deleted once the vault holds the epoch; those of any other
- * host are deleted outright: an admin would not hand it them, nobody asks a
- * device that does not manage the account for a key, and the full devices
- * read them from the keyring. Returns how many raw entries went.
+ * device-local key, as an admin's mail would put them there; the raw copy is
+ * deleted only once the vault holds the epoch. Each is taken only if it is
+ * exactly the key the chain committed for its machine and epoch (`check`
+ * throws otherwise): one that is not — another account's (the key store is
+ * the browser's), or garbage — is left where it is. Every committed one is
+ * kept, whether or not its host lets this device in now: who a host lets in
+ * changes, and nothing proves another copy of an old epoch is left anywhere.
+ * Returns how many raw entries went.
  */
 export async function moveLegacyMachineKeysToVault(
   store: KeyStore,
   hostKeys: HostKeyVault,
   machines: string[],
   check: (machine: string, epoch: number, key: Bytes) => Promise<void>,
-  keep: (machine: string) => boolean,
   maxEpochs = 64,
 ): Promise<number> {
   let moved = 0;
   for (const machine of machines) {
-    for (let epoch = 0; epoch < maxEpochs; epoch++) {
+    for (const epoch of await legacyEpochs(store, machine, maxEpochs)) {
       const name = legacyMachineKeyName(machine, epoch);
       const stored = await store.get(name);
-      if (typeof stored !== "string") break;
+      if (typeof stored !== "string") continue;
       let raw: Bytes | null = null;
       try {
         raw = fromHex(stored);
         if (raw.length !== 32) continue;
         await check(machine, epoch, raw);
-        if (keep(machine)) {
-          await hostKeys.put(machine, epoch, raw);
-          if (!(await hostKeys.has(machine, epoch))) continue;
-        }
+        await hostKeys.put(machine, epoch, raw);
+        if (!(await hostKeys.has(machine, epoch))) continue;
       } catch {
         // not the committed key, or the vault would not take it: the raw copy stays
         continue;

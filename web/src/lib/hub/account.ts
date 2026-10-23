@@ -150,6 +150,7 @@ import {
   signHubLogin,
   type SlotRecord,
   type UnreadableReason,
+  underKeyStoreLock,
   userKeyCommit,
   utf8,
   verifyEnrollProof,
@@ -198,6 +199,8 @@ import { genesisKey, pageSeenStore, seenKey, type SeenStore, SeenStoreError } fr
 import type { ControllersRecord } from "./streams";
 
 const deviceKey = (account: string) => `rh.hub.device.${account}`;
+/** The Web Lock moving the raw machine keys from before the keyring is done under (`CloudAccount.migrate`): the key store's, not one account's. */
+const LEGACY_MIGRATION_LOCK = "rh-legacy-machine-keys";
 /** The signing key (hex) this browser's device id was registered with: what tells keys that changed under it. */
 const deviceSignKey = (account: string) => `rh.hub.devicekey.${account}`;
 /** A device id this browser held but lost the keys of, until it is a device of the account again. */
@@ -493,8 +496,7 @@ async function forgetBrowser(input: {
     for (const host of input.legacyHosts) {
       for (let epoch = 0; epoch < 64; epoch++) {
         const name = legacyMachineKeyName(host, epoch);
-        if ((await store.get(name)) === undefined) break;
-        names.add(name);
+        if ((await store.get(name)) !== undefined) names.add(name);
       }
     }
     for (const name of names) await store.delete(name);
@@ -2976,27 +2978,23 @@ export class CloudAccount {
 
   /**
    * M1/M2a kept machine keys as raw hex in the key store: move them out, on
-   * every device. A full device wraps them into the keyring under the newest
-   * user key and deletes them once the hub holds that
-   * ({@link migrateLegacyMachineKeys}); one that does not manage the account
-   * — no user key, and no keyring writes — keeps those of the hosts that let
-   * it in sealed in its host-key vault and deletes the rest, each only if it
-   * is the key the chain committed ({@link moveLegacyMachineKeysToVault}).
+   * every device, one page of the browser at a time (Web Locks). A full
+   * device wraps them into the keyring under the newest user key and deletes
+   * them once the hub holds that ({@link migrateLegacyMachineKeys}); one that
+   * does not manage the account — no user key, and no keyring writes — seals
+   * each that is the key the chain committed into its host-key vault, and
+   * deletes the raw copy once the vault holds it
+   * ({@link moveLegacyMachineKeysToVault}).
    */
   async migrate(): Promise<number> {
     const chain = this.state;
     if (!chain) return 0;
     const machines = chain.hosts().map((m) => m.info.id);
-    const moved = this.isAdmin
-      ? await migrateLegacyMachineKeys(this.store, this.vault, this.keyring, this.account, machines, () => this.ensureUserKey())
-      : await moveLegacyMachineKeysToVault(
-          this.store,
-          this.hostKeys,
-          machines,
-          (machine, epoch, key) => chain.checkMachineKey(machine, epoch, key),
-          // The hosts an admin would hand this device the keys of (`sealHostKeys`).
-          (machine) => chain.device(machine)?.host === true && admits(chain, machine, this.deviceId),
-        );
+    const moved = await underKeyStoreLock(LEGACY_MIGRATION_LOCK, () =>
+      this.isAdmin
+        ? migrateLegacyMachineKeys(this.store, this.vault, this.keyring, this.account, machines, () => this.ensureUserKey())
+        : moveLegacyMachineKeysToVault(this.store, this.hostKeys, machines, (machine, epoch, key) => chain.checkMachineKey(machine, epoch, key)),
+    );
     if (moved) this.emit();
     return moved;
   }

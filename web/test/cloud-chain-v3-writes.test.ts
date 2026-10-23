@@ -249,38 +249,40 @@ test("pairing a device that does not manage the account (a v3 chain): addDevice3
   assert.ok(!(b.store as RecordingKeyStore).puts.some((p) => containsBytes(p.value, mk)), "no raw machine key in the key store");
 });
 
-test("a device that does not manage the account moves raw machine keys from before the keyring out of the key store: a host's that lets it in into its vault, another's deleted, one the chain did not commit left", async () => {
+test("a device that does not manage the account moves raw machine keys from before the keyring into its sealed vault — every one the chain committed, past a gap too; one it did not commit is left", async () => {
   const { hub, a } = await account();
   await hub.enroll(a, "m-2", { writable: true });
   const b = await pairAs(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
+  await a.rotate(new FakeCourier());
   // What an admin mailed it is not what this is about: as if it never came.
   hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
   await b.sync();
   assert.equal(b.isAdmin, false);
   assert.deepEqual(await b.hostKeys.epochs("m-1"), []);
-  // As M1/M2a left them: every committed epoch of m-1 (which lets it in) and m-2's first (which does not), as hex.
-  const store = b.store as RecordingKeyStore;
   const n1 = a.chain!.machineKeyEpochs("m-1");
-  const m1: Uint8Array[] = [];
-  for (let e = 0; e < n1; e++) m1.push((await a.machineKeyBytes("m-1", e))!);
+  assert.ok(n1 >= 2, String(n1));
+  // As M1/M2a left them, as hex — but m-1's epoch 0 already went in a run cut short; and m-2's first, a host that does not let it in now.
+  const store = b.store as RecordingKeyStore;
+  const m1 = new Map<number, Uint8Array>();
+  for (let e = 1; e < n1; e++) m1.set(e, (await a.machineKeyBytes("m-1", e))!);
   const m2 = (await a.machineKeyBytes("m-2", 0))!;
-  for (const [e, key] of m1.entries()) await store.put(legacyMachineKeyName("m-1", e), hex(key));
+  for (const [e, key] of m1) await store.put(legacyMachineKeyName("m-1", e), hex(key));
   const uncommitted = hex(crypto.getRandomValues(new Uint8Array(32)));
   await store.put(legacyMachineKeyName("m-1", n1), uncommitted);
   await store.put(legacyMachineKeyName("m-2", 0), hex(m2));
   const before = store.puts.length;
 
   await b.settle();
-  for (let e = 0; e < n1; e++) assert.equal(await store.get(legacyMachineKeyName("m-1", e)), undefined, `m-1 epoch ${e} is not left raw`);
+  for (const e of m1.keys()) assert.equal(await store.get(legacyMachineKeyName("m-1", e)), undefined, `m-1 epoch ${e} is not left raw`);
   assert.equal(await store.get(legacyMachineKeyName("m-2", 0)), undefined, "nor m-2's");
   assert.equal(await store.get(legacyMachineKeyName("m-1", n1)), uncommitted, "a key the chain did not commit is left as it was");
   assert.deepEqual(await b.hostKeys.epochs("m-1"), [...m1.keys()], "m-1's, sealed in its vault");
   assert.deepEqual([...(await b.machineKeys("m-1")).keys()].sort((x, y) => x - y), [...m1.keys()], "and it reads m-1 with them");
-  assert.deepEqual(await b.hostKeys.epochs("m-2"), [], "m-2 does not let it in: not kept");
+  assert.deepEqual(await b.hostKeys.epochs("m-2"), [0], "m-2's too, though m-2 does not let it in now: no raw copy goes without a sealed one");
   assert.deepEqual(b.missingHostKeys, []);
   for (const { name, value } of store.puts.slice(before)) {
-    for (const key of [...m1, m2]) assert.ok(!containsBytes(value, key), `no raw machine key written under ${name}`);
+    for (const key of [...m1.values(), m2]) assert.ok(!containsBytes(value, key), `no raw machine key written under ${name}`);
   }
 });
 
