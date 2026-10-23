@@ -385,6 +385,12 @@ impl RemoteHandApp {
         // cross-origin request before the real one was made.
         let auth_for_link = auth.clone();
         let router = router.layer(crate::auth::layer(auth));
+        // Outside even that: a request addressed to a name this server does
+        // not answer to (`crate::origin`, "Which names the server answers
+        // to") reaches nothing, the exempt sign-in routes included.
+        let router = router.layer(crate::origin::host_layer(std::sync::Arc::new(crate::origin::HostPolicy::from_env(
+            &config.server.host,
+        ))));
 
         let bind = format!("{}:{}", config.server.host, config.server.port);
         let listener = TcpListener::bind(&bind)

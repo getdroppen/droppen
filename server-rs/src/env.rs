@@ -57,7 +57,8 @@ pub enum Kind {
 /// `DROPPEN_HUB_X` and any other `RH_X` `DROPPEN_X`.
 ///
 /// Not here, because they never had another name: `APP_*` (the framework's),
-/// `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`, `DROPPEN_DESKTOP_SHELL_READ`.
+/// `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`, `DROPPEN_DESKTOP_SHELL_READ`,
+/// `DROPPEN_ALLOWED_HOSTS`.
 /// Not here either, because their old names are gone: `DROPPEN_CODEX_API_KEY`
 /// (the server sets it and names it in the same spawn of `codex`), and the
 /// names only a test reads.

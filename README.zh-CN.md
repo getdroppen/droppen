@@ -360,6 +360,12 @@ ticket 只活 60 秒。
 - `APP_AUTH__LOCKOUT_ATTEMPTS` / `APP_AUTH__LOCKOUT_MINUTES`:连续失败多少次锁多久,
   默认 `5` / `5`;attempts 设 `0` 表示不锁。
 - `DROPPEN_ALLOWED_ORIGINS`:逗号分隔的额外可信 Origin;与请求同 host 的 Origin 自动信任。
+- `DROPPEN_ALLOWED_HOSTS`:逗号分隔的额外主机名(端口忽略)。服务端只回答发给这些名字的请求
+  (看 `Host`,所有路径):IP 地址、`localhost` 和 `*.localhost`、只有本地网络才给的名字
+  (不带点的单个名字如 `mymac`,以及 `*.local`、`*.lan`、`*.home.arpa`、`*.internal`)、
+  `APP_SERVER__HOST` 配的名字、`DROPPEN_ALLOWED_ORIGINS` 里的主机,再加这里列的。别的名字一律
+  `403`,所以经反向代理 / 隧道用自己的域名访问(Caddy、Traefik、`tailscale serve`、Cloudflare
+  Tunnel 会把公开域名原样转过来)时要把那个域名写进来;`*` 表示任何名字都回答(以前的行为)。
 - `DROPPEN_IDLE_TIMEOUT_MS`:一次 agent 运行「多久没有任何进展」才判定为卡死并终止(默认
   20 分钟)。进展 = CLI 有输出,或会话 transcript 文件仍在增长;**运行时间本身不设上限**,
   长时间的 agentic 任务不会被打断。

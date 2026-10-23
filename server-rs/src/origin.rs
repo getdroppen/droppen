@@ -9,11 +9,35 @@
 //! `Access-Control-Allow-Origin`. Tools that send no `Origin` at all (curl,
 //! the integration tests) are unaffected, exactly as in the TypeScript.
 //!
-//! Same-host origins are always trusted so any deployment domain works; extra
-//! proxy origins come from `DROPPEN_ALLOWED_ORIGINS`. Nothing else is: the
-//! development origins this once trusted for any `Host` were another site's
+//! Same-host origins are trusted, for any name the server answers to (below);
+//! extra proxy origins come from `DROPPEN_ALLOWED_ORIGINS`. Nothing else is:
+//! the development origins this once trusted for any `Host` were another site's
 //! page as far as the browser was concerned (`pnpm dev` proxies the API, so it
 //! never needed them).
+//!
+//! # Which names the server answers to
+//!
+//! A same-origin request says nothing about where it was made — a page's own
+//! `GET` carries no `Origin`, and `Sec-Fetch-Site` says `same-origin` — so a
+//! page served under some other host name that resolves to this device would
+//! pass both checks above. [`host_layer`] therefore looks at the name the
+//! request was addressed to (`Host`, and the request target's authority when it
+//! has one), on every path, before anything else runs. It accepts:
+//!
+//! * an IP address (`127.0.0.1:8700`, `[::1]:8700`, `192.168.1.20:8700`): the
+//!   desktop app's window, the local page, the CLI, `droppen-notify` and the
+//!   Droppen bridge all address the server this way;
+//! * `localhost` and `*.localhost`, which browsers keep on this device;
+//! * names only a local network gives out: a single label (`mymac`) and
+//!   `*.local`, `*.lan`, `*.home.arpa`, `*.internal`;
+//! * the name the server is configured to bind (`APP_SERVER__HOST`), the hosts
+//!   of `DROPPEN_ALLOWED_ORIGINS`, and the names in `DROPPEN_ALLOWED_HOSTS`
+//!   (comma-separated; a port is ignored). A reverse proxy or tunnel that
+//!   passes its public name on (Caddy, Traefik, `tailscale serve`, a Cloudflare
+//!   Tunnel) needs that name here. `DROPPEN_ALLOWED_HOSTS=*` accepts any name.
+//!
+//! A request with no `Host` at all (an HTTP/1.0 tool) passes; a browser always
+//! sends one.
 //!
 //! Before the `Origin` is looked at, a browser's own word on where a request
 //! came from is: `Sec-Fetch-Site: cross-site` — another site's page, an
@@ -34,10 +58,13 @@
 //! TypeScript gets from its route pattern is therefore made explicitly, in the
 //! first line of the guard.
 
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
+
 use gotcha::axum::body::Body;
-use gotcha::axum::extract::Request;
+use gotcha::axum::extract::{Request, State};
 use gotcha::axum::http::{header, HeaderValue, Method, StatusCode};
-use gotcha::axum::middleware::Next;
+use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
 use crate::api::error::ApiError;
@@ -92,6 +119,157 @@ pub fn origin_allowed(origin: &str, request_host: Option<&str>) -> bool {
         (Some(host), Some(request_host)) => host == request_host,
         _ => false,
     }
+}
+
+/// What a `Host` value names: an IP address, or a host name (lowercase,
+/// without a trailing dot).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HostName {
+    Ip,
+    Name(String),
+}
+
+/// The name in a `Host` value (or an authority, or a `DROPPEN_ALLOWED_HOSTS`
+/// entry), without its port. `None` when it is not one: an empty value, a bad
+/// port, a bare IPv6 address, a character no host name has.
+fn host_name(value: &str) -> Option<HostName> {
+    let value = value.trim();
+    let port_ok = |port: &str| !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit());
+    if let Some(rest) = value.strip_prefix('[') {
+        let (inside, after) = rest.split_once(']')?;
+        inside.parse::<Ipv6Addr>().ok()?;
+        return match after {
+            "" => Some(HostName::Ip),
+            _ => after.strip_prefix(':').filter(|port| port_ok(port)).map(|_| HostName::Ip),
+        };
+    }
+    let name = match value.split_once(':') {
+        Some((name, port)) if port_ok(port) => name,
+        Some(_) => return None,
+        None => value,
+    };
+    let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
+    if name.parse::<Ipv4Addr>().is_ok() {
+        return Some(HostName::Ip);
+    }
+    let label_ok = |label: &str| {
+        !label.is_empty() && label.len() <= 63 && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    (name.len() <= 253 && name.split('.').all(label_ok)).then_some(HostName::Name(name))
+}
+
+/// The suffixes of names only this device or its local network gives out:
+/// browsers keep `localhost` on this device, mDNS answers `.local` on the local
+/// network only, and `.lan`, `.home.arpa` and `.internal` are what home and
+/// office networks name their devices under, never names public DNS hands out.
+const LOCAL_SUFFIXES: [&str; 5] = ["localhost", "local", "lan", "home.arpa", "internal"];
+
+/// Whether `name` is one only this device or its local network resolves: a
+/// single label (`mymac`, reached through the network's own DNS) or one under
+/// [`LOCAL_SUFFIXES`].
+fn local_name(name: &str) -> bool {
+    !name.contains('.')
+        || LOCAL_SUFFIXES
+            .iter()
+            .any(|suffix| name == *suffix || name.strip_suffix(suffix).is_some_and(|rest| rest.ends_with('.')))
+}
+
+/// The host names this server answers to besides IP addresses and local names
+/// (see the module documentation).
+#[derive(Debug, Clone, Default)]
+pub struct HostPolicy {
+    /// `DROPPEN_ALLOWED_HOSTS=*`: any name at all.
+    any: bool,
+    names: Vec<String>,
+}
+
+impl HostPolicy {
+    /// From `DROPPEN_ALLOWED_HOSTS`'s value, the trusted origins
+    /// (`DROPPEN_ALLOWED_ORIGINS`) and the host the server binds.
+    pub fn new(allowed_hosts: &str, allowed_origins: &[String], bind_host: &str) -> Self {
+        let mut policy = HostPolicy::default();
+        let add = |policy: &mut HostPolicy, value: &str| {
+            if let Some(HostName::Name(name)) = host_name(value) {
+                if !policy.names.contains(&name) {
+                    policy.names.push(name);
+                }
+            }
+        };
+        for entry in allowed_hosts.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            if entry == "*" {
+                policy.any = true;
+            } else if host_name(entry).is_none() {
+                tracing::warn!(entry, "DROPPEN_ALLOWED_HOSTS: not a host name; ignored");
+            } else {
+                add(&mut policy, entry);
+            }
+        }
+        for origin in allowed_origins {
+            if let Some(host) = origin_host(origin) {
+                add(&mut policy, &host);
+            }
+        }
+        add(&mut policy, bind_host);
+        policy
+    }
+
+    /// [`HostPolicy::new`] from this process's environment.
+    pub fn from_env(bind_host: &str) -> Self {
+        Self::new(&crate::env::var("DROPPEN_ALLOWED_HOSTS").unwrap_or_default(), configured_origins(), bind_host)
+    }
+
+    /// Whether a request addressed to `host` (a `Host` value) is answered.
+    pub fn allows(&self, host: &str) -> bool {
+        if self.any {
+            return true;
+        }
+        match host_name(host) {
+            Some(HostName::Ip) => true,
+            Some(HostName::Name(name)) => local_name(&name) || self.names.contains(&name),
+            None => false,
+        }
+    }
+}
+
+/// The already-boxed future [`host_layer`] hands to axum.
+type HostFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
+/// A plain function pointer, so the layer's type can be written down
+/// ([`layer`]'s trick).
+type HostFn = fn(State<Arc<HostPolicy>>, Request, Next) -> HostFuture;
+
+/// [`host_guard`] as a router layer, for the whole router (`crate::app`).
+pub fn host_layer(policy: Arc<HostPolicy>) -> FromFnLayer<HostFn, Arc<HostPolicy>, (State<Arc<HostPolicy>>, Request)> {
+    fn boxed(State(policy): State<Arc<HostPolicy>>, request: Request, next: Next) -> HostFuture {
+        Box::pin(host_guard(policy, request, next))
+    }
+    gotcha::axum::middleware::from_fn_with_state(policy, boxed as HostFn)
+}
+
+/// Refuse a request addressed to a name this server does not answer to, on
+/// every path, saying which setting would let it through.
+pub async fn host_guard(policy: Arc<HostPolicy>, request: Request, next: Next) -> Response {
+    let named = request.headers().get(header::HOST).map(|value| value.to_str().unwrap_or(""));
+    let authority = request.uri().authority().map(|authority| authority.as_str());
+    if let Some(refused) = named.into_iter().chain(authority).find(|host| !policy.allows(host)) {
+        let said = match host_name(refused) {
+            Some(HostName::Name(name)) => format!(
+                "this server does not answer to the name {name}: add it to DROPPEN_ALLOWED_HOSTS (comma-separated) to reach it by that name"
+            ),
+            _ => "bad Host header".to_string(),
+        };
+        tracing::debug!(host = refused, "refused a request addressed to another host name");
+        if request.uri().path().starts_with("/api/") {
+            return ApiError::new(StatusCode::FORBIDDEN, said).into_response();
+        }
+        let mut response = Response::new(Body::from(format!("{said}\n")));
+        *response.status_mut() = StatusCode::FORBIDDEN;
+        let headers = response.headers_mut();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+        headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
+    next.run(request).await
 }
 
 /// The already-boxed future [`layer`] hands to axum.
@@ -221,6 +399,84 @@ mod tests {
         // sandboxed or file:// document.
         assert!(!origin_allowed("null", Some("null")));
         assert!(!origin_allowed("", Some("")));
+    }
+
+    fn policy(allowed_hosts: &str, allowed_origins: &[&str], bind_host: &str) -> HostPolicy {
+        let origins: Vec<String> = allowed_origins.iter().map(|o| o.to_string()).collect();
+        HostPolicy::new(allowed_hosts, &origins, bind_host)
+    }
+
+    #[test]
+    fn ip_addresses_are_always_answered() {
+        let p = policy("", &[], "127.0.0.1");
+        for host in ["127.0.0.1:8700", "127.0.0.1", "[::1]:8700", "[::1]", "192.168.1.20:8700", "100.64.0.7:8700", "127.0.0.1.:8700"] {
+            assert!(p.allows(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn localhost_and_local_network_names_are_answered() {
+        let p = policy("", &[], "127.0.0.1");
+        for host in [
+            "localhost:8700",
+            "LOCALHOST:8700",
+            "localhost.:8700",
+            "app.localhost:8700",
+            "mymac:8700",
+            "mymac.local:8700",
+            "nas.lan",
+            "box.home.arpa:8700",
+            "dev.internal:8700",
+        ] {
+            assert!(p.allows(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn a_public_name_is_refused_unless_configured() {
+        let p = policy("", &[], "127.0.0.1");
+        for host in ["remote.example.com", "remote.example.com:8700", "127.0.0.1.example.com:8700", "localhost.example.com:8700", "local.example.com"] {
+            assert!(!p.allows(host), "{host}");
+        }
+        let p = policy(" Remote.Example.com:443 , other.example.org ", &[], "127.0.0.1");
+        assert!(p.allows("remote.example.com"), "a configured name, its port and case aside");
+        assert!(p.allows("REMOTE.example.com.:8443"));
+        assert!(p.allows("other.example.org:8700"));
+        assert!(!p.allows("sub.remote.example.com"), "a name, not its subdomains");
+    }
+
+    #[test]
+    fn the_trusted_origins_and_the_bound_name_are_answered() {
+        let p = policy("", &["https://proxy.example.com", "http://dev.example.net:5180"], "mymac.example.org");
+        assert!(p.allows("proxy.example.com"));
+        assert!(p.allows("dev.example.net:8700"));
+        assert!(p.allows("mymac.example.org:8700"));
+        assert!(!p.allows("elsewhere.example.com"));
+    }
+
+    #[test]
+    fn a_star_answers_any_name() {
+        let p = policy("*", &[], "127.0.0.1");
+        assert!(p.allows("remote.example.com:8700"));
+        assert!(p.allows("anything.example"));
+    }
+
+    #[test]
+    fn a_malformed_host_is_refused() {
+        let p = policy("", &[], "127.0.0.1");
+        for host in ["", ":8700", "localhost:", "localhost:http", "localhost:123456", "::1", "[::1", "[::1]x", "[nope]:80", "a b", "user@localhost", "a..b", "localhost/x"] {
+            assert!(!p.allows(host), "{host:?}");
+        }
+        assert!(policy("not a name, ok.example", &[], "127.0.0.1").allows("ok.example"), "a bad entry is skipped, the rest kept");
+    }
+
+    #[test]
+    fn a_host_names_an_ip_or_a_lowercase_name() {
+        assert_eq!(host_name("127.0.0.1:8700"), Some(HostName::Ip));
+        assert_eq!(host_name("[::1]:8700"), Some(HostName::Ip));
+        assert_eq!(host_name("[fe80::1%25en0]:8700"), None, "a zone is no Host a browser sends");
+        assert_eq!(host_name("MyMac.Local.:8700"), Some(HostName::Name("mymac.local".into())));
+        assert!(local_name("x.local") && !local_name("xlocal.example") && !local_name("x.localx"));
     }
 
     #[test]

@@ -91,7 +91,11 @@ curl -fsSL https://droppen.app/install.sh | DROPPEN_CODE=<code> sh
 
 The local program listens on loopback only. Reach it from other devices
 through Droppen, or through an SSH tunnel or Tailscale. Do not expose its port
-to the Internet: whoever reaches it can run commands as you.
+to the Internet: whoever reaches it can run commands as you. It answers to IP
+addresses, `localhost` and local-network names (`mymac`, `*.local`, `*.lan`,
+`*.home.arpa`, `*.internal`); a reverse proxy or tunnel that passes another
+name on (`tailscale serve`, Caddy, a Cloudflare Tunnel) needs that name in
+`DROPPEN_ALLOWED_HOSTS` (comma-separated).
 
 ## Build from source
 

@@ -188,7 +188,11 @@ impl TestServer {
     /// plaintext requests to a loopback port the test just opened.
     pub async fn request_full(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> (u16, String, String) {
         let mut stream = tokio::net::TcpStream::connect(self.addr).await.expect("connect");
-        let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n", self.addr);
+        // The server's own address, unless the case names another `Host`.
+        let mut request = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\n");
+        if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("host")) {
+            request.push_str(&format!("Host: {}\r\n", self.addr));
+        }
         for (name, value) in headers {
             request.push_str(&format!("{name}: {value}\r\n"));
         }

@@ -105,3 +105,41 @@ async fn the_guard_only_covers_the_api() {
     assert!(status == 200 || status == 503, "the SPA fallback answered {status}");
     server.stop().await;
 }
+
+/// The name a request is addressed to decides first, on every path: a page
+/// served under another site's host name gets nothing, not even with no
+/// `Origin` and `Sec-Fetch-Site: same-origin`, which is what such a page's own
+/// requests carry.
+#[tokio::test]
+async fn a_request_addressed_to_another_host_name_is_refused() {
+    let server = common::TestServer::start().await;
+    let page = [("Host", "remote.example.com:8700"), ("Sec-Fetch-Site", "same-origin")];
+    let (status, _, body) = server.request_full("GET", "/api/settings", &page, &[]).await;
+    assert_eq!(status, 403);
+    let error = serde_json::from_str::<Value>(&body).expect("json")["error"].as_str().unwrap_or_default().to_string();
+    assert!(error.contains("DROPPEN_ALLOWED_HOSTS"), "says what to set: {error}");
+
+    let (status, head, body) = server.request_full("GET", "/", &page, &[]).await;
+    assert_eq!(status, 403, "the page too, not only the API");
+    assert!(header(&head, "content-type").is_some_and(|v| v.starts_with("text/plain")));
+    assert!(body.contains("remote.example.com"), "{body}");
+
+    let (status, _, _) = server
+        .request_full("POST", "/api/auth/login", &[("Host", "remote.example.com"), ("Content-Type", "application/json")], b"{}")
+        .await;
+    assert_eq!(status, 403, "nor the routes that answer without a session");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn loopback_and_local_names_are_answered() {
+    let server = common::TestServer::start().await;
+    let port = server.addr.port();
+    for host in [format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}"), format!("mymac.local:{port}")] {
+        let (status, _, _) = server
+            .request_full("GET", "/api/settings", &[("Host", &host), ("Sec-Fetch-Site", "same-origin")], &[])
+            .await;
+        assert_eq!(status, 200, "{host}");
+    }
+    server.stop().await;
+}

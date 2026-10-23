@@ -173,10 +173,14 @@ async fn with_no_accounts_nobody_gets_in_without_a_session() {
         let (status, body) = server.request(method, path, &[], &[]).await;
         assert_eq!(status, 401, "{method} {path} -> {status}: {body}");
     }
-    for host in ["localhost", "localhost:8700", "127.0.0.1", "[::1]:8700", "evil.example"] {
+    for host in ["localhost", "localhost:8700", "127.0.0.1", "[::1]:8700"] {
         let (status, _) = raw_get(&server, "/api/settings", host).await;
         assert_eq!(status, 401, "Host: {host} through a relay is nobody");
     }
+    // A name the server does not answer to gets no further than that
+    // (`crate::origin`, "Which names the server answers to").
+    let (status, _) = raw_get(&server, "/api/settings", "evil.example").await;
+    assert_eq!(status, 403, "Host: evil.example is not this server's name");
 
     let status: Value = server.get_json("/api/auth/status").await;
     assert_eq!(status["authRequired"], true);

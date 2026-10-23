@@ -128,6 +128,10 @@ serve 那一个 pid：
 - Tailscale / Cloudflare Tunnel 之类自带 HTTPS 的隧道；
 - 只在本机用时访问 `http://localhost:<port>`——`localhost` 被规范单独豁免，IP 形式不算。
 
+前两种经过的名字（反向代理的域名、Tailscale 的 `*.ts.net`、隧道的域名）要写进
+`DROPPEN_ALLOWED_HOSTS`（逗号分隔），否则服务端对发给这个名字的请求一律回 `403`
+（`crate::origin`「Which names the server answers to」）。
+
 另外两条运维前提：
 
 - **VAPID 私钥落在 `~/.local/share/remote-hand/instances/<instance>/push.json`（`0600`）**，首次
