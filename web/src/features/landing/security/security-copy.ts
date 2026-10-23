@@ -248,10 +248,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "見えるもの",
   ],
   [
-    "**Your account**:\n- the e-mail address and whether it is verified\n- a password hash or your passkeys' public keys\n- which provider made each (from its AAGUID) and the name you gave it\n- the plan and the invite it came with\n- the usage it is counted on (bytes stored and transferred)",
-    "**你的账户**：\n- 邮箱地址和是否已验证\n- 密码哈希或通行密钥的公钥\n- 每把出自哪个提供方（取自它的 AAGUID）和你给它起的名字\n- 套餐和注册时用的邀请码\n- 计费用的用量（存储与传输的字节数）",
-    "**你的帳戶**：\n- 電子郵件地址和是否已驗證\n- 密碼雜湊或通行金鑰的公鑰\n- 每把出自哪個提供者（取自它的 AAGUID）和你給它取的名字\n- 方案和註冊時用的邀請碼\n- 計費用的用量（儲存與傳輸的位元組數）",
-    "**アカウント**：\n- メールアドレスと確認済みかどうか\n- パスワードのハッシュまたはパスキーの公開鍵\n- 各パスキーの提供元（AAGUID から）とあなたが付けた名前\n- プランと登録時の招待\n- 課金の基になる使用量（保存と転送のバイト数）",
+    "**Your account** (Hub):\n- the e-mail address and whether it is verified\n- a password hash or your passkeys' public keys\n- which provider made each (from its AAGUID) and the name you gave it\n- the plan and the invite it came with\n- the usage it is counted on (bytes stored and transferred)",
+    "**你的账户**（Hub）：\n- 邮箱地址和是否已验证\n- 密码哈希或通行密钥的公钥\n- 每把出自哪个提供方（取自它的 AAGUID）和你给它起的名字\n- 套餐和注册时用的邀请码\n- 计费用的用量（存储与传输的字节数）",
+    "**你的帳戶**（Hub）：\n- 電子郵件地址和是否已驗證\n- 密碼雜湊或通行金鑰的公鑰\n- 每把出自哪個提供者（取自它的 AAGUID）和你給它取的名字\n- 方案和註冊時用的邀請碼\n- 計費用的用量（儲存與傳輸的位元組數）",
+    "**アカウント**（Hub）：\n- メールアドレスと確認済みかどうか\n- パスワードのハッシュまたはパスキーの公開鍵\n- 各パスキーの提供元（AAGUID から）とあなたが付けた名前\n- プランと登録時の招待\n- 課金の基になる使用量（保存と転送のバイト数）",
   ],
   [
     "A record of the last 30 days' **changes to how you sign in**: which change, from which device, and the passkey's name (Hub).",
@@ -260,10 +260,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "過去 30 日間の**サインイン方法の変更**記録：どんな変更か、どのデバイスからか、パスキーの名前（Hub）。",
   ],
   [
-    "The **IP address** of every request and connection.",
-    "每个请求、每条连接的 **IP 地址**。",
-    "每個請求、每條連線的 **IP 位址**。",
-    "すべてのリクエストと接続の **IP アドレス**。",
+    "The **IP address** of every request and connection (Hub).",
+    "每个请求、每条连接的 **IP 地址**（Hub）。",
+    "每個請求、每條連線的 **IP 位址**（Hub）。",
+    "すべてのリクエストと接続の **IP アドレス**（Hub）。",
   ],
   [
     "What **kind of device** each browser or phone is, as a short name such as “iPhone · Safari” made from its User-Agent; it does not keep the User-Agent itself (Hub).",
@@ -272,10 +272,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "各ブラウザやスマホの**種類**。User-Agent から作った「iPhone · Safari」のような短い名前だけで、User-Agent そのものは保存しません（Hub）。",
   ],
   [
-    "Each device's **random id and public keys**, when it joined and was last seen, when a device that runs AI went online or offline, which relays it is on and its round trip to each (a rough location), and the version and protocol features it declares.",
-    "每台设备的**随机 id 和公钥**、加入与最后在线的时间、可运行 AI 的设备何时上线下线、在哪些中继上以及到每个中继的往返时间（能看出大致位置），以及它声明的版本与协议功能。",
-    "每台裝置的**隨機 id 和公鑰**、加入與最後上線的時間、可執行 AI 的裝置何時上線離線、在哪些中繼上以及到每個中繼的往返時間（能看出大致位置），以及它宣告的版本與協定功能。",
-    "各デバイスの**ランダムな id と公開鍵**、参加した時刻と最後に見えた時刻、AI を実行できるデバイスがいつオンライン・オフラインになったか、どの中継にいて各中継までの往復時間がどれくらいか（おおよその場所がわかる）、そして申告するバージョンとプロトコルの機能。",
+    "Each device's **random id and public keys**, when it joined and was last seen, when a device that runs AI went online or offline, which relays it is on and its round trip to each (a rough location), and the version and protocol features it declares (Hub).",
+    "每台设备的**随机 id 和公钥**、加入与最后在线的时间、可运行 AI 的设备何时上线下线、在哪些中继上以及到每个中继的往返时间（能看出大致位置），以及它声明的版本与协议功能（Hub）。",
+    "每台裝置的**隨機 id 和公鑰**、加入與最後上線的時間、可執行 AI 的裝置何時上線離線、在哪些中繼上以及到每個中繼的往返時間（能看出大致位置），以及它宣告的版本與協定功能（Hub）。",
+    "各デバイスの**ランダムな id と公開鍵**、参加した時刻と最後に見えた時刻、AI を実行できるデバイスがいつオンライン・オフラインになったか、どの中継にいて各中継までの往復時間がどれくらいか（おおよその場所がわかる）、そして申告するバージョンとプロトコルの機能（Hub）。",
   ],
   [
     "**The device chain**: which devices belong to the account, which of them run AI, and which device added which.",
@@ -500,10 +500,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "削除を差し止める Hub は、削除されたデバイスに操作を続けさせられるかもしれません。そのためフルデバイスは、接続時、チェーンが変わるたび、開いている間は 3 時間ごとに、見えているチェーンのヘッドを証明する署名をします。AI を実行できるデバイスがチャネルを開くのは、要求してきたデバイス以外のフルデバイス（それが唯一のフルデバイスならそのデバイス自身）が **7 日以内**に現在のヘッドを証明している場合だけです。チャネル越しにそのデバイスを管理するリクエスト（コンテンツ鍵の受け渡し、名前の変更、再暗号化、設定・AI アカウント・ソフトウェアの変更）には、**12 時間以内**のその証明が必要です。鍵メールで届くコンテンツ鍵には要りません。チェーンがコミットしたものしか受け取らないからです。開いているチャネルも、最後の有効な証明から **7 日で閉じます**。",
   ],
   [
-    "An honest Hub revokes a removed device's sessions and relay tickets at once; the 7 days bound only a Hub that is itself compromised. **The documented limit**: if the Hub also freezes every other full device on that same head, they keep vouching for it, and a removed device keeps control until one of them notices it is frozen; a new channel, which needs an attestation of exactly the current head, has the same limit.",
-    "诚实的 Hub 一收到移除就吊销那台设备的会话和中继票据；7 天只约束本身已被攻破的 Hub。**写明的局限**：如果 Hub 还把其它每一台完整设备都冻在同一个链头上，它们就会一直为那个链头作证，被移除的设备也就一直保有控制，直到其中一台发现自己被冻住；新开通道要求的正是当前链头的作证，也有同样的局限。",
-    "誠實的 Hub 一收到移除就撤銷那台裝置的工作階段和中繼票據；7 天只約束本身已被攻破的 Hub。**寫明的限制**：如果 Hub 還把其他每一台完整裝置都凍在同一個鏈頭上，它們就會一直為那個鏈頭作證，被移除的裝置也就一直保有控制，直到其中一台發現自己被凍住；新開通道要求的正是目前鏈頭的作證，也有同樣的限制。",
-    "誠実な Hub は、削除されたデバイスのセッションと中継チケットをすぐに失効させます。7 日という上限が縛るのは、それ自体が侵害された Hub だけです。**明記している限界**：Hub がほかのすべてのフルデバイスも同じヘッドに凍結すると、それらはそのヘッドを証明し続け、どれかが凍結に気づくまで、削除されたデバイスは操作を続けられます。現在のヘッドそのものの証明を求める新しいチャネルにも、同じ限界があります。",
+    "An honest Hub revokes a removed device's sessions and relay tickets at once (Hub); the 7 days bound only a Hub that is itself compromised. **The documented limit**: if the Hub also freezes every other full device on that same head, they keep vouching for it, and a removed device keeps control until one of them notices it is frozen; a new channel, which needs an attestation of exactly the current head, has the same limit.",
+    "诚实的 Hub 一收到移除就吊销那台设备的会话和中继票据（Hub）；7 天只约束本身已被攻破的 Hub。**写明的局限**：如果 Hub 还把其它每一台完整设备都冻在同一个链头上，它们就会一直为那个链头作证，被移除的设备也就一直保有控制，直到其中一台发现自己被冻住；新开通道要求的正是当前链头的作证，也有同样的局限。",
+    "誠實的 Hub 一收到移除就撤銷那台裝置的工作階段和中繼票據（Hub）；7 天只約束本身已被攻破的 Hub。**寫明的限制**：如果 Hub 還把其他每一台完整裝置都凍在同一個鏈頭上，它們就會一直為那個鏈頭作證，被移除的裝置也就一直保有控制，直到其中一台發現自己被凍住；新開通道要求的正是目前鏈頭的作證，也有同樣的限制。",
+    "誠実な Hub は、削除されたデバイスのセッションと中継チケットをすぐに失効させます（Hub）。7 日という上限が縛るのは、それ自体が侵害された Hub だけです。**明記している限界**：Hub がほかのすべてのフルデバイスも同じヘッドに凍結すると、それらはそのヘッドを証明し続け、どれかが凍結に気づくまで、削除されたデバイスは操作を続けられます。現在のヘッドそのものの証明を求める新しいチャネルにも、同じ限界があります。",
   ],
   [
     "Every change is announced",
@@ -524,10 +524,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "削除と鍵のローテーション",
   ],
   [
-    "A full device **signs the removal**. Droppen Hub closes the removed device's connections and revokes its sessions and relay tickets; every device that runs AI drops its channels as soon as it sees the entry, and refuses its handshakes from then on.",
-    "由一台完整设备**签下移除**。Droppen Hub 关掉被移除设备的连接，吊销它的会话和中继票据；每台可运行 AI 的设备一看到这一条就断开它的通道，此后拒绝它的握手。",
-    "由一台完整裝置**簽下移除**。Droppen Hub 關掉被移除裝置的連線，撤銷它的工作階段和中繼票據；每台可執行 AI 的裝置一看到這一筆就斷開它的通道，此後拒絕它的交握。",
-    "**削除**はフルデバイスが署名します。Droppen Hub は削除されたデバイスの接続を閉じ、セッションと中継チケットを失効させます。AI を実行できる各デバイスは、そのエントリを見た時点でそのデバイスのチャネルを切り、以後のハンドシェイクを拒否します。",
+    "A full device **signs the removal**. Droppen Hub closes the removed device's connections and revokes its sessions and relay tickets (Hub); every device that runs AI drops its channels as soon as it sees the entry, and refuses its handshakes from then on.",
+    "由一台完整设备**签下移除**。Droppen Hub 关掉被移除设备的连接，吊销它的会话和中继票据（Hub）；每台可运行 AI 的设备一看到这一条就断开它的通道，此后拒绝它的握手。",
+    "由一台完整裝置**簽下移除**。Droppen Hub 關掉被移除裝置的連線，撤銷它的工作階段和中繼票據（Hub）；每台可執行 AI 的裝置一看到這一筆就斷開它的通道，此後拒絕它的交握。",
+    "**削除**はフルデバイスが署名します。Droppen Hub は削除されたデバイスの接続を閉じ、セッションと中継チケットを失効させます（Hub）。AI を実行できる各デバイスは、そのエントリを見た時点でそのデバイスのチャネルを切り、以後のハンドシェイクを拒否します。",
   ],
   [
     "Then the app makes **new keys** (the chain records each new epoch but does not demand one):\n- a **new user key** if the removed device ever held one, sealed to the full devices that remain and to the recovery words (the chain voids the words if the removed device knew them: then make new ones)\n- a **new content key** for every device that runs AI, which you may skip only when the removed device never held the user key and no device that runs AI let it control it\nEach new epoch is committed on the chain first, always exactly one up, and sealed only to the devices that remain.",
@@ -896,10 +896,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "リカバリーワードから**リカバリー署名鍵**を導き、ユーザー鍵の各世代はその鍵の X25519 の双子の鍵に封印してキーリングに置かれます。チェーンにはアカウント鍵に対するリカバリー鍵の署名があるので、Droppen Hub があなたの本物のリカバリー鍵を自作のチェーンに入れることはできません。",
   ],
   [
-    "A device that comes back with the words holds the keys to the history at once, but **joins as pending**: it can neither sign entries nor open a channel, and an honest Droppen Hub does not serve it the stored copies, until a full device approves it or it activates itself with the words, which each verifier that already follows the account accepts only **24 hours** after it first saw the join, by its own clock. Meanwhile every device and every device that runs AI warns you, and any full device can veto by removing it; a full device that holds the activation back signs nothing but the veto and pairs no device, not even one already listed, until you approve or remove it. A browser that first opens the account after both the join and the activation (one that then joins with the recovery words itself, say) takes them as the account's history. The delay holds back control; against a Hub that is itself compromised, it does not hold back reading.",
-    "用恢复词回来的设备立刻就握有打开历史的钥匙，但以「**等待批准**」的身份加入：在完整设备批准它、或它用恢复词自行激活之前，它既不能签条目，也开不了通道，诚实的 Droppen Hub 也不会把保存的副本给它；而自行激活，每个已经在跟随这个账户的验证者都要按自己的时钟、在自己第一次看到这次加入**满 24 小时**后才接受。这期间每台设备、每台可运行 AI 的设备都会提醒你，任何一台完整设备都能把它移除来否决；暂缓这次激活的完整设备，在你批准或移除它之前，除了否决什么都不签，也不配对任何设备，已在名单上的设备重新配对也不行。在这次加入和激活都发生之后才第一次打开这个账户的浏览器（比如随后自己用恢复词加入的那个），会把它们当作账户的历史接受。这段等待挡住的是控制；面对本身已被攻破的 Hub，它挡不住读取。",
-    "用復原詞回來的裝置立刻就握有打開歷史的金鑰，但以「**等待核准**」的身分加入：在完整裝置核准它、或它用復原詞自行啟用之前，它既不能簽項目，也開不了通道，誠實的 Droppen Hub 也不會把保存的副本給它；而自行啟用，每個已經在跟隨這個帳戶的驗證者都要按自己的時鐘、在自己第一次看到這次加入**滿 24 小時**後才接受。這期間每台裝置、每台可執行 AI 的裝置都會提醒你，任何一台完整裝置都能把它移除來否決；暫緩這次啟用的完整裝置，在你核准或移除它之前，除了否決什麼都不簽，也不配對任何裝置，已在名單上的裝置重新配對也不行。在這次加入和啟用都發生之後才第一次打開這個帳戶的瀏覽器（比如隨後自己用復原詞加入的那個），會把它們當作帳戶的歷史接受。這段等待擋住的是控制；面對本身已被攻破的 Hub，它擋不住讀取。",
-    "リカバリーワードで戻ってきたデバイスは、すぐに履歴を開く鍵を手にしますが、**承認待ち**として参加します。フルデバイスが承認するか、デバイスがワードを使って自分を有効にするまで、エントリへの署名もチャネルを開くこともできず、誠実な Droppen Hub は保存されたコピーを渡しません。自分での有効化は、すでにこのアカウントを追っている各検証器が、自分の時計で最初に参加を見てから **24 時間**たって初めて受け入れます。その間、すべてのデバイスと AI を実行できるすべてのデバイスが警告し、どのフルデバイスもそれを削除して拒否できます。有効化を保留しているフルデバイスは、あなたが承認するか削除するまで、拒否以外には何も署名せず、どのデバイスもペアリングしません（すでに一覧にあるデバイスのペアリングし直しも含みます）。参加と有効化の両方が済んだ後に初めてこのアカウントを開くブラウザ（その後で自分もリカバリーワードで参加するブラウザなど）は、それらをアカウントの履歴として受け入れます。この遅延が抑えるのは操作です。それ自体が侵害された Hub に対しては、読むことまでは抑えられません。",
+    "A device that comes back with the words holds the keys to the history at once, but **joins as pending**: it can neither sign entries nor open a channel, and an honest Droppen Hub does not serve it the stored copies, until a full device approves it or it activates itself with the words, which each verifier that already follows the account accepts only **24 hours** after it first saw the join, by its own clock. Meanwhile every device and every device that runs AI warns you, and any full device can veto by removing it; a full device that holds the activation back signs no entry but the veto and pairs no device, not even one already listed, until you approve or remove it, or its 24 hours are up. A browser, or a device that runs AI, that first follows the account after both the join and the activation (a browser that then joins with the recovery words itself, say) takes them as the account's history. The delay holds back control; against a Hub that is itself compromised, it does not hold back reading.",
+    "用恢复词回来的设备立刻就握有打开历史的钥匙，但以「**等待批准**」的身份加入：在完整设备批准它、或它用恢复词自行激活之前，它既不能签条目，也开不了通道，诚实的 Droppen Hub 也不会把保存的副本给它；而自行激活，每个已经在跟随这个账户的验证者都要按自己的时钟、在自己第一次看到这次加入**满 24 小时**后才接受。这期间每台设备、每台可运行 AI 的设备都会提醒你，任何一台完整设备都能把它移除来否决；暂缓这次激活的完整设备，在你批准或移除它、或它的 24 小时到期之前，除了否决不签任何条目，也不配对任何设备，已在名单上的设备重新配对也不行。在这次加入和激活都发生之后才开始跟随这个账户的浏览器或可运行 AI 的设备（比如随后自己用恢复词加入的浏览器），会把它们当作账户的历史接受。这段等待挡住的是控制；面对本身已被攻破的 Hub，它挡不住读取。",
+    "用復原詞回來的裝置立刻就握有打開歷史的金鑰，但以「**等待核准**」的身分加入：在完整裝置核准它、或它用復原詞自行啟用之前，它既不能簽項目，也開不了通道，誠實的 Droppen Hub 也不會把保存的副本給它；而自行啟用，每個已經在跟隨這個帳戶的驗證者都要按自己的時鐘、在自己第一次看到這次加入**滿 24 小時**後才接受。這期間每台裝置、每台可執行 AI 的裝置都會提醒你，任何一台完整裝置都能把它移除來否決；暫緩這次啟用的完整裝置，在你核准或移除它、或它的 24 小時到期之前，除了否決不簽任何項目，也不配對任何裝置，已在名單上的裝置重新配對也不行。在這次加入和啟用都發生之後才開始跟隨這個帳戶的瀏覽器或可執行 AI 的裝置（比如隨後自己用復原詞加入的瀏覽器），會把它們當作帳戶的歷史接受。這段等待擋住的是控制；面對本身已被攻破的 Hub，它擋不住讀取。",
+    "リカバリーワードで戻ってきたデバイスは、すぐに履歴を開く鍵を手にしますが、**承認待ち**として参加します。フルデバイスが承認するか、デバイスがワードを使って自分を有効にするまで、エントリへの署名もチャネルを開くこともできず、誠実な Droppen Hub は保存されたコピーを渡しません。自分での有効化は、すでにこのアカウントを追っている各検証器が、自分の時計で最初に参加を見てから **24 時間**たって初めて受け入れます。その間、すべてのデバイスと AI を実行できるすべてのデバイスが警告し、どのフルデバイスもそれを削除して拒否できます。有効化を保留しているフルデバイスは、あなたが承認するか削除するか、その 24 時間が過ぎるまで、拒否以外のエントリには署名せず、どのデバイスもペアリングしません（すでに一覧にあるデバイスのペアリングし直しも含みます）。参加と有効化の両方が済んだ後に初めてこのアカウントを追い始めるブラウザや AI を実行できるデバイス（その後で自分もリカバリーワードで参加するブラウザなど）は、それらをアカウントの履歴として受け入れます。この遅延が抑えるのは操作です。それ自体が侵害された Hub に対しては、読むことまでは抑えられません。",
   ],
   [
     "If Droppen Hub itself holds the words, it can **order the activation before any veto**: then veto, make new words, and, if you suspect the Hub, add your devices that run AI again on the devices themselves.",
@@ -926,10 +926,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "パスキーの現状",
   ],
   [
-    "A passkey **signs you in** to Droppen Hub: it gives the same short sign-in session a password does (15 minutes: enough to see the account and its devices, read the chain and register this browser's device key). Everything else needs a **device session**, signed by a device key, and what a device may do is **decided by the chain**: a device the chain does not list gets only ciphertext. Adding or removing a passkey and setting, changing or removing the password take a full device and a fresh passkey or the current password, and each such change shows on your other full devices.",
-    "通行密钥用来**登录** Droppen Hub：它换来的登录会话和密码一样短（15 分钟，够查看账户和它的设备、读取设备链、登记这个浏览器的设备钥）。其余一切都要**设备会话**，由设备钥签名换取，而一台设备能做什么**由链决定**：链上没有的设备，只能拿到密文。添加或删除通行密钥，以及设置、更改或删除密码，都要在完整设备上进行，并再用一次通行密钥或输入当前密码；每一次这样的变化，都会显示在你的其它完整设备上。",
-    "通行金鑰用來**登入** Droppen Hub：它換來的登入工作階段和密碼一樣短（15 分鐘，夠查看帳戶和它的裝置、讀取裝置鏈、登記這個瀏覽器的裝置金鑰）。其餘一切都要**裝置工作階段**，由裝置金鑰簽章換取，而一台裝置能做什麼**由鏈決定**：鏈上沒有的裝置，只能拿到密文。新增或刪除通行金鑰，以及設定、變更或刪除密碼，都要在完整裝置上進行，並再用一次通行金鑰或輸入目前密碼；每一次這樣的變化，都會顯示在你的其他完整裝置上。",
-    "パスキーは Droppen Hub への**サインイン**に使います。得られるのはパスワードと同じ短いサインインセッション（15 分。アカウントとそのデバイスを見ること、チェーンを読むこと、このブラウザのデバイス鍵を登録することができる）です。それ以外はすべて、デバイス鍵の署名で得る**デバイスセッション**が必要で、デバイスに何ができるかは**チェーンが決めます**。チェーンに載っていないデバイスが受け取れるのは暗号文だけです。パスキーの追加や削除、パスワードの設定・変更・削除には、フルデバイスと、改めてのパスキーか現在のパスワードが必要で、そうした変更はほかのフルデバイスにすべて表示されます。",
+    "A passkey **signs you in** to Droppen Hub: it gives the same short sign-in session a password does (Hub): 15 minutes, enough to see the account and its devices, read the chain and register this browser's device key. Everything else needs a **device session**, signed by a device key, and what a device may do is **decided by the chain**: a device the chain does not list gets only ciphertext. Adding or removing a passkey and setting, changing or removing the password take a full device and a fresh passkey or the current password, and each such change shows on your other full devices.",
+    "通行密钥用来**登录** Droppen Hub：它换来的登录会话和密码一样短（Hub），只有 15 分钟，够查看账户和它的设备、读取设备链、登记这个浏览器的设备钥。其余一切都要**设备会话**，由设备钥签名换取，而一台设备能做什么**由链决定**：链上没有的设备，只能拿到密文。添加或删除通行密钥，以及设置、更改或删除密码，都要在完整设备上进行，并再用一次通行密钥或输入当前密码；每一次这样的变化，都会显示在你的其它完整设备上。",
+    "通行金鑰用來**登入** Droppen Hub：它換來的登入工作階段和密碼一樣短（Hub），只有 15 分鐘，夠查看帳戶和它的裝置、讀取裝置鏈、登記這個瀏覽器的裝置金鑰。其餘一切都要**裝置工作階段**，由裝置金鑰簽章換取，而一台裝置能做什麼**由鏈決定**：鏈上沒有的裝置，只能拿到密文。新增或刪除通行金鑰，以及設定、變更或刪除密碼，都要在完整裝置上進行，並再用一次通行金鑰或輸入目前密碼；每一次這樣的變化，都會顯示在你的其他完整裝置上。",
+    "パスキーは Droppen Hub への**サインイン**に使います。得られるのはパスワードと同じ短いサインインセッション（Hub）で、長さは 15 分です。アカウントとそのデバイスを見ること、チェーンを読むこと、このブラウザのデバイス鍵を登録することができます。それ以外はすべて、デバイス鍵の署名で得る**デバイスセッション**が必要で、デバイスに何ができるかは**チェーンが決めます**。チェーンに載っていないデバイスが受け取れるのは暗号文だけです。パスキーの追加や削除、パスワードの設定・変更・削除には、フルデバイスと、改めてのパスキーか現在のパスワードが必要で、そうした変更はほかのフルデバイスにすべて表示されます。",
   ],
   [
     "A passkey can also let a new browser **ask to join**: when you add one on a full device it does, unless you untick that (it needs a passkey that supports PRF); the passkey you signed up with does only once you switch it on. That puts a **passkey slot** on the chain: a key derived from the passkey's PRF output, which only that passkey can produce. A new browser that signs in with the passkey derives the same key, checks the slot on the chain, and adds itself as a pending, limited device, which every device announces. It gets no key until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen; then it becomes a full device and receives the user key through the pairing. Any full device can remove it instead. A passkey **holds no encryption key and unlocks none**: a slot only lets a device ask.",
@@ -989,7 +989,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "A relay pairs a device's channel with the other end's on tickets that Droppen Hub signs, valid for 15 minutes; the holder must also sign the relay's own challenge with the ticket's key, so a stolen ticket is useless, and the relay refuses a ticket that runs longer than 15 minutes or was issued more than 5 minutes ahead of its own clock. The relay\n- copies frames **without parsing them**\n- has **no database**\n- holds **no key to your data** (only its own signing key and Droppen Hub's public ticket keys)\n- keeps **nothing about your channels** across a restart\nA relay that misreports who is who only gets a failed handshake. Each account is kept on one relay, with an optional standby, and moves at once when its relay goes away; on it, each account's devices that run AI are kept apart from every other account's. While its link to Droppen Hub is down, a relay keeps sessions already connected for up to 2 hours past their tickets: a new sign-in still needs a valid ticket, the revocations it missed are applied when the link is back, and all it ever sees is ciphertext.",
     "中继凭 Droppen Hub 签发、15 分钟有效的票据，把设备的通道和另一端的配上对；持票人还得用票据里的钥匙签中继自己出的挑战，所以单偷票据没用；有效期超过 15 分钟、或签发时间比中继自己的时钟超前 5 分钟以上的票据，中继一概拒绝。中继\n- 原样搬运帧、**不解析**\n- **没有数据库**\n- **不持有任何能打开你数据的钥匙**（只有它自己的签名钥和 Droppen Hub 签票用的公钥）\n- 重启后也**不留下任何关于你通道的东西**\n谎报谁是谁的中继，只会得到一次失败的握手。每个账户固定用一个中继，可选再加一个备用，中继一离开就立刻换；在中继上，每个账户的可运行 AI 的设备都和其它账户的分开。中继与 Droppen Hub 的连接断开期间，已经连上的会话最多可以在票据过期后再保持 2 小时：新的登录仍然需要有效的票据，错过的吊销会在连接恢复时补上，而中继看到的始终只有密文。",
     "中繼憑 Droppen Hub 簽發、15 分鐘有效的票據，把裝置的通道和另一端的配上對；持票人還得用票據裡的金鑰簽中繼自己出的挑戰，所以單偷票據沒用；有效期超過 15 分鐘、或簽發時間比中繼自己的時鐘超前 5 分鐘以上的票據，中繼一概拒絕。中繼\n- 原樣搬運幀、**不解析**\n- **沒有資料庫**\n- **不持有任何能打開你資料的金鑰**（只有它自己的簽章金鑰和 Droppen Hub 簽票用的公鑰）\n- 重新啟動後也**不留下任何關於你通道的東西**\n謊報誰是誰的中繼，只會得到一次失敗的交握。每個帳戶固定用一個中繼，可選再加一個備用，中繼一離開就立刻換；在中繼上，每個帳戶的可執行 AI 的裝置都和其他帳戶的分開。中繼與 Droppen Hub 的連線中斷期間，已經連上的工作階段最多可以在票據過期後再保持 2 小時：新的登入仍然需要有效的票據，錯過的撤銷會在連線恢復時補上，而中繼看到的始終只有密文。",
-    "中継は、Droppen Hub が署名した 15 分有効のチケットに基づいて、デバイスのチャネルと相手側のチャネルを組み合わせます。チケットの持ち主は中継自身のチャレンジにもチケットの鍵で署名する必要があるので、チケットだけを盗んでも役に立ちません。有効期間が 15 分を超えるチケットや、中継自身の時計より 5 分以上先に発行されたチケットも、中継は拒否します。中継は\n- フレームを**解析せずに**コピーするだけで\n- **データベースを持たず**\n- **あなたのデータを開く鍵も持たず**（持つのは自分の署名鍵と Droppen Hub のチケット用の公開鍵だけ）\n- 再起動をまたいであなたのチャネルについて**何も残しません**\n誰が誰かを偽る中継は、ハンドシェイクの失敗を招くだけです。各アカウントは 1 つの中継（任意で予備を 1 つ）に置かれ、中継がいなくなればすぐに移ります。中継の上では、各アカウントの AI を実行できるデバイスはほかのアカウントのものと区別されます。中継と Droppen Hub の接続が切れている間、すでにつながっているセッションはチケットの期限から最大 2 時間まで保たれます。新しいサインインには引き続き有効なチケットが必要で、取りこぼした失効は接続が戻ったときに適用され、中継に見えるのは常に暗号文だけです。",
+    "中継は、Droppen Hub が署名した 15 分有効のチケットに基づいて、デバイスのチャネルと相手側のチャネルを組み合わせます。チケットの持ち主は中継自身のチャレンジにもチケットの鍵で署名する必要があるので、チケットだけを盗んでも役に立ちません。有効期間が 15 分を超えるチケットや、中継自身の時計より 5 分以上先に発行されたチケットも、中継は拒否します。中継は\n- フレームを**解析せずに**コピーするだけで\n- **データベースを持たず**\n- **あなたのデータを開く鍵も持たず**（持つのは自分の署名鍵と Droppen Hub のチケット用の公開鍵だけ）\n- 再起動をまたいであなたのチャネルについて**何も残しません**\n誰が誰かを偽る中継は、ハンドシェイクの失敗を招くだけです。各アカウントは 1 つの中継（任意で予備を 1 つ）に置かれ、中継がいなくなればすぐに移ります。中継の上では、各アカウントの AI を実行できるデバイスはほかのアカウントのものと分けられています。中継と Droppen Hub の接続が切れている間、すでにつながっているセッションはチケットの期限から最大 2 時間まで保たれます。新しいサインインには引き続き有効なチケットが必要で、取りこぼした失効は接続が戻ったときに適用され、中継に見えるのは常に暗号文だけです。",
   ],
   [
     "A relay sees",
@@ -1166,10 +1166,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "証明は、AI を実行できるデバイス**自身が、古い鍵でサインインしている自分の接続で** Droppen Hub に渡します。中継越しに答えたコピーがそうするには、そのデバイスとしてサインインし、本物を押し出すしかありません。",
   ],
   [
-    "For a window (2 minutes by default), every sign-in with the old key **must confirm with the new key within 20 seconds**; any sign-in that does not voids the staging. Only then does the full device write the entry. The device that runs AI switches to the new seed only after it has verified the entry on its own chain, so a lying Hub cannot make it give up its key.",
-    "在一个窗口期内（默认 2 分钟），每一次用旧钥匙登录都必须**在 20 秒内用新钥匙确认**；有一次没确认，这次暂存就作废。窗口过后，完整设备才写下条目。可运行 AI 的设备只有在自己的链上验到这一条之后才换上新种子，所以撒谎的 Hub 没法让它弃用自己的钥匙。",
-    "在一個窗口期內（預設 2 分鐘），每一次用舊金鑰登入都必須**在 20 秒內用新金鑰確認**；有一次沒確認，這次暫存就作廢。窗口過後，完整裝置才寫下項目。可執行 AI 的裝置只有在自己的鏈上驗到這一筆之後才換上新種子，所以說謊的 Hub 沒辦法讓它放棄自己的金鑰。",
-    "一定の時間窓（既定で 2 分）の間、古い鍵でのサインインはすべて **20 秒以内に新しい鍵で確認しなければならず**、1 つでも確認しなければ準備は無効になります。そのあとで初めてフルデバイスがエントリを書きます。AI を実行できるデバイスは、自分のチェーンでそのエントリを検証してから新しいシードに切り替えるので、嘘をつく Hub に鍵を手放させられることはありません。",
+    "For a window (2 minutes by default), every sign-in with the old key **must confirm with the new key within 20 seconds**; any sign-in that does not voids the staging (Hub). Only then does the full device write the entry. The device that runs AI switches to the new seed only after it has verified the entry on its own chain, so a lying Hub cannot make it give up its key.",
+    "在一个窗口期内（默认 2 分钟），每一次用旧钥匙登录都必须**在 20 秒内用新钥匙确认**；有一次没确认，这次暂存就作废（Hub）。窗口过后，完整设备才写下条目。可运行 AI 的设备只有在自己的链上验到这一条之后才换上新种子，所以撒谎的 Hub 没法让它弃用自己的钥匙。",
+    "在一個窗口期內（預設 2 分鐘），每一次用舊金鑰登入都必須**在 20 秒內用新金鑰確認**；有一次沒確認，這次暫存就作廢（Hub）。窗口過後，完整裝置才寫下項目。可執行 AI 的裝置只有在自己的鏈上驗到這一筆之後才換上新種子，所以說謊的 Hub 沒辦法讓它放棄自己的金鑰。",
+    "一定の時間窓（既定で 2 分）の間、古い鍵でのサインインはすべて **20 秒以内に新しい鍵で確認しなければならず**、1 つでも確認しなければ準備は無効になります（Hub）。そのあとで初めてフルデバイスがエントリを書きます。AI を実行できるデバイスは、自分のチェーンでそのエントリを検証してから新しいシードに切り替えるので、嘘をつく Hub に鍵を手放させられることはありません。",
   ],
   [
     "The next content key is **sealed only to the new X25519 key**, and readers accept stream heads from the network only under the current key.",
@@ -1658,10 +1658,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "私たちの言葉をうのみにしないで。",
   ],
   [
-    "Statements about the protocol, the apps and the local program come from this repository's code and design notes; statements about what Droppen Hub stores or does, and test results on droppen.app, describe the closed Hub and the service — marked (Hub). Here is where to look.",
-    "关于协议、各个应用和本地程序的说法，出自本仓库的代码和设计文档；关于 Droppen Hub 保存什么、做什么，以及在 droppen.app 上的测试结果，说的是不开源的 Hub 和这项服务——都标了（Hub）。下面告诉你去哪里看。",
-    "關於協定、各個應用程式和本地程式的說法，出自本儲存庫的程式碼和設計文件；關於 Droppen Hub 保存什麼、做什麼，以及在 droppen.app 上的測試結果，說的是不開源的 Hub 和這項服務——都標了（Hub）。下面告訴你去哪裡看。",
-    "プロトコル、アプリ、ローカルプログラムについての記述は、このリポジトリのコードと設計メモに基づいています。Droppen Hub が何を保存し何をするか、そして droppen.app でのテスト結果についての記述は、公開されていない Hub とサービスについてのもので、（Hub）と記しています。確かめる場所はここです。",
+    "Statements about the protocol, the apps and the local program come from this repository's code and design notes; Droppen Hub is closed, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub). Here is where to look.",
+    "关于协议、各个应用和本地程序的说法，出自本仓库的代码和设计文档；Droppen Hub 不开源，依赖它自身行为或策略的句子，以及在 droppen.app 上的测试结果，都标了（Hub）。下面告诉你去哪里看。",
+    "關於協定、各個應用程式和本地程式的說法，出自本儲存庫的程式碼和設計文件；Droppen Hub 不開源，依賴它自身行為或政策的句子，以及在 droppen.app 上的測試結果，都標了（Hub）。下面告訴你去哪裡看。",
+    "プロトコル、アプリ、ローカルプログラムについての記述は、このリポジトリのコードと設計メモに基づいています。Droppen Hub は公開されておらず、その振る舞いや方針に依る記述と droppen.app でのテスト結果には（Hub）と記しています。確かめる場所はここです。",
   ],
   [
     "Algorithms",
@@ -1718,10 +1718,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "いま読んでいるこのページ",
   ],
   [
-    "node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; only an older release named on purpose may go without one.",
-    "node [[scripts/verify-web.mjs]] 默认拿 my.droppen.app 和 www.droppen.app 下发的内容和最新一次发版的清单比对（只有你明确要求时才和更早的发版比），页面没有足够的 Content-Security-Policy 就算不通过；/.well-known/droppen-build 说明站点跑的是哪个构建。源码公开以后的发版，清单都带**签名的证明**；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（[[docs/web-integrity.md]]）。[[scripts/install.sh]] 在安装任何东西之前，先用它钉住的发版钥匙核对发版校验和（SHA256SUMS-server）的签名；只有特意指定的旧版本才可以不带签名。",
-    "node [[scripts/verify-web.mjs]] 預設拿 my.droppen.app 和 www.droppen.app 下發的內容和最新一次發版的清單比對（只有你明確要求時才和更早的發版比），頁面沒有足夠的 Content-Security-Policy 就算不通過；/.well-known/droppen-build 說明站點跑的是哪個建置。原始碼公開以後的發版，清單都帶**簽章的證明**；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（[[docs/web-integrity.md]]）。[[scripts/install.sh]] 在安裝任何東西之前，先用它釘住的發版金鑰核對發版校驗和（SHA256SUMS-server）的簽章；只有特意指定的舊版本才可以不帶簽章。",
-    "node [[scripts/verify-web.mjs]] は、既定では my.droppen.app と www.droppen.app が配信するものを最新リリースのマニフェストと照合し（古いリリースとは指定したときだけ）、十分な Content-Security-Policy のないページは不合格にします。/.well-known/droppen-build はそれぞれどのビルドかを示します。ソースの公開以降のリリースでは、マニフェストに**署名付きの証明**が付いています。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（[[docs/web-integrity.md]]）。[[scripts/install.sh]] は何かをインストールする前に、リリースのチェックサム（SHA256SUMS-server）を、スクリプトに固定したリリース鍵の署名で確かめます。署名なしで入れられるのは、わざわざ指定した古いリリースだけです。",
+    "node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; it goes without one only if you set DROPPEN_ALLOW_UNSIGNED=1 (meant for a release from before the checksums were signed, or a system without openssl), and a signature that does not check out is never accepted.",
+    "node [[scripts/verify-web.mjs]] 默认拿 my.droppen.app 和 www.droppen.app 下发的内容和最新一次发版的清单比对（只有你明确要求时才和更早的发版比），页面没有足够的 Content-Security-Policy 就算不通过；/.well-known/droppen-build 说明站点跑的是哪个构建。源码公开以后的发版，清单都带**签名的证明**；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（[[docs/web-integrity.md]]）。[[scripts/install.sh]] 在安装任何东西之前，先用它钉住的发版钥匙核对发版校验和（SHA256SUMS-server）的签名；只有设置了 DROPPEN_ALLOW_UNSIGNED=1 才可以不带签名（这是给校验和开始签名之前的发版、或没有 openssl 的系统用的），而核对不通过的签名永远不会被接受。",
+    "node [[scripts/verify-web.mjs]] 預設拿 my.droppen.app 和 www.droppen.app 下發的內容和最新一次發版的清單比對（只有你明確要求時才和更早的發版比），頁面沒有足夠的 Content-Security-Policy 就算不通過；/.well-known/droppen-build 說明站點跑的是哪個建置。原始碼公開以後的發版，清單都帶**簽章的證明**；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（[[docs/web-integrity.md]]）。[[scripts/install.sh]] 在安裝任何東西之前，先用它釘住的發版金鑰核對發版校驗和（SHA256SUMS-server）的簽章；只有設定了 DROPPEN_ALLOW_UNSIGNED=1 才可以不帶簽章（這是給校驗和開始簽章之前的發版、或沒有 openssl 的系統用的），而核對不通過的簽章永遠不會被接受。",
+    "node [[scripts/verify-web.mjs]] は、既定では my.droppen.app と www.droppen.app が配信するものを最新リリースのマニフェストと照合し（古いリリースとは指定したときだけ）、十分な Content-Security-Policy のないページは不合格にします。/.well-known/droppen-build はそれぞれどのビルドかを示します。ソースの公開以降のリリースでは、マニフェストに**署名付きの証明**が付いています。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（[[docs/web-integrity.md]]）。[[scripts/install.sh]] は何かをインストールする前に、リリースのチェックサム（SHA256SUMS-server）を、スクリプトに固定したリリース鍵の署名で確かめます。署名なしで入れられるのは DROPPEN_ALLOW_UNSIGNED=1 を設定したときだけで（チェックサムに署名し始める前のリリースや、openssl のないシステムのためのものです）、検証に通らない署名が受け入れられることはありません。",
   ],
   [
     "Report a vulnerability",
