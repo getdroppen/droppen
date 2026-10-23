@@ -26,6 +26,12 @@
  *
  * Every change to the ways to sign in is said on the account's other full
  * devices (`SignInChangeAlerts`: the hub records and pushes each).
+ *
+ * At the bottom, deleting the account (`DELETE /v1/account`): from a full
+ * device only, folded away until asked for, with what it means said first,
+ * the account's e-mail address typed to confirm and the same proof it is
+ * still the person as for the password. Once the hub took it, this browser
+ * forgets the account's keys and copies and leaves it (`sign-out.ts`).
  */
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -35,7 +41,7 @@ import { cn } from "@/lib/cn";
 import { formatMoment } from "@/lib/format";
 import { credentialHash, hex } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
-import { type AccountPasskey, HubApiError, PASSWORD_MIN_CHARS, type Reauth, type SignInMethods } from "@/lib/hub/api";
+import { type AccountPasskey, HubApiError, PASSWORD_MIN_CHARS, type Proof, type Reauth, type SignInMethods } from "@/lib/hub/api";
 import type { HubLink } from "@/lib/hub/link";
 import { fromBase64Url, pageCredentials, passkeyAdd, passkeyCancelled, passkeyPrf, passkeyReauth, signalUnknownCredential } from "@/lib/hub/passkey";
 import { AccountNotices, PendingRecoveryBanner, SquareSwitch, useAccountVersion } from "./devices";
@@ -46,6 +52,7 @@ import { PendingPasskeyBanner } from "./passkey-join";
 import { SignInChangeAlerts, useMe } from "./plan";
 import { RecoveryWords } from "./recovery";
 import { SignOutChoice } from "./sign-out-dialog";
+import { deleteAccount } from "./sign-out";
 import { CloudPage, danger, ErrorLine, errorText, field, Note, primary, quiet, secondary } from "./ui";
 
 /** The page: the frame (the account by its e-mail, the way back to 「我的设备」, sign out), the account's alerts, then the settings. */
@@ -100,7 +107,7 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
 }
 
 /** What the page edits at a time (one form open, so one primary action on the page). */
-type Editing = { kind: "add" } | { kind: "password" } | { kind: "removePassword" } | { kind: "rename"; id: string } | { kind: "remove"; id: string } | { kind: "words" } | null;
+type Editing = { kind: "add" } | { kind: "password" } | { kind: "removePassword" } | { kind: "rename"; id: string } | { kind: "remove"; id: string } | { kind: "words" } | { kind: "delete" } | null;
 
 /** The settings, with the account's sign-in methods read from the hub. */
 export function AccountPanel({ account, link, onWords }: { account: CloudAccount; link: HubLink; onWords: (words: string[]) => void }) {
@@ -110,6 +117,8 @@ export function AccountPanel({ account, link, onWords }: { account: CloudAccount
   const [loadError, setLoadError] = useState<string | null>(null);
   // The relying party the hub's passkeys are for (`null` once known: the hub offers none).
   const [rpId, setRpId] = useState<string | null | undefined>(undefined);
+  // For how many days a deleted account's address cannot sign up again (`null`: the hub did not say).
+  const [holdDays, setHoldDays] = useState<number | null>(null);
   const token = account.session.token;
   const hashes = useCredentialHashes(methods);
   const reload = useCallback(async () => {
@@ -132,7 +141,10 @@ export function AccountPanel({ account, link, onWords }: { account: CloudAccount
     void reload();
     account.api
       .signupConfig()
-      .then((c) => setRpId(c.passkeys?.rpId ?? null))
+      .then((c) => {
+        setRpId(c.passkeys?.rpId ?? null);
+        setHoldDays(c.deletion?.emailHoldDays ?? null);
+      })
       .catch(() => setRpId(null));
   }, [account, reload]);
   return (
@@ -145,6 +157,7 @@ export function AccountPanel({ account, link, onWords }: { account: CloudAccount
       hashes={hashes}
       loadError={loadError}
       rpId={rpId}
+      holdDays={holdDays}
       token={token}
       onChanged={() => void reload()}
       onWords={onWords}
@@ -161,6 +174,7 @@ export function AccountSettings({
   hashes,
   loadError,
   rpId,
+  holdDays = null,
   token,
   onChanged,
   onWords,
@@ -173,6 +187,8 @@ export function AccountSettings({
   hashes: ReadonlyMap<string, string>;
   loadError: string | null;
   rpId: string | null | undefined;
+  /** For how many days a deleted account's address cannot sign up again (`null`: not said). */
+  holdDays?: number | null;
   token: string;
   onChanged: () => void;
   onWords: (words: string[]) => void;
@@ -296,6 +312,7 @@ export function AccountSettings({
           </SignOutChoice>
         </SettingRow>
       </section>
+      <DeleteAccountSection account={account} token={token} email={email} methods={methods} manager={manager} webauthn={webauthn} holdDays={holdDays} editing={editing} setEditing={setEditing} />
     </>
   );
 }
@@ -459,7 +476,7 @@ function PasswordRow({
 }
 
 /** Ask one of the account's passkeys to prove it is still the person (a gesture). */
-async function passkeyProof(account: CloudAccount, token: string): Promise<Reauth> {
+async function passkeyProof(account: CloudAccount, token: string): Promise<Proof> {
   const credentials = pageCredentials();
   if (!credentials) throw new Error("no passkeys in this browser");
   return { passkey: await passkeyReauth(account.api, { credentials }, { token }) };
@@ -494,7 +511,7 @@ function useProof(account: CloudAccount, token: string, methods: SignInMethods, 
       )}
     </>
   );
-  const get = (): Promise<Reauth> => (withPasskey ? passkeyProof(account, token) : Promise.resolve({ currentPassword: current }));
+  const get = (): Promise<Proof> => (withPasskey ? passkeyProof(account, token) : Promise.resolve({ currentPassword: current }));
   return { fields, ready, withPasskey, get };
 }
 
@@ -945,5 +962,170 @@ function RecoveryWordsSection({
         </div>
       )}
     </section>
+  );
+}
+
+// ------------------------------------------------------------ deleting the account
+
+/** Whether `typed` is the account's e-mail address, as the hub compares them: trimmed, in any case. */
+export function emailConfirms(typed: string, email: string | null): boolean {
+  if (!email) return false;
+  const said = typed.trim();
+  return said.length > 0 && said.toLowerCase() === email.trim().toLowerCase();
+}
+
+/**
+ * What deleting the account means, said before it is asked for: the data
+ * gone for good, every device stopped, devices that run AI to add again
+ * elsewhere, this browser wiped and the others left with nothing they can use,
+ * and the days the address cannot sign up again (`holdDays`: the hub's, `null`
+ * when it did not say; none said for 0).
+ */
+export function deletionPoints(holdDays: number | null | undefined, t: (key: string, vars?: Record<string, unknown>) => string): string[] {
+  const points = [
+    t("Everything the account keeps at Droppen is erased: the encrypted copies of your sessions and terminals, its keys, its devices and its ways to sign in. Nobody can bring any of it back — not you, not us."),
+    t("Every device of the account stops working at once. To use a device that runs AI again, add it to another account."),
+    t("This browser forgets the account's keys now. Your other browsers and phones are not wiped from here: they just stop working, with nothing left they can use."),
+  ];
+  if (holdDays === 0) return points;
+  if (holdDays === null || holdDays === undefined) points.push(t("For a few days, this e-mail address cannot be used to sign up again."));
+  else if (holdDays === 1) points.push(t("For a day, this e-mail address cannot be used to sign up again."));
+  else points.push(t("For {{n}} days, this e-mail address cannot be used to sign up again.", { n: holdDays }));
+  return points;
+}
+
+/** The danger zone at the bottom of the page: folded away until asked for, and offered on a full device only. */
+function DeleteAccountSection({
+  account,
+  token,
+  email,
+  methods,
+  manager,
+  webauthn,
+  holdDays,
+  editing,
+  setEditing,
+}: {
+  account: CloudAccount;
+  token: string;
+  email: string | null;
+  methods: SignInMethods | null;
+  manager: boolean;
+  webauthn: boolean;
+  holdDays: number | null;
+  editing: Editing;
+  setEditing: (e: Editing) => void;
+}) {
+  const { t } = useTranslation();
+  const open = editing?.kind === "delete";
+  // The proof it is still the person: the password, or a passkey this browser can use.
+  const cannotProve = methods !== null && !methods.password && !(methods.passkeys.length > 0 && webauthn);
+  return (
+    <section data-testid="delete-account-section" className="border-b border-border">
+      <SectionHead label={t("deleting the account")} />
+      <SettingRow title={t("delete this account")} text={t("Erases the account and everything it keeps at Droppen, for good. Every device of the account stops working.")}>
+        {manager && !open && (
+          <button
+            type="button"
+            data-testid="delete-account"
+            className={cn(danger, rowButton)}
+            disabled={editing !== null || methods === null || email === null || cannotProve}
+            title={cannotProve ? t("deleting the account asks for one of your passkeys, which this browser cannot use") : undefined}
+            onClick={() => setEditing({ kind: "delete" })}
+          >
+            {t("delete account…")}
+          </button>
+        )}
+      </SettingRow>
+      {!manager && account.standing === "active" && (
+        <p data-testid="delete-read-only" className="px-6 pb-3 text-xs leading-5 text-muted max-md:px-4">
+          {t("Only a full device of the account can delete it. Do it on one of those.")}
+        </p>
+      )}
+      {open && manager && methods && email && (
+        <DeleteAccountForm account={account} token={token} email={email} methods={methods} webauthn={webauthn} holdDays={holdDays} onCancel={() => setEditing(null)} />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Delete the account: what it means first, then the account's e-mail
+ * address typed to confirm (the button waits for it) and the proof it is
+ * still the person. Once the hub took it, this browser forgets the account
+ * and leaves it (`deleteAccount`). Exported to be drawn alone.
+ */
+export function DeleteAccountForm({
+  account,
+  token,
+  email,
+  methods,
+  webauthn,
+  holdDays,
+  onCancel,
+}: {
+  account: CloudAccount;
+  token: string;
+  email: string;
+  methods: SignInMethods;
+  webauthn: boolean;
+  holdDays: number | null;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const proof = useProof(account, token, methods, webauthn);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const matches = emailConfirms(typed, email);
+  const go = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !matches || !proof.ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteAccount(account, { confirm: typed, proof: await proof.get(), email });
+    } catch (err) {
+      setError(passkeyCancelled(err) ? t("no passkey was used") : errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <form data-testid="delete-account-form" className="px-6 pb-4 max-md:px-4" onSubmit={(e) => void go(e)}>
+      <Note tone="danger" className="max-w-xl">
+        <ul className="flex list-disc flex-col gap-1.5 pl-4 text-xs leading-5 text-muted">
+          {deletionPoints(holdDays, t).map((point) => (
+            <li key={point}>{point}</li>
+          ))}
+        </ul>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-2xs text-muted">
+            {t("To confirm, type the account's e-mail address:")} <span className="font-mono text-fg">{email}</span>
+          </span>
+          <input
+            data-testid="delete-confirm"
+            type="text"
+            inputMode="email"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            className={field}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+          />
+        </label>
+        {proof.fields}
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" data-testid="delete-account-confirm" className={cn(danger, "h-7 px-3 text-xs pointer-coarse:h-9")} disabled={busy || !matches || !proof.ready}>
+            {busy && <Loader2 className="size-3 animate-spin" />}
+            {t("delete the account for good")}
+          </button>
+          <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} disabled={busy} onClick={onCancel}>
+            {t("cancel")}
+          </button>
+        </div>
+        <ErrorLine message={error} />
+      </Note>
+    </form>
   );
 }

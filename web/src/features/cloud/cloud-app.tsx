@@ -32,7 +32,7 @@ import { isAccountPath } from "./devices-route";
 import { MyDevicesScreen } from "./my-devices";
 import { NoKeysScreen, PairingScreen, PasskeyPendingScreen } from "./pairing-screen";
 import { PendingScreen, RecoveryWords } from "./recovery";
-import { clearDeviceCopies, type HeldSession, pairingResume, signInAgainToPair, signOut, takeSignOutFailures, takeStillListed } from "./sign-out";
+import { clearDeviceCopies, deletingAccount, type HeldSession, pairingResume, signInAgainToPair, signOut, takeAccountDeleted, takeSignOutFailures, takeStillListed, wipeAccountHere } from "./sign-out";
 import { SignOutChoice, SignOutDialog, StillListedNote } from "./sign-out-dialog";
 import { authErrorText, Centered, CloudPage, danger, ErrorLine, errorText, Field, field, Note, Panel, primary, quiet, Tabs } from "./ui";
 import { CheckEmailScreen, VerifyEmailPage } from "./email-verify";
@@ -104,6 +104,8 @@ type Phase =
   | { kind: "pending"; account: CloudAccount }
   | { kind: "noKeys"; account: CloudAccount }
   | { kind: "removed"; failures?: string[] }
+  /** The hub says the account itself was deleted (from another device, or by its operator): keys and copies wiped. */
+  | { kind: "deleted"; failures?: string[] }
   /** The hub refuses this device, but the chain this browser can check does not show it removed: keys kept. */
   | { kind: "refused"; reason: "removed" | "denied" }
   /** Past sign-in and setup: the account's machines (`hub-shell.ts`), the list or the app on one of them. */
@@ -179,12 +181,21 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
 
   /**
    * The hub will not have this device: wipe it only if the chain this
-   * browser verified shows the removal, else stop and keep the keys.
+   * browser verified shows the removal, or the hub says the account itself
+   * was deleted (nothing is left for the keys to open); else stop and keep
+   * the keys — a suspended account's included.
    */
   const refused = useCallback(
     async (account: CloudAccount, link: HubLink | null) => {
+      // This page is deleting the account: the hub ending its sessions is that, and the page leaves on its own.
+      if (deletingAccount()) return;
       account.stopSession();
       link?.stop();
+      const refusal = account.refusal;
+      if (refusal === "deleted") {
+        const failures = await wipeRemoved(account, link, store);
+        return setPhase({ kind: "deleted", failures });
+      }
       if (account.standing === "removed") {
         const failures = await wipeRemoved(account, link, store);
         return setPhase({ kind: "removed", failures });
@@ -193,7 +204,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
       hubShell()?.stop();
       setHubShell(null);
       setRenewalRunner(null);
-      setPhase({ kind: "refused", reason: account.refusal ?? "denied" });
+      setPhase({ kind: "refused", reason: refusal ?? "denied" });
     },
     [store],
   );
@@ -468,6 +479,8 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
       );
     case "removed":
       return <RemovedScreen failures={phase.failures} />;
+    case "deleted":
+      return <AccountDeletedScreen failures={phase.failures} />;
     case "refused":
       return <RefusedScreen reason={phase.reason} />;
     case "shell":
@@ -718,11 +731,7 @@ async function wipeRemoved(account: CloudAccount, link: HubLink | null, store: K
   setHubShell(null);
   setRenewalRunner(null);
   clearSession();
-  const failures: string[] = [];
-  const [wiped, copies] = await Promise.allSettled([account.wipe(), clearDeviceCopies(store)]);
-  if (wiped.status === "rejected") failures.push(`keys: ${wiped.reason instanceof Error ? wiped.reason.message : String(wiped.reason)}`);
-  if (copies.status === "fulfilled") failures.push(...copies.value);
-  else failures.push(`offline copies: ${String(copies.reason)}`);
+  const failures = await wipeAccountHere(account, store);
   if (failures.length) console.warn("cloud: the removed device could not clear:", failures);
   return failures;
 }
@@ -767,6 +776,39 @@ export function RemovedScreen({ failures }: { failures?: string[] }) {
           }}
         >
           {t("sign in again")}
+        </button>
+      </Panel>
+    </Centered>
+  );
+}
+
+/**
+ * The hub says this device's account was deleted (from another device of it,
+ * or by the hub's operator): this browser forgot its keys and copies for it.
+ * Exported so the screen can be previewed on its own.
+ */
+export function AccountDeletedScreen({ failures }: { failures?: string[] }) {
+  const { t } = useTranslation();
+  return (
+    <Centered>
+      <Panel title={t("this account was deleted")}>
+        <p data-testid="account-gone" data-signal="removed" className="font-mono text-xs text-danger">
+          {t("this account was deleted")}
+        </p>
+        <p className="text-xs leading-5 text-muted">
+          {t("It no longer exists at Droppen, so this browser forgot its keys and its offline copies. To use Droppen again, sign in to another account or make a new one.")}
+        </p>
+        <ClearFailures failures={failures} />
+        <button
+          type="button"
+          data-variant="primary"
+          className={primary}
+          onClick={() => {
+            clearSession();
+            location.replace(SIGN_IN_PATH);
+          }}
+        >
+          {t("sign in")}
         </button>
       </Panel>
     </Centered>
@@ -865,6 +907,8 @@ export function AuthScreen({
   const [failures] = useState(() => takeSignOutFailures());
   // A browser just signed out and removed that the account still lists (read once).
   const [stillListed] = useState(() => takeStillListed());
+  // This tab's account was just deleted, from its settings (read once).
+  const [deleted] = useState(() => takeAccountDeleted());
   // Signed out by the pairing screen's "sign in again": it comes back once signed in.
   const [resumesPairing] = useState(() => pairingResume() !== null);
   // How sign-up works here (`failed`: the hub did not say; its answers will).
@@ -1084,6 +1128,16 @@ export function AuthScreen({
             <BrandMark size={36} />
             <h1 className="font-mono text-lg leading-6 font-medium text-fg">Droppen</h1>
           </div>
+          {deleted && (
+            <div className="mb-6">
+              <Note tone="ok">
+                <p data-testid="account-deleted" className="text-xs leading-5 font-medium text-fg">
+                  {t("Your account was deleted.")}
+                </p>
+                <p className="text-xs leading-5 text-muted">{t("What it kept at Droppen is erased for good, and this browser no longer holds its keys.")}</p>
+              </Note>
+            </div>
+          )}
           {failures && (
             <div className="mb-6">
               <ClearFailures failures={failures} />

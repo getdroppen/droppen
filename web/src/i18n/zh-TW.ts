@@ -831,6 +831,12 @@ export const zhTW: Record<string, string> = {
   "this passkey could not sign you in: try again": "無法用這個通行金鑰登入：請重試",
   "this passkey is no longer registered here: use another passkey or your password": "這個通行金鑰已失效：請改用其他通行金鑰或密碼",
   "passkeys are turned off on this hub: use your password": "這裡未啟用通行金鑰：請使用密碼",
+  // Deleting the account, and an account suspended (features/cloud/ui.tsx).
+  "that is not this account's e-mail address: type it exactly as shown": "這不是這個帳戶的電子郵件地址：請照所示原樣輸入",
+  "this account is suspended: it cannot be used for now": "這個帳戶已被停權：暫時無法使用",
+  "this account is suspended, so it cannot sign in for now": "這個帳戶已被停權，暫時無法登入",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again in a few days": "使用這個電子郵件的帳戶剛被刪除不久：幾天後才能再註冊",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again from {{when}}": "使用這個電子郵件的帳戶剛被刪除不久：{{when}} 起才能再註冊",
   // Plugins (web/src/plugins)
   "got it": "知道了",
   "until fixed": "修復後自動消失",

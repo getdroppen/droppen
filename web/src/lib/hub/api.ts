@@ -60,12 +60,14 @@ export class HubApiError extends Error {
   readonly reason?: string;
   /** When a renewal's window closes, by the hub's clock (409 `rotation_not_ready` `window`). */
   readonly readyMs?: number;
+  /** When a deleted account's address may sign up again, by the hub's clock (409 `recently_deleted`). */
+  readonly untilMs?: number;
 
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
-    extra: { retryAfterMs?: number; limit?: LimitDetail; waitingHosts?: string[]; grant?: string; reason?: string; readyMs?: number } = {},
+    extra: { retryAfterMs?: number; limit?: LimitDetail; waitingHosts?: string[]; grant?: string; reason?: string; readyMs?: number; untilMs?: number } = {},
   ) {
     super(message);
     this.name = "HubApiError";
@@ -75,6 +77,7 @@ export class HubApiError extends Error {
     if (extra.grant !== undefined) this.grant = extra.grant;
     if (extra.reason !== undefined) this.reason = extra.reason;
     if (extra.readyMs !== undefined) this.readyMs = extra.readyMs;
+    if (extra.untilMs !== undefined) this.untilMs = extra.untilMs;
   }
 }
 
@@ -197,6 +200,14 @@ export interface SignupConfig {
   verification: Verification;
   /** `null`: this hub offers no passkeys (or predates them), and the page says nothing of them. */
   passkeys: PasskeysConfig | null;
+  /** What deleting an account leaves behind (absent: the hub predates account deletion, or did not say). */
+  deletion?: DeletionConfig | null;
+}
+
+/** What deleting an account leaves behind (`GET /v1/signup/config` `deletion`). */
+export interface DeletionConfig {
+  /** For how many days a deleted account's address cannot sign up again (0: it can at once). */
+  emailHoldDays: number;
 }
 
 /** A password sign-in or sign-up: a LOGIN token, and whether the account's e-mail still needs verifying. */
@@ -257,6 +268,9 @@ export interface SignInMethods {
  * was taken.
  */
 export type Reauth = { currentPassword: string } | { passkey: { challenge: string; credential: AuthenticationResponseJSON } } | { grant: string };
+
+/** Proof it is still the person, a grant aside: what deleting the account takes. */
+export type Proof = Exclude<Reauth, { grant: string }>;
 
 /** The account's e-mail as `/v1/me` tells it. */
 export interface EmailStanding {
@@ -735,7 +749,7 @@ export class HubApi {
   }
 
   private static async fail(res: Response): Promise<never> {
-    let d: { error?: string; message?: string; retry_after_ms?: unknown; key?: unknown; limit?: unknown; used?: unknown; hosts?: unknown; grant?: unknown; reason?: unknown; ready_ms?: unknown; waiting?: unknown } = {};
+    let d: { error?: string; message?: string; retry_after_ms?: unknown; key?: unknown; limit?: unknown; used?: unknown; hosts?: unknown; grant?: unknown; reason?: unknown; ready_ms?: unknown; waiting?: unknown; until_ms?: unknown } = {};
     try {
       d = ((await res.json()) ?? {}) as typeof d;
     } catch {
@@ -754,6 +768,7 @@ export class HubApi {
     const grant = d.error === "unlock_on" && typeof d.grant === "string" && d.grant ? d.grant : undefined;
     const reason = (d.error === "rotation_not_ready" || d.error === "rotation_in_progress") && typeof d.reason === "string" ? d.reason : undefined;
     const readyMs = d.error === "rotation_not_ready" ? (num(d.ready_ms) ?? undefined) : undefined;
+    const untilMs = d.error === "recently_deleted" ? (num(d.until_ms) ?? undefined) : undefined;
     throw new HubApiError(res.status, d.error ?? "error", d.message || res.statusText || `${d.error ?? "error"} (${res.status})`, {
       retryAfterMs,
       limit,
@@ -761,6 +776,7 @@ export class HubApi {
       grant,
       reason,
       readyMs,
+      untilMs,
     });
   }
 
@@ -783,14 +799,18 @@ export class HubApi {
       turnstile?: { site_key?: unknown; origin?: unknown } | null;
       verification?: unknown;
       passkeys?: unknown;
+      deletion?: unknown;
     } | null>("GET", "/v1/signup/config");
     const signup: SignupMode = r?.signup === "open" || r?.signup === "closed" ? r.signup : "invite";
+    const deletion = deletionConfig(r?.deletion);
     return {
       signup,
       inviteRequired: typeof r?.invite_required === "boolean" ? r.invite_required : signup === "invite",
       turnstile: turnstileConfig(r?.turnstile),
       verification: r?.verification === "required" ? "required" : "off",
       passkeys: passkeysConfig(r?.passkeys),
+      // Only from a hub that says it (one from before account deletion says nothing).
+      ...(deletion ? { deletion } : {}),
     };
   }
 
@@ -940,6 +960,30 @@ export class HubApi {
   /** Remove the password (409 `last_credential` without a passkey), with proof it is still the person. */
   async deletePassword(token: string, proof: Reauth): Promise<void> {
     await this.call<unknown>("DELETE", "/v1/password", { token, body: reauthBody(proof) });
+  }
+
+  /**
+   * Delete the account, for good (a current full device): `confirm` is its
+   * e-mail address as the person typed it (400 `confirm_mismatch` otherwise),
+   * with proof it is still the person, as for the password. Every session
+   * and socket of the account ends with it. `purged: false`: the hub is still
+   * erasing what it stored, and finishes on its own — the account is gone
+   * either way.
+   */
+  async deleteAccount(token: string, confirm: string, proof: Proof): Promise<{ purged: boolean }> {
+    const r = await this.call<{ purged?: unknown } | null>("DELETE", "/v1/account", { token, body: { confirm, ...reauthBody(proof) } });
+    return { purged: r?.purged !== false };
+  }
+
+  /** Forget the known-client token kept for `email` (its account is gone: the token is worth nothing, and the address need not stay here). */
+  async forgetKnownClient(email: string): Promise<void> {
+    try {
+      const key = await knownClientKey(email);
+      if (key !== null) this.storage?.removeItem?.(key);
+      this.storage?.removeItem?.(legacyKnownClientKey(email));
+    } catch {
+      // nothing kept
+    }
   }
 
   /** Send the verification mail again (a login or device session; with the widget's token when Turnstile is on). */
@@ -1366,8 +1410,20 @@ export function hubErrorKind(
   | "passkeyExists"
   | "noPasskey"
   | "passkeyRefused"
+  | "confirmMismatch"
+  | "accountSuspended"
+  | "accountDeleted"
+  | "recentlyDeleted"
   | null {
   if (!(error instanceof HubApiError)) return null;
+  // Deleting the account (`DELETE /v1/account`), an account gone from the hub
+  // (`410 account_deleted`: what a device session renewal answers for it — this
+  // browser's keys for it open nothing any more), and one the hub's operator
+  // suspended (`403 account_suspended`: nothing is wiped for that).
+  if (error.status === 410 && error.code === "account_deleted") return "accountDeleted";
+  if (error.status === 400 && error.code === "confirm_mismatch") return "confirmMismatch";
+  if (error.status === 403 && error.code === "account_suspended") return "accountSuspended";
+  if (error.status === 409 && error.code === "recently_deleted") return "recentlyDeleted";
   // The account's ways to sign in (`docs/hub-api/http.md` "The account's ways to sign in").
   if (error.status === 403 && error.code === "reauth_failed") return "reauthFailed";
   if (error.status === 403 && error.code === "reauth_required") return "reauthRequired";
@@ -1421,6 +1477,8 @@ export type AuthErrorKind =
   | "badPasskey"
   | "unknownPasskey"
   | "passkeysOff"
+  | "accountSuspended"
+  | "recentlyDeleted"
   | "rate";
 
 /** Sign-up, sign-in and e-mail verification's refusals, by kind (`null`: another error). */
@@ -1436,6 +1494,8 @@ export function authErrorKind(error: unknown): AuthErrorKind | null {
     return "unauthorized";
   }
   if (status === 403 && code === "passkeys_off") return "passkeysOff";
+  if (status === 403 && code === "account_suspended") return "accountSuspended";
+  if (status === 409 && code === "recently_deleted") return "recentlyDeleted";
   if (status === 403 && code === "signup_closed") return "signupClosed";
   if (status === 403 && code === "bad_invite") return "badInvite";
   if (status === 403 && code === "turnstile_required") return "turnstileRequired";
@@ -1464,6 +1524,13 @@ function passkeysConfig(raw: unknown): PasskeysConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const rpId = (raw as { rp_id?: unknown }).rp_id;
   return typeof rpId === "string" && rpId ? { rpId } : null;
+}
+
+/** `signup/config`'s `deletion` (absent, from an older hub, or not of its shape: `null`). */
+function deletionConfig(raw: unknown): DeletionConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const days = (raw as { email_hold_days?: unknown }).email_hold_days;
+  return typeof days === "number" && Number.isInteger(days) && days >= 0 ? { emailHoldDays: days } : null;
 }
 
 /** `{challenge, options}` of the shape `create()` (or `get()`) needs, else a 502: nothing is asked of the browser. */
@@ -1512,7 +1579,7 @@ function accountPasskey(raw: unknown): AccountPasskey | null {
   };
 }
 
-/** A proof's fields as `PUT`/`DELETE /v1/password` take them. */
+/** A proof's fields as `PUT`/`DELETE /v1/password` (and `DELETE /v1/account`) take them. */
 function reauthBody(proof: Reauth): Record<string, unknown> {
   if ("grant" in proof) return { grant: proof.grant };
   return "currentPassword" in proof ? { current_password: proof.currentPassword } : { passkey: proof.passkey };

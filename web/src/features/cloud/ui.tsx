@@ -5,6 +5,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { RegMark } from "@/components/reg-mark";
 import { cn } from "@/lib/cn";
+import { formatMoment } from "@/lib/format";
 import i18next from "i18next";
 import { authErrorKind, CODE_PAIRING_WINDOW_MS, HubApiError, hubErrorKind, isNetworkError } from "@/lib/hub/api";
 import { ChainError, RULES } from "@/lib/e2e/chain";
@@ -102,6 +103,14 @@ export function errorText(error: unknown): string {
       return t("this account has no passkey: give its current password");
     case "passkeyRefused":
       return t("that passkey could not be checked: try again");
+    case "confirmMismatch":
+      return t("that is not this account's e-mail address: type it exactly as shown");
+    case "accountSuspended":
+      return t("this account is suspended: it cannot be used for now");
+    case "accountDeleted":
+      return t("this account was deleted");
+    case "recentlyDeleted":
+      return recentlyDeletedText(error);
     case null:
       break;
   }
@@ -190,6 +199,13 @@ export function renewalErrorText(error: RenewalError, t: (key: string, opts?: Re
   }
 }
 
+/** A sign-up refused for an address whose account was deleted lately (409 `recently_deleted`): from when it may sign up again, if the hub said. */
+function recentlyDeletedText(error: unknown): string {
+  const until = error instanceof HubApiError ? error.untilMs : undefined;
+  if (until === undefined) return i18next.t("an account with this e-mail address was deleted a short while ago: it can sign up again in a few days");
+  return i18next.t("an account with this e-mail address was deleted a short while ago: it can sign up again from {{when}}", { when: formatMoment(until, i18next.language) });
+}
+
 /** `message` in the reader's language when it is one of the page's i18n keys (as the English), else as it is. */
 export function knownText(message: string): string {
   return i18next.exists(message) ? i18next.t(message) : message;
@@ -233,6 +249,10 @@ export function authErrorText(error: unknown, context: "signup" | "login" | "res
       return t("this passkey is no longer registered here: use another passkey or your password");
     case "passkeysOff":
       return t("passkeys are turned off on this hub: use your password");
+    case "accountSuspended":
+      return t("this account is suspended, so it cannot sign in for now");
+    case "recentlyDeleted":
+      return recentlyDeletedText(error);
     case "rate":
       return retryText(error);
     default:

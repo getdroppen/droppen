@@ -208,7 +208,7 @@
     },
     "error": {
       "type": "object",
-      "description": "Every hub error: a stable machine-readable `error` code and a human `message`. 429s add `retry_after_ms` (and a Retry-After header); 409 `limit` adds the entitlement `key`, its `limit` and what is `used`; 409 `unlock_on` from DELETE /v1/passkeys/{id}, after a password or passkey proof, adds a removal `grant`.",
+      "description": "Every hub error: a stable machine-readable `error` code and a human `message`. 429s add `retry_after_ms` (and a Retry-After header); 409 `limit` adds the entitlement `key`, its `limit` and what is `used`; 409 `unlock_on` from DELETE /v1/passkeys/{id}, after a password or passkey proof, adds a removal `grant`; 409 `recently_deleted` from the sign-up routes adds `until_ms`.",
       "required": [
         "error",
         "message"
@@ -236,6 +236,10 @@
         },
         "grant": {
           "$ref": "#/$defs/removalGrant"
+        },
+        "until_ms": {
+          "$ref": "#/$defs/ms",
+          "description": "409 recently_deleted: when the address may sign up again"
         }
       }
     },
@@ -793,7 +797,7 @@
     },
     "proof": {
       "type": "object",
-      "description": "Proof it is still the person (http.md, \"The account's ways to sign in\"): the current password (only where the account has one), or a passkey of the account's answering a challenge POST /v1/passkeys/reauth/options gave this device",
+      "description": "Proof it is still the person (http.md, \"The account's ways to sign in\"; also DELETE /v1/account): the current password (only where the account has one), or a passkey of the account's answering a challenge POST /v1/passkeys/reauth/options gave this device",
       "properties": {
         "current_password": {
           "type": [
@@ -1166,6 +1170,20 @@
                 }
               ],
               "description": "Passkeys offered, for this relying party id (docs/passkeys.md §3.1); null when the hub has them off. Absent from hubs before passkeys."
+            },
+            "deletion": {
+              "type": "object",
+              "required": [
+                "email_hold_days"
+              ],
+              "properties": {
+                "email_hold_days": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "For how many days after an account is deleted its e-mail address cannot sign up again (409 recently_deleted); 0: it can at once"
+                }
+              },
+              "description": "What deleting an account (DELETE /v1/account) leaves behind. Absent from hubs before account deletion."
             }
           }
         }
@@ -1698,6 +1716,108 @@
               "items": {
                 "type": "object"
               }
+            },
+            "suspended_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "When the account was suspended; null: it is not"
+            },
+            "suspension_note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deleting_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "When the account's deletion began, while its data is still being erased; null: none under way"
+            }
+          }
+        }
+      }
+    },
+    "PUT /v1/admin/accounts/{who}/suspension": {
+      "$defs": {
+        "request": {
+          "type": "object",
+          "properties": {
+            "note": {
+              "type": "string",
+              "maxLength": 500
+            }
+          }
+        },
+        "response": {
+          "type": "object",
+          "required": [
+            "account",
+            "suspended_ms",
+            "note"
+          ],
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "suspended_ms": {
+              "$ref": "#/$defs/ms",
+              "description": "The first suspension's time: an account suspended already keeps it (and takes the new note)"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "DELETE /v1/admin/accounts/{who}/suspension": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "required": [
+            "account",
+            "unsuspended"
+          ],
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "unsuspended": {
+              "type": "boolean",
+              "description": "false: it was not suspended"
+            }
+          }
+        }
+      }
+    },
+    "DELETE /v1/admin/accounts/{who}": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "required": [
+            "account",
+            "deleted",
+            "purged"
+          ],
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "deleted": {
+              "const": true
+            },
+            "purged": {
+              "type": "boolean",
+              "description": "false: the stored data is still being erased; it finishes on its own"
             }
           }
         }
@@ -2074,6 +2194,90 @@
           "properties": {
             "removed": {
               "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/admin/email/deny": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "required": [
+            "domains"
+          ],
+          "properties": {
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "domain",
+                  "created_ms",
+                  "note"
+                ],
+                "properties": {
+                  "domain": {
+                    "type": "string"
+                  },
+                  "created_ms": {
+                    "$ref": "#/$defs/ms"
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "PUT /v1/admin/email/deny/{domain}": {
+      "$defs": {
+        "request": {
+          "type": "object",
+          "properties": {
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "response": {
+          "type": "object",
+          "required": [
+            "domain",
+            "denied"
+          ],
+          "properties": {
+            "domain": {
+              "type": "string"
+            },
+            "denied": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    "DELETE /v1/admin/email/deny/{domain}": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "required": [
+            "domain",
+            "removed"
+          ],
+          "properties": {
+            "domain": {
+              "type": "string"
+            },
+            "removed": {
+              "type": "boolean",
+              "description": "false: it was not on the list"
             }
           }
         }
@@ -3516,6 +3720,45 @@
           "properties": {
             "password": {
               "const": false
+            }
+          }
+        }
+      }
+    },
+    "DELETE /v1/account": {
+      "$defs": {
+        "request": {
+          "description": "The account's e-mail address as the person typed it (compared trimmed and case-insensitively with the account's), and proof it is still the person (as #/$defs/proof)",
+          "allOf": [
+            {
+              "$ref": "#/$defs/proof"
+            },
+            {
+              "type": "object",
+              "required": [
+                "confirm"
+              ],
+              "properties": {
+                "confirm": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "response": {
+          "type": "object",
+          "required": [
+            "deleted",
+            "purged"
+          ],
+          "properties": {
+            "deleted": {
+              "const": true
+            },
+            "purged": {
+              "type": "boolean",
+              "description": "false: the stored data is still being erased; the hub finishes on its own (the account is gone either way)"
             }
           }
         }

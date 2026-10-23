@@ -15,7 +15,12 @@
  *   the connection with 4403 and the chain confirms it — and hand over to the
  *   page, which wipes its keys and copies. A hub that refuses this device's
  *   session (the account's `refusal`) without the chain showing the removal
- *   is only a claim: the page stops, but keeps the keys (`onRefused`).
+ *   is only a claim: the page stops, but keeps the keys (`onRefused`) —
+ *   unless it says the account itself was deleted (`error account_deleted`
+ *   on the socket, `410 account_deleted` to a renewal: refusal `deleted`),
+ *   when the page wipes them too: there is no account left for them to open.
+ *   An account suspended (`account_suspended`) is a refusal like any other:
+ *   nothing is wiped for it.
  */
 import { Serial } from "@/lib/e2e";
 import { AccountError, type CloudAccount } from "./account";
@@ -28,6 +33,11 @@ export const ATTEST_EVERY_MS = 3 * 60 * 60 * 1000;
 export const REMOVED_CLOSE = 4403;
 
 export type FollowLink = Pick<HubLink, "onState" | "onControl" | "onChain" | "sendControl" | "attest" | "state" | "lastClose">;
+
+/** Whether a control message on the device socket says the account was deleted (`error {code: "account_deleted"}`, before the 4403 close). */
+export function accountDeletedMessage(message: Record<string, unknown>): boolean {
+  return message.t === "error" && message.code === "account_deleted";
+}
 
 export interface FollowerOptions {
   link: FollowLink;
@@ -62,6 +72,8 @@ export class ChainFollower {
       link.onChain((entries) => void this.run(() => this.onEntries(entries))),
       link.onControl((message) => {
         if (message.t === "mail") void this.run(() => this.onMail());
+        // The account itself is gone (deleted; the 4403 close follows): its keys here open nothing any more.
+        else if (accountDeletedMessage(message)) this.opts.account.setRefusal("deleted");
       }),
       this.opts.account.onChange(() => {
         if (this.opts.account.refusal) {

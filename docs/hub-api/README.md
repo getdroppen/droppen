@@ -78,7 +78,7 @@ subdomain of it.
 |---|---|---|
 | `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/signup/config`, `GET /v1/releases/latest`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
 | `session` | `Authorization: Bearer <token>`, a **login** or a **device** session | `POST /v1/devices`, `GET /v1/me`, `GET /v1/chain`, `POST /v1/email/resend`, `POST /v1/logout` |
-| `device` | `Authorization: Bearer <token>` of a **device** session | everything else under `/v1/` — managing the account's passkeys and password included (a current full device: a login session never changes how the account signs in) |
+| `device` | `Authorization: Bearer <token>` of a **device** session | everything else under `/v1/` — managing the account's passkeys and password, and deleting the account, included (a current full device: a login session never changes how the account signs in) |
 | `admin` | `Authorization: Bearer <the operator's admin token>` | `/v1/admin/*`, the operator routes (documented with the Hub) |
 
 **Login session.** `POST /v1/signup` or `POST /v1/login` (email and
@@ -111,6 +111,21 @@ Removing the device from the chain revokes all of its sessions at once
 4403). Clients renew by repeating the exchange (the web app does so before
 expiry and once on a `401`).
 
+**Suspended accounts.** The hub's operator may suspend an account (abuse
+control; the operator routes). While it is suspended, `POST /v1/login`,
+`POST /v1/login/passkey` and `POST /v1/session` answer `403
+account_suspended` — only once the password, the passkey or the device's
+signature checked out, so the answer says nothing to anyone else — every
+session of the account is `401 unauthorized` on every route, its sockets
+close with 4403 after `error {code: "account_suspended"}` (websocket.md),
+and none of its devices or agents signs in until the operator lifts it.
+Nothing of the account is deleted. A
+**deleted** account (`DELETE /v1/account`, http.md) is gone: its sessions
+end, its sockets close the same way (`account_deleted`), and `POST
+/v1/session` for it answers `410 account_deleted` before the device is looked
+up; a password or passkey sign-in in the moments its deletion takes is `403
+account_deleted`.
+
 **Where the device stands** matters beyond the session: `requires: full`
 routes need a *current full device* of the chain (`403 not_a_full_device`),
 `requires: current` ones any current device (`403 not_in_chain` /
@@ -138,18 +153,19 @@ Every hub error is JSON with a stable code and a message for people:
 | `retry_after_ms` | on `429`; the `Retry-After` header carries the same in seconds |
 | `key`, `limit`, `used` | on `409 limit`: the entitlement (`devices.max`, `machines.max`, `storage.bytes`, `relay.max`, …), its value (`null`: none) and the current use |
 | `grant` | on `409 unlock_on` from `DELETE /v1/passkeys/{id}` after a password or passkey proof: send it back as `{grant}` once the passkey slot is off (http.md) |
+| `until_ms` | on `409 recently_deleted` from the sign-up routes: when the address may sign up again (http.md, `POST /v1/signup`) |
 
 The codes, by status (http.md lists them per route):
 
 | status | codes |
 |---|---|
-| 400 | `bad_request` (a malformed or too-long field; `message` names it), `disposable_email`, `bad_token` |
+| 400 | `bad_request` (a malformed or too-long field; `message` names it), `disposable_email`, `bad_token`, `confirm_mismatch` |
 | 401 | `unauthorized` (no, unknown or expired session), `bad_login`, `bad_passkey`, `unknown_passkey`, `denied` (device session exchange), `rotated` (device session exchange signed with a key an identity key renewal retired), `device_session_required` |
-| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `host_devices_off`, `rotation_pending` (a host's device role while its identity key is being renewed), `isolated` (relay tickets of an isolated host), `reauth_required`, `reauth_failed` |
+| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `host_devices_off`, `rotation_pending` (a host's device role while its identity key is being renewed), `isolated` (relay tickets of an isolated host), `reauth_required`, `reauth_failed`, `account_suspended`, `account_deleted` (a sign-in while the account is being deleted) |
 | 404 | `not_found`, `no_such_renewal` |
 | 408 | `slow_request` (a route that needs no sign-in got its body too slowly: within 10 s, or not at all; the connection is closed) |
-| 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey` |
-| 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account) |
+| 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey`, `recently_deleted` (with `until_ms`) |
+| 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account), `account_deleted` (`POST /v1/session` for an account the hub no longer has, or is deleting) |
 | 422 | `invalid_entry` (a chain entry the hub's verification refused), `invalid_dispute` |
 | 429 | `rate` (with `retry_after_ms`), `mail_rate`, `device_rate`, `too_many_pending_devices`, `too_many_enrollments`, `too_many_pairings`, `pairing_full` |
 | 500 | `internal` |
@@ -201,7 +217,7 @@ A refused request costs nothing and leaves nothing behind.
 | `POST /v1/passkeys/login/options` | 60 a minute per address |
 | `POST /v1/login/passkey` | 30 per 10 minutes per address, a bucket of its own; a network's (IPv4 /24, IPv6 /48) **failed** assertions 120 per 10 minutes, past which its failures are answered `429 rate` — a valid assertion is never held by it; 30 valid logins per 10 minutes per passkey (`429 rate`), spent only by that passkey's own valid assertions. No lockout, no backoff, no known-client budget, no Turnstile, and nothing it does counts towards the password login's |
 | `POST /v1/passkeys` (adding a passkey) | 10 a day per account (`429 rate`), spent only by a passkey that checked out; at most 10 passkeys at once (`409 too_many_passkeys`) |
-| the current password, given as proof it is still the person (`POST /v1/passkeys/add/options`, `DELETE /v1/passkeys/{id}`, `PUT`/`DELETE /v1/password`) | 3 checks per 10 minutes and 10 a day per device, then 6 per 10 minutes and 20 a day per account (`429 rate`), every check, both before the hash: one device never spends the account's whole share; argon2 as for a login |
+| the current password, given as proof it is still the person (`POST /v1/passkeys/add/options`, `DELETE /v1/passkeys/{id}`, `PUT`/`DELETE /v1/password`, `DELETE /v1/account`) | 3 checks per 10 minutes and 10 a day per device, then 6 per 10 minutes and 20 a day per account (`429 rate`), every check, both before the hash: one device never spends the account's whole share; argon2 as for a login |
 | `POST /v1/session` | 30 a minute and 300 an hour per device (`429 rate`), spent only by that device's own valid signature — never by a made-up one naming it, nor by another device of the account |
 | `POST /v1/email/verify` | 30 a minute per address |
 | `POST /v1/waitlist` | every attempt, junk included: 5 an hour and 20 a day per address, spent first; once the attempt passed the cheap checks (plan, the address's syntax and domain), just before it is written: 20 an hour and 100 a day per network (IPv4 /24, IPv6 /48). Across the hub past 1,000 a day the hub only logs it (once an hour) and keeps taking them, so no one source can close the list |
@@ -222,7 +238,7 @@ A refused request costs nothing and leaves nothing behind.
 | body cap | routes |
 |---|---|
 | 8 KiB | unauthenticated routes and the operator routes |
-| 16 KiB | the four passkey routes, and adding, renaming or removing a passkey and setting the password (`/v1/passkeys`, `/v1/passkeys/*`, `/v1/password`) |
+| 16 KiB | the four passkey routes, and adding, renaming or removing a passkey, setting the password and deleting the account (`/v1/passkeys`, `/v1/passkeys/*`, `/v1/password`, `/v1/account`) |
 | 256 KiB | `/v1/chain` (1–64 entries per append) |
 | 20 KiB | `/v1/mailbox` (`sealed` ≤ 8 KiB) |
 | 16 KiB | `/v1/keys/*` (a blob ≤ 4 KiB) |

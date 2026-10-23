@@ -362,14 +362,20 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     // Stored data is padded; live connections are not (as /security says).
     "What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal",
     `Last updated ${PRIVACY_UPDATED}`,
+    // Deleting an account: what goes, and the two things kept, for how long.
+    "If you delete your account",
+    "It is gone at once and for good: nobody, us included, can bring it back.",
+    "Your address also leaves the waitlist, if it was on it.",
+    "A keyed hash of your e-mail address, never the address itself, for 7 days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: 7 days on droppen.app.",
+    "Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /in padded sizes/);
-  assert.equal(PRIVACY_UPDATED, "2026-10-22");
+  assert.equal(PRIVACY_UPDATED, "2026-10-23");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));
-  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
-  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see/, lng);
+  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
+  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash/, lng);
 });

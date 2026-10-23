@@ -94,6 +94,8 @@ export const DEVICE_KEYS = [
   "rh.cloud.signout-still-listed",
   // The pairing screen's tab to come back to after its "sign in again" (sessionStorage).
   "rh.cloud.pairing-resume",
+  // This tab's account was just deleted from its settings, for the sign-in screen to say once (sessionStorage).
+  "rh.cloud.account-deleted",
   "rh.panel.",
   "rh.sessions.backgroundPanelOpen",
   "rh.files.showHidden",
