@@ -3,15 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { field, primary } from "@/features/cloud/ui";
-import { type HubApi, HubApiError, type WaitlistPlan } from "@/lib/hub/api";
+import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
 import { publicLink, PRIVACY_PATH } from "./route";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
- * for Pro (word when it can be bought), or — where sign-up is by invite — a
- * plan to choose too: Free (an invite) or Pro. Submitting is joining: no
+ * for Pro (word when it can be bought), or — where sign-up is by invite or
+ * closed — a plan to choose too: Free (an invite, or word when sign-up
+ * opens) or Pro. Submitting is joining: no
  * confirmation mail, and the hub
  * answers the same whether the address was on the list already
  * (`POST /v1/waitlist`, docs/hub-api/http.md). Its outcomes, said plainly:
@@ -110,13 +111,19 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
 }
 
 /** Joined: what happens next, and nothing else to do. */
-function Joined({ plan, onAgain }: { plan: WaitlistPlan; onAgain: () => void }) {
+function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupMode; onAgain: () => void }) {
   const { t } = useTranslation();
   return (
     <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex max-w-[34rem] flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
       <p className="flex items-start gap-2.5 text-[15px] leading-6 font-semibold text-fg">
         <Check aria-hidden="true" className="mt-1 size-4 shrink-0" />
-        <span>{plan === "pro" ? t("You're on the list: we'll e-mail you when Pro opens.") : t("You're on the list: we'll e-mail you an invite.")}</span>
+        <span>
+          {plan === "pro"
+            ? t("You're on the list: we'll e-mail you when Pro opens.")
+            : signup === "closed"
+              ? t("You're on the list: we'll e-mail you when sign-up opens.")
+              : t("You're on the list: we'll e-mail you an invite.")}
+        </span>
       </p>
       <p className="text-xs leading-5 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
       <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-xs text-fg underline underline-offset-4 hover:no-underline">
@@ -129,24 +136,27 @@ function Joined({ plan, onAgain }: { plan: WaitlistPlan; onAgain: () => void }) 
 /**
  * The form. `plan` is the page's (the plan cards choose it too); with
  * `onPlan` the form offers both plans to choose from, without it only `plan`
- * is joined. `state` stands in for the form's own (tests, previews).
+ * is joined. `signup` is the hub's sign-up mode (`signup-mode.ts`), for what
+ * joining Free brings. `state` stands in for the form's own (tests, previews).
  */
 export function WaitlistForm({
   api,
   plan,
   onPlan,
   state: given,
+  signup = "open",
 }: {
   api: Pick<HubApi, "joinWaitlist">;
   plan: WaitlistPlan;
   onPlan?: (plan: WaitlistPlan) => void;
   state?: WaitlistState;
+  signup?: SignupMode;
 }) {
   const { t, i18n } = useTranslation();
   const [email, setEmail] = useState("");
   const [own, setOwn] = useState<WaitlistState>({ kind: "idle" });
   const state = given ?? own;
-  if (state.kind === "done") return <Joined plan={state.plan} onAgain={() => setOwn({ kind: "idle" })} />;
+  if (state.kind === "done") return <Joined plan={state.plan} signup={signup} onAgain={() => setOwn({ kind: "idle" })} />;
   const sending = state.kind === "sending";
   const refused = state.kind === "error" ? state : null;
   const submit = async (event: FormEvent) => {

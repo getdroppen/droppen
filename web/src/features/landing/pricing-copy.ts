@@ -50,6 +50,7 @@ export const pricingZhCN: Bundle = {
   "Free": "免费版",
   "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前凭邀请码注册",
+  "Sign-up is closed for now": "目前暂停注册",
   "Sign up with an e-mail address": "用邮箱注册即可",
   "Sign up": "注册",
   "Join the waitlist": "加入等候名单",
@@ -74,6 +75,7 @@ export const pricingZhCN: Bundle = {
   "Price": "价格",
   "Free forever, no account": "永久免费，无需账号",
   "Free; sign-up by invite for now": "免费；目前凭邀请码注册",
+  "Free; sign-up is closed for now": "免费；目前暂停注册",
   "Free, with an account": "免费，需注册账号",
   "${{monthly}} a month, or ${{yearly}} a year": "每月 ${{monthly}}，或每年 ${{yearly}}",
   "Devices that run AI": "可运行 AI 的设备",
@@ -92,6 +94,8 @@ export const pricingZhCN: Bundle = {
   "Leave your address, and we'll write when it's your turn.": "留下邮箱，轮到你时我们写信给你。",
   "Leave your address, and we'll write when Pro opens.": "留下邮箱，Pro 开放时我们写信给你。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 还没开卖，付款功能正在准备中。提交表单就算加入，不用再确认。",
+  "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
+    "目前暂停注册，Pro 也还没开卖。选好你在等哪一个：开放注册或 Pro 开卖时，我们会发邮件通知你。提交表单就算加入，不用再确认。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen 还是邀请制测试版，注册需要邀请码，Pro 也还没开卖。选好你在等哪一个：我们会把邀请发到你的邮箱，或在 Pro 开放时通知你。提交表单就算加入，不用再确认。",
   "Plan": "方案",
@@ -104,6 +108,7 @@ export const pricingZhCN: Bundle = {
   "Could not reach Droppen. Check your connection and try again.": "连不上 Droppen，检查网络后再试。",
   "You're on the list: we'll e-mail you when Pro opens.": "你已在名单上，Pro 开放时我们会发邮件通知你。",
   "You're on the list: we'll e-mail you an invite.": "你已在名单上，我们会把邀请发到你的邮箱。",
+  "You're on the list: we'll e-mail you when sign-up opens.": "你已在名单上，开放注册时我们会发邮件通知你。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外我们不会发任何邮件。想退出名单，请写信到 {{email}}。",
   "Add another address": "再添加一个邮箱",
 
@@ -136,7 +141,7 @@ export const pricingZhCN: Bundle = {
   "Last updated {{date}}": "最后更新：{{date}}",
   "If you joined the waitlist": "如果你加入了等候名单",
   "What we keep, and why": "我们保存什么、为什么",
-  "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "你的邮箱地址、你选的方案（免费版或 Pro）、页面语言，以及加入的时间。",
+  "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的邮箱地址、你在等的方案（免费版或 Pro）、页面语言，以及加入的时间。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用来给你发邀请，或在 Pro 开放时通知你。不会发别的邮件，你的邮箱也绝不出售、不用于营销。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
@@ -233,6 +238,7 @@ export const pricingZhTW: Bundle = {
   "Free": "免費版",
   "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前憑邀請碼註冊",
+  "Sign-up is closed for now": "目前暫停註冊",
   "Sign up with an e-mail address": "用電子郵件註冊即可",
   "Sign up": "註冊",
   "Join the waitlist": "加入等候名單",
@@ -256,6 +262,7 @@ export const pricingZhTW: Bundle = {
   "Price": "價格",
   "Free forever, no account": "永久免費，不需要帳號",
   "Free; sign-up by invite for now": "免費；目前憑邀請碼註冊",
+  "Free; sign-up is closed for now": "免費；目前暫停註冊",
   "Free, with an account": "免費，需註冊帳號",
   "${{monthly}} a month, or ${{yearly}} a year": "每月 ${{monthly}}，或每年 ${{yearly}}",
   "Devices that run AI": "可執行 AI 的裝置",
@@ -273,6 +280,8 @@ export const pricingZhTW: Bundle = {
   "Leave your address, and we'll write when it's your turn.": "留下電子郵件，輪到你時我們寫信給你。",
   "Leave your address, and we'll write when Pro opens.": "留下電子郵件，Pro 開放時我們寫信給你。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 還沒開賣，付款功能正在準備中。送出表單就算加入，不用再確認。",
+  "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
+    "目前暫停註冊，Pro 也還沒開賣。選好你在等哪一個：開放註冊或 Pro 開賣時，我們會寄信通知你。送出表單就算加入，不用再確認。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen 還是邀請制測試版，註冊需要邀請碼，Pro 也還沒開賣。選好你在等哪一個：我們會把邀請寄到你的信箱，或在 Pro 開放時通知你。送出表單就算加入，不用再確認。",
   "Plan": "方案",
@@ -285,6 +294,7 @@ export const pricingZhTW: Bundle = {
   "Could not reach Droppen. Check your connection and try again.": "連不上 Droppen，檢查網路後再試。",
   "You're on the list: we'll e-mail you when Pro opens.": "你已在名單上，Pro 開放時我們會寄信通知你。",
   "You're on the list: we'll e-mail you an invite.": "你已在名單上，我們會把邀請寄到你的信箱。",
+  "You're on the list: we'll e-mail you when sign-up opens.": "你已在名單上，開放註冊時我們會寄信通知你。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外我們不會寄任何信。想退出名單，請寫信到 {{email}}。",
   "Add another address": "再新增一個信箱",
 
@@ -315,7 +325,7 @@ export const pricingZhTW: Bundle = {
   "Last updated {{date}}": "最後更新：{{date}}",
   "If you joined the waitlist": "如果你加入了等候名單",
   "What we keep, and why": "我們保存什麼、為什麼",
-  "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "你的電子郵件地址、你選的方案（免費版或 Pro）、頁面語言，以及加入的時間。",
+  "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的電子郵件地址、你在等的方案（免費版或 Pro）、頁面語言，以及加入的時間。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用來寄邀請給你，或在 Pro 開放時通知你。不會寄別的信，你的信箱也絕不出售、不用於行銷。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
@@ -412,6 +422,7 @@ export const pricingJa: Bundle = {
   "Free": "無料",
   "USD / month": "USD / 月",
   "Sign-up is by invite for now": "現在は招待コードで登録",
+  "Sign-up is closed for now": "現在は新規登録を停止中",
   "Sign up with an e-mail address": "メールアドレスで登録できます",
   "Sign up": "新規登録",
   "Join the waitlist": "ウェイトリストに登録",
@@ -435,6 +446,7 @@ export const pricingJa: Bundle = {
   "Price": "料金",
   "Free forever, no account": "ずっと無料、アカウント不要",
   "Free; sign-up by invite for now": "無料（現在は招待制）",
+  "Free; sign-up is closed for now": "無料（現在は登録停止中）",
   "Free, with an account": "無料（アカウント登録が必要）",
   "${{monthly}} a month, or ${{yearly}} a year": "月 ${{monthly}}、または年 ${{yearly}}",
   "Devices that run AI": "AI を実行できるデバイス",
@@ -452,6 +464,8 @@ export const pricingJa: Bundle = {
   "Leave your address, and we'll write when it's your turn.": "メールアドレスを残してください。順番が来たらご連絡します。",
   "Leave your address, and we'll write when Pro opens.": "メールアドレスを残してください。Pro が始まったらご連絡します。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro はまだ販売していません。お支払いの仕組みを準備中です。フォームを送信するだけで登録完了です。",
+  "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
+    "現在は新規登録を停止しており、Pro もまだ販売していません。待っているものを選んでください。登録の再開か Pro の開始を、メールでお知らせします。フォームを送信するだけで登録完了です。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen は招待制ベータのため登録には招待コードが必要で、Pro もまだ販売していません。待っているものを選んでください。招待をメールでお送りするか、Pro の開始をお知らせします。フォームを送信するだけで登録完了です。",
   "Plan": "プラン",
@@ -464,6 +478,7 @@ export const pricingJa: Bundle = {
   "Could not reach Droppen. Check your connection and try again.": "Droppen に接続できませんでした。接続を確認してもう一度お試しください。",
   "You're on the list: we'll e-mail you when Pro opens.": "登録しました。Pro が始まったらメールでお知らせします。",
   "You're on the list: we'll e-mail you an invite.": "登録しました。招待をメールでお送りします。",
+  "You're on the list: we'll e-mail you when sign-up opens.": "登録しました。新規登録が始まったらメールでお知らせします。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "それ以外のメールは送りません。リストから外れたい場合は {{email}} までご連絡ください。",
   "Add another address": "別のアドレスを登録",
 
@@ -494,7 +509,7 @@ export const pricingJa: Bundle = {
   "Last updated {{date}}": "最終更新：{{date}}",
   "If you joined the waitlist": "ウェイトリストに登録した方へ",
   "What we keep, and why": "保管するものとその理由",
-  "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "メールアドレス、選んだプラン（無料または Pro）、ページの言語、登録した日時。",
+  "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "メールアドレス、お待ちのプラン（無料または Pro）、ページの言語、登録した日時。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "用途は招待のお送りと Pro 開始のお知らせだけです。それ以外のメールは送らず、アドレスを販売したりマーケティングに使ったりすることもありません。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":

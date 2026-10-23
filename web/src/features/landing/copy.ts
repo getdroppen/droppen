@@ -80,6 +80,7 @@ const zhCN: Bundle = {
     "Claude Code 和 Codex 照常在你自己的电脑上跑；人走开了，在手机上照样看它干活、回答它的提问、打开终端。所有设备一个屏，全程端到端加密：你的代码，我们看不到。",
   "Invite-only for now: sign-up needs an invite code.": "目前邀请制，注册需要邀请码。",
   "Public beta: sign-up is open.": "公开测试版，注册已开放。",
+  "Sign-up is closed for now.": "目前暂停注册。",
   "See the plans": "查看各个方案",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同一台电脑上用浏览器直连，按键回显（实测 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "手机 4G 直连电脑的往返；不能直连时 215–227 ms（实测 p50）",
@@ -187,6 +188,7 @@ const zhCN: Bundle = {
   // Footer
   "Invite-only beta": "邀请制测试版",
   "Public beta": "公开测试版",
+  "Beta": "测试版",
   "Your AI keeps working. You can walk away.": "AI 接着干活，你可以走开了。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "用邀请码注册，接上你的电脑，然后在手机上接着用。",
   "Sign up with your e-mail, connect your computer, and pick up from your phone.": "用邮箱注册，接上你的电脑，然后在手机上接着用。",
@@ -233,6 +235,7 @@ const zhTW: Bundle = {
     "Claude Code 和 Codex 照常在你自己的電腦上跑；人走開了，在手機上照樣看它工作、回答它的提問、開啟終端機。所有裝置一個畫面，全程端對端加密：你的程式碼，我們看不到。",
   "Invite-only for now: sign-up needs an invite code.": "目前採邀請制，註冊需要邀請碼。",
   "Public beta: sign-up is open.": "公開測試版，註冊已開放。",
+  "Sign-up is closed for now.": "目前暫停註冊。",
   "See the plans": "查看各個方案",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同一台電腦上用瀏覽器直連，按鍵回顯（實測 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "手機 4G 直連電腦的往返；無法直連時 215–227 ms（實測 p50）",
@@ -334,6 +337,7 @@ const zhTW: Bundle = {
 
   "Invite-only beta": "邀請制測試版",
   "Public beta": "公開測試版",
+  "Beta": "測試版",
   "Your AI keeps working. You can walk away.": "AI 繼續工作，你可以走開了。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "用邀請碼註冊，接上你的電腦，然後在手機上接著用。",
   "Sign up with your e-mail, connect your computer, and pick up from your phone.": "用電子郵件註冊，接上你的電腦，然後在手機上接著用。",
@@ -380,6 +384,7 @@ const ja: Bundle = {
     "Claude Code と Codex は自分のコンピュータで動かしたまま。席を離れても、スマホで様子を見て、質問に答え、ターミナルも開けます。すべてのデバイスをひとつの画面に。エンドツーエンド暗号化で、あなたのコードは私たちにも見えません。",
   "Invite-only for now: sign-up needs an invite code.": "いまは招待制です。登録には招待コードが必要です。",
   "Public beta: sign-up is open.": "パブリックベータです。どなたでも登録できます。",
+  "Sign-up is closed for now.": "現在、新規登録を停止しています。",
   "See the plans": "プランを見る",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同じコンピュータのブラウザで直結したときのキー入力エコー（実測 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "4G のスマホから直結したときの往復。直結できないときは 215–227 ms（実測 p50）",
@@ -481,6 +486,7 @@ const ja: Bundle = {
 
   "Invite-only beta": "招待制ベータ",
   "Public beta": "パブリックベータ",
+  "Beta": "ベータ",
   "Your AI keeps working. You can walk away.": "AI は動かしたまま、席を離れよう。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "招待コードで登録し、コンピュータをつなげば、あとはスマホで続きから。",
   "Sign up with your e-mail, connect your computer, and pick up from your phone.": "メールアドレスで登録し、コンピュータをつなげば、あとはスマホで続きから。",

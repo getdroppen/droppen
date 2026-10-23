@@ -162,7 +162,7 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
-test("open sign-up by default: no invite wording; the invite wording only where the hub says sign-up is by invite (or closed)", () => {
+test("open sign-up by default: no invite wording; the invite wording only where the hub says sign-up is by invite, and \"closed for now\" where it is closed", () => {
   // Open (droppen.app since 2026-10-23), and what the page draws before the hub has answered.
   for (const signup of [undefined, "open"] as const) {
     const html = draw("en", { signup });
@@ -179,19 +179,29 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
   }
   assert.ok(text(draw("zh-CN")).includes("公开测试版，注册已开放。"));
-  // By invite, or closed: as before — the code, and the waitlist for those without one.
-  for (const signup of ["invite", "closed"] as const) {
-    const html = draw("en", { signup });
-    const words = text(html);
-    assert.ok(words.includes("Invite-only for now: sign-up needs an invite code."), signup);
-    assert.match(html, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
-    assert.doesNotMatch(html, /data-testid="hero-pricing"/);
-    assert.ok(words.includes("Invite-only beta"));
-    assert.ok(words.includes("Sign up with your invite code, connect your computer, and pick up from your phone."));
-  }
+  // By invite: as before — the code, and the waitlist for those without one.
+  const invited = draw("en", { signup: "invite" });
+  assert.ok(text(invited).includes("Invite-only for now: sign-up needs an invite code."));
+  assert.match(invited, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
+  assert.doesNotMatch(invited, /data-testid="hero-pricing"/);
+  assert.ok(text(invited).includes("Invite-only beta"));
+  assert.ok(text(invited).includes("Sign up with your invite code, connect your computer, and pick up from your phone."));
   assert.ok(text(draw("zh-CN", { signup: "invite" })).includes("邀请制测试版"));
-  // Signed in: no invitation to sign up either way.
-  for (const signup of ["open", "invite"] as const) assert.doesNotMatch(draw("en", { signedIn: true, signup }), /hero-(waitlist|pricing)|Public beta|Invite-only/);
+  // Closed: closed for now, and the waitlist; no invite code and nothing to sign up with.
+  const closed = draw("en", { signup: "closed" });
+  assert.ok(text(closed).includes("Sign-up is closed for now."));
+  assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>Join the waitlist<\/a>/);
+  assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
+  assert.ok(text(closed).includes("Beta"));
+  for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
+    const words = text(draw(lng, { signup: "closed" }));
+    assert.ok(words.includes(line), `${lng}: ${line}`);
+    assert.doesNotMatch(words, /邀请|邀請|招待/, `${lng}: no invite`);
+  }
+  // Signed in: no invitation to sign up whatever the mode.
+  for (const signup of ["open", "invite", "closed"] as const) {
+    assert.doesNotMatch(draw("en", { signedIn: true, signup }), /hero-(waitlist|pricing)|Public beta|Invite-only|closed for now/);
+  }
 });
 
 /** Every `t("…")` key in the landing page's sources. */

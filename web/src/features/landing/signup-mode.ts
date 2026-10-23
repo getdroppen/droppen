@@ -4,10 +4,11 @@ import type { HubApi, SignupMode } from "@/lib/hub/api";
 /*
  * Who may sign up, as the public pages word it (`GET /v1/signup/config`,
  * docs/hub-api/http.md). droppen.app's sign-up is open, so the pages draw
- * the open wording at once and switch to the invite wording only once the
- * hub says sign-up is by invite (or closed): droppen.app never flickers, and
- * a hub in invite mode still says so a moment later. A hub that cannot be
- * asked keeps the open wording; its sign-up form says the rest.
+ * the open wording at once and switch only once the hub says sign-up is by
+ * invite (the invite code, and Free's waitlist) or closed ("closed for
+ * now", and Free's waitlist): droppen.app never flickers, and another hub
+ * still says what it does a moment later. A hub that cannot be asked keeps
+ * the open wording; its sign-up form says the rest.
  *
  * Asked once per hub client and kept for the page's life: moving between
  * the public pages asks nothing again.
@@ -30,11 +31,6 @@ export function signupModeOf(api: Asker): Promise<SignupMode> {
     asked.set(api, mode);
   }
   return mode;
-}
-
-/** Whether a page should speak of invites: anything but open sign-up keeps them. */
-export function byInvite(mode: SignupMode): boolean {
-  return mode !== "open";
 }
 
 /**

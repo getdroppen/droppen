@@ -27,8 +27,7 @@ import {
 import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
-import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
-import { byInvite } from "./signup-mode";
+import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * droppen.app/download: how Droppen gets onto a device, the way other
@@ -491,7 +490,7 @@ function Uninstall({ availability }: { availability: Availability }) {
   );
 }
 
-function End({ signedIn, invite }: { signedIn: boolean; invite: boolean }) {
+function End({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) {
   const { t } = useTranslation();
   return (
     <Section>
@@ -502,11 +501,20 @@ function End({ signedIn, invite }: { signedIn: boolean; invite: boolean }) {
             {t("Install it, then sign it in to Droppen.")}
           </p>
           <p className="text-sm leading-6 text-muted">
-            {signedIn
-              ? t("Once it is signed in, it is in my devices: add another device the same way to see both on one screen.")
-              : invite
-                ? t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })
-                : t("No account yet? Sign up first, or in the {{app}} window when you sign the device in.", { app: appHost() })}
+            {signedIn ? (
+              t("Once it is signed in, it is in my devices: add another device the same way to see both on one screen.")
+            ) : signup === "closed" ? (
+              <>
+                {t("Sign-up is closed for now.")}{" "}
+                <a {...publicLink(WAITLIST_HREF)} data-testid="download-waitlist" className="text-fg underline underline-offset-4 hover:no-underline">
+                  {t("Join the waitlist")}
+                </a>
+              </>
+            ) : signup === "invite" ? (
+              t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })
+            ) : (
+              t("No account yet? Sign up first, or in the {{app}} window when you sign the device in.", { app: appHost() })
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -588,7 +596,7 @@ export default function DownloadPage({
   hints?: EnvironmentHints;
   cpu?: string | null;
   release?: LatestRelease | null;
-  /** The hub's sign-up mode (`signup-mode.ts`): by invite, the way to sign up names the invite code. */
+  /** The hub's sign-up mode (`signup-mode.ts`): by invite, the way to sign up names the invite code; closed, it offers the waitlist. */
   signup?: SignupMode;
 }) {
   const { t } = useTranslation();
@@ -629,7 +637,7 @@ export default function DownloadPage({
           <Requirements availability={availability} />
           <Manual />
           <Uninstall availability={availability} />
-          <End signedIn={signedIn} invite={byInvite(signup)} />
+          <End signedIn={signedIn} signup={signup} />
           <FooterLine />
         </main>
       </div>

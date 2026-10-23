@@ -24,7 +24,7 @@ import { PRIVACY_EMAIL } from "./waitlist";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-23";
+export const PRIVACY_UPDATED = "2026-10-24";
 
 /** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = 7;
@@ -109,7 +109,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
               <Block
                 title={t("What we keep, and why")}
                 items={[
-                  t("Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined."),
+                  t("Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined."),
                   t("We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing."),
                   t("Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most."),
                 ]}

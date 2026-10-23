@@ -34,7 +34,7 @@ import { PLAN_TABLE } from "../src/lib/hub/plan.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, PRICING_PATH, PRIVACY_PATH, publicPage } from "../src/features/landing/route.js";
 import { looksLikeEmail, PRIVACY_EMAIL, submitWaitlist, type WaitlistState, waitlistProblem } from "../src/features/landing/waitlist.js";
 import { HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "../src/lib/hub/api.js";
-import { byInvite, signupModeOf } from "../src/features/landing/signup-mode.js";
+import { signupModeOf } from "../src/features/landing/signup-mode.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -242,12 +242,40 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
     assert.doesNotMatch(text(draw(lng)), invite, lng);
     assert.match(text(draw(lng, { signup: "invite" })), invite, `${lng}: by invite it says so`);
   }
-  // By invite (or closed), as before.
-  for (const signup of ["invite", "closed"] as const) {
-    const invited = text(draw("en", { signup }));
-    for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn."]) {
-      assert.ok(invited.includes(line), `${signup} missing: ${line}`);
-    }
+  // By invite, as before.
+  const invited = text(draw("en", { signup: "invite" }));
+  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn."]) {
+    assert.ok(invited.includes(line), `invite missing: ${line}`);
+  }
+});
+
+test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite code anywhere", () => {
+  const html = draw("en", { signup: "closed" });
+  const words = text(html);
+  for (const line of [
+    "Sign-up is closed for now",
+    "Free; sign-up is closed for now",
+    "Leave your address, and we'll write when it's your turn.",
+    "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.",
+  ]) {
+    assert.ok(words.includes(line), `missing: ${line}`);
+  }
+  assert.doesNotMatch(words, /invite/i);
+  assert.doesNotMatch(html, /href="\/signup"[^>]*data-testid="plan-free-signup"/, "nothing to sign up with");
+  assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/);
+  // Pro's button leads the plans, as by invite; the form offers both plans.
+  assert.match(part(html, "plans", "compare"), /data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/);
+  assert.equal((html.match(/<input type="radio"[^>]*name="plan"/g) ?? []).length, 2);
+  assert.ok(text(draw("en", { signup: "closed", waitlist: { kind: "done", plan: "free" } })).includes("You're on the list: we'll e-mail you when sign-up opens."));
+  assert.ok(text(draw("en", { signup: "closed", waitlist: { kind: "done", plan: "pro" } })).includes("You're on the list: we'll e-mail you when Pro opens."));
+  for (const [lng, line, invite] of [
+    ["zh-CN", "目前暂停注册", /邀请/],
+    ["zh-TW", "目前暫停註冊", /邀請/],
+    ["ja", "現在は新規登録を停止中", /招待/],
+  ] as const) {
+    const said = text(draw(lng, { signup: "closed" }));
+    assert.ok(said.includes(line), `${lng}: ${line}`);
+    assert.doesNotMatch(said, invite, `${lng}: no invite`);
   }
 });
 
@@ -266,7 +294,6 @@ test("the page asks the hub once how sign-up works, and keeps the open wording w
   assert.equal(asked, 1, "asked once per hub client");
   assert.equal(await signupModeOf(hub("open")), "open");
   assert.equal(await signupModeOf(hub(new TypeError("Failed to fetch"))), "open");
-  assert.deepEqual((["open", "invite", "closed"] as const).map(byInvite), [false, true, true]);
 });
 
 test("signed out, Free offers sign-up (with an invite where sign-up is by invite); signed in, the way back into the app", () => {
@@ -427,7 +454,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   const html = drawPrivacy("en");
   const words = text(html);
   for (const line of [
-    "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.",
+    "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.",
     "We use them only to e-mail you an invite, or to tell you when Pro opens.",
     "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below).",
     "never more than 12 months after you last joined: older entries are deleted automatically.",
@@ -451,7 +478,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   }
   assert.doesNotMatch(words, /in padded sizes/);
   assert.doesNotMatch(words, /a matter of minutes/, "the ids are kept as long as the address's hash, not minutes");
-  assert.equal(PRIVACY_UPDATED, "2026-10-23");
+  assert.equal(PRIVACY_UPDATED, "2026-10-24");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));

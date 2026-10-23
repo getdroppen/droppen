@@ -986,6 +986,8 @@ export function AuthScreen({
         setInviteShown(true);
         // None was given, and the hub wants one: its sign-up is by invite since this page asked.
         if (known && !invite.trim()) setConfig({ ...known, signup: "invite", inviteRequired: true });
+        // The page never learnt how sign-up works here: ask again, so the field says whether it is required.
+        else if (!known) setConfigTry((n) => n + 1);
       }
       // The hub turned passkeys off since: the password form, and no more passkey wording.
       if (kind === "passkeysOff") setConfig((c) => (c && c !== "failed" ? { ...c, passkeys: null } : c));
