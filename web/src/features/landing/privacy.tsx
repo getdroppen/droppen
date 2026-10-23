@@ -26,6 +26,12 @@ export const PRIVACY_UPDATED = "2026-10-23";
 /** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = 7;
 
+/**
+ * How long copies in droppen.app's backups and logs live before they expire.
+ * A placeholder: the owner sets the real period before this is published.
+ */
+export const BACKUPS_EXPIRE_AFTER = "X";
+
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
@@ -144,7 +150,9 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                   title={t("What we keep, and for how long")}
                   items={[
                     t("A keyed hash of your e-mail address, never the address itself, for {{days}} days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: {{days}} days on droppen.app.", { days: DELETED_EMAIL_HOLD_DAYS }),
+                    t("For the same {{days}} days, the ids of your devices and their public keys, which open nothing: a device that comes back is told the account is gone, and forgets its keys.", { days: DELETED_EMAIL_HOLD_DAYS }),
                     t("Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes."),
+                    t("Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.", { period: BACKUPS_EXPIRE_AFTER }),
                   ]}
                 />
               </div>

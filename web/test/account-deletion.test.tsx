@@ -277,6 +277,30 @@ test("a deletion the hub refuses leaves this browser as it was; one it took leav
   assert.equal(takeAccountDeleted(storage as never), false, "said once");
 });
 
+test("an answer lost after the hub said the account is gone still leaves it: the deletion was taken", async () => {
+  const left: string[] = [];
+  const acct = {
+    session: { token: "dev" },
+    refusal: null as string | null,
+    api: {
+      deleteAccount: async () => {
+        // The socket's `error account_deleted` arrives, then the answer is lost.
+        acct.refusal = "deleted";
+        throw new TypeError("Failed to fetch");
+      },
+    },
+  };
+  const leave = async (_a: unknown, email: string | null) => void left.push(String(email));
+  await deleteAccount(acct as never, { confirm: "me@example.test", proof: { currentPassword: "right" }, email: "me@example.test" }, leave);
+  assert.deepEqual(left, ["me@example.test"], "wiped and left all the same");
+  // Without that word from the hub, a lost answer is an error and nothing is wiped.
+  const quiet = { ...acct, refusal: null, api: { deleteAccount: async () => Promise.reject(new TypeError("Failed to fetch")) } };
+  left.length = 0;
+  await assert.rejects(deleteAccount(quiet as never, { confirm: "me@example.test", proof: { currentPassword: "right" }, email: "me@example.test" }, leave));
+  assert.deepEqual(left, []);
+  assert.equal(deletingAccount(), false);
+});
+
 test("leaving a deleted account wipes as a removed device does, and says what could not be cleared", async () => {
   const failures = await wipeAccountHere({ wipe: async () => Promise.reject(new Error("store locked")) }, undefined);
   assert.ok(failures.includes("keys: store locked"), failures.join(" | "));

@@ -139,10 +139,14 @@ export function deletingAccount(): boolean {
  * Delete the account at the hub (`DELETE /v1/account`: `confirm`, the
  * account's e-mail address as typed, and proof it is still the person), then
  * leave it here ({@link leaveDeletedAccount}). A refusal changes nothing
- * here, and is thrown. `leave` stands in for the page's leaving (tests).
+ * here, and is thrown — unless the hub said meanwhile that the account is
+ * gone (its socket's `error account_deleted`, a renewal's `410`: refusal
+ * `deleted`), when the deletion was taken whatever became of its answer (a
+ * connection lost on the way back): this browser leaves all the same.
+ * `leave` stands in for the page's leaving (tests).
  */
 export async function deleteAccount(
-  account: CloudAccount,
+  account: Pick<CloudAccount, "api" | "session" | "refusal">,
   input: { confirm: string; proof: Proof; email: string | null },
   leave: (account: CloudAccount, email: string | null) => Promise<void> = leaveDeletedAccount,
 ): Promise<void> {
@@ -150,10 +154,12 @@ export async function deleteAccount(
   try {
     await account.api.deleteAccount(account.session.token, input.confirm.trim(), input.proof);
   } catch (error) {
-    deleting = false;
-    throw error;
+    if (account.refusal !== "deleted") {
+      deleting = false;
+      throw error;
+    }
   }
-  await leave(account, input.email);
+  await leave(account as CloudAccount, input.email);
 }
 
 /**
