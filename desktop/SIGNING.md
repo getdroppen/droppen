@@ -87,10 +87,10 @@ checks the first two and says exactly what is missing; `desktop/build.sh`
 
 The same material is kept as secrets of the **`release` environment** of
 `getdroppen/droppen`, under the names Tauri's GitHub action reads. Only the
-`sign-apple`, `sign-updater` and `publish` jobs of
-`.github/workflows/release.yml` read them, each only its own, after a person
-approves it ([docs/releasing.md](../docs/releasing.md), which also says how
-to set them):
+`release` job of `.github/workflows/release.yml` reads them, each step only
+its own, after a person approves it, once per run
+([docs/releasing.md](../docs/releasing.md), which also says how to set
+them):
 
 | secret | what it holds |
 |---|---|
@@ -108,9 +108,10 @@ to set them):
 An Actions secret can be replaced but never read back: none of them is a
 backup of the certificate or the updater key.
 
-- They live in the protected **`release` environment** only (required
-  reviewers, deployments only from release tags, `v*`), so a job reaches them
-  only once a person approves it. Keep no copy among the repository's own
+- They live in the protected **`release` environment** only (a required
+  reviewer, deployments only from release tags, `v*`, and main for dry
+  runs), so the one job that uses it reaches them only once a person
+  approves it. Keep no copy among the repository's own
   secrets: the repository is public, and these sign what every Mac runs.
 - Never use them from `pull_request_target`, or from any job that runs code a
   fork can change (a pull request's checkout, its scripts, its dependencies,
@@ -238,7 +239,8 @@ to it, and `desktop/build.sh` checks that the built app carries it.
     - `TAURI_SIGNING_PRIVATE_KEY`: the contents of `tauri-updater.key`;
     - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the contents of the password file.
 
-    These are the variables `tauri signer sign` reads.
+    These are the variables `tauri signer sign` reads, and
+    `droppen-update-signer` (`desktop/update-signer`) the same.
     `desktop/updater-artifacts.sh` signs with them when
     `TAURI_SIGNING_PRIVATE_KEY` is set and no `--key` is given, and puts
     neither on a command line: that is how `release.yml` signs updates.
@@ -339,7 +341,11 @@ silicon and Intel), whose version is not `$VERSION`, or that is an `--e2e`
 test build. It packs the app as `Droppen.app.tar.gz` (entries under
 `Droppen.app/` only, owned by root — no builder's name in a published file —
 and no extended attributes; the unpacked copy is checked to verify and to keep
-its ticket), signs it with `tauri signer sign --app-version $VERSION` (the
+its ticket), signs it with `droppen-update-signer sign Droppen.app.tar.gz
+--version $VERSION` (`desktop/update-signer`: what `tauri signer sign
+--app-version $VERSION` does, with minisign and few dependencies, so no big
+third-party tool runs where the key is; its tests check its signatures the
+way the Tauri updater does, and `core/src/update.rs`'s tests check one; the
 password goes to the signer through its environment only), and writes
 `latest.json` through `droppen-update-manifest`
 (`core/src/bin/droppen-update-manifest.rs`), which verifies the signature with

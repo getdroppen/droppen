@@ -44,7 +44,9 @@
 #   TAURI_SIGNING_PRIVATE_KEY           the key itself (the contents of
 #                                       tauri-updater.key; an Actions secret)
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (an Actions secret)
-#   DROPPEN_TOOLS_DIR      where the pinned tauri-cli is (~/.cache/droppen-desktop/tools)
+#   DROPPEN_UPDATE_SIGNER  a built droppen-update-signer (desktop/update-signer,
+#                          which signs as `tauri signer sign --app-version` does)
+#                          to use instead of `cargo run` there
 #   DROPPEN_UPDATE_MANIFEST  a built droppen-update-manifest to use instead of
 #                          `cargo run` in desktop/
 #   DROPPEN_RELEASE_REPO   the repository releases are published in (getdroppen/droppen)
@@ -134,8 +136,6 @@ elif ! release_text_names_ok; then
   echo "note: DROPPEN_RELEASE_FORBIDDEN is not the release list; this test build checks only \"Kilerd\" and $(id -un)"
 fi
 REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
-TOOLS=${DROPPEN_TOOLS_DIR:-$HOME/.cache/droppen-desktop/tools}
-TAURI_CLI_VERSION=$(sed -n 's/^TAURI_CLI_VERSION=//p' "$DESKTOP/build.sh")
 ARCHIVE=Droppen.app.tar.gz
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "$VERSION is not a semantic version"
 if [ "$TEST" = 0 ] && ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then die "a release version is x.y.z, not $VERSION"; fi
@@ -203,10 +203,16 @@ else
   echo "test build: ${AUTHORITY:-ad hoc} signature, not checked for notarisation"
 fi
 
-say "tauri-cli $TAURI_CLI_VERSION"
-if [ "$("$TOOLS/bin/cargo-tauri" --version 2>/dev/null | awk '{ print $2 }')" != "$TAURI_CLI_VERSION" ]; then
-  cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked --root "$TOOLS"
-fi
+# The signer of this checkout (desktop/update-signer: minisign, as the Tauri
+# updater checks it, and few dependencies), or a build of it
+# (DROPPEN_UPDATE_SIGNER: release.yml builds it in a job of its own).
+signer_tool() {
+  if [ -n "${DROPPEN_UPDATE_SIGNER:-}" ]; then
+    "$DROPPEN_UPDATE_SIGNER" "$@"
+    return
+  fi
+  cargo run --quiet --release --locked --manifest-path "$DESKTOP/update-signer/Cargo.toml" -- "$@"
+}
 
 # The manifest tool of this checkout (desktop/core), or a build of it
 # (DROPPEN_UPDATE_MANIFEST: release.yml builds it in a job of its own, so that
@@ -277,11 +283,11 @@ say "signature ($KEY_FROM)"
 # command, never `env VAR=…`, whose arguments any process may read).
 if [ "$KEY_FROM" = TAURI_SIGNING_PRIVATE_KEY ]; then
   TAURI_SIGNING_PRIVATE_KEY=$ENV_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$KEY_PASSWORD \
-    "$TOOLS/bin/cargo-tauri" signer sign --app-version "$VERSION" "$OUT/$ARCHIVE" >/dev/null \
+    signer_tool sign "$OUT/$ARCHIVE" --version "$VERSION" >/dev/null \
     || die "signing failed (wrong TAURI_SIGNING_PRIVATE_KEY_PASSWORD?)"
 else
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$KEY_PASSWORD \
-    "$TOOLS/bin/cargo-tauri" signer sign -f "$KEY" --app-version "$VERSION" "$OUT/$ARCHIVE" >/dev/null \
+    signer_tool sign "$OUT/$ARCHIVE" --version "$VERSION" --key-file "$KEY" >/dev/null \
     || die "signing failed (wrong key password?)"
 fi
 unset KEY_PASSWORD ENV_KEY

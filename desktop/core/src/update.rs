@@ -1194,6 +1194,10 @@ mod tests {
         pub const SIGNATURE: &str = include_str!("../testdata/update/Droppen.app.tar.gz.sig");
         pub const OTHER_SIGNATURE: &str = include_str!("../testdata/update/other-key.sig");
         pub const OTHER_FILE_SIGNATURE: &str = include_str!("../testdata/update/other-file.sig");
+        // The same archive, signed by desktop/update-signer (the release's
+        // signer) with a test key of its own, for VERSION.
+        pub const IN_REPO_SIGNATURE: &str = include_str!("../testdata/update/in-repo-signer.sig");
+        pub const IN_REPO_PUBKEY: &str = include_str!("../testdata/update/in-repo-signer.key.pub");
         pub const VERSION: &str = "0.0.2-test";
     }
 
@@ -1259,6 +1263,23 @@ mod tests {
         assert!(check_signature(fixture::OTHER_FILE_SIGNATURE, fixture::PUBKEY, fixture::VERSION, None)
             .unwrap_err()
             .contains("not Droppen.app.tar.gz"));
+    }
+
+    /// desktop/update-signer signs as `tauri signer sign --app-version` does:
+    /// the app's checks take its signature, version and file name included.
+    #[test]
+    fn the_release_signer_signs_what_the_app_checks() {
+        assert_eq!(
+            check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, fixture::VERSION, Some(fixture::ARCHIVE)),
+            Ok(())
+        );
+        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, "0.0.3-test", Some(fixture::ARCHIVE))
+            .unwrap_err()
+            .contains("made for version 0.0.2-test"));
+        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::PUBKEY, fixture::VERSION, Some(fixture::ARCHIVE)).is_err());
+        let mut tampered = fixture::ARCHIVE.to_vec();
+        tampered[100] ^= 1;
+        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, fixture::VERSION, Some(&tampered)).is_err());
     }
 
     #[test]

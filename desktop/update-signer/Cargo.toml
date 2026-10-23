@@ -1,0 +1,27 @@
+# The updater's signer: what `tauri signer sign --app-version` does, and
+# nothing else, with as few dependencies as that takes (minisign, base64).
+# Its own workspace, so its dependencies are neither the app's (nor in its
+# notices) nor anything the app links. .github/workflows/release.yml builds it
+# in a job without secrets and runs it, checked by sha256, in the one job that
+# holds the updater key; desktop/updater-artifacts.sh runs it.
+[workspace]
+
+[package]
+name = "droppen-update-signer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+description = "Signs a Droppen update archive the way the Tauri updater checks it"
+
+[dependencies]
+# The format the Tauri updater uses (tauri-cli 2.12 signs with minisign 0.9).
+minisign = "0.9"
+base64 = "0.22"
+
+[dev-dependencies]
+# What the Tauri updater (tauri-plugin-updater 2.13) verifies with.
+minisign-verify = "0.2"
+
+[profile.release]
+strip = true

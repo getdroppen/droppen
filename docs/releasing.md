@@ -14,9 +14,10 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 
 - **Who can publish.** Only a run of `release.yml` for a `v*` tag of a commit
   on main (the workflow checks the commit is on main), and only once a person
-  has approved it: the jobs that sign and publish run in the protected
+  has approved it: the one job that signs and publishes runs in the protected
   `release` environment, whose required reviewer is the owner and which
-  deploys only for `v*` tags. Who may create such a tag is the tag ruleset's
+  deploys only for `v*` tags and main (dry runs); GitHub enforces the
+  approval, once per run. Who may create such a tag is the tag ruleset's
   to say (the owner). The job that publishes uses the run's own token, with
   `contents: write` in that job only; there is no other token that can write
   a release.
@@ -61,14 +62,14 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    have one. Nothing needs skipping: the release workflow does not run on
    pushes to main.
 2. **Optionally, a dry run**: `gh workflow run release.yml --ref main` (or
-   *Actions → release → Run workflow*, `dry_run` ticked). It builds and checks
-   everything a release does, the Developer ID signature and Apple's
-   notarisation included, checks the release against this repository's
-   releases (`publish-release.sh --dry-run`), and attests and publishes
-   nothing; the files it made stay on the run for two days as the artifact
-   `dry-run-vX.Y.Z`. A run anywhere but on a `v*` tag is always a dry run.
-   Its signing jobs need the environment's approval like a release's, and the
-   environment must allow the branch (below).
+   *Actions → release → Run workflow*, `dry_run` ticked). It does everything
+   a release does but attest and publish: after the same one approval, the
+   Developer ID signature, Apple's notarisation, the updater's signature, and
+   the checks against this repository's releases (`publish-release.sh
+   --dry-run`); the files it made stay on the run for two days as the
+   artifact `dry-run-vX.Y.Z`. A run on any other branch builds and checks
+   but never reaches the `release` job (the environment allows `v*` tags and
+   main only).
 3. **Tag** the merged commit and push the tag:
 
    ```sh
@@ -86,26 +87,23 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    ```sh
    gh workflow run release.yml --ref vX.Y.Z -f dry_run=false
    ```
-4. **Approve, three times.** The build jobs run (about twenty minutes).
-   Each job that holds a secret then waits for the `release` environment:
-   *Review deployments → Approve* on the run's page, for `sign-apple` (the
-   Developer ID and notarisation), `sign-updater` (the updater key) and
-   `publish` (writing the release), a few minutes apart. Each starts only if
-   everything before it passed. A server-only release has two: `approve`
-   (before anything is attested) and `publish`.
+4. **Approve, once.** The build jobs run (about twenty minutes). Once they
+   and the smoke tests have passed, the `release` job waits for the `release`
+   environment: *Review deployments → Approve* on the run's page. Nothing
+   asks again.
 5. It signs and notarises the app (Apple usually takes a few minutes), makes
    the updater's files, checks the release, attests every file and
    publishes: a draft with every file, `latest.json` last, checked, then
    published as the latest release. Installed apps and
    `curl -fsSL https://droppen.app/install.sh | sh` take it at once. The
-   `attest` job's summary lists every file with its sha256.
+   `release` job's summary lists every file with its sha256.
 
 **When it fails.** Before publishing nothing is written: fix the cause and
 *Re-run failed jobs* (or, for a fix in the source, a new version). If
 publishing failed after the draft was created, the draft stays (invisible):
 look at it, delete it (`gh release delete vX.Y.Z --repo getdroppen/droppen`;
-the tag stays), and re-run the `publish` job. A published release is never
-changed.
+the tag stays), and re-run the `release` job (it asks for the approval
+again, and signs again). A published release is never changed.
 
 **Not in the workflow**: a key rotation's transition release, and the
 server-only releases after it until the next app
@@ -120,18 +118,13 @@ the fallback whenever GitHub Actions cannot be used.
 | `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main), whether it has the app |
 | `web` | Linux | nothing | the public web build, once, for every binary to embed |
 | `tools` | macOS | nothing | cargo-about and tauri-cli for the build jobs |
-| `signer` | macOS | nothing | tauri-cli (the updater's signer) and `droppen-update-manifest` for `sign-updater`, built in a job of their own that builds nothing else |
+| `signer` | macOS | nothing | `droppen-update-signer` (`desktop/update-signer`, with its format tests) and `droppen-update-manifest`, built from this repository's locked sources, for the `release` job |
 | `server-macos` | macOS ×2 | nothing | the server for aarch64 and x86_64, as `scripts/release-public.sh` builds it |
 | `server-linux` | Linux ×2 | nothing | the server for x86_64 and aarch64 (glibc 2.28): `scripts/build-linux-in-container.sh` in the image `scripts/build-linux.sh` pins |
 | `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt`: the binary checks, `THIRD_PARTY_NOTICES`, macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks, `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
 | `desktop` | macOS | nothing | `desktop/build.sh --sidecar` with the staged universal server (unsigned) |
-| `sign-apple` | macOS | the Developer ID, the notary's password, the names | the text check with the names; `desktop/notarise.sh`: the app and the DMG signed, notarised, stapled; the keychain deleted right after |
-| `sign-updater` | macOS | the updater key | `desktop/updater-artifacts.sh`: `Droppen.app.tar.gz`, its signature, `latest.json`, with `signer`'s two programs (checked by sha256); it compiles nothing |
-| `verify` | macOS | nothing | `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` (the release's page: `scripts/release-notes.sh` writes it again) are the source's, byte for byte; `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only |
-| `approve` | Linux | nothing | a server-only release only: waits for the approval before anything is attested (with the app, `sign-apple` and `sign-updater` were approved already) |
-| `attest` | macOS | the OIDC token (when publishing) | `SHA256SUMS` (`publish-release.sh --sums-only`, held to verify's) and a build provenance attestation for every file published |
-| `publish` | macOS | `contents: write`, the names | the text check with the names; `scripts/publish-release.sh --verify-tag` with the attested `SHA256SUMS`: the release of the tag, made once |
+| `release` | macOS | every secret, `contents: write`, the OIDC token; approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh` with `droppen-update-signer`; `scripts/publish-release.sh --dry-run` (every check, `latest.json` against its archive and the key included); only when publishing, the attestations and `scripts/publish-release.sh --verify-tag` |
 
 The trust boundaries:
 
@@ -147,38 +140,50 @@ The trust boundaries:
   into an empty directory of its own, only if every member is a plain file or
   directory on the expected paths (`.github/scripts/unpack-artifact.sh`).
   Two artifacts never share a directory.
-- **Nothing from an untrusted artifact runs where a secret is.**
-  `sign-apple` only has `codesign`, `notarytool`, `stapler`, `hdiutil` and
-  `spctl` read and sign the app; `publish` runs the repository's scripts,
-  `gh` and `stapler`; the staged tarballs are read member by member, never
-  unpacked by their own paths, and `install.sh`, `LICENSE`, the INSTALL
-  texts and `NOTES.md` are compared with the source. The two programs that do run with a
-  secret, tauri-cli's signer and `droppen-update-manifest` in
-  `sign-updater`, are built by `signer`, a job of their own with no secret
-  that builds nothing else, from pinned versions and locked sources
-  (crates.io checksums), and checked by sha256; `sign-updater` compiles
-  nothing. GitHub gives a job all its secrets when it starts, so whatever
-  runs in it could reach them: the code of tauri-cli's dependencies, built
-  into the signer, is what meets the updater key. That job holds no Apple,
-  write or OIDC credential, and the key alone ships nothing: apps take an
-  update only from a release of this repository, which only `publish` makes.
-  (Later: a small signer in this repository, with few dependencies, instead
-  of tauri-cli.)
-- **One secret per job, each approved.** A job gets all the secrets it
-  names when it starts, for its whole run, so the secrets are split by job:
-  the Developer ID and the notary's password reach only `sign-apple` (its
-  keychain is deleted right after the signing), the updater key only
-  `sign-updater`, the write token only `publish`. Each of these jobs waits for
-  a person's approval.
-- **The OIDC token only where nothing built runs, after an approval.**
-  `attest` runs the repository's scripts, `shasum`, `gh` and `stapler`, and
-  GitHub's attest action. It runs only when publishing (dry runs make no
-  attestation), and only after a person approved the release
-  (`sign-updater`, or `approve` for a server-only one).
-- **What is attested is what was checked, and what is published.** `verify`
-  writes the release's `SHA256SUMS`; `attest` makes it again without the
-  manifest tool and refuses a different one; `publish` refuses to write
-  anything unless its own is the attested one (`--sums-expected`).
+- **One job holds the secrets, approved once per run.** `release` is the
+  only job in the `release` environment, so GitHub itself makes it wait for
+  the owner's approval, every run, whatever the workflow says. A job gets
+  all the secrets it names when it starts, for its whole run, so what runs
+  in it is kept to what can be read in a few minutes:
+  - this repository's scripts (`desktop/notarise.sh`,
+    `desktop/updater-artifacts.sh`, `scripts/publish-release.sh`, the text
+    checks), read from the checked-out commit;
+  - Apple's tools (`codesign`, `notarytool`, `stapler`, `hdiutil`, `spctl`),
+    `gh`, and GitHub's attest action, pinned by commit;
+  - two programs of ours, built by `signer` (a job without secrets) from
+    this repository's locked sources and checked by sha256:
+    `droppen-update-signer` (`desktop/update-signer`: minisign, its scrypt
+    and Ed25519 code, base64) and `droppen-update-manifest` (`desktop/core`).
+
+  No third-party build tool (tauri-cli, cargo, npm) runs there, and nothing
+  from an artifact is run: the app, the DMG and the tarballs are only read,
+  signed and uploaded; the staged tarballs are read member by member, never
+  unpacked by their own paths. Each step gets only the secrets it uses in its
+  own `env:`: the Developer ID and the notary's password the keychain and
+  notarisation steps (the keychain is deleted right after, whatever
+  happened), the updater key the updater step, the names the text checks.
+- **The updater's signer is ours, and checked against the Tauri updater.**
+  `droppen-update-signer` writes what `tauri signer sign --app-version`
+  (tauri-cli 2.12.3) writes: a minisign signature (minisign 0.9, as
+  tauri-cli), the same untrusted comment, and the trusted comment
+  `timestamp:…`, `file:Droppen.app.tar.gz`, `version:<version>` (tab
+  separated), from the key in Tauri's format (base64 of the encrypted
+  minisign secret key, and its password). Its tests make keys the way
+  `tauri signer generate` does, read a key tauri-cli made, and verify every
+  signature the way tauri-plugin-updater 2.13.2 does (minisign-verify, then
+  the signed version against the announced one, `requireSignedVersion`);
+  `desktop/core`'s `update.rs` tests check one of its signatures with the
+  app's own checks, version and file name included. `signer` runs those
+  tests on every run.
+- **Write and OIDC tokens only where they are used.** GitHub grants a job's
+  `permissions` for the whole job, so `release` has `contents: write` and
+  `id-token: write` on dry runs too; only its attest and publish steps,
+  which run only when publishing, use them, and nothing else that runs there
+  (above) asks for them.
+- **What is attested is what was checked, and what is published.** The
+  dry-run check writes the release's `SHA256SUMS`; it is attested with every
+  file, and the publishing step refuses to write anything unless its own is
+  the same (`--sums-expected`).
 - **No caches.** Every dependency is fetched and built afresh, so no earlier
   run can leave anything for a release to pick up.
 - **Pinned inputs.** Every action by commit; Rust 1.98.1 (rustup checks its
@@ -186,7 +191,7 @@ The trust boundaries:
   by digest, zig by sha256; crates and npm packages by their lockfiles;
   Apple's Developer ID G2 intermediate certificate by sha256.
 - **Names stay out of the log.** The release text check's list of personal
-  names (`RELEASE_FORBIDDEN_ENV`) reaches only `sign-apple` and `publish`; the
+  names (`RELEASE_FORBIDDEN_ENV`) reaches only the `release` job's text checks; the
   build jobs check for "Kilerd" only (`DROPPEN_RELEASE_NAMES_DEFERRED`). A hit
   is reported by its line number only (`DROPPEN_RELEASE_TEXT_QUIET`), and the
   names are masked in the log.
@@ -228,9 +233,9 @@ first tag:
    the workflow creates it bare, with no rules):
    - *Required reviewers*: the owner. *Prevent self-review* off (the owner
      approves the owner's tags), *Allow administrators to bypass* off.
-   - *Deployment branches and tags*: selected only, the tag pattern `v*`.
-     Add the branch `main` too to allow dry runs from main (a run that is not
-     on a tag never publishes, and its signing jobs still need the approval).
+   - *Deployment branches and tags*: selected only, the tag pattern `v*` and
+     the branch `main` (dry runs from main: they sign after the same
+     approval, and never publish).
 2. **Its secrets** (*Add environment secret*, or
    `gh secret set <NAME> --env release --repo getdroppen/droppen`), from the
    release Mac's files, since secrets cannot be read back:
