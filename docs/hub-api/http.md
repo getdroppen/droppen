@@ -60,6 +60,16 @@ then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
 A claim like everything else here, not a proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.
 
+### A service worker fetched from any path but `/sw.js` — only when the hub serves the web app
+A `GET` carrying `Service-Worker: script` (the browser fetching or updating a
+service worker) for any path other than `/sw.js` gets a small worker that
+deletes every cache of the origin and unregisters itself, as
+`text/javascript; charset=utf-8` with `Cache-Control: no-store`, instead of
+the shell. A worker registered for `/` from another address by a page that
+should not have would otherwise stay: the shell fails the browser's update on
+its MIME type ([web-integrity](../web-integrity.md)). The local server answers
+the same.
+
 ### `GET /v1/signup/config`
 → `{signup: "invite"|"open"|"closed", invite_required, turnstile: null | {site_key, origin}, verification: "required"|"off", passkeys: null | {rp_id}}`.
 What the sign-up form must ask for. `passkeys`: the hub offers passkeys

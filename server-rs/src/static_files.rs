@@ -36,9 +36,53 @@ impl<B> Service<Request<B>> for SpaService {
     }
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
+        if foreign_worker(request.headers(), request.uri().path()) {
+            return std::future::ready(Ok(retiring_worker()));
+        }
         let if_none_match = request.headers().get(header::IF_NONE_MATCH).and_then(|value| value.to_str().ok());
         std::future::ready(Ok(respond_to(request.uri().path(), request.uri().query(), if_none_match)))
     }
+}
+
+/// The page's own service worker: the one address a worker is registered from.
+const WORKER_PATH: &str = "/sw.js";
+
+/// What a browser gets when it fetches a service worker from any other
+/// address: a worker that empties this origin's caches and unregisters itself.
+///
+/// One malicious page load can register a worker for the scope `/` from an
+/// address of its choosing (`/x.js`). Answered with the shell, as any other
+/// path is, the browser's update check fails on the MIME type and the old
+/// worker stays — in control of every page, whatever is deployed later. This
+/// answer is a valid worker instead, so the update replaces it, and the
+/// replacement goes; the page registers `/sw.js` again as it next loads.
+/// Droppen Hub answers the same (docs/web-integrity.md).
+const RETIRING_WORKER: &str = r#"/* Droppen: no service worker lives at this address. One registered here
+ * clears this origin's caches and unregisters itself; the page registers
+ * /sw.js again as it next loads. */
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      for (const name of await caches.keys()) await caches.delete(name);
+      await self.registration.unregister();
+    })(),
+  );
+});
+"#;
+
+/// Whether a request is a browser fetching a service worker script
+/// (`Service-Worker: script`) from anywhere but [`WORKER_PATH`].
+fn foreign_worker(headers: &gotcha::axum::http::HeaderMap, path: &str) -> bool {
+    path != WORKER_PATH && headers.get("service-worker").is_some_and(|value| value.as_bytes() == b"script")
+}
+
+fn retiring_worker() -> Response<Body> {
+    let mut response = Response::new(Body::from(RETIRING_WORKER));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/javascript; charset=utf-8"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// One file of the embedded web build, by its path under `web/dist`, or `None`
@@ -220,6 +264,37 @@ mod tests {
 
     fn get(path: &str) -> Response<Body> {
         respond(path)
+    }
+
+    /// A request as the browser's service-worker update check sends it.
+    fn worker_fetch(path: &str, header_value: Option<&str>) -> Response<Body> {
+        let mut builder = gotcha::axum::http::Request::builder().uri(path);
+        if let Some(value) = header_value {
+            builder = builder.header("service-worker", value);
+        }
+        let mut spa = service();
+        Service::call(&mut spa, builder.body(()).unwrap()).into_inner().unwrap()
+    }
+
+    #[test]
+    fn a_worker_fetched_from_another_address_is_one_that_unregisters_itself() {
+        for path in ["/x.js", "/assets/evil.js", "/sessions", "/sw.js.map"] {
+            let response = worker_fetch(path, Some("script"));
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "text/javascript; charset=utf-8", "{path}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store", "{path}");
+        }
+        assert!(RETIRING_WORKER.contains("self.registration.unregister()"));
+        assert!(RETIRING_WORKER.contains("caches.delete(name)"));
+        // The page's own worker, and the same path fetched as anything else, are served as before.
+        let mut asked = gotcha::axum::http::HeaderMap::new();
+        asked.insert("service-worker", HeaderValue::from_static("script"));
+        assert!(!foreign_worker(&asked, "/sw.js"));
+        assert!(foreign_worker(&asked, "/x.js"));
+        let plain = worker_fetch("/x.js", None);
+        assert_ne!(plain.headers().get(header::CACHE_CONTROL).map(|v| v.as_bytes()), Some(&b"no-store"[..]), "a plain fetch is not the retiring worker");
+        let other = worker_fetch("/x.js", Some("other"));
+        assert_ne!(other.headers().get(header::CONTENT_TYPE).map(|v| v.as_bytes()), Some(&b"text/javascript; charset=utf-8"[..]));
     }
 
     #[test]
