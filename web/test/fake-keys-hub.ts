@@ -141,6 +141,10 @@ export class FakeKeysHub {
   refuseRegistrations: string | null = null;
   /** Devices the hub says were removed, whatever the chain says (a lying hub). */
   claimRemoved = new Set<string>();
+  /** The account was deleted: every session refused (401), and a device session renewal answers `410 account_deleted` before anything else. */
+  accountGone = false;
+  /** The account is suspended: every session refused (401), and a device session renewal with a good signature answers `403 account_suspended`. */
+  suspended = false;
   /** Mail posts per sender, by time (the 120/min cap). */
   private posts = new Map<string, number[]>();
   mailRatePerMin = 120;
@@ -449,6 +453,7 @@ export class FakeKeysHub {
       return this.json(200, { nonce });
     }
     if (path === "/v1/session" && method === "POST") {
+      if (this.accountGone) return this.json(410, { error: "account_deleted", message: "this account was deleted" });
       const challenge = this.challenges.get(body.nonce);
       this.challenges.delete(body.nonce);
       const reg = this.devices.get(body.device);
@@ -463,11 +468,12 @@ export class FakeKeysHub {
       );
       if (!ok) return this.json(401, { error: "denied", message: "bad signature" });
       if (this.removed(body.device)) return this.json(403, { error: "device_removed", message: "this device was removed from the account" });
+      if (this.suspended) return this.json(403, { error: "account_suspended", message: "this account is suspended" });
       const s = this.newToken({ kind: "device", device: body.device }, this.deviceSessionMs);
       return this.json(200, { account: this.account, device: body.device, token: s.token, expires_ms: s.expiresMs });
     }
 
-    if (this.refuseSessionsOf.has(token) || (this.refuseAllSessions && token)) return denied();
+    if (this.refuseSessionsOf.has(token) || ((this.refuseAllSessions || this.accountGone || this.suspended) && token)) return denied();
     const who = this.sessions.get(token);
     if (!who || who.expiresMs <= this.now()) return denied();
     if (who.kind === "device" && this.removed(who.device)) {

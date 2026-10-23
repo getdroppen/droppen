@@ -61,10 +61,13 @@ A claim like everything else here, not a proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.
 
 ### `GET /v1/signup/config`
-→ `{signup: "invite"|"open"|"closed", invite_required, turnstile: null | {site_key, origin}, verification: "required"|"off", passkeys: null | {rp_id}}`.
+→ `{signup: "invite"|"open"|"closed", invite_required, turnstile: null | {site_key, origin}, verification: "required"|"off", passkeys: null | {rp_id}, deletion: {email_hold_days}}`.
 What the sign-up form must ask for. `passkeys`: the hub offers passkeys
 for this relying party id (`null`: it has them off — a hub on an IP
-address always does; absent from hubs before passkeys).
+address always does; absent from hubs before passkeys). `deletion`:
+`email_hold_days` (≥ 0), how many days a deleted account's address cannot
+sign up again (`DELETE /v1/account`; `0`: it can at once), for the page to
+say before an account is deleted; absent from hubs before account deletion.
 
 ### `POST /v1/signup`
 `{email, password, invite?, turnstile?, lang?}` → a login session
@@ -84,8 +87,18 @@ by the new sign-up in the same transaction: it and its sessions are gone,
 and its verification link verifies nothing. Any other account keeps the
 e-mail (`409 email_taken`); sign-up by invite never replaces one. A new
 account's verification mail always goes out.
+An address whose account was deleted within the hub's hold
+(`/v1/signup/config` `deletion.email_hold_days`; the address compared in its
+canonical form: lower-cased, its `+tag` dropped and, at Gmail, its dots) is
+refused with `409 recently_deleted`, whose `until_ms` says when it may sign
+up again. `400 disposable_email` covers the hub's built-in list of throwaway
+mail domains and any domain on its operator's deny list alike.
 Errors: `403 signup_closed | bad_invite | turnstile_required | turnstile_retry | turnstile_failed` (`turnstile_*` only with Turnstile),
-`400 bad_request | disposable_email`, `409 email_taken`, `503 turnstile_unavailable`.
+`400 bad_request | disposable_email`, `409 email_taken | recently_deleted`, `503 turnstile_unavailable`.
+
+```json
+{"error": "recently_deleted", "message": "an account with this address was deleted recently", "until_ms": 1793750400000}
+```
 Limits: every attempt counts (per address, per network, across the hub),
 and accounts made 5/hour and 20/day per address; without Turnstile also
 per network and across the hub (`429 rate`, no account made); fields as in
@@ -98,7 +111,9 @@ Errors: `401 bad_login` (wrong e-mail or password, an unknown account, or a
 locked (e-mail, address) pair — indistinguishable on purpose; an IPv4
 address as a whole, an IPv6 one by its /64),
 `403 turnstile_required | turnstile_retry | turnstile_failed` (only with
-Turnstile), `429 rate` (also the backoff without Turnstile), `400 bad_request`.
+Turnstile), `403 account_suspended` (the hub's operator suspended the
+account: said only once the password checked out, README "Suspended
+accounts"), `429 rate` (also the backoff without Turnstile), `400 bad_request`.
 The failures, the lockout and the Turnstile threshold count the e-mail asked
 for, whether or not an account has it: an unknown e-mail gets the same
 answers in the same order as a wrong password for an existing account.
@@ -169,11 +184,12 @@ made spends one), `DROPPEN_HUB_SIGNUP` (closed, invite), Turnstile when the hub
 uses it (action `signup`), the e-mail's syntax and throwaway domains, the
 invite, without Turnstile the per-network and hub-wide caps — and whether
 the e-mail is taken (`409 email_taken`, unless open sign-up would replace
-the account that holds it, as `POST /v1/signup` does). A refusal here
-means: do not call `create()`.
+the account that holds it, as `POST /v1/signup` does), or its account was
+deleted within the hold (`409 recently_deleted` with `until_ms`). A refusal
+here means: do not call `create()`.
 Errors: `400 bad_request | disposable_email`, `403 signup_closed |
-bad_invite | turnstile_* | passkeys_off`, `409 email_taken`, `429 rate`,
-`503 turnstile_unavailable`. (Adding a passkey to an account takes a
+bad_invite | turnstile_* | passkeys_off`, `409 email_taken |
+recently_deleted`, `429 rate`, `503 turnstile_unavailable`. (Adding a passkey to an account takes a
 device session: `POST /v1/passkeys/add/options`, below; any other `purpose`
 is `400`.)
 
@@ -190,8 +206,8 @@ queued, as with `POST /v1/signup`. A password login for such an account is
 answered exactly like a wrong password (`401 bad_login`).
 Errors: `401 bad_passkey`, `400 bad_request | disposable_email`, `403
 signup_closed | bad_invite | passkeys_off`, `409 email_taken` (lost a
-race), `429 rate`. After any refusal the passkey belongs to no account:
-signal it unknown.
+race) `| recently_deleted`, `429 rate`. After any refusal the passkey
+belongs to no account: signal it unknown.
 
 #### `POST /v1/passkeys/login/options`
 `{}` → `{challenge, options}`, `options` a
@@ -222,6 +238,7 @@ and the credential must be JSON objects with no key given twice (taken as
 sent, never the last of two). An unverified account signs in like with a
 password: `email_verified: false`, the same limits.
 Errors: `401 bad_passkey | unknown_passkey`, `403 passkeys_off`,
+`403 account_suspended` (only once the assertion checked out),
 `429 rate`. Limits: 30 per 10 minutes per address, a bucket of its own; a
 network's (IPv4 /24, IPv6 /48) failed assertions 120 per 10 minutes, past
 which its failures are answered `429` — a valid assertion never is; and 30
@@ -246,8 +263,10 @@ keeps the address first given and takes the latest `plan` and `locale`.
 one `@`, a domain of two or more host labels; `plan` is a public plan;
 `locale` (≤ 16 bytes) is kept as one of `en`, `zh-CN`, `zh-TW`, `ja`. No IP
 address or other request detail is stored; an entry not given again for 365
-days is deleted. Errors: `400 bad_request` (`message` names the field),
-`400 disposable_email`. Limits: README.md, "Rate limits and caps".
+days is deleted; deleting an account (`DELETE /v1/account`) deletes its
+address's entry too. Errors: `400 bad_request` (`message` names the field),
+`400 disposable_email` (a throwaway mail domain, or one on the operator's
+deny list). Limits: README.md, "Rate limits and caps".
 
 ### `POST /v1/session/challenge`
 `{account, device}` → `{nonce}` (32-byte hex). Stateless; any well-formed ids
@@ -280,9 +299,17 @@ fresh: the signed exchange is kept as evidence (`GET /v1/rotations`
 `disputes`) and may isolate the host. A session is made only if the key it
 was signed with is still the device's when it is made: one checked with a
 key a renewal retires meanwhile is `401 rotated` too, no session made.
+A device (or a host) of a suspended account gets `403 account_suspended`,
+once its signature checked out (README "Suspended accounts"). An `account`
+the hub has no account for any more, or one being deleted
+(`DELETE /v1/account`), is `410 account_deleted` — checked first, before
+the device is looked up, so it takes no signature: a device that kept its
+keys for a deleted account hears it on its next renewal (the web app then
+wipes them, as for a removed device).
 Errors: `401 denied` (anything wrong: unknown device, bad signature, stale
 or reused nonce, clock — never a check the hub could not make, which is
 `503 unavailable`), `401 rotated`, `403 device_removed`,
+`403 account_suspended`, `410 account_deleted`,
 `403 rotation_pending`, `400 bad_request` (`nonce`
 not 32 bytes of hex), `429 rate` (with `retry_after_ms`). Limits: 30 a
 minute and 300 an hour per device, spent only by the device's own valid
@@ -953,11 +980,16 @@ last_credential | unlock_on`, `429 rate`.
 
 #### `POST /v1/passkeys/reauth/options` — requires a current full device
 `{}` → `{challenge, options}`: a challenge bound to the account and this
-device, for proving it is still the person, and
+device, for proving it is still the person (here and for
+`DELETE /v1/account`, below), and
 `PublicKeyCredentialRequestOptionsJSON` naming the account's own passkeys
 in `allowCredentials` (with their transports), `userVerification:
-"required"`. Nothing is stored. Errors: `403 passkeys_off |
-not_a_full_device | email_unverified`, `409 no_passkey` (give the current
+"required"`. Nothing is stored. An account whose chain has no entries yet
+(no device is full before the genesis) may ask with any of its device
+sessions. It takes an unverified e-mail too: the route it serves checks its
+own rules (changing a way to sign in still answers `403 email_unverified`
+past the due date; deleting the account does not ask). Errors: `403
+passkeys_off | not_a_full_device`, `409 no_passkey` (give the current
 password instead).
 
 #### `PUT /v1/password` — requires a current full device
@@ -976,6 +1008,48 @@ in with its passkeys only (a password login then answers exactly like a
 wrong password), after the proof above. Refused without a passkey (`409
 last_credential`). Errors: `403 not_a_full_device | email_unverified |
 reauth_required | reauth_failed`, `409 last_credential`, `429 rate`.
+
+### `DELETE /v1/account` — requires a current full device
+`{confirm, current_password? | passkey?}` → `{deleted: true, purged}`:
+the account deleted, for good. `confirm` is the account's e-mail address as
+the person typed it (compared trimmed and case-insensitively; anything else
+is `400 confirm_mismatch`), and the proof is the one above ("Proving it is
+still the person": the current password where the account has one, or a
+passkey answering a challenge `POST /v1/passkeys/reauth/options` gave this
+device; the same errors, the same limits on the password). A current full
+device of the account's chain asks — or, for an account whose chain has no
+entries yet, any of its device sessions. An unverified e-mail does not
+hold it. Body up to 16 KiB, as the passkey routes.
+
+**What goes.** Every session and socket of the account ends at once (its
+sockets close with 4403 after `error {code: "account_deleted"}`,
+websocket.md), and the relays drop its connections and refuse its tickets.
+The hub deletes the device chain, the devices, the machines (the hosts that
+ran AI under the account), the mailbox, the keyring, identity key renewals,
+enrollments, plan rows, the ways to sign in (password, passkeys), the
+stored encrypted pages and stream tails, the records of verification mail
+sent to the address, and the address's waitlist entry. **What stays:** a
+keyed hash (HMAC-SHA256 under a secret of the hub's) of the address in its
+canonical form (lower-cased, its `+tag` dropped and, at Gmail, its dots),
+for the days `GET /v1/signup/config` names (`deletion.email_hold_days`;
+`DROPPEN_HUB_DELETED_EMAIL_DAYS`, 7 by default, `0` keeps none), so the same
+inbox cannot sign up again at once (`409 recently_deleted`); and an
+account-wide revocation of relay tickets (the account's random id and a
+time, sent to the relays as `revoke` with `id: null`) until the last ticket
+it could stop has expired (a ticket's lifetime and 10 minutes).
+
+Nothing deleted can be brought back, by anyone: the data was encrypted on
+the account's devices, and with the account gone every device of it stops
+working; hosts must be enrolled again under another account. The hub cannot
+reach the account's other browsers: they keep what they hold until they
+next ask the hub, which knows them no more. The device that deleted the
+account forgets its keys for it there and then (the web app does). `purged:
+false`: the stored data is still being erased; the hub finishes on its own,
+and the account is gone either way.
+Errors: `400 confirm_mismatch | bad_request`, `401 unauthorized |
+device_session_required`, `403 not_a_full_device | reauth_required |
+reauth_failed`, `429 rate` (with `retry_after_ms`), `503 unavailable`
+(nothing was done: try again).
 
 ## Operator: `admin`
 

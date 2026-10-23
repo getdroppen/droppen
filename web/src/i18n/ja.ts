@@ -832,6 +832,12 @@ export const ja: Record<string, string> = {
   "this passkey could not sign you in: try again": "このパスキーではログインできませんでした：もう一度お試しください",
   "this passkey is no longer registered here: use another passkey or your password": "このパスキーはもう登録されていません：別のパスキーかパスワードを使ってください",
   "passkeys are turned off on this hub: use your password": "ここではパスキーが無効です：パスワードを使ってください",
+  // Deleting the account, and an account suspended (features/cloud/ui.tsx).
+  "that is not this account's e-mail address: type it exactly as shown": "このアカウントのメールアドレスではありません：表示どおりに入力してください",
+  "this account is suspended: it cannot be used for now": "このアカウントは停止されています：現在は使えません",
+  "this account is suspended, so it cannot sign in for now": "このアカウントは停止されているため、現在はログインできません",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again in a few days": "このメールアドレスのアカウントは最近削除されました：数日後にまた登録できます",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again from {{when}}": "このメールアドレスのアカウントは最近削除されました：{{when}} からまた登録できます",
   // Plugins (web/src/plugins)
   "got it": "了解",
   "until fixed": "解決すると消えます",

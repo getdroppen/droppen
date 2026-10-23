@@ -831,6 +831,12 @@ export const zhCN: Record<string, string> = {
   "this passkey could not sign you in: try again": "无法用这个通行密钥登录：请重试",
   "this passkey is no longer registered here: use another passkey or your password": "这个通行密钥已失效：请改用其他通行密钥或密码",
   "passkeys are turned off on this hub: use your password": "这里未开启通行密钥：请使用密码",
+  // Deleting the account, and an account suspended (features/cloud/ui.tsx).
+  "that is not this account's e-mail address: type it exactly as shown": "这不是这个账户的邮箱地址：请照所示原样输入",
+  "this account is suspended: it cannot be used for now": "这个账户已被停用：暂时无法使用",
+  "this account is suspended, so it cannot sign in for now": "这个账户已被停用，暂时无法登录",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again in a few days": "使用这个邮箱的账户刚被删除不久：几天后才能再注册",
+  "an account with this e-mail address was deleted a short while ago: it can sign up again from {{when}}": "使用这个邮箱的账户刚被删除不久：{{when}} 起才能再注册",
   // Plugins (web/src/plugins)
   "got it": "知道了",
   "until fixed": "修复后自动消失",

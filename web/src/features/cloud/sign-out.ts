@@ -1,6 +1,6 @@
 import type { KeyStore } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
-import { clearSession, type HubApi } from "@/lib/hub/api";
+import { clearSession, type HubApi, type Proof } from "@/lib/hub/api";
 import { deviceMirrorStore, forgetMirrorKey } from "@/lib/hub/mirror";
 import { forgetPasskeySignIn } from "@/lib/hub/passkey-join";
 import { setRenewalRunner } from "@/lib/hub/renewal";
@@ -60,6 +60,22 @@ export function takeSignOutFailures(storage: Storage | undefined = globalThis.se
   }
 }
 
+/**
+ * Forget everything this browser holds for `account`: its keys
+ * (`CloudAccount.wipe`: user keys, the cached keyring, the device keys) and
+ * every offline copy with the key that sealed them (`clearDeviceCopies`).
+ * Every clear is waited for; what failed comes back, to be shown. What a
+ * removed device does, and a device whose account was deleted.
+ */
+export async function wipeAccountHere(account: Pick<CloudAccount, "wipe">, store?: KeyStore): Promise<string[]> {
+  const failures: string[] = [];
+  const [wiped, copies] = await Promise.allSettled([account.wipe(), clearDeviceCopies(store)]);
+  if (wiped.status === "rejected") failures.push(failure("keys", wiped.reason));
+  if (copies.status === "fulfilled") failures.push(...copies.value);
+  else failures.push(failure("offline copies", copies.reason));
+  return failures;
+}
+
 /** A hub session a screen holds without an open account (one that could not be opened): ended on sign-out too. */
 export interface HeldSession {
   api: Pick<HubApi, "logout">;
@@ -101,6 +117,89 @@ export async function signOut(from?: CloudAccount, held?: HeldSession): Promise<
   }
   // The sign-in page, which also shows what could not be cleared.
   location.replace(SIGN_IN_PATH);
+}
+
+// ------------------------------------------------------------ deleting the account
+
+/** Where this tab says the account it was in has just been deleted, for the sign-in screen (once). */
+export const ACCOUNT_DELETED_KEY = "rh.cloud.account-deleted";
+
+let deleting = false;
+
+/**
+ * Whether this page is deleting its account right now: the hub ending the
+ * account's sessions and sockets meanwhile is that deletion, not a refusal
+ * of this device to show (`cloud-app.tsx`).
+ */
+export function deletingAccount(): boolean {
+  return deleting;
+}
+
+/**
+ * Delete the account at the hub (`DELETE /v1/account`: `confirm`, the
+ * account's e-mail address as typed, and proof it is still the person), then
+ * leave it here ({@link leaveDeletedAccount}). A refusal changes nothing
+ * here, and is thrown. `leave` stands in for the page's leaving (tests).
+ */
+export async function deleteAccount(
+  account: CloudAccount,
+  input: { confirm: string; proof: Proof; email: string | null },
+  leave: (account: CloudAccount, email: string | null) => Promise<void> = leaveDeletedAccount,
+): Promise<void> {
+  deleting = true;
+  try {
+    await account.api.deleteAccount(account.session.token, input.confirm.trim(), input.proof);
+  } catch (error) {
+    deleting = false;
+    throw error;
+  }
+  await leave(account, input.email);
+}
+
+/**
+ * The account was deleted at the hub: forget it in this browser — its keys
+ * and every offline copy, as a removed device does ({@link wipeAccountHere}),
+ * the session, the passkey this tab signed in with and the known-client
+ * token kept for its address — and leave as a sign-out does, for the sign-in
+ * screen, which says the account was deleted (and what could not be
+ * cleared). Nothing is asked of the hub: it ended every session already.
+ */
+export async function leaveDeletedAccount(account: CloudAccount, email: string | null): Promise<void> {
+  const shell = hubShell();
+  shell?.stop();
+  setRenewalRunner(null);
+  account.stopSession();
+  shell?.link.stop();
+  forgetPasskeySignIn();
+  clearSession();
+  if (email) account.api.forgetKnownClient(email);
+  const failures = await wipeAccountHere(account, account.store);
+  if (failures.length) {
+    console.warn("cloud: the deleted account could not be cleared from this browser:", failures);
+    rememberFailures(failures);
+  }
+  markAccountDeleted();
+  location.replace(SIGN_IN_PATH);
+}
+
+/** Say on this tab's next sign-in screen that its account was deleted. */
+export function markAccountDeleted(storage: Storage | undefined = globalThis.sessionStorage): void {
+  try {
+    storage?.setItem(ACCOUNT_DELETED_KEY, "1");
+  } catch {
+    // the sign-in screen just says nothing of it
+  }
+}
+
+/** Whether this tab's account was just deleted (read once: it is removed as it is read). */
+export function takeAccountDeleted(storage: Storage | undefined = globalThis.sessionStorage): boolean {
+  try {
+    if (!storage || storage.getItem(ACCOUNT_DELETED_KEY) === null) return false;
+    storage.removeItem(ACCOUNT_DELETED_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

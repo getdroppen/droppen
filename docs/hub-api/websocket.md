@@ -51,7 +51,7 @@ hub    → main_device {machine, set_ms}          the account's main device
 A refused sign-in is `error {code, message}` and a close: 4401 (`denied`:
 bad signature, clock, session not this device's own device session) or 4403
 (`removed`; `host_devices_off`: a host signing in as a device while the hub
-runs `DROPPEN_HUB_CHAIN_V3=off`). The web app renews its device session (HTTP) after a 4401 and
+runs `DROPPEN_HUB_CHAIN_V3=off`; `account_suspended`). The web app renews its device session (HTTP) after a 4401 and
 reconnects.
 
 A sign-in also records when the device was last seen and, if the upgrade's
@@ -218,7 +218,10 @@ dropped.
 is cut off and stays out: its live connection gets the `CHAIN` frame with
 the removal first, then `error {code: "removed"}` and a close with 4403, and
 every later `login` as it is refused the same way (after the signature is
-checked). The open agent does **not** take the hub's word for it: a refused
+checked). An agent of a suspended account is refused with
+`account_suspended` (4403) until the account is unsuspended; one of a
+deleted account is cut off (`account_deleted`, 4403), and the hub knows it no
+more. The open agent does **not** take the hub's word for it: a refused
 sign-in is a failure it shows and retries with backoff; only a
 `RemoveMachine` in its own verified chain stops it for good. Re-joining means
 a new enrollment (a new machine id). A machine that was never in the chain,
@@ -328,7 +331,7 @@ quietly becomes another. A relay signing in again closes its previous link
 | `welcome`, `registered` | `id`, `ticket_keys: [{kid, key}]` | the keys tickets are signed with |
 | `error` | `code`, `message` | `unknown_relay` (register next), `key_mismatch`, `denied`, `bad_token`, `bad_key`, `bad_origin`, `origin_proof` (the relay retries later), `origin_taken`, `refused`, `retired`, `too_many_attempts`, `bad_message`, `sign_in_first`, `unexpected`, `unavailable` |
 | `usage_ok` | `boot`, `seq` | a usage report is recorded |
-| `revoke` | `account`, `id` (`null`: the whole account), `at_ms`, `role?` (`"device"` or `"agent"`: only the tickets of that role — a host's device-role and agent tickets carry the same id; absent: both) | close those connections and refuse tickets issued at or before `at_ms`; replayed at every sign-in while in force. `role` only to a relay that named `revoke-role/1`; a relay ignores a role it does not know |
+| `revoke` | `account`, `id` (`null`: the whole account, e.g. a deleted one), `at_ms`, `role?` (`"device"` or `"agent"`: only the tickets of that role — a host's device-role and agent tickets carry the same id; absent: both) | close those connections and refuse tickets issued at or before `at_ms`; replayed at every sign-in while in force. `role` only to a relay that named `revoke-role/1`; a relay ignores a role it does not know |
 | `replayed` | `revocations` | the replay is complete (a relay that just started waits for this before taking sign-ins) |
 | `throttle` | `account`, `bytes_per_sec` (`null`: lifted) | one account's relayed rate |
 | `throttles` | `accounts: [{account, bytes_per_sec}]` | the whole throttle table: anything not in it is not throttled |
@@ -426,7 +429,7 @@ that closes the connection (4400).
 | 4005 | this host's identity key was renewed (`error rotated` with the new key's fingerprint before it): sign in with the new key. Only to a renewed host's agent and device connections | hub |
 | 4400 | a message or frame the server does not understand, or one not allowed here | hub, relay |
 | 4401 | sign-in refused, or not signed in in time (renew the session, then reconnect); `rotated`: signed with a key a renewal retired (after one `chain_sub`, or 10 s) | hub, relay |
-| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed, or an isolated host's agent connection (`rotation_pending`) | hub, relay |
+| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed, or an isolated host's agent connection (`rotation_pending`); the account suspended or deleted (`account_suspended`, `account_deleted`; on a relay, the account-wide `revoke` of a deleted account) | hub, relay |
 | 4409 | the enrollment was already completed | hub (`/v1/agent`) |
 | 4419 | the ticket ran out and was not renewed | relay |
 | 4429 | too many attempts (enrollment, relay registration), or over the account's connections on a relay | hub, relay |
@@ -463,6 +466,8 @@ Codes 4408 and 4412 from the agent are end to end: the hub and relays pass
 | `removed` | 4403 | the device or machine was removed from the account (the chain names it removed); do not reconnect as it |
 | `forbidden` | 4403 | `SUB` from a device not current in the chain |
 | `host_devices_off` | 4403 | a host signing in as a device while the hub runs `DROPPEN_HUB_CHAIN_V3=off` |
+| `account_suspended` | 4403 | the hub's operator suspended the account (README "Suspended accounts"): every connection of it is closed, and every sign-in refused, until that is lifted |
+| `account_deleted` | 4403 | the account was deleted (http.md `DELETE /v1/account`): every connection of it is closed; do not reconnect — its devices and machines are gone, and a device session renewal answers `410 account_deleted` (http.md `POST /v1/session`). The web app wipes its keys for the account on either |
 | `rotated` | 4005 or 4401 | 4005: this host's identity key was just renewed (`fp`: the new key's fingerprint), sign in with the new key; 4401: the sign-in was signed with a key a renewal retired (`retired_seq`: that renewal; kept as evidence, the host may be isolated) — the close comes after one `chain_sub` answered up to that renewal, or 10 s (see `/v1/agent`) |
 | `rotation_pending` | 4403 | a host signing in as a device (or signed in as one) while its identity key is being renewed: retry once the renewal is committed or withdrawn; or, on `/v1/agent`, the host was just isolated (http.md, identity key renewals): its channels through the hub end with the connection; sign in again (the hub routes nothing new to it until the isolation clears) |
 | `too_large` | 1009 | a control message over 16 KiB (on `/v1/relay`: over 4 KiB before sign-in) |

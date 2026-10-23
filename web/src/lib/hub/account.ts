@@ -158,7 +158,7 @@ import {
   verifyRotateConfirm,
   WrapError,
 } from "@/lib/e2e";
-import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
+import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, hubErrorKind, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
 import { hubOrigin } from "./config";
 import {
   ChannelUnavailable,
@@ -777,8 +777,13 @@ export function limitedDevice(input: {
 /** Where this device stands in the account's chain. */
 export type Standing = "active" | "pending" | "removed" | "absent";
 
-/** Why the hub will not give this device a session: it says the device was `removed`, or it `denied` it. */
-export type Refusal = "removed" | "denied";
+/**
+ * Why the hub will not give this device a session: it says the device was
+ * `removed`, or it `denied` it — or the account itself is gone: `deleted`
+ * (`410 account_deleted` to a session renewal, or `error account_deleted` on
+ * the device socket), whose keys open nothing any more and are wiped.
+ */
+export type Refusal = "removed" | "denied" | "deleted";
 
 /** A device's keys as a person compares them on two screens: base32 of their fingerprint, in groups of four. */
 export async function deviceFingerprint(signKey: Uint8Array, dhKey: Uint8Array): Promise<string> {
@@ -1058,6 +1063,7 @@ type Listener = () => void;
 
 function refusalOf(error: unknown): Refusal | null {
   if (!(error instanceof HubApiError)) return null;
+  if (hubErrorKind(error) === "accountDeleted") return "deleted";
   if (error.status === 403 && error.code === "device_removed") return "removed";
   if (error.status === 401) return "denied";
   return null;

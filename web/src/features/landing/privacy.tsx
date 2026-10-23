@@ -9,10 +9,11 @@ import { PRIVACY_EMAIL } from "./waitlist";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
- * for how long and how to be taken off it, and what Droppen's servers can and
+ * for how long and how to be taken off it, what Droppen's servers can and
  * cannot see of an account (docs/cross-machine-architecture.md §2, the
  * landing page's security section; the security design at `/security` says
- * how). Signed in or not; drawn like the other
+ * how), and what deleting an account erases and keeps (docs/hub-api/http.md
+ * `DELETE /v1/account`). Signed in or not; drawn like the other
  * public pages. The contact address is a placeholder for the user to confirm.
  */
 
@@ -20,7 +21,10 @@ import { PRIVACY_EMAIL } from "./waitlist";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-22";
+export const PRIVACY_UPDATED = "2026-10-23";
+
+/** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
+export const DELETED_EMAIL_HOLD_DAYS = 7;
 
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
@@ -123,6 +127,28 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 {t("How the encryption works, in detail")}
               </a>
             </p>
+          </Section>
+          <Section id="deletion">
+            <SectionHead label={t("Deleting your account")} title={t("If you delete your account")} />
+            <div className="grid border-t border-border md:grid-cols-2">
+              <Block
+                title={t("What is deleted")}
+                items={[
+                  t("You can delete your account yourself, in its settings. It is gone at once and for good: nobody, us included, can bring it back."),
+                  t("Deleted with it: your devices, the devices that run AI you added, the encrypted copies of your sessions and terminals, your keys, your plan, your password and passkeys, and the records of verification mail sent to your address."),
+                  t("Your address also leaves the waitlist, if it was on it."),
+                ]}
+              />
+              <div className="max-md:border-t max-md:border-border md:border-l md:border-border">
+                <Block
+                  title={t("What we keep, and for how long")}
+                  items={[
+                    t("A keyed hash of your e-mail address, never the address itself, for {{days}} days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: {{days}} days on droppen.app.", { days: DELETED_EMAIL_HOLD_DAYS }),
+                    t("Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes."),
+                  ]}
+                />
+              </div>
+            </div>
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
