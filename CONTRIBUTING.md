@@ -63,6 +63,11 @@ copyright and licence notice.
   keeps your commits' `Signed-off-by:` lines (above).
 - Keep a pull request to one change. Say what it changes and why, and add or
   update tests for the behaviour you changed.
+- On a pull request from a fork, CI waits until the automated security review
+  has passed for its latest commit. The review then starts CI itself. If the
+  review blocks, it says why in a comment and a maintainer decides. A
+  maintainer also decides when the pull request changes files under
+  `.github/` ([docs/ci-security.md](docs/ci-security.md)).
 - Keep the documentation in step: [README.zh-CN.md](README.zh-CN.md) is the full
   manual, and the server's API contract (`openapi/openapi.json`,
   `web/src/api/schema.d.ts`) is regenerated with `pnpm gen:api` after a change
