@@ -261,6 +261,9 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("GET", "/api/accounts/limit-events", Use),
         ("GET", "/api/accounts/start", Use),
         ("GET", "/api/accounts/{id}/limit-events", Use),
+        // The whole block, values included: reading it is posture, like
+        // changing it.
+        ("GET", "/api/accounts/{id}/env", Posture),
         ("GET", "/api/accounts/setup-token/{captureId}", Posture),
         ("DELETE", "/api/accounts/{id}/rest", Posture),
         ("POST", "/api/accounts", Posture),
