@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Fragment, type ReactNode, useEffect } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
@@ -27,16 +27,37 @@ export const PRIVACY_UPDATED = "2026-10-23";
 export const DELETED_EMAIL_HOLD_DAYS = 7;
 
 /**
- * How long copies in droppen.app's backups and logs live before they expire.
- * A placeholder: the owner sets the real period before this is published.
+ * How long copies in droppen.app's backups and logs live before they expire,
+ * as the page says it (e.g. "30 days"). Only the owner can say: until then it
+ * is a placeholder in capitals and brackets, which the page shows marked
+ * ({@link marked}), and `test/privacy-placeholders.test.tsx` fails while it
+ * is left, so the notice cannot ship unfilled by accident.
  */
-export const BACKUPS_EXPIRE_AFTER = "X";
+export const BACKUPS_EXPIRE_AFTER: string = "[BACKUP RETENTION]";
+
+/** A value still to be supplied by the owner: `[IN CAPITALS]`. */
+export const PLACEHOLDER = /\[[A-Z][A-Z ]*\]/;
+
+/** `text` with every placeholder in it marked, so an unfilled notice shows it. */
+export function marked(text: string): ReactNode {
+  const parts = text.split(new RegExp(`(${PLACEHOLDER.source})`));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} data-placeholder="" className="bg-warn/25 px-0.5 font-mono text-warn-fg">
+        {part}
+      </mark>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
 
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
       <span className="text-[13px] leading-5 font-semibold text-fg">{title}</span>
-      <Points items={items} />
+      <Points items={items} render={marked} />
     </div>
   );
 }
@@ -150,8 +171,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                   title={t("What we keep, and for how long")}
                   items={[
                     t("A keyed hash of your e-mail address, never the address itself, for {{days}} days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: {{days}} days on droppen.app.", { days: DELETED_EMAIL_HOLD_DAYS }),
-                    t("For the same {{days}} days, the ids of your devices and their public keys, which open nothing: a device that comes back is told the account is gone, and forgets its keys.", { days: DELETED_EMAIL_HOLD_DAYS }),
-                    t("Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes."),
+                    t("For the same {{days}} days, your account's and your devices' random ids and your devices' public keys, which open nothing: our servers use them to turn the account's connections away, and to tell a device that comes back that the account is gone, so it forgets its keys.", { days: DELETED_EMAIL_HOLD_DAYS }),
                     t("Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.", { period: BACKUPS_EXPIRE_AFTER }),
                   ]}
                 />

@@ -51,13 +51,13 @@ export function SectionHead({ label, title, lead, className }: { label: string; 
   );
 }
 
-export function Points({ items, className }: { items: string[]; className?: string }) {
+export function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
         <li key={item} className="flex gap-2.5 text-xs leading-5 text-muted">
           <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
-          <span>{item}</span>
+          <span>{render ? render(item) : item}</span>
         </li>
       ))}
     </ul>

@@ -362,16 +362,17 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     // Stored data is padded; live connections are not (as /security says).
     "What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal",
     `Last updated ${PRIVACY_UPDATED}`,
-    // Deleting an account: what goes, and the two things kept, for how long.
+    // Deleting an account: what goes, and what is kept, for how long.
     "If you delete your account",
     "It is gone at once and for good: nobody, us included, can bring it back.",
     "Your address also leaves the waitlist, if it was on it.",
     "A keyed hash of your e-mail address, never the address itself, for 7 days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: 7 days on droppen.app.",
-    "Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes.",
+    "For the same 7 days, your account's and your devices' random ids and your devices' public keys, which open nothing",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /in padded sizes/);
+  assert.doesNotMatch(words, /a matter of minutes/, "the ids are kept as long as the address's hash, not minutes");
   assert.equal(PRIVACY_UPDATED, "2026-10-23");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
