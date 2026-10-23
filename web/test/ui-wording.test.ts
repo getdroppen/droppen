@@ -30,6 +30,7 @@ import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboar
 import { setupJa, setupZhCN, setupZhTW } from "../src/i18n/setup.js";
 import { signOutJa, signOutZhCN, signOutZhTW } from "../src/i18n/sign-out.js";
 import { hostsJa, hostsZhCN, hostsZhTW } from "../src/i18n/hosts.js";
+import { moveJa, moveZhCN, moveZhTW } from "../src/i18n/move.js";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
@@ -62,9 +63,9 @@ const ZH_TW = /機器|電腦|本機/;
 const JA = /マシン|コンピュータ|端末/;
 
 const TABLES = {
-  "zh-CN": { table: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN }, forbidden: ZH_CN },
-  "zh-TW": { table: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW }, forbidden: ZH_TW },
-  ja: { table: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...hostsJa, ...setupJa, ...welcomeJa, ...ja }, forbidden: JA },
+  "zh-CN": { table: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...moveZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN }, forbidden: ZH_CN },
+  "zh-TW": { table: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...moveZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW }, forbidden: ZH_TW },
+  ja: { table: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...hostsJa, ...moveJa, ...setupJa, ...welcomeJa, ...ja }, forbidden: JA },
 };
 
 /** The download page's own table (`features/landing/download-copy.ts`): the product's words, not the landing's selling copy. */

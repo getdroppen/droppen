@@ -38,6 +38,7 @@ import { addressOn, type HubMachine, type HubShell, hubShell, useFocusedMachine,
 import { openAddDevice } from "./onboarding";
 import { AddDeviceHint, useAddDeviceHint } from "./onboarding-hints";
 import { useRouteMachine } from "@/app/machine-route";
+import { PushMovedNotice } from "@/features/move/push-moved-notice";
 import { useHomeMachine } from "@/lib/machines/context";
 
 /**
@@ -169,6 +170,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
       <ChainAlerts account={shell.account} link={shell.link} />
       <RegisteredDeviceAlerts account={shell.account} link={shell.link} />
       <SignInChangeAlerts account={shell.account} link={shell.link} onReview={() => openAccount()} />
+      <PushMovedNotice />
       {keyState === "behind" && <OldKeyNotice onRetry={() => machine.recheckKey(true)} />}
       {channel === "error" && machine.channel.blocked && <BlockedNotice kind={machine.channel.blocked} />}
       {refusalShown && refusal && (
