@@ -33,6 +33,15 @@
  * are renewed every 10 minutes. **Connections** are made when a channel
  * needs one and let go two minutes after their last channel closed — a phone
  * keeps only its Hub connection up.
+ *
+ * **Failures** bench a relay for automatic choices after three in a row (a
+ * failed sign-in counts once), for {@link FAILURE_FORGET_MS}: then it is a
+ * candidate again — a relay that failed while the phone slept or was offline
+ * is not kept from the page for good. A channel with nowhere else to go
+ * (the hub carries none) may try benched relays anyway
+ * (`choose(…, {benched: true})`). {@link RelayPool.wake}, when the page comes
+ * back, forgives them all, fetches the list again if it is old, and checks
+ * the connections (a dead idle one is let go).
  */
 import type { HubApi } from "./api";
 import { RelayLink } from "./relay-link";
@@ -83,6 +92,12 @@ const MEASURE_EVERY_MS = 15 * 60 * 1000;
 const RENEW_EVERY_MS = 10 * 60 * 1000;
 const IDLE_CLOSE_MS = 2 * 60 * 1000;
 const FAILURES_TO_GIVE_UP = 3;
+/** How long three failures in a row keep a relay from automatic choices. */
+export const FAILURE_FORGET_MS = 60_000;
+/** A list older than this is fetched again when the page comes back ({@link RelayPool.wake}). */
+const WAKE_REFRESH_MS = 60_000;
+/** …and an open connection's ticket with less than this left is renewed then. */
+const TICKET_RENEW_WITHIN_MS = 5 * 60 * 1000;
 /** A manual relay unreachable this long gives way to automatic. */
 const UNREACHABLE_GIVE_UP_MS = 30_000;
 const MANUAL_CHECK_EVERY_MS = 10_000;
@@ -206,7 +221,9 @@ export class RelayPool {
   /** The relay the last channel went through. */
   current: string | null = null;
   private readonly rtts = new Map<string, number | null>();
-  private readonly failures = new Map<string, { count: number; why: string }>();
+  private readonly failures = new Map<string, { count: number; why: string; atMs: number }>();
+  /** When the list was last fetched (the page's clock). */
+  private loadedAt: number | null = null;
   private readonly tickets = new Map<string, Ticket>();
   private readonly links = new Map<string, RelayLink>();
   private readonly idleSince = new Map<string, number>();
@@ -266,6 +283,7 @@ export class RelayPool {
     this.loading ??= (async () => {
       try {
         this.directory = await this.opts.api.relays(this.opts.account.session.token);
+        this.loadedAt = this.now();
         this.checkManual();
         this.changed();
       } finally {
@@ -275,9 +293,13 @@ export class RelayPool {
     return this.loading;
   }
 
-  /** Loaded at least once (now, if it already was). */
-  async ready(): Promise<RelayDirectory | null> {
-    if (!this.directory) {
+  /**
+   * Loaded at least once (now, if it already was) — and, with `maxAgeMs`,
+   * fetched again if it is older than that (or being fetched now). A list
+   * that cannot be had now leaves the one there was.
+   */
+  async ready(maxAgeMs?: number): Promise<RelayDirectory | null> {
+    if (!this.directory || this.loading || (maxAgeMs !== undefined && this.ageMs() > maxAgeMs)) {
       try {
         await this.refresh();
       } catch {
@@ -285,6 +307,28 @@ export class RelayPool {
       }
     }
     return this.directory;
+  }
+
+  /** How old the list is (ms; infinite before the first). */
+  ageMs(): number {
+    return this.loadedAt === null ? Number.POSITIVE_INFINITY : this.now() - this.loadedAt;
+  }
+
+  /**
+   * The page is back (in view, online again, shown from the back-forward
+   * cache): what failed before says little about now — every failure is
+   * forgiven; a list older than a minute is fetched again (and the relays
+   * timed); each connection is checked (`RelayLink.wake`).
+   */
+  wake(): void {
+    if (this.failures.size > 0) {
+      this.failures.clear();
+      this.changed();
+    }
+    if (this.ageMs() > WAKE_REFRESH_MS) void this.refresh().then(() => this.measure(), () => undefined);
+    for (const link of [...this.links.values()]) link.wake();
+    // Tickets of open connections the renewal (its timer held meanwhile) did not get to.
+    void this.renewOpen(TICKET_RENEW_WITHIN_MS);
   }
 
   /** This device's round trip to `id` (ms): a connected relay's ping, else the last measurement. */
@@ -389,9 +433,15 @@ export class RelayPool {
     if (!entry || entry.state !== "up" || failed) this.giveUpManual(manual, entry?.city ?? null, entry ? "failed" : "gone");
   }
 
-  /** Whether `id` can be used: not given up on after failures. */
+  /** Whether `id` can be used: not given up on after failures (three in a row, within {@link FAILURE_FORGET_MS}). */
   usable(id: string): boolean {
-    return (this.failures.get(id)?.count ?? 0) < FAILURES_TO_GIVE_UP;
+    const f = this.failures.get(id);
+    return !f || f.count < FAILURES_TO_GIVE_UP || this.now() - f.atMs >= FAILURE_FORGET_MS;
+  }
+
+  /** The relays given up on for now ({@link usable}). */
+  benched(): string[] {
+    return [...this.failures.keys()].filter((id) => !this.usable(id));
   }
 
   /** What went wrong with `id` last, if anything (the picker's "last failure"). */
@@ -400,9 +450,10 @@ export class RelayPool {
   }
 
   noteFailure(id: string, why: string): void {
-    const f = this.failures.get(id) ?? { count: 0, why };
+    const f = this.failures.get(id) ?? { count: 0, why, atMs: 0 };
     f.count += 1;
     f.why = why;
+    f.atMs = this.now();
     this.failures.set(id, f);
     this.checkManual();
     this.changed();
@@ -417,8 +468,10 @@ export class RelayPool {
    * The relay for a new channel to `machine` (§2.6): the manual one while it
    * holds, else the automatic choice — the relays the machine is `on` first;
    * `exclude`d relays (one draining, one that just failed) are never chosen.
+   * `benched`: relays given up on after failures are candidates too (a
+   * channel with nowhere else to go).
    */
-  choose(machine: string | null, exclude: ReadonlySet<string> = new Set(), on?: ReadonlySet<string>): RelayChoice | null {
+  choose(machine: string | null, exclude: ReadonlySet<string> = new Set(), on?: ReadonlySet<string>, opts: { benched?: boolean } = {}): RelayChoice | null {
     const dir = this.directory;
     if (!dir) return null;
     this.checkManual();
@@ -439,7 +492,7 @@ export class RelayPool {
       directory: dir,
       machine,
       deviceRtt: (id) => this.rtt(id),
-      usable: (id) => this.usable(id) && !exclude.has(id),
+      usable: (id) => (opts.benched || this.usable(id)) && !exclude.has(id),
       on,
       current: this.current,
       now: this.now(),
@@ -486,9 +539,11 @@ export class RelayPool {
         });
       this.links.set(entry.id, link);
       const opened = link;
+      let signedIn = false;
       opened.onState((state) => {
-        // A connection that went away on its own (not closed by this page) is a failure.
-        if (state === "closed" && opened.lastClose !== 1000 && this.links.get(entry.id) === opened) {
+        if (state === "open") signedIn = true;
+        // A connection that went away on its own (not closed by this page) is a failure; one that never got in is counted below, once.
+        if (state === "closed" && signedIn && opened.lastClose !== 1000 && this.links.get(entry.id) === opened) {
           this.noteFailure(entry.id, opened.lastError ?? `closed (${opened.lastClose ?? "?"})`);
         }
         this.changed();
@@ -510,9 +565,11 @@ export class RelayPool {
     return [...this.links.values()].filter((l) => l.state === "open");
   }
 
-  /** Renew the tickets of open connections. */
-  private async renewOpen(): Promise<void> {
+  /** Renew the tickets of open connections (only those with less than `within` left, if given). */
+  private async renewOpen(within?: number): Promise<void> {
     for (const link of this.openLinks()) {
+      const held = this.tickets.get(link.relay);
+      if (within !== undefined && held && held.expiresMs - this.now() > within) continue;
       this.tickets.delete(link.relay);
       try {
         link.renew((await this.ticket(link.relay)).ticket);

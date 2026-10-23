@@ -146,6 +146,21 @@ export class RelayLink {
     return true;
   }
 
+  /**
+   * The page is back (in view, online again): one carrying no channel and
+   * not heard from for a beat is let go at once — the page may have slept
+   * through its death, and the next channel would wait on it for nothing,
+   * where a new one costs a sign-in; any other is checked now (a beat).
+   */
+  wake(): void {
+    if (this.state !== "open") return;
+    if (this.routes.size === 0 && this.now() - this.lastHeard >= (this.opts.heartbeatMs ?? HEARTBEAT_MS)) {
+      this.close();
+      return;
+    }
+    this.beat();
+  }
+
   close(): void {
     const socket = this.socket;
     this.drop(1000, "done");

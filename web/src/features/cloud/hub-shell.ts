@@ -64,6 +64,7 @@ import { machinePath, splitMachinePath } from "@/lib/machines/routes";
 import type { AppShell, MachineInfo, MachineRuntime } from "@/lib/machines/runtime";
 import { enterHubShell, openHubMachine } from "@/lib/machines/shells/hub";
 import { constantStore, createStore, type Store, useStore, type WritableStore } from "@/lib/machines/store";
+import { onPageResume } from "@/lib/page-resume";
 import { type Pipe, type PipeMessage, type PipeOpener, tunnelTransport } from "@/lib/transport/tunnel";
 import { feedHubFor } from "@/app/global-feed";
 import { copySessions, type SessionsStore } from "@/features/machines/copy-sessions";
@@ -659,6 +660,16 @@ export class HubShell implements AppShell {
    */
   start(): void {
     enterHubShell();
+    // The page back (in view, online again): the hub link reconnects or is
+    // checked now, and the relays' failures from before are forgiven, their
+    // list fetched again if old — before the machines' own tries, which
+    // listen after this.
+    this.offs.push(
+      onPageResume(() => {
+        this.opts.link.wake();
+        this.opts.relays.wake();
+      }),
+    );
     // The account's main device as the hub keeps it: said after every sign-in
     // on the link, and again whenever a device of the account changes it.
     this.offs.push(

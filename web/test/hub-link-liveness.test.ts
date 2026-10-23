@@ -38,12 +38,17 @@ class HubSocket {
   answering = true;
   /** Sign the page in, then say nothing at all (a hub that took the sign-in and hung). */
   silentAfterWelcome = false;
+  /** Say where the machines are a moment after the welcome, as the hub does. */
+  presenceAfterWelcome = false;
+  /** Unreachable: closes before its challenge (the phone is offline). */
+  unreachable = false;
   readonly openedAt = performance.now();
   pings = 0;
   closed: number | null = null;
 
   constructor() {
     setTimeout(() => {
+      if (this.unreachable) return this.onclose?.({ code: 1006 });
       this.readyState = 1;
       this.onopen?.({});
       this.text({ t: "challenge", nonce: "00".repeat(32) });
@@ -60,6 +65,7 @@ class HubSocket {
         setTimeout(() => {
           this.text({ t: "welcome" });
           if (this.silentAfterWelcome) this.answering = false;
+          if (this.presenceAfterWelcome) setTimeout(() => this.text({ t: "presence", machines: [{ id: "m-1", state: "online", since_ms: 1, via: [{ relay: "r-1" }] }] }), 5);
         }, 0);
       return;
     }
@@ -180,6 +186,52 @@ test("after waking, a connection that does not answer is replaced one interval l
   // The late beat (within one interval) pings and allows one more interval; a
   // grace of the whole silence would take ten intervals.
   assert.ok(tookMs < heartbeatMs * 4, `replaced ${tookMs} ms after waking, within about two intervals, not ${silenceMs} ms`);
+});
+
+test("what the hub says of the machines is fresh once said on this connection, and in doubt after a pause until the connection answers", async (t) => {
+  let offset = 0;
+  const heartbeatMs = 40;
+  const { link, sockets } = await linkWith(t, { heartbeatMs, silenceMs: 400, now: () => Date.now() + offset }, (s) => (s.presenceAfterWelcome = true));
+  assert.equal(link.presenceFresh, false, "signed in, but the hub has not said where the machines are yet");
+  assert.equal(await link.waitPresence(1_000), true);
+  assert.deepEqual(link.presence.get("m-1")?.via, [{ relay: "r-1", rttMs: null }]);
+
+  // Ten minutes asleep; the page is back. The connection may have died meanwhile: in doubt until it answers.
+  offset += 10 * 60_000;
+  link.wake();
+  assert.equal(link.presenceFresh, false, "what it said before the pause is not taken as what holds now");
+  assert.equal(await link.waitPresence(1_000), true, "it answered: it lived through the pause, and said every change meanwhile");
+  assert.equal(sockets.length, 1);
+
+  // Asleep again, and this time the connection died: replaced, and fresh once the new one's hub says where the machines are.
+  sockets[0]!.answering = false;
+  offset += 10 * 60_000;
+  link.wake();
+  assert.equal(link.presenceFresh, false);
+  assert.equal(await link.waitPresence(2_000), true);
+  assert.equal(sockets.length, 2);
+  // Nothing said in time: `false`, not a hang.
+  sockets[1]!.answering = false;
+  offset += 10 * 60_000;
+  link.wake();
+  assert.equal(await link.waitPresence(10), false);
+});
+
+test("a link that is down reconnects the moment the page comes back, not at the end of its backoff", async (t) => {
+  let offline = false;
+  // random 0.99: each wait is (nearly) the whole backoff, 0.5 s doubling.
+  const { link, sockets } = await linkWith(t, { heartbeatMs: 1_000, silenceMs: 2_500, random: () => 0.99 }, (s) => (s.unreachable = offline));
+  offline = true;
+  sockets[0]!.onclose?.({ code: 1006 });
+  await until(() => sockets.length === 3 && link.state === "closed", "two tries while offline", 5_000);
+  // Online again, the page back in view: the next try would be 2 s away.
+  offline = false;
+  const woke = Date.now();
+  link.wake();
+  await link.waitOpen(5_000);
+  const tookMs = Date.now() - woke;
+  assert.ok(tookMs < 500, `signed in again ${tookMs} ms after the page came back`);
+  assert.equal(sockets.length, 4);
 });
 
 /** A relay socket: lets the device in, and answers pings while `answering`. */

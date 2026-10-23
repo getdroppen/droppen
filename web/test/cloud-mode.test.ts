@@ -213,6 +213,39 @@ test("on the copy with the machine online, a channel that will not open is retri
   assert.equal(channel.ensures, after, "a stopped controller does nothing");
 });
 
+test("a channel that would not open is tried again the moment the page comes back, not at the end of a backoff the phone held", async () => {
+  const link = new FakeLink();
+  const channel = new FakeChannel();
+  const transport = new SwitchingTransport({ live: stub("live"), offline: stub("offline") }, "offline");
+  const resumed = new Set<() => void>();
+  // A backoff far longer than the test: only the page coming back can bring the next try.
+  const c = new ModeController({
+    link,
+    channel,
+    machine: "m-1",
+    transport,
+    downMs: 40,
+    retryMs: () => 600_000,
+    resume: (fn) => {
+      resumed.add(fn);
+      return () => resumed.delete(fn);
+    },
+  });
+  channel.outcome = "fail";
+  link.setPresence("online");
+  c.start();
+  await until(() => channel.ensures === 1 && channel.status === "offline");
+  await flush(20);
+  assert.equal(channel.ensures, 1, "waiting out its backoff");
+  // The phone is unlocked (visible, focused, online again): a try at once, and it opens.
+  channel.outcome = "open";
+  for (const fn of resumed) fn();
+  await until(() => transport.current === "live");
+  assert.equal(channel.ensures, 2);
+  c.stop();
+  assert.equal(resumed.size, 0, "a stopped controller no longer listens for the page coming back");
+});
+
 test("a machine the hub has said nothing about yet is tried, not given up on", async () => {
   const { transport, channel, c } = controller();
   c.start();

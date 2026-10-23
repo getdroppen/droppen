@@ -461,19 +461,27 @@ export function linkCourier(
       }
     }
   }
+  // What the hub says of the machine now: after a reconnect, or a pause the link may not have lived through, not what it said before.
+  const online = (machine: string) => link.presenceFresh && link.presence.get(machine)?.state === "online";
   return {
     waitOnline(machine, timeoutMs) {
-      if (link.presence.get(machine)?.state === "online") return Promise.resolve(true);
+      if (online(machine)) return Promise.resolve(true);
       return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          off();
-          resolve(false);
-        }, timeoutMs);
-        const off = link.onPresence((p) => {
-          if (p.get(machine)?.state !== "online") return;
+        let settled = false;
+        const finish = (value: boolean) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           off();
-          resolve(true);
+          resolve(value);
+        };
+        const timer = setTimeout(() => finish(online(machine)), timeoutMs);
+        const off = link.onPresence(() => {
+          if (online(machine)) finish(true);
+        });
+        // Fresh again without a word on the machines (the link answered after a pause): as good as one.
+        void link.waitPresence(timeoutMs).then(() => {
+          if (online(machine)) finish(true);
         });
       });
     },
@@ -481,7 +489,7 @@ export function linkCourier(
       return inChannel(machine, (opener) => postMachineKey(opener, body));
     },
     rotate(machine, body) {
-      if (link.presence.get(machine)?.state === "offline") return Promise.reject(new ChannelUnavailable("offline", "the device is offline"));
+      if (link.presenceFresh && link.presence.get(machine)?.state === "offline") return Promise.reject(new ChannelUnavailable("offline", "the device is offline"));
       // An isolated host is reached for a renewal confirmed on the device only — on a channel of its own, for this one call (§3.8).
       if (account.isolated?.(machine)) {
         if (body.assurance !== 1) return Promise.reject(new ChannelUnavailable("failed", `${machine} is isolated: only a renewal confirmed on the device reaches it`));

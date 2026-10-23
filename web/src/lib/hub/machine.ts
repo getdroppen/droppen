@@ -9,7 +9,12 @@
  * Switched off, the hub answers the `OPEN` with 4426; the link remembers that
  * until it reconnects, so the channel is blocked (`blocked`: no relay
  * available, or the agent is too old for relays) without asking the hub
- * again, and opens through a relay as soon as one can carry it. An open
+ * again, and opens through a relay as soon as one can carry it. Where the
+ * machine is comes from what the hub says on the connection signed in now:
+ * after a reconnect or a pause the channel waits for that, and "blocked" is
+ * only ever said on it (see `carrier`), never on what the page heard before —
+ * otherwise the try fails as {@link ChannelPending}, and the bar keeps saying
+ * "connecting" while the page tries again. An open
  * channel is never moved between the hub and a relay (only a draining relay
  * or "reconnect now" moves it): the next one is placed afresh.
  *
@@ -151,11 +156,31 @@ export class ChannelRefused extends Error {
   }
 }
 
-/** Why no channel can open now: no relay can carry it, and the hub carries none (the bar says so). */
+/**
+ * Why no channel can open now: no relay can carry it, and the hub carries
+ * none (the bar says so). Said only on what holds now — what the hub said of
+ * the machine on the connection signed in now, the relay list fetched again
+ * if it is old, relays given up on after failures tried after all — never on
+ * what the page heard before a pause ({@link ChannelPending}).
+ */
 export class ChannelBlocked extends Error {
   constructor(readonly kind: "noRelay" | "agentTooOld") {
     super(kind === "noRelay" ? "no relay available" : "the device's agent is too old to be reached");
     this.name = "ChannelBlocked";
+  }
+}
+
+/**
+ * No channel yet, and nothing to say it cannot open: the hub has not said
+ * where the machine is since the link (re)connected or the page came back
+ * ({@link PRESENCE_WAIT_MS}). Not {@link ChannelBlocked}: the bar keeps saying
+ * "connecting", and the next try (the hub's word on the machine starts one)
+ * places the channel on what it says.
+ */
+export class ChannelPending extends Error {
+  constructor() {
+    super("waiting for the hub to say where the device is");
+    this.name = "ChannelPending";
   }
 }
 
@@ -216,6 +241,14 @@ const MOVE_RETRY_MAX_MS = 60_000;
 const MOVE_GRACE_MS = 1500;
 /** The relay's close for a machine not signed in there. */
 const RELAY_OFFLINE = 4404;
+/**
+ * How long a channel waits for the hub to say where the machine is, after the
+ * link (re)connected or the page came back (the hub says it right after its
+ * `welcome`): what the page heard before is not where the machine is now.
+ */
+export const PRESENCE_WAIT_MS = 5000;
+/** A relay list older than this is fetched again before saying no relay can carry a channel. */
+const DIRECTORY_FRESH_MS = 30_000;
 
 /** A channel opened, not yet the page's. */
 interface OpenedChannel {
@@ -551,21 +584,36 @@ export class MachineChannel implements PipeOpener {
   /**
    * The carrier for a new channel: a relay (chosen, ticketed, the machine on
    * it) when one can carry it, else the hub — unless the hub said on this
-   * connection that it carries none: then the channel is blocked.
+   * connection that it carries none: then the channel is blocked. A relay
+   * that cannot be reached goes into `skip` (this try dials it no more).
+   *
+   * It is placed on what the hub says of the machine now: after the link
+   * (re)connected, or the page came back from a pause, it first waits for
+   * that ({@link PRESENCE_WAIT_MS}) — what the page heard before (on no relay,
+   * say, while the machine renewed its key) is not where it is now. And with
+   * nowhere to go while the hub carries none, it looks once more (`again`) —
+   * the relay list fetched again if it is old, relays given up on after
+   * failures (while the phone slept or was offline, say) tried after all —
+   * before saying no relay can carry it; and it says that only on presence
+   * heard now ({@link ChannelPending} otherwise).
    */
-  private async carrier(exclude: ReadonlySet<string>): Promise<Carried> {
+  private async carrier(skip: Set<string>, again = false, waited = new Set<string>()): Promise<Carried> {
     const pool = this.options.relays;
     const presence = () => this.link.presence.get(this.machine);
-    const hub = (): Carried => {
-      if (!this.link.carriesChannels) throw this.blockedNow();
-      return { carrier: this.link, route: { kind: "hub" }, link: null };
+    if (pool && !this.link.presenceFresh) await this.link.waitPresence(PRESENCE_WAIT_MS);
+    const hub = async (): Promise<Carried> => {
+      if (this.link.carriesChannels) return { carrier: this.link, route: { kind: "hub" }, link: null };
+      if (pool && !again && (pool.ageMs() > DIRECTORY_FRESH_MS || pool.benched().length > 0)) return this.carrier(skip, true, waited);
+      if (pool && !this.link.presenceFresh) throw new ChannelPending();
+      throw this.blockedNow();
     };
     // An agent from before relays signs in on none.
     if (presence()?.relays === false) return hub();
-    const dir = pool ? await pool.ready() : null;
+    const dir = pool ? await pool.ready(again ? DIRECTORY_FRESH_MS : undefined) : null;
     if (!pool || !dir || dir.relays.length === 0) return hub();
     const via = () => presence()?.via.map((v) => v.relay) ?? [];
-    let choice = pool.choose(this.machine, exclude, new Set(via()));
+    const benched = again;
+    let choice = pool.choose(this.machine, skip, new Set(via()), { benched });
     if (!choice) return hub();
     if (!via().includes(choice.relay.id)) {
       // A ticket puts it in the account's set; the hub tells the agent, which signs in there.
@@ -578,13 +626,16 @@ export class MachineChannel implements PipeOpener {
       }
       // With nowhere else to go (no other relay the machine is on, no hub), it is worth waiting for.
       const chosen = choice.relay.id;
-      const alone = !via().some((r) => r !== chosen && !exclude.has(r)) && !this.link.carriesChannels;
-      if (!ticketed || !(await this.waitVia(chosen, alone ? ATTACH_WAIT_ALONE_MS : ATTACH_WAIT_MS))) {
+      const alone = !via().some((r) => r !== chosen && !skip.has(r)) && !this.link.carriesChannels;
+      // (Not twice in one try: a second look does not wait again for a relay the first waited for.)
+      const wait = waited.has(chosen) ? 0 : alone ? ATTACH_WAIT_ALONE_MS : ATTACH_WAIT_MS;
+      waited.add(chosen);
+      if (!ticketed || !(await this.waitVia(chosen, wait))) {
         // A manual choice the machine is not on counts against it (three, and it gives way).
         if (choice.mode === "manual") pool.noteFailure(choice.relay.id, "the device is not on this relay");
         // The best relay the machine is already on.
         const on = new Set(via());
-        const fallback = pool.choose(this.machine, new Set([...exclude, ...dir.relays.filter((r) => !on.has(r.id)).map((r) => r.id)]));
+        const fallback = pool.choose(this.machine, new Set([...skip, ...dir.relays.filter((r) => !on.has(r.id)).map((r) => r.id)]), undefined, { benched });
         if (!fallback) return hub();
         choice = fallback;
       }
@@ -594,8 +645,9 @@ export class MachineChannel implements PipeOpener {
       link = await pool.link(choice.relay);
     } catch {
       // It failed (counted: a manual choice gives way after three); this channel goes elsewhere.
-      if (exclude.has(choice.relay.id)) return hub();
-      return this.carrier(new Set([...exclude, choice.relay.id]));
+      if (skip.has(choice.relay.id)) return hub();
+      skip.add(choice.relay.id);
+      return this.carrier(skip, again, waited);
     }
     return {
       carrier: link,
@@ -726,8 +778,14 @@ export class MachineChannel implements PipeOpener {
           continue;
         }
         // The hub carries no channels (`RH_HUB_CHANNEL_RELAY=off`): the link
-        // remembers it until it reconnects, and no relay can carry this one.
-        if (first.code === HUB_NO_CHANNELS) throw this.blockedNow();
+        // remembers it until it reconnects. With relays to go to, the next
+        // pass looks for one as a channel with nowhere else to go does (it
+        // waits longer for the machine to come on one, and looks again before
+        // giving up); with none, no relay can carry this one.
+        if (first.code === HUB_NO_CHANNELS) {
+          if (this.options.relays) continue;
+          throw this.blockedNow();
+        }
         if (first.code === HUB_OFFLINE) {
           this.setStatus("offline", first.reason);
           throw new Error("the device is offline");

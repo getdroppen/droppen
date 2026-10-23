@@ -325,6 +325,10 @@ class FakeHub {
   opens: string[] = [];
   /** What presence says of the machine besides "online": the relays it is on, and whether its agent speaks `relays/1`. */
   machine: { via: { relay: string; rtt_ms: number }[]; relays?: boolean } = { via: [{ relay: "r-1", rtt_ms: 1 }], relays: true };
+  /** Whether it says where the machines are right after a sign-in's `welcome` (off: only when the test calls {@link announce}). */
+  presenceOnSignIn = true;
+  /** Sign-ins it refuses (4401, a device session that ran out) before it takes one again. */
+  refuseSignIns = 0;
   /** Agent → page frames, mapped back onto the page's ch (they are the same here). */
   constructor(readonly http: FakeHubHttp) {}
 
@@ -354,9 +358,13 @@ class FakeHub {
       );
       assert.ok(ok, "the sign-in names the origin the page dialled, signed by the device key");
       assert.equal(m.session, `dev-${this.device}`, "and carries this device's own session");
+      if (this.refuseSignIns > 0) {
+        this.refuseSignIns--;
+        return socket.close(4401);
+      }
       socket.signedIn = true;
       socket.text({ t: "welcome", account: m.account, id: m.id, chain_seq: 1 });
-      this.announce(socket);
+      if (this.presenceOnSignIn) this.announce(socket);
       return;
     }
     const frame = decodeFrame(data);
@@ -469,14 +477,22 @@ function relayDirectory(relays: RelayEntry[] = [R1]): RelayDirectory {
  * (the list as `directory` has it when asked; `tickets` counts the tickets
  * asked for).
  */
-function relayPool(account: CloudAccount, relay: FakeRelay, directory: RelayDirectory = relayDirectory(), tickets = { count: 0 }, others: FakeRelay[] = []): RelayPool {
+function relayPool(
+  account: CloudAccount,
+  relay: FakeRelay,
+  directory: RelayDirectory = relayDirectory(),
+  tickets = { count: 0 },
+  others: FakeRelay[] = [],
+  /** How long its tickets last (15 minutes, as the hub's). */
+  ticketMs = 900_000,
+): RelayPool {
   const played = (id: string) => [relay, ...others].find((r) => r.id === id) ?? relay;
   const api = {
     relays: async () => structuredClone(directory),
     relayTickets: async (_token: string, ids: string[]) => {
       tickets.count++;
       return {
-        tickets: ids.map((id) => ({ relay: id, origin: played(id).origin, ticket: `TICKET-${id}`, expiresMs: Date.now() + 900_000, emergency: false, throttled: false })),
+        tickets: ids.map((id) => ({ relay: id, origin: played(id).origin, ticket: `TICKET-${id}`, expiresMs: Date.now() + ticketMs, emergency: false, throttled: false })),
         errors: [],
       };
     },
@@ -530,6 +546,8 @@ async function linked(t: { after(fn: () => void): void }) {
     deviceId: account.deviceId,
     token: () => account.session.token,
     signKey: account.keys.sign.privateKey,
+    // A sign-in refused (4401) renews the device session first, as the page's.
+    renew: () => account.renewSession(),
     makeSocket: hub.make,
     random: () => 0,
   });
@@ -1148,6 +1166,155 @@ test("a channel on the hub stays there when a relay appears (no flapping); the n
   await flush(30);
   assert.equal(channel.route?.kind, "relay", "and stays there");
   assert.deepEqual(hub.agent.carriers, ["hub", "relay"]);
+});
+
+// A phone back from a long sleep (or from offline): its sockets died meanwhile,
+// its device session and relay tickets ran out, and what it last heard of the
+// machine is old. The hub carries no channels (`RH_HUB_CHANNEL_RELAY=off`, as
+// in production). The page must find its own way back to the machine through
+// a relay, and never say "no relay available" on what it heard before.
+
+/** A page live on m-1 through r-1, with the hub carrying no channels, and its mode controller. */
+async function liveThroughRelay(t: { after(fn: () => void): void }, ticketMs?: number) {
+  const set = await linked(t);
+  const { account, hub, relay, link } = set;
+  hub.carries = false;
+  const tickets = { count: 0 };
+  const pool = relayPool(account, relay, relayDirectory([R1]), tickets, [], ticketMs);
+  t.after(() => pool.stop());
+  const channel = new MachineChannel(link, account, "m-1", { relays: pool });
+  t.after(() => channel.close());
+  const transport = new SwitchingTransport({ live: tunnelTransport(channel), offline: tunnelTransport(channel) }, "offline");
+  // The page's own pace of retries is seconds; here a tenth of one. Nothing here is the page coming back (resume): the retries alone.
+  const controller = new ModeController({ link, channel, machine: "m-1", transport, downMs: 20, retryMs: () => 100, relayOnline: () => pool.online("m-1"), resume: () => () => undefined });
+  t.after(() => controller.stop());
+  controller.start();
+  await until(() => transport.current === "live");
+  assert.equal(channel.route?.kind === "relay" ? channel.route.relay.id : null, "r-1");
+  // Every "blocked" the bar would have shown from here on.
+  const blocked: string[] = [];
+  channel.onStatus(() => {
+    if (channel.blocked) blocked.push(channel.blocked);
+  });
+  return { ...set, pool, tickets, channel, transport, blocked };
+}
+
+test("back from a long pause, with the hub's word on the machine coming after the first try: the channel waits for it and goes live through the relay, never 'no relay'", async (t) => {
+  const { http, hub, relay, link, channel, transport, tickets, blocked } = await liveThroughRelay(t, 61_000);
+  // The machine renews its identity key and signs in again: the last the page hears, it is on no relay yet.
+  hub.machine = { via: [], relays: true };
+  hub.announce();
+  await flush(5);
+
+  // The phone sleeps. The machine is soon back on r-1, but the page hears nothing of it: its sockets die
+  // meanwhile, its device session runs out (the hub refuses its next sign-in once), and its ticket for r-1
+  // too (less than the minute's margin left). Signed in again, the hub says where the machine is only a
+  // while after its welcome — later than a relay the machine is not on is waited for (1.5 s).
+  hub.machine = { via: [{ relay: "r-1", rtt_ms: 1 }], relays: true };
+  hub.presenceOnSignIn = false;
+  hub.refuseSignIns = 1;
+  const sessions = http.sessions.length;
+  const sockets = hub.sockets.length;
+  const opens = hub.opens.length;
+  const ticketed = tickets.count;
+  hub.agent.dropChannels();
+  relay.live.close(1006);
+  hub.live.close(1006);
+
+  await until(() => hub.sockets.length >= sockets + 2 && link.state === "open");
+  assert.equal(http.sessions.length, sessions + 1, "the refused sign-in renewed the device session");
+  await until(() => channel.status === "connecting");
+  await flush(2500);
+  assert.equal(transport.current, "offline", "nothing to go on yet: on the copy");
+  assert.deepEqual(blocked, [], "and not 'no relay available': the hub has not said where the machine is");
+  hub.announce();
+
+  await until(() => transport.current === "live" && channel.status === "open", 15_000);
+  assert.equal(channel.route?.kind === "relay" ? channel.route.relay.id : null, "r-1", "through the relay the machine is on");
+  assert.ok(tickets.count > ticketed, "with a fresh ticket");
+  assert.deepEqual(blocked, [], "never 'no relay available' on the way back");
+  assert.equal(hub.opens.length, opens, "and nothing asked of a hub that carries no channels");
+  assert.deepEqual(await echo(channel, "back"), { method: "POST", path: "/api/sessions", body: "back" });
+});
+
+test("a relay given up on while the phone was offline is tried again once it answers: the page is never stuck on 'no relay'", async (t) => {
+  const { hub, relay, pool, channel, transport, blocked } = await liveThroughRelay(t);
+  // Offline: the relay's socket dies, and every try since fails on it, until the pool gives up on it.
+  relay.down = true;
+  hub.agent.dropChannels();
+  relay.live.close(1006);
+  await until(() => !pool.usable("r-1"));
+  await until(() => channel.blocked === "noRelay");
+  assert.equal(transport.current, "offline", "on the copy, saying why");
+
+  // Online again: the relay answers. The page goes live through it by itself — the minute a relay
+  // stays given up on is not waited out, and nothing else (a reload, a click) is needed.
+  relay.down = false;
+  await until(() => transport.current === "live" && channel.status === "open", 10_000);
+  assert.equal(channel.route?.kind === "relay" ? channel.route.relay.id : null, "r-1");
+  assert.equal(channel.blocked, null);
+  assert.ok(pool.usable("r-1"), "and it is counted as working again");
+  assert.ok(blocked.length > 0, "('no relay available' was true while the relay could not be reached)");
+});
+
+test("a page that comes back forgives its relays' failures and fetches an old list again", async (t) => {
+  const { account, relay } = await setUp();
+  const directory = relayDirectory([R1]);
+  let fetched = 0;
+  let now = Date.now();
+  const pool = new RelayPool({
+    api: {
+      relays: async () => {
+        fetched++;
+        return structuredClone(directory);
+      },
+    } as never,
+    account,
+    storage: null,
+    now: () => now,
+    fetchImpl: async () => new Response(null, { status: 204 }),
+    makeLink: (entry, ticket) =>
+      new RelayLink({ relay: entry.id, origin: entry.origin, account: account.account, deviceId: account.deviceId, signKey: account.keys.sign.privateKey, ticket, makeSocket: relay.make as never }),
+  });
+  t.after(() => pool.stop());
+  await pool.ready();
+  assert.equal(fetched, 1);
+  for (let i = 0; i < 3; i++) pool.noteFailure("r-1", "no answer");
+  assert.equal(pool.usable("r-1"), false, "three failures in a row: given up on");
+  assert.deepEqual(pool.benched(), ["r-1"]);
+  assert.equal(pool.choose("m-1"), null, "and not chosen");
+  assert.equal(pool.choose("m-1", new Set(), undefined, { benched: true })?.relay.id, "r-1", "unless there is nowhere else to go");
+  // Not for good: a minute later it is a candidate again.
+  now += 60_000;
+  assert.equal(pool.usable("r-1"), true);
+  for (let i = 0; i < 3; i++) pool.noteFailure("r-1", "no answer");
+  assert.equal(pool.usable("r-1"), false);
+  // The page comes back: what failed before is forgiven, and a list two minutes old is fetched again.
+  now += 120_000;
+  pool.wake();
+  assert.equal(pool.usable("r-1"), true);
+  assert.equal(pool.failure("r-1"), null);
+  await until(() => fetched === 2);
+  // A list that was just fetched is not fetched again when asked for one at most a minute old.
+  await pool.ready(60_000);
+  assert.equal(fetched, 2);
+  now += 61_000;
+  await pool.ready(60_000);
+  assert.equal(fetched, 3);
+});
+
+test("a relay connection that cannot be signed in to counts as one failure, not two", async (t) => {
+  const { account, relay } = await setUp();
+  relay.down = true;
+  const pool = relayPool(account, relay);
+  t.after(() => pool.stop());
+  await pool.ready();
+  await assert.rejects(pool.link(R1));
+  assert.equal(pool.usable("r-1"), true);
+  await assert.rejects(pool.link(R1));
+  assert.equal(pool.usable("r-1"), true, "two failed sign-ins: not given up on yet");
+  await assert.rejects(pool.link(R1));
+  assert.equal(pool.usable("r-1"), false, "the third");
 });
 
 test("cloud mode is the hub's marker in the shell, and nothing else", async () => {

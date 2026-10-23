@@ -17,6 +17,7 @@
  */
 import type { LinkState, PresenceState } from "@/lib/hub/link";
 import type { MachineStatus } from "@/lib/hub/machine";
+import { onPageResume } from "@/lib/page-resume";
 import type { FetchOptions, SocketLike, Transport } from "@/lib/transport";
 
 export type CloudMode = "offline" | "live";
@@ -185,6 +186,12 @@ export interface ModeControllerOptions {
    * wanted.
    */
   wanted?: () => boolean;
+  /**
+   * Hear the page come back — in view, shown again, focused, online again
+   * (default {@link onPageResume}): a try then, not at the end of a backoff
+   * whose timer the phone held while it slept.
+   */
+  resume?: (fn: () => void) => () => void;
 }
 
 /** 2 s doubling to 30 s. */
@@ -195,7 +202,10 @@ export const channelRetryMs = (attempt: number) => Math.min(2000 * 2 ** attempt,
  * page between the copy and the machine: live as soon as the channel is open;
  * back to the copy once it has been down for {@link DOWN_MS}. While on the
  * copy with the machine not known to be offline — and wanted — it keeps
- * opening the channel, backing off.
+ * opening the channel, backing off — and tries at once whenever the hub says
+ * anything new of the machines, the link signs in, or the page comes back
+ * ({@link ModeControllerOptions.resume}): a channel that would not open (no
+ * relay could carry it, say) is never given up on.
  */
 export class ModeController {
   private downTimer: ReturnType<typeof setTimeout> | undefined;
@@ -219,6 +229,7 @@ export class ModeController {
         this.evaluate();
       }),
       this.opts.channel.onStatus(evaluate),
+      (this.opts.resume ?? onPageResume)(() => this.poke()),
     ];
     this.evaluate();
   }

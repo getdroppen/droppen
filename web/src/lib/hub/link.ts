@@ -38,6 +38,18 @@
  * A beat that comes far later than due means this page's timers were held (a
  * background tab, a phone asleep): what was not heard meanwhile says nothing
  * about the connection, so it gets one more interval from then.
+ *
+ * What the hub says of the machines ({@link HubLink.presence}) is kept across
+ * connections, for display, but it is only *fresh* ({@link
+ * HubLink.presenceFresh}) once the hub has said it on the connection now
+ * signed in — the hub sends it right after its `welcome`, a moment later —
+ * and while nothing makes that doubtful: after a late beat (the page was
+ * away, and the socket may have died meanwhile) it is not, until the
+ * connection answers again. What a page heard before a pause is not where
+ * a machine is now: a channel is placed on fresh presence only
+ * ({@link HubLink.waitPresence}). {@link HubLink.wake} is for the page coming
+ * back (in view, online again): it reconnects at once rather than at the end
+ * of a backoff that grew while it was away, or checks the connection now.
  */
 import { decodeFrame, encodeAttestation, encodeFrame, type Attestation, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
 
@@ -141,6 +153,12 @@ export class HubLink {
   private nonce = 0;
   private nextCh = 1;
   private lastRenewMs = 0;
+  /** The hub said where the machines are on this connection. */
+  private presenceHeard = false;
+  /** A late beat: the page was away, and this connection may have died meanwhile — until it answers. */
+  private doubted = false;
+  /** Those waiting for presence to be fresh ({@link waitPresence}). */
+  private readonly freshWaiters = new Set<() => void>();
   private readonly routes = new Map<number, (frame: Frame) => void>();
   private readonly stateListeners = new Set<Listener<LinkState>>();
   private readonly presenceListeners = new Set<Listener<Map<string, MachinePresence>>>();
@@ -204,6 +222,54 @@ export class HubLink {
     });
   }
 
+  /**
+   * Whether {@link presence} is what the hub says now: said on the connection
+   * signed in now, and not put in doubt since by a pause the connection may
+   * not have survived. Not before the first `presence` after a reconnect.
+   */
+  get presenceFresh(): boolean {
+    return this.state === "open" && this.presenceHeard && !this.doubted;
+  }
+
+  /** Resolves `true` once presence is fresh (now, if it is), `false` if it is not after `timeoutMs`. */
+  waitPresence(timeoutMs: number): Promise<boolean> {
+    if (this.presenceFresh) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.freshWaiters.delete(check);
+        resolve(this.presenceFresh);
+      };
+      const check = () => {
+        if (this.presenceFresh) done();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      this.freshWaiters.add(check);
+    });
+  }
+
+  private freshened(): void {
+    for (const fn of [...this.freshWaiters]) fn();
+  }
+
+  /**
+   * The page is back (in view again, online again, shown from the back-forward
+   * cache): closed, connect now — not at the end of a backoff that grew while
+   * it was away; open, check the connection now (a beat: a late one doubts it
+   * until it answers, and replaces it if it does not).
+   */
+  wake(): void {
+    if (this.stopped) return;
+    if (this.state === "closed") {
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this.backoff = BACKOFF_MIN;
+      this.connect();
+      return;
+    }
+    if (this.state === "open" && this.socket) this.beat(this.socket);
+  }
+
   /** A fresh channel number on this page (never reused), and where its frames go. */
   reserve(route: (frame: Frame) => void): number {
     const ch = this.nextCh++;
@@ -256,6 +322,11 @@ export class HubLink {
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return;
       this.lastHeard = this.clock();
+      if (this.doubted) {
+        // It answered after the pause: it lived through it, and told this page every change meanwhile (before this).
+        this.doubted = false;
+        this.freshened();
+      }
       if (typeof ev.data === "string") void this.onText(socket, ev.data);
       else if (ev.data instanceof ArrayBuffer) this.onBinary(new Uint8Array(ev.data));
     };
@@ -300,8 +371,11 @@ export class HubLink {
         return;
       }
       case "welcome":
-        // A new connection: whether this hub carries channels is not known yet.
+        // A new connection: whether this hub carries channels is not known yet,
+        // nor where the machines are now (its `presence` comes next).
         this.carriesChannels = true;
+        this.presenceHeard = false;
+        this.doubted = false;
         this.openedAt = (this.opts.now ?? Date.now)();
         this.lastHeard = this.lastBeat = this.clock();
         this.heartbeat = setInterval(() => this.beat(socket), this.opts.heartbeatMs ?? HEARTBEAT_MS);
@@ -318,7 +392,9 @@ export class HubLink {
           const known = this.presence.get(m.id)?.relays;
           this.presence.set(m.id, { state: m.state, sinceMs: m.since_ms, via, relays: typeof m.relays === "boolean" ? m.relays : known });
         }
+        this.presenceHeard = true;
         for (const fn of this.presenceListeners) fn(this.presence);
+        this.freshened();
         return;
       }
       default:
@@ -361,6 +437,8 @@ export class HubLink {
     if (late) {
       // This page's timers were held: one more interval, from now, to hear back.
       this.lastHeard = Math.max(this.lastHeard, now - silence + heartbeat);
+      // Until it does, what it said of the machines may be from before a socket that died in the pause.
+      this.doubted = true;
     } else if (now - this.lastHeard >= silence) {
       this.lastClose = null;
       this.dropConnection();
@@ -386,6 +464,8 @@ export class HubLink {
     const stable = this.openedAt > 0 && this.lastHeard - this.openedAt >= (this.opts.stableMs ?? STABLE_MS);
     if (stable) this.backoff = BACKOFF_MIN;
     this.openedAt = 0;
+    this.presenceHeard = false;
+    this.doubted = false;
     if (this.socket) {
       this.socket.onmessage = null;
       this.socket.onclose = null;
