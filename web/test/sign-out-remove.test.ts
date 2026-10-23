@@ -12,11 +12,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryKeyStore } from "../src/lib/e2e/index.js";
-import type { CloudAccount } from "../src/lib/hub/account.js";
-import { userKeyStale } from "../src/lib/hub/account.js";
+import { CloudAccount, userKeyStale, WipeError } from "../src/lib/hub/account.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { setHubShell } from "../src/features/cloud/hub-shell.js";
-import { SIGN_OUT_STILL_LISTED_KEY, signOut, takeStillListed } from "../src/features/cloud/sign-out.js";
+import { SIGN_OUT_FAILURES_KEY, SIGN_OUT_STILL_LISTED_KEY, signOut, takeSignOutFailures, takeStillListed } from "../src/features/cloud/sign-out.js";
 import { browserStorage, createV2Genesis, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
 
 class FakeStorage {
@@ -168,4 +167,79 @@ test("a device that cannot take itself off is wiped all the same, and the sign-i
   assert.equal(takeStillListed(), null);
   tab.setItem(SIGN_OUT_STILL_LISTED_KEY, "failed: the hub did not answer");
   assert.equal(takeStillListed(), "failed: the hub did not answer");
+});
+
+test("a hub that does not answer cannot keep the keys here: the wipe follows the removal at once, and each hub call is capped", async () => {
+  const { hub, a } = await account();
+  const c = await pairAs(hub, a, { admin: true });
+  setHubShell(null);
+  const never = () => new Promise<never>(() => undefined);
+  // The hub takes the request and never answers: neither the removal nor the logout.
+  (c.api as unknown as { appendChain: unknown }).appendChain = never;
+  (c.api as unknown as { logout: unknown }).logout = never;
+  replaced.length = 0;
+  const started = Date.now();
+  await signOut(c, undefined, { removeBrowser: true, dropPush: never, hubWithinMs: 50 });
+  assert.ok(Date.now() - started < 8_000, "on without the hub");
+  assert.deepEqual(replaced, ["/signin"]);
+  assert.deepEqual(await kept(c), { keys: false, id: false }, "wiped all the same");
+  assert.match(takeStillListed() ?? "", /^failed: the hub did not answer within/);
+  await a.sync();
+  assert.equal(a.chain!.deviceRecord(c.deviceId)?.status.type, "active", "it is still listed: the sign-in screen said so");
+});
+
+test("a wipe tries every step and says each that failed", async () => {
+  const { hub, a } = await account();
+  const c = await pairAs(hub, a, { admin: true });
+  // The key store will not delete the device keys; every later step still runs.
+  const store = c.store as unknown as { delete(name: string): Promise<void> };
+  const del = store.delete.bind(store);
+  store.delete = async (name: string) => {
+    if (name === "device-keys/v2") throw new Error(`cannot delete ${name}`);
+    return del(name);
+  };
+  const error = await c.wipe().then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.ok(error instanceof WipeError, String(error));
+  assert.ok(error.failures.some((f) => /^device keys: cannot delete device-keys\/v2/.test(f)), error.failures.join(" | "));
+  assert.equal(error.failures.length, 1, "only that step failed");
+  assert.equal(browserStorage(c.store).values.has(`rh.hub.device.${c.account}`), false, "the steps after the failed ones ran: its id is gone");
+  // Through a sign-out, each failure is kept for the sign-in screen.
+  tab.values.delete(SIGN_OUT_FAILURES_KEY);
+  await signOut(c, undefined, { removeBrowser: true, dropPush: async () => undefined, hubWithinMs: 2_000 });
+  const failures = takeSignOutFailures() ?? [];
+  assert.ok(failures.some((f) => f.startsWith("device keys: device keys: cannot delete")), failures.join(" | "));
+  takeStillListed();
+});
+
+test("a screen that could not open the account removes the browser as a local wipe", async () => {
+  const { hub, a } = await account();
+  const c = await pairAs(hub, a, { admin: true });
+  const ended: string[] = [];
+  setHubShell(null);
+  replaced.length = 0;
+  // Nothing kept for an account: nothing to fail.
+  await CloudAccount.wipeLocal(new MemoryKeyStore(), "nobody", { storage: browserStorage(new MemoryKeyStore()) });
+  // No account object: only the session it held, whose account it was, and the browser's key store.
+  const held = { api: { logout: async (token: string) => void ended.push(token) }, token: c.session.token, account: c.account, store: c.store };
+  // `wipeLocal` reads the browser's storage: the page's localStorage, which these tests give the fake hub's.
+  const g2 = globalThis as { localStorage?: unknown };
+  const before = g2.localStorage;
+  g2.localStorage = browserStorage(c.store);
+  try {
+    await signOut(undefined, held, { removeBrowser: true, dropPush: async () => undefined });
+  } finally {
+    g2.localStorage = before;
+  }
+  assert.deepEqual(ended, [c.session.token], "the session it held is ended");
+  assert.deepEqual(replaced, ["/signin"]);
+  assert.deepEqual(await kept(c), { keys: false, id: false });
+  assert.equal(takeStillListed(), "unopened");
+  // Without "remove", the same screen keeps them.
+  const d = await pairAs(hub, a, { admin: false });
+  await signOut(undefined, { api: { logout: async () => undefined }, token: d.session.token, account: d.account, store: d.store }, { dropPush: async () => undefined });
+  assert.deepEqual(await kept(d), { keys: true, id: true });
+  assert.equal(takeStillListed(), null);
 });
