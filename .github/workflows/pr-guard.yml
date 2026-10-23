@@ -61,13 +61,15 @@ jobs:
   # committed under an AI vendor's no-reply address. `git log` over the pull
   # request's own commits, `origin/<base>..<head>`, read from the event and the
   # repository alone, so a pull request from a fork is checked the same way.
+  # The checkout is the pull request merged into its base (the default ref), so
+  # the check's script is there even for a branch made before it was added;
+  # the head commit is one of that merge's parents.
   no-ai-attribution:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
