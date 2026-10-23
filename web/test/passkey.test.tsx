@@ -21,7 +21,7 @@ import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { authErrorKind, HubApi, HubApiError, type SignupConfig } from "../src/lib/hub/api.js";
+import { authErrorKind, HubApi, HubApiError, knownClientKey, type SignupConfig } from "../src/lib/hub/api.js";
 import {
   AUTOFILL_REFRESH_MS,
   authenticationToJSON,
@@ -425,7 +425,7 @@ test("the passkey sign-up calls: the hub's checks first, then the account, as th
   assert.equal(sent[1]!.url, "https://hub.test/v1/signup/passkey");
   assert.deepEqual(sent[1]!.body, { challenge: CREATE.challenge, email: "me@example.test", invite: "INVITE-1", lang: "ja", credential: EXPECTED_REGISTRATION });
   assert.deepEqual(session, { account: "a-1", token: "login-token", expiresMs: 1_000, emailVerified: false, verification: "required" });
-  assert.equal(items.get("rh.hub.knownClient:me@example.test"), "kc1.a-1.9.tag", "the e-mail is known here: its known-client token is kept");
+  assert.equal(items.get((await knownClientKey("me@example.test"))!), "kc1.a-1.9.tag", "the e-mail is known here: its known-client token is kept (under its hash)");
   // No invite, no widget, no language: none sent.
   await api.passkeySignupOptions({ email: "me@example.test", turnstile: null });
   assert.deepEqual(sent[2]!.body, { purpose: "signup", email: "me@example.test" });

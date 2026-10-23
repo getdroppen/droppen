@@ -17,7 +17,7 @@
  * before it expires and once on a 401 (`HubApi.renew`), and a removed
  * device's sessions are refused.
  */
-import { type Bytes, fromHex, hex } from "@/lib/e2e";
+import { type Bytes, fromHex, hex, sha256, utf8 } from "@/lib/e2e";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
 import type { RelayDirectory } from "./relays";
 
@@ -426,10 +426,66 @@ const SESSION_KEY = "rh.hub.session";
  * owner comes back, and a stolen one is worth little: after three failures
  * in an hour the hub treats it as no token at all.
  */
-const KNOWN_CLIENT_KEY = "rh.hub.knownClient";
+const KNOWN_CLIENT_KEY = "rh.hub.knownClientHash:";
+/**
+ * Where they were kept before: under the e-mail itself, readable by anyone at
+ * this browser (`rh.hub.knownClient:<e-mail>`). Moved to the hashed key as the
+ * page starts ({@link migrateKnownClients}) or as the e-mail is next used.
+ */
+const LEGACY_KNOWN_CLIENT_KEY = "rh.hub.knownClient:";
+/** What the e-mail is hashed with: a label of its own, so the hash is of no use elsewhere. */
+const KNOWN_CLIENT_LABEL = "droppen/v1 known-client e-mail\0";
 
-function knownClientKey(email: string): string {
-  return `${KNOWN_CLIENT_KEY}:${email.trim().toLowerCase()}`;
+/** The storage the known-client tokens live in: reads and writes, and removals and a listing where it has them. */
+export type KnownClientStorage = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "removeItem" | "key" | "length">>;
+
+const normalEmail = (email: string) => email.trim().toLowerCase();
+
+/**
+ * The key `email`'s token is kept under: a hash of the e-mail, not the e-mail,
+ * so the storage does not say who signed in here. `null` without WebCrypto
+ * (an insecure context, where nothing of cloud mode works): no token is kept.
+ */
+export async function knownClientKey(email: string): Promise<string | null> {
+  try {
+    return `${KNOWN_CLIENT_KEY}${hex(await sha256(utf8(KNOWN_CLIENT_LABEL), utf8(normalEmail(email))))}`;
+  } catch {
+    return null;
+  }
+}
+
+/** A key from before e-mails were hashed. */
+function legacyKnownClientKey(email: string): string {
+  return `${LEGACY_KNOWN_CLIENT_KEY}${normalEmail(email)}`;
+}
+
+/**
+ * Move every token kept under its e-mail (`rh.hub.knownClient:<e-mail>`) to
+ * the hashed key; a token already there (a newer one) stays. Returns how many
+ * were moved. Never throws: what cannot be moved now is moved when its e-mail
+ * is next used.
+ */
+export async function migrateKnownClients(storage: KnownClientStorage | undefined = pageStorage()): Promise<number> {
+  if (!storage || typeof storage.key !== "function" || typeof storage.length !== "number" || typeof storage.removeItem !== "function") return 0;
+  let moved = 0;
+  try {
+    const legacy: string[] = [];
+    for (let i = 0; i < storage.length; i++) {
+      const name = storage.key(i);
+      if (name?.startsWith(LEGACY_KNOWN_CLIENT_KEY)) legacy.push(name);
+    }
+    for (const name of legacy) {
+      const token = storage.getItem(name);
+      const key = await knownClientKey(name.slice(LEGACY_KNOWN_CLIENT_KEY.length));
+      if (key === null) return moved;
+      if (token && storage.getItem(key) === null) storage.setItem(key, token);
+      storage.removeItem(name);
+      moved++;
+    }
+  } catch {
+    // the rest moves as each e-mail is next used
+  }
+  return moved;
 }
 
 /** This page's `localStorage`, where it may be had. */
@@ -616,26 +672,44 @@ export class HubApi {
   /** Set by the account: re-establish the device session once on a 401. */
   renew: SessionRenewer | null = null;
 
+  /** The move of the tokens kept under their e-mails, started as the page's API is made. */
+  private readonly migrated: Promise<unknown>;
+
   constructor(
     private readonly base = "",
     private readonly fetchImpl: Fetch = (input, init) => globalThis.fetch(input, init),
-    private readonly storage: Pick<Storage, "getItem" | "setItem"> | undefined = pageStorage(),
-  ) {}
+    private readonly storage: KnownClientStorage | undefined = pageStorage(),
+  ) {
+    this.migrated = migrateKnownClients(storage);
+  }
 
-  /** The known-client token a sign-in to the account with `email` gave this browser, if any. */
-  private knownClient(email: string): string | null {
+  /** The known-client token a sign-in to the account with `email` gave this browser, if any (one kept under the e-mail moves to its hash). */
+  private async knownClient(email: string): Promise<string | null> {
+    await this.migrated;
+    const key = await knownClientKey(email);
+    if (key === null || !this.storage) return null;
     try {
-      return this.storage?.getItem(knownClientKey(email)) ?? null;
+      const kept = this.storage.getItem(key);
+      if (kept !== null) return kept;
+      const legacy = this.storage.getItem(legacyKnownClientKey(email));
+      if (legacy === null) return null;
+      this.storage.setItem(key, legacy);
+      this.storage.removeItem?.(legacyKnownClientKey(email));
+      return legacy;
     } catch {
       return null;
     }
   }
 
-  /** Keep the hub's known-client token for `email` (each sign-in gives a fresh one). */
-  private keepKnownClient(email: string, token: unknown): void {
+  /** Keep the hub's known-client token for `email` (each sign-in gives a fresh one), under the e-mail's hash. */
+  private async keepKnownClient(email: string, token: unknown): Promise<void> {
     if (typeof token !== "string" || !token) return;
+    await this.migrated;
+    const key = await knownClientKey(email);
+    if (key === null || !this.storage) return;
     try {
-      this.storage?.setItem(knownClientKey(email), token);
+      this.storage.setItem(key, token);
+      this.storage.removeItem?.(legacyKnownClientKey(email));
     } catch {
       // memory only: the next login just goes without it
     }
@@ -745,7 +819,7 @@ export class HubApi {
     if (opts.turnstile) body.turnstile = opts.turnstile;
     if (opts.lang) body.lang = opts.lang;
     const r = await this.call<SignedInBody>("POST", "/v1/signup", { body });
-    this.keepKnownClient(email, r?.known_client);
+    await this.keepKnownClient(email, r?.known_client);
     return signedIn(r);
   }
 
@@ -759,10 +833,10 @@ export class HubApi {
   async login(email: string, password: string, turnstile?: string | null): Promise<SignedIn> {
     const body: Record<string, string> = { email, password };
     if (turnstile) body.turnstile = turnstile;
-    const known = this.knownClient(email);
+    const known = await this.knownClient(email);
     if (known) body.known_client = known;
     const r = await this.call<SignedInBody>("POST", "/v1/login", { body });
-    this.keepKnownClient(email, r?.known_client);
+    await this.keepKnownClient(email, r?.known_client);
     return signedIn(r);
   }
 
@@ -791,7 +865,7 @@ export class HubApi {
     if (input.lang) body.lang = input.lang;
     body.credential = input.credential;
     const r = await this.call<SignedInBody>("POST", "/v1/signup/passkey", { body });
-    this.keepKnownClient(input.email, r?.known_client);
+    await this.keepKnownClient(input.email, r?.known_client);
     return signedIn(r);
   }
 
@@ -940,7 +1014,7 @@ export class HubApi {
     const email = emailStanding(r.email);
     // A device in use is a known client: keep each fresh token the hub gives,
     // so this browser's next password login is never held back for others'.
-    if (email.address) this.keepKnownClient(email.address, r.known_client);
+    if (email.address) await this.keepKnownClient(email.address, r.known_client);
     return {
       account: r.account,
       email,
