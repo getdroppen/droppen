@@ -23,8 +23,9 @@
 //      navigator.languages: WebKit lists only the first, so a page's "auto"
 //      (web/src/i18n/index.ts) would show English to a reader whose first
 //      language the app does not speak, while the app's menus take the first
-//      one it does (src-tauri/src/i18n.rs). On every page, the start-up page
-//      included.
+//      one it does (src-tauri/src/i18n.rs). Only on the app's own pages: the
+//      start-up page (tauri:), a new window's about:blank, and the server's
+//      http://127.0.0.1; any other page keeps WebKit's one language.
 //
 // __DROPPEN_NONCE__ is replaced with this launch's nonce when the window is made,
 // __DROPPEN_BRIDGE__ with the update bridge's own token (part 4),
@@ -38,18 +39,42 @@
 (function () {
   "use strict";
 
-  // 5. The system's languages, in its order.
+  var server = location.protocol === "http:" && location.hostname === "127.0.0.1";
+
+  // 5. The system's languages, in its order, on the app's own pages only.
   var LANGUAGES = "__DROPPEN_LANGUAGES__".split(",").filter(function (tag) {
     return /^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})*$/.test(tag);
   });
-  if (LANGUAGES.length) {
+  if (LANGUAGES.length && (server || location.protocol === "tauri:" || location.protocol === "about:")) {
     Object.freeze(LANGUAGES);
+    // The list is the system's as the window was made. WebKit's own
+    // navigator.language is live: when it no longer names the list's first
+    // language (the system's changed since), it goes first. WebKit spells some
+    // tags its own way (en-JP as en-US), which then lists one language twice:
+    // harmless, as only the first the app speaks counts.
+    var shownFor = null;
+    var shown = LANGUAGES;
     try {
       Object.defineProperty(navigator, "languages", {
         configurable: true,
         enumerable: true,
         get: function () {
-          return LANGUAGES;
+          var live = navigator.language || "";
+          if (live !== shownFor) {
+            shownFor = live;
+            var first = live.toLowerCase();
+            shown =
+              !live || first === LANGUAGES[0].toLowerCase()
+                ? LANGUAGES
+                : Object.freeze(
+                    [live].concat(
+                      LANGUAGES.filter(function (tag) {
+                        return tag.toLowerCase() !== first;
+                      }),
+                    ),
+                  );
+          }
+          return shown;
         },
       });
     } catch (e) {
@@ -57,7 +82,7 @@
     }
   }
 
-  if (location.protocol !== "http:" || location.hostname !== "127.0.0.1") return;
+  if (!server) return;
 
   var NONCE = "__DROPPEN_NONCE__";
   var TOKEN_KEY = "rh.auth.token"; // web/src/lib/auth.ts, TOKEN_KEY

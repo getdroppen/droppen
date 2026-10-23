@@ -12,15 +12,15 @@ import { signOutJa, signOutZhCN, signOutZhTW } from "./sign-out";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "./welcome";
 import { zhCN } from "./zh-CN";
 import { zhTW } from "./zh-TW";
+import { pickLanguage, type Language } from "./match";
+
+export { matchLanguage, pickLanguage, type Language } from "./match";
 
 /**
  * Translation keys ARE the English source strings, so English needs no
  * resource file and a missing translation falls back to readable English.
  */
 export type LanguagePref = "auto" | Language;
-
-/** A language the app speaks. */
-export type Language = "en" | "zh-CN" | "zh-TW" | "ja";
 
 /** The four, each named in its own script, as the language menus list them. */
 export const LANGUAGE_NAMES: readonly { id: Language; label: string }[] = [
@@ -34,32 +34,6 @@ const CACHE_KEY = "rh.lang";
 
 function isLanguage(value: unknown): value is Language {
   return value === "en" || value === "zh-CN" || value === "zh-TW" || value === "ja";
-}
-
-/**
- * The language of one BCP 47 tag, if it is one the app speaks: Chinese in
- * Traditional script (`zh-Hant`, else Taiwan, Hong Kong or Macao) is zh-TW,
- * any other Chinese (`zh`, `zh-CN`, `zh-SG`, `zh-Hans`, …) zh-CN; `ja…` is
- * Japanese and `en…` English. The script, where a tag names one, decides
- * over the region (`zh-Hans-HK` is zh-CN). Anything else: `null`.
- */
-export function matchLanguage(tag: string): Language | null {
-  const [primary, ...rest] = tag.trim().replace(/_/g, "-").toLowerCase().split("-");
-  if (primary === "en") return "en";
-  if (primary === "ja") return "ja";
-  if (primary !== "zh") return null;
-  if (rest.includes("hant")) return "zh-TW";
-  if (rest.includes("hans")) return "zh-CN";
-  return rest.some((part) => part === "tw" || part === "hk" || part === "mo") ? "zh-TW" : "zh-CN";
-}
-
-/** The first of `tags`, in the reader's order, that the app speaks; English when none is. */
-export function pickLanguage(tags: readonly (string | null | undefined)[]): Language {
-  for (const tag of tags) {
-    const lang = tag ? matchLanguage(tag) : null;
-    if (lang) return lang;
-  }
-  return "en";
 }
 
 /**

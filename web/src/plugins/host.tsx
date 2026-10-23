@@ -25,6 +25,7 @@ import { useBlocker } from "@tanstack/react-router";
 import i18n from "i18next";
 import type { MachineKey } from "@/lib/machines/key";
 import { apiFor } from "@/lib/machines/registry";
+import { matchLanguage } from "@/i18n/match";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { requestConfirm } from "./confirm";
@@ -35,9 +36,7 @@ export const pluginNamespace = (id: string) => `plugin:${id}`;
 
 /** The page's language as the SDK names it. */
 export function hostLocale(language = i18n.language): Locale {
-  if (language === "zh-CN" || language === "zh-TW" || language === "ja") return language;
-  if (/^zh/i.test(language)) return /tw|hk|mo|hant/i.test(language) ? "zh-TW" : "zh-CN";
-  return language?.startsWith("ja") ? "ja" : "en";
+  return (language && matchLanguage(language)) || "en";
 }
 
 interface Failure {
