@@ -27,15 +27,14 @@ droppen.app 的网页由闭源的 Hub 下发。端到端加密防得住 Hub 读�
 node scripts/verify-web.mjs                       # 检查 my.droppen.app、www.droppen.app、droppen.app，对照最新发版
 node scripts/verify-web.mjs --release v0.2.109    # 指定对照哪次发版
 node scripts/verify-web.mjs --allow-older         # 站点还在跑较早的发版时，对照那次发版检查，不判失败
-node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub；它有几个主机就给几次 --site
-node scripts/verify-web.mjs --site https://droppen.app   # 只查一个主机
+node scripts/verify-web.mjs --site https://a.example --site https://b.example   # 检查另一个 Hub：它的每个主机都给一次 --site
 ```
 
-不给 `--site` 时依次检查 droppen.app 的三个主机，每个主机单独检查、单独给出 `PASS` 或 `FAIL`，最后列出汇总。还没有上线的主机（`my.`、`www.` 的 DNS 未建）报「没能检查」；这时只查 `--site https://droppen.app`。
+不给 `--site` 时依次检查 droppen.app 的三个主机，每个主机单独检查、单独给出 `PASS` 或 `FAIL`，最后列出汇总。一个 Hub 的几个主机要在同一次运行里一起检查：三个主机互相重定向（下面第 3 步），只查其中一个时，送往另一个主机的那些路径没人核对，这个主机就判失败。某个主机连不上时，它报「没能检查」，其余主机照常检查。
 
 对每个主机，脚本做这几件事：
 
-1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。
+1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。站点不回答、回答的不是 JSON、或者里面没有构建摘要时，照样按最新发版的清单逐个核对它的文件（结果里注明站点没说它跑的是哪个构建），对不上就判失败。
 2. 取**最新发版**（`--repo` 在 GitHub 上标为 latest 的那次发版，也就是 `install.sh` 安装的那次）的 `web-manifest.json`，站点报告的摘要必须与它相同。每次发版的构建都留着证明，一个停在较早发版的站点（没部署、或者故意给旧构建）照样能逐字节对上那次发版、证明也对得上，却没有之后的修改；所以只对得上较早发版时判**失败**，并说出是哪次发版、最新的是哪次。确实要对照较早的发版，加 `--allow-older`（在最近 `--releases` 次发版里找，默认 30；结果里注明不是最新发版），或用 `--release` 指明。站点报告的提交与清单的不同不算失败：比对的是摘要（字节），提交只是 Hub 自己说的标签，Hub 也可能从发版标签以外、网页相同的提交部署（§3）。对这份清单用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版在 getdroppen/droppen（`--repo`）：从 v0.2.127 起，`release.yml` 构建、签名并发布每一次发版，清单和它的 bundle（`web-manifest.sigstore.json`）就在同一个发版上。v0.2.126 及以前的发版在 getdroppen/releases（`--repo getdroppen/releases`），清单由 `scripts/release-public.sh` 在本机生成，文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名），而 bundle 签的是字节。所以发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
 3. 下载清单里的每个文件，再取各主机会给出页面外壳的路由——应用的 `/`、`/link`、`/signin`、`/sessions`、`/move`，站点的 `/security`、`/download`——逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
    脚本不跟随重定向，查的是这个主机自己给出的东西。一个回答若是重定向，只有它把浏览器送到**这次也在检查的另一个主机上的同一路径**（查询串也相同）才算通过，那边的内容在检查那个主机时核对；送去别处、或换了路径，都算失败。三个主机分工后正是这样：droppen.app 的 `/` 去 `www`，`www` 的 `/link` 去 `my`，`my` 的 `/download` 去 `www`。整个主机都重定向到另一个主机时（如分工之前的 `www.droppen.app`），连 `/.well-known/droppen-build` 也按那个主机的回答对照。

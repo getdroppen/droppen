@@ -236,10 +236,13 @@ const { dist, files, manifest, manifestFile } = build;
 /**
  * A hub that serves a build (`dist` by default) the way rh-hub does.
  * `marker`: the origin written into the shell (`self` for the site's own);
- * `csp(path)`: the policy header (`null`: none); `redirect(path)`: a `308` there instead
- * (`null`: none); `worker(req)`: another `/sw.js` (`null`: the build's).
+ * `csp(path)`: the policy header (`null`: none; a list: one header line each;
+ * `{reportOnly}`: only a Content-Security-Policy-Report-Only header);
+ * `redirect(path)`: a `308` there instead (`null`: none); `worker(req)`:
+ * another `/sw.js` (`null`: the build's); `buildInfo`: the body of
+ * `/.well-known/droppen-build` (`null`: a 404; default: the build it serves).
  */
-function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null } = {}) {
+function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null, buildInfo } = {}) {
   const server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname.slice(1);
     const sw = path === "sw.js" ? worker(req) : null;
@@ -253,12 +256,17 @@ function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirec
       return res.end();
     }
     if (path === ".well-known/droppen-build") {
+      if (buildInfo === null) {
+        res.statusCode = 404;
+        return res.end("not found");
+      }
       res.setHeader("content-type", "application/json");
-      return res.end(JSON.stringify({ commit: "0123abc", web: { digest: serves.manifest.digest, files: serves.files.length } }));
+      return res.end(buildInfo ?? JSON.stringify({ commit: "0123abc", web: { digest: serves.manifest.digest, files: serves.files.length } }));
     }
     const file = serves.files.find((f) => f.path === path && path !== "index.html");
     const policy = csp(`/${path}`);
-    if (policy !== null) res.setHeader("content-security-policy", policy);
+    if (policy?.reportOnly) res.setHeader("content-security-policy-report-only", policy.reportOnly);
+    else if (policy !== null) res.setHeader("content-security-policy", policy);
     if (file) return res.end(readFileSync(join(serves.dist, file.path)));
     if (path.startsWith("assets/")) {
       res.statusCode = 404;
@@ -478,6 +486,24 @@ describe("verify-web.mjs against a hub", () => {
     assert.equal(full.code, 0, full.out);
   });
 
+  test("a policy sent only as Content-Security-Policy-Report-Only enforces nothing, and fails", async () => {
+    const r = await verify(["--site", await hub({ csp: () => ({ reportOnly: HUB_CSP_FULL }) }), "--manifest", manifestFile]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /\/: Content-Security-Policy: no Content-Security-Policy header/);
+  });
+
+  test("two Content-Security-Policy header lines are two policies, each enforced", async () => {
+    const scripts = `default-src 'self'; script-src 'self' ${INLINE_HASH}`;
+    const both = await verify(["--site", await hub({ csp: () => [scripts, "frame-ancestors 'none'; object-src 'none'"] }), "--manifest", manifestFile]);
+    assert.equal(both.code, 0, both.out);
+    const neither = await verify(["--site", await hub({ csp: () => [scripts, "object-src 'none'"] }), "--manifest", manifestFile]);
+    assert.equal(neither.code, 1, neither.out);
+    assert.match(neither.out, /no frame-ancestors limits framing by another site/);
+    const loose = await verify(["--site", await hub({ csp: () => ["frame-ancestors 'none'; object-src 'none'", "script-src 'self' 'unsafe-inline'"] }), "--manifest", manifestFile]);
+    assert.equal(loose.code, 1, loose.out);
+    assert.match(loose.out, /script-src lets script elements come from 'unsafe-inline'/);
+  });
+
   test("both scripts run when started through a symlink (macOS /tmp is one)", async () => {
     const links = mkdtempSync(join(tmpdir(), "verify-web-links-"));
     try {
@@ -636,6 +662,23 @@ describe("verify-web.mjs against a hub", () => {
       const r = await verify(["--site", await hub(), "--repo", "m/r", "--allow-unattested"], env());
       assert.equal(r.code, 2, r.out);
       assert.match(r.out, /the latest release of m\/r, v9\.9\.11, has no web-manifest\.json; name a release with --release/);
+    });
+
+    test("a site that does not say which build it serves is compared with the latest release", async () => {
+      for (const buildInfo of [null, "not json{", JSON.stringify({ commit: null, web: { digest: "sha256:nope" } }), JSON.stringify([])]) {
+        const r = await verify(["--site", await hub({ buildInfo }), "--repo", "u/r", "--allow-unattested"], env());
+        assert.equal(r.code, 1, `${buildInfo}: ${r.out}`);
+        assert.match(r.out, /serves: +\(not reported\)/);
+        assert.match(r.out, /note: +the site does not say which build it serves: its files are compared with the latest release's/);
+        assert.match(r.out, /manifest: +release v9\.9\.10 of u\/r/);
+        assert.match(r.out, /FAIL: .* does not serve the attested build/);
+      }
+      const r = await verify(["--site", await hub({ buildInfo: "not json{" }), "--repo", "o/r", "--allow-unattested"], env());
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /droppen-build: .*not JSON/);
+      assert.match(r.out, /PASS: .* byte-identical to release v9\.9\.9 of o\/r/);
+      const quiet = await verify(["--site", await hub({ buildInfo: null }), "--repo", "o/r", "--allow-unattested"], env());
+      assert.equal(quiet.code, 0, quiet.out);
     });
 
     test("a build no release has fails as before", async () => {

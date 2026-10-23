@@ -35,7 +35,9 @@
 //   2. takes the latest release's manifest (GitHub's latest release of
 //      --repo, as install.sh takes it; or the one named), which must have
 //      that digest: a site serving an earlier release's build fails, naming
-//      that release, unless --allow-older. It checks the manifest's
+//      that release, unless --allow-older. A site that does not say which
+//      build it serves (no answer there, or not a build digest) is compared
+//      with the latest release's manifest all the same. It checks the manifest's
 //      attestation with `gh attestation verify --bundle` — that
 //      needs `gh` installed but no GitHub login. A release without a bundle
 //      of its own (getdroppen/releases, up to v0.2.126: its manifest was
@@ -189,7 +191,12 @@ async function get(url, { json = false, optional = false, headers = {} } = {}) {
     throw Object.assign(new Error(`${url}: HTTP ${res.status}${where ? ` → ${where}` : ""}`), { status: res.status, location: where });
   }
   const body = Buffer.from(await res.arrayBuffer());
-  return json ? JSON.parse(body.toString("utf8")) : { body, headers: res.headers };
+  if (!json) return { body, headers: res.headers };
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new Error(`${url}: not JSON`);
+  }
 }
 
 /** GitHub release downloads redirect to a CDN; those are followed. */
@@ -263,9 +270,9 @@ function latestRelease(opts, memo) {
 /**
  * The release manifest to compare with: `{match, latest}`. `match`: the
  * named release's (`--release`), or else the latest release's when it has
- * the site's `digest`, or else the newest of the last --releases releases
- * that has it (which is then not the latest's), or `null`. `latest`: the
- * latest release's tag (`null` with --release).
+ * the site's `digest` or the site names none, or else the newest of the last
+ * --releases releases that has it (which is then not the latest's), or
+ * `null`. `latest`: the latest release's tag (`null` with --release).
  */
 async function releaseManifest(opts, digest, memo) {
   if (opts.release) {
@@ -273,9 +280,8 @@ async function releaseManifest(opts, digest, memo) {
     if (!found) throw new Unchecked(`release ${opts.release} of ${opts.repo} has no web-manifest.json`);
     return { match: found, latest: null };
   }
-  if (!digest) throw new Unchecked(`the site does not say which build it serves; name one with --release or --manifest`);
   const latest = await latestRelease(opts, memo);
-  if (latest.manifest?.digest === digest) return { match: latest, latest: latest.tag };
+  if (!digest || latest.manifest?.digest === digest) return { match: latest, latest: latest.tag };
   const releases = await githubApi(
     `/repos/${opts.repo}/releases?per_page=${opts.releases}`,
     `is ${opts.repo} public? otherwise name a manifest with --manifest`,
@@ -682,17 +688,20 @@ async function checkSite(opts, site, memo) {
       });
     }
   }
-  const served = typeof info?.web?.digest === "string" ? info.web.digest : null;
-  console.log(`  serves:      ${served ? `${served} (${info.web.files} files)` : "(not reported)"}${info?.commit ? `, built from ${info.commit}` : ""}`);
+  const reported = info?.web?.digest;
+  const served = typeof reported === "string" && /^sha256:[0-9a-f]{64}$/.test(reported) ? reported : null;
+  if (info && reported !== undefined && !served) notes.push(`${BUILD_INFO}: ${JSON.stringify(reported)} is not a build digest`);
+  const commit = typeof info?.commit === "string" ? info.commit : null;
+  console.log(`  serves:      ${served ? `${served} (${info.web.files} files)` : "(not reported)"}${commit ? `, built from ${commit}` : ""}`);
 
-  // 2. The attested manifest to compare with.
-  if (!opts.manifest && !opts.release && !served)
-    throw new Unchecked(`the site does not say which build it serves; name one with --release or --manifest${notes.length ? ` (${notes.join("; ")})` : ""}`);
+  // 2. The attested manifest to compare with. A site that does not say which
+  // build it serves is held to the latest release's, file by file.
+  if (!served && !opts.manifest && !opts.release) notes.push("the site does not say which build it serves: its files are compared with the latest release's");
   const found = await attested(opts, served, memo);
   if (found.none) {
     console.log(`  manifest:    neither the latest release ${found.latest} nor any of the last ${opts.releases} releases of ${opts.repo} has ${served}`);
     console.log(
-      `\nFAIL: ${site} serves a build no release attests.${info?.commit ? ` To check it anyway, build ${info.commit} yourself (docs/web-integrity.md) and pass --manifest.` : ""}`,
+      `\nFAIL: ${site} serves a build no release attests.${commit ? ` To check it anyway, build ${commit} yourself (docs/web-integrity.md) and pass --manifest.` : ""}`,
     );
     return 1;
   }
@@ -708,8 +717,8 @@ async function checkSite(opts, site, memo) {
   failures.push(...found.failures);
   console.log(`  manifest:    ${source}: ${manifest.digest}${manifest.commit ? `, commit ${manifest.commit}` : ""}`);
   if (served && served !== manifest.digest) failures.push(`the site says it serves ${served}, not the manifest's ${manifest.digest}`);
-  if (info?.commit && manifest.commit && !manifest.commit.startsWith(info.commit) && !info.commit.startsWith(manifest.commit))
-    notes.push(`the site was built from ${info.commit}, the manifest from ${manifest.commit}: the same web app if the digests agree`);
+  if (commit && manifest.commit && !manifest.commit.startsWith(commit) && !commit.startsWith(manifest.commit))
+    notes.push(`the site was built from ${commit}, the manifest from ${manifest.commit}: the same web app if the digests agree`);
   console.log(`  attestation: ${attestation.note}`);
 
   // 3. Every file, as served now: the worker also as a browser's update
