@@ -8,7 +8,8 @@
 // brings you to the form; Free is a plain sign-up and the form is Pro's
 // alone where the hub's sign-up is open (the default), while by invite
 // Free's button joins the waitlist too and the form offers both plans; one primary
-// action in each part of the page; the form says how it went (on the list;
+// action in each part of the page — among the plans, Free's sign-up where
+// sign-up is open, else Pro's; the form says how it went (on the list;
 // not an address; a throwaway address; too many tries, and for how long;
 // out of reach) and sends nothing it cannot; the hub client posts
 // `/v1/waitlist` without a session; `/pricing` and `/privacy` are public
@@ -167,7 +168,7 @@ test("nothing can be bought yet: Pro's button joins the waitlist, and no page of
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
     for (const signup of ["open", "invite"] as const) {
       const html = draw(lng, { signup });
-      assert.match(html, /<a href="#waitlist"[^>]*data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, lng);
+      assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-pro-waitlist"/, lng);
       assert.doesNotMatch(html, /stripe|checkout|buy now|subscribe/i, lng);
     }
     // Free: a sign-up where sign-up is open, the waitlist where it is by invite.
@@ -180,7 +181,19 @@ test("nothing can be bought yet: Pro's button joins the waitlist, and no page of
   assert.ok(words.includes("Join the waitlist"));
 });
 
-test("one primary action in each part of the page: Pro's among the plans, the form's own below the comparison", () => {
+test("one primary action in each part of the page: among the plans Free's sign-up where sign-up is open, else Pro's; the form's own below the comparison", () => {
+  // Open: signing up is what anyone can do now, so it leads; Pro's waitlist steps back.
+  for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
+    const plans = part(draw(lng), "plans", "compare");
+    assert.match(plans, /<a href="\/signup"[^>]*data-variant="primary"[^>]*data-testid="plan-free-signup"/, lng);
+    assert.doesNotMatch(plans, /data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, lng);
+  }
+  // By invite, or signed in (no sign-up to offer): Pro's, as before.
+  for (const opts of [{ signup: "invite" as const }, { signedIn: true }, { signedIn: true, signup: "invite" as const }]) {
+    const plans = part(draw("en", opts), "plans", "compare");
+    assert.match(plans, /<a href="#waitlist"[^>]*data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, JSON.stringify(opts));
+    assert.equal(primaries(plans), 1, JSON.stringify(opts));
+  }
   for (const [lng, signup] of [["en", "open"], ["zh-CN", "open"], ["en", "invite"]] as const) {
     const html = draw(lng, { signup });
     assert.equal(primaries(html), 2, lng);

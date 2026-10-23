@@ -33,7 +33,9 @@ import { type WaitlistState, WaitlistForm } from "./waitlist";
  * (`signup-mode.ts`: a hub that says so), Free's button joins the waitlist
  * too, the form has both plans, each card's button choosing its own, and
  * `?plan=pro` in the address chooses Pro. One primary action in view at a
- * time (docs/ui-spec.md V10): Pro's, and the form's own further down.
+ * time (docs/ui-spec.md V10): among the plans, Free's sign-up where sign-up
+ * is open and the visitor has no account (the lead's call, 2026-10-24), else
+ * Pro's; and the form's own further down.
  */
 
 // Added, never overwriting: a key the app already translates keeps its wording.
@@ -100,6 +102,8 @@ function Plans({ signedIn, invite, onChoose }: { signedIn: boolean; invite: bool
   const { free, pro } = PLAN_NUMBERS;
   const encrypted = t("End-to-end encrypted: we can't see your code");
   // To the form, with the plan chosen (the anchor scrolls; the form takes the focus).
+  // The plans' one primary action: signing up where anyone can, else Pro's waitlist.
+  const freeLeads = !invite && !signedIn;
   const choose = (plan: WaitlistPlan) => () => {
     onChoose(plan);
     requestAnimationFrame(() => document.getElementById("waitlist-email")?.focus({ preventScroll: true }));
@@ -143,7 +147,7 @@ function Plans({ signedIn, invite, onChoose }: { signedIn: boolean; invite: bool
                 {t("Join the waitlist")}
               </a>
             ) : (
-              <a {...publicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className={cn(secondary, "w-full")}>
+              <a {...publicLink(SIGN_UP_PATH)} data-variant="primary" data-testid="plan-free-signup" className={cn(primary, "w-full")}>
                 {t("Sign up")}
               </a>
             )
@@ -175,7 +179,13 @@ function Plans({ signedIn, invite, onChoose }: { signedIn: boolean; invite: bool
           unit={t("USD / month")}
           note={t("or ${{price}} a year: save {{saving}}%", { price: PRO_PRICE.yearly, saving: yearlySaving() })}
           action={
-            <a href="#waitlist" onClick={choose("pro")} data-variant="primary" data-testid="plan-pro-waitlist" className={cn(primary, "w-full")}>
+            <a
+              href="#waitlist"
+              onClick={choose("pro")}
+              data-variant={freeLeads ? undefined : "primary"}
+              data-testid="plan-pro-waitlist"
+              className={cn(freeLeads ? secondary : primary, "w-full")}
+            >
               {t("Join the waitlist")}
             </a>
           }
