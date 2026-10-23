@@ -24,12 +24,17 @@ name: release
 # - `verify` (no secrets) writes latest.json and checks the release;
 #   `publish` (no secrets: the run's write token and OIDC token, only when
 #   publishing a `v*` tag) attests every file and publishes.
-# - No caches anywhere.
+# - No caches anywhere. The two prebuilt tools, cargo-about and tauri-cli,
+#   are their upstream release files, each checked against the sha256 pinned
+#   in .github/release-tools.lock (never fetched at run time): we trust
+#   upstream's release and our pinned hash. They run in build jobs only.
 #
 #   meta ─┬─ web ─┬─ server-macos (aarch64, x86_64) ─┐
-#         │       └─ server-linux (x86_64, aarch64) ─┼─ stage ─┬─ smoke-linux ─┐
-#         ├─ tools ──────────────────────────────────┘         └─ desktop ─────┼─ release ─ verify ─ publish
-#         └─ signer ───────────────────────────────────────────────────────────┘
+#         │       └─ server-linux (x86_64, aarch64) ─┼─ stage ───────────────────────────┬─ smoke-linux ──┐
+#         ├─ tools ─ notices ────────────────────────┴─ desktop-arch (aarch64, x86_64) ──┴─ desktop ──────┼─ release ─ verify ─ publish
+#         └─ signer ──────────────────────────────────────────────────────────────────────────────────────┘
+#   (desktop-arch takes server-macos, not server-linux; desktop takes stage's
+#   universal server and fuses desktop-arch's two apps.)
 on:
   push:
     tags: ["v*"]
@@ -62,6 +67,7 @@ env:
   # What each artifact may hold (.github/scripts/unpack-artifact.sh).
   ALLOW_WEB: '^dist(/[^/]+)*$'
   ALLOW_TOOLS: '^bin(/(cargo-about|cargo-tauri))?$'
+  ALLOW_NOTICES: '^(THIRD_PARTY_NOTICES|desktop(/THIRD_PARTY_NOTICES)?)$'
   ALLOW_SIGNER: '^signer(/bin(/droppen-update-signer)?)?$'
   ALLOW_MANIFEST_TOOL: '^signer(/bin(/droppen-update-manifest)?)?$'
   ALLOW_SIGNED: '^(Droppen-[0-9]+\.[0-9]+\.[0-9]+\.dmg|updater(/(Droppen\.app\.tar\.gz|Droppen\.app\.tar\.gz\.sig))?)$'
@@ -168,7 +174,8 @@ jobs:
 
   # The public web build (what droppen.app serves), once, for every binary to
   # embed: the same commands as the hub's Docker stage and CI's
-  # `web-reproducible`. The stage job checks its own build against it.
+  # `web-reproducible`, which checks that the build is reproducible. stage
+  # stages this very build (not a second one) and checks its manifest.
   web:
     needs: meta
     runs-on: ubuntu-latest
@@ -212,8 +219,8 @@ jobs:
   # jobs below. The jobs with secrets build what they run themselves.
   tools:
     needs: meta
-    runs-on: macos-latest
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -222,22 +229,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust
-        run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
-          rustup default "$RUST_TOOLCHAIN"
-      - name: Build the tools
+      # Upstream's release files for the pinned versions, each checked against
+      # .github/release-tools.lock; nothing is built (the macOS programs run
+      # in notices and desktop-arch, which check their versions).
+      - name: The tools, prebuilt and pinned
         id: pack
         run: |
           set -euo pipefail
           tools=$RUNNER_TEMP/tools
-          about=$(sed -n 's/^ABOUT_VERSION=//p' scripts/release-public.sh)
-          tauri=$(sed -n 's/^TAURI_CLI_VERSION=//p' desktop/build.sh)
-          cargo install --locked "cargo-about@$about" --features cli --root "$tools"
-          cargo install --locked tauri-cli --version "$tauri" --root "$tools"
-          "$tools/bin/cargo-about" --version
-          "$tools/bin/cargo-tauri" --version
-          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/tools.tar" -C "$tools" bin/cargo-about bin/cargo-tauri
+          .github/scripts/fetch-release-tool.sh cargo-about "$tools"
+          .github/scripts/fetch-release-tool.sh tauri-cli "$tools"
+          tar -cf "$RUNNER_TEMP/tools.tar" -C "$tools" bin/cargo-about bin/cargo-tauri
           echo "sha=$(shasum -a 256 "$RUNNER_TEMP/tools.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -297,6 +299,67 @@ jobs:
         with:
           name: manifest-tool
           path: ${{ runner.temp }}/manifest-tool.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # THIRD_PARTY_NOTICES of the server's files (scripts/third-party-notices.sh)
+  # and of the desktop app (desktop/third-party-notices.sh): cargo-about over
+  # the locked crates, and the npm packages the web app bundles. Beside the
+  # builds rather than after them: cargo-about reads the dependency graph, not
+  # the binaries. Handed to stage and the desktop jobs by sha256.
+  notices:
+    needs: [meta, tools]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tools
+          path: ${{ runner.temp }}/dl/tools
+      - name: THIRD_PARTY_NOTICES (the server's, and the desktop app's)
+        id: pack
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          REV: ${{ needs.meta.outputs.rev }}
+          DESKTOP: ${{ needs.meta.outputs.desktop }}
+          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
+          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+        run: |
+          set -euo pipefail
+          unset DROPPEN_DISTRIBUTION
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$RUNNER_TEMP/a/tools" "$ALLOW_TOOLS"
+          export PATH="$RUNNER_TEMP/a/tools/bin:$PATH"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          npm install -g "pnpm@$PNPM_VERSION"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          mkdir -p "$RUNNER_TEMP/out"
+          scripts/third-party-notices.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/THIRD_PARTY_NOTICES" "$VERSION" "$crate" "$REV"
+          members=(THIRD_PARTY_NOTICES)
+          if [ "$DESKTOP" = true ]; then
+            mkdir -p "$RUNNER_TEMP/out/desktop"
+            desktop/third-party-notices.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/desktop/THIRD_PARTY_NOTICES" "$crate" "$crate" "$REV"
+            members+=(desktop/THIRD_PARTY_NOTICES)
+          fi
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/notices.tar" -C "$RUNNER_TEMP/out" "${members[@]}"
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/notices.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notices
+          path: ${{ runner.temp }}/notices.tar
           if-no-files-found: error
           retention-days: 3
 
@@ -418,7 +481,7 @@ jobs:
   # The Linux smoke tests need Docker, which macOS runners lack: smoke-linux.
   # The text check's names are left to the jobs that have them.
   stage:
-    needs: [meta, web, tools, server-macos, server-linux]
+    needs: [meta, web, notices, server-macos, server-linux]
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
@@ -433,18 +496,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - name: Rust (cargo-about reads the crates through cargo)
-        run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
-          rustup default "$RUST_TOOLCHAIN"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: web-dist
           path: ${{ runner.temp }}/dl/web-dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: tools
-          path: ${{ runner.temp }}/dl/tools
+          name: notices
+          path: ${{ runner.temp }}/dl/notices
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: server-aarch64-apple-darwin
@@ -464,7 +523,7 @@ jobs:
       - name: Unpack
         env:
           WEB_SHA: ${{ needs.web.outputs.sha }}
-          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+          NOTICES_SHA: ${{ needs.notices.outputs.sha }}
           MAC_AARCH64_SHA: ${{ needs.server-macos.outputs.sha_aarch64 }}
           MAC_X86_64_SHA: ${{ needs.server-macos.outputs.sha_x86_64 }}
           LINUX_X86_64_SHA: ${{ needs.server-linux.outputs.sha_x86_64 }}
@@ -475,7 +534,7 @@ jobs:
           a=$RUNNER_TEMP/a
           unpack=.github/scripts/unpack-artifact.sh
           $unpack "$dl/web-dist/web-dist.tar" "$WEB_SHA" "$a/web" "$ALLOW_WEB"
-          $unpack "$dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
+          $unpack "$dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
           $unpack "$dl/server-aarch64-apple-darwin/server-aarch64-apple-darwin.tar" "$MAC_AARCH64_SHA" "$a/mac-aarch64" '^aarch64-apple-darwin(/remote-hand-server)?$'
           $unpack "$dl/server-x86_64-apple-darwin/server-x86_64-apple-darwin.tar" "$MAC_X86_64_SHA" "$a/mac-x86_64" '^x86_64-apple-darwin(/remote-hand-server)?$'
           $unpack "$dl/server-linux-x86_64/server-linux-x86_64.tar" "$LINUX_X86_64_SHA" "$a/linux-x86_64" '^x86_64(/remote-hand-server)?$'
@@ -493,13 +552,13 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
           SHA: ${{ needs.meta.outputs.sha }}
           SNAPSHOT: ${{ needs.meta.outputs.snapshot }}
-          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
           DROPPEN_RELEASE_NAMES_DEFERRED: "1"
         run: |
           set -euo pipefail
-          export PATH="$RUNNER_TEMP/a/tools/bin:$PATH"
-          npm install -g "pnpm@$PNPM_VERSION"
-          args=("$VERSION" --ref "$SHA" --out "$RUNNER_TEMP/release" --prebuilt "$RUNNER_TEMP/prebuilt" --no-linux-smoke)
+          # The binaries, the web app they embed and the notices are other
+          # jobs' (checked by sha256 above); nothing is installed or built here.
+          args=("$VERSION" --ref "$SHA" --out "$RUNNER_TEMP/release" --prebuilt "$RUNNER_TEMP/prebuilt" --no-linux-smoke
+            --web-dist "$RUNNER_TEMP/a/web/dist" --notices "$RUNNER_TEMP/a/notices/THIRD_PARTY_NOTICES")
           [ "$SNAPSHOT" = false ] || args+=(--snapshot)
           scripts/release-public.sh "${args[@]}"
       - name: The staged web manifest is the web app the binaries embed
@@ -558,13 +617,91 @@ jobs:
           EXPECT_VERSION="+g$REV" bash .github/scripts/smoke-linux.sh "$RUNNER_TEMP/unpacked/droppen/droppen" "$ARCH"
           EXPECT_VERSION="+g$REV" bash .github/scripts/smoke-linux.sh "$RUNNER_TEMP/unpacked/remote-hand/remote-hand-server" "$ARCH"
 
-  # The desktop app around the staged universal server (desktop/SIGNING.md,
-  # "Making a release", step 2): desktop/build.sh --sidecar, unsigned.
-  desktop:
-    needs: [meta, tools, stage]
+  # The desktop app for each architecture, beside stage: desktop/build.sh
+  # --arch with that architecture's server (server-macos, the very binary the
+  # tarballs hold) and the notices from `notices`; no DMG. `desktop` fuses
+  # the two.
+  desktop-arch:
+    needs: [meta, tools, notices, server-macos]
     if: needs.meta.outputs.desktop == 'true'
     runs-on: macos-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            key: aarch64
+          - target: x86_64-apple-darwin
+            key: x86_64
+    # Each leg sets only its own output.
+    outputs:
+      sha_aarch64: ${{ steps.pack.outputs.sha_aarch64 }}
+      sha_x86_64: ${{ steps.pack.outputs.sha_x86_64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust, and Rosetta for the x86_64 server's --version
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "$TARGET"
+          [ "$TARGET" != x86_64-apple-darwin ] || /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tools
+          path: ${{ runner.temp }}/dl/tools
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notices
+          path: ${{ runner.temp }}/dl/notices
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-${{ matrix.target }}
+          path: ${{ runner.temp }}/dl/server
+      - name: Build the app (desktop/build.sh --arch)
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+          KEY: ${{ matrix.key }}
+          SHA: ${{ needs.meta.outputs.sha }}
+          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+          NOTICES_SHA: ${{ needs.notices.outputs.sha }}
+          SERVER_SHA: ${{ matrix.key == 'aarch64' && needs.server-macos.outputs.sha_aarch64 || needs.server-macos.outputs.sha_x86_64 }}
+          DROPPEN_RELEASE_NAMES_DEFERRED: "1"
+        run: |
+          set -euo pipefail
+          a=$RUNNER_TEMP/a
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/server/server-$TARGET.tar" "$SERVER_SHA" "$a/server" "^$TARGET(/remote-hand-server)?\$"
+          chmod 755 "$a/server/$TARGET/remote-hand-server"
+          export DROPPEN_TOOLS_DIR=$a/tools PATH="$a/tools/bin:$PATH"
+          DROPPEN_BUILD_JOBS=$(sysctl -n hw.ncpu); export DROPPEN_BUILD_JOBS
+          desktop/build.sh --ref "$SHA" --arch "$KEY" --sidecar "$a/server/$TARGET/remote-hand-server" \
+            --notices "$a/notices/desktop/THIRD_PARTY_NOTICES" --no-dmg --out "$RUNNER_TEMP/desktop"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/desktop-app-$KEY.tar" -C "$RUNNER_TEMP/desktop" Droppen.app
+          echo "sha_$KEY=$(shasum -a 256 "$RUNNER_TEMP/desktop-app-$KEY.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-app-${{ matrix.key }}
+          path: ${{ runner.temp }}/desktop-app-${{ matrix.key }}.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The universal app (desktop/SIGNING.md, "Making a release", step 2): the
+  # two builds fused (desktop/build.sh --from-apps: their main programs with
+  # lipo, the staged universal server, sealed ad hoc), then the same checks
+  # as a build. Unsigned; nothing compiled.
+  desktop:
+    needs: [meta, notices, stage, desktop-arch]
+    if: needs.meta.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     outputs:
@@ -573,43 +710,44 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          package-manager-cache: false
-      - name: Rust
-        run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
-          rustup default "$RUST_TOOLCHAIN"
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: tools
-          path: ${{ runner.temp }}/dl/tools
+          name: notices
+          path: ${{ runner.temp }}/dl/notices
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: staged
           path: ${{ runner.temp }}/dl/staged
-      - name: Build the app (desktop/build.sh --sidecar)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-app-aarch64
+          path: ${{ runner.temp }}/dl/desktop-app-aarch64
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-app-x86_64
+          path: ${{ runner.temp }}/dl/desktop-app-x86_64
+      - name: The universal app (desktop/build.sh --from-apps)
         id: pack
         env:
           VERSION: ${{ needs.meta.outputs.version }}
           SHA: ${{ needs.meta.outputs.sha }}
-          PNPM_VERSION: ${{ needs.meta.outputs.pnpm }}
-          TOOLS_SHA: ${{ needs.tools.outputs.sha }}
+          NOTICES_SHA: ${{ needs.notices.outputs.sha }}
           STAGED_SHA: ${{ needs.stage.outputs.sha }}
+          A64_SHA: ${{ needs.desktop-arch.outputs.sha_aarch64 }}
+          X64_SHA: ${{ needs.desktop-arch.outputs.sha_x86_64 }}
           DROPPEN_RELEASE_NAMES_DEFERRED: "1"
         run: |
           set -euo pipefail
           a=$RUNNER_TEMP/a
-          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
-          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/staged/staged.tar" "$STAGED_SHA" "$a/staged" "$ALLOW_STAGED"
+          unpack=.github/scripts/unpack-artifact.sh
+          $unpack "$RUNNER_TEMP/dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
+          $unpack "$RUNNER_TEMP/dl/staged/staged.tar" "$STAGED_SHA" "$a/staged" "$ALLOW_STAGED"
+          $unpack "$RUNNER_TEMP/dl/desktop-app-aarch64/desktop-app-aarch64.tar" "$A64_SHA" "$a/app-aarch64" "$ALLOW_APP"
+          $unpack "$RUNNER_TEMP/dl/desktop-app-x86_64/desktop-app-x86_64.tar" "$X64_SHA" "$a/app-x86_64" "$ALLOW_APP"
           mkdir -p "$RUNNER_TEMP/sidecar"
           tar -xzf "$a/staged/release/droppen-$VERSION-macos-universal.tar.gz" -C "$RUNNER_TEMP/sidecar" droppen
-          export DROPPEN_TOOLS_DIR=$a/tools PATH="$a/tools/bin:$PATH"
-          DROPPEN_BUILD_JOBS=$(sysctl -n hw.ncpu); export DROPPEN_BUILD_JOBS
-          npm install -g "pnpm@$PNPM_VERSION"
-          desktop/build.sh --ref "$SHA" --sidecar "$RUNNER_TEMP/sidecar/droppen" --out "$RUNNER_TEMP/desktop"
+          desktop/build.sh --ref "$SHA" --sidecar "$RUNNER_TEMP/sidecar/droppen" --notices "$a/notices/desktop/THIRD_PARTY_NOTICES" \
+            --from-apps "$a/app-aarch64/Droppen.app" "$a/app-x86_64/Droppen.app" --no-dmg --out "$RUNNER_TEMP/desktop"
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/desktop-app.tar" -C "$RUNNER_TEMP/desktop" Droppen.app
           echo "sha=$(shasum -a 256 "$RUNNER_TEMP/desktop-app.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

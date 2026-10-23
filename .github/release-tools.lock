@@ -1,0 +1,12 @@
+# The prebuilt tools .github/workflows/release.yml downloads instead of
+# building them: each one upstream's own release file, pinned here by its
+# sha256. The workflow checks every download against this file and fails on
+# any difference (.github/scripts/fetch-release-tool.sh); it never builds
+# these tools, and never fetches a hash. For a version bump (ABOUT_VERSION in
+# scripts/release-public.sh, TAURI_CLI_VERSION in desktop/build.sh),
+# scripts/update-release-tool-pins.sh prints the new lines; a person checks
+# them and commits them here.
+#
+# tool        version  platform              sha256                                                            url
+cargo-about   0.9.2    aarch64-apple-darwin  ae72f0df0c399a1e96336f696fa55b1b28679fd725632eba8cf8e4568467cc3e  https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-aarch64-apple-darwin.tar.gz
+tauri-cli     2.12.3   aarch64-apple-darwin  35e3b339bfb5f2061023bf5646dc969e5fa53b6fc4347daf467e7f6743692494  https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-aarch64-apple-darwin.zip

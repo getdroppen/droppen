@@ -8,6 +8,7 @@
 #   desktop/build.sh [--ref <git-ref> | --worktree] [--arch universal|aarch64|x86_64]
 #                    [--out <dir>] [--sidecar <prebuilt remote-hand-server>]
 #                    [--e2e [--version <v>]] [--keep-work]
+#                    [--notices <file>] [--no-dmg] [--from-apps <aarch64 app> <x86_64 app>]
 #
 #   --ref       what to build (default HEAD), exported with `git archive` so
 #               uncommitted changes never reach a release.
@@ -34,6 +35,14 @@
 #               release is always the server's version, which the updater
 #               compares with the newest release's.
 #   --keep-work keep the build directory.
+#   --notices   THIRD_PARTY_NOTICES as desktop/third-party-notices.sh wrote it
+#               for this version elsewhere, instead of making it here.
+#   --no-dmg    the app only (desktop/notarise.sh makes the release's DMG).
+#   --from-apps a universal app put together from two builds of this ref
+#               (--arch aarch64 and --arch x86_64, with the same --notices):
+#               their main programs fused with lipo, the universal --sidecar
+#               in, sealed ad hoc again, then the same checks as a build here.
+#               Nothing is compiled. release.yml builds the two in parallel.
 #
 # The server is built exactly as scripts/release-public.sh builds the public
 # release (the web app as the public distribution, the builder's paths
@@ -53,8 +62,9 @@
 # Both pass the release text check (scripts/release-text-check.sh) before
 # they go in, and the build refuses to finish without them.
 #
-# Needs: Node as in .nvmrc, rustup, and for every build but --e2e,
-# cargo-about 0.9.2 (`cargo install --locked cargo-about@0.9.2 --features cli`).
+# Needs: rustup; Node as in .nvmrc, unless --sidecar and --notices (or --e2e)
+# are given; and for every build but --e2e or --notices, cargo-about 0.9.2
+# (`cargo install --locked cargo-about@0.9.2 --features cli`).
 #
 # Environment:
 #   DROPPEN_MIN_FREE_GB      refuse to start, and stop a step, below this much
@@ -92,6 +102,9 @@ SIDECAR=""
 KEEP_WORK=0
 E2E=0
 TEST_VERSION=""
+NOTICES_FROM=""
+NO_DMG=0
+FROM_APPS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=${2:?--ref needs a value}; shift 2 ;;
@@ -102,12 +115,20 @@ while [ $# -gt 0 ]; do
     --keep-work) KEEP_WORK=1; shift ;;
     --e2e) E2E=1; shift ;;
     --version) TEST_VERSION=${2:?--version needs a value}; shift 2 ;;
+    --notices) NOTICES_FROM=${2:?--notices needs a file}; shift 2 ;;
+    --no-dmg) NO_DMG=1; shift ;;
+    --from-apps) FROM_APPS=("${2:?--from-apps needs two apps}" "${3:?--from-apps needs two apps}"); shift 3 ;;
     -h|--help) usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
 done
 [ "$WORKTREE" = 0 ] || [ -z "$REF" ] || { echo "--ref and --worktree are exclusive" >&2; exit 2; }
 [ -z "$TEST_VERSION" ] || [ "$E2E" = 1 ] || { echo "--version is for --e2e test builds only; a release is the server's version" >&2; exit 2; }
+if [ "${#FROM_APPS[@]}" -gt 0 ]; then
+  { [ "$ARCH" = universal ] && [ "$E2E" = 0 ] && [ -n "${SIDECAR:-}" ]; } \
+    || { echo "--from-apps makes a universal release app, with a --sidecar" >&2; exit 2; }
+fi
+[ -z "$NOTICES_FROM" ] || [ "$E2E" = 0 ] || { echo "--notices is for a release build, not --e2e" >&2; exit 2; }
 
 TAURI_CLI_VERSION=2.12.3
 ABOUT_VERSION=0.9.2
@@ -134,14 +155,22 @@ for tool in git cargo rustup lipo shasum hdiutil codesign ditto; do
   command -v "$tool" >/dev/null || die "missing $tool"
 done
 # The licence and notices (every build but --e2e) need Node and cargo-about,
-# even with a prebuilt server: its web app's notices are made from the source.
-if [ -z "$SIDECAR" ] || [ "$E2E" = 0 ]; then
+# even with a prebuilt server (its web app's notices are made from the
+# source), unless --notices brings them.
+if [ -z "$SIDECAR" ] || { [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; }; then
   for tool in node npx; do command -v "$tool" >/dev/null || die "missing $tool"; done
 fi
-if [ "$E2E" = 0 ]; then
+if [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; then
   [ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
     || die "needs cargo-about $ABOUT_VERSION for THIRD_PARTY_NOTICES: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
 fi
+if [ -n "$NOTICES_FROM" ]; then
+  [ -s "$NOTICES_FROM" ] || die "--notices: no such file"
+  NOTICES_FROM=$(cd "$(dirname "$NOTICES_FROM")" && pwd -P)/$(basename "$NOTICES_FROM")
+fi
+for app in ${FROM_APPS[@]+"${FROM_APPS[@]}"}; do
+  [ -f "$app/Contents/Info.plist" ] || die "--from-apps: $app is not an app bundle"
+done
 # Signing during the build: the identity must be in the keychain, which is
 # better found out now than after the build.
 if [ -n "${APPLE_SIGNING_IDENTITY:-}" ] && [ "$APPLE_SIGNING_IDENTITY" != - ]; then
@@ -273,11 +302,13 @@ fi
 SRC=$WORK/src
 [ -d "$SRC/desktop/src-tauri" ] || die "$REF has no desktop/ app to build"
 
-say "rust targets"
-installed=$(rustup target list --installed)
-for target in "${TARGETS[@]}"; do
-  grep -qx "$target" <<<"$installed" || rustup target add "$target"
-done
+if [ "${#FROM_APPS[@]}" = 0 ]; then
+  say "rust targets"
+  installed=$(rustup target list --installed)
+  for target in "${TARGETS[@]}"; do
+    grep -qx "$target" <<<"$installed" || rustup target add "$target"
+  done
+fi
 
 CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
 REMAP="--remap-path-prefix=$SRC=/droppen --remap-path-prefix=$CARGO_HOME_DIR=/cargo"
@@ -327,7 +358,7 @@ if [ -n "$SIDECAR" ]; then
   fi
   echo "ok: the sidecar is $SIDE_VERSION, this ref's server"
 fi
-if [ -z "$SIDECAR" ] || [ "$E2E" = 0 ]; then
+if [ -z "$SIDECAR" ] || { [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; }; then
   say "web app: the public distribution"
   PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
   mkdir -p "$WORK/shims"
@@ -349,47 +380,15 @@ if [ "$E2E" = 0 ]; then
   [ -f "$LICENSE_FILE" ] || LICENSE_FILE=$REPO/LICENSE
   grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$LICENSE_FILE" || die "$LICENSE_FILE is not the AGPL-3.0 text"
   cp "$LICENSE_FILE" "$LEGAL/LICENSE"
-  # about.toml's allow-list, for the macOS targets this app is built for:
-  # its `targets` replaced, on one line or over several, and the rest kept.
-  awk '/^[[:space:]]*targets[[:space:]]*=/ {
-         print "targets = [\"aarch64-apple-darwin\", \"x86_64-apple-darwin\"]"
-         if ($0 !~ /\]/) skip = 1
-         next
-       }
-       skip { if ($0 ~ /\]/) skip = 0; next }
-       { print }' "$REPO/about.toml" > "$WORK/about-macos.toml"
-  [ "$(grep -c '^[[:space:]]*targets[[:space:]]*=' "$WORK/about-macos.toml")" = 1 ] \
-    && grep -qx 'targets = \["aarch64-apple-darwin", "x86_64-apple-darwin"\]' "$WORK/about-macos.toml" \
-    || die "cannot set the macOS targets in a copy of about.toml"
-  for kept in '^accepted[[:space:]]*=' '^ignore-build-dependencies[[:space:]]*=[[:space:]]*true' '^ignore-dev-dependencies[[:space:]]*=[[:space:]]*true' '^private[[:space:]]*=[[:space:]]*\{[[:space:]]*ignore[[:space:]]*=[[:space:]]*true[[:space:]]*\}'; do
-    grep -qE "$kept" "$WORK/about-macos.toml" || die "the copy of about.toml lost a setting it must keep ($kept)"
-  done
-  for manifest in server-rs desktop; do
-    run_watched cargo fetch --locked --manifest-path "$SRC/$manifest/Cargo.toml" >/dev/null
-    cargo about generate --frozen --fail -c "$WORK/about-macos.toml" \
-      -m "$SRC/$manifest/Cargo.toml" --format json -o "$WORK/about-$manifest.json" \
-      || die "cargo-about refused a Rust licence of $manifest (see above; the allow-list is about.toml's accepted)"
-  done
-  node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about-desktop.json,$WORK/about-server-rs.json" "$WORK/notices-rust.txt" \
-    "the app and its bundled server"
-  run_watched "${web_env[@]}" node "$REPO/scripts/notices/web-notices.mjs" "$SRC/web" "$WORK/notices-web.txt" \
-    || die "an npm package bundled into the web app fails the licence check (see above)"
-  rule=$(printf '=%.0s' $(seq 1 80))
-  {
-    printf 'THIRD_PARTY_NOTICES for Droppen %s for macOS (with remote-hand-server %s+g%s)\n\n' "$VERSION" "$SERVER_VERSION" "$REV"
-    printf 'Droppen is licensed under the GNU Affero General Public License, version 3\n'
-    printf 'only (AGPL-3.0-only); see LICENSE.\nCopyright (C) 2026 Kilerd\n\n'
-    printf 'The app, and the server it carries, also contain the third-party software\n'
-    printf 'below, used under the terms given with each: 1. other material, 2. Rust\n'
-    printf 'crates compiled in (cargo-about %s, macOS), 3. npm packages bundled into the\n' "$ABOUT_VERSION"
-    printf "server's web app.\n\n"
-    printf '%s\n1. ' "$rule"
-    cat "$REPO/scripts/notices/attributions.txt"
-    printf '\n%s\n2. ' "$rule"
-    cat "$WORK/notices-rust.txt"
-    printf '\n%s\n3. ' "$rule"
-    cat "$WORK/notices-web.txt"
-  } > "$LEGAL/THIRD_PARTY_NOTICES"
+  if [ -n "$NOTICES_FROM" ]; then
+    # Written elsewhere by desktop/third-party-notices.sh, for this very app.
+    cp "$NOTICES_FROM" "$LEGAL/THIRD_PARTY_NOTICES"
+    [ "$(head -n 1 "$LEGAL/THIRD_PARTY_NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION for macOS (with remote-hand-server $SERVER_VERSION+g$REV)" ] \
+      || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of Droppen $VERSION (remote-hand-server $SERVER_VERSION+g$REV)"
+  else
+    run_watched "${web_env[@]}" "$REPO/desktop/third-party-notices.sh" "$SRC" "$LEGAL/THIRD_PARTY_NOTICES" "$VERSION" "$SERVER_VERSION" "$REV" \
+      || die "THIRD_PARTY_NOTICES failed (see above)"
+  fi
   if LC_ALL=C grep -qF "$HOME/" "$LEGAL/THIRD_PARTY_NOTICES"; then die "THIRD_PARTY_NOTICES names paths under $HOME"; fi
   # The release text check (scripts/release-text-check.sh): no personal names
   # but the copyright holder's on the copyright line.
@@ -452,7 +451,9 @@ done
 chmod +x "$BINARIES/$BIN_NAME"-*
 
 say "tauri-cli $TAURI_CLI_VERSION"
-if [ "$("$TOOLS/bin/cargo-tauri" --version 2>/dev/null | awk '{ print $2 }')" != "$TAURI_CLI_VERSION" ]; then
+if [ "${#FROM_APPS[@]}" -gt 0 ]; then
+  echo "(--from-apps: nothing to compile)"
+elif [ "$("$TOOLS/bin/cargo-tauri" --version 2>/dev/null | awk '{ print $2 }')" != "$TAURI_CLI_VERSION" ]; then
   run_watched env CARGO_TARGET_DIR="$WORK/target-tauri-cli" CARGO_BUILD_BUILD_DIR="$WORK/build-tauri-cli" \
     cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked --root "$TOOLS" -j "$JOBS"
   rm -rf "$WORK/target-tauri-cli" "$WORK/build-tauri-cli"
@@ -484,6 +485,32 @@ identity_bundle_id() { sed -n "/^pub const $1: Identity = Identity {/,/^};/s/^ *
 if [ "$E2E" = 1 ]; then WANT_ID=$(identity_bundle_id E2E); else WANT_ID=$(identity_bundle_id RELEASE); fi
 [ -n "$WANT_ID" ] || die "cannot read the bundle id from desktop/core/src/identity.rs"
 [ "$BUNDLE_ID" = "$WANT_ID" ] || die "$CONF names the bundle id $BUNDLE_ID, but the app is compiled as $WANT_ID (desktop/core/src/identity.rs): it would refuse to start"
+if [ "${#FROM_APPS[@]}" -gt 0 ]; then
+  say "app: universal, from ${FROM_APPS[0]} and ${FROM_APPS[1]}"
+  A64=${FROM_APPS[0]}
+  X64=${FROM_APPS[1]}
+  # Two builds of the same app: the same files but the main program, each
+  # for its architecture (the sidecar is replaced by the universal one).
+  [ "$(lipo -archs "$A64/Contents/MacOS/$PRODUCT")" = arm64 ] || die "${FROM_APPS[0]}'s $PRODUCT is not arm64"
+  [ "$(lipo -archs "$X64/Contents/MacOS/$PRODUCT")" = x86_64 ] || die "${FROM_APPS[1]}'s $PRODUCT is not x86_64"
+  cmp -s "$A64/Contents/Info.plist" "$X64/Contents/Info.plist" || die "the two apps' Info.plist differ"
+  diff -r "$A64/Contents/Resources" "$X64/Contents/Resources" >/dev/null || die "the two apps' Resources differ"
+  [ "$(cd "$A64" && find . -path ./Contents/_CodeSignature -prune -o -print | LC_ALL=C sort)" = "$(cd "$X64" && find . -path ./Contents/_CodeSignature -prune -o -print | LC_ALL=C sort)" ] \
+    || die "the two apps do not hold the same files"
+  [ "$(ls "$A64/Contents/MacOS")" = "$(printf '%s\n' "$PRODUCT" "$BIN_NAME" | LC_ALL=C sort)" ] || die "the apps' Contents/MacOS is not $PRODUCT and $BIN_NAME"
+  BUNDLE="$WORK/assembled/bundle"
+  APP="$BUNDLE/macos/$PRODUCT.app"
+  mkdir -p "$BUNDLE/macos"
+  ditto "$A64" "$APP"
+  rm -rf "$APP/Contents/_CodeSignature"
+  lipo -create -output "$APP/Contents/MacOS/$PRODUCT" "$A64/Contents/MacOS/$PRODUCT" "$X64/Contents/MacOS/$PRODUCT"
+  cp "$SIDECAR_OUT" "$APP/Contents/MacOS/$BIN_NAME"
+  chmod 755 "$APP/Contents/MacOS/$PRODUCT" "$APP/Contents/MacOS/$BIN_NAME"
+  # Sealed ad hoc again, inside-out, as the builds were (desktop/notarise.sh
+  # signs the release with the Developer ID either way).
+  codesign --force --sign - "$APP/Contents/MacOS/$BIN_NAME"
+  codesign --force --sign - "$APP"
+else
 say "app: $TAURI_TARGET$([ "$E2E" = 1 ] && echo ' (e2e test build)')"
 # CI=true keeps Tauri from scripting the Finder. Ad hoc signing ("-") seals the bundle consistently; it is not a Developer ID
 # signature, so Gatekeeper still treats the app as unidentified.
@@ -502,6 +529,7 @@ say "app: $TAURI_TARGET$([ "$E2E" = 1 ] && echo ' (e2e test build)')"
 
 BUNDLE="$WORK/target-desktop/$TAURI_TARGET/release/bundle"
 APP="$BUNDLE/macos/$PRODUCT.app"
+fi
 [ -d "$APP" ] || die "no $PRODUCT.app in $BUNDLE/macos"
 
 say "checks"
@@ -552,6 +580,8 @@ codesign --verify --deep --strict "$APP" && echo "codesign: $(codesign -dv "$APP
 ditto "$APP" "$OUT/$PRODUCT.app"
 if [ "$E2E" = 1 ]; then
   echo "An end-to-end test build (feature e2e). Never ship or upload it." > "$OUT/E2E-TEST-BUILD.txt"
+elif [ "$NO_DMG" = 1 ]; then
+  echo "(--no-dmg: no DMG)"
 else
   # The DMG: the app, the usual Applications link, and the licence and the
   # notices beside them (desktop/notarise.sh makes the release's the same way).

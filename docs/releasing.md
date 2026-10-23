@@ -118,13 +118,15 @@ the fallback whenever GitHub Actions cannot be used.
 |---|---|---|---|
 | `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main), whether it has the app |
 | `web` | Linux | nothing | the public web build, once, for every binary to embed |
-| `tools` | macOS | nothing | cargo-about and tauri-cli for the build jobs |
+| `tools` | Linux | nothing | cargo-about and tauri-cli for the build jobs: upstream's release files, each checked against `.github/release-tools.lock` (nothing built) |
 | `signer` | macOS | nothing | `droppen-update-signer` (`desktop/update-signer`, with its format tests) and `droppen-update-manifest`, built from this repository's locked sources, for the `release` job |
 | `server-macos` | macOS ×2 | nothing | the server for aarch64 and x86_64, as `scripts/release-public.sh` builds it |
 | `server-linux` | Linux ×2 | nothing | the server for x86_64 and aarch64 (glibc 2.28): `scripts/build-linux-in-container.sh` in the image `scripts/build-linux.sh` pins |
-| `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt`: the binary checks, `THIRD_PARTY_NOTICES`, macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks, `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
+| `notices` | macOS | nothing | `THIRD_PARTY_NOTICES` of the server's files (`scripts/third-party-notices.sh`) and of the app (`desktop/third-party-notices.sh`), beside the builds: cargo-about reads the locked dependency graph, not the binaries |
+| `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt --web-dist --notices` with `web`'s build (not built again: CI's `web-reproducible` checks that the build is reproducible) and `notices`' file: macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks (the binary checks on the programs in them, the tarballs in parallel), `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
-| `desktop` | macOS | nothing | `desktop/build.sh --sidecar` with the staged universal server (unsigned) |
+| `desktop-arch` | macOS ×2 | nothing | `desktop/build.sh --arch aarch64` and `--arch x86_64`, each with that architecture's server from `server-macos` and the app's notices from `notices`, beside `stage` (unsigned, no DMG) |
+| `desktop` | macOS | nothing | `desktop/build.sh --from-apps`: the two apps' main programs fused with `lipo`, the staged universal server put in, sealed ad hoc and checked as a build (unsigned; nothing compiled) |
 | `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature) |
 | `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key); `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
 | `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected`: the release of the tag, made once |
@@ -132,10 +134,10 @@ the fallback whenever GitHub Actions cannot be used.
 The trust boundaries:
 
 - **The build jobs run dependency code and hold nothing.** `web`, `tools`,
-  the server builds, `stage`, `smoke-linux` and `desktop` run npm install
-  scripts, Rust build scripts and the programs they build, so they have no
-  secret, no write token and no OIDC token. Whatever they make is untrusted
-  data from then on.
+  `notices`, the server builds, `stage`, `smoke-linux`, `desktop-arch` and
+  `desktop` run npm install scripts, Rust build scripts and the programs
+  they build, so they have no secret, no write token and no OIDC token.
+  Whatever they make is untrusted data from then on.
 - **Artifacts are pinned and fenced.** Each artifact is a tar whose sha256
   its job puts out as a job output, which no other job can change. A job
   that takes one checks the download against that output, so an artifact
@@ -202,6 +204,16 @@ The trust boundaries:
   (`--sums-expected`).
 - **No caches.** Every dependency is fetched and built afresh, so no earlier
   run can leave anything for a release to pick up.
+- **Two prebuilt tools, pinned.** cargo-about (the notices) and tauri-cli
+  (the app's build) are not built here: they are upstream's release files
+  (EmbarkStudios/cargo-about, tauri-apps/tauri) for the versions the source
+  pins, each checked against the sha256 in `.github/release-tools.lock`; any
+  difference fails the run, and nothing falls back to building. The trust is
+  upstream's release plus our pinned hash (neither publishes an attestation
+  for them; cargo-about publishes a `.sha256`, which
+  `scripts/update-release-tool-pins.sh` checks, with the sha256 GitHub
+  records, when a person makes new pins for a version bump). The workflow
+  never fetches a hash, and the tools run in build jobs only.
 - **Pinned inputs.** Every action by commit; Rust 1.98.1 (rustup checks its
   downloads); Node as in `.nvmrc`; pnpm as in `package.json`; the Linux image
   by digest, zig by sha256; crates and npm packages by their lockfiles;

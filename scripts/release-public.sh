@@ -9,6 +9,7 @@
 #
 #   scripts/release-public.sh <version> [--ref <git-ref>] [--out <dir>] [--snapshot] [--no-linux] [--keep-work]
 #                             [--prebuilt <dir>] [--no-linux-smoke]
+#                             [--web-dist <dir>] [--notices <file>]
 #
 #   <version>   the release tag, e.g. v0.2.119. It must match the server
 #               crate's version at the ref.
@@ -30,6 +31,11 @@
 #   --no-linux-smoke  leave the Linux smoke tests (Docker) to the caller:
 #               release.yml runs .github/scripts/smoke-linux.sh on Linux
 #               runners, on the binaries unpacked from both tarballs
+#   --web-dist  the web app as built elsewhere, from the same ref (the one
+#               the --prebuilt binaries embed): its manifest is written from
+#               it, and it is not built again
+#   --notices   THIRD_PARTY_NOTICES as scripts/third-party-notices.sh wrote it
+#               for this version elsewhere (release.yml: a job of its own)
 #
 # Needs: Node as in .nvmrc, rustup, cargo-about 0.9.2
 # (`cargo install --locked cargo-about@0.9.2 --features cli`), and for Linux
@@ -47,9 +53,10 @@
 #      targets if missing), with the builder's paths remapped out of the binary,
 #      and meanwhile x86_64 and aarch64 Linux (glibc 2.28) in a throwaway pod
 #      (scripts/build-linux.sh);
-#   4. checks the binaries: the version names the commit, the only distribution
-#      marker is "public", no plugin is bundled, no path under $HOME is left,
-#      and nothing names the private source repository;
+#   4. checks the binaries (on the programs unpacked from the tarballs, step
+#      8, which are byte for byte these): the version names the commit, the
+#      only distribution marker is "public", no plugin is bundled, no path
+#      under $HOME is left, and nothing names the private source repository;
 #   5. writes THIRD_PARTY_NOTICES: every Rust crate compiled in (cargo-about,
 #      `about.toml`) and every npm package bundled into the web app
 #      (scripts/notices/web-notices.mjs), each licence in full, and fails on a
@@ -127,6 +134,8 @@ SNAPSHOT=0
 LINUX=1
 PREBUILT=""
 LINUX_SMOKE=1
+WEB_DIST=""
+NOTICES_FROM=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=${2:?--ref needs a value}; shift 2 ;;
@@ -136,6 +145,8 @@ while [ $# -gt 0 ]; do
     --no-linux) LINUX=0; shift ;;
     --prebuilt) PREBUILT=${2:?--prebuilt needs a directory}; shift 2 ;;
     --no-linux-smoke) LINUX_SMOKE=0; shift ;;
+    --web-dist) WEB_DIST=${2:?--web-dist needs a directory}; shift 2 ;;
+    --notices) NOTICES_FROM=${2:?--notices needs a file}; shift 2 ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) [ -z "$VERSION" ] || usage; VERSION=$1; shift ;;
@@ -157,6 +168,7 @@ BIN_NAME=remote-hand-server
 NEW_NAME=droppen
 # The old tarball names stay on every release until at least this date (three
 # months after the first release that also had the new ones).
+# shellcheck disable=SC2034 # scripts/release-notes.sh reads it from here
 OLD_ASSETS_UNTIL=2027-01-31
 ABOUT_VERSION=0.9.2
 # Strings no public binary may contain: the private repositories' names (the
@@ -177,8 +189,16 @@ if [ "$LINUX" = 1 ]; then
   [ -n "$PREBUILT" ] || command -v kubectl >/dev/null || die "the Linux builds need kubectl (or pass --no-linux)"
   [ "$LINUX_SMOKE" = 0 ] || docker info >/dev/null 2>&1 || die "the Linux smoke tests need Docker (or pass --no-linux)"
 fi
-[ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
-  || die "needs cargo-about $ABOUT_VERSION: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
+if [ -z "$NOTICES_FROM" ]; then
+  [ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
+    || die "needs cargo-about $ABOUT_VERSION: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
+else
+  [ -s "$NOTICES_FROM" ] || die "--notices: no such file"
+fi
+if [ -n "$WEB_DIST" ]; then
+  [ -f "$WEB_DIST/index.html" ] || die "--web-dist: $WEB_DIST holds no built web app"
+  WEB_DIST=$(cd "$WEB_DIST" && pwd -P)
+fi
 
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 REF=${REF:-$VERSION}
@@ -300,8 +320,18 @@ if ! command -v pnpm >/dev/null || [ "$(pnpm --version 2>/dev/null)" != "$PNPM_V
 fi
 # No DROPPEN_DISTRIBUTION: the build then reads `distribution.json`, the public one.
 web_env=(env -u DROPPEN_DISTRIBUTION PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
-run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
-run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
+if [ -n "$WEB_DIST" ]; then
+  # Built once, elsewhere: the very bytes the binaries embed. (CI's
+  # web-reproducible jobs keep checking that a build is reproducible.)
+  rm -rf "$SRC/web/dist"
+  cp -R "$WEB_DIST" "$SRC/web/dist"
+  echo "web app: $WEB_DIST (--web-dist), not built again"
+  # The notices build it once more, to see what it bundles.
+  [ -n "$NOTICES_FROM" ] || run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
+else
+  run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
+  run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
+fi
 # The public distribution, and nothing else.
 node -e '
   const m = require(process.argv[1]);
@@ -363,7 +393,8 @@ if [ "$LINUX" = 1 ] && [ -z "$PREBUILT" ]; then
   tail -n 3 "$WORK/linux-build.log"
 fi
 
-say "checks"
+# The checks of every binary (check_binary) are made on the programs of
+# every tarball, below ("tarball checks"): byte for byte these.
 bin_of() { echo "$WORK/target/$1/release/$BIN_NAME"; }
 check_binary() { # path
   local bin=$1 markers kind
@@ -392,16 +423,12 @@ check_binary() { # path
   esac
   echo "ok: $kind $bin: distribution public, no plugins, no \$HOME paths, no ${FORBIDDEN[*]}"
 }
-for target in "${TARGETS[@]}"; do check_binary "$(bin_of "$target")"; done
-if [ "$LINUX" = 1 ]; then
-  for arch in "${LINUX_ARCHES[@]}"; do
-    check_binary "$WORK/linux/$arch/$BIN_NAME"
-    case "$(file -b "$WORK/linux/$arch/$BIN_NAME")" in
-      *"$([ "$arch" = x86_64 ] && echo x86-64 || echo aarch64)"*) ;;
-      *) die "$WORK/linux/$arch/$BIN_NAME is not an $arch binary" ;;
-    esac
-  done
-fi
+check_linux_arch() { # path, arch
+  case "$(file -b "$1")" in
+    *"$([ "$2" = x86_64 ] && echo x86-64 || echo aarch64)"*) ;;
+    *) die "$1 is not an $2 binary" ;;
+  esac
+}
 
 say "licences"
 # The licence and notices tooling from this checkout, like INSTALL.txt below;
@@ -409,34 +436,19 @@ say "licences"
 LICENSE_FILE=$SRC/LICENSE
 [ -f "$LICENSE_FILE" ] || LICENSE_FILE=$REPO/LICENSE
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$LICENSE_FILE" || die "$LICENSE_FILE is not the AGPL-3.0 text"
-# The targets come from about.toml: the macOS and Linux ones built here, so one
-# file covers every binary of the release. Every target's crates are fetched
-# first: cargo-about reads their licences from the sources (--frozen), and
-# prebuilt binaries leave none behind on this machine.
-run_watched cargo fetch --locked --manifest-path "$SRC/server-rs/Cargo.toml" >/dev/null \
-  || die "cannot fetch the server's crates for the licences"
-cargo about generate --frozen --fail -c "$REPO/about.toml" \
-  -m "$SRC/server-rs/Cargo.toml" --format json -o "$WORK/about.json" \
-  || die "cargo-about refused a Rust licence (see above; the allow-list is about.toml's accepted)"
-node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about.json" "$WORK/notices-rust.txt"
-run_watched "${web_env[@]}" node "$REPO/scripts/notices/web-notices.mjs" "$SRC/web" "$WORK/notices-web.txt" \
-  || die "an npm package bundled into the web app fails the licence check (see above)"
 NOTICES=$WORK/THIRD_PARTY_NOTICES
-{
-  printf 'THIRD_PARTY_NOTICES for Droppen %s (remote-hand-server %s+g%s)\n\n' "$VERSION" "$CRATE_VERSION" "$REV"
-  printf 'Droppen is licensed under the GNU Affero General Public License, version 3\n'
-  printf 'only (AGPL-3.0-only); see LICENSE.\nCopyright (C) 2026 Kilerd\n\n'
-  printf 'The server binary also contains the third-party software below, used under\n'
-  printf 'the terms given with each: 1. other material, 2. Rust crates compiled in\n'
-  printf '(cargo-about %s, macOS and Linux), 3. npm packages bundled into the embedded web app.\n\n' "$ABOUT_VERSION"
-  printf '%s\n1. ' "$(printf '=%.0s' $(seq 1 80))"
-  cat "$REPO/scripts/notices/attributions.txt"
-  printf '\n%s\n2. ' "$(printf '=%.0s' $(seq 1 80))"
-  cat "$WORK/notices-rust.txt"
-  printf '\n%s\n3. ' "$(printf '=%.0s' $(seq 1 80))"
-  cat "$WORK/notices-web.txt"
-} > "$NOTICES"
-if LC_ALL=C grep -qF "$HOME/" "$NOTICES"; then die "THIRD_PARTY_NOTICES names paths under $HOME"; fi
+if [ -n "$NOTICES_FROM" ]; then
+  # Written elsewhere by scripts/third-party-notices.sh, for this very version.
+  cp "$NOTICES_FROM" "$NOTICES"
+  [ "$(head -n 1 "$NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION (remote-hand-server $CRATE_VERSION+g$REV)" ] \
+    || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of $VERSION (remote-hand-server $CRATE_VERSION+g$REV)"
+  if LC_ALL=C grep -qF "$HOME/" "$NOTICES"; then die "THIRD_PARTY_NOTICES names paths under $HOME"; fi
+else
+  # The licence and notices tooling from this checkout, like INSTALL.txt
+  # below; the dependency graph and node_modules from the ref.
+  run_watched "${web_env[@]}" "$REPO/scripts/third-party-notices.sh" "$SRC" "$NOTICES" "$VERSION" "$CRATE_VERSION" "$REV" \
+    || die "THIRD_PARTY_NOTICES failed (see above)"
+fi
 echo "ok: THIRD_PARTY_NOTICES $(wc -l < "$NOTICES" | tr -d ' ') lines; LICENSE from ${LICENSE_FILE#"$WORK/"}"
 
 mkdir -p "$WORK/dist/universal" "$WORK/dist/aarch64" "$WORK/dist/x86_64"
@@ -521,11 +533,12 @@ fi
 
 say "tarball checks"
 # Every tarball, unpacked as a person would: exactly its members, each program
-# byte for byte the binary the checks and smoke tests above passed, and the
-# step-4 checks again on what was unpacked.
+# byte for byte the binary the smoke tests above passed, and the binary checks
+# (check_binary) on what was unpacked: the one pass of them. All tarballs at
+# once, each with a log of its own, printed in order; any failure fails.
 UNPACKED=$WORK/unpacked
 verify_tarball() { # tarball, the binary it was made from, its members
-  local tarball=$1 bin=$2 dir listing member
+  local tarball=$1 bin=$2 dir listing member checked=""
   shift 2
   dir=$UNPACKED/$(basename "$tarball" .tar.gz)
   mkdir -p "$dir"
@@ -535,10 +548,18 @@ verify_tarball() { # tarball, the binary it was made from, its members
   for member in "$NEW_NAME" "$BIN_NAME"; do
     [ -e "$dir/$member" ] || continue
     [ -x "$dir/$member" ] || die "$(basename "$tarball"): $member is not executable"
-    cmp -s "$dir/$member" "$bin" || die "$(basename "$tarball"): $member is not the binary that was checked"
+    cmp -s "$dir/$member" "$bin" || die "$(basename "$tarball"): $member is not the binary that was smoke-tested"
+    # A hard link to the member just checked: the same file.
+    if [ -n "$checked" ] && [ "$dir/$member" -ef "$checked" ]; then
+      echo "ok: $dir/$member is $(basename "$checked"), one file"
+      continue
+    fi
     check_binary "$dir/$member"
+    checked=$dir/$member
   done
 }
+CHECK_PIDS=()
+CHECK_NAMES=()
 for tarball in "$STAGE"/*.tar.gz; do
   name=$(basename "$tarball" .tar.gz)
   case "$name" in
@@ -554,8 +575,19 @@ for tarball in "$STAGE"/*.tar.gz; do
     linux) bin=$WORK/linux/$arch/$BIN_NAME ;;
     *) die "an unexpected platform in $name" ;;
   esac
-  verify_tarball "$tarball" "$bin" "${members[@]}" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
+  (
+    verify_tarball "$tarball" "$bin" "${members[@]}" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
+    [ "$os" != linux ] || check_linux_arch "$bin" "$arch"
+  ) >"$WORK/check-$name.log" 2>&1 &
+  CHECK_PIDS+=("$!")
+  CHECK_NAMES+=("$name")
 done
+CHECK_FAILED=()
+for i in "${!CHECK_PIDS[@]}"; do
+  wait "${CHECK_PIDS[$i]}" || CHECK_FAILED+=("${CHECK_NAMES[$i]}")
+  sed "s|^|${CHECK_NAMES[$i]}: |" "$WORK/check-${CHECK_NAMES[$i]}.log"
+done
+[ "${#CHECK_FAILED[@]}" = 0 ] || die "the checks of ${CHECK_FAILED[*]} failed (above)"
 # Both families of each platform, or neither.
 for tarball in "$STAGE/remote-hand-$VERSION-"*.tar.gz; do
   name=$(basename "$tarball")
