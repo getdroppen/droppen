@@ -8,6 +8,7 @@ pub mod cloud;
 pub mod created;
 pub mod error;
 pub mod extract;
+pub mod hub_web;
 pub mod link_handoff;
 
 use std::sync::Arc;

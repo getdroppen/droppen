@@ -360,12 +360,14 @@ const HUB_CRATE = /(?<![A-Za-z0-9_])(?:rh|droppen)_hub(?:_[A-Za-z0-9_]+)?(?![A-Z
 // built with (`Path::new(root).join("rh-hub")`, `join(root, "rh-hub")`). A
 // file or a binary named after it (`rh-hub-stress.rs`,
 // `target/debug/rh-hub-stress`) is not a path into it, and neither is the
-// page's documented `<meta name="rh-hub">` marker.
+// page's documented `<meta name="rh-hub">` marker, nor the documented hub
+// route `/.well-known/droppen-hub` (docs/hub-api/http.md: which hosts a hub
+// serves, read by the local server and the web app).
 const HUB_PATH = new RegExp(
   [
     String.raw`(?<![A-Za-z0-9_-])(?:rh|droppen)-hub(?:-[a-z]+)?\/`,
     String.raw`crates\/(?:rh|droppen)-hub(?:-[a-z]+)?(?![A-Za-z0-9_.\/-])`,
-    String.raw`(?<!target\/(?:debug|release)\/)(?<=\/)(?:rh|droppen)-hub(?:-[a-z]+)?(?![A-Za-z0-9_.\/-])`,
+    String.raw`(?<!target\/(?:debug|release)\/|\/\.well-known\/)(?<=\/)(?:rh|droppen)-hub(?:-[a-z]+)?(?![A-Za-z0-9_.\/-])`,
     String.raw`(?<=(?:join|push|resolve|new|from)\((?:[^()]*,\s*)?["'\x60])(?:rh|droppen)-hub(?:-[a-z]+)?(?=["'\x60])`,
   ].join("|"),
   "g",

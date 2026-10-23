@@ -670,6 +670,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 **1. 发起**（`POST /api/cloud/link`，与弹窗共用一个 attempt）
 
 - 请求带 `Origin` 时（本机页面发起的都带），S 除了 nonce 之外再为这个 attempt 生成一把一次性 X25519 钥 `E` 和 16 字节 `state`，只在内存里，随 attempt 一起过期、用掉或取消。
+- `hubWeb` 是浏览器登录 Hub 的地址，弹窗也在这里打开：S 问 Hub 的 `/.well-known/droppen-hub`，取其中的 `app`（如 `https://my.droppen.app`，须是 Hub 自己的主机或它的子域）；没有、或不合规则，就用 Hub 自己的源（`https://droppen.app`）。S 自己仍连 `wss://<hub>`。规则与各版本的行为见 `docs/hub-api/link.md`「Which host the popup and the hand-off open」（`server-rs/src/api/hub_web.rs`）。
 - 回复多一个 `handoffUrl`：`<hubWeb>/link#droppen-link=<base64url(JSON)>`。JSON 里只有：attempt id、`E` 的公钥、`state`、页面的源（取自 `Origin`）、过期时间、主机名与设备两把公钥。全部在片段里，不进查询串；S 不记日志。
 - 桌面应用：页面 `window.open(handoffUrl, "_blank", "noopener")`，应用把它交给系统浏览器。应用往外交地址时一向去掉片段（本机地址的片段可能是登录令牌）；只有形如 `/link#droppen-link=…`、又不是应用自己服务器的地址保留片段（`desktop/core/src/sign_in.rs`）。
 - 浏览器：弹窗被拦或被关后，「改在浏览器标签页里继续」用同一个 attempt 打开这个地址（点击里打开，不会被拦）。

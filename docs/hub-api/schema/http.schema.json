@@ -1042,6 +1042,38 @@
         }
       }
     },
+    "GET /.well-known/droppen-hub": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "description": "Which hosts this hub serves (docs/hub-api/http.md): the origin agents and relays dial, where the web app lives and where the site does. A hub that serves everything on one host may have no such document (404, or the web app's shell as for any path); a client then uses the hub's own origin for everything. The local agent takes `app` for the sign-in popup and the browser hand-off only when it is a plain https origin (http on loopback) whose host is the hub's own or a subdomain of it, and `origin`, when given, is the hub it dialled; anything else, it uses the hub's own origin.",
+          "required": [
+            "origin",
+            "app"
+          ],
+          "properties": {
+            "origin": {
+              "type": "string",
+              "pattern": "^wss?://[^/?#@]+$",
+              "description": "the hub as agents, relays and the agent's sign-in dial it (`wss://droppen.app`); it does not move"
+            },
+            "app": {
+              "type": "string",
+              "pattern": "^https?://[^/?#@]+$",
+              "description": "the web app's origin: where a browser signs in, pairs and uses the account (`https://my.droppen.app`); the hub's own origin when it serves the app there"
+            },
+            "site": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^https?://[^/?#@]+$",
+              "description": "the site's origin (`https://www.droppen.app`): the landing, download, pricing, security, privacy and terms pages; `null` or absent when the app's host has them"
+            }
+          }
+        }
+      }
+    },
     "GET /v1/releases/latest": {
       "$defs": {
         "response": {

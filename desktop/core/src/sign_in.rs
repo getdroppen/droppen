@@ -173,6 +173,23 @@ mod tests {
         assert_eq!(browser_url(&own, Some(51_234)).fragment(), None);
     }
 
+    /// The hub may name its app on another host (`/.well-known/droppen-hub`,
+    /// `server-rs/src/api/hub_web.rs`): the hand-off is then there, and goes
+    /// to the browser whole all the same — any host, only the shape counts.
+    #[test]
+    fn a_sign_in_on_the_hub_s_app_host_goes_to_the_browser_whole() {
+        for at in [
+            "https://my.droppen.app/link#droppen-link=eyJ2IjoxfQ",
+            "http://my.localhost:9000/link#droppen-link=abc",
+        ] {
+            let sign_in = url(at);
+            assert!(is_sign_in(&sign_in), "{at}");
+            assert_eq!(browser_url(&sign_in, Some(51_234)), sign_in, "{at}: whole");
+        }
+        let other = url("https://my.droppen.app/sessions#droppen-link=abc");
+        assert_eq!(browser_url(&other, Some(51_234)).fragment(), None);
+    }
+
     #[test]
     fn the_window_comes_forward_once_when_the_device_joins() {
         let start = Instant::now();

@@ -775,6 +775,7 @@ mod tests {
         assert!(!leaves_the_app(&url("tauri://localhost/index.html"), port));
         assert!(!leaves_the_app(&url("about:blank"), port));
         assert!(leaves_the_app(&url("https://droppen.app/link"), port));
+        assert!(leaves_the_app(&url("https://my.droppen.app/link"), port));
         assert!(leaves_the_app(&url("http://127.0.0.1:8700/"), port));
         assert!(leaves_the_app(&url("http://localhost:51234/"), port));
         assert!(leaves_the_app(&url("http://127.0.0.1:51234/"), None));

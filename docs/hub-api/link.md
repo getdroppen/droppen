@@ -84,3 +84,48 @@ All are plain objects with `v: 1` and a type `t`. Hex is lower-case.
   online admin answers with host keys only. No other chain entry is written.
 - Neither page sets `Cross-Origin-Opener-Policy: same-origin` (it would cut
   `window.opener`); the hub's tests hold it to that.
+
+## Which host the popup and the hand-off open
+
+The opener and the hand-off use the hub's **app origin**, `hubWeb`, which the
+local server works out (`server-rs/src/api/hub_web.rs`) and gives in
+`GET /api/cloud` and `POST /api/cloud/link`:
+
+- It asks the hub for `GET /.well-known/droppen-hub` (`http.md`) and takes
+  its `app` (`https://my.droppen.app` for droppen.app) when it is a plain
+  `https` origin (`http` only for a loopback test hub) whose host is the hub's
+  own or a subdomain of it, and the document's `origin`, when it has one, is
+  the hub the computer dialled.
+- Anything else — no document (a hub that serves one host), a redirect, an
+  answer it does not take, the hub out of reach — leaves the hub's own origin
+  as `https://` (`https://droppen.app`), as before.
+- The computer itself keeps signing in to `wss://<hub>` (`/v1/agent`): the
+  document moves only where a browser goes.
+- An answer is kept for ten minutes (a failure for 30 seconds). The status
+  waits at most a second for a hub's first answer; a sign-in asks again when
+  its answer is stale, at most 3 seconds.
+
+`/link?v=1` opens at `<hubWeb>`, and the opener takes messages from that
+origin only; the hand-off address is `<hubWeb>/link#droppen-link=…`. The
+hand-off's answer goes back to the page's own origin
+(`<cb>/link/return#droppen-return=…`) and is sealed to the attempt, not to the
+host the consent page was on (`rh_proto::link_return`): it works from any of
+the hub's hosts.
+
+### Installed versions and an app on another host
+
+What each installed version of the local server does once the app is on
+`my.droppen.app` and `droppen.app` no longer serves it to page loads:
+
+| version | sign-in from the local settings | after the move |
+|---|---|---|
+| up to v0.2.102 | none (a one-time code, `DROPPEN_CODE`) | unaffected: it only uses `/v1/*` and the sockets on `droppen.app`, which never redirect |
+| v0.2.103–v0.2.124 | popup at `https://droppen.app/link?v=1`; the opener takes messages from `https://droppen.app` only; no hand-off | the popup cannot finish on `my.droppen.app`: the opener drops its messages. `droppen.app/link?v=1` says so (update Droppen, or add the device with a one-time code from my.droppen.app) |
+| v0.2.125–v0.2.128 | the same popup, plus the browser hand-off `https://droppen.app/link#droppen-link=…` ("continue in the browser"; the desktop app's only way) | the popup as above; the hand-off works: `droppen.app` sends it on to `my.droppen.app` with the fragment, and the answer comes back to the local page, bound to nothing about the host |
+| from the version with discovery | popup and hand-off at the hub's `app` | both on `my.droppen.app` directly |
+
+The popup sign-in arrived in v0.2.103 and the hand-off in v0.2.125; the
+desktop app's window has no `window.opener`, so its sign-in works from
+v0.2.125 on, through the hand-off only. Every version keeps its connection to
+the hub: agents, relays and the desktop app's server dial `wss://droppen.app`,
+unredirected.

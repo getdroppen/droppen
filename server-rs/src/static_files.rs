@@ -382,6 +382,23 @@ mod tests {
         }
     }
 
+    /// The local web UI when a hub splits its hosts (the app on
+    /// my.droppen.app, the site on www): this server serves the same build
+    /// with no `rh-hub` marker, so the page runs in local mode, and has no
+    /// `/.well-known/droppen-hub` of its own — the page never takes this host
+    /// for a hub's app or site. Where it signs in comes from its server
+    /// (`GET /api/cloud`'s `hubWeb`, `api/hub_web.rs`).
+    #[test]
+    fn the_local_page_names_no_hub_and_this_server_names_no_hosts() {
+        let discovery = get("/.well-known/droppen-hub");
+        let kind = discovery.headers().get(header::CONTENT_TYPE).map(|v| v.to_str().unwrap_or_default().to_string());
+        assert_ne!(kind.as_deref(), Some("application/json"), "no discovery document here");
+        if let Some(shell) = assets::get("index.html") {
+            assert_eq!(kind.as_deref(), Some("text/html; charset=utf-8"), "the shell, as for any route");
+            assert!(!String::from_utf8_lossy(&shell).contains(r#"name="rh-hub""#), "no hub marker on the local page");
+        }
+    }
+
     #[test]
     fn a_url_carrying_its_own_content_hash_is_immutable() {
         let icon = file_response("icon-192.png", vec![1, 2, 3], true, None);

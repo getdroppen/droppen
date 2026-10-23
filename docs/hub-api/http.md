@@ -60,6 +60,23 @@ then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
 A claim like everything else here, not a proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.
 
+### `GET /.well-known/droppen-hub` — which hosts this hub serves
+→ `{origin: "wss://<host>", app: "https://<host>", site?: "https://<host>" | null}`.
+`origin` is the hub as agents, relays and the agent's own sign-in dial it
+(`wss://droppen.app`); it does not move. `app` is where a browser signs in,
+pairs and uses the account (`https://my.droppen.app`), `site` where the
+landing, download and policy pages are (`https://www.droppen.app`). A hub that
+serves everything on one host may have no such document (a 404, or the web
+app's shell as for any path); a client then uses the hub's own origin for
+everything.
+
+The local server reads it to know where the sign-in popup and the browser
+hand-off open ([link](link.md#which-host-the-popup-and-the-hand-off-open)): it
+takes `app` only when it is a plain `https` origin (`http` only for a loopback
+test hub) whose host is the hub's own or a subdomain of it, and `origin`,
+when given, is the hub it dialled; it does not follow a redirect. It keeps an
+answer for ten minutes.
+
 ### A service worker fetched from any path but `/sw.js` — only when the hub serves the web app
 A `GET` carrying `Service-Worker: script` (the browser fetching or updating a
 service worker) for any path other than `/sw.js` gets a small worker that

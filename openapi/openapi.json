@@ -1567,7 +1567,7 @@
             "type": "string"
           },
           "hubWeb": {
-            "description": "The hub's web origin, which the sign-in popup opens.",
+            "description": "Where a browser signs in to the hub, which the sign-in popup and the\nbrowser hand-off open: the app origin the hub's\n`/.well-known/droppen-hub` names (`https://my.droppen.app`), else the\nhub's own origin as `https://`.",
             "type": "string"
           },
           "link": {
@@ -2274,7 +2274,7 @@
             "type": "string"
           },
           "hubWeb": {
-            "description": "The popup's origin (`https://droppen.app`).",
+            "description": "The popup's origin, where the browser signs in: the hub's app origin\n(`https://my.droppen.app`), else its own (`https://droppen.app`).",
             "type": "string"
           },
           "machine": {

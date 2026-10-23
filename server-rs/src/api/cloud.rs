@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
 use super::extract::ApiJson;
+use super::hub_web::HubWebs;
 use super::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 use super::{ApiRouter, AppState, SendResult};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
@@ -83,6 +84,8 @@ pub struct Cloud {
     /// Bumped whenever `cloud.json` changes: the gateway's connections look
     /// again at who may see other devices.
     changed: tokio::sync::watch::Sender<u64>,
+    /// Where a browser signs in to each hub ([`super::hub_web`]).
+    pub hub_webs: HubWebs,
 }
 
 /// A sign-in in flight.
@@ -92,7 +95,8 @@ struct Attempt {
     nonce: String,
     /// The local user who opened it.
     owner: String,
-    /// The hub, as the agent signs in to it (`wss://…`) and as a browser opens it.
+    /// The hub, as the agent signs in to it (`wss://…`), and where a browser
+    /// signs in to it ([`super::hub_web`]: its app origin, or its own as `https://`).
     hub: String,
     hub_web: String,
     aggregate: bool,
@@ -181,6 +185,7 @@ impl Cloud {
             handoff_outcome: Mutex::new(None),
             file: Mutex::new(()),
             changed: tokio::sync::watch::channel(0).0,
+            hub_webs: HubWebs::default(),
         })
     }
 
@@ -381,19 +386,21 @@ pub fn hand_over_from_local_owner(paths: &Paths, accounts: &[(String, String, bo
 
 /// The hub a sign-in uses: the request's, else `DROPPEN_HUB_DEFAULT` (or its
 /// old name, `RH_HUB_DEFAULT`), else
-/// droppen.app. `(as the agent signs in: wss://…, as a browser opens it: https://…)`.
-fn resolve_hub(requested: Option<&str>) -> Result<(String, String), ApiError> {
+/// droppen.app; as the agent signs in to it, `wss://…`. Where a browser signs
+/// in to it is the hub's to say ([`super::hub_web`]).
+fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
     let configured = crate::env::var("DROPPEN_HUB_DEFAULT");
     let url = requested
         .filter(|h| !h.trim().is_empty())
         .map(str::to_string)
         .or(configured)
         .unwrap_or_else(|| DEFAULT_HUB.to_string());
-    let ws = crate::agent::hub::origin(&url).map_err(|message| refusal(StatusCode::BAD_REQUEST, "bad_hub", &message))?;
-    Ok((ws.clone(), web_origin(&ws)))
+    crate::agent::hub::origin(&url).map_err(|message| refusal(StatusCode::BAD_REQUEST, "bad_hub", &message))
 }
 
-/// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only).
+/// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only):
+/// the hub's own web origin, where a browser signs in unless the hub names
+/// its app's ([`super::hub_web`]).
 pub fn web_origin(ws_origin: &str) -> String {
     if let Some(rest) = ws_origin.strip_prefix("wss://") {
         format!("https://{rest}")
@@ -821,7 +828,10 @@ pub struct CloudStatus {
     pub local_auth: bool,
     /// The hub, as the agent signs in to it (`wss://…`).
     pub hub: String,
-    /// The hub's web origin, which the sign-in popup opens.
+    /// Where a browser signs in to the hub, which the sign-in popup and the
+    /// browser hand-off open: the app origin the hub's
+    /// `/.well-known/droppen-hub` names (`https://my.droppen.app`), else the
+    /// hub's own origin as `https://`.
     pub hub_web: String,
     /// The account, once known.
     pub account: Option<CloudAccount>,
@@ -912,7 +922,8 @@ pub struct LinkAttempt {
     /// The nonce the popup's messages must carry (32 hex digits). Only ever
     /// between this page and the popup — never in a URL.
     pub nonce: String,
-    /// The popup's origin (`https://droppen.app`).
+    /// The popup's origin, where the browser signs in: the hub's app origin
+    /// (`https://my.droppen.app`), else its own (`https://droppen.app`).
     pub hub_web: String,
     /// When the attempt expires (ms).
     pub expires_ms: u64,
@@ -1115,12 +1126,15 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     } else {
         Vec::new()
     };
-    let (hub, hub_web) = match &agent.hub {
-        Some(hub) => (hub.clone(), web_origin(hub)),
-        None => match &attempt {
-            Some(a) => (a.hub.clone(), a.hub_web.clone()),
-            None => resolve_hub(None).unwrap_or_else(|_| ("wss://droppen.app".into(), DEFAULT_HUB.into())),
-        },
+    let hub = match (&agent.hub, &attempt) {
+        (Some(hub), _) => hub.clone(),
+        (None, Some(a)) => a.hub.clone(),
+        (None, None) => resolve_hub(None).unwrap_or_else(|_| "wss://droppen.app".into()),
+    };
+    let hub_web = match &attempt {
+        // The attempt's own: the page that opened it follows that one.
+        Some(a) if a.hub == hub => a.hub_web.clone(),
+        _ => cloud.hub_webs.for_status(&hub).await,
     };
     // The fingerprint only when the key exists already: a status is never
     // what makes one.
@@ -1276,11 +1290,14 @@ pub async fn post_link(
         }
         Standing::None | Standing::Enrolling => None,
     };
-    let (hub, hub_web) = match (&enrolled, &agent.hub) {
+    let hub = match (&enrolled, &agent.hub) {
         // An enrolled computer stays with its hub.
-        (Some(_), Some(hub)) => (hub.clone(), web_origin(hub)),
+        (Some(_), Some(hub)) => hub.clone(),
         _ => resolve_hub(body.hub.as_deref())?,
     };
+    // Where the browser signs in: the hub's app origin, when its discovery
+    // document names one (my.droppen.app), else its own (`super::hub_web`).
+    let hub_web = cloud.hub_webs.for_sign_in(&hub).await;
     let identity = cloud.control.identity().map_err(ApiError::internal)?;
     let aggregate = body.aggregate.unwrap_or(true);
     // Chain v3 (local-aggregator §3.3): this computer controls other devices
@@ -2550,6 +2567,56 @@ mod tests {
         assert_eq!(state.cloud.control.status().state, Standing::Linked);
     }
 
+    /// The sign-in opens where the hub says its app is
+    /// (`/.well-known/droppen-hub`, [`super::super::hub_web`]): the popup's
+    /// origin, the hand-off address and the status the page opens the popup
+    /// from — while the agent keeps signing in to the hub itself.
+    #[tokio::test]
+    async fn the_sign_in_opens_the_app_origin_the_hub_names() {
+        use crate::api::hub_web::tests::{hub_answering, port};
+        let (hub, asked) = hub_answering(|hub| {
+            let doc = serde_json::json!({"origin": hub, "app": format!("http://my.localhost:{}", port(hub))});
+            (200, None, doc.to_string())
+        })
+        .await;
+        let app = format!("http://my.localhost:{}", port(&hub));
+        let home = tempfile::tempdir().unwrap();
+        let (state, addr) = crate::api::test_support::served(home.path()).await;
+        state.cloud.control.attach(crate::agent::link::LinkEnv {
+            addr,
+            credential: "test".into(),
+            drive: state.drive.clone(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+        });
+        state.cloud.hub_webs.set_discover(true);
+        state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
+        let alice = signed_in(&state, "alice").await;
+        let Json(opened) = post_link(
+            State(state.clone()),
+            alice,
+            PageOrigin(Some(format!("http://{addr}"))),
+            ApiJson(LinkRequest {
+                hub: Some(hub.clone()),
+                aggregate: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(opened.hub_web, app);
+        let url = opened.handoff_url.clone().expect("opened from a page");
+        assert!(url.starts_with(&format!("{app}/link#droppen-link=")), "{url}");
+        let status = status_for(&state, Some("alice")).await;
+        assert_eq!((status.hub.as_str(), status.hub_web.as_str()), (hub.as_str(), app.as_str()), "the agent stays on the hub");
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // The answer through the browser is bound to the page's origin, not
+        // to the host droppen.app's page was on: it opens as before.
+        let reply = serde_json::json!({"code": valid_code()});
+        let (attempt, sealed) = crate::api::link_handoff::tests::answer(&url, &reply, None);
+        let held = state.cloud.live_attempt().expect("the attempt");
+        assert_eq!(attempt, held.id);
+        assert!(held.handoff.as_ref().unwrap().open(&attempt, &link_handoff::sealed_bytes(&sealed).unwrap()).is_ok());
+    }
+
     /// Review of the hand-off: between taking the attempt and the hub's
     /// answer the attempt is gone, and the page that waits read that as "ran
     /// out". Through `return` itself, while the hub keeps the enrollment
@@ -2671,14 +2738,10 @@ mod tests {
 
     #[test]
     fn hubs_resolve_to_an_agent_origin_and_a_web_origin() {
-        assert_eq!(
-            resolve_hub(Some("https://droppen.app")).unwrap(),
-            ("wss://droppen.app".to_string(), "https://droppen.app".to_string())
-        );
-        assert_eq!(
-            resolve_hub(Some("http://127.0.0.1:9000/")).unwrap(),
-            ("ws://127.0.0.1:9000".to_string(), "http://127.0.0.1:9000".to_string())
-        );
+        assert_eq!(resolve_hub(Some("https://droppen.app")).unwrap(), "wss://droppen.app");
+        assert_eq!(web_origin("wss://droppen.app"), "https://droppen.app");
+        assert_eq!(resolve_hub(Some("http://127.0.0.1:9000/")).unwrap(), "ws://127.0.0.1:9000");
+        assert_eq!(web_origin("ws://127.0.0.1:9000"), "http://127.0.0.1:9000");
         assert_eq!(code_of(resolve_hub(Some("http://evil.example")).unwrap_err()).1, "bad_hub");
     }
 

@@ -417,7 +417,7 @@ function SignedOut(props: {
           <input
             value={props.hubInput}
             onChange={(e) => props.setHubInput(e.target.value)}
-            placeholder={status.hubWeb}
+            placeholder={hubWebOrigin(status.hub) ?? status.hubWeb}
             spellCheck={false}
             className={cn(field, !props.hubValid && "border-danger/60")}
           />

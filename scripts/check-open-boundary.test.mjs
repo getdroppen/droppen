@@ -88,6 +88,10 @@ describe("sources", () => {
     for (const src of ['let bin = "target/debug/rh-hub-stress";', '#[path = "bin/rh-hub-stress.rs"]\nmod stress;', 'let s = "rh-hub-web";']) {
       assert.deepEqual(sourceProblems(src, "rs", "server-rs/crates/rh-devkit/src/a.rs"), [], src);
     }
+    // nor is the documented route of which hosts a hub serves
+    assert.deepEqual(sourceProblems('pub const DISCOVERY_PATH: &str = "/.well-known/droppen-hub";', "rs", "server-rs/src/a.rs"), []);
+    assert.deepEqual(sourceProblems('await fetch("/.well-known/droppen-hub");', "js", "web/src/a.ts"), []);
+    assert.equal(sourceProblems('let p = "/srv/well-known/droppen-hub";', "rs", "server-rs/src/a.rs").length, 1, "only that route");
   });
 
   test("shell and YAML: `#` comments out, quotes and `$#` do not", () => {

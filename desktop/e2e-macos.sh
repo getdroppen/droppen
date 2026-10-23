@@ -39,7 +39,9 @@
 #      the throwaway home: an end-to-end build never uses SMAppService, which
 #      would register with the real Login Items;
 #   4. Settings → Security has no password change;
-#      Settings → Droppen signs in through the system browser: the sign-in
+#      Settings → Droppen signs in through the system browser, at the app host
+#      the hub names in its discovery document (a test hub on loopback whose
+#      app is my.localhost) while the server stays with the hub: the sign-in
 #      address goes to the browser whole (logged by host only), the window
 #      stays and shows "continue in your browser" with the device's
 #      fingerprint, and cancelling ends the attempt;
@@ -90,6 +92,7 @@ mkdir -p "$HOME_DIR/Downloads" "$SHOTS"
 mkdir -m 700 "$CTL"
 APP_PID=""
 LISTENER_PID=""
+HUB_PID=""
 FAILED=0
 # WebKit keeps a web view's data under the *account's* home, whatever $HOME
 # says — per bundle id, so the end-to-end build's own: removed before the run
@@ -128,6 +131,7 @@ cleanup() {
   if alive "$APP_PID"; then stop TERM "$APP_PID"; sleep 3; fi
   if alive "$APP_PID"; then stop KILL "$APP_PID"; fi
   if alive "$LISTENER_PID"; then kill -TERM "$LISTENER_PID" 2>/dev/null || true; fi
+  if alive "$HUB_PID"; then kill -TERM "$HUB_PID" 2>/dev/null || true; fi
   local server
   server=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$SUPPORT/server.pid" 2>/dev/null || true)
   if alive "$server"; then stop TERM "$server"; fi
@@ -139,10 +143,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The hub the server signs in to (DROPPEN_DESKTOP_TEST_HUB): a test hub on
+# loopback that only answers its discovery document, `/.well-known/droppen-hub`
+# (docs/hub-api/http.md), naming its app on another host, as droppen.app names
+# my.droppen.app. Signing in to Droppen opens that host; the server stays with
+# the hub (server-rs/src/api/hub_web.rs). Nothing has to listen on the app's
+# host: an end-to-end build logs the address instead of opening it.
+HUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+HUB="http://localhost:$HUB_PORT"
+HUB_APP="http://my.localhost:$HUB_PORT"
+SIGN_IN_AT="http://my.localhost"
+mkdir -p "$ROOT/hub/.well-known"
+printf '{"origin":"ws://localhost:%s","app":"%s","site":"http://www.localhost:%s"}\n' "$HUB_PORT" "$HUB_APP" "$HUB_PORT" >"$ROOT/hub/.well-known/droppen-hub"
+python3 -m http.server "$HUB_PORT" --bind 127.0.0.1 --directory "$ROOT/hub" >"$ROOT/hub.log" 2>&1 &
+HUB_PID=$!
+
 launch() {
   env -i HOME="$HOME_DIR" USER="$USER" LOGNAME="$USER" SHELL=/bin/zsh LANG=en_US.UTF-8 \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    DROPPEN_DESKTOP_KEYCHAIN=0 DROPPEN_DESKTOP_TEST_CONTROL="$CTL" \
+    DROPPEN_DESKTOP_KEYCHAIN=0 DROPPEN_DESKTOP_TEST_CONTROL="$CTL" DROPPEN_DESKTOP_TEST_HUB="$HUB" \
     "$BIN" >>"$ROOT/stdout.log" 2>&1 &
   APP_PID=$!
 }
@@ -392,19 +411,22 @@ sleep 1
 command "snapshot $SHOTS/03-settings-security.png"
 echo "probe: $(last_probe)"
 check "Security: no password change, no sign-out; a Droppen section" '[ "$(probe_field securityDesktopApp)" = True ] && [ "$(probe_field loginForm)" = False ] && [ "$(probe_field droppenTab)" = True ]'
+# (`?e2e`: this look is not counted as the server's below.)
+check "the test hub answers its discovery document" 'curl -fsS "$HUB/.well-known/droppen-hub?e2e" | grep -qF "\"app\":\"$HUB_APP\""'
 reload_and_probe 'location.assign("/settings?section=Droppen")'
-SIGN_INS=$(count "would open the Droppen sign-in at https://droppen.app in the browser")
+SIGN_INS=$(count "would open the Droppen sign-in at $SIGN_IN_AT in the browser")
 command 'js document.querySelector("[data-testid=droppen-sign-in]").click()' >/dev/null
-wait_for "the sign-in to open" '[ "$(count "would open the Droppen sign-in at https://droppen.app in the browser")" -gt "$SIGN_INS" ]' 15 || true
+wait_for "the sign-in to open" '[ "$(count "would open the Droppen sign-in at $SIGN_IN_AT in the browser")" -gt "$SIGN_INS" ]' 15 || true
 sleep 1
 command "snapshot $SHOTS/04-droppen-sign-in.png"
-check "Sign in to Droppen opens droppen.app in the browser, by host only in the log" '[ "$(count "would open the Droppen sign-in at https://droppen.app in the browser")" -gt "$SIGN_INS" ] && nowhere -F "droppen-link=" "$LOG"'
+check "Sign in to Droppen opens the hub's app host (my.localhost) in the browser, by host only in the log" '[ "$(count "would open the Droppen sign-in at $SIGN_IN_AT in the browser")" -gt "$SIGN_INS" ] && [ "$(count "would open the Droppen sign-in at http://localhost in the browser")" = 0 ] && nowhere -F "droppen-link=" "$LOG"'
 check "the window stays on the app" '[ "$(field windowVisible)" = True ] && [ "$(field windowScheme)" = http ] && [ "$(field windowPort)" = "$(field port)" ]'
 SIGN_IN_TOKEN=$(curl -fsS -H 'Content-Type: application/json' -d "{\"username\":\"$USER_NAME\",\"password\":\"$(password)\"}" "http://127.0.0.1:$PORT/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' || true)
 ATTEMPT_JSON=$(curl -sS -H "Authorization: Bearer $SIGN_IN_TOKEN" "http://127.0.0.1:$PORT/api/cloud" || true)
 curl -s -o /dev/null -X POST -H "Authorization: Bearer $SIGN_IN_TOKEN" "http://127.0.0.1:$PORT/api/auth/logout" || true
 unset SIGN_IN_TOKEN
-check "an attempt waits, with its droppen.app address in a fragment only" 'python3 -c "import json,sys; a=json.loads(sys.argv[1])[\"attempt\"]; u=a[\"handoffUrl\"]; sys.exit(0 if a[\"mine\"] and u.startswith(\"https://droppen.app/link#droppen-link=\") and \"?\" not in u else 1)" "$ATTEMPT_JSON"'
+check "an attempt waits, with its address on the hub's app host in a fragment only" 'python3 -c "import json,sys; a=json.loads(sys.argv[1])[\"attempt\"]; u=a[\"handoffUrl\"]; sys.exit(0 if a[\"mine\"] and u.startswith(sys.argv[2] + \"/link#droppen-link=\") and \"?\" not in u else 1)" "$ATTEMPT_JSON" "$HUB_APP"'
+check "the server stays with the hub, and says where a browser signs in to it" 'python3 -c "import json,sys; s=json.loads(sys.argv[1]); sys.exit(0 if s[\"hub\"] == sys.argv[2] and s[\"hubWeb\"] == sys.argv[3] else 1)" "$ATTEMPT_JSON" "ws://localhost:$HUB_PORT" "$HUB_APP" && grep -qF "\"GET /.well-known/droppen-hub HTTP/" "$ROOT/hub.log"'
 command 'js document.querySelector("[data-testid=droppen-cancel]").click()' >/dev/null
 sleep 1
 reload_and_probe 'location.assign("/")'

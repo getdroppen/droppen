@@ -3369,7 +3369,12 @@ export interface components {
             handoff?: components["schemas"]["CloudHandoff"];
             /** @description The hub, as the agent signs in to it (`wss://…`). */
             hub: string;
-            /** @description The hub's web origin, which the sign-in popup opens. */
+            /**
+             * @description Where a browser signs in to the hub, which the sign-in popup and the
+             *     browser hand-off open: the app origin the hub's
+             *     `/.well-known/droppen-hub` names (`https://my.droppen.app`), else the
+             *     hub's own origin as `https://`.
+             */
             hubWeb: string;
             /** @description The hub connection, once there is a state. */
             link?: components["schemas"]["CloudLinkHealth"];
@@ -3731,7 +3736,10 @@ export interface components {
              *     said no `Origin` to come back to.
              */
             handoffUrl?: string | null;
-            /** @description The popup's origin (`https://droppen.app`). */
+            /**
+             * @description The popup's origin, where the browser signs in: the hub's app origin
+             *     (`https://my.droppen.app`), else its own (`https://droppen.app`).
+             */
             hubWeb: string;
             /** @description This computer as a machine. */
             machine: components["schemas"]["LinkMachine"];
