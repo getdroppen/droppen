@@ -262,6 +262,14 @@ jobs:
           # serve one.
           ANTHROPIC_BASE_URL: http://127.0.0.1:${{ env.PROXY_PORT }}
           ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
+          # The runner's service tokens (the cache's among them: this run's
+          # cache scope is main's) stay out of the session's environment. The
+          # runner gives them only to JavaScript and container actions, not to
+          # the run step the session runs in; emptied too, in case that changes.
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_RUNTIME_URL: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
         with:
           # Not a key: the proxy replaces it. The action only checks that one is set.
           anthropic_api_key: added-by-the-local-gateway-proxy
@@ -290,6 +298,14 @@ jobs:
         env:
           ANTHROPIC_BASE_URL: http://127.0.0.1:${{ env.PROXY_PORT }}
           ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
+          # The runner's service tokens (the cache's among them: this run's
+          # cache scope is main's) stay out of the session's environment. The
+          # runner gives them only to JavaScript and container actions, not to
+          # the run step the session runs in; emptied too, in case that changes.
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_RUNTIME_URL: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
         with:
           anthropic_api_key: added-by-the-local-gateway-proxy
           github_token: ${{ github.token }}
@@ -342,7 +358,7 @@ jobs:
               tools_ok=false
             fi
             printf 'denied tool calls: '
-            jq -c '[.[] | select(.type == "result") | .permission_denials[]? | {tool_name, path: (.tool_input.file_path // .tool_input.path // null)}]' "$f" 2>/dev/null || echo '?'
+            jq -c '[.[] | select(.type == "result") | .permission_denials[]? | {tool_name, path: (.tool_input.file_path // .tool_input.path // null), pattern: (.tool_input.pattern // null)}]' "$f" 2>/dev/null || echo '?'
           done
           [ "$sessions" -gt 0 ] || tools_ok=false
           # One line of JSON, or null: it becomes a job output.
@@ -392,11 +408,21 @@ jobs:
           set -euo pipefail
           marker='<!-- llm-security-review -->'
           [ -n "$VERDICT" ] || { VERDICT=ERROR; REASON="the review did not finish"; }
-          # The agent's text, as text: no @-mentions, and nothing that looks
+          # The agent's text, as plain text (def text), and nothing that looks
           # like a credential (then nothing of it at all).
           body=$(jq -rn --arg marker "$marker" --arg verdict "$VERDICT" --arg reason "$REASON" \
             --arg sha "$HEAD_SHA" --arg run "$RUN_URL" --arg fork "$FORK" --arg github "$CHANGES_GITHUB" --arg raw "$RESULT" '
-            def text: tostring | gsub("@(?=[A-Za-z0-9_-])"; "@​") | .[0:4000];
+            # Markdown and HTML images and links go (a link keeps its text),
+            # no URL stays clickable, and no @-mention pings anyone.
+            def text:
+              tostring
+              | gsub("!\\[[^\\]]*\\](\\([^)]*\\)|\\[[^\\]]*\\])"; "")
+              | gsub("\\[(?<t>[^\\]]*)\\](\\([^)]*\\)|\\[[^\\]]*\\])"; "\(.t)")
+              | split("\n") | map(select(test("^ {0,3}\\[[^\\]]+\\]:") | not)) | join("\n")
+              | gsub("<[A-Za-z/!?][^>]*>"; "") | gsub("<"; "&lt;")
+              | gsub("(?<s>[A-Za-z][A-Za-z0-9+.-]*)://"; "\(.s)[:]//") | gsub("(?<w>[Ww][Ww][Ww])\\."; "\(.w)[.]")
+              | gsub("@(?=[A-Za-z0-9_-])"; "@\u200b")
+              | .[0:4000];
             ($raw | fromjson? // null) as $r
             | ($r.findings // [] | if type == "array" then . else [] end) as $f
             | [ $marker,

@@ -104,7 +104,10 @@ This is how each way in is closed:
   claude-code-action's `setup-bun` runs with caching off. The agent has no tool
   that reaches the cache service. The runner gives the cache token only to
   JavaScript and container actions, not to the `run:` step that the agent's
-  session runs in.
+  session runs in. Checked: `ACTIONS_RUNTIME_TOKEN`, `ACTIONS_RUNTIME_URL`,
+  `ACTIONS_CACHE_URL` and `ACTIONS_RESULTS_URL` are unset both in a run step
+  and in a composite action's run step (claude-code-action is one). The
+  review step also sets them empty, in case that changes.
 - **Artifacts.** The transcript is uploaded only when the repository is
   private (it can name the gateway's host).
 
@@ -117,9 +120,21 @@ anything its tools allow, and say anything in its output.
   Grep and Glob (`--tools`). They are the only allowed tools (`--allowedTools`).
   Bash, Edit, MultiEdit, Write, NotebookEdit, WebFetch, WebSearch, Task, Agent
   and Skill are denied, and so are reads under `/proc`, `/sys`, `/dev` and the
-  runner's temporary directory (`--disallowedTools`). It has no MCP server: claude-code-action adds its
-  GitHub servers only for tools named in `--allowedTools`. There is no shell,
-  no network and no write. **Checked on every run:** the first message of each
+  runner's temporary directory (`--disallowedTools`). It has no MCP server:
+  claude-code-action adds its GitHub servers only for tools named in
+  `--allowedTools`. There is no shell, no network and no write.
+- **The read denials hold for Grep and Glob too.** This was checked with a
+  planted file: the same canary file, once in the runner's temporary
+  directory (denied) and once in a directory beside it (allowed).
+  - Every Read, Grep and Glob aimed at a denied path was refused ("Permission
+    to read … has been denied"), whether the path was written directly, through
+    `..`, or as a Glob's absolute pattern. The paths tried were
+    `/proc/self/environ`, `/proc/self`, `/proc`, `/sys`, `/dev` and the
+    temporary directory.
+  - A Grep or a Glob from a parent directory (`/home/runner/work`,
+    `/home/runner`) found the allowed copy only. The denied subtree is left out
+    of the search.
+- **Checked on every run:** the first message of each
   attempt's transcript lists the session's tools and MCP servers. If it lists
   anything other than Read, Grep, Glob and StructuredOutput, or any MCP server,
   or if there is no transcript, there is no verdict and the check fails.
@@ -130,7 +145,13 @@ anything its tools allow, and say anything in its output.
   anything.
 - **What it can say.** Its structured output (a JSON schema: PASS or BLOCK,
   summary, findings) is the only thing that leaves the job. The `comment` job
-  posts it as text, defuses @-mentions, and caps its length. If any part looks
+  posts it as plain text:
+  - Markdown and HTML images and links are removed, and a link keeps only its
+    text;
+  - every other HTML tag is removed, and a leftover `<` is escaped;
+  - URLs are defanged (`https[:]//`, `www[.]`), so nothing in it is clickable;
+  - @-mentions are defused;
+  - its length is capped. If any part looks
   like a credential (a GitHub token, an `sk-` key, a JWT, a private key),
   nothing of it is posted and the job fails. If the agent returns anything
   other than PASS or BLOCK, that counts as no verdict, and the check fails.
@@ -239,6 +260,13 @@ scoped to the pull request, and put their checks on its commit.
 - To run CI anyway: in the pull request, choose **Approve workflows to run**.
   First read what the pull request changes under `.github/`, in `scripts/`, in
   the package scripts and in `build.rs`. Those run in its CI.
+- Before you approve a fork's runs by hand, check its workflow changes for a
+  job named after a required check: `llm-security-review`, `web`,
+  `web-tests (1)` to `(3)`, `web-reproducible`, `server`, `secrets-scan`,
+  `DCO` or `no-skip-markers`. Look at both the job's id and its `name:`. Such a
+  job reports a pass in the real check's place, and the ruleset cannot tell
+  the two apart, because both come from GitHub Actions. Do not approve a pull
+  request that has one.
 
 ## Testing the gate end to end
 
