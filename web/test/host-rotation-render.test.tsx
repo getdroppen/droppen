@@ -409,6 +409,18 @@ test("a refusal of a renewal reads in words, in the reader's language", () => {
     void i18n.changeLanguage(lng);
     assert.ok(renewalErrorText(waits, i18n.t.bind(i18n) as typeof t).includes(words), lng);
   }
+  // `lapsed` may be this device no longer controlling it: the way out is renewing it from another full device.
+  for (const [lng, words] of [
+    ["en", "or renew it from that device"],
+    ["zh-CN", "或直接从那台设备更换它的身份密钥"],
+    ["zh-TW", "或直接從那台裝置更換它的身分金鑰"],
+    ["ja", "そのデバイスから ID 鍵を更新してください"],
+  ] as const) {
+    void i18n.changeLanguage(lng);
+    assert.ok(renewalErrorText(new RenewalError("lapsed", "x", "lapsed"), i18n.t.bind(i18n) as typeof t).includes(words), lng);
+  }
+  // ja: `このデバイス` is the reader's own device — never the host the fork is about.
+  assert.doesNotMatch(renewalErrorText(new RenewalError("fork", "x", "fork"), i18n.t.bind(i18n) as typeof t), /^このデバイス/);
   void i18n.changeLanguage("en");
   assert.doesNotMatch(renewalErrorText(new RenewalError("unconfirmed", "x", "stale", []), t), /\{\{ids\}\}|open Droppen on/, "the sole admin: no one else to open");
   // The row says the failure itself in the reader's language, not its message.

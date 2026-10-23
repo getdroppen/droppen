@@ -184,7 +184,7 @@ export function renewalErrorText(error: RenewalError, t: (key: string, opts?: Re
     case "fork":
       return t("it sees the account's devices differently from what your full devices confirmed, so nothing was changed: look at Droppen on that device itself");
     case "lapsed":
-      return t("it takes no control from this device now: open Droppen on another of your full devices, then try again");
+      return t("it takes no control from this device now: open Droppen on another of your full devices and try again, or renew it from that device");
     case "failed":
       return t("could not reach it: {{why}}", { why: errorText(new Error(error.message)) });
   }
