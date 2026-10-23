@@ -42,6 +42,8 @@ export const SEEN_CHANNEL = "rh.hub.seen";
 /** How long opening the database may take before that open counts as failed (the next call tries again). */
 export const SEEN_DB_OPEN_MS = 10_000;
 const STORE = "seen";
+/** The one object store of {@link SEEN_DB}. */
+export const SEEN_STORE = STORE;
 
 /** `localStorage`, or a stand-in. */
 export type SeenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;

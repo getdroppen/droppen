@@ -46,9 +46,11 @@ export interface PushApi {
 }
 
 // This browser's, not a device's (one subscription per browser): kept with the hub account's keys.
-const RECORD_KEY = "rh.hub.push.subscribed";
+export const PUSH_RECORD_KEY = "rh.hub.push.subscribed";
+const RECORD_KEY = PUSH_RECORD_KEY;
 /** A device whose renewal left this browser without notifications, until a tap turns them back on. */
-const RENEW_KEY = "rh.hub.push.renew";
+export const PUSH_RENEW_KEY = "rh.hub.push.renew";
+const RENEW_KEY = PUSH_RENEW_KEY;
 
 /**
  * `serviceWorker.ready` never settles when no worker was ever registered — a
@@ -112,6 +114,33 @@ function setRenewal(env: Pick<PushEnv, "storage">, machine: MachineKey | null): 
   try {
     if (machine) env.storage?.setItem(RENEW_KEY, machine);
     else env.storage?.removeItem(RENEW_KEY);
+  } catch {
+    // memory only
+  }
+}
+
+/**
+ * After this browser's device moved here from another origin (`lib/move`):
+ * the device its notifications came from there. The subscription itself
+ * never moves — it belongs to the old origin's worker, and Notification
+ * permission is the origin's — so a tap here turns them back on
+ * ({@link pushMovedFrom}, `features/move/push-moved-notice.tsx`).
+ */
+export const PUSH_MOVED_KEY = "rh.hub.push.moved";
+
+/** The device whose notifications were on before this browser's device moved here, until they are on again (`null`: none). */
+export function pushMovedFrom(env: Pick<PushEnv, "storage"> = browserPushEnv()): MachineKey | null {
+  try {
+    return env.storage?.getItem(PUSH_MOVED_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stop offering to turn notifications back on after a move. */
+export function forgetPushMoved(env: Pick<PushEnv, "storage"> = browserPushEnv()): void {
+  try {
+    env.storage?.removeItem(PUSH_MOVED_KEY);
   } catch {
     // memory only
   }
@@ -182,6 +211,7 @@ export async function enablePush(machine: MachineKey, env: PushEnv = browserPush
   // from before it refuses the key meanwhile), so its latest renewal is looked at (`followPushRenewals`).
   writePushRecord(env, { machine, vapid: key.data.publicKey, seq: null });
   setRenewal(env, null);
+  forgetPushMoved(env);
 }
 
 /**
@@ -194,6 +224,7 @@ export async function disablePush(machine: MachineKey | null, env: PushEnv = bro
   const reg = await env.ready();
   writePushRecord(env, null);
   setRenewal(env, null);
+  forgetPushMoved(env);
   if (reg === null) return;
   const sub = await reg.pushManager.getSubscription();
   if (sub === null) return;

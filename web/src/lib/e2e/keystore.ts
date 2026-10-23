@@ -56,7 +56,10 @@ export class MemoryKeyStore implements KeyStore {
   }
 }
 
+/** The IndexedDB database the key store is kept in, and its one object store (keyed by record name). */
+export const KEY_STORE_DB = "rh-e2e";
 const STORE = "keys";
+export const KEY_STORE_STORE = STORE;
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -75,7 +78,7 @@ export const KEY_STORE_OPEN_MS = 10_000;
  * of: the next call opens the database afresh, instead of every call failing
  * for the rest of the page's life.
  */
-export function indexedDbKeyStore(factory: IDBFactory = indexedDB, dbName = "rh-e2e"): KeyStore {
+export function indexedDbKeyStore(factory: IDBFactory = indexedDB, dbName = KEY_STORE_DB): KeyStore {
   let db: Promise<IDBDatabase> | null = null;
   let afresh = false;
   const drop = (which: Promise<IDBDatabase>) => {
@@ -158,7 +161,7 @@ const DEVICE_KEYS_V2 = "device-keys/v2";
  */
 const DEVICE_WRAP = "device-keys/wrap";
 /** Every record the device keys are kept in starts so. */
-const DEVICE_KEYS_PREFIX = "device-keys/";
+export const DEVICE_KEYS_PREFIX = "device-keys/";
 /** Keys replaced at the person's word, kept aside (`<prefix><time>`), at most {@link KEPT_ASIDE} of them. */
 const PREV_PREFIX = "device-keys/v2.prev-";
 const KEPT_ASIDE = 2;
