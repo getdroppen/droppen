@@ -93,7 +93,10 @@ GLIBC_MIN=2.28
 # are downloaded from. The installer checks SHA256SUMS-server's signature
 # (SHA256SUMS-server.sig) with it before it trusts a checksum. Empty: no key
 # yet, and the release's SHA256SUMS is used unsigned.
-SUMS_KEY=''
+SUMS_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKiXmd8sCxPhHUEj7l8xW4trDDzmA
+vQUo/A0its92E59ESxQu3XmYy8OpeVOYANxJqvWXFY5ndAA5WVrfAi35aw==
+-----END PUBLIC KEY-----'
 # Where my.droppen.app shows a one-time code.
 WHERE_CODES="my devices → add a device that runs AI → show a one-time code"
 
