@@ -23,5 +23,10 @@
     "test:verify-web": "node --test scripts/verify-web.test.mjs",
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
     "test:sdk": "pnpm --filter @droppen/plugin-sdk test"
+  },
+  "pnpm": {
+    "overrides": {
+      "seroval": ">=1.7.1"
+    }
   }
 }
