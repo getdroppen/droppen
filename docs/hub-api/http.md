@@ -345,12 +345,16 @@ fresh: the signed exchange is kept as evidence (`GET /v1/rotations`
 was signed with is still the device's when it is made: one checked with a
 key a renewal retires meanwhile is `401 rotated` too, no session made.
 A device (or a host) of a suspended account gets `403 account_suspended`,
-once its signature checked out (README "Suspended accounts"). An `account`
-the hub has no account for any more, or one being deleted
-(`DELETE /v1/account`), is `410 account_deleted` — checked first, before
-the device is looked up, so it takes no signature: a device that kept its
-keys for a deleted account hears it on its next renewal (the web app then
-wipes them, as for a removed device).
+once its signature checked out (README "Suspended accounts"). A device of an
+account being deleted, or deleted within the hub's hold
+(`DELETE /v1/account`; `deletion.email_hold_days`), gets `410
+account_deleted` — only once its signature checked out against its own key
+(for a deleted account, the public key the hub kept with the tombstone): a
+device that kept its keys for a deleted account hears it on its next renewal
+(the web app then wipes them, as for a removed device). An account or device
+the hub merely does not know — no such evidence — is `401 denied`, as ever:
+a hub restored from a backup or pointed at the wrong database never makes a
+browser wipe its keys.
 Errors: `401 denied` (anything wrong: unknown device, bad signature, stale
 or reused nonce, clock — never a check the hub could not make, which is
 `503 unavailable`), `401 rotated`, `403 device_removed`,
@@ -1057,8 +1061,9 @@ reauth_required | reauth_failed`, `409 last_credential`, `429 rate`.
 ### `DELETE /v1/account` — requires a current full device
 `{confirm, current_password? | passkey?}` → `{deleted: true, purged}`:
 the account deleted, for good. `confirm` is the account's e-mail address as
-the person typed it (compared trimmed and case-insensitively; anything else
-is `400 confirm_mismatch`), and the proof is the one above ("Proving it is
+the person typed it (compared as the hub compares inboxes: trimmed, in any
+case, a provider's own spellings of it — Gmail's dots, say; anything else is
+`400 confirm_mismatch`), and the proof is the one above ("Proving it is
 still the person": the current password where the account has one, or a
 passkey answering a challenge `POST /v1/passkeys/reauth/options` gave this
 device; the same errors, the same limits on the password). A current full
@@ -1073,12 +1078,16 @@ The hub deletes the device chain, the devices, the machines (the hosts that
 ran AI under the account), the mailbox, the keyring, identity key renewals,
 enrollments, plan rows, the ways to sign in (password, passkeys), the
 stored encrypted pages and stream tails, the records of verification mail
-sent to the address, and the address's waitlist entry. **What stays:** a
-keyed hash (HMAC-SHA256 under a secret of the hub's) of the address in its
-canonical form (lower-cased, its `+tag` dropped and, at Gmail, its dots),
-for the days `GET /v1/signup/config` names (`deletion.email_hold_days`;
+sent to the address, and the address's waitlist entry. The account keeps no
+address from the moment its deletion begins, even while its stored data is
+still being erased. **What stays:** a keyed hash (HMAC-SHA256 under a secret
+of the hub's) of the inbox the address reaches (lower-cased, a `+tag`
+dropped, and each mail provider's own rules — Gmail's dots, say), for the
+days `GET /v1/signup/config` names (`deletion.email_hold_days`;
 `DROPPEN_HUB_DELETED_EMAIL_DAYS`, 7 by default, `0` keeps none), so the same
-inbox cannot sign up again at once (`409 recently_deleted`); and an
+inbox cannot sign up again at once (`409 recently_deleted`); for as long,
+the ids and public signing keys of its devices and hosts, so a device that
+comes back is told the account is gone (`POST /v1/session`, `410`); and an
 account-wide revocation of relay tickets (the account's random id and a
 time, sent to the relays as `revoke` with `id: null`) until the last ticket
 it could stop has expired (a ticket's lifetime and 10 minutes).

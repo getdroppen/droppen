@@ -173,6 +173,10 @@ export const pricingZhCN: Bundle = {
     "你邮箱地址的带密钥哈希（不是地址本身），保留 {{days}} 天，防止同一个邮箱马上重新注册。保留多久由 Droppen Hub 的设置决定：droppen.app 上是 {{days}} 天。",
   "Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes.":
     "你账号的随机 ID 和删除时间，记在我们服务器用来拒绝其连接的名单里，直到它领到的最后一张连接凭证过期：通常只要几分钟。",
+  "For the same {{days}} days, the ids of your devices and their public keys, which open nothing: a device that comes back is told the account is gone, and forgets its keys.":
+    "同样保留 {{days}} 天：你各个设备的 ID 和它们的公钥（打不开任何东西）。设备再次连上时会被告知账号已删除，并忘掉它的钥匙。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
+    "删除会立即把这些从我们的在线系统中移除。备份和日志中的副本会在 {{period}} 后过期。",
 };
 
 export const pricingZhTW: Bundle = {
@@ -323,6 +327,10 @@ export const pricingZhTW: Bundle = {
     "你電子郵件地址的帶金鑰雜湊（不是地址本身），保留 {{days}} 天，防止同一個信箱馬上重新註冊。保留多久由 Droppen Hub 的設定決定：droppen.app 上是 {{days}} 天。",
   "Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes.":
     "你帳號的隨機 ID 和刪除時間，記在我們伺服器用來拒絕其連線的名單裡，直到它領到的最後一張連線憑證過期：通常只要幾分鐘。",
+  "For the same {{days}} days, the ids of your devices and their public keys, which open nothing: a device that comes back is told the account is gone, and forgets its keys.":
+    "同樣保留 {{days}} 天：你各個裝置的 ID 和它們的公鑰（打不開任何東西）。裝置再次連上時會被告知帳號已刪除，並忘掉它的金鑰。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
+    "刪除會立即把這些從我們的線上系統中移除。備份和日誌中的副本會在 {{period}} 後過期。",
 };
 
 export const pricingJa: Bundle = {
@@ -473,4 +481,8 @@ export const pricingJa: Bundle = {
     "メールアドレスの鍵付きハッシュ（アドレスそのものではありません）を {{days}} 日間。同じ受信箱ですぐに再登録できないようにするためです。期間は Droppen Hub の設定で、droppen.app では {{days}} 日です。",
   "Your account's random id and the time it was deleted, in the list our servers use to turn its connections away, until the last pass to connect it was given has run out: a matter of minutes.":
     "アカウントのランダムな ID と削除した時刻。私たちのサーバーがその接続を断るためのリストに、最後に発行された接続用の許可証が切れるまで（数分程度）残します。",
+  "For the same {{days}} days, the ids of your devices and their public keys, which open nothing: a device that comes back is told the account is gone, and forgets its keys.":
+    "同じ {{days}} 日間、デバイスの ID とその公開鍵（何も開けません）。戻ってきたデバイスにアカウントが削除されたことを伝え、そのデバイスが鍵を消せるようにするためです。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
+    "削除すると、これらは稼働中のシステムからすぐに消えます。バックアップとログに残る写しは {{period}} で期限切れになります。",
 };

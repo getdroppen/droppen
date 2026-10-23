@@ -122,9 +122,10 @@ and none of its devices or agents signs in until the operator lifts it.
 Nothing of the account is deleted. A
 **deleted** account (`DELETE /v1/account`, http.md) is gone: its sessions
 end, its sockets close the same way (`account_deleted`), and `POST
-/v1/session` for it answers `410 account_deleted` before the device is looked
-up; a password or passkey sign-in in the moments its deletion takes is `403
-account_deleted`.
+/v1/session` answers `410 account_deleted` to a device of it whose signature
+checks out (http.md) — never to an account the hub merely does not know; a
+passkey sign-in in the moments its deletion takes is `403 account_deleted`
+(its address is gone at once: a password one is `401 bad_login`).
 
 **Where the device stands** matters beyond the session: `requires: full`
 routes need a *current full device* of the chain (`403 not_a_full_device`),
@@ -165,7 +166,7 @@ The codes, by status (http.md lists them per route):
 | 404 | `not_found`, `no_such_renewal` |
 | 408 | `slow_request` (a route that needs no sign-in got its body too slowly: within 10 s, or not at all; the connection is closed) |
 | 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey`, `recently_deleted` (with `until_ms`) |
-| 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account), `account_deleted` (`POST /v1/session` for an account the hub no longer has, or is deleting) |
+| 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account), `account_deleted` (`POST /v1/session`, signed by a device of an account being deleted, or deleted within the hold) |
 | 422 | `invalid_entry` (a chain entry the hub's verification refused), `invalid_dispute` |
 | 429 | `rate` (with `retry_after_ms`), `mail_rate`, `device_rate`, `too_many_pending_devices`, `too_many_enrollments`, `too_many_pairings`, `pairing_full` |
 | 500 | `internal` |
