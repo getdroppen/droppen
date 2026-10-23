@@ -36,6 +36,16 @@ use crate::sig::{self, RELAY_TICKET};
 pub const TICKET_VERSION: u8 = 1;
 /// How long a ticket is good for.
 pub const TICKET_TTL_MS: u64 = 15 * 60 * 1000;
+/// The longest a ticket may run, `expires_ms - issued_ms`, for a verifier to
+/// take it ([`SignedTicket::verify`]): what the Hub issues, so the 15 minutes
+/// hold at the relay too, not only at the issuer. A Hub that ever issues
+/// longer tickets needs its relays to take them first.
+pub const MAX_TICKET_LIFETIME_MS: u64 = TICKET_TTL_MS;
+/// How far ahead of a verifier's clock a ticket's `issued_ms` may lie (the
+/// Hub's clock and a relay's are not the same clock). Five times a relay's
+/// default sign-in skew of a minute, so a relay that takes sign-ins at all
+/// does not refuse a fresh ticket for it.
+pub const TICKET_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 pub const MAX_RELAY_ID_LEN: usize = 32;
 pub const MAX_PEERS: usize = 64;
 /// `flags` bit 0: the account used up its free transfer; connections are throttled.
@@ -99,6 +109,10 @@ pub enum TicketError {
     OtherRelay(String),
     #[error("the ticket expired")]
     Expired,
+    #[error("the ticket runs longer than a ticket may")]
+    TooLong,
+    #[error("the ticket was issued ahead of this clock")]
+    IssuedAhead,
 }
 
 fn too_large(what: &'static str, len: usize, max: usize) -> DecodeError {
@@ -242,7 +256,10 @@ impl SignedTicket {
     }
 
     /// Check the signature under the key `key_of(kid)` returns, that the
-    /// ticket is for `relay`, and that it has not expired at `now_ms`.
+    /// ticket is for `relay`, that it has not expired at `now_ms`, and that
+    /// it runs no longer than [`MAX_TICKET_LIFETIME_MS`] from an issue time
+    /// no further than [`TICKET_CLOCK_SKEW_MS`] past `now_ms`: whatever its
+    /// issuer wrote, a ticket is good for at most their sum from now.
     pub fn verify(self, key_of: impl Fn(u8) -> Option<[u8; 32]>, relay: &str, now_ms: u64) -> Result<RelayTicket, TicketError> {
         let key = key_of(self.ticket.kid).ok_or(TicketError::UnknownKey(self.ticket.kid))?;
         if !sig::verify(&key, RELAY_TICKET, &self.body, &self.signature) {
@@ -253,6 +270,12 @@ impl SignedTicket {
         }
         if now_ms >= self.ticket.expires_ms {
             return Err(TicketError::Expired);
+        }
+        if self.ticket.expires_ms.saturating_sub(self.ticket.issued_ms) > MAX_TICKET_LIFETIME_MS {
+            return Err(TicketError::TooLong);
+        }
+        if self.ticket.issued_ms > now_ms.saturating_add(TICKET_CLOCK_SKEW_MS) {
+            return Err(TicketError::IssuedAhead);
         }
         Ok(self.ticket)
     }
@@ -407,6 +430,39 @@ pub(crate) mod tests {
             SignedTicket::parse(&forged).unwrap().verify(keys, "sin-1", now),
             Err(TicketError::BadSignature)
         );
+    }
+
+    #[test]
+    fn a_ticket_runs_no_longer_than_the_issuers_ttl_from_no_later_than_now() {
+        let key = SigningKey::from_bytes(&[3; 32]);
+        let public = key.verifying_key().to_bytes();
+        let keys = |kid: u8| (kid == 1).then_some(public);
+        let check = |t: &RelayTicket, now: u64| SignedTicket::parse(&t.sign(&key).unwrap()).unwrap().verify(keys, "sin-1", now);
+        // What the Hub issues: `issued_ms = now`, `expires_ms = now + TICKET_TTL_MS`.
+        let t = sample();
+        assert_eq!(t.expires_ms - t.issued_ms, TICKET_TTL_MS);
+        assert_eq!(check(&t, t.issued_ms), Ok(t.clone()));
+        assert_eq!(check(&t, t.expires_ms - 1), Ok(t.clone()));
+        // A relay whose clock is behind the Hub's, by up to the skew, takes it too.
+        assert_eq!(check(&t, t.issued_ms - TICKET_CLOCK_SKEW_MS), Ok(t.clone()));
+        assert_eq!(check(&t, t.issued_ms - TICKET_CLOCK_SKEW_MS - 1), Err(TicketError::IssuedAhead));
+        // A millisecond longer than the Hub issues is refused, at any time in it.
+        let long = RelayTicket {
+            expires_ms: t.issued_ms + MAX_TICKET_LIFETIME_MS + 1,
+            ..t.clone()
+        };
+        for now in [long.issued_ms, long.issued_ms + 1, long.expires_ms - 1] {
+            assert_eq!(check(&long, now), Err(TicketError::TooLong), "{now}");
+        }
+        // A distant expiry does not pass by moving the issue time along with it.
+        let far = RelayTicket {
+            issued_ms: t.issued_ms + 30 * 24 * 60 * 60 * 1000,
+            expires_ms: t.expires_ms + 30 * 24 * 60 * 60 * 1000,
+            ..t.clone()
+        };
+        assert_eq!(check(&far, t.issued_ms), Err(TicketError::IssuedAhead));
+        // A ticket that ran out is still told apart as expired.
+        assert_eq!(check(&long, long.expires_ms), Err(TicketError::Expired));
     }
 
     #[test]

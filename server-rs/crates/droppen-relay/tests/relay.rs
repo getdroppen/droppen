@@ -530,6 +530,17 @@ async fn bad_tickets_and_bad_sign_ins_are_refused() {
     let mut c = Client::dial(o).await;
     assert!(refused(&c.login_with(&old, &old.text(), o).await));
     assert_eq!(c.closed_within(SECS).await, Some(4419));
+    // Running longer than the Hub issues tickets for, or issued ahead of the relay's clock.
+    let mut long = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 21, &[]);
+    long.ticket.expires_ms = long.ticket.issued_ms + TICKET_TTL_MS + 1;
+    let mut ahead = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 21, &[]);
+    ahead.ticket.issued_ms += 60 * 60 * 1000;
+    ahead.ticket.expires_ms += 60 * 60 * 1000;
+    for h in [&long, &ahead] {
+        let mut c = Client::dial(o).await;
+        assert!(refused(&c.login_with(h, &h.text(), o).await));
+        assert_eq!(c.closed_within(SECS).await, Some(4401));
+    }
     // Another relay's.
     let other = Holder::new("nrt-1", "a-1", TicketRole::Device, "d-1", 21, &[]);
     let mut c = Client::dial(o).await;
@@ -1018,8 +1029,10 @@ async fn a_replayed_revocation_leaves_a_later_ticket_alone() {
     // A ticket issued in the same millisecond as the revocation is covered.
     let mut same = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 31, &["m-1"]);
     same.ticket.issued_ms = at;
+    same.ticket.expires_ms = at + TICKET_TTL_MS;
     let mut c = Client::dial(o).await;
     assert_eq!(c.login_with(&same, &same.text(), o).await["t"], "error");
+    assert_eq!(c.closed_within(SECS).await, Some(4403), "refused as revoked");
     hub.stop.cancel();
 }
 

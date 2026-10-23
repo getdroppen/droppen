@@ -356,7 +356,11 @@ on `/v1/agent` (agents); `sig` is `HubLogin {role: RelayDevice|RelayAgent}`
 naming **the relay's origin**, under the key the ticket names. A relay that
 just started waits up to 5 s for the hub's replay of revocations before
 answering. A ticket that runs out and is not renewed closes the connection
-(4419).
+(4419). A relay takes a ticket (at sign-in or as a renewal) only if it runs
+no longer than the hub issues them for, `expires_ms − issued_ms` at most 15
+minutes (`rh_proto::ticket::MAX_TICKET_LIFETIME_MS`), and its `issued_ms` is
+at most 5 minutes ahead of the relay's clock
+(`TICKET_CLOCK_SKEW_MS`); anything else is refused like a bad ticket (4401).
 
 | `t` | dir | fields | |
 |---|---|---|---|
