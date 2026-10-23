@@ -920,6 +920,18 @@ async fn a_renewed_ticket_keeps_a_connection_and_shutting_down_says_goaway_first
     renewed.ticket.expires_ms = now_ms() + 60_000;
     dev.send_json(json!({"t": "ticket", "ticket": renewed.text()})).await;
     assert_eq!(dev.next_text(SECS).await["t"], "ticket_ok");
+    // A renewal longer than the hub issues, or issued ahead of the relay's
+    // clock, is refused; the connection stays on the ticket it has.
+    let mut long = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 81, &["m-1"]);
+    long.ticket.expires_ms = long.ticket.issued_ms + TICKET_TTL_MS + 1;
+    let mut ahead = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 81, &["m-1"]);
+    ahead.ticket.issued_ms += 60 * 60 * 1000;
+    ahead.ticket.expires_ms += 60 * 60 * 1000;
+    for h in [&long, &ahead] {
+        dev.send_json(json!({"t": "ticket", "ticket": h.text()})).await;
+        let answer = dev.next_text(SECS).await;
+        assert_eq!((answer["t"].as_str(), answer["code"].as_str()), (Some("error"), Some("bad_ticket")), "{answer}");
+    }
     // Someone else's ticket is no renewal.
     let other = Holder::new("sin-1", "a-1", TicketRole::Device, "d-2", 82, &[]);
     let mut probe = Client::login(&o, &Holder::new("sin-1", "a-3", TicketRole::Device, "d-3", 83, &[])).await;

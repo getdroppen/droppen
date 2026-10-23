@@ -359,8 +359,11 @@ answering. A ticket that runs out and is not renewed closes the connection
 (4419). A relay takes a ticket (at sign-in or as a renewal) only if it runs
 no longer than the hub issues them for, `expires_ms − issued_ms` at most 15
 minutes (`rh_proto::ticket::MAX_TICKET_LIFETIME_MS`), and its `issued_ms` is
-at most 5 minutes ahead of the relay's clock
-(`TICKET_CLOCK_SKEW_MS`); anything else is refused like a bad ticket (4401).
+at most 5 minutes ahead of the relay's clock (`TICKET_CLOCK_SKEW_MS`).
+Anything else is refused as any bad ticket is: at sign-in, `error denied`
+and a close (4401); as a renewal, `error bad_ticket` with the connection left
+open on the ticket it has — which, not renewed, closes it 60 s after it runs
+out (4419).
 
 | `t` | dir | fields | |
 |---|---|---|---|
