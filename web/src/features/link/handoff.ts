@@ -135,12 +135,18 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  * How the popup treats the origin that asked (`cb`):
  * - `local`: this computer itself — `localhost`, `*.localhost`, 127.0.0.0/8,
  *   `[::1]`. Nobody but this computer answers there.
- * - `warn`: anything else, the local network included — a red warning, an
- *   explicit "this is my own computer", and the fingerprint the computer's
- *   settings show. A private address, `*.local` or 100.64/10 is whoever
- *   answers on the network the browser is on, and `*.ts.net` is public
- *   (Tailscale Funnel gives anyone one): a fake settings page there must not
- *   get a code for one unwary click.
+ * - `warn`: an address a computer of one's own usually has — a private,
+ *   link-local or carrier-grade (100.64/10, Tailscale) address, a name with
+ *   no dot, `*.local`, `*.home.arpa`, `*.internal`, `*.ts.net` — a red
+ *   warning, an explicit "this is my own device", and the fingerprint the
+ *   computer's settings show. Whoever answers on the network the browser is
+ *   on can answer there, and `*.ts.net` is public (Tailscale Funnel gives
+ *   anyone one): a fake settings page there must not get a code for one
+ *   unwary click.
+ * - `public`: any other host — a public name or address. Droppen on a
+ *   computer of one's own is rarely there (a reverse proxy under one's own
+ *   domain), and a phishing page always is: the warning, and the host name
+ *   typed out to confirm it, not a tick ({@link confirmsHost}).
  * - `refuse`: not an http(s) origin at all, the hub's own origin, or the
  *   hub's host on another scheme or port (a page there asking for a code for
  *   itself) — unless that host is loopback, where a test hub and the
@@ -149,7 +155,33 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  * Known and accepted for now (docs/local-aggregator.md §3.4): another program
  * on this computer's loopback, on another port, is "local" too.
  */
-export type CallbackTier = "local" | "warn" | "refuse";
+export type CallbackTier = "local" | "warn" | "public" | "refuse";
+
+/** Names that are not on the public internet: mDNS, the home network's, private use, a tailnet's. */
+const PRIVATE_SUFFIXES = [".local", ".home.arpa", ".internal", ".ts.net"];
+
+/** Whether `host` (a URL's hostname, IPv6 in brackets) is one of the networks a computer of one's own sits on. */
+export function privateHost(host: string): boolean {
+  const name = host.toLowerCase().replace(/\.$/, "");
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(name);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (name.startsWith("[")) {
+    const v6 = name.slice(1, -1);
+    // Unique local (fc00::/7), link-local (fe80::/10), loopback, unspecified, and IPv4-mapped (as the URL parser writes it).
+    if (/^f[cd][0-9a-f]{0,2}:/.test(v6) || /^fe[89ab][0-9a-f]?:/.test(v6) || v6 === "::1" || v6 === "::") return true;
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
+    if (mapped) {
+      const hi = parseInt(mapped[1]!, 16);
+      const lo = parseInt(mapped[2]!, 16);
+      return privateHost(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
+    return false;
+  }
+  return !name.includes(".") || PRIVATE_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
 
 export function callbackTier(cb: string, hubWeb: string): CallbackTier {
   let url: URL;
@@ -171,7 +203,26 @@ export function callbackTier(cb: string, hubWeb: string): CallbackTier {
   // The hub's host on another scheme or port is the hub's too — but a hub
   // run on this computer for testing shares its loopback with the computer.
   if (!loopback && host === hub.hostname.toLowerCase()) return "refuse";
-  return loopback ? "local" : "warn";
+  if (loopback) return "local";
+  return privateHost(host) ? "warn" : "public";
+}
+
+/** A host name as typed or shown, for comparing: no case, blanks, brackets or trailing dot. */
+const bareHost = (host: string) => host.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "");
+
+/** The host name a `public` origin is confirmed by typing (no port: the name is what the person must read). */
+export function hostToType(cb: string): string {
+  try {
+    return bareHost(new URL(cb).hostname);
+  } catch {
+    return "";
+  }
+}
+
+/** Whether what was typed confirms a `public` origin: its host name ({@link hostToType}), in any case. */
+export function confirmsHost(typed: string, cb: string): boolean {
+  const host = hostToType(cb);
+  return host !== "" && bareHost(typed) === host;
 }
 
 /** The hub's web origin for a hub address someone typed (`https://…`, `wss://…`). `null` when it is none. */

@@ -73,6 +73,9 @@ export const linkZhCN: Record<string, string> = {
   "asked by": "来源",
   "This address does not look like Droppen on a device of your own.": "这个地址不像是你自己设备上的 Droppen。",
   "I confirm {{host}} is my own device": "我确认 {{host}} 是我自己的设备",
+  "This is a public address on the internet. A device of your own is rarely there, and a page pretending to be its settings may be: add it only if you set up {{host}} yourself.":
+    "这是互联网上的公开地址。你自己的设备很少在这样的地址上，冒充设备设置页的网页却可能在：只有 {{host}} 是你自己搭建的，才添加它。",
+  "To confirm, type its host name: {{host}}": "确认请输入它的主机名：{{host}}",
   "host name (as the device says)": "主机名（设备自己报的，仅供参考）",
   "fingerprint — the device's settings show the same": "指纹，设备的设置里显示的是同一串",
   "issuing a one-time code…": "正在生成一次性注册码…",
@@ -186,6 +189,9 @@ export const linkZhTW: Record<string, string> = {
   "asked by": "來源",
   "This address does not look like Droppen on a device of your own.": "這個位址不像是你自己裝置上的 Droppen。",
   "I confirm {{host}} is my own device": "我確認 {{host}} 是我自己的裝置",
+  "This is a public address on the internet. A device of your own is rarely there, and a page pretending to be its settings may be: add it only if you set up {{host}} yourself.":
+    "這是網際網路上的公開位址。你自己的裝置很少在這樣的位址上，冒充裝置設定頁的網頁卻可能在：只有 {{host}} 是你自己架設的，才加入它。",
+  "To confirm, type its host name: {{host}}": "確認請輸入它的主機名稱：{{host}}",
   "host name (as the device says)": "主機名稱（裝置自己回報，僅供參考）",
   "fingerprint — the device's settings show the same": "指紋，裝置的設定中顯示的是同一串",
   "issuing a one-time code…": "正在產生一次性註冊碼…",
@@ -299,6 +305,9 @@ export const linkJa: Record<string, string> = {
   "asked by": "依頼元",
   "This address does not look like Droppen on a device of your own.": "このアドレスはあなた自身のデバイス上の Droppen には見えません。",
   "I confirm {{host}} is my own device": "{{host}} は自分のデバイスであることを確認しました",
+  "This is a public address on the internet. A device of your own is rarely there, and a page pretending to be its settings may be: add it only if you set up {{host}} yourself.":
+    "これはインターネット上の公開アドレスです。自分のデバイスがここにあることはまれですが、設定ページを装ったページはあり得ます。{{host}} を自分で用意した場合にだけ追加してください。",
+  "To confirm, type its host name: {{host}}": "確認のため、ホスト名を入力してください：{{host}}",
   "host name (as the device says)": "ホスト名（デバイスの申告。参考用）",
   "fingerprint — the device's settings show the same": "フィンガープリント（デバイスの設定にも同じものが表示されます）",
   "issuing a one-time code…": "ワンタイムコードを発行しています…",

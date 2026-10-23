@@ -143,6 +143,15 @@ test("droppen.app's consent page answers a hand-off from the address: where it g
   const lan = await consent({ ...HANDOFF, origin: "http://192.168.1.20:8700" });
   assert.match(lan, /data-testid="link-warning"/);
   assert.match(lan, /data-testid="link-confirm"[^>]*disabled=""|disabled=""[^>]*data-testid="link-confirm"/);
+  assert.match(lan, /data-testid="link-confirm-host"/, "a tick for the local network");
+  assert.doesNotMatch(lan, /data-testid="link-type-host"/);
+  // A public address: its host name typed out, not a tick; nothing to add until then.
+  const pub = await consent({ ...HANDOFF, origin: "https://box.example.com" });
+  assert.match(pub, /data-testid="link-warning"/);
+  assert.match(pub, /data-testid="link-type-host"/);
+  assert.doesNotMatch(pub, /data-testid="link-confirm-host"/);
+  assert.match(pub, /To confirm, type its host name: box\.example\.com/);
+  assert.match(pub, /data-testid="link-confirm"[^>]*disabled=""|disabled=""[^>]*data-testid="link-confirm"/);
   // The hub itself never.
   const hub = await consent({ ...HANDOFF, origin: "https://droppen.app" });
   assert.ok(hub.includes('data-testid="link-refused"') || hub.includes("link-refused"), hub.slice(0, 200));

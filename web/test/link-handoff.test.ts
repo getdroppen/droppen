@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { callbackTier, hubWebOrigin, machineFingerprint, parseLinkMessage } from "../src/features/link/handoff.js";
+import { callbackTier, confirmsHost, hostToType, hubWebOrigin, machineFingerprint, parseLinkMessage, privateHost } from "../src/features/link/handoff.js";
 import { LinkOpener, type OpenerState, type OpenerWindow } from "../src/features/link/opener.js";
 import { linkJa, linkZhCN, linkZhTW } from "../src/i18n/link.js";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
@@ -38,13 +38,13 @@ test("only well-formed messages of this version are taken", () => {
   }
 });
 
-test("only this computer itself is trusted without a warning; the hub's own host is refused", () => {
+test("only this computer itself is trusted without a warning; a public address must be typed out; the hub's own host is refused", () => {
   const hub = "https://droppen.app";
   for (const local of ["http://127.0.0.1:8700", "http://127.8.9.10", "http://localhost:5180", "http://box.localhost", "http://[::1]:8700"]) {
     assert.equal(callbackTier(local, hub), "local", local);
   }
-  for (const other of ["https://evil.example", "http://8.8.8.8", "http://172.32.0.1", "http://100.128.0.1", "http://[2001:db8::1]"]) {
-    assert.equal(callbackTier(other, hub), "warn", other);
+  for (const other of ["https://evil.example", "http://8.8.8.8", "http://172.32.0.1", "http://100.128.0.1", "http://[2001:db8::1]", "https://droppen.app.evil.example", "https://my-box.example.com:8443"]) {
+    assert.equal(callbackTier(other, hub), "public", other);
   }
   assert.equal(callbackTier("https://droppen.app", hub), "refuse", "the hub's own origin");
   assert.equal(callbackTier("http://droppen.app", hub), "refuse", "the hub's host on another scheme");
@@ -258,4 +258,29 @@ test("an attempt that runs out while the popup waits (a recovered browser awaiti
   assert.equal(opener.current.kind, "expired");
   assert.ok(f.popup.closed, "the popup is closed with it");
   opener.close();
+});
+
+test("the warning with a tick is kept for the networks a computer of one's own sits on; any other host is public", () => {
+  for (const host of ["192.168.0.2", "10.1.2.3", "172.16.0.1", "172.31.255.255", "169.254.1.1", "100.64.0.1", "100.127.255.255", "0.0.0.0", "nas", "box.local", "box.local.", "pi.home.arpa", "srv.internal", "x.tail1234.ts.net", "[fd00::1]", "[fe80::1]", "[::ffff:c0a8:1]"]) {
+    assert.equal(privateHost(host), true, host);
+  }
+  for (const host of ["8.8.8.8", "172.15.0.1", "172.32.0.1", "100.63.255.255", "100.128.0.1", "example.com", "local.example.com", "x.ts.net.evil.example", "[2001:db8::1]", "[::ffff:808:808]"]) {
+    assert.equal(privateHost(host), false, host);
+  }
+  // A name with no dot is the local network's own (its search domain resolves it).
+  assert.equal(privateHost("studio-mac"), true);
+});
+
+test("a public address is confirmed by typing its host name, not by a tick", () => {
+  const cb = "https://My-Box.Example.com:8443";
+  assert.equal(hostToType(cb), "my-box.example.com", "the name, no port");
+  assert.equal(confirmsHost("my-box.example.com", cb), true);
+  assert.equal(confirmsHost("  MY-BOX.example.COM ", cb), true, "case and blanks do not matter");
+  assert.equal(confirmsHost("my-box.example.com.", cb), true, "nor a trailing dot");
+  for (const wrong of ["", "example.com", "my-box.example.co", "my-box.example.com:8443", "https://my-box.example.com", "y"]) {
+    assert.equal(confirmsHost(wrong, cb), false, wrong);
+  }
+  assert.equal(hostToType("http://[2001:db8::1]:8700"), "2001:db8::1");
+  assert.equal(confirmsHost("[2001:db8::1]", "http://[2001:db8::1]:8700"), true);
+  assert.equal(confirmsHost("anything", "not a url"), false);
 });

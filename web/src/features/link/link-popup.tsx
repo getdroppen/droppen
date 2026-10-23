@@ -11,8 +11,8 @@ import { atLimit, HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
 import { hubShell } from "@/features/cloud/hub-shell";
 import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
 import { LimitNote, useMe } from "@/features/cloud/plan";
-import { Centered, ErrorLine, errorText, Note, Panel, primary, quiet } from "@/features/cloud/ui";
-import { callbackTier, type HandoffRequest, LINK_PATH, type LinkMessage, machineFingerprintHex, parseLinkMessage, returnAddress } from "./handoff";
+import { Centered, ErrorLine, errorText, field, Note, Panel, primary, quiet } from "@/features/cloud/ui";
+import { callbackTier, confirmsHost, type HandoffRequest, hostToType, LINK_PATH, type LinkMessage, machineFingerprintHex, parseLinkMessage, returnAddress } from "./handoff";
 import { browserEnv, forgetHandoff, pendingHandoff } from "./fragment-boot";
 
 /*
@@ -219,6 +219,8 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
   const me = useMe(account, link);
   const [step, setStep] = useState<Step>({ kind: "consent" });
   const [confirmHost, setConfirmHost] = useState(false);
+  // A public address: its host name, typed out (`confirmsHost`).
+  const [typedHost, setTypedHost] = useState("");
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [mismatch, setMismatch] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -453,7 +455,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
     );
   }
 
-  const ready = mismatch === null && (tier === "local" || confirmHost);
+  const ready = mismatch === null && (tier === "local" || (tier === "warn" && confirmHost) || (tier === "public" && confirmsHost(typedHost, cb)));
   return (
     <Centered>
       <Panel
@@ -480,6 +482,26 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
               <label className="flex items-center gap-2 text-xs text-fg">
                 <input type="checkbox" checked={confirmHost} onChange={(e) => setConfirmHost(e.target.checked)} data-testid="link-confirm-host" />
                 {t("I confirm {{host}} is my own device", { host })}
+              </label>
+            </Note>
+          )}
+          {tier === "public" && (
+            <Note tone="danger">
+              <p data-signal="failed" className="text-xs text-danger" data-testid="link-warning">
+                {t("This is a public address on the internet. A device of your own is rarely there, and a page pretending to be its settings may be: add it only if you set up {{host}} yourself.", { host: hostToType(cb) })}
+              </p>
+              <label className="flex flex-col gap-1 text-xs text-fg">
+                {t("To confirm, type its host name: {{host}}", { host: hostToType(cb) })}
+                <input
+                  type="text"
+                  value={typedHost}
+                  onChange={(e) => setTypedHost(e.target.value)}
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  className={field}
+                  data-testid="link-type-host"
+                />
               </label>
             </Note>
           )}
