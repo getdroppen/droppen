@@ -128,9 +128,12 @@ serve 那一个 pid：
 - Tailscale / Cloudflare Tunnel 之类自带 HTTPS 的隧道；
 - 只在本机用时访问 `http://localhost:<port>`——`localhost` 被规范单独豁免，IP 形式不算。
 
-前两种经过的名字（反向代理的域名、Tailscale 的 `*.ts.net`、隧道的域名）要写进
-`DROPPEN_ALLOWED_HOSTS`（逗号分隔），否则服务端对发给这个名字的请求一律回 `403`
-（`crate::origin`「Which names the server answers to」）。
+前两种经过的名字（反向代理的域名、隧道的域名）要写进 `DROPPEN_ALLOWED_HOSTS`（逗号分隔），
+否则服务端对发给这个名字的请求一律回 `403`（`crate::origin`「Which names the server answers
+to」）。不用写的：IP 地址、`localhost` 和 `*.localhost`、本地网络的名字（不带点的单个名字、
+`*.local`、`*.lan`、`*.home.arpa`、`*.internal`）和 tailnet 的 `*.ts.net`（`tailscale serve`
+的名字也在其中）。本地网络的名字由这个网络自己的名字解析决定，所以同一网络里能控制名字解析的设备
+仍能访问不需要会话的那几个接口（登录、首次设置、状态）；其余一切都要会话。
 
 另外两条运维前提：
 

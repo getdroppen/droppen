@@ -261,10 +261,10 @@ test("an attempt that runs out while the popup waits (a recovered browser awaiti
 });
 
 test("the warning with a tick is kept for the networks a computer of one's own sits on; any other host is public", () => {
-  for (const host of ["192.168.0.2", "10.1.2.3", "172.16.0.1", "172.31.255.255", "169.254.1.1", "100.64.0.1", "100.127.255.255", "0.0.0.0", "nas", "box.local", "box.local.", "pi.home.arpa", "srv.internal", "x.tail1234.ts.net", "[fd00::1]", "[fe80::1]", "[::ffff:c0a8:1]"]) {
+  for (const host of ["192.168.0.2", "10.1.2.3", "172.16.0.1", "172.31.255.255", "169.254.1.1", "100.64.0.1", "100.127.255.255", "0.0.0.0", "nas", "box.local", "box.local.", "nas.lan", "pi.home.arpa", "srv.internal", "x.tail1234.ts.net", "[fd00::1]", "[fe80::1]", "[::ffff:c0a8:1]"]) {
     assert.equal(privateHost(host), true, host);
   }
-  for (const host of ["8.8.8.8", "172.15.0.1", "172.32.0.1", "100.63.255.255", "100.128.0.1", "example.com", "local.example.com", "x.ts.net.evil.example", "[2001:db8::1]", "[::ffff:808:808]"]) {
+  for (const host of ["8.8.8.8", "172.15.0.1", "172.32.0.1", "100.63.255.255", "100.128.0.1", "example.com", "local.example.com", "lan.example.com", "x.ts.net.evil.example", "[2001:db8::1]", "[::ffff:808:808]"]) {
     assert.equal(privateHost(host), false, host);
   }
   // A name with no dot is the local network's own (its search domain resolves it).

@@ -93,9 +93,12 @@ The local program listens on loopback only. Reach it from other devices
 through Droppen, or through an SSH tunnel or Tailscale. Do not expose its port
 to the Internet: whoever reaches it can run commands as you. It answers to IP
 addresses, `localhost` and local-network names (`mymac`, `*.local`, `*.lan`,
-`*.home.arpa`, `*.internal`); a reverse proxy or tunnel that passes another
-name on (`tailscale serve`, Caddy, a Cloudflare Tunnel) needs that name in
-`DROPPEN_ALLOWED_HOSTS` (comma-separated).
+`*.home.arpa`, `*.internal`, a tailnet's `*.ts.net`); a reverse proxy or
+tunnel that passes another name on (Caddy, a Cloudflare Tunnel) needs that
+name in `DROPPEN_ALLOWED_HOSTS` (comma-separated). Local-network names are
+whatever the network's own name resolution says, so a device on the same
+network that controls it can still reach the routes that answer without a
+session (sign-in, first-run setup, status); everything else needs a session.
 
 ## Build from source
 

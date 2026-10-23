@@ -137,7 +137,7 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  *   `[::1]`. Nobody but this computer answers there.
  * - `warn`: an address a computer of one's own usually has — a private,
  *   link-local or carrier-grade (100.64/10, Tailscale) address, a name with
- *   no dot, `*.local`, `*.home.arpa`, `*.internal`, `*.ts.net` — a red
+ *   no dot, `*.local`, `*.lan`, `*.home.arpa`, `*.internal`, `*.ts.net` — a red
  *   warning, an explicit "this is my own device", and the fingerprint the
  *   computer's settings show. Whoever answers on the network the browser is
  *   on can answer there, and `*.ts.net` is public (Tailscale Funnel gives
@@ -161,8 +161,12 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  */
 export type CallbackTier = "local" | "warn" | "public" | "refuse";
 
-/** Names that are not on the public internet: mDNS, the home network's, private use, a tailnet's. */
-const PRIVATE_SUFFIXES = [".local", ".home.arpa", ".internal", ".ts.net"];
+/**
+ * Names that are not on the public internet: mDNS, the home network's, private
+ * use, a tailnet's. The local server answers to the same ones
+ * (`LOCAL_SUFFIXES` in `server-rs/src/origin.rs`).
+ */
+const PRIVATE_SUFFIXES = [".local", ".lan", ".home.arpa", ".internal", ".ts.net"];
 
 /** Whether `host` (a URL's hostname, IPv6 in brackets) is one of the networks a computer of one's own sits on. */
 export function privateHost(host: string): boolean {

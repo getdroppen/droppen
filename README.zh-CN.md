@@ -362,10 +362,12 @@ ticket 只活 60 秒。
 - `DROPPEN_ALLOWED_ORIGINS`:逗号分隔的额外可信 Origin;与请求同 host 的 Origin 自动信任。
 - `DROPPEN_ALLOWED_HOSTS`:逗号分隔的额外主机名(端口忽略)。服务端只回答发给这些名字的请求
   (看 `Host`,所有路径):IP 地址、`localhost` 和 `*.localhost`、只有本地网络才给的名字
-  (不带点的单个名字如 `mymac`,以及 `*.local`、`*.lan`、`*.home.arpa`、`*.internal`)、
-  `APP_SERVER__HOST` 配的名字、`DROPPEN_ALLOWED_ORIGINS` 里的主机,再加这里列的。别的名字一律
-  `403`,所以经反向代理 / 隧道用自己的域名访问(Caddy、Traefik、`tailscale serve`、Cloudflare
-  Tunnel 会把公开域名原样转过来)时要把那个域名写进来;`*` 表示任何名字都回答(以前的行为)。
+  (不带点的单个名字如 `mymac`,以及 `*.local`、`*.lan`、`*.home.arpa`、`*.internal`、tailnet 的
+  `*.ts.net`)、`APP_SERVER__HOST` 配的名字、`DROPPEN_ALLOWED_ORIGINS` 里的主机,再加这里列的。
+  别的名字一律 `403`,所以经反向代理 / 隧道用自己的域名访问(Caddy、Traefik、Cloudflare Tunnel
+  会把公开域名原样转过来)时要把那个域名写进来;`*` 表示任何名字都回答(以前的行为)。本地网络的
+  名字由这个网络自己的名字解析决定,所以同一网络里能控制名字解析的设备仍能访问不需要会话的那几个
+  接口(登录、首次设置、状态);其余一切都要会话。
 - `DROPPEN_IDLE_TIMEOUT_MS`:一次 agent 运行「多久没有任何进展」才判定为卡死并终止(默认
   20 分钟)。进展 = CLI 有输出,或会话 transcript 文件仍在增长;**运行时间本身不设上限**,
   长时间的 agentic 任务不会被打断。

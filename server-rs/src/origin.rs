@@ -29,15 +29,23 @@
 //!   Droppen bridge all address the server this way;
 //! * `localhost` and `*.localhost`, which browsers keep on this device;
 //! * names only a local network gives out: a single label (`mymac`) and
-//!   `*.local`, `*.lan`, `*.home.arpa`, `*.internal`;
+//!   `*.local`, `*.lan`, `*.home.arpa`, `*.internal`, and a tailnet's
+//!   `*.ts.net` (the web app's `privateHost` in
+//!   `web/src/features/link/handoff.ts` takes the same suffixes);
 //! * the name the server is configured to bind (`APP_SERVER__HOST`), the hosts
 //!   of `DROPPEN_ALLOWED_ORIGINS`, and the names in `DROPPEN_ALLOWED_HOSTS`
 //!   (comma-separated; a port is ignored). A reverse proxy or tunnel that
-//!   passes its public name on (Caddy, Traefik, `tailscale serve`, a Cloudflare
-//!   Tunnel) needs that name here. `DROPPEN_ALLOWED_HOSTS=*` accepts any name.
+//!   passes another public name on (Caddy, Traefik, a Cloudflare Tunnel) needs
+//!   that name here. `DROPPEN_ALLOWED_HOSTS=*` accepts any name.
 //!
 //! A request with no `Host` at all (an HTTP/1.0 tool) passes; a browser always
 //! sends one.
+//!
+//! What this leaves: the local-network names are whatever the network's own
+//! name resolution says they are, so a device on the same network that
+//! controls that resolution can still reach the routes that answer without a
+//! session (sign-in, first-run setup, status); everything else needs a
+//! session ([`crate::auth`]).
 //!
 //! Before the `Origin` is looked at, a browser's own word on where a request
 //! came from is: `Sec-Fetch-Site: cross-site` — another site's page, an
@@ -160,18 +168,21 @@ fn host_name(value: &str) -> Option<HostName> {
 
 /// The suffixes of names only this device or its local network gives out:
 /// browsers keep `localhost` on this device, mDNS answers `.local` on the local
-/// network only, and `.lan`, `.home.arpa` and `.internal` are what home and
-/// office networks name their devices under, never names public DNS hands out.
-const LOCAL_SUFFIXES: [&str; 5] = ["localhost", "local", "lan", "home.arpa", "internal"];
+/// network only, `.lan`, `.home.arpa` and `.internal` are what home and office
+/// networks name their devices under, never names public DNS hands out, and
+/// `.ts.net` names are a tailnet's own (Tailscale's MagicDNS and `tailscale
+/// serve`). The web app's `privateHost` (`web/src/features/link/handoff.ts`)
+/// takes the same ones.
+const LOCAL_SUFFIXES: [&str; 6] = ["localhost", "local", "lan", "home.arpa", "internal", "ts.net"];
 
 /// Whether `name` is one only this device or its local network resolves: a
-/// single label (`mymac`, reached through the network's own DNS) or one under
-/// [`LOCAL_SUFFIXES`].
+/// single label (`mymac`, reached through the network's own DNS) or a name
+/// under one of [`LOCAL_SUFFIXES`] (not the suffix itself).
 fn local_name(name: &str) -> bool {
     !name.contains('.')
         || LOCAL_SUFFIXES
             .iter()
-            .any(|suffix| name == *suffix || name.strip_suffix(suffix).is_some_and(|rest| rest.ends_with('.')))
+            .any(|suffix| name.strip_suffix(suffix).is_some_and(|rest| rest.len() > 1 && rest.ends_with('.')))
 }
 
 /// The host names this server answers to besides IP addresses and local names
@@ -427,8 +438,13 @@ mod tests {
             "nas.lan",
             "box.home.arpa:8700",
             "dev.internal:8700",
+            "mymac.tail1234.ts.net:8700",
+            "MyMac.Tail1234.TS.NET.",
         ] {
             assert!(p.allows(host), "{host}");
+        }
+        for host in ["ts.net", "ts.net:8700", "evilts.net", "x.ts.net.example.com", "home.arpa", ".local"] {
+            assert!(!p.allows(host), "{host}: a suffix alone, or one that is not at the end, is not a local name");
         }
     }
 
