@@ -27,10 +27,10 @@
 # Report every failing test, not just the first one.
 fail-fast = false
 # Most tests wait on timers, child processes and sockets rather than on the
-# CPU, and the hosted runner has two cores: more tests in flight than cores
-# keeps them busy (101 s against 171 s for the server crate's tests on two
-# cores at 8 against 2 threads).
-test-threads = 8
+# CPU: more tests in flight than cores keeps them busy (101 s against 171 s
+# for the server crate's tests at 8 against 2 threads, on the old two-core
+# hosted runner). CI runs on the cluster's 16-core runner now.
+test-threads = 32
 # A hung test is killed on its own, and named, after 10 minutes, instead of
 # taking the step's timeout with it.
 slow-timeout = { period = "120s", terminate-after = 5 }
