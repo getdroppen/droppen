@@ -7,7 +7,7 @@ contributors holds the runs. The review workflow is what approves them.
 
 ## What runs, and when
 
-| Pull request from | `ci`, `pr-guard`, CodeQL (`pull_request`) | `llm-security-review` (`pull_request_target`) |
+| Pull request from | `ci`, `pr-guard` | `llm-security-review` (`pull_request_target`) |
 |---|---|---|
 | a branch of this repository (maintainers) | at once | at once |
 | Dependabot (a branch of this repository) | at once, with a read-only token and Dependabot's secrets only | at once, reviewed like any other pull request |
@@ -19,11 +19,16 @@ approval for all external contributors** (Settings → Actions → General). A
 because it is the default branch's own workflow and not the pull request's.
 That is why the review is one.
 
+CodeQL is not in that table: it is a scheduled workflow on main
+(`.github/workflows/codeql.yml`, once a day) and runs on neither a pull request
+nor a push. A pull request therefore never waits on it, and approving a fork's
+runs approves only `ci` and `pr-guard`.
+
 ## The gate, step by step
 
 1. A fork's pull request is opened, reopened, marked ready, or pushed to. Its
-   head is now commit C. GitHub creates C's runs of `ci`, `pr-guard` and CodeQL
-   and holds them. `llm-security-review` starts at once, from main.
+   head is now commit C. GitHub creates C's runs of `ci` and `pr-guard` and
+   holds them. `llm-security-review` starts at once, from main.
 2. **`llm-security-review`** (the required check) checks C out by its sha as
    data, without credentials. It writes the diff `base...C` and the list of
    changed files next to the checkout, and has the review agent read them. A
@@ -278,7 +283,7 @@ for example a throwaway account.
    `git commit -s`, then open a pull request against `getdroppen/droppen:main`.
 2. On the pull request, under Checks, check that:
    - `llm-security-review` is running;
-   - `ci`, `pr-guard` and CodeQL show as waiting for approval.
+   - `ci` and `pr-guard` show as waiting for approval.
 
    The API agrees:
 

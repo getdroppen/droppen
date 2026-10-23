@@ -1,0 +1,51 @@
+name: codeql
+
+# CodeQL is the slowest thing CI runs: four languages, a database each.
+# It does not run on pull requests or on pushes to main — the daily scan on
+# main is enough to catch a new finding, and the checks a pull request must
+# pass are in ci.yml and pr-guard.yml. Dispatch this workflow for a commit
+# that needs the scan before the next day's run.
+on:
+  schedule:
+    # 03:17 UTC: a quiet hour, and the odd minute keeps it off the top of it.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The languages the repository used to scan with default setup.
+          # Every one of them is analyzed without a build: Rust supports no
+          # other build mode, and the rest have nothing to compile.
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: rust
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:${{ matrix.language }}"
