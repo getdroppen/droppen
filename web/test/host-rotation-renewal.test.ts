@@ -1989,9 +1989,31 @@ test("Codex 1: kept disputes are one per renewal; copies, or many others, never 
   tab2.onChange(() => heard++);
   tab1.keepDisputes([await keptOf(b, "m-1", bh1.signPrivate, b1)]);
   assert.equal(tab1.isolated("m-1"), true, "the write failed; memory keeps it");
-  // Another tab hears of it at once — and tells its listeners (its channels among them).
-  assert.equal(tab2.isolated("m-1"), true, "the other tab heard of it");
+  // Another tab hears of it at once, and counts it once it has verified it on its own chain — then tells its listeners (its channels among them).
+  assert.equal(tab2.isolated("m-1"), false, "heard of, not yet verified there: it counts for nothing yet");
+  await until(() => tab2.isolated("m-1"));
   assert.ok(heard > 0, "and told its listeners");
+  assert.equal(tab2.keptDisputes().length, 1);
+});
+
+test("a dispute heard from another tab counts only once verified there; one about a renewal that tab has not loaded yet holds the host meanwhile, and the tab catches up", async () => {
+  const { a, agents, x, h1 } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const bus = tabsBus();
+  // A tab behind: it has not loaded m-1's renewal.
+  const tab2 = await tabOf(a, bus());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const s1 = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const tab1 = await tabOf(a, bus());
+  assert.ok(tab2.chain!.seq < s1, "tab2 is behind the renewal");
+  const told: boolean[] = [];
+  tab2.onChange(() => told.push(tab2.isolated("m-1")));
+  tab1.keepDisputes([await keptOf(tab1, "m-1", h1.signPrivate, s1)]);
+  assert.equal(tab2.isolated("m-1"), true, "behind, it cannot judge it: the host is held isolated meanwhile");
+  await until(() => tab2.chain!.seq >= s1);
+  assert.equal(tab2.isolated("m-1"), true, "caught up, checked on the view that brought the renewal: still isolated");
+  assert.ok(!told.includes(false), "never let go in between");
+  assert.equal(tab2.keptDisputes().length, 1);
 });
 
 test("Codex 1: the runner's evidence from the hub now never stands in for what this page kept", async () => {
@@ -2187,16 +2209,21 @@ test("R6 review: kept disputes carry their signature and are verified again when
   // Written into storage with a signature that is not the retired key's.
   browserStorage(a.store).setItem(`rh.hub.renewal.disputes.${a.account}`, JSON.stringify([{ ...d1, sig: "ab".repeat(64) }]));
   const page = await hub.reload(a);
-  assert.equal(page.isolated("m-1"), true, "until checked, it counts: isolation fails safe");
-  await until(() => !page.isolated("m-1"));
+  assert.equal(page.isolated("m-1"), false, "checked on the chain as it was loaded, before it was taken: it never counted");
   assert.deepEqual(page.keptDisputes(), [], "dropped once checked");
-  // From another tab, forged: the same.
+  // From another tab, forged: never counted there either, not even for a moment.
   const bus = tabsBus();
   const tab1 = await tabOf(a, bus());
   const tab2 = await tabOf(a, bus());
   browserStorage(a.store).removeItem(`rh.hub.renewal.disputes.${a.account}`);
+  const told: boolean[] = [];
+  tab2.onChange(() => told.push(tab2.isolated("m-1")));
   tab1.keepDisputes([{ ...d1, sig: "cd".repeat(64) }]);
-  await until(() => !tab2.isolated("m-1"));
+  assert.equal(tab2.isolated("m-1"), false);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(told.length > 0 && !told.includes(true), "told, and never isolated by it");
+  assert.equal(tab2.isolated("m-1"), false);
+  assert.deepEqual(tab2.keptDisputes(), [], "dropped once checked");
   // The real one: kept, read back on a reload, verified again — and isolating.
   a.keepDisputes([d1]);
   const again = await hub.reload(a);

@@ -1192,8 +1192,11 @@ export class CloudAccount {
   /**
    * What re-verifying a kept dispute on this page's chain found (R6 review), by
    * {@link disputeId}: `ok`, `bad` (dropped: it isolates nothing), or
-   * `checking`. One not looked at yet — or that the chain cannot judge yet —
-   * still counts, as a wait: isolation fails safe.
+   * `checking`. Only an `ok` one counts — but for one about a renewal this
+   * page's chain does not hold yet, which it cannot judge: that one counts
+   * meanwhile (a page behind keeps the host isolated: isolation fails safe),
+   * and is checked on the view that brings the renewal before that view is
+   * taken ({@link install}).
    */
   private keptChecks = new Map<string, "ok" | "bad" | "checking">();
   /**
@@ -1985,6 +1988,10 @@ export class CloudAccount {
         if (error instanceof SeenStoreError) this.unrecordedThrough = Math.max(this.unrecordedThrough, next.seq);
         throw error;
       }
+      // What this page kept or heard of that the new view can judge, checked on
+      // it before it is taken: one that counted while this view was behind goes
+      // on counting, or stops, with no moment in between.
+      await this.checkDisputesOn(next);
       // A fork latched meanwhile (another call of this page) installs nothing either.
       this.assertNotForked();
       this.state = next;
@@ -4230,11 +4237,21 @@ export class CloudAccount {
    * ({@link disputeIsolates}), before any channel is opened or key sealed.
    */
   keepDisputes(found: readonly KeptDispute[]): void {
-    const kept = this.keptDisputes();
+    // Every one kept, those still being checked too: a write never drops another tab's.
+    const kept = this.keptAll();
     const fresh = disputesNotIn(kept, found);
-    if (!fresh.length) return;
-    // Verified just now by the caller (`checkStatement`), on this page's chain.
-    for (const d of fresh) this.keptChecks.set(disputeId(d), "ok");
+    // Verified just now by the caller (`checkStatement`), on this page's chain —
+    // one another tab told of, and still being checked here, as well.
+    const confirmed = found.filter((d) => this.keptChecks.get(disputeId(d)) !== "ok");
+    for (const d of found) this.keptChecks.set(disputeId(d), "ok");
+    if (!fresh.length) {
+      if (confirmed.length) {
+        this.assuranceGen++;
+        this.exposureCache = null;
+        this.emit();
+      }
+      return;
+    }
     this.assuranceGen++;
     // Memory holds what storage is told: if the write fails, nothing is lost here.
     this.keptMemory = capDisputes(this.state, mergeDisputes(kept, fresh));
@@ -4244,27 +4261,39 @@ export class CloudAccount {
     this.emit();
   }
 
-  /** Another tab's disputes (or its storage write): kept in memory here too, and everyone told. */
+  /**
+   * Another tab's disputes (or its storage write): kept in memory here too —
+   * so a storage write that failed there loses none — but counted only once
+   * this page has verified them on its own chain ({@link keptDisputes});
+   * then everyone here is told at once ({@link checkKept}). One about a
+   * renewal this page's chain does not hold yet counts meanwhile, and this
+   * page catches up to check it.
+   */
   private heardDisputes(message: unknown): void {
     const m = (message && typeof message === "object" ? message : {}) as { account?: unknown; disputes?: unknown; storage?: unknown };
     if (m.account === this.account) {
       const heard = parseDisputes(m.disputes);
-      const fresh = disputesNotIn(this.keptDisputes(), heard);
-      if (fresh.length) {
-        this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptDisputes(), fresh));
-        this.assuranceGen++;
-      }
+      const fresh = disputesNotIn(this.keptAll(), heard);
+      if (fresh.length) this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptAll(), fresh));
     } else if (!("storage" in m)) return;
+    // What an automatic renewal may not go past may have moved (here, or once checked).
+    this.assuranceGen++;
     this.exposureCache = null;
+    // The checks start now, not when someone next asks; for one about a renewal this view does not hold yet, it catches up.
+    this.keptDisputes();
+    const chain = this.state;
+    if (chain && this.keptAll().some((d) => d.seq > chain.seq)) {
+      void this.sync().catch((error: unknown) => console.warn("cloud account: catching up with a dispute another tab kept:", error));
+    }
     this.emit();
   }
 
   /**
-   * The disputes this browser verified for the account, as kept
-   * ({@link keepDisputes}): what storage holds, and what this page kept or
-   * heard of in memory — one each, by host and renewal.
+   * Every dispute kept for the account here that no check found bad — what
+   * storage holds, and what this page kept or heard of in memory, one each by
+   * host, renewal and signature — verified or not yet.
    */
-  keptDisputes(): KeptDispute[] {
+  private keptAll(): KeptDispute[] {
     const raw = this.read(keptDisputesKey(this.account));
     if (raw !== this.keptRaw) {
       let parsed: KeptDispute[] = [];
@@ -4277,16 +4306,35 @@ export class CloudAccount {
       this.keptParsed = parsed;
     }
     const all = this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
-    // Each read back is verified again on this page's chain (R6 review); one that does not check out counts for nothing.
-    for (const d of all) this.checkKept(d);
     return all.filter((d) => this.keptChecks.get(disputeId(d)) !== "bad");
+  }
+
+  /**
+   * The disputes this browser verified for the account, as kept
+   * ({@link keepDisputes}): what storage holds, and what this page kept or
+   * heard of in memory — one each, by host and renewal. Each is verified
+   * again on this page's chain (R6 review) and counts only once it checks
+   * out: storage, and another tab, are this origin's to write, not evidence.
+   * One about a renewal this page's chain does not hold yet counts until
+   * the chain brings it (see {@link keptChecks}).
+   */
+  keptDisputes(): KeptDispute[] {
+    const all = this.keptAll();
+    for (const d of all) this.checkKept(d);
+    const chain = this.state;
+    return all.filter((d) => {
+      const check = this.keptChecks.get(disputeId(d));
+      return check === "ok" || (check === undefined && (!chain || chain.seq < d.seq));
+    });
   }
 
   /**
    * Verify kept dispute `d` on this page's chain, once (R6 review): the statement
    * must be signed by the key the renewal at `d.seq` retired. A chain that
-   * has no such entry yet cannot judge it: it is looked at again when asked
-   * once the chain has it — until then it counts.
+   * has no such entry yet cannot judge it: it is checked on the view that
+   * brings the entry ({@link checkDisputesOn}). One that checks out counts
+   * from then on, and listeners (each channel among them) are told at once;
+   * one that does not is dropped.
    */
   private checkKept(d: KeptDispute): void {
     const id = disputeId(d);
@@ -4294,20 +4342,37 @@ export class CloudAccount {
     if (this.keptChecks.has(id) || !chain || chain.seq < d.seq) return;
     this.keptChecks.set(id, "checking");
     void (async () => {
-      let ok = false;
-      try {
-        ok = await chain.verifyRotateDispute(d.host, d.seq, fromHex(d.sig));
-      } catch {
-        ok = false;
-      }
-      this.keptChecks.set(id, ok ? "ok" : "bad");
-      if (!ok) {
-        console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq} does not check out: dropped`);
-        this.keptMemory = this.keptMemory.filter((k) => disputeId(k) !== id);
-        this.exposureCache = null;
-        this.emit();
-      }
+      const ok = await disputeChecksOut(chain, d);
+      if (this.keptChecks.get(id) !== "checking") return;
+      this.settleKept(d, ok);
+      if (ok) this.assuranceGen++;
+      this.exposureCache = null;
+      this.emit();
     })();
+  }
+
+  /** What checking kept dispute `d` found: kept as `ok`, or as `bad` and dropped from memory. */
+  private settleKept(d: KeptDispute, ok: boolean): void {
+    const id = disputeId(d);
+    this.keptChecks.set(id, ok ? "ok" : "bad");
+    if (!ok) {
+      console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq} does not check out: dropped`);
+      this.keptMemory = this.keptMemory.filter((k) => disputeId(k) !== id);
+    }
+  }
+
+  /** Check, on `chain`, every kept dispute it can judge that was not judged yet (a view about to be installed). */
+  private async checkDisputesOn(chain: ChainState): Promise<void> {
+    for (const d of this.keptAll()) {
+      const id = disputeId(d);
+      const check = this.keptChecks.get(id);
+      if (check === "ok" || check === "bad" || chain.seq < d.seq) continue;
+      const ok = await disputeChecksOut(chain, d);
+      const now = this.keptChecks.get(id);
+      if (now === "ok" || now === "bad") continue;
+      this.settleKept(d, ok);
+      this.exposureCache = null;
+    }
   }
 
   /** Whether a kept dispute isolates host `id` on this page's chain. */
@@ -6649,6 +6714,15 @@ function parseDisputes(list: unknown): KeptDispute[] {
 
 /** A dispute's identity: its host, its renewal and its signature (one each; a forged copy is another, dropped once checked). */
 const disputeId = (d: KeptDispute) => `${d.seq}@${d.host}@${d.sig}`;
+
+/** Whether kept dispute `d` is signed by the key the renewal at `d.seq` on `chain` retired (`false` for anything that does not verify). */
+async function disputeChecksOut(chain: ChainState, d: KeptDispute): Promise<boolean> {
+  try {
+    return await chain.verifyRotateDispute(d.host, d.seq, fromHex(d.sig));
+  } catch {
+    return false;
+  }
+}
 
 /** Those of `found` not in `kept`, one each. */
 function disputesNotIn(kept: readonly KeptDispute[], found: readonly KeptDispute[]): KeptDispute[] {
