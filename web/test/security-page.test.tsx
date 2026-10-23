@@ -6,10 +6,11 @@
 // section and from the privacy notice; it reads in en, zh-CN, zh-TW and ja
 // with every string translated and nothing left in English; its sections come
 // in order, each with an anchor the table of contents links, and the identity
-// renewal's parts have anchors of their own; what is not live is marked so
-// (the renewal "not live yet", a passkey letting a device in on its own "not
-// live"), passkeys are described as shipped (sign-in, and a join a full device
-// approves by pairing), and the page says
+// renewal's parts have anchors of their own; what is not live, or still in
+// testing, is marked so (the renewal "in testing", switched on at droppen.app
+// and tested there, never called stable; a passkey letting a device in on its
+// own "not live"), passkeys are described as shipped (sign-in, and a join a
+// full device approves by pairing), and the page says
 // where the source is; it says plainly that
 // a modified page can do anything the browser can, keys included; the
 // cross-references are links to anchors that exist; its enumerations are
@@ -157,9 +158,9 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 test("the page reads in each language, with nothing left in English but the code it quotes", () => {
   const lines = {
     en: ["How Droppen's end-to-end encryption works.", "Your devices hold the keys. Our servers carry ciphertext.", "One signed list decides who is in your account.", "Renewing the identity key of a device that runs AI.", "Don't take our word for it."],
-    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "尚未启用"],
-    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "尚未啟用"],
-    ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "まだ有効になっていない"],
+    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "测试中"],
+    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "測試中"],
+    ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "テスト中"],
   };
   for (const [lng, want] of Object.entries(lines)) {
     const words = text(draw(lng));
@@ -167,23 +168,32 @@ test("the page reads in each language, with nothing left in English but the code
   }
   for (const lng of LANGS) {
     const words = text(draw(lng));
-    assert.doesNotMatch(words, /Your devices hold the keys|What it never sees|Not live yet|Threat model|Verify it yourself|Report a vulnerability|devices? that runs? AI/, lng);
+    assert.doesNotMatch(words, /Your devices hold the keys|What it never sees|In testing|Threat model|Verify it yourself|Report a vulnerability|devices? that runs? AI/, lng);
   }
 });
 
-test("only what ships is described as live: the renewal is not live yet, nor a passkey letting a device in on its own; the source is where it says", () => {
+test("only what ships is described as live: the renewal is in testing, a passkey letting a device in on its own not live; the source is where it says", () => {
   for (const lng of ["en", ...LANGS]) {
     const html = draw(lng);
     // The renewal's head carries the chip, in the reader's language.
     const head = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="renewal-why"'));
-    const chip = { en: "Not live yet", "zh-CN": "尚未启用", "zh-TW": "尚未啟用", ja: "まだ有効になっていない" }[lng]!;
+    const chip = { en: "In testing", "zh-CN": "测试中", "zh-TW": "測試中", ja: "テスト中" }[lng]!;
     assert.ok(text(head).includes(chip), `${lng}: the renewal is marked`);
     // So does its line in the table of contents.
     const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
     assert.ok(text(contents).includes(chip), `${lng}: the contents mark it too`);
   }
-  const words = text(draw("en"));
-  assert.ok(words.includes("Not switched on yet."));
+  const page = draw("en");
+  const words = text(page);
+  // Switched on at droppen.app, in testing, and what its test there showed; never called stable, nor "not live" any more.
+  const renewal = text(page.slice(page.indexOf('id="renewal"'), page.indexOf('id="renewal-why"')));
+  assert.ok(renewal.includes("Switched on at droppen.app since 2026-10-23, in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested"));
+  assert.ok(renewal.includes("A test on droppen.app on 2026-10-23 showed:"));
+  for (const seen of ["the window was 2 minutes", "was revoked, on relays that can revoke one role's tickets alone; its ticket for running AI stayed valid until the entry was stored", "an entry written before the window was over was refused", "an automatic renewal and one confirmed with the code on the device both went through"]) {
+    assert.ok(renewal.includes(seen), seen);
+  }
+  assert.doesNotMatch(words, /\bstable\b|Not switched on|not live yet, will|renewal in place is not live/i);
+  assert.ok(words.includes("In testing: renewing the identity key of a device that runs AI in place"));
   assert.ok(words.includes("Not live: a passkey letting a new device in without a full device's approval"));
   // What has shipped: a passkey's slot lets a new browser ask; a full device approves it by pairing.
   assert.ok(words.includes("It gets no key until a full device pairs with it, by its 8-digit code or QR code, and approves exactly the keys on its screen"));

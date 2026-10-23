@@ -32,10 +32,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Droppen のエンドツーエンド暗号化のしくみ。",
   ],
   [
-    "A technical description for anyone who wants to check our claims: who holds which key, how your devices agree on who belongs to your account, what our servers can and cannot see, and what each of them could still do if it turned against you. It describes what Droppen does today; the parts that are not live yet are marked as such.",
-    "写给想核实我们说法的人的技术说明：哪把钥匙在谁手里，你的设备怎样就「谁属于这个账户」达成一致，我们的服务器能看到什么、看不到什么，以及它们哪天倒戈还能做什么。这里写的是 Droppen 今天的做法；尚未启用的部分都已标明。",
-    "寫給想核實我們說法的人的技術說明：哪把金鑰在誰手上，你的裝置怎樣就「誰屬於這個帳戶」達成一致，我們的伺服器能看到什麼、看不到什麼，以及它們哪天倒戈還能做什麼。這裡寫的是 Droppen 今天的做法；尚未啟用的部分都已標明。",
-    "私たちの説明を確かめたい人のための技術資料です。どの鍵を誰が持つのか、あなたのデバイスがアカウントに属するデバイスをどう合意するのか、私たちのサーバーに何が見え何が見えないのか、そしてサーバーが敵に回ったら何ができるのか。今日の Droppen の実装を説明しています。まだ有効になっていない部分は、そう明記しています。",
+    "A technical description for anyone who wants to check our claims: who holds which key, how your devices agree on who belongs to your account, what our servers can and cannot see, and what each of them could still do if it turned against you. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.",
+    "写给想核实我们说法的人的技术说明：哪把钥匙在谁手里，你的设备怎样就「谁属于这个账户」达成一致，我们的服务器能看到什么、看不到什么，以及它们哪天倒戈还能做什么。这里写的是 Droppen 今天的做法；尚未启用或仍在测试的部分都已标明。",
+    "寫給想核實我們說法的人的技術說明：哪把金鑰在誰手上，你的裝置怎樣就「誰屬於這個帳戶」達成一致，我們的伺服器能看到什麼、看不到什麼，以及它們哪天倒戈還能做什麼。這裡寫的是 Droppen 今天的做法；尚未啟用或仍在測試的部分都已標明。",
+    "私たちの説明を確かめたい人のための技術資料です。どの鍵を誰が持つのか、あなたのデバイスがアカウントに属するデバイスをどう合意するのか、私たちのサーバーに何が見え何が見えないのか、そしてサーバーが敵に回ったら何ができるのか。今日の Droppen の実装を説明しています。まだ有効になっていない部分やテスト中の部分は、そう明記しています。",
   ],
   [
     "Overview",
@@ -110,10 +110,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "AI を実行できるデバイスの ID 鍵をその場で入れ替えます。",
   ],
   [
-    "Not live yet",
-    "尚未启用",
-    "尚未啟用",
-    "まだ有効になっていない",
+    "In testing",
+    "测试中",
+    "測試中",
+    "テスト中",
   ],
   [
     "Threat model",
@@ -542,10 +542,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "必要なら**再暗号化**もできます。AI を実行できる各デバイスが手元の記録から新しい鍵で履歴を作り直し、古い暗号文の削除を Droppen Hub に求めます。",
   ],
   [
-    "What the removed device already read, or can still read from old ciphertext a Hub kept, **cannot be taken back**. A device that could control a device that runs AI may also have copied that device's identity key: today you remove and add that device again; identity renewal ([[section 06|renewal]]), not live yet, will do this in place.",
-    "被移除的设备已经读到的东西，以及它还能从 Hub 留着的旧密文里读到的东西，都**收不回来**。能控制某台可运行 AI 的设备的设备，也可能复制了那台设备的身份密钥：今天的做法是把那台设备移除后重新添加；尚未启用的身份密钥更换（[[第 06 节|renewal]]）将来可以原地完成。",
-    "被移除的裝置已經讀到的東西，以及它還能從 Hub 留著的舊密文裡讀到的東西，都**收不回來**。能控制某台可執行 AI 的裝置的裝置，也可能複製了那台裝置的身分金鑰：今天的做法是把那台裝置移除後重新新增；尚未啟用的身分金鑰更換（[[第 06 節|renewal]]）將來可以原地完成。",
-    "削除されたデバイスがすでに読んだもの、そして Hub が残した古い暗号文からまだ読めるものは**取り戻せません**。AI を実行できるデバイスを操作できたデバイスは、そのデバイスの ID 鍵もコピーしたかもしれません。今はそのデバイスを削除して追加し直します。まだ有効になっていない ID 鍵の更新（[[06 節|renewal]]）が、これをその場で行えるようにします。",
+    "What the removed device already read, or can still read from old ciphertext a Hub kept, **cannot be taken back**. A device that could control a device that runs AI may also have copied that device's identity key: identity renewal ([[section 06|renewal]]), in early testing at droppen.app, replaces it in place; removing that device and adding it again also still works.",
+    "被移除的设备已经读到的东西，以及它还能从 Hub 留着的旧密文里读到的东西，都**收不回来**。能控制某台可运行 AI 的设备的设备，也可能复制了那台设备的身份密钥：身份密钥更换（[[第 06 节|renewal]]）可以原地换掉它，目前在 droppen.app 上处于早期测试阶段；把那台设备移除后重新添加，也仍然可行。",
+    "被移除的裝置已經讀到的東西，以及它還能從 Hub 留著的舊密文裡讀到的東西，都**收不回來**。能控制某台可執行 AI 的裝置的裝置，也可能複製了那台裝置的身分金鑰：身分金鑰更換（[[第 06 節|renewal]]）可以原地換掉它，目前在 droppen.app 上處於早期測試階段；把那台裝置移除後重新新增，也仍然可行。",
+    "削除されたデバイスがすでに読んだもの、そして Hub が残した古い暗号文からまだ読めるものは**取り戻せません**。AI を実行できるデバイスを操作できたデバイスは、そのデバイスの ID 鍵もコピーしたかもしれません。ID 鍵の更新（[[06 節|renewal]]）がその鍵をその場で入れ替えます。これは droppen.app で初期のテスト中です。そのデバイスを削除して追加し直すこともこれまでどおりできます。",
   ],
   [
     "Key",
@@ -626,10 +626,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "- Droppen Hub と中継へのサインイン、自分のストリームのヘッドへの署名\n- X25519 の半分は Noise の静的鍵で、コンテンツ鍵の受け取りにも使う",
   ],
   [
-    "When it is added again (renewal in place is not live yet)",
-    "重新添加时（原地更换尚未启用）",
-    "重新新增時（原地更換尚未啟用）",
-    "追加し直したとき（その場での更新はまだ有効になっていない）",
+    "When it is renewed in place (in testing) or added again",
+    "原地更换时（测试中），或重新添加时",
+    "原地更換時（測試中），或重新新增時",
+    "その場で更新したとき（テスト中）、または追加し直したとき",
   ],
   [
     "Account key AK",
@@ -938,10 +938,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "パスキーは、新しいブラウザが**参加を申請**できるようにもします。フルデバイスで追加したパスキーでは、チェックを外さない限りそうなります（PRF に対応したパスキーが必要です）。登録に使ったパスキーは、あなたがオンにしたときだけです。オンにすると、**パスキースロット**がチェーンに置かれます。パスキーの PRF 出力から導いた鍵で、そのパスキーにしか作れません。新しいブラウザはそのパスキーでサインインすると同じ鍵を導き、チェーン上のスロットを確かめて、自分を承認待ちの制限付きデバイスとして追加します。これはすべてのデバイスで警告になります。フルデバイスがそのブラウザと 8 桁のコードか QR コードでペアリングし、画面に出ている鍵そのものを承認するまで、鍵は何も受け取れません。承認されるとフルデバイスになり、ペアリングを通じてユーザー鍵を受け取ります。どのフルデバイスも、代わりにそれを削除できます。パスキーは**暗号化の鍵を持たず、何も開けません**。スロットはデバイスに申請させるだけです。",
   ],
   [
-    "**Not live**:\n- a **passkey letting a new device in** without a full device's approval\n- **renewing the identity key of a device that runs AI in place** ([[section 06|renewal]])",
-    "**尚未启用**：\n- 不经完整设备批准就凭**通行密钥让新设备加入**\n- **原地更换可运行 AI 的设备的身份密钥**（[[第 06 节|renewal]]）",
-    "**尚未啟用**：\n- 不經完整裝置核准就憑**通行金鑰讓新裝置加入**\n- **原地更換可執行 AI 的裝置的身分金鑰**（[[第 06 節|renewal]]）",
-    "**まだ有効になっていないもの**：\n- フルデバイスの承認なしに**パスキーで新しいデバイスを参加させること**\n- **AI を実行できるデバイスの ID 鍵のその場での更新**（[[06 節|renewal]]）",
+    "**Not live**: a **passkey letting a new device in** without a full device's approval.\n**In testing**: **renewing the identity key of a device that runs AI in place** ([[section 06|renewal]]).",
+    "**尚未启用**：不经完整设备批准就凭**通行密钥让新设备加入**。\n**测试中**：**原地更换可运行 AI 的设备的身份密钥**（[[第 06 节|renewal]]）。",
+    "**尚未啟用**：不經完整裝置核准就憑**通行金鑰讓新裝置加入**。\n**測試中**：**原地更換可執行 AI 的裝置的身分金鑰**（[[第 06 節|renewal]]）。",
+    "**まだ有効になっていないもの**：フルデバイスの承認なしに**パスキーで新しいデバイスを参加させること**。\n**テスト中のもの**：**AI を実行できるデバイスの ID 鍵のその場での更新**（[[06 節|renewal]]）。",
   ],
   [
     "Every channel is end to end, whichever way it goes.",
@@ -1106,10 +1106,16 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "AI を実行できるデバイスの ID 鍵を更新する。",
   ],
   [
-    "Not switched on yet. This section describes the design as it is being built and reviewed, not as live; parts of it may still change. Until it is on, a device that runs AI whose identity key may have been copied is removed and added again.",
-    "还没有启用。本节描述的是正在实现和评审中的设计，不是已上线的功能；其中部分内容仍可能改变。在启用之前，身份密钥可能已被复制的可运行 AI 的设备，要移除后重新添加。",
-    "還沒有啟用。本節描述的是正在實作和審查中的設計，不是已上線的功能；其中部分內容仍可能改變。在啟用之前，身分金鑰可能已被複製的可執行 AI 的裝置，要移除後重新新增。",
-    "まだ有効になっていません。この節は、実装とレビューが進行中の設計を説明するもので、稼働中の機能ではありません。一部はまだ変わるかもしれません。有効になるまでは、ID 鍵がコピーされたおそれのある AI を実行できるデバイスは、削除して追加し直します。",
+    "Switched on at droppen.app since 2026-10-23, in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested and parts of it may still change. A device that runs AI whose identity key may have been copied can also still be removed and added again.",
+    "自 2026-10-23 起已在 droppen.app 启用，处于早期测试阶段；Droppen 0.2.127 包含网页版一侧和可运行 AI 的设备一侧的部分。它仍在测试中，部分内容仍可能改变。身份密钥可能已被复制的可运行 AI 的设备，也仍然可以移除后重新添加。",
+    "自 2026-10-23 起已在 droppen.app 啟用，處於早期測試階段；Droppen 0.2.127 包含網頁版一側和可執行 AI 的裝置一側的部分。它仍在測試中，部分內容仍可能改變。身分金鑰可能已被複製的可執行 AI 的裝置，也仍然可以移除後重新新增。",
+    "2026-10-23 から droppen.app で有効になっており、初期のテスト段階です。Droppen 0.2.127 に、ウェブアプリの側と AI を実行できるデバイスの側の実装が入っています。まだテスト中で、一部は変わるかもしれません。ID 鍵がコピーされたおそれのある AI を実行できるデバイスは、これまでどおり削除して追加し直すこともできます。",
+  ],
+  [
+    "**A test on droppen.app** on 2026-10-23 showed:\n- the window was **2 minutes** ([[6.3|renewal-staging]])\n- as soon as a full device asked Droppen Hub for the renewal, a relay ticket issued earlier to the device that runs AI **in its role as a device** (in which it can control another device that runs AI that lets it in) was **revoked**, on relays that can revoke one role's tickets alone; its ticket for running AI **stayed valid until the entry was stored**\n- an entry written **before the window was over** was refused\n- an **automatic** renewal and one **confirmed with the code on the device** both went through",
+    "2026-10-23 **在 droppen.app 上的一次测试**表明：\n- 窗口是 **2 分钟**（[[6.3|renewal-staging]]）\n- 完整设备一向 Droppen Hub 提出更换，此前签给可运行 AI 的设备、供它**以设备角色**使用的中继票据就**被吊销**（以这个角色，它可以控制放行它的另一台可运行 AI 的设备），前提是中继能单独吊销一种角色的票据；它用于运行 AI 的票据则**一直有效，直到条目存下**\n- **窗口结束前**写下的条目被拒绝\n- **自动**更换和**凭设备上的代码确认**的更换都成功了",
+    "2026-10-23 **在 droppen.app 上的一次測試**表明：\n- 窗口是 **2 分鐘**（[[6.3|renewal-staging]]）\n- 完整裝置一向 Droppen Hub 提出更換，此前簽給可執行 AI 的裝置、供它**以裝置角色**使用的中繼票據就**被撤銷**（以這個角色，它可以控制放行它的另一台可執行 AI 的裝置），前提是中繼能單獨撤銷一種角色的票據；它用於執行 AI 的票據則**一直有效，直到項目存下**\n- **窗口結束前**寫下的項目被拒絕\n- **自動**更換和**憑裝置上的代碼確認**的更換都成功了",
+    "2026-10-23 の **droppen.app でのテスト**で、次のことを確かめました：\n- 時間窓は **2 分**（[[6.3|renewal-staging]]）\n- フルデバイスが Droppen Hub に更新を求めた時点で、それより前に AI を実行できるデバイスへ**デバイスとしての役割**で発行された中継チケットが**失効しました**（この役割で、それを受け入れる別の AI を実行できるデバイスを操作できます）。1 つの役割のチケットだけを失効させられる中継でのことです。AI を実行するためのチケットは**エントリが保存されるまで有効なまま**でした\n- **時間窓が終わる前に**書いたエントリは拒否されました\n- **自動**の更新も、**デバイスに表示されるコードで確認した**更新も、どちらも成功しました",
   ],
   [
     "Why renew",
@@ -1136,10 +1142,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "更新は、チェーン v3 の種別 20 のエントリ RotateHostKey で、フルデバイスが署名し、その直後にそのデバイスの次のコンテンツ鍵のコミットが続きます。**古い ID 鍵と新しい ID 鍵の両方**が 1 つの証明に署名します。アカウント、デバイス、作成時点のチェーンの位置（連番とそのエントリのハッシュ）、4 つの公開鍵すべて、ナンス、保証レベルです。エントリが持つのは新しい鍵、その位置、ナンス、保証レベル、2 つの署名で、各検証器は自分のチェーンにあるアカウントと古い鍵で証明を組み立て直します。だから、盗まれたフルデバイスだけでも、古い鍵を持つ人だけでも、その id を別の鍵に付け替えることはできません。",
   ],
   [
-    "Both verifiers check\n- that the device is a **current device that runs AI**\n- that **neither new key** is one any device on the chain holds or ever held\n- that the **hash** matches the chain at that position\n- **both signatures**\nRetired keys stay on the chain and can never join or be activated again. The released verifiers already read entry kind 20, and Droppen Hub **refuses to store it** until renewal is switched on. Entry kinds 21 and 22 (below) arrive with renewal itself, and the Hub holds them back the same way.",
-    "两个验证者都要检查：\n- 这台设备是**当前的可运行 AI 的设备**\n- **两把新钥匙**都不是链上任何设备正在用或曾经用过的\n- **哈希**与链在那个位置相符\n- **两份签名**\n退役的钥匙留在链上，永远不能再加入或被激活。已发布的验证者已经认得种类 20 的条目；在启用之前，Droppen Hub **拒绝保存它**。种类 21 和 22 的条目（见下文）随更换本身一起到来，Hub 同样先不收。",
-    "兩個驗證者都要檢查：\n- 這台裝置是**目前的可執行 AI 的裝置**\n- **兩把新金鑰**都不是鏈上任何裝置正在用或曾經用過的\n- **雜湊**與鏈在那個位置相符\n- **兩份簽章**\n退役的金鑰留在鏈上，永遠不能再加入或被啟用。已發布的驗證者已經認得種類 20 的項目；在啟用之前，Droppen Hub **拒絕保存它**。種類 21 和 22 的項目（見下文）隨更換本身一起到來，Hub 同樣先不收。",
-    "2 つの検証器はどちらも確かめます：\n- デバイスが**現在の AI を実行できるデバイス**であること\n- **新しい鍵**がどちらもチェーン上のどのデバイスも持っていないし持ったこともないものであること\n- その位置で**ハッシュ**がチェーンと一致すること\n- **2 つの署名**\n退役した鍵はチェーンに残り、二度と参加も有効化もできません。リリース済みの検証器はすでに種別 20 のエントリを読めますが、有効になるまで Droppen Hub は**その保存を拒否します**。種別 21 と 22 のエントリ（下記）は更新そのものと一緒に来るもので、Hub は同じように受け付けません。",
+    "Both verifiers check\n- that the device is a **current device that runs AI**\n- that **neither new key** is one any device on the chain holds or ever held\n- that the **hash** matches the chain at that position\n- **both signatures**\nRetired keys stay on the chain and can never join or be activated again. Droppen Hub stores an entry of kind 20 or 21, or one that starts a pause (kind 22; both below), only while renewal is switched on and every device that runs AI on the account runs a Droppen that can renew; otherwise it **refuses to store** them.",
+    "两个验证者都要检查：\n- 这台设备是**当前的可运行 AI 的设备**\n- **两把新钥匙**都不是链上任何设备正在用或曾经用过的\n- **哈希**与链在那个位置相符\n- **两份签名**\n退役的钥匙留在链上，永远不能再加入或被激活。种类 20 或 21 的条目，以及开始一次暂停的条目（种类 22；两者见下文），Droppen Hub 只在更换功能已启用、并且账户里每台可运行 AI 的设备运行的 Droppen 都能更换身份密钥时才保存；否则它**拒绝保存**。",
+    "兩個驗證者都要檢查：\n- 這台裝置是**目前的可執行 AI 的裝置**\n- **兩把新金鑰**都不是鏈上任何裝置正在用或曾經用過的\n- **雜湊**與鏈在那個位置相符\n- **兩份簽章**\n退役的金鑰留在鏈上，永遠不能再加入或被啟用。種類 20 或 21 的項目，以及開始一次暫停的項目（種類 22；兩者見下文），Droppen Hub 只在更換功能已啟用、並且帳戶裡每台可執行 AI 的裝置執行的 Droppen 都能更換身分金鑰時才保存；否則它**拒絕保存**。",
+    "2 つの検証器はどちらも確かめます：\n- デバイスが**現在の AI を実行できるデバイス**であること\n- **新しい鍵**がどちらもチェーン上のどのデバイスも持っていないし持ったこともないものであること\n- その位置で**ハッシュ**がチェーンと一致すること\n- **2 つの署名**\n退役した鍵はチェーンに残り、二度と参加も有効化もできません。種別 20 や 21 のエントリ、そして一時停止を始めるエントリ（種別 22。どちらも下記）を Droppen Hub が保存するのは、更新が有効で、アカウントの AI を実行できるデバイスすべてが更新に対応した Droppen を動かしているときだけです。それ以外では**保存を拒否します**。",
   ],
   [
     "Staging on the real device, and confirming it",

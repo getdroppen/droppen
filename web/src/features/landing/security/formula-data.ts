@@ -1207,7 +1207,7 @@ export const TERMS: Record<string, Term> = {
     src: `${P}/stream.rs:296-304`,
   },
 
-  // ---- 6.2–6.5 identity renewal (not live yet)
+  // ---- 6.2–6.5 identity renewal (in testing)
   "rot.proof": {
     kind: "value",
     known: STORED,
