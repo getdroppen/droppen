@@ -40,7 +40,7 @@ for (const bundles of [landingBundles, securityBundles]) {
 }
 
 /** When the page last changed, as the page says it. */
-export const SECURITY_UPDATED = "2026-10-23";
+export const SECURITY_UPDATED = "2026-10-24";
 
 /** Where to report a vulnerability (`page-kit.tsx`, so the terms can name it without this page's chunk). */
 export { SECURITY_EMAIL };
@@ -492,9 +492,9 @@ function OverviewSection() {
               title: t("What it sees"),
               items: [
                 t("**Your account**:\n- the e-mail address and whether it is verified\n- a password hash or your passkeys' public keys\n- which provider made each (from its AAGUID) and the name you gave it\n- the plan and the invite it came with\n- the usage it is counted on (bytes stored and transferred)"),
-                t("A record of the last 30 days' **changes to how you sign in**: which change, from which device, and the passkey's name."),
+                t("A record of the last 30 days' **changes to how you sign in**: which change, from which device, and the passkey's name (Hub)."),
                 t("The **IP address** of every request and connection."),
-                t("What **kind of device** each browser or phone is, as a short name such as “iPhone · Safari” made from its User-Agent; it does not keep the User-Agent itself."),
+                t("What **kind of device** each browser or phone is, as a short name such as “iPhone · Safari” made from its User-Agent; it does not keep the User-Agent itself (Hub)."),
                 t("Each device's **random id and public keys**, when it joined and was last seen, when a device that runs AI went online or offline, which relays it is on and its round trip to each (a rough location), and the version and protocol features it declares."),
                 t("**The device chain**: which devices belong to the account, which of them run AI, and which device added which."),
                 t("Which device that runs AI is the account's **main device**."),
@@ -512,7 +512,7 @@ function OverviewSection() {
               ],
             }}
           />
-          <P>{t("Stored records are **padded to fixed sizes** before they are encrypted, and compressed only where no attacker-influenced text shares a record with a secret, so a stored size says little; live channel traffic is **not padded**.")}</P>
+          <P>{t("Stored records are **padded to fixed sizes** before they are encrypted and are not compressed, so a stored size says little; live channel traffic is **not padded**.")}</P>
         </Topic>
         <Topic n="1.2" title={t("With no account")}>
           <P>{t("On one device with no account, the local program **talks to no Droppen service at all**: it serves the app itself, and nothing goes through our servers. Everything below is about using Droppen with an account, across devices.")}</P>
@@ -575,13 +575,13 @@ function ChainSection() {
           <Formula block="chain" />
         </Topic>
         <Topic n="2.2" title={t("The genesis and the account key")}>
-          <P>{t("The first browser makes the account key AK (Ed25519), signs the genesis entry with it, and **throws the private key away**: it is never stored and signs nothing else. Its fingerprint is the account's **root identity**. Each device that runs AI pins it when it joins; a new browser pins the genesis only once a pairing secret or the recovery words tie it to the real account, so Droppen Hub cannot hand it a chain of its own making. A new account starts on chain v3: the genesis names the first full device, and the entry after it commits the first user key.")}</P>
+          <P>{t("The first browser makes the account key AK (Ed25519), signs the genesis entry with it, and **throws the private key away**: it is never stored and signs nothing else. Its fingerprint is the account's **root identity**. Each device that runs AI pins it when it joins; a new browser pins the genesis only once a pairing secret or the recovery words tie it to the real account, so Droppen Hub cannot hand it a chain of its own making. A new account starts on chain v3: the genesis names the first full device, and the app commits the first user key in the next entry.")}</P>
         </Topic>
         <Topic n="2.3" title={t("Chain v3: devices, AI and full devices")}>
           <P>{t("Every device on the chain has two flags: **host** (it runs AI) and **admin** (a full device: it signs entries, holds the user key and vouches for the chain). Every browser and phone you pair now is a full device; one paired earlier as a limited device (it holds no user key and signs nothing) stays limited until a full device makes it full. A device that runs AI is **never a full device**, and both verifiers refuse any entry that would make it one. Entries that change the account are signed by a current, active full device; the account key signs only the genesis, and the recovery key only a recovery join and its activation. A passkey slot, which a full device puts on the chain, signs only a limited device's pending join ([[3.6|t3-6]]) (the protocol also lets a slot marked self-activating activate that device after 24 hours; no app writes such a slot). Accounts made before chain v3 follow the earlier rules until you upgrade them in My devices. The last full device cannot be removed.")}</P>
         </Topic>
         <Topic n="2.4" title={t("Who may control which device")}>
-          <P>{t("Each device that runs AI has an **accept list** on the chain (SetAccept). By default **only full devices** may control it; another device that runs AI, or a limited device, only if a full device lists it there. The device that runs AI enforces the list when it admits a channel and on channels already open; Droppen Hub also trims relay tickets by it, as defence in depth. Narrowing a list requires a new content key for that device in the very next entry.")}</P>
+          <P>{t("Each device that runs AI has an **accept list** on the chain (SetAccept). By default **only full devices** may control it; another device that runs AI, or a limited device, only if a full device lists it there. The device that runs AI enforces the list when it admits a channel and on channels already open; Droppen Hub also trims relay tickets by it, as defence in depth (Hub). Narrowing a list requires a new content key for that device in the very next entry.")}</P>
         </Topic>
         <Topic n="2.5" title={t("Forks and rollbacks")}>
           <P>{t("Every verifier keeps the highest sequence number and hash it has seen, and refuses a chain that **goes back or branches**. A channel handshake carries both sides' views and their latest entries, so a removal Droppen Hub holds back reaches the other side at the next connection, and any conflict raises a **fork alarm**: in the app, and on the device that runs AI in its log, its encrypted status and a push.")}</P>
@@ -599,7 +599,7 @@ function ChainSection() {
           <List
             items={[
               t("A full device **signs the removal**. Droppen Hub closes the removed device's connections and revokes its sessions and relay tickets; every device that runs AI drops its channels as soon as it sees the entry, and refuses its handshakes from then on."),
-              t("Then **new keys**:\n- a **new user key** if the removed device ever held one, sealed to the full devices that remain and to the recovery words (the chain voids the words if the removed device knew them: then make new ones)\n- a **new content key** for every device that runs AI, which you may skip only when the removed device never held the user key and no device that runs AI let it control it\nEach new epoch is committed on the chain first, always exactly one up, and sealed only to the devices that remain."),
+              t("Then the app makes **new keys** (the chain records each new epoch but does not demand one):\n- a **new user key** if the removed device ever held one, sealed to the full devices that remain and to the recovery words (the chain voids the words if the removed device knew them: then make new ones)\n- a **new content key** for every device that runs AI, which you may skip only when the removed device never held the user key and no device that runs AI let it control it\nEach new epoch is committed on the chain first, always exactly one up, and sealed only to the devices that remain."),
               t("Optionally, each device that runs AI **re-encrypts its history** under the new key from its own transcripts, and Droppen Hub is asked to delete the old ciphertext."),
               t("What the removed device already read, or can still read from old ciphertext a Hub kept, **cannot be taken back**. A device that could control a device that runs AI may also have copied that device's identity key: identity renewal ([[section 06|renewal]]), in early testing at droppen.app, replaces it in place; removing that device and adding it again also still works."),
             ]}
@@ -620,7 +620,7 @@ function KeysSection() {
     [t("User key UK"), t("256-bit symmetric, by epoch"), t("Full devices"), t("Wraps every content key in the account's keyring"), t("When a device that held it is removed")],
     [t("Content key MK"), t("Symmetric, by epoch, one per device that runs AI"), t("- That device\n- Your devices get it wrapped or sealed"), t("Only an input to HKDF: stream names and stream keys"), t("On a removal, when its accept list narrows, and when it starts running AI again")],
     [t("Stream key SK"), t("HKDF of the content key and the stream id"), t("Nobody: derived when needed"), t("Encrypts one stream's records and pages"), t("With the content key")],
-    [t("Channel keys"), t("From the Noise handshake's ephemeral keys"), t("Memory only"), t("A live channel, with forward secrecy"), t("- New with each channel\n- Rekeyed every hour or 2^20 messages")],
+    [t("Channel keys"), t("From the Noise handshake's ephemeral keys"), t("Memory only"), t("A live channel, with forward secrecy"), t("- New with each channel\n- Rekeyed by the sender every hour or 2^20 messages; the receiver refuses to go past 2^20 without one")],
     [t("Recovery key RK"), t("128 random bits, shown as 12 words"), t("You only: no device stores it"), t("Derives the recovery signing key, whose X25519 twin opens the user keys sealed to it"), t("When you make new words")],
   ];
   return (
@@ -634,7 +634,7 @@ function KeysSection() {
         <Table label={t("The keys")} heads={heads} rows={rows} />
         <Topic n="3.1" title={t("Delivering a key")}>
           <P>{t("A key sent to one device is sealed to its X25519 key with **sender authentication**, in the manner of HPKE's Auth mode: the key-encryption key depends on the sender's static key as well as a fresh one, and the context (purpose, account, sender, recipient, epoch) is both an input to the KDF and the AAD. Keys go through Droppen Hub's mailbox; a content key for its own device that runs AI goes straight over the end-to-end channel when that device is online.")}</P>
-          <P>{t("A recipient takes a key only if it is addressed to itself, in this account, from a current full device, and matches the hash the chain committed for that epoch. So neither Droppen Hub nor a removed device can **slip in a key** of its own choosing, or **push an epoch forward**.")}</P>
+          <P>{t("A recipient takes a key only if it is addressed to itself, in this account, from a current full device (for the recovery package, any device the chain has named, since the commitment check is what makes it the account's key), and matches the hash the chain committed for that epoch. So neither Droppen Hub nor a removed device can **slip in a key** of its own choosing, or **push an epoch forward**.")}</P>
           <Formula block="seal" />
         </Topic>
         <Topic n="3.2" title={t("Adding a device")}>
@@ -647,14 +647,14 @@ function KeysSection() {
           />
         </Topic>
         <Topic n="3.3" title={t("Keys in the browser")}>
-          <P>{t("- The **device key** is used as a non-extractable WebCrypto key; it is stored as PKCS #8 sealed under a non-extractable AES-GCM key of this browser (WebKit cannot store non-extractable X25519 keys), or, if made before that change, as the non-extractable key itself.\n- **User keys** are stored only encrypted, under another such key.\n- **Content keys** are not stored in the clear (a browser from the earliest test builds keeps its old copy only until it has moved it into the keyring).\n- **Offline copies** are encrypted under a third such key and cleared when you sign out.\n- **Compatibility mode** (a browser whose WebCrypto lacks Ed25519 or X25519, once you agree to it there) computes the same keys and protocol in JavaScript (the noble-curves library) and stores them sealed the same way, but while the page is open the private keys are plain bytes in the page's memory rather than keys the browser holds, that curve arithmetic is not hardened against side channels as the browser's own is, and one more library runs in the page; the app shows “compatibility mode”.\nThis keeps keys out of storage in the clear. It does not stop code running on the page itself, which can unseal them just as the page does: see [[the threat model|threats]].")}</P>
+          <P>{t("- The **device key** is used as a non-extractable WebCrypto key; it is stored as PKCS #8 sealed under a non-extractable AES-GCM key of this browser (WebKit cannot store non-extractable X25519 keys), or, if made before that change, as the non-extractable key itself.\n- **User keys** are stored only encrypted, under another such key.\n- **Content keys** are not stored in the clear (a browser from the earliest test builds keeps its old copy only until it has moved it into the keyring, or, on a limited device, into its own sealed store; signing out and removing the browser deletes it in any case).\n- **Offline copies** are encrypted under a third such key and cleared when you sign out.\n- **Compatibility mode** (a browser whose WebCrypto lacks Ed25519 or X25519, once you agree to it there) computes the same keys and protocol in JavaScript (the noble-curves library) and stores them sealed the same way, but while the page is open the private keys are plain bytes in the page's memory rather than keys the browser holds, that curve arithmetic is not hardened against side channels as the browser's own is, and one more library runs in the page; the app shows “compatibility mode”.\nThis keeps keys out of storage in the clear. It does not stop code running on the page itself, which can unseal them just as the page does: see [[the threat model|threats]].")}</P>
         </Topic>
         <Topic n="3.4" title={t("Recovery words")}>
           <List
             items={[
               t("Offered when you create the account, and **optional**: **12 words** that encode 128 random bits (only the BIP-39 encoding, with no passphrase stretching), shown once, three of them typed back. You can make new ones from a full device at any time."),
               t("They derive the **recovery signing key**, and every user key epoch is sealed to that key's X25519 twin in the keyring. A signature of the recovery key over the account key is on the chain, so Droppen Hub cannot put your real recovery key into a chain of its own."),
-              t("A device that comes back with the words holds the keys to the history at once, but **joins as pending**: it can neither sign entries nor open a channel, and an honest Droppen Hub does not serve it the stored copies, until a full device approves it or it activates itself with the words, which each verifier accepts only **24 hours** after it first saw the join, by its own clock. Meanwhile every device and every device that runs AI warns you, and any full device can veto by removing it. The delay holds back control; against a Hub that is itself compromised, it does not hold back reading."),
+              t("A device that comes back with the words holds the keys to the history at once, but **joins as pending**: it can neither sign entries nor open a channel, and an honest Droppen Hub does not serve it the stored copies, until a full device approves it or it activates itself with the words, which each verifier that already follows the account accepts only **24 hours** after it first saw the join, by its own clock. Meanwhile every device and every device that runs AI warns you, and any full device can veto by removing it; a full device that holds the activation back signs nothing but the veto and pairs no device, not even one already listed, until you approve or remove it. A browser that first opens the account after both the join and the activation (one that then joins with the recovery words itself, say) takes them as the account's history. The delay holds back control; against a Hub that is itself compromised, it does not hold back reading."),
               t("If Droppen Hub itself holds the words, it can **order the activation before any veto**: then veto, make new words, and, if you suspect the Hub, add your devices that run AI again on the devices themselves."),
             ]}
           />
@@ -690,7 +690,7 @@ function ChannelsSection() {
           <P>{t("An IK first message can be replayed, and whoever holds the responder's static key could forge one in any device's name. So it carries only the device's view of the chain and its latest entries; anything that changes state **waits for the first transport message**, which needs the device's own private key. The device that runs AI merges the entries first (a conflict is a fork alarm), then checks that the device is current, on its accept list and fresh, and only then the replay window: **10 minutes back, 60 seconds ahead**. Its reply carries its own view and the entries the device lacks.")}</P>
         </Topic>
         <Topic n="4.3" title={t("Droppen relays")}>
-          <P>{t("A relay pairs a device's channel with the other end's on tickets that Droppen Hub signs, valid for 15 minutes; the holder must also sign the relay's own challenge with the ticket's key, so a stolen ticket is useless. The relay\n- copies frames **without parsing them**\n- has **no database**\n- holds **no key to your data** (only its own signing key and Droppen Hub's public ticket keys)\n- keeps **nothing about your channels** across a restart\nA relay that misreports who is who only gets a failed handshake. Each account is kept on one relay, with an optional standby, and moves at once when its relay goes away.")}</P>
+          <P>{t("A relay pairs a device's channel with the other end's on tickets that Droppen Hub signs, valid for 15 minutes; the holder must also sign the relay's own challenge with the ticket's key, so a stolen ticket is useless, and the relay refuses a ticket that runs longer than 15 minutes or was issued more than 5 minutes ahead of its own clock. The relay\n- copies frames **without parsing them**\n- has **no database**\n- holds **no key to your data** (only its own signing key and Droppen Hub's public ticket keys)\n- keeps **nothing about your channels** across a restart\nA relay that misreports who is who only gets a failed handshake. Each account is kept on one relay, with an optional standby, and moves at once when its relay goes away; on it, each account's devices that run AI are kept apart from every other account's. While its link to Droppen Hub is down, a relay keeps sessions already connected for up to 2 hours past their tickets: a new sign-in still needs a valid ticket, the revocations it missed are applied when the link is back, and all it ever sees is ciphertext.")}</P>
           <Pair
             left={{ title: t("A relay sees"), items: [t("Random account and device ids, and both ends' IP addresses."), t("When connections and channels open and close, the sizes and timing of frames, the bytes per account, and the limits its ticket carries, such as whether the free transfer is used up.")] }}
             right={{ title: t("A relay never sees"), items: [t("Your e-mail address, the device chain, mail, the keyring or the stored streams."), t("Any content, and the signalling of a direct path.")] }}
@@ -713,7 +713,7 @@ function OfflineSection() {
         <SectionHead
           label={`05 · ${t("Offline copies")}`}
           title={withConcepts(t("History you can read while the device is off, and only you."))}
-          lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and check every record against that device's own signature."))}
+          lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by that device covers it: each record is authenticated under the stream's key and linked to the one before, and the signed head names the newest link."))}
         />
         <Topic n="5.1" title={t("Records")}>
           <P>{t("Each record is sealed with AES-256-GCM under a stream key derived from the content key. The AAD binds the stream, the sequence number and the epoch, so Droppen Hub **cannot move or reorder records**, and each record's plaintext carries a hash link to the one before. Records are padded to fixed sizes. A stream's name is an HMAC under a key derived from the content key, so it **cannot be matched to a session**.")}</P>
@@ -728,7 +728,7 @@ function OfflineSection() {
           <Formula block="pages" />
         </Topic>
         <Topic n="5.4" title={t("When keys change")}>
-          <P>{t("Each content key epoch has its **own stream names**. With re-encryption the device that runs AI rebuilds its streams from its own transcripts under the new key, and Droppen Hub is asked to delete the old ciphertext. Drafts still being written are sent only to live readers, **never stored**, signed by the device that runs AI and accepted only under the current epoch.")}</P>
+          <P>{t("Each content key epoch has its **own stream names** once your devices read them so (every current app does): after a rotation the device that runs AI moves its index and status to the new names at once, and its sessions within six hours, in random order — at once when it re-encrypts. With re-encryption the device that runs AI rebuilds its streams from its own transcripts under the new key, and Droppen Hub is asked to delete the old ciphertext. Drafts still being written are sent only to live readers, **never stored**, signed by the device that runs AI and accepted only under the current epoch.")}</P>
         </Topic>
       </MentionScope>
     </Section>
@@ -746,11 +746,11 @@ function RenewalSection() {
           lead={
             <span className="flex flex-col items-start gap-3">
               <Chip>{t("In testing")}</Chip>
-              <span>{withConcepts(t("Switched on at droppen.app since 2026-10-23, in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested and parts of it may still change. A device that runs AI whose identity key may have been copied can also still be removed and added again."))}</span>
+              <span>{withConcepts(t("Switched on at droppen.app since 2026-10-23 (Hub), in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested and parts of it may still change. A device that runs AI whose identity key may have been copied can also still be removed and added again."))}</span>
             </span>
           }
         />
-        <Note>{t("**A test on droppen.app** on 2026-10-23 showed:\n- the window was **2 minutes** ([[6.3|renewal-staging]])\n- as soon as a full device asked Droppen Hub for the renewal, a relay ticket issued earlier to the device that runs AI **in its role as a device** (in which it can control another device that runs AI that lets it in) was **revoked**, on relays that can revoke one role's tickets alone; its ticket for running AI **stayed valid until the entry was stored**\n- an entry written **before the window was over** was refused\n- an **automatic** renewal and one **confirmed with the code on the device** both went through")}</Note>
+        <Note>{t("**A test on droppen.app** on 2026-10-23 (Hub) showed:\n- the window was **2 minutes** ([[6.3|renewal-staging]])\n- as soon as a full device asked Droppen Hub for the renewal, a relay ticket issued earlier to the device that runs AI **in its role as a device** (in which it can control another device that runs AI that lets it in) was **revoked**, on relays that can revoke one role's tickets alone; its ticket for running AI **stayed valid until the entry was stored**\n- an entry written **before the window was over** was refused\n- an **automatic** renewal and one **confirmed with the code on the device** both went through")}</Note>
         <Topic id="renewal-why" n="6.1" title={t("Why renew")}>
           <P>{t("Being allowed to control a device that runs AI means being able to read its files, including the one that holds its identity seed. So when a device that could control it is removed, loses its full rights, or is taken off its accept list, that device **may hold a copy of the identity key**. New content keys **do not help** against that: the copy could still sign in as the device that runs AI, answer handshakes and receive keys sealed to it. Renewal **replaces the identity key in place** and keeps the device's id, its accept list and everything else kept by id. It runs for every device that runs AI the lost device could reach, directly or through other devices that run AI that let it in.")}</P>
         </Topic>
@@ -794,7 +794,7 @@ function RenewalSection() {
             items={[
               t("If the real device that runs AI sees, on a chain it has verified, its id renewed to keys it never made, it\n- **raises an alarm** (in its status and by push)\n- **stops**\n- **keeps its old seed**\n- **signs a dispute** with that now-retired key"),
               t("The dispute names the renewal's sequence number, its entry hash and the key it installed, so it **can only exist after that entry**, with no clocks compared. Droppen Hub can withhold a dispute but **cannot forge one**."),
-              t("Each of your browsers and phones that verifies it **isolates the device that runs AI**: it opens no channel to it, seals it no keys, and renews it only with the code. Other devices that run AI keep following their accept lists until it is renewed with the code or removed. Each browser keeps the disputes it has verified, so the Hub cannot undo them later; only a later renewal confirmed on the device, or removing the device, ends the isolation."),
+              t("Each of your browsers and phones that verifies it **isolates the device that runs AI**: it opens no channel to it, seals it no keys, and renews it only with the code. Other devices that run AI keep following their accept lists until it is renewed with the code or removed. Each browser keeps the disputes it has verified, so the Hub cannot undo them later. A page counts only those it has verified itself, except that one another page of the browser verified, about a renewal this page has not loaded yet, isolates the device until this page catches up and checks it. Only a later renewal confirmed on the device, or removing the device, ends the isolation."),
               t("A key retired by a confirmed renewal **never isolates**, so a stolen old key can force at most one confirmation. If the real device holds only the retired key, it **cannot recover in place**: remove it, and add it again with a new identity."),
             ]}
           />
@@ -842,7 +842,7 @@ function ThreatsSection() {
     ],
     [t("A Droppen relay"), t("- See **ids, IP addresses, and the sizes and timing** of the channels it carries\n- **Drop them**"), t("- **Read or change them**\n- **Splice two sessions together** (the prologue binds both ids)")],
     [t("The network, or a STUN server"), t("See **IP addresses, and the sizes and timing** of traffic."), t("- **Read signalling or content**\n- **Sit in the middle of a direct path** (both DTLS fingerprints are bound into its handshake)")],
-    [t("A stolen phone or browser"), t("Until you remove it:\n- **read what it can read**\n- **control what it may**"), t("After removal:\n- **sign entries**\n- **open channels**\n- **read anything sealed under the new keys**\n- **forge records with old stream keys**\n(against a Hub that withholds the removal, see [[2.6|t2-6]])")],
+    [t("A stolen phone or browser"), t("Until you remove it, a full browser or phone can:\n- **read all history** (its user key opens every content key in the keyring)\n- **control your devices that run AI**\n- **sign chain entries** such as adding a device of its own (which every device announces) or removing your other devices\nA limited one reads and controls only the devices that let it in."), t("After removal:\n- **sign entries**\n- **open channels**\n- **read anything sealed under the new keys**\n- **forge records with old stream keys**\n(against a Hub that withholds the removal, see [[2.6|t2-6]])")],
     [
       t("A stolen device that runs AI, or a program running as its user"),
       t("**Anything you can do on that device**, including reading its identity seed and acting as it, and **control the devices that run AI that let it in**, until it is removed or added again."),
@@ -874,7 +874,7 @@ function ThreatsSection() {
           <P>{t("**www.droppen.app** shows this page and the other public ones: the same attested build, which never reads or stores a key there. droppen.app is the Hub's own address, where devices that run AI and relays connect. A browser set up at droppen.app before the app moved to my.droppen.app either moves its keys there once, from one page to the other inside the browser, or is added again as a new device; either way they never pass through the Hub.")}</P>
           <List
             items={[
-              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what my.droppen.app and www.droppen.app serve with a release's manifest ([[docs/web-integrity.md]] says how)."),
+              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what my.droppen.app and www.droppen.app serve with the latest release's manifest by default, and fails a page served without a sufficient Content-Security-Policy ([[docs/web-integrity.md]] says how)."),
               t("A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one."),
               t("For high assurance, use the **desktop app**, signed with Apple's Developer ID and notarised, or the **local web app** that the droppen program serves from its own binary: neither loads code from Droppen Hub."),
             ]}
@@ -919,7 +919,7 @@ function VerifySection() {
         <SectionHead
           label={`08 · ${t("Verify it yourself")}`}
           title={withConcepts(t("Don't take our word for it."))}
-          lead={withConcepts(t("Every statement on this page comes from the protocol's code and its design notes. Here is where to look."))}
+          lead={withConcepts(t("Statements about the protocol, the apps and the local program come from this repository's code and design notes; statements about what Droppen Hub stores or does, and test results on droppen.app, describe the closed Hub and the service — marked (Hub). Here is where to look."))}
         />
         <Topic n="8.1" title={t("Algorithms")}>
           <dl className="grid max-w-[46em] grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
@@ -951,7 +951,7 @@ function VerifySection() {
           <P>{t("Each implementation writes test vectors ([[vectors/rust.json|server-rs/crates/rh-proto/vectors/rust.json]], [[vectors/ts.json|server-rs/crates/rh-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains in which every refusal gives the same error\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.")}</P>
         </Topic>
         <Topic n="8.5" title={t("The page you are reading")}>
-          <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against a release's manifest; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).")}</P>
+          <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; only an older release named on purpose may go without one.")}</P>
         </Topic>
         <Topic n="8.6" title={t("Report a vulnerability")}>
           <P>

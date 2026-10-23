@@ -187,8 +187,10 @@ test("only what ships is described as live: the renewal is in testing, a passkey
   const words = text(page);
   // Switched on at droppen.app, in testing, and what its test there showed; never called stable, nor "not live" any more.
   const renewal = text(page.slice(page.indexOf('id="renewal"'), page.indexOf('id="renewal-why"')));
-  assert.ok(renewal.includes("Switched on at droppen.app since 2026-10-23, in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested"));
-  assert.ok(renewal.includes("A test on droppen.app on 2026-10-23 showed:"));
+  assert.ok(renewal.includes("Switched on at droppen.app since 2026-10-23 (Hub), in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested"));
+  assert.ok(renewal.includes("A test on droppen.app on 2026-10-23 (Hub) showed:"));
+  // What is the Hub's and the service's, not this repository's, says so (the sources section says what the mark means).
+  assert.ok(words.includes("describe the closed Hub and the service — marked (Hub)."));
   for (const seen of ["the window was 2 minutes", "was revoked, on relays that can revoke one role's tickets alone; its ticket for running AI stayed valid until the entry was stored", "an entry written before the window was over was refused", "an automatic renewal and one confirmed with the code on the device both went through"]) {
     assert.ok(renewal.includes(seen), seen);
   }
