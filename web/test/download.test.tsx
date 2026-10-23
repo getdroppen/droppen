@@ -102,7 +102,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, 
 const primaries = (html: string) => (html.match(/data-variant="primary"/g) ?? []).length;
 
 test("detection, over real user agents: the device's kind, and the tab it opens on", () => {
-  const table: { name: string; hints: EnvironmentHints; kind: string; os: DownloadOs }[] = [
+  const table: { name: string; hints: EnvironmentHints; kind: string; os: DownloadOs | null }[] = [
     {
       name: "Safari on macOS",
       hints: { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15", maxTouchPoints: 0 },
@@ -170,7 +170,8 @@ test("detection, over real user agents: the device's kind, and the tab it opens 
       kind: "ipad",
       os: "mobile",
     },
-    { name: "nothing to go on", hints: { userAgent: "" }, kind: "unknown", os: "macos-app" },
+    // Nothing marked detected; the page opens on the Mac App (`DEFAULT_OS`, test/direct-download.test.tsx).
+    { name: "nothing to go on", hints: { userAgent: "" }, kind: "unknown", os: null },
   ];
   for (const row of table) {
     const kind = detectKind(row.hints);

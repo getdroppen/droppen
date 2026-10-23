@@ -30,6 +30,7 @@ export const downloadZhCN: Bundle = {
   "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
     "Droppen 跟 Claude Code、Codex 一起跑在你的设备上。打开它、登录 Droppen，这台设备就到了你的手机上，也能和你的其他设备放进同一个屏幕。",
   "We picked the way for the device you are on; every other way is one click away.": "已按你现在用的设备选好方式，其它系统点一下就能切换。",
+  "Pick the device your AI runs on: every way is one click away.": "选一下跑 AI 的设备：每种方式点一下就能切换。",
 
   // The tabs
   "Choose your system": "选择你的系统",
@@ -51,6 +52,8 @@ export const downloadZhCN: Bundle = {
   "the steps for running it in the background": "查看后台运行的步骤",
   "Download Droppen App (macOS)": "下载 Droppen App（macOS）",
   "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 及以上 · 通用版：Apple 芯片和 Intel 都能用 · Droppen-<版本>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 及以上 · 通用版：Apple 芯片和 Intel 都能用",
+  "release notes, checksums and other files": "更新说明、校验值和其他文件",
   "Open the .dmg": "打开 .dmg",
   "The file you just downloaded, from Downloads.": "就是刚下载好的那个文件，在「下载」文件夹里。",
   "Drag Droppen to Applications": "把 Droppen 拖进「应用程序」",
@@ -89,6 +92,7 @@ export const downloadZhCN: Bundle = {
   "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 支持（服务器上不需要浏览器）正在路上。在那之前，可以先在 Mac 上运行 Droppen。",
   "run it in the background on a Mac": "改为在 Mac 后台运行",
   "This browser reports Linux on {{arch}}.": "这个浏览器报告的系统是 {{arch}} 架构的 Linux。",
+  "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen 的 Linux 版本支持 x86_64 和 aarch64。",
   "<code>": "<注册码>",
   "Replace <code> with a one-time code: on droppen.app, open my devices → add a device that runs AI → show a one-time code.":
     "把 <注册码> 换成一次性注册码：在 droppen.app 打开「我的设备 → 添加可运行 AI 的设备 → 显示一次性注册码」。",
@@ -110,6 +114,7 @@ export const downloadZhCN: Bundle = {
   "Once Linux is supported: a Linux server, or WSL.": "等 Linux 支持上线后：Linux 服务器，或者 WSL。",
   "use droppen.app in this browser": "在这个浏览器里用 droppen.app",
   "the Mac options": "看看 Mac 的方式",
+  "the Linux server options": "看看 Linux 服务器的方式",
 
   // Phone / tablet
   "On your phone, Droppen is the remote control": "在手机上，Droppen 是遥控器",
@@ -164,6 +169,21 @@ export const downloadZhCN: Bundle = {
   "No account yet? Sign up with your invite code first, or in the droppen.app window when you sign the device in.": "还没有账号？先用邀请码注册，或者在设备登录时弹出的 droppen.app 窗口里注册。",
   "Open my devices": "打开「我的设备」",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登录之后，它就在「我的设备」里了。再用同样的方法加一台设备，就能在一个屏里同时看两台。",
+
+  // The home page's hero: the way onto the device reading it (hero-get.tsx)
+  "Download for Mac": "下载 Mac 版",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 及以上 · Apple 芯片和 Intel 都能用",
+  "other systems": "其他系统",
+  "checksums and other files": "校验值和其他文件",
+  "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在这台设备的终端里粘贴运行：Droppen 会自动安装、启动，并打开它的页面。",
+  "A server with no browser?": "服务器上没有浏览器？",
+  "No Windows app yet. Droppen works in this browser: watch and answer your AI from here, while it runs on a Mac or a Linux server.":
+    "Windows 版 App 还没有。Droppen 在这个浏览器里就能用：在这里看 AI 干活、回答它的问题，AI 本身跑在 Mac 或 Linux 服务器上。",
+  "On your phone, Droppen works in the browser: open droppen.app and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.":
+    "在手机上，Droppen 直接在浏览器里用：打开 droppen.app，添加到主屏幕。AI 跑在 Mac 或 Linux 上，Droppen 装在那里。",
+  "how to set it up": "怎么设置",
+  "Get Droppen:": "获取 Droppen：",
+  "Or download it:": "也可以直接下载：",
 };
 
 export const downloadZhTW: Bundle = {
@@ -177,6 +197,7 @@ export const downloadZhTW: Bundle = {
   "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
     "Droppen 跟 Claude Code、Codex 一起在你的裝置上執行。打開它、登入 Droppen，這台裝置就到了你的手機上，也能和你的其他裝置放進同一個畫面。",
   "We picked the way for the device you are on; every other way is one click away.": "已依你現在用的裝置選好方式，其他系統點一下就能切換。",
+  "Pick the device your AI runs on: every way is one click away.": "選一下跑 AI 的裝置：每種方式點一下就能切換。",
 
   "Choose your system": "選擇你的系統",
   "Mac · App": "Mac · App",
@@ -196,6 +217,8 @@ export const downloadZhTW: Bundle = {
   "the steps for running it in the background": "查看背景執行的步驟",
   "Download Droppen App (macOS)": "下載 Droppen App（macOS）",
   "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 以上 · 通用版：Apple 晶片和 Intel 都能用 · Droppen-<版本>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 以上 · 通用版：Apple 晶片和 Intel 都能用",
+  "release notes, checksums and other files": "更新說明、校驗值和其他檔案",
   "Open the .dmg": "打開 .dmg",
   "The file you just downloaded, from Downloads.": "就是剛下載好的那個檔案，在「下載項目」資料夾裡。",
   "Drag Droppen to Applications": "把 Droppen 拖進「應用程式」",
@@ -232,6 +255,7 @@ export const downloadZhTW: Bundle = {
   "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 支援（伺服器上不需要瀏覽器）正在路上。在那之前，可以先在 Mac 上執行 Droppen。",
   "run it in the background on a Mac": "改為在 Mac 背景執行",
   "This browser reports Linux on {{arch}}.": "這個瀏覽器回報的系統是 {{arch}} 架構的 Linux。",
+  "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen 的 Linux 版本支援 x86_64 和 aarch64。",
   "<code>": "<註冊碼>",
   "Replace <code> with a one-time code: on droppen.app, open my devices → add a device that runs AI → show a one-time code.":
     "把 <註冊碼> 換成一次性註冊碼：在 droppen.app 打開「我的裝置 → 新增可執行 AI 的裝置 → 顯示一次性註冊碼」。",
@@ -252,6 +276,7 @@ export const downloadZhTW: Bundle = {
   "Once Linux is supported: a Linux server, or WSL.": "等 Linux 支援上線後：Linux 伺服器，或者 WSL。",
   "use droppen.app in this browser": "在這個瀏覽器裡用 droppen.app",
   "the Mac options": "看看 Mac 的方式",
+  "the Linux server options": "看看 Linux 伺服器的方式",
 
   "On your phone, Droppen is the remote control": "在手機上，Droppen 是遙控器",
   "The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put droppen.app on your home screen and it opens like an app.":
@@ -301,6 +326,21 @@ export const downloadZhTW: Bundle = {
   "No account yet? Sign up with your invite code first, or in the droppen.app window when you sign the device in.": "還沒有帳號？先用邀請碼註冊，或在裝置登入時彈出的 droppen.app 視窗裡註冊。",
   "Open my devices": "打開「我的裝置」",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登入之後，它就在「我的裝置」裡了。再用同樣的方法加一台裝置，就能在一個畫面裡同時看兩台。",
+
+  // The home page's hero: the way onto the device reading it (hero-get.tsx)
+  "Download for Mac": "下載 Mac 版",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 以上 · Apple 晶片和 Intel 都能用",
+  "other systems": "其他系統",
+  "checksums and other files": "校驗值和其他檔案",
+  "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在這台裝置的終端機裡貼上執行：Droppen 會自動安裝、啟動，並打開它的頁面。",
+  "A server with no browser?": "伺服器上沒有瀏覽器？",
+  "No Windows app yet. Droppen works in this browser: watch and answer your AI from here, while it runs on a Mac or a Linux server.":
+    "Windows 版 App 還沒有。Droppen 在這個瀏覽器裡就能用：在這裡看 AI 工作、回答它的問題，AI 本身跑在 Mac 或 Linux 伺服器上。",
+  "On your phone, Droppen works in the browser: open droppen.app and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.":
+    "在手機上，Droppen 直接在瀏覽器裡用：打開 droppen.app，加入主畫面。AI 跑在 Mac 或 Linux 上，Droppen 裝在那裡。",
+  "how to set it up": "怎麼設定",
+  "Get Droppen:": "取得 Droppen：",
+  "Or download it:": "也可以直接下載：",
 };
 
 export const downloadJa: Bundle = {
@@ -314,6 +354,7 @@ export const downloadJa: Bundle = {
   "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
     "Droppen は、あなたのデバイスで Claude Code や Codex と一緒に動きます。開いて Droppen にサインインすれば、そのデバイスがスマホから使え、ほかのデバイスとひとつの画面に並べられます。",
   "We picked the way for the device you are on; every other way is one click away.": "今お使いのデバイスに合う方法を選んであります。ほかの OS もワンクリックで切り替えられます。",
+  "Pick the device your AI runs on: every way is one click away.": "AI を動かすデバイスを選んでください。どの方法もワンクリックで切り替えられます。",
 
   "Choose your system": "システムを選ぶ",
   "Mac · App": "Mac・アプリ",
@@ -333,6 +374,8 @@ export const downloadJa: Bundle = {
   "the steps for running it in the background": "バックグラウンドで動かす手順を見る",
   "Download Droppen App (macOS)": "Droppen アプリをダウンロード（macOS）",
   "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "macOS 13 以降 · ユニバーサル：Apple シリコンと Intel の両方に対応 · Droppen-<バージョン>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "macOS 13 以降 · ユニバーサル：Apple シリコンと Intel の両方に対応",
+  "release notes, checksums and other files": "リリースノート・チェックサム・ほかのファイル",
   "Open the .dmg": ".dmg を開く",
   "The file you just downloaded, from Downloads.": "「ダウンロード」フォルダにある、いまダウンロードしたファイルです。",
   "Drag Droppen to Applications": "Droppen を「アプリケーション」にドラッグ",
@@ -369,6 +412,7 @@ export const downloadJa: Bundle = {
   "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 対応（サーバーにブラウザ不要）は準備中です。それまでは Mac で Droppen を動かせます。",
   "run it in the background on a Mac": "Mac のバックグラウンドで動かす",
   "This browser reports Linux on {{arch}}.": "このブラウザは {{arch}} の Linux と報告しています。",
+  "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen の Linux 版は x86_64 と aarch64 に対応しています。",
   "<code>": "<コード>",
   "Replace <code> with a one-time code: on droppen.app, open my devices → add a device that runs AI → show a one-time code.":
     "<コード> をワンタイムコードに置き換えます。droppen.app で「マイデバイス → AI を実行できるデバイスを追加 → ワンタイムコードを表示」を開きます。",
@@ -389,6 +433,7 @@ export const downloadJa: Bundle = {
   "Once Linux is supported: a Linux server, or WSL.": "Linux 対応後は、Linux サーバーか WSL で。",
   "use droppen.app in this browser": "このブラウザで droppen.app を使う",
   "the Mac options": "Mac の方法を見る",
+  "the Linux server options": "Linux サーバーの方法を見る",
 
   "On your phone, Droppen is the remote control": "スマホでは、Droppen はリモコンです",
   "The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put droppen.app on your home screen and it opens like an app.":
@@ -442,4 +487,19 @@ export const downloadJa: Bundle = {
   "Open my devices": "「マイデバイス」を開く",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.":
     "サインインすれば「マイデバイス」に入ります。同じ手順でもう 1 台追加すれば、2 台をひとつの画面で見られます。",
+
+  // The home page's hero: the way onto the device reading it (hero-get.tsx)
+  "Download for Mac": "Mac 版をダウンロード",
+  "macOS 13 or later · Apple silicon and Intel": "macOS 13 以降 · Apple シリコンと Intel に対応",
+  "other systems": "ほかの OS",
+  "checksums and other files": "チェックサムとほかのファイル",
+  "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "このデバイスのターミナルに貼り付けて実行すると、Droppen がインストールされ、起動してページが開きます。",
+  "A server with no browser?": "ブラウザのないサーバーなら？",
+  "No Windows app yet. Droppen works in this browser: watch and answer your AI from here, while it runs on a Mac or a Linux server.":
+    "Windows 版アプリはまだありません。Droppen はこのブラウザで使えます。ここから AI の作業を見て質問に答えられ、AI 自体は Mac か Linux サーバーで動きます。",
+  "On your phone, Droppen works in the browser: open droppen.app and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.":
+    "スマホでは、Droppen はブラウザで使います。droppen.app を開いてホーム画面に追加してください。AI は Mac か Linux で動かし、Droppen はそちらに入れます。",
+  "how to set it up": "設定のしかた",
+  "Get Droppen:": "Droppen を入手：",
+  "Or download it:": "直接ダウンロードもできます：",
 };

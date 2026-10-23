@@ -12,7 +12,8 @@ import { atLimit, HOSTS_KEY, type LimitHit, limitOf } from "@/lib/hub/plan";
 import { CapsLabel } from "@/components/ui/caps-label";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
-import { APP_DOWNLOAD_URL, type Availability, AVAILABILITY, codeInstallCommand, downloadHref, INSTALL_COMMAND, otherHub, stdinEnrollCommand } from "@/features/landing/get-droppen";
+import { type Availability, AVAILABILITY, codeInstallCommand, downloadHref, INSTALL_COMMAND, otherHub, stdinEnrollCommand } from "@/features/landing/get-droppen";
+import { fileLink, useLatestRelease } from "@/features/landing/release-files";
 import { hubShell, useShellMachines } from "./hub-shell";
 import { type NewHost, partnerFor, watchNewHost } from "./onboarding";
 import { FirstMachineNote, LimitNote, useMe } from "./plan";
@@ -256,6 +257,8 @@ export function AddComputer({
   // The devices that run AI as the guide opened: a new one is any other.
   const [before] = useState<ReadonlySet<MachineKey>>(() => new Set(hubShell()?.machines().get().map((m) => m.key) ?? activeHosts(account)));
   const watch = useNewHost(before, machines);
+  // The App's file, as the hub names it: asked only when the guide offers the App.
+  const latest = useLatestRelease(availability.app && availability.appSignIn ? undefined : null);
   const full = atLimit(me?.plan, HOSTS_KEY);
   if (mode === "code") return <AddMachine account={account} link={link} origin={origin} onDone={onDone} />;
   if (watch.kind === "ready") return <NewDeviceReady account={account} added={watch.info} machines={machines} onDone={onDone} />;
@@ -280,7 +283,8 @@ export function AddComputer({
                 {t("On the device your AI runs on (a Mac, for now), download the Droppen App and open it: Droppen starts there by itself, with no login page.")}
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <a href={APP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" data-testid="add-app-download" className={cn(secondary, "inline-flex items-center gap-1.5")}>
+                {/* The latest release's .dmg itself when the hub names it, downloaded in place; else the release page. */}
+                <a {...fileLink(latest?.files.macos)} data-testid="add-app-download" className={cn(secondary, "inline-flex items-center gap-1.5")}>
                   <Download className="size-3.5" />
                   {t("Download Droppen App (macOS)")}
                 </a>

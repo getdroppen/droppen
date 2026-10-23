@@ -6,7 +6,12 @@
  *
  * - **the Droppen App for macOS** (Tauri, `feat/desktop-app`), what people
  *   are pointed to: `Droppen-<version>.dmg` (universal) attached to the
- *   release `v<version>`. Opening it starts Droppen with no login page.
+ *   release `v<version>`. The buttons download the latest one in place: the
+ *   hub names it (`GET /v1/releases/latest`, `lib/hub/releases.ts`), the
+ *   page links it; until it does, or when it cannot, they link the release
+ *   page ({@link APP_DOWNLOAD_URL}). The page never asks GitHub for anything
+ *   (its `connect-src` stays the hub and its relays). Opening it starts
+ *   Droppen with no login page.
  *   Until the first one is published ({@link APP_AVAILABLE}), every place that
  *   offers it says it is coming and offers the background install instead.
  *   Signing it in to an account from inside it (「登录 Droppen」, through the
@@ -22,7 +27,9 @@
  * - **Linux servers** enrol without a browser, with a one-time code
  *   (`DROPPEN_CODE`) ({@link LINUX_AVAILABLE});
  * - the manual download: that repository's latest release, every file with
- *   its SHA-256 (`SHA256SUMS`, which the script checks before installing);
+ *   its SHA-256 (`SHA256SUMS`, which the script checks before installing).
+ *   The Linux tarballs (`droppen-v<version>-linux-<cpu>.tar.gz`) are linked
+ *   after the install command when the hub names them;
  *   and `--uninstall`, which removes the server and keeps its data
  *   (`scripts/install.sh`).
  */
@@ -71,10 +78,14 @@ export function osOfSearch(search: string): DownloadOs | null {
   return (DOWNLOAD_OSES as readonly string[]).includes(os ?? "") ? (os as DownloadOs) : null;
 }
 
-/** Every release, with its files (the App's `Droppen-<version>.dmg` among them) and their SHA-256 checksums. */
+/** The latest release's page: every file (the App's `.dmg` among them) and their SHA-256 checksums. */
 export const RELEASES_URL = "https://github.com/getdroppen/droppen/releases/latest";
 
-/** Where the App's download button goes: the latest release, whose universal `.dmg` is the one to take. */
+/**
+ * Where an App download button goes when the hub has not named the file
+ * (`release-files.tsx`): the latest release, whose universal `.dmg` is the
+ * one to take.
+ */
 export const APP_DOWNLOAD_URL = RELEASES_URL;
 
 /** The one line that installs Droppen to run in the background (a Mac; Linux servers once {@link LINUX_AVAILABLE}). */

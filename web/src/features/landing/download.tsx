@@ -2,14 +2,14 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { AppWindow, Check, Copy, Download, ExternalLink, Laptop, Monitor, Server, Smartphone } from "lucide-react";
+import { AppWindow, Download, ExternalLink, Laptop, Monitor, Server, Smartphone } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
+import type { LatestRelease } from "@/lib/hub/releases";
 import { landingBundles } from "./copy";
-import { browserArchitecture, browserHints, detectKind, type EnvironmentHints, initialOs, osForKind } from "./detect";
+import { browserCpu, browserHints, detectKind, type EnvironmentHints, initialOs, LINUX_CPUS, osForKind } from "./detect";
 import {
-  APP_DOWNLOAD_URL,
   type Availability,
   AVAILABILITY,
   CHECKSUM_COMMAND,
@@ -23,17 +23,22 @@ import {
   RELEASES_URL,
   UNINSTALL_COMMAND,
 } from "./get-droppen";
-import { FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
+import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
+import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { APP_PATH, onPublicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
 
 /*
  * droppen.app/download: how Droppen gets onto a device, the way other
  * vendors' download pages work. The page reads which device it is on
  * (`detect.ts`), opens on the way that fits it — marked "detected" — and
- * every other way is one click away, in an ARIA tablist:
+ * every other way is one click away, in an ARIA tablist (a device it cannot
+ * tell opens on the Mac App, with nothing marked):
  *
  * - **Mac · App** (the one people are pointed to): the Droppen App for macOS,
- *   universal; open it and Droppen starts, 「登录 Droppen」 inside it once the
+ *   universal: the latest release's `.dmg` itself, downloaded in place, with
+ *   its version and size, as the hub names it (`release-files.tsx`; the
+ *   release page until it does, or if it cannot), the release page beside it
+ *   for its other files and checksums; open it and Droppen starts, 「登录 Droppen」 inside it once the
  *   App can (`APP_SIGN_IN_AVAILABLE`; until then, a note that it is coming in
  *   an update, never a step for a button the App does not have). Until the
  *   first one is out (`APP_AVAILABLE`), "coming soon", and the background
@@ -74,36 +79,6 @@ function rememberOs(os: DownloadOs): void {
   } catch {
     // nothing to keep it in: the address still says it
   }
-}
-
-/** A command, as the page shows it: mono on the raised paper, selectable whole, with its copy button. */
-export function CommandLine({ command, label, testId, primaryCopy = false }: { command: string; label: string; testId?: string; primaryCopy?: boolean }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex min-w-0 items-stretch border border-border-strong bg-raised max-sm:flex-col">
-      <code data-testid={testId} className="min-w-0 flex-1 px-3 py-2.5 font-mono text-xs leading-5 whitespace-pre-wrap text-fg select-all [overflow-wrap:anywhere]">
-        <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
-        {command}
-      </code>
-      <button
-        type="button"
-        data-variant={primaryCopy ? "primary" : undefined}
-        data-testid={testId ? `${testId}-copy` : undefined}
-        aria-label={label}
-        onClick={() => {
-          void navigator.clipboard?.writeText(command).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-        className={cn(primaryCopy ? primary : secondary, "h-auto shrink-0 rounded-none border-0 max-sm:h-9 sm:border-l sm:border-border-strong")}
-      >
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        {copied ? t("copied") : label}
-      </button>
-    </div>
-  );
 }
 
 /** Numbered steps, as hairline cells. */
@@ -153,8 +128,9 @@ function Soon({ label, body, children, testId }: { label: string; body: string; 
   );
 }
 
-function AppPanel({ availability, onPick }: { availability: Availability; onPick: (os: DownloadOs) => void }) {
+function AppPanel({ availability, onPick, release }: { availability: Availability; onPick: (os: DownloadOs) => void; release: LatestRelease | null | undefined }) {
   const { t } = useTranslation();
+  const dmg = release?.files.macos;
   const head = {
     title: t("Droppen for Mac"),
     body: availability.appSignIn
@@ -177,11 +153,20 @@ function AppPanel({ availability, onPick }: { availability: Availability; onPick
     <>
       <PanelHead {...head}>
         <div className="flex flex-wrap items-center gap-3">
-          <a href={APP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" data-variant="primary" data-testid="app-download" className={primary}>
+          {/* The file itself when the hub named it, downloaded in place; else the release page. */}
+          <a {...fileLink(dmg)} data-variant="primary" data-testid="app-download" className={primary}>
             <Download className="size-3.5" />
             {t("Download Droppen App (macOS)")}
           </a>
-          <span className="font-mono text-2xs text-faint">{t("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg")}</span>
+          <span data-testid="app-file-facts" className="font-mono text-2xs text-faint">
+            {release && dmg
+              ? `${fileFacts(release, dmg)} · ${t("macOS 13 or later · Universal: Apple silicon and Intel")}`
+              : t("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg")}
+          </span>
+          <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="app-release-link" className="inline-flex items-center gap-1 font-mono text-2xs text-muted underline underline-offset-4 hover:text-fg">
+            {t("release notes, checksums and other files")}
+            <ExternalLink className="size-3" />
+          </a>
         </div>
       </PanelHead>
       <Steps
@@ -232,7 +217,17 @@ function BackgroundPanel() {
   );
 }
 
-function LinuxPanel({ availability, onPick, arch }: { availability: Availability; onPick: (os: DownloadOs) => void; arch: string | null }) {
+function LinuxPanel({
+  availability,
+  onPick,
+  arch,
+  release,
+}: {
+  availability: Availability;
+  onPick: (os: DownloadOs) => void;
+  arch: string | null;
+  release: LatestRelease | null | undefined;
+}) {
   const { t } = useTranslation();
   const head = {
     title: t("Droppen on a Linux server"),
@@ -252,10 +247,16 @@ function LinuxPanel({ availability, onPick, arch }: { availability: Availability
   return (
     <>
       <PanelHead {...head}>
-        {arch && <p className="font-mono text-2xs text-faint">{t("This browser reports Linux on {{arch}}.", { arch })}</p>}
+        {arch && (
+          <p data-testid="linux-cpu" className="font-mono text-2xs text-faint">
+            {t("This browser reports Linux on {{arch}}.", { arch })}
+            {!(LINUX_CPUS as readonly string[]).includes(arch) && <> {t("Droppen's Linux builds are for x86_64 and aarch64.")}</>}
+          </p>
+        )}
         <div className="flex max-w-[44rem] flex-col gap-2">
           <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
           <p className="text-xs leading-5 text-muted">{t("Replace <code> with a one-time code: on droppen.app, open my devices → add a device that runs AI → show a one-time code.")}</p>
+          <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
         </div>
       </PanelHead>
       <Steps
@@ -295,6 +296,11 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
           <button type="button" data-testid="to-macos-app" onClick={() => onPick("macos-app")} className={secondary}>
             {t("the Mac options")}
           </button>
+          {availability.linux && (
+            <button type="button" data-testid="to-linux" onClick={() => onPick("linux")} className={secondary}>
+              {t("the Linux server options")}
+            </button>
+          )}
         </div>
       </Soon>
     </PanelHead>
@@ -355,18 +361,21 @@ function Environments({
   availability,
   signedIn,
   arch,
+  release,
 }: {
   os: DownloadOs;
-  detected: DownloadOs;
+  /** The detected device's tab, marked; `null` when the device cannot be told. */
+  detected: DownloadOs | null;
   onPick: (os: DownloadOs) => void;
   availability: Availability;
   signedIn: boolean;
   arch: string | null;
+  release: LatestRelease | null | undefined;
 }) {
   const { t } = useTranslation();
   const tabs = useTabs();
   return (
-    <BaseTabs.Root value={os} onValueChange={(next) => onPick(next as DownloadOs)} data-testid="environments" data-os={os} data-detected={detected}>
+    <BaseTabs.Root value={os} onValueChange={(next) => onPick(next as DownloadOs)} data-testid="environments" data-os={os} data-detected={detected ?? undefined}>
       <BaseTabs.List aria-label={t("Choose your system")} activateOnFocus className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-5">
         {tabs.map(({ os: value, label, icon: Icon }, i) => (
           <BaseTabs.Tab
@@ -393,9 +402,9 @@ function Environments({
       </BaseTabs.List>
       {DOWNLOAD_OSES.map((value) => (
         <BaseTabs.Panel key={value} value={value} data-testid={`panel-${value}`} className="outline-none">
-          {value === "macos-app" && <AppPanel availability={availability} onPick={onPick} />}
+          {value === "macos-app" && <AppPanel availability={availability} onPick={onPick} release={release} />}
           {value === "macos-bg" && <BackgroundPanel />}
-          {value === "linux" && <LinuxPanel availability={availability} onPick={onPick} arch={arch} />}
+          {value === "linux" && <LinuxPanel availability={availability} onPick={onPick} arch={arch} release={release} />}
           {value === "windows" && <WindowsPanel availability={availability} signedIn={signedIn} onPick={onPick} />}
           {value === "mobile" && <MobilePanel signedIn={signedIn} />}
         </BaseTabs.Panel>
@@ -538,7 +547,7 @@ function useDocumentMeta() {
  * detected — kept in the address (`?os=`) and the session as it changes,
  * and following Back and Forward.
  */
-function useChosenOs(detected: DownloadOs): [DownloadOs, (os: DownloadOs) => void] {
+function useChosenOs(detected: DownloadOs | null): [DownloadOs, (os: DownloadOs) => void] {
   const [os, setOs] = useState<DownloadOs>(() => initialOs({ search: typeof location === "undefined" ? "" : location.search, remembered: rememberedOs(), detected }));
   useEffect(() => {
     const popped = () => {
@@ -560,18 +569,31 @@ function useChosenOs(detected: DownloadOs): [DownloadOs, (os: DownloadOs) => voi
   return [os, pick];
 }
 
-/** droppen.app/download, signed in or not. `availability` and `hints` stand in for the build's switches and the browser (tests, previews). */
-export default function DownloadPage({ signedIn = false, availability = AVAILABILITY, hints }: { signedIn?: boolean; availability?: Availability; hints?: EnvironmentHints }) {
+/** droppen.app/download, signed in or not. `availability`, `hints`, `cpu` and `release` stand in for the build's switches, the browser and the hub (tests, previews). */
+export default function DownloadPage({
+  signedIn = false,
+  availability = AVAILABILITY,
+  hints,
+  cpu,
+  release,
+}: {
+  signedIn?: boolean;
+  availability?: Availability;
+  hints?: EnvironmentHints;
+  cpu?: string | null;
+  release?: LatestRelease | null;
+}) {
   const { t } = useTranslation();
   useDocumentMeta();
   const detected = useMemo(() => osForKind(detectKind(hints ?? browserHints() ?? { userAgent: "" })), [hints]);
   const [os, pick] = useChosenOs(detected);
-  // Linux's processor family, said on its tab where the browser offers it (never guessed, and never for a Mac: the App is universal).
-  const [arch, setArch] = useState<string | null>(null);
+  // Linux's processor, said on its tab (from the high-entropy hints, else the user agent; never asked for a Mac: the App is universal).
+  const [arch, setArch] = useState<string | null>(cpu ?? null);
+  const latest = useLatestRelease(release);
   useEffect(() => {
     if (os !== "linux" || hints) return;
     let live = true;
-    void browserArchitecture().then((value) => live && setArch(value));
+    void browserCpu().then((value) => live && setArch(value));
     return () => {
       live = false;
     };
@@ -589,10 +611,12 @@ export default function DownloadPage({ signedIn = false, availability = AVAILABI
             <p className="max-w-[40em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
               {t("Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.")}
             </p>
-            <p className="font-mono text-2xs text-faint">{t("We picked the way for the device you are on; every other way is one click away.")}</p>
+            <p className="font-mono text-2xs text-faint">
+              {detected ? t("We picked the way for the device you are on; every other way is one click away.") : t("Pick the device your AI runs on: every way is one click away.")}
+            </p>
           </div>
           <Section id="get">
-            <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={arch} />
+            <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={arch} release={latest} />
           </Section>
           <Requirements availability={availability} />
           <Manual />

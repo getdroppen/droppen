@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Check, Copy } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { secondary } from "@/features/cloud/ui";
+import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import { DOWNLOAD_PATH } from "./get-droppen";
 import { APP_PATH, onPublicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, usePathname } from "./route";
@@ -16,7 +17,9 @@ import { APP_PATH, onPublicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN
  * The landing page (`landing.tsx`), the download page (`download.tsx`), the
  * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`) and the
  * security design (`security/security.tsx`) are all drawn with these; the
- * header links the pricing page, the footer every page.
+ * header links the pricing page, the footer every page. A command to paste
+ * (`CommandLine`) looks the same on the landing page's hero and the download
+ * page.
  */
 
 /** The two marks where a section's top line meets the frame. */
@@ -58,6 +61,36 @@ export function Points({ items, className }: { items: string[]; className?: stri
         </li>
       ))}
     </ul>
+  );
+}
+
+/** A command, as the page shows it: mono on the raised paper, selectable whole, with its copy button. */
+export function CommandLine({ command, label, testId, primaryCopy = false }: { command: string; label: string; testId?: string; primaryCopy?: boolean }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex min-w-0 items-stretch border border-border-strong bg-raised max-sm:flex-col">
+      <code data-testid={testId} className="min-w-0 flex-1 px-3 py-2.5 font-mono text-xs leading-5 whitespace-pre-wrap text-fg select-all [overflow-wrap:anywhere]">
+        <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
+        {command}
+      </code>
+      <button
+        type="button"
+        data-variant={primaryCopy ? "primary" : undefined}
+        data-testid={testId ? `${testId}-copy` : undefined}
+        aria-label={label}
+        onClick={() => {
+          void navigator.clipboard?.writeText(command).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+        className={cn(primaryCopy ? primary : secondary, "h-auto shrink-0 rounded-none border-0 max-sm:h-9 sm:border-l sm:border-border-strong")}
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        {copied ? t("copied") : label}
+      </button>
+    </div>
   );
 }
 

@@ -1,17 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { EyeOff, FolderTree, Info, KeyRound, MonitorSmartphone, Network, Plug, SquareTerminal, Unplug } from "lucide-react";
 import { RegMark } from "@/components/reg-mark";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { primary, secondary } from "@/features/cloud/ui";
+import { secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
+import type { LatestRelease } from "@/lib/hub/releases";
+import { browserCpu, browserHints, detectKind, type EnvironmentHints, type HeroOffer, heroOffer } from "./detect";
 import { DirectPath } from "./direct-path";
+import { type Availability, AVAILABILITY } from "./get-droppen";
 import { HeroDiagram } from "./hero-diagram";
+import { HeroGet } from "./hero-get";
 import { Journey } from "./journey";
 import { OfflineCopy } from "./offline-copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { useLatestRelease } from "./release-files";
 import { APP_PATH, onPublicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
@@ -20,7 +25,9 @@ import { APP_PATH, onPublicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAIT
  *
  * Drafting-sheet language throughout: a 1152px framed
  * column of hairline sections with registration marks at their seams, one ink
- * primary action ("get started"), display type only for the headlines, and
+ * primary action (the hero's, for the device reading it: `hero-get.tsx` — the
+ * Mac App's download on a Mac, the install command on Linux, else "get
+ * started"), display type only for the headlines, and
  * colour only where a diagram shows state — a live direct path, a dropped one,
  * a computer that is off, a round trip by how fast it is.
  *
@@ -43,7 +50,19 @@ function Header({ signedIn }: { signedIn: boolean }) {
   return <PublicHeader signedIn={signedIn} nav={nav} />;
 }
 
-function Hero({ signedIn }: { signedIn: boolean }) {
+function Hero({
+  signedIn,
+  offer,
+  availability,
+  release,
+  cpu,
+}: {
+  signedIn: boolean;
+  offer: HeroOffer;
+  availability: Availability;
+  release: LatestRelease | null | undefined;
+  cpu: string | null;
+}) {
   const { t } = useTranslation();
   const stats = [
     { value: "1–2 ms", label: t("keystroke echo in a browser on the same computer, direct (measured p50)") },
@@ -65,33 +84,15 @@ function Hero({ signedIn }: { signedIn: boolean }) {
           <p className="max-w-[34em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
             {t("Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.")}
           </p>
-          {signedIn ? (
-            // Signed in already: back into the app, or on through the page.
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <a href={APP_PATH} onClick={onPublicLink(APP_PATH)} data-variant="primary" className={primary}>
-                {t("Open app")}
+          {/* The way onto this device, and the account's ways in (signed in: back into the app). */}
+          <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} />
+          {!signedIn && (
+            <p className="mt-3 font-mono text-2xs text-faint">
+              {t("Invite-only for now: sign-up needs an invite code.")}{" "}
+              <a href={WAITLIST_HREF} onClick={onPublicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
+                {t("No code yet? Join the waitlist")}
               </a>
-              <a href="#journey" className={secondary}>
-                {t("How it works")}
-              </a>
-            </div>
-          ) : (
-            <>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <a href={SIGN_UP_PATH} onClick={onPublicLink(SIGN_UP_PATH)} data-variant="primary" className={primary}>
-                  {t("Get started")}
-                </a>
-                <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={secondary}>
-                  {t("Sign in")}
-                </a>
-              </div>
-              <p className="mt-3 font-mono text-2xs text-faint">
-                {t("Invite-only for now: sign-up needs an invite code.")}{" "}
-                <a href={WAITLIST_HREF} onClick={onPublicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
-                  {t("No code yet? Join the waitlist")}
-                </a>
-              </p>
-            </>
+            </p>
           )}
         </div>
         <div className="relative border-border max-xl:border-t">
@@ -270,17 +271,45 @@ function useDocumentMeta() {
 /**
  * The landing page, at `/` whether or not this browser is signed in. Signed
  * in (a device session is kept here), its ways in become a way back into the
- * app at {@link APP_PATH}, and the invitations to sign up go.
+ * app at {@link APP_PATH}, and the invitations to sign up go. The hero offers
+ * the way onto the device reading it (`detect.ts`), its files as the hub
+ * names them (`release-files.tsx`); `availability`, `hints`, `cpu` and
+ * `release` stand in for the build's switches, the browser and the hub
+ * (tests, previews).
  */
-export default function LandingPage({ signedIn = false }: { signedIn?: boolean }) {
+export default function LandingPage({
+  signedIn = false,
+  availability = AVAILABILITY,
+  hints,
+  cpu,
+  release,
+}: {
+  signedIn?: boolean;
+  availability?: Availability;
+  hints?: EnvironmentHints;
+  cpu?: string | null;
+  release?: LatestRelease | null;
+}) {
   const { t } = useTranslation();
   useDocumentMeta();
+  const offer = useMemo(() => heroOffer(detectKind(hints ?? browserHints() ?? { userAgent: "" }), availability), [hints, availability]);
+  const latest = useLatestRelease(release);
+  // Linux's processor, for its tarball (the high-entropy hints, else the user agent).
+  const [detectedCpu, setDetectedCpu] = useState<string | null>(null);
+  useEffect(() => {
+    if (offer !== "linux" || cpu !== undefined) return;
+    let live = true;
+    void browserCpu().then((value) => live && setDetectedCpu(value));
+    return () => {
+      live = false;
+    };
+  }, [offer, cpu]);
   return (
     <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <Header signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
-          <Hero signedIn={signedIn} />
+          <Hero signedIn={signedIn} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="journey">
             <SectionHead
               label={t("End-to-end encrypted")}
