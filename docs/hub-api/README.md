@@ -76,7 +76,7 @@ subdomain of it.
 
 | auth (index.json) | how | what it is good for |
 |---|---|---|
-| `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/signup/config`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
+| `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/signup/config`, `GET /v1/releases/latest`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
 | `session` | `Authorization: Bearer <token>`, a **login** or a **device** session | `POST /v1/devices`, `GET /v1/me`, `GET /v1/chain`, `POST /v1/email/resend`, `POST /v1/logout` |
 | `device` | `Authorization: Bearer <token>` of a **device** session | everything else under `/v1/` — managing the account's passkeys and password included (a current full device: a login session never changes how the account signs in) |
 | `admin` | `Authorization: Bearer <the operator's admin token>` | `/v1/admin/*`, the operator routes (documented with the Hub) |
@@ -153,7 +153,7 @@ The codes, by status (http.md lists them per route):
 | 422 | `invalid_entry` (a chain entry the hub's verification refused), `invalid_dispute` |
 | 429 | `rate` (with `retry_after_ms`), `mail_rate`, `device_rate`, `too_many_pending_devices`, `too_many_enrollments`, `too_many_pairings`, `pairing_full` |
 | 500 | `internal` |
-| 503 | `unavailable` (database, page store), `turnstile_unavailable` |
+| 503 | `unavailable` (database, page store), `turnstile_unavailable`, `release_unavailable` (`GET /v1/releases/latest` before the hub has read a release) |
 | 507 | `mailbox_full`, `keyring_full` |
 
 Treat an unknown code by its status. **Not every error body is JSON**: the

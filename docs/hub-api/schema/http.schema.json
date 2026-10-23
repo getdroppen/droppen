@@ -4,6 +4,28 @@
   "title": "Droppen hub API v1: HTTP bodies",
   "description": "Look up a route as $defs[\"<METHOD> <path template>\"]; its $defs hold `request` (the JSON body sent), `response` (the JSON body of a 2xx answer) and, where it differs from #/$defs/error, `error` (the body of any other answer). Templates are the ones in docs/hub-api/index.json. Every object may carry fields not listed here: /v1/ only grows, and a client must ignore what it does not know. Binary fields are lower-case hex.",
   "$defs": {
+    "releaseFile": {
+      "type": "object",
+      "description": "One file of the latest release (GET /v1/releases/latest): its exact name, its address on GitHub (https://github.com/getdroppen/droppen/releases/download/<tag>/<name>) and its size in bytes.",
+      "required": [
+        "name",
+        "url",
+        "size"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://github\\.com/getdroppen/droppen/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/[^/]+$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "relayPrefs": {
       "type": "object",
       "description": "The account's relay preferences (relay-and-plans §2.7): `standby`, whether the hub keeps a standby relay in the account's set (two instead of one). Absent from /v1/me on hubs before it.",
@@ -1015,6 +1037,62 @@
                   "$ref": "#/$defs/count"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/releases/latest": {
+      "$defs": {
+        "response": {
+          "type": "object",
+          "description": "The latest public release of getdroppen/droppen as the hub last read it from GitHub and checked: published, not a prerelease, tagged vX.Y.Z; only the files below, under their exact names. A platform whose file the release lacks is absent.",
+          "required": [
+            "version",
+            "tag",
+            "published_at",
+            "releases_page",
+            "platforms",
+            "fetched_ms"
+          ],
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "tag": {
+              "type": "string",
+              "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "published_at": {
+              "type": "string",
+              "description": "GitHub's time of publication, YYYY-MM-DDTHH:MM:SSZ."
+            },
+            "releases_page": {
+              "type": "string",
+              "pattern": "^https://github\\.com/getdroppen/droppen/releases/tag/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "platforms": {
+              "type": "object",
+              "properties": {
+                "macos": {
+                  "$ref": "#/$defs/releaseFile",
+                  "description": "Droppen-X.Y.Z.dmg: the desktop app, universal."
+                },
+                "linux-x86_64": {
+                  "$ref": "#/$defs/releaseFile",
+                  "description": "droppen-vX.Y.Z-linux-x86_64.tar.gz."
+                },
+                "linux-aarch64": {
+                  "$ref": "#/$defs/releaseFile",
+                  "description": "droppen-vX.Y.Z-linux-aarch64.tar.gz."
+                }
+              }
+            },
+            "fetched_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "When the hub read it (ms since the epoch); after a failed read the last good answer is served on."
             }
           }
         }

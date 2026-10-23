@@ -66,6 +66,39 @@ What the sign-up form must ask for. `passkeys`: the hub offers passkeys
 for this relying party id (`null`: it has them off — a hub on an IP
 address always does; absent from hubs before passkeys).
 
+### `GET /v1/releases/latest`
+→ `{version, tag, published_at, releases_page, platforms: {macos?, "linux-x86_64"?, "linux-aarch64"?}, fetched_ms}`,
+each platform `{name, url, size}`. This is the latest public release of
+`getdroppen/droppen`, for the download buttons. The hub reads it from
+GitHub's API itself, once at start and then every 15 minutes, so the page
+asks GitHub for nothing: its CSP's `connect-src` stays the hub and the
+relays.
+
+The hub takes only a release that is published, not a prerelease, and
+tagged `vX.Y.Z` (`version` is `X.Y.Z`). It takes only these files, under
+their exact names:
+
+| platform | file |
+|---|---|
+| `macos` | `Droppen-X.Y.Z.dmg`, the desktop app (universal) |
+| `linux-x86_64` | `droppen-vX.Y.Z-linux-x86_64.tar.gz` |
+| `linux-aarch64` | `droppen-vX.Y.Z-linux-aarch64.tar.gz` |
+
+Each `url` is exactly
+`https://github.com/getdroppen/droppen/releases/download/vX.Y.Z/<name>`, and
+`size` is in bytes. A platform whose file the release lacks is absent.
+`releases_page` is the release's page on GitHub (notes, `SHA256SUMS`, every
+other file), made from the tag. The hub serves its last good answer
+whatever later reads fail with; `fetched_ms` says when it read it. The
+answer carries `Cache-Control: public, max-age=300`.
+
+A client links the files: a plain `<a href>`, which downloads in place. It
+checks the names and addresses as strictly. On any failure it links
+`https://github.com/getdroppen/droppen/releases/latest` instead.
+Errors: `503 release_unavailable` (with `Cache-Control: no-store` and
+`Retry-After`) until the hub has read a release that checks out. A hub
+before this route answers `404`.
+
 ### `POST /v1/signup`
 `{email, password, invite?, turnstile?, lang?}` → a login session
 `{account, token, expires_ms, email_verified, verification, known_client}`
