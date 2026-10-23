@@ -13,9 +13,20 @@ export function internalNavPath(data: unknown): string | null {
   const url = message["url"];
   if (message["type"] !== "nav" || typeof url !== "string") return null;
   // A leading single slash is a same-origin path; "//host" is scheme-relative
-  // and would leave the origin, so it must be rejected.
-  if (!url.startsWith("/") || url.startsWith("//")) return null;
-  return url;
+  // and would leave the origin, so it must be rejected — and so must what a
+  // URL parser reads as one: "/\host", or a tab or line break the parser drops.
+  if (!url.startsWith("/") || url.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(url)) return null;
+  return sameOriginPath(url) ? url : null;
+}
+
+/** Whether `path`, resolved as a browser would against this origin, stays on it (the service worker's rule for `openWindow`, `public/sw.js`). */
+function sameOriginPath(path: string): boolean {
+  const base = "https://droppen.invalid";
+  try {
+    return new URL(path, base).origin === base;
+  } catch {
+    return false;
+  }
 }
 
 /**
