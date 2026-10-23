@@ -1191,16 +1191,18 @@ export class CloudAccount {
   private keptMemory: KeptDispute[] = [];
   /**
    * What re-verifying a kept dispute on this page's chain found (R6 review), by
-   * {@link disputeId}: `ok`, `bad` (dropped: it isolates nothing),
-   * `checking`, or `ahead` — about a renewal past this page's chain, which
-   * it cannot judge, but within what this browser has verified (its seen
-   * record): another page of it may have checked it. Only `ok` and `ahead`
-   * count — `ahead` meanwhile (a page behind keeps the host isolated:
-   * isolation fails safe); it is checked on the view that brings the renewal
-   * before that view is taken ({@link install}). One past anything this
-   * browser verified is `bad`: no page of it can have checked it.
+   * {@link disputeId}: `ok`; `bad` (its signature does not check out:
+   * dropped, it isolates nothing); `checking`; or, for one about an entry
+   * past this page's chain, which it cannot judge yet, `ahead` — within what
+   * this browser has verified (its seen record), or the record would not
+   * read: another page of it may have checked it — or `beyond`, past that:
+   * none can have. Only `ok` and `ahead` count — `ahead` meanwhile (a page
+   * behind keeps the host isolated: isolation fails safe). `beyond` is kept,
+   * not counted, and placed again when the record may have moved; either is
+   * checked on the view that brings its entry before that view is taken
+   * ({@link install}).
    */
-  private keptChecks = new Map<string, "ok" | "bad" | "checking" | "ahead">();
+  private keptChecks = new Map<string, "ok" | "bad" | "checking" | "ahead" | "beyond">();
   /** Stop hearing the other tabs ({@link stopSession}). */
   private unhearCrossTab: (() => void) | null = null;
   /**
@@ -1988,8 +1990,15 @@ export class CloudAccount {
       }
       // Kept only under the pin it is of (a chain this browser never pinned is not recorded).
       const genesis = hex(next.hashAt(0)!);
+      // How far this browser has verified, with this view: what a dispute past the view is placed by, below.
+      let recorded = -1;
       try {
-        await this.updateHeld((held) => (held.genesis === genesis ? { record: this.nextRecord(next, held, clock) } : undefined), next);
+        await this.updateHeld((held) => {
+          if (held.genesis !== genesis) return undefined;
+          const record = this.nextRecord(next, held, clock);
+          recorded = Math.max(record.seenThrough, ...checkpoints(held).map((mark) => mark.seenThrough));
+          return { record };
+        }, next);
       } catch (error) {
         // Verified, not taken: this page's word for the older head it still shows is no good meanwhile.
         if (error instanceof SeenStoreError) this.unrecordedThrough = Math.max(this.unrecordedThrough, next.seq);
@@ -2003,6 +2012,9 @@ export class CloudAccount {
       do {
         await this.checkDisputesOn(next);
       } while (this.disputesDueOn(next).length);
+      // And those past it placed by the record just written, in the same step:
+      // a reload holds a host isolated before any channel opens.
+      this.placeDisputesPast(next, recorded);
       // A fork latched meanwhile (another call of this page) installs nothing either.
       this.assertNotForked();
       this.state = next;
@@ -4278,7 +4290,8 @@ export class CloudAccount {
    * this page has verified them on its own chain ({@link keptDisputes});
    * then everyone here is told at once ({@link checkKept}). One about a
    * renewal this page's chain does not hold yet counts meanwhile if this
-   * browser has verified that far, and this page catches up to check it.
+   * browser has verified that far, and this page catches up to check it;
+   * one placed past that before is placed again (the record may have moved).
    */
   private heardDisputes(message: unknown): void {
     const m = (message && typeof message === "object" ? message : {}) as { account?: unknown; disputes?: unknown; storage?: unknown };
@@ -4290,6 +4303,7 @@ export class CloudAccount {
     // What an automatic renewal may not go past may have moved (here, or once checked).
     this.assuranceGen++;
     this.exposureCache = null;
+    for (const [id, check] of this.keptChecks) if (check === "beyond") this.keptChecks.delete(id);
     // The checks start now, not when someone next asks.
     this.keptDisputes();
     this.emit();
@@ -4323,8 +4337,8 @@ export class CloudAccount {
    * again on this page's chain (R6 review) and counts only once it checks
    * out: storage, and another tab, are this origin's to write, not evidence.
    * One about a renewal this page's chain does not hold yet counts until
-   * the chain brings it, if this browser verified that far (`ahead`, see
-   * {@link keptChecks}).
+   * the chain brings it, if this browser verified that far or cannot tell
+   * (`ahead`, see {@link keptChecks}); one past that does not, but is kept.
    */
   keptDisputes(): KeptDispute[] {
     const all = this.keptAll();
@@ -4341,10 +4355,11 @@ export class CloudAccount {
    * out counts from then on, and listeners (each channel among them) are
    * told at once; one that does not is dropped. A chain that has no such
    * entry yet cannot judge it: if this browser has verified a chain that long
-   * (its seen record), another page of it may have checked it, so it counts
-   * meanwhile (`ahead`), and this page catches up — it is checked on the view
-   * that brings the entry ({@link checkDisputesOn}); if not, no page of this
-   * browser can have checked it, and it is dropped.
+   * (its seen record), or the record will not read, another page of it may
+   * have checked it, so it counts meanwhile (`ahead`); if not, no page of it
+   * can have, and it does not count (`beyond`) — but it is kept: the record
+   * may lag. Either way this page catches up, and it is checked on the view
+   * that brings the entry ({@link checkDisputesOn}).
    */
   private checkKept(d: KeptDispute): void {
     const id = disputeId(d);
@@ -4358,23 +4373,18 @@ export class CloudAccount {
         this.settleKept(d, ok);
         if (ok) this.assuranceGen++;
       } else {
-        let through: number;
+        let through: number | null = null;
         try {
           through = await this.verifiedThrough();
         } catch (error) {
-          // Unread: looked at again when next asked.
+          // Unread: it fails safe — counted, as one within the record.
           console.warn("cloud account: reading the seen record for a dispute:", error);
-          if (this.keptChecks.get(id) === "checking") this.keptChecks.delete(id);
-          return;
         }
         if (this.keptChecks.get(id) !== "checking") return;
-        if (d.seq > through) {
-          this.settleKept(d, false, `entry ${d.seq} is past anything this browser verified (${through})`);
-        } else {
-          this.keptChecks.set(id, "ahead");
-          this.assuranceGen++;
-          void this.sync().catch((error: unknown) => console.warn("cloud account: catching up with a dispute another tab kept:", error));
-        }
+        const ahead = through === null || d.seq <= through;
+        this.keptChecks.set(id, ahead ? "ahead" : "beyond");
+        if (ahead) this.assuranceGen++;
+        void this.sync().catch((error: unknown) => console.warn("cloud account: catching up with a dispute another tab kept:", error));
       }
       this.exposureCache = null;
       this.emit();
@@ -4387,13 +4397,30 @@ export class CloudAccount {
     return held.genesis === null ? -1 : Math.max(-1, ...checkpoints(held).map((mark) => mark.seenThrough));
   }
 
-  /** What checking kept dispute `d` found: kept as `ok`, or as `bad` and dropped from memory. */
-  private settleKept(d: KeptDispute, ok: boolean, why = "it does not check out"): void {
+  /** What checking kept dispute `d`'s signature found: kept as `ok`, or as `bad` and dropped from memory. */
+  private settleKept(d: KeptDispute, ok: boolean): void {
     const id = disputeId(d);
     this.keptChecks.set(id, ok ? "ok" : "bad");
     if (!ok) {
-      console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq}: ${why}: dropped`);
+      console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq} does not check out: dropped`);
       this.keptMemory = this.keptMemory.filter((k) => disputeId(k) !== id);
+    }
+  }
+
+  /**
+   * Place every kept dispute about an entry past `chain` that is not judged
+   * yet: `ahead` (counted meanwhile) within `through`, what this browser has
+   * verified — `beyond` (kept, not counted) past it. At once, no await.
+   */
+  private placeDisputesPast(chain: ChainState, through: number): void {
+    for (const d of this.keptAll()) {
+      const id = disputeId(d);
+      const check = this.keptChecks.get(id);
+      if (d.seq <= chain.seq || check === "ok" || check === "bad") continue;
+      const ahead = d.seq <= through;
+      if (ahead && check !== "ahead") this.assuranceGen++;
+      this.keptChecks.set(id, ahead ? "ahead" : "beyond");
+      this.exposureCache = null;
     }
   }
 

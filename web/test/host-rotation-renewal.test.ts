@@ -2017,20 +2017,30 @@ test("a dispute heard from another tab counts only once verified there; one abou
   assert.equal(tab2.keptDisputes().length, 1);
 });
 
-test("a kept dispute about an entry past anything this browser has verified never counts, and is dropped", async () => {
+test("a kept dispute about an entry past anything this browser has verified does not count, and is kept; where the seen record will not read, it fails safe", async () => {
   const { hub, a } = await account();
+  const key = `rh.hub.renewal.disputes.${a.account}`;
   const far = { host: "m-1", seq: 1_000_000, sig: "ab".repeat(64) };
-  browserStorage(a.store).setItem(`rh.hub.renewal.disputes.${a.account}`, JSON.stringify([far]));
+  browserStorage(a.store).setItem(key, JSON.stringify([far]));
   const page = await hub.reload(a);
   const told: boolean[] = [];
   page.onChange(() => told.push(page.isolated("m-1")));
-  assert.equal(page.isolated("m-1"), false);
-  await until(() => told.length > 0);
+  assert.equal(page.isolated("m-1"), false, "placed as the chain was loaded: past what this browser verified");
+  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.ok(!told.includes(true), "never isolated by it");
   assert.equal(page.isolated("m-1"), false);
-  // Dropped: the next dispute this page keeps writes storage without it.
+  // Kept, not erased (the record may lag): the next dispute this page keeps writes storage with it.
   page.keepDisputes([{ host: "gone", seq: 1, sig: "00".repeat(64) }]);
-  assert.ok(!(browserStorage(a.store).getItem(`rh.hub.renewal.disputes.${a.account}`) ?? "").includes("1000000"));
+  assert.ok((browserStorage(a.store).getItem(key) ?? "").includes("1000000"));
+  // A page that cannot read the seen record when it hears of it counts it: isolation fails safe.
+  const bus = tabsBus();
+  const blind = await tabOf(a, bus());
+  assert.equal(blind.isolated("m-1"), false);
+  (blind as unknown as { readHeld: () => Promise<never> }).readHeld = async () => {
+    throw new Error("the store failed");
+  };
+  bus().post({ storage: key });
+  await until(() => blind.isolated("m-1"));
 });
 
 test("Codex 1: the runner's evidence from the hub now never stands in for what this page kept", async () => {
