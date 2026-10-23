@@ -30,7 +30,8 @@ import {
 import { recoverySecret } from "../src/lib/hub/recovery-words.js";
 import { ChannelUnavailable, deliverMachineKey, flushPendingReencrypts, mailMachineKey, pendingReencrypts } from "../src/lib/hub/deliver.js";
 import { keyName, legacyMachineKeyName, parseKeyName, UserKeyVault, validKeyName } from "../src/lib/hub/keyring.js";
-import { containsBytes, createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
+import { CloudAccount } from "../src/lib/hub/account.js";
+import { browserStorage, containsBytes, createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
 
 async function ukFromRecovery(hub: FakeKeysHub, words: string[], epoch: number, sender: string) {
   const a = await hub.device();
@@ -161,6 +162,27 @@ test("M1's raw machine keys are deleted only once the hub holds a blob that unwr
   const keys = await again.machineKeys("m-1", store);
   assert.deepEqual([...keys.keys()].sort(), [0, 1]);
   assert.equal(hex(await indexStream(keys.get(0)!)), hex(await indexStream(await importMachineKey(committed0!))));
+});
+
+test("a wipe forgets every raw machine key from before the keyring — with no chain to name their hosts, and past a gap in their epochs", async () => {
+  const raw = () => hex(crypto.getRandomValues(new Uint8Array(32)));
+  // A page that could not open the account: no chain, only the store.
+  const store = new MemoryKeyStore();
+  for (const name of [legacyMachineKeyName("m-1", 0), legacyMachineKeyName("m-1", 1), legacyMachineKeyName("m-gone", 0), legacyMachineKeyName("m-2", 3)]) await store.put(name, raw());
+  await store.put("unrelated/1", "kept");
+  await CloudAccount.wipeLocal(store, "a-test", { storage: browserStorage(store) });
+  assert.deepEqual(await store.list("mk/"), [], "no raw machine key is left");
+  assert.equal(await store.get("unrelated/1"), "kept", "nothing else is touched");
+
+  // An open account's wipe: also those of a host its chain does not name, and those after a missing epoch.
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok", new MemoryKeyStore());
+  await createV2Genesis(a, false);
+  await hub.enroll(a);
+  const kept = a.store as MemoryKeyStore;
+  for (const name of [legacyMachineKeyName("m-1", 1), legacyMachineKeyName("m-1", 2), legacyMachineKeyName("m-old", 0)]) await kept.put(name, raw());
+  await a.wipe();
+  assert.deepEqual(await kept.list("mk/"), []);
 });
 
 test("an MK goes in the channel when the machine is online, else by sealed mailbox", async () => {

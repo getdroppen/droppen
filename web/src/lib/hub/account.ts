@@ -178,9 +178,11 @@ import {
   type KeptRenewal,
   keyName,
   Keyring,
+  LEGACY_MACHINE_KEY_PREFIX,
   legacyMachineKeyName,
   machineKeyBytes,
   migrateLegacyMachineKeys,
+  moveLegacyMachineKeysToVault,
   openMachineKeys,
   openRecoveryPackage,
   type Rewrap,
@@ -483,13 +485,19 @@ async function forgetBrowser(input: {
   await step("renewals", () => renewalStash.wipe());
   await step("keyring copy", () => keyring.wipe());
   await step("machine keys", async () => {
+    // M1/M2a's raw machine keys: every one the store lists, whether or not a
+    // chain names its host (a wipe without one too) — they are not kept per
+    // account, but nor are the device keys and the local wrap key that go
+    // above — and, in a store that cannot list, those of the hosts named.
+    const names = new Set((await store.list?.(LEGACY_MACHINE_KEY_PREFIX)) ?? []);
     for (const host of input.legacyHosts) {
       for (let epoch = 0; epoch < 64; epoch++) {
         const name = legacyMachineKeyName(host, epoch);
         if ((await store.get(name)) === undefined) break;
-        await store.delete(name);
+        names.add(name);
       }
     }
+    for (const name of names) await store.delete(name);
   });
   await step("pending re-encryptions", () => forgetPendingReencrypts(account));
   // The browser's notes (forgetting one never throws).
@@ -2590,15 +2598,17 @@ export class CloudAccount {
   /**
    * The settle steps an active device runs after loading (and after the chain
    * moves): take the keys mailed to it, refresh the keyring, move M1's raw
-   * machine keys into it, and keep a recovery package for every epoch it
-   * holds. Each step on its own: one failing leaves the others; listeners are
-   * told once they have run. Nothing at all on a device that has not pinned
-   * the account.
+   * machine keys out of the key store (whatever the device's role:
+   * {@link migrate}), and keep a recovery package for every epoch it holds.
+   * Each step on its own: one failing leaves the others; listeners are told
+   * once they have run. Nothing at all on a device that has not pinned the
+   * account.
    */
   async settle(): Promise<void> {
     if (this.standing !== "active" || !this.pinned) return;
     // A device that does not manage the account holds no user key (chain v3):
-    // it keeps the hosts' machine keys it was handed, and asks for those it lacks.
+    // it keeps the hosts' machine keys it was handed (and the raw ones it
+    // still had from before the keyring), and asks for those it lacks.
     const steps: [string, () => Promise<unknown>][] = this.isAdmin
       ? [
           ["keyring", () => this.keyring.refresh()],
@@ -2610,6 +2620,7 @@ export class CloudAccount {
       : [
           ["keyring", () => this.keyring.refresh()],
           ["mail", () => this.receiveMail()],
+          ["migrate", () => this.migrate()],
           ["host keys", () => this.checkHostKeys()],
         ];
     for (const [what, step] of steps) {
@@ -2963,10 +2974,29 @@ export class CloudAccount {
     });
   }
 
-  /** M1/M2a kept machine keys as raw hex in the key store: wrap them into the keyring and delete them (once verified there). */
+  /**
+   * M1/M2a kept machine keys as raw hex in the key store: move them out, on
+   * every device. A full device wraps them into the keyring under the newest
+   * user key and deletes them once the hub holds that
+   * ({@link migrateLegacyMachineKeys}); one that does not manage the account
+   * — no user key, and no keyring writes — keeps those of the hosts that let
+   * it in sealed in its host-key vault and deletes the rest, each only if it
+   * is the key the chain committed ({@link moveLegacyMachineKeysToVault}).
+   */
   async migrate(): Promise<number> {
-    const machines = (this.state?.hosts() ?? []).map((m) => m.info.id);
-    const moved = await migrateLegacyMachineKeys(this.store, this.vault, this.keyring, this.account, machines, () => this.ensureUserKey());
+    const chain = this.state;
+    if (!chain) return 0;
+    const machines = chain.hosts().map((m) => m.info.id);
+    const moved = this.isAdmin
+      ? await migrateLegacyMachineKeys(this.store, this.vault, this.keyring, this.account, machines, () => this.ensureUserKey())
+      : await moveLegacyMachineKeysToVault(
+          this.store,
+          this.hostKeys,
+          machines,
+          (machine, epoch, key) => chain.checkMachineKey(machine, epoch, key),
+          // The hosts an admin would hand this device the keys of (`sealHostKeys`).
+          (machine) => chain.device(machine)?.host === true && admits(chain, machine, this.deviceId),
+        );
     if (moved) this.emit();
     return moved;
   }
@@ -5917,8 +5947,8 @@ export class CloudAccount {
    * forked, its keys would not open, an error): what this browser keeps for
    * `account`, under the device id it noted, forgotten from `store` and the
    * browser's storage, step by step. Its device keys go with it: the next
-   * sign-in here is a new device. (No chain: raw machine keys from before the
-   * keyring, named by host, stay.)
+   * sign-in here is a new device. Raw machine keys from before the keyring
+   * go too, chain or none: every one the key store lists.
    */
   static async wipeLocal(store: KeyStore, account: string, opts: { storage?: AccountStorage; seen?: SeenStore } = {}): Promise<void> {
     const storage = opts.storage ?? defaultStorage();

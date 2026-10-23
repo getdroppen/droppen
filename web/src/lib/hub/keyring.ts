@@ -85,8 +85,14 @@ const keyringCache = (account: string) => `keyring/${account}`;
 const hkRecord = (account: string, host: string, epoch: number) => `hk/${account}/${host}/${epoch}`;
 const hkIndex = (account: string) => `hk-index/${account}`;
 const rnRecord = (account: string, host: string) => `rn/${account}/${host}`;
-/** Where M1 and M2a kept a machine key as raw hex (migrated away, see `migrateLegacyMachineKeys`). */
-export const legacyMachineKeyName = (machine: string, epoch: number) => `mk/${machine}/${epoch}`;
+/**
+ * Every name M1 and M2a kept a raw machine key under starts so (nothing else
+ * in the key store does: the keyring's own `mk/…` names live inside its
+ * cached copy, `keyring/<account>`).
+ */
+export const LEGACY_MACHINE_KEY_PREFIX = "mk/";
+/** Where M1 and M2a kept a machine key as raw hex (migrated away, see `migrateLegacyMachineKeys` and `moveLegacyMachineKeysToVault`). */
+export const legacyMachineKeyName = (machine: string, epoch: number) => `${LEGACY_MACHINE_KEY_PREFIX}${machine}/${epoch}`;
 
 interface StoredUserKey {
   v: 1;
@@ -984,6 +990,57 @@ export async function migrateLegacyMachineKeys(
     if (!(await held(f))) continue;
     await store.delete(legacyMachineKeyName(f.machine, f.epoch));
     moved++;
+  }
+  return moved;
+}
+
+/**
+ * {@link migrateLegacyMachineKeys} for a device that does not manage the
+ * account (chain v3): it holds no `UK`, and the hub takes keyring blobs only
+ * from full devices — so M1/M2a's raw `mk/<machine>/<epoch>` entries of
+ * `machines` go into its host-key vault instead, sealed under the
+ * device-local key, as an admin's mail would put them there. Each is taken
+ * only if it is exactly the key the chain committed for its machine and epoch
+ * (`check` throws otherwise): one that is not — another account's (the key
+ * store is the browser's), or garbage — is left where it is. Of the rest,
+ * those of hosts that let this device in (`keep`) are kept in the vault, and
+ * the raw copy deleted once the vault holds the epoch; those of any other
+ * host are deleted outright: an admin would not hand it them, nobody asks a
+ * device that does not manage the account for a key, and the full devices
+ * read them from the keyring. Returns how many raw entries went.
+ */
+export async function moveLegacyMachineKeysToVault(
+  store: KeyStore,
+  hostKeys: HostKeyVault,
+  machines: string[],
+  check: (machine: string, epoch: number, key: Bytes) => Promise<void>,
+  keep: (machine: string) => boolean,
+  maxEpochs = 64,
+): Promise<number> {
+  let moved = 0;
+  for (const machine of machines) {
+    for (let epoch = 0; epoch < maxEpochs; epoch++) {
+      const name = legacyMachineKeyName(machine, epoch);
+      const stored = await store.get(name);
+      if (typeof stored !== "string") break;
+      let raw: Bytes | null = null;
+      try {
+        raw = fromHex(stored);
+        if (raw.length !== 32) continue;
+        await check(machine, epoch, raw);
+        if (keep(machine)) {
+          await hostKeys.put(machine, epoch, raw);
+          if (!(await hostKeys.has(machine, epoch))) continue;
+        }
+      } catch {
+        // not the committed key, or the vault would not take it: the raw copy stays
+        continue;
+      } finally {
+        raw?.fill(0);
+      }
+      await store.delete(name);
+      moved++;
+    }
   }
   return moved;
 }
