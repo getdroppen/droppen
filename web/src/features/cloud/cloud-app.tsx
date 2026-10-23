@@ -41,6 +41,8 @@ import { Turnstile } from "./turnstile";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, usePathname } from "@/features/landing/route";
+import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
+import { hostMode, hubHosts, webOf } from "@/lib/hub/hosts";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
 import { FrontPageView } from "@/features/landing/front-pages";
 
@@ -114,6 +116,12 @@ function startLink(account: CloudAccount, origin: string): HubLink {
  * `store` and `keyReadRetryMs` stand in for this browser's IndexedDB and the
  * waits between reads of it (tests); the page uses its own.
  */
+/** On the app host, the hub's origin a browser's device can be brought over from (the key move); else `null`. */
+function movedFrom(): string | null {
+  const hosts = hubHosts();
+  return hostMode() === "app" && hosts?.app ? webOf(hosts.origin) : null;
+}
+
 export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { children: ReactNode; store?: KeyStore; keyReadRetryMs?: readonly number[] }) {
   const origin = hubOrigin()!;
   const api = useMemo(() => new HubApi(), []);
@@ -327,6 +335,10 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     }
   }, [proceed]);
 
+  // Another tab of this origin took this browser's device over from the hub's origin (the key move,
+  // `features/move`): a tab with no account open reloads, and opens it.
+  useEffect(() => reloadOnArrival({ isOpen: () => opened.current !== null }), []);
+
   // "Open app" on the landing page (or the download page): on into the app.
   useEffect(() => {
     if (phase.kind !== "front" || isFrontPath(pathname)) return;
@@ -399,6 +411,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         <AuthScreen
           api={api}
           initialMode={page === "signup" ? "signup" : "signin"}
+          above={movedFrom() ? <BringItOver legacy={movedFrom()!} /> : null}
           onSignedIn={(session) => {
             // The app's router knows no `/signin`: it starts at its start (a deep link keeps its path).
             if (isAuthPath(location.pathname)) goPublic(APP_PATH, { replace: true });
@@ -861,10 +874,13 @@ export function AuthScreen({
   api,
   onSignedIn,
   initialMode = "signin",
+  above,
 }: {
   api: HubApi;
   onSignedIn: (session: HubSession) => void;
   initialMode?: "signin" | "signup";
+  /** Shown above the form: on the app host, the offer to bring this browser's device over from the hub's origin. */
+  above?: ReactNode;
 }) {
   const { t, i18n } = useTranslation();
   const [mode, setModeState] = useState<"signin" | "signup">(initialMode);
@@ -1129,6 +1145,7 @@ export function AuthScreen({
               </Note>
             </div>
           )}
+          {above && <div className="mb-6">{above}</div>}
           <form onSubmit={submit} className="flex flex-col gap-3">
             <Tabs
               value={mode}

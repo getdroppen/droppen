@@ -5,7 +5,10 @@
 //   legacy  /seed   makes a device the way the app does (key store, notes,
 //                   seen record, session, push record) and registers it
 //   legacy  /       "Move this browser": startMove (push)
-//   app     /       "Bring it over": startPull (pull)
+//   app     /       "Bring it over": the sign-in screen's real offer
+//                   (BringItOver), and a bare startPull button (#pull)
+//   app     /watch  a second tab of the app host: counts its loads, and
+//                   reloads when a move arrives (reloadOnArrival)
 //   both    /move   the real MovePage
 //   both    /check  what the origin holds now, read on a fresh page; on the
 //                   app host also a fresh sign-in with the stored keys
@@ -24,6 +27,7 @@ import { localDevice, MOVE_PATH, type MoveOutcome, startMove, startPull } from "
 import { readMarker } from "@/lib/move/receiver";
 import { idbRecordStore } from "@/lib/move/stores";
 import { MovePage } from "@/features/move/move-page";
+import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
 import "@/i18n";
 
 declare global {
@@ -32,6 +36,7 @@ declare global {
     __outcome?: MoveOutcome;
     __steps?: string[];
     __evil?: { received: { origin: string; t: unknown }[]; done: boolean };
+    __offerMoved?: boolean;
   }
 }
 
@@ -154,6 +159,11 @@ if (path === MOVE_PATH && (at === LEGACY || at === APP)) {
   run(seed);
 } else if (path === "/check") {
   run(check);
+} else if (path === "/watch" && at === APP) {
+  const loads = Number(sessionStorage.getItem("loads") ?? "0") + 1;
+  sessionStorage.setItem("loads", String(loads));
+  reloadOnArrival({ isOpen: () => false });
+  show(`loads ${loads}`);
 } else if (path === "/" && (at === LEGACY || at === APP)) {
   window.__steps = [];
   const go = at === LEGACY ? startMove : startPull;
@@ -164,6 +174,11 @@ if (path === MOVE_PATH && (at === LEGACY || at === APP)) {
       show(JSON.stringify(outcome));
     });
   });
+  if (at === APP) {
+    const offer = document.createElement("div");
+    root.appendChild(offer);
+    createRoot(offer).render(<BringItOver legacy={LEGACY} onMoved={() => (window.__offerMoved = true)} />);
+  }
 } else if (path === "/steal") {
   foreign(`${LEGACY}${MOVE_PATH}`, () => ({ v: 1, t: "rh-move/request", id: "0".repeat(32) }));
 } else if (path === "/plant") {

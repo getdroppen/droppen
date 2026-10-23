@@ -3,7 +3,7 @@
  * app calls. The interface is in `./types.ts`; the page on `/move` is
  * `features/move/move-page.tsx`.
  */
-import { browserEnv, type MoveEnv } from "./env";
+import { browserEnv, type MoveEnv, sharedTabs } from "./env";
 import { startMove as start, startPull as pull } from "./flows";
 import { readLocalDevice } from "./local";
 import type { LocalDevice, MoveEvent, StartMove, StartPull } from "./types";
@@ -24,6 +24,6 @@ export function localDevice(env: MoveEnv = browserEnv()): Promise<LocalDevice | 
 }
 
 /** Hear what this origin's other tabs say about a move (`MoveEvent`): returns a stop. */
-export function watchMoves(fn: (event: MoveEvent) => void, env: Pick<MoveEnv, "tabs"> = browserEnv()): () => void {
+export function watchMoves(fn: (event: MoveEvent) => void, env: Pick<MoveEnv, "tabs"> = { tabs: sharedTabs() }): () => void {
   return env.tabs?.subscribe(fn) ?? (() => undefined);
 }

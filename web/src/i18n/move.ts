@@ -6,6 +6,11 @@
  */
 
 export const moveZhCN: Record<string, string> = {
+  "Used Droppen at {{legacy}} in this browser?": "在这个浏览器里用过 {{legacy}} 上的 Droppen？",
+  "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
+    "迁移过来：会打开一个 {{legacy}} 窗口，你在那里确认后，这个浏览器就以同一台设备的身份在这里打开，无需重新添加。",
+  "Bring it over": "迁移过来",
+  "This browser cannot move its keys here.": "这个浏览器无法把钥匙迁移到这里。",
   "This browser is now at {{app}}. Its copy at {{legacy}} was removed.": "这个浏览器现在在 {{app}}。它在 {{legacy}} 的副本已删除。",
   "This browser is now at {{app}}. {{legacy}} still holds its old copy until you open it once more.": "这个浏览器现在在 {{app}}。在你再次打开 {{legacy}} 之前，那里仍保留着旧副本。",
   "The browser blocked the window the move needs. Allow pop-ups for this site, then try again.": "浏览器拦截了迁移所需的窗口。请允许这个网站弹出窗口，然后重试。",
@@ -37,6 +42,11 @@ export const moveZhCN: Record<string, string> = {
 };
 
 export const moveZhTW: Record<string, string> = {
+  "Used Droppen at {{legacy}} in this browser?": "在這個瀏覽器裡用過 {{legacy}} 上的 Droppen？",
+  "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
+    "遷移過來：會開啟一個 {{legacy}} 視窗，你在那裡確認後，這個瀏覽器就以同一台裝置的身分在這裡開啟，無需重新新增。",
+  "Bring it over": "遷移過來",
+  "This browser cannot move its keys here.": "這個瀏覽器無法把鑰匙遷移到這裡。",
   "This browser is now at {{app}}. Its copy at {{legacy}} was removed.": "這個瀏覽器現在在 {{app}}。它在 {{legacy}} 的副本已刪除。",
   "This browser is now at {{app}}. {{legacy}} still holds its old copy until you open it once more.": "這個瀏覽器現在在 {{app}}。在你再次開啟 {{legacy}} 之前，那裡仍保留著舊副本。",
   "The browser blocked the window the move needs. Allow pop-ups for this site, then try again.": "瀏覽器封鎖了遷移所需的視窗。請允許這個網站彈出視窗，然後重試。",
@@ -68,6 +78,11 @@ export const moveZhTW: Record<string, string> = {
 };
 
 export const moveJa: Record<string, string> = {
+  "Used Droppen at {{legacy}} in this browser?": "このブラウザで {{legacy}} の Droppen を使っていましたか？",
+  "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
+    "移行する：{{legacy}} のウインドウが開きます。そこで確認すると、このブラウザは追加し直さずに同じデバイスとしてここで開きます。",
+  "Bring it over": "移行する",
+  "This browser cannot move its keys here.": "このブラウザは鍵をここに移行できません。",
   "This browser is now at {{app}}. Its copy at {{legacy}} was removed.": "このブラウザは {{app}} に移りました。{{legacy}} のコピーは削除されました。",
   "This browser is now at {{app}}. {{legacy}} still holds its old copy until you open it once more.": "このブラウザは {{app}} に移りました。{{legacy}} をもう一度開くまで、そこには古いコピーが残ります。",
   "The browser blocked the window the move needs. Allow pop-ups for this site, then try again.": "移行に必要なウインドウがブラウザにブロックされました。このサイトのポップアップを許可してから、もう一度お試しください。",

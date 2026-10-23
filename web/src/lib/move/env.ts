@@ -62,25 +62,47 @@ export interface MoveEnv {
 /** The channel the tabs of one origin tell each other about a move on. */
 export const MOVE_CHANNEL = "rh.hub.move";
 
-function pageTabs(): MoveEnv["tabs"] {
+/**
+ * This origin's other tabs, over {@link MOVE_CHANNEL}. A page does not hear
+ * itself: what it says is marked with an id of its own, and every page's
+ * listeners skip it (one page may listen more than once).
+ */
+export function pageTabs(): MoveEnv["tabs"] {
   const Channel = (globalThis as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
   if (!Channel) return null;
+  const self = Math.random().toString(36).slice(2);
   let poster: BroadcastChannel | null = null;
   return {
     post(event) {
       try {
-        poster ??= new Channel(MOVE_CHANNEL);
-        poster.postMessage(event);
+        if (!poster) {
+          poster = new Channel(MOVE_CHANNEL);
+          (poster as { unref?: () => void }).unref?.();
+        }
+        poster.postMessage({ from: self, event });
       } catch {
         // the others find out as they reload
       }
     },
     subscribe(fn) {
       const channel = new Channel(MOVE_CHANNEL);
-      channel.onmessage = (e: MessageEvent) => fn(e.data as MoveEvent);
+      // Node's channels keep a process alive (tests); a browser's have no such thing.
+      (channel as { unref?: () => void }).unref?.();
+      channel.onmessage = (e: MessageEvent) => {
+        const m = e.data as { from?: unknown; event?: MoveEvent } | null;
+        if (m && m.from !== self && m.event && typeof m.event.t === "string") fn(m.event);
+      };
       return () => channel.close();
     },
   };
+}
+
+/** One per page: its own tabs channel, so its own words are known as its own. */
+let pageTabsOnce: MoveEnv["tabs"] | undefined;
+
+/** This page's {@link pageTabs}, the same every time it is asked for. */
+export function sharedTabs(): MoveEnv["tabs"] {
+  return (pageTabsOnce ??= pageTabs());
 }
 
 function pageLocks(): MoveLocks | null {
@@ -119,7 +141,7 @@ export function browserEnv(): MoveEnv {
     records: (db, store) => (idb ? idbRecordStore(idb, db, store) : memoryRecordStore(db, store)),
     keyStore: () => (idb ? indexedDbKeyStore(idb) : new MemoryKeyStore()),
     locks: pageLocks(),
-    tabs: pageTabs(),
+    tabs: sharedTabs(),
     fetch: (input, init) => globalThis.fetch(input, init),
     hub: hubOrigin(),
     open: (url, name) => window.open(url, name, "popup,width=480,height=640"),

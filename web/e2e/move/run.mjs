@@ -1,5 +1,6 @@
 // The browser key move on two real hosts, in Chromium, Firefox and WebKit
-// (Playwright): push, pull, a blocked popup, a foreign opener (steal and
+// (Playwright): push, pull (also from the sign-in screen's offer, with
+// another tab reloading as the device arrives), a blocked popup, a foreign opener (steal and
 // plant), a failed verify (no wipe), and a move cut off (resumable, no key
 // lost) — once before the app host signed in, once after.
 //
@@ -137,6 +138,35 @@ const scenarios = {
     movedHere(expect, await check(ctx, APP), seeded, "pull");
     wipedThere(expect, await check(ctx, LEGACY), "pull");
     return { outcome };
+  },
+  async pullFromOffer(ctx, expect, account) {
+    // The sign-in screen's own "Bring it over", with a second my. tab open that must reload as the device arrives.
+    const seeded = await seed(ctx, account);
+    const other = await ctx.newPage();
+    await other.goto(`${APP}/watch`);
+    await other.waitForFunction(() => window.__done === undefined && document.getElementById("out"), null, { timeout: T });
+    const tab = await ctx.newPage();
+    await tab.goto(`${APP}/`);
+    await tab.waitForSelector('[data-testid="bring-it-over"]', { timeout: T });
+    await tab.evaluate(() => (window.__sameDocument = true));
+    const opened = ctx.waitForEvent("page", { timeout: T });
+    await tab.click('[data-testid="bring-it-over"]');
+    const popup = await opened;
+    await popup.waitForSelector('[data-testid="move-confirm"]', { timeout: T });
+    await popup.click('[data-testid="move-confirm"]');
+    await tab.waitForFunction(() => window.__offerMoved === true, null, { timeout: 3 * T });
+    await other.waitForFunction(() => sessionStorage.getItem("loads") === "2", null, { timeout: T }).catch(() => undefined);
+    const loads = await other.evaluate(() => sessionStorage.getItem("loads"));
+    expect(loads === "2", `the other my. tab reloaded once as the device arrived (loads ${loads})`);
+    movedHere(expect, await check(ctx, APP), seeded, "offer");
+    wipedThere(expect, await check(ctx, LEGACY), "offer");
+    const after = await ctx.newPage();
+    await after.goto(`${APP}/`);
+    await after.waitForSelector("#pull", { timeout: T });
+    await sleep(1_000);
+    expect((await after.locator('[data-testid="bring-it-over"]').count()) === 0, "with a device here, the offer is gone");
+    expect((await tab.evaluate(() => window.__sameDocument)) === true, "the tab that pulled did not reload from its own word (it goes on itself)");
+    return { loads };
   },
   async popupBlocked(ctx, expect, account) {
     await seed(ctx, account);
