@@ -61,6 +61,12 @@ copyright and licence notice.
 - Pull requests are squash-merged: the pull request's title becomes the
   commit's subject line, so write the title the same way. The commit's message
   keeps your commits' `Signed-off-by:` lines (above).
+- Commits and pull requests carry their human authors only: no co-author
+  trailer naming an AI tool or its vendor, no "generated with" line naming one
+  (in a commit message, or in the pull request's title or body), and no commit
+  authored or committed under an AI vendor's no-reply address. The
+  `no-ai-attribution` check (`scripts/check-ai-attribution.mjs`) fails a pull
+  request that has one; reword the commit or edit the text.
 - Keep a pull request to one change. Say what it changes and why, and add or
   update tests for the behaviour you changed.
 - On a pull request from a fork, CI waits until the automated security review

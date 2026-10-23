@@ -1,13 +1,17 @@
 name: pr-guard
 
-# What a pull request would write into main's history that stops workflows.
-# A CI skip marker (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`,
-# `[actions skip]`) or a `skip-checks: true` trailer in the message of the
-# commit a release tag points at means GitHub runs no workflow for the tag's
-# push, and the release never starts (docs/releasing.md). The message is the
-# pull request's title or one of its commits' (squash: the title, or the only
-# commit's, and the commits' messages; merge and rebase: the commits'), so all
-# are checked, again whenever the title is edited.
+# What a pull request must not write into main's history.
+#
+# no-skip-markers: what stops workflows. A CI skip marker (`[skip ci]`,
+# `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`) or a
+# `skip-checks: true` trailer in the message of the commit a release tag
+# points at means GitHub runs no workflow for the tag's push, and the release
+# never starts (docs/releasing.md). The message is the pull request's title or
+# one of its commits' (squash: the title, or the only commit's, and the
+# commits' messages; merge and rebase: the commits'), so all are checked,
+# again whenever the title is edited.
+#
+# no-ai-attribution: see the job.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
@@ -49,3 +53,32 @@ jobs:
             exit 1
           fi
           echo "ok: no CI skip marker in the title or in any of the pull request's commits"
+
+  # Commits and pull requests carry their human authors only (CONTRIBUTING.md):
+  # no co-author trailer naming an AI tool or its vendor, no "generated with"
+  # line naming one, in any commit of the pull request or in its title or body
+  # (a squash merge's message is made from them), and no commit authored or
+  # committed under an AI vendor's no-reply address. `git log` over the pull
+  # request's own commits, `origin/<base>..<head>`, read from the event and the
+  # repository alone, so a pull request from a fork is checked the same way.
+  no-ai-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # The check's own tests: a small git repository made on the runner.
+      - run: node --test scripts/check-ai-attribution.test.mjs
+      - name: No AI attribution in the pull request's commits, title or body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-ai-attribution.mjs "origin/$BASE_REF..$HEAD_SHA"
