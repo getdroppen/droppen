@@ -12,6 +12,7 @@ import { authIsOff, isLocalOwner, LOGIN_PATH, logout } from "@/lib/auth";
 import { formatRelative, formatTime, formatUntil } from "@/lib/format";
 import { droppenCommand } from "@/lib/droppen-command";
 import { cn } from "@/lib/cn";
+import { disablePushOnSignOut } from "@/lib/push";
 import { Sheet } from "@/components/sheet";
 import { useApi, useMachine } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
@@ -64,6 +65,8 @@ function AccountSection({ user }: { user: string }) {
 
   const signOut = async () => {
     setBusy(true);
+    // While the token still works: this browser's notifications stop with the sign-in (the device's row, then the subscription).
+    await disablePushOnSignOut();
     await logout();
     // A document load, not a router navigation: it is the one way to be sure
     // nothing carries on running with the token that was just revoked.

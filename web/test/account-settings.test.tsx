@@ -39,6 +39,7 @@ import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "../src/i18n/cro
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
+import { signOutJa, signOutZhCN, signOutZhTW } from "../src/i18n/sign-out.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 
 class MemoryStorage {
@@ -563,7 +564,7 @@ test("the notice: what changed, from which device, when — for every kind", () 
 
 test("every string the page and the passkey join use is translated into zh-CN, zh-TW and ja", () => {
   const keys = new Set<string>();
-  const files = ["account-settings.tsx", "passkey-join.tsx", "my-devices.tsx", "pairing-screen.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8"));
+  const files = ["account-settings.tsx", "passkey-join.tsx", "my-devices.tsx", "pairing-screen.tsx", "sign-out-dialog.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8"));
   files.push(readFileSync(new URL("../src/lib/hub/passkey-join.ts", import.meta.url), "utf8"));
   // The sign-in change notices, and approving a join by pairing (only these parts of those files).
   const plan = readFileSync(new URL("../src/features/cloud/plan.tsx", import.meta.url), "utf8");
@@ -583,9 +584,9 @@ test("every string the page and the passkey join use is translated into zh-CN, z
   for (const m of account.slice(start, account.indexOf("Keep the `UK` epochs a pairing delivered", start)).matchAll(/AccountError\(\s*"[a-zA-Z]+",\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 60, String(keys.size));
   for (const [name, table] of [
-    ["zh-CN", { ...onboardingZhCN, ...crossDeviceZhCN, ...cloudDevicesZhCN, ...zhCN }],
-    ["zh-TW", { ...onboardingZhTW, ...crossDeviceZhTW, ...cloudDevicesZhTW, ...zhTW }],
-    ["ja", { ...onboardingJa, ...crossDeviceJa, ...cloudDevicesJa, ...ja }],
+    ["zh-CN", { ...onboardingZhCN, ...crossDeviceZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...zhCN }],
+    ["zh-TW", { ...onboardingZhTW, ...crossDeviceZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...zhTW }],
+    ["ja", { ...onboardingJa, ...crossDeviceJa, ...cloudDevicesJa, ...signOutJa, ...ja }],
   ] as const) {
     const missing = [...keys].filter((k) => !(k in table));
     assert.deepEqual(missing, [], `${name} lacks these`);

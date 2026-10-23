@@ -32,7 +32,8 @@ import { isAccountPath } from "./devices-route";
 import { MyDevicesScreen } from "./my-devices";
 import { NoKeysScreen, PairingScreen, PasskeyPendingScreen } from "./pairing-screen";
 import { PendingScreen, RecoveryWords } from "./recovery";
-import { clearDeviceCopies, type HeldSession, pairingResume, signInAgainToPair, signOut, takeSignOutFailures } from "./sign-out";
+import { clearDeviceCopies, type HeldSession, pairingResume, signInAgainToPair, signOut, takeSignOutFailures, takeStillListed } from "./sign-out";
+import { SignOutDialog, StillListedNote } from "./sign-out-dialog";
 import { authErrorText, Centered, CloudPage, danger, ErrorLine, errorText, Field, field, Note, Panel, primary, quiet, Tabs } from "./ui";
 import { CheckEmailScreen, VerifyEmailPage } from "./email-verify";
 import { UnsupportedBrowserScreen } from "./browser-support";
@@ -144,6 +145,14 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   const api = useMemo(() => new HubApi(), []);
   const store = useMemo<KeyStore>(() => givenStore ?? indexedDbKeyStore(), [givenStore]);
   const [phase, setPhase] = useState<Phase>({ kind: "boot" });
+  // The sign-out question a screen before the shell asked (pairing, waiting, no keys): for its account.
+  const [askSignOut, setAskSignOut] = useState<CloudAccount | null>(null);
+  const withSignOut = (screen: ReactNode) => (
+    <>
+      {screen}
+      {askSignOut && <SignOutDialog account={askSignOut} onOpenChange={(open) => void (open || setAskSignOut(null))} />}
+    </>
+  );
   // Whether this browser can run the end-to-end encryption: checked once, as
   // the page starts, before any key is read or made (`lib/e2e/support.ts`).
   const supportCheck = useRef<Promise<E2eSupport> | null>(null);
@@ -427,35 +436,35 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     case "recovery":
       return <RecoveryWords words={phase.words} onDone={() => void proceed(phase.account.session)} />;
     case "pairing":
-      return (
+      return withSignOut(
         <PairingScreen
           account={phase.account}
           onPaired={() => void proceed(phase.account.session)}
           onPending={() => setPhase({ kind: "pending", account: phase.account })}
-          onSignOut={() => void signOut(phase.account)}
+          onSignOut={() => setAskSignOut(phase.account)}
           onSignInAgain={(mode) => void signInAgainToPair(phase.account, mode)}
-        />
+        />,
       );
     case "pending": {
       // Joined with a passkey: the pairing offer another device approves it by; with the recovery words: their own waiting screen.
       const Waiting = phase.account.chain?.deviceRecord(phase.account.deviceId)?.viaPasskey ? PasskeyPendingScreen : PendingScreen;
-      return (
+      return withSignOut(
         <Waiting
           account={phase.account}
           onActive={() => void proceed(phase.account.session)}
           onRemoved={() => void wipeRemoved(phase.account, null, store).then((failures) => setPhase({ kind: "removed", failures }))}
-          onSignOut={() => void signOut(phase.account)}
-        />
+          onSignOut={() => setAskSignOut(phase.account)}
+        />,
       );
     }
     case "noKeys":
-      return (
+      return withSignOut(
         <NoKeysScreen
           account={phase.account}
           onKeys={() => void proceed(phase.account.session)}
           onRemoved={() => void wipeRemoved(phase.account, null, store).then((failures) => setPhase({ kind: "removed", failures }))}
-          onSignOut={() => void signOut(phase.account)}
-        />
+          onSignOut={() => setAskSignOut(phase.account)}
+        />,
       );
     case "removed":
       return <RemovedScreen failures={phase.failures} />;
@@ -842,6 +851,8 @@ export function AuthScreen({
   const [busy, setBusy] = useState(false);
   // What the last sign-out in this tab could not clear (read once).
   const [failures] = useState(() => takeSignOutFailures());
+  // A browser just signed out and removed that the account still lists (read once).
+  const [stillListed] = useState(() => takeStillListed());
   // Signed out by the pairing screen's "sign in again": it comes back once signed in.
   const [resumesPairing] = useState(() => pairingResume() !== null);
   // How sign-up works here (`failed`: the hub did not say; its answers will).
@@ -1064,6 +1075,11 @@ export function AuthScreen({
           {failures && (
             <div className="mb-6">
               <ClearFailures failures={failures} />
+            </div>
+          )}
+          {stillListed && (
+            <div className="mb-6">
+              <StillListedNote why={stillListed} />
             </div>
           )}
           {resumesPairing && (

@@ -45,7 +45,7 @@ import { AccountName, openMyDevices } from "./my-devices";
 import { PendingPasskeyBanner } from "./passkey-join";
 import { SignInChangeAlerts, useMe } from "./plan";
 import { RecoveryWords } from "./recovery";
-import { signOut } from "./sign-out";
+import { SignOutChoice } from "./sign-out-dialog";
 import { CloudPage, danger, ErrorLine, errorText, field, Note, primary, quiet, secondary } from "./ui";
 
 /** The page: the frame (the account by its e-mail, the way back to 「我的设备」, sign out), the account's alerts, then the settings. */
@@ -72,9 +72,13 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
             <ArrowLeft className="size-3.5 shrink-0" />
             {t("my devices")}
           </button>
-          <button type="button" className={cn(quiet, "h-7 px-2")} onClick={() => void signOut()}>
-            {t("sign out")}
-          </button>
+          <SignOutChoice account={account}>
+            {(ask) => (
+              <button type="button" className={cn(quiet, "h-7 px-2")} onClick={ask}>
+                {t("sign out")}
+              </button>
+            )}
+          </SignOutChoice>
         </>
       }
     >
@@ -279,10 +283,17 @@ export function AccountSettings({
       <RecoveryWordsSection account={account} manager={manager} editing={editing} setEditing={setEditing} onWords={onWords} />
       <section data-testid="sign-out-section" className="border-b border-border">
         <SectionHead label={t("This device")} />
-        <SettingRow title={t("sign out")} text={t("Sign out on this browser. Its offline copies are cleared; it stays a device of the account, and signing in again opens it as before.")}>
-          <button type="button" className={cn(secondary, "h-7 px-3 text-xs pointer-coarse:h-9")} onClick={() => void signOut()}>
-            {t("sign out")}
-          </button>
+        <SettingRow
+          title={t("sign out")}
+          text={t("Sign out on this browser. Its offline copies are cleared and its notifications stop. On a device of your own it stays a device of the account; on a shared one, sign out and remove it.")}
+        >
+          <SignOutChoice account={account}>
+            {(ask) => (
+              <button type="button" data-testid="account-sign-out" className={cn(secondary, "h-7 px-3 text-xs pointer-coarse:h-9")} onClick={ask}>
+                {t("sign out")}
+              </button>
+            )}
+          </SignOutChoice>
         </SettingRow>
       </section>
     </>

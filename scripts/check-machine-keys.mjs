@@ -90,6 +90,8 @@ export const DEVICE_KEYS = [
   "rh.hub.",
   "rh.relays.manual",
   "rh.cloud.signout-failures",
+  // A browser just signed out and removed that the account still lists, for the sign-in screen (sessionStorage).
+  "rh.cloud.signout-still-listed",
   // The pairing screen's tab to come back to after its "sign in again" (sessionStorage).
   "rh.cloud.pairing-resume",
   "rh.panel.",

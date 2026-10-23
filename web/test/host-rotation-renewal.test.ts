@@ -1454,6 +1454,7 @@ function pushEnv(over: { permission?: NotificationPermission; vapid?: string; su
         return now === null ? ({ error: { error: "push_renewing" } } as never) : { data: { publicKey: now } };
       },
       POST: async (_path, init) => (log.push(`post ${init.body.endpoint}`), {}),
+      DELETE: async (_path, init) => (log.push(`delete ${init.body.endpoint}`), {}),
     }),
     // What a page before the review's fix took a subscription to be current for (`PushEnv.renewalOf`): ignored now.
     ...(over.renewalOf ? { renewalOf: over.renewalOf } : {}),

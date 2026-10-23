@@ -38,10 +38,11 @@ export interface PushEnv {
   api(machine: MachineKey): PushApi;
 }
 
-/** The two routes of the device's API a subscription uses. */
+/** The routes of the device's API a subscription uses. */
 export interface PushApi {
   GET(path: "/api/push/vapid"): Promise<{ data?: { publicKey: string } }>;
   POST(path: "/api/push/subscriptions", init: { body: { endpoint: string; keys: { p256dh: string; auth: string } } }): Promise<{ error?: { error: string } }>;
+  DELETE(path: "/api/push/subscriptions", init: { body: { endpoint: string } }): Promise<unknown>;
 }
 
 // This browser's, not a device's (one subscription per browser): kept with the hub account's keys.
@@ -183,8 +184,13 @@ export async function enablePush(machine: MachineKey, env: PushEnv = browserPush
   setRenewal(env, null);
 }
 
-/** Stop `machine`'s notifications to this browser. */
-export async function disablePush(machine: MachineKey, env: PushEnv = browserPushEnv()): Promise<void> {
+/**
+ * Stop `machine`'s notifications to this browser (`null`: the device is not
+ * known — the browser's own subscription goes all the same). `rowWithinMs`:
+ * how long the device's row may take to go before the browser's subscription
+ * goes regardless (a sign-out does not wait on a device that is offline).
+ */
+export async function disablePush(machine: MachineKey | null, env: PushEnv = browserPushEnv(), opts: { rowWithinMs?: number } = {}): Promise<void> {
   const reg = await env.ready();
   writePushRecord(env, null);
   setRenewal(env, null);
@@ -194,10 +200,35 @@ export async function disablePush(machine: MachineKey, env: PushEnv = browserPus
   // Drop the server's row first, while the endpoint is still in hand, but do
   // not let that failure strand the browser subscription: the send path prunes
   // rows the push service rejects, so an orphaned row heals itself.
-  await (apiFor(machine) as unknown as { DELETE(path: string, init: { body: { endpoint: string } }): Promise<unknown> })
-    .DELETE("/api/push/subscriptions", { body: { endpoint: sub.endpoint } })
-    .catch(() => undefined);
+  if (machine !== null) {
+    const row = Promise.resolve()
+      .then(() => env.api(machine).DELETE("/api/push/subscriptions", { body: { endpoint: sub.endpoint } }))
+      .catch(() => undefined);
+    const within = opts.rowWithinMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await (within === undefined ? row : Promise.race([row, new Promise((resolve) => (timer = setTimeout(resolve, within)))]));
+    clearTimeout(timer);
+  }
+  // The push service forgets the endpoint: nothing sent to it reaches this browser again.
   await sub.unsubscribe();
+}
+
+/** How long a sign-out waits for the device to drop this browser's subscription. */
+export const SIGN_OUT_PUSH_MS = 3_000;
+
+/**
+ * Signing out (either way): this browser's notifications stop — the device
+ * this browser subscribed with drops its row, and the browser's subscription
+ * goes, which makes the push service forget the endpoint. A browser left
+ * subscribed would go on showing whoever uses it next what the account's
+ * sessions are doing (their titles). Never throws.
+ */
+export async function disablePushOnSignOut(env: PushEnv = browserPushEnv(), rowWithinMs = SIGN_OUT_PUSH_MS): Promise<void> {
+  try {
+    await disablePush(readPushRecord(env)?.machine ?? null, env, { rowWithinMs });
+  } catch (error) {
+    console.warn("push: could not unsubscribe on sign-out:", error);
+  }
 }
 
 /**

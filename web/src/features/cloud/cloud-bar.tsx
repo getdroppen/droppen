@@ -33,7 +33,7 @@ import { BarMachineName } from "./machine-name";
 import { RegisteredDeviceAlerts, SignInChangeAlerts, storageFullText, useMe } from "./plan";
 import { CompatBadge } from "./browser-support";
 import { storageView } from "@/lib/hub/plan";
-import { signOut } from "./sign-out";
+import { SignOutChoice } from "./sign-out-dialog";
 import { addressOn, type HubMachine, type HubShell, hubShell, useFocusedMachine, useShellMachines } from "./hub-shell";
 import { openAddDevice } from "./onboarding";
 import { AddDeviceHint, useAddDeviceHint } from "./onboarding-hints";
@@ -149,14 +149,20 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
         <CompatBadge compact />
         <DevicesButton />
         <AccountButton />
-        <button
-          type="button"
-          onClick={() => void signOut()}
-          className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
-          title={t("sign out")}
-        >
-          <LogOut className="size-3" />
-        </button>
+        <SignOutChoice>
+          {(ask) => (
+            <button
+              type="button"
+              data-testid="cloud-bar-sign-out"
+              onClick={ask}
+              className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
+              title={t("sign out")}
+              aria-label={t("sign out")}
+            >
+              <LogOut className="size-3" />
+            </button>
+          )}
+        </SignOutChoice>
       </div>
       <PendingPasskeyBanner account={shell.account} link={shell.link} onRemovePasskey={removePasskeyThere} />
       <PendingRecoveryBanner account={shell.account} link={shell.link} />

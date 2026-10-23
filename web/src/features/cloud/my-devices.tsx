@@ -36,7 +36,7 @@ import { PendingPasskeyBanner } from "./passkey-join";
 import { VerifyEmailBanner } from "./email-verify";
 import { hubShell, useShellMachines } from "./hub-shell";
 import { PlanBanner, RegisteredDeviceAlerts, SignInChangeAlerts, useMe } from "./plan";
-import { signOut } from "./sign-out";
+import { SignOutChoice } from "./sign-out-dialog";
 import { CloudPage, quiet } from "./ui";
 
 /**
@@ -200,9 +200,13 @@ function MyDevicesFrame({ account, link, onBack, children }: { account: CloudAcc
             <UserRound className="size-3.5 shrink-0" />
             <span className="max-sm:hidden">{t("my account")}</span>
           </button>
-          <button type="button" className={cn(quiet, "h-7 px-2")} onClick={() => void signOut()}>
-            {t("sign out")}
-          </button>
+          <SignOutChoice account={account}>
+            {(ask) => (
+              <button type="button" data-testid="my-devices-sign-out" className={cn(quiet, "h-7 px-2")} onClick={ask}>
+                {t("sign out")}
+              </button>
+            )}
+          </SignOutChoice>
         </>
       }
     >

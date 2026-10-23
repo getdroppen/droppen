@@ -6,6 +6,7 @@ import { ja } from "./ja";
 import { linkJa, linkZhCN, linkZhTW } from "./link";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "./onboarding";
 import { setupJa, setupZhCN, setupZhTW } from "./setup";
+import { signOutJa, signOutZhCN, signOutZhTW } from "./sign-out";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "./welcome";
 import { zhCN } from "./zh-CN";
 import { zhTW } from "./zh-TW";
@@ -51,9 +52,9 @@ function initialLanguage(): string {
 
 void i18n.use(initReactI18next).init({
   resources: {
-    "zh-CN": { translation: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN } },
-    "zh-TW": { translation: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW } },
-    ja: { translation: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...setupJa, ...welcomeJa, ...ja } },
+    "zh-CN": { translation: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN } },
+    "zh-TW": { translation: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW } },
+    ja: { translation: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...setupJa, ...welcomeJa, ...ja } },
   },
   lng: initialLanguage(),
   fallbackLng: false,

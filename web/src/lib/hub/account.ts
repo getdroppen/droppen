@@ -777,6 +777,9 @@ export function limitedDevice(input: {
 /** Where this device stands in the account's chain. */
 export type Standing = "active" | "pending" | "removed" | "absent";
 
+/** Whether this device may take itself out of the account as it signs out for good, and if not, why (`CloudAccount.selfRemoval`). */
+export type SelfRemoval = "removable" | "notActive" | "notAdmin" | "lastAdmin" | "keepsSignIn" | "heldBack";
+
 /** Why the hub will not give this device a session: it says the device was `removed`, or it `denied` it. */
 export type Refusal = "removed" | "denied";
 
@@ -3929,6 +3932,55 @@ export class CloudAccount {
       },
       { overHeld: true },
     );
+  }
+
+  /**
+   * Whether this device may take itself out of the account's chain as it
+   * signs out for good ({@link removeSelf}), and if not, why:
+   * - `notActive`: it is no active device of the account (no chain, pending,
+   *   removed, or another view latched): there is nothing it may sign;
+   * - `notAdmin`: only a device that manages the account signs entries;
+   * - `lastAdmin`: the chain keeps one admin device at least;
+   * - `keepsSignIn`: removing it would void the recovery words or the passkey
+   *   slots it set (or came back with) — a sign-out must not take those from
+   *   the account; another admin device removes it, knowing that;
+   * - `heldBack`: an activation is held back here (only its veto is signed).
+   */
+  selfRemoval(): SelfRemoval {
+    const chain = this.state;
+    if (!chain || this.standing !== "active" || this.forked !== null) return "notActive";
+    if (!this.isAdmin) return "notAdmin";
+    if (!this.pinned) return "notActive";
+    if (!chain.admins().some((d) => d.info.id !== this.deviceId)) return "lastAdmin";
+    const me = this.deviceId;
+    const slots = chain.allSlots().some((s) => !s.removed && (s.setBy === me || chain.deviceRecord(me)?.viaPasskey === s.slot.slot));
+    if (chain.voidsRecoveryWords(me, "removal") || slots) return "keepsSignIn";
+    if (this.held) return "heldBack";
+    return "removable";
+  }
+
+  /**
+   * Take this device out of the account's chain — signed by itself, as its
+   * last entry: `removeDevice3` (chain v3), v2's `removeDevice`. Only what
+   * {@link selfRemoval} calls `removable` (checked again on the chain the
+   * entry is built on). Nothing is rotated: a device that removes itself is
+   * the one that would make the new keys, so it is no reason to retire them
+   * — it forgets its own right after ({@link wipe}); the user key it held
+   * goes stale for the other admin devices all the same ({@link userKeyStale})
+   * and is replaced with the next batch that issues keys. The hub ends its
+   * sessions as it takes the removal.
+   */
+  async removeSelf(): Promise<void> {
+    const why = this.selfRemoval();
+    if (why !== "removable") {
+      const kind = ({ notActive: "notInChain", notAdmin: "notAdmin", lastAdmin: "lastAdmin", keepsSignIn: "self", heldBack: "heldBack" } as const)[why];
+      throw new AccountError(kind, `this device cannot remove itself (${why}): remove it from another full device`);
+    }
+    const me = this.deviceId;
+    await this.appendBatch(async (chain) => {
+      if (!chain.admins().some((d) => d.info.id !== me)) throw new AccountError("lastAdmin", "the account's last full device stays one");
+      return [chain.isV3 ? { type: "removeDevice3", id: me } : { type: "removeDevice", id: me }];
+    });
   }
 
   /** Whether device `id` (not an admin) may control some current host now: removing it rotates the machine keys whatever was asked (review D2). */

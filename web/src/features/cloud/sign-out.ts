@@ -1,10 +1,11 @@
 import type { KeyStore } from "@/lib/e2e";
-import type { CloudAccount } from "@/lib/hub/account";
+import type { CloudAccount, SelfRemoval } from "@/lib/hub/account";
 import { clearSession, type HubApi } from "@/lib/hub/api";
 import { deviceMirrorStore, forgetMirrorKey } from "@/lib/hub/mirror";
 import { forgetPasskeySignIn } from "@/lib/hub/passkey-join";
 import { setRenewalRunner } from "@/lib/hub/renewal";
 import { cacheWipe } from "@/lib/local-cache";
+import { disablePushOnSignOut } from "@/lib/push";
 import { SIGN_IN_PATH } from "@/features/landing/route";
 import { hubShell } from "./hub-shell";
 
@@ -67,18 +68,74 @@ export interface HeldSession {
 }
 
 /**
- * End the hub session (the device keys stay: they are this browser's). The
- * offline copies on this device go with it — cleared and sealed, so a save
- * still scheduled cannot put any of it back, and their key forgotten — and
- * the page is replaced only once all of that has landed. Whatever could not
- * be cleared is kept for the sign-in screen ({@link takeSignOutFailures}).
+ * After "sign out and remove this browser": its keys are gone, but the
+ * account's devices still list it (it could not take itself off, or taking
+ * itself off failed) — for the sign-in screen to say so, once.
  */
-export async function signOut(from?: CloudAccount, held?: HeldSession): Promise<void> {
+export const SIGN_OUT_STILL_LISTED_KEY = "rh.cloud.signout-still-listed";
+
+/** Why a removed browser is still listed: what it could not do ({@link SelfRemoval}), or `failed: <why>`. */
+export type StillListed = Exclude<SelfRemoval, "removable"> | `failed: ${string}`;
+
+/** Why the account still lists the browser that was just signed out and wiped (`null`: it does not, or it was taken). Read once. */
+export function takeStillListed(storage: Storage | undefined = globalThis.sessionStorage): StillListed | null {
+  try {
+    const raw = storage?.getItem(SIGN_OUT_STILL_LISTED_KEY);
+    if (raw === null || raw === undefined) return null;
+    storage!.removeItem(SIGN_OUT_STILL_LISTED_KEY);
+    return /^(notActive|notAdmin|lastAdmin|keepsSignIn|heldBack)$/.test(raw) || raw.startsWith("failed: ") ? (raw.slice(0, 240) as StillListed) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface SignOutOptions {
+  /**
+   * "Sign out and remove this browser" (a shared or borrowed computer): it
+   * takes itself out of the account's devices where it may
+   * (`CloudAccount.selfRemoval`), then forgets its device keys, user keys and
+   * everything else it kept for the account (`CloudAccount.wipe`), whether it
+   * could take itself out or not. Without it (the default: a computer of
+   * one's own) the device keys stay, and signing in again opens it as before.
+   */
+  removeBrowser?: boolean;
+  /** Stops this browser's notifications ({@link disablePushOnSignOut}): stands in for the page's in tests. */
+  dropPush?: () => Promise<void>;
+}
+
+/**
+ * End the hub session. Either way this browser's notifications stop and the
+ * offline copies on it go — cleared and sealed, so a save still scheduled
+ * cannot put any of it back, and their key forgotten. The device keys stay
+ * (they are this browser's: signing in again opens it as before), unless
+ * `removeBrowser` ({@link SignOutOptions}). The page is replaced only once all
+ * of that has landed; whatever could not be cleared is kept for the sign-in
+ * screen ({@link takeSignOutFailures}), and so is a removed browser the
+ * account still lists ({@link takeStillListed}).
+ */
+export async function signOut(from?: CloudAccount, held?: HeldSession, opts: SignOutOptions = {}): Promise<void> {
   const shell = hubShell();
   const account = shell?.account ?? from;
+  const remove = opts.removeBrowser === true;
+  // First, while the devices are still reached: the subscription goes (its device's row, then the browser's own).
+  await (opts.dropPush ?? (() => disablePushOnSignOut()))().catch(() => undefined);
   // Every machine's copy stops following (nothing is saved after this), and its channel goes.
   shell?.stop();
   setRenewalRunner(null);
+  let stillListed: StillListed | null = null;
+  if (remove && account) {
+    // Off the account's devices, while its session is still renewed: signed by itself, its last entry. The
+    // link goes first, so the hub closing it for the removal is not taken for a removal by another device.
+    shell?.link.stop();
+    const why = account.selfRemoval();
+    if (why === "removable") {
+      try {
+        await account.removeSelf();
+      } catch (error) {
+        stillListed = `failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } else if (account.standing === "active" || account.standing === "pending") stillListed = why;
+  }
   account?.stopSession?.();
   // Which passkey this tab signed in with is the signed-in person's: not kept past them.
   forgetPasskeySignIn();
@@ -90,14 +147,28 @@ export async function signOut(from?: CloudAccount, held?: HeldSession): Promise<
     const token = account ? account.session.token : held?.token;
     if (api && token) await api.logout(token);
   } catch {
-    // signed out locally either way
+    // signed out locally either way (a browser that removed itself has no session left to end)
   }
   shell?.link.stop();
   clearSession();
   const failures = await clearing;
+  if (remove && account) {
+    try {
+      await account.wipe();
+    } catch (error) {
+      failures.push(failure("device keys", error));
+    }
+  }
   if (failures.length) {
     console.warn("cloud: sign-out could not clear:", failures);
     rememberFailures(failures);
+  }
+  if (stillListed) {
+    try {
+      globalThis.sessionStorage?.setItem(SIGN_OUT_STILL_LISTED_KEY, stillListed);
+    } catch {
+      // the sign-in screen does not say it
+    }
   }
   // The sign-in page, which also shows what could not be cleared.
   location.replace(SIGN_IN_PATH);
