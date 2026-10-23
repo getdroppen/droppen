@@ -517,7 +517,7 @@ function OverviewSection() {
         <Topic n="1.2" title={t("With no account")}>
           <P>{t("On one device with no account, the local program **talks to no Droppen service at all**: it serves the app itself, and nothing goes through our servers. Everything below is about using Droppen with an account, across devices.")}</P>
         </Topic>
-        <Note>{t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}</Note>
+        <Note>{t("Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}</Note>
       </MentionScope>
     </Section>
   );

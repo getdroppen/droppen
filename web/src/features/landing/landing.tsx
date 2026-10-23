@@ -7,6 +7,7 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
+import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
 import { browserCpu, browserHints, detectKind, type EnvironmentHints, type HeroOffer, heroOffer } from "./detect";
 import { DirectPath } from "./direct-path";
@@ -17,7 +18,8 @@ import { Journey } from "./journey";
 import { OfflineCopy } from "./offline-copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { useLatestRelease } from "./release-files";
-import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, PRICING_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { byInvite } from "./signup-mode";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -52,12 +54,15 @@ function Header({ signedIn }: { signedIn: boolean }) {
 
 function Hero({
   signedIn,
+  invite,
   offer,
   availability,
   release,
   cpu,
 }: {
   signedIn: boolean;
+  /** Sign-up is by invite here (`signup-mode.ts`): say so, and offer the waitlist. */
+  invite: boolean;
   offer: HeroOffer;
   availability: Availability;
   release: LatestRelease | null | undefined;
@@ -86,14 +91,23 @@ function Hero({
           </p>
           {/* The way onto this device, and the account's ways in (signed in: back into the app). */}
           <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} />
-          {!signedIn && (
-            <p className="mt-3 font-mono text-2xs text-faint">
-              {t("Invite-only for now: sign-up needs an invite code.")}{" "}
-              <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
-                {t("No code yet? Join the waitlist")}
-              </a>
-            </p>
-          )}
+          {/* Below 640px the header has no room for its pricing link: this line is the way there. */}
+          {!signedIn &&
+            (invite ? (
+              <p className="mt-3 font-mono text-2xs text-faint">
+                {t("Invite-only for now: sign-up needs an invite code.")}{" "}
+                <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
+                  {t("No code yet? Join the waitlist")}
+                </a>
+              </p>
+            ) : (
+              <p className="mt-3 font-mono text-2xs text-faint">
+                {t("Public beta: sign-up is open.")}{" "}
+                <a {...publicLink(PRICING_PATH)} data-testid="hero-pricing" className="text-muted underline underline-offset-4 hover:text-fg">
+                  {t("See the plans")}
+                </a>
+              </p>
+            ))}
         </div>
         <div className="relative border-border max-xl:border-t">
           <RegMark className="-top-[5px] -left-[5px] xl:hidden" />
@@ -212,7 +226,7 @@ function Security() {
       <div className="flex items-start gap-3 border-t border-border px-6 py-5 max-md:px-4">
         <Info className="mt-0.5 size-4 shrink-0 text-muted" />
         <p className="max-w-[60em] text-xs leading-5 text-muted">
-          {t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}{" "}
+          {t("Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}{" "}
           <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="text-fg underline underline-offset-4 hover:no-underline">
             {t("How the encryption works, in detail")}
           </a>
@@ -222,7 +236,7 @@ function Security() {
   );
 }
 
-function Footer({ signedIn }: { signedIn: boolean }) {
+function Footer({ signedIn, invite }: { signedIn: boolean; invite: boolean }) {
   const { t } = useTranslation();
   return (
     <>
@@ -231,9 +245,11 @@ function Footer({ signedIn }: { signedIn: boolean }) {
         <Section>
           <div className="flex flex-col gap-6 px-6 py-14 max-md:px-4 max-md:py-10 md:flex-row md:items-end md:justify-between">
             <div className="flex flex-col gap-3">
-              <CapsLabel>{t("Invite-only beta")}</CapsLabel>
+              <CapsLabel>{invite ? t("Invite-only beta") : t("Public beta")}</CapsLabel>
               <p className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{t("Your AI keeps working. You can walk away.")}</p>
-              <p className="text-sm leading-6 text-muted">{t("Sign up with your invite code, connect your computer, and pick up from your phone.")}</p>
+              <p className="text-sm leading-6 text-muted">
+                {invite ? t("Sign up with your invite code, connect your computer, and pick up from your phone.") : t("Sign up with your e-mail, connect your computer, and pick up from your phone.")}
+              </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
@@ -275,7 +291,9 @@ function useDocumentMeta() {
  * the way onto the device reading it (`detect.ts`), its files as the hub
  * names them (`release-files.tsx`); `availability`, `hints`, `cpu` and
  * `release` stand in for the build's switches, the browser and the hub
- * (tests, previews).
+ * (tests, previews). `signup` is the hub's sign-up mode (`signup-mode.ts`):
+ * open unless it says invite (or closed), when the page speaks of invite
+ * codes and the waitlist.
  */
 export default function LandingPage({
   signedIn = false,
@@ -283,15 +301,18 @@ export default function LandingPage({
   hints,
   cpu,
   release,
+  signup = "open",
 }: {
   signedIn?: boolean;
   availability?: Availability;
   hints?: EnvironmentHints;
   cpu?: string | null;
   release?: LatestRelease | null;
+  signup?: SignupMode;
 }) {
   const { t } = useTranslation();
   useDocumentMeta();
+  const invite = byInvite(signup);
   const offer = useMemo(() => heroOffer(detectKind(hints ?? browserHints() ?? { userAgent: "" }), availability), [hints, availability]);
   const latest = useLatestRelease(release);
   // Linux's processor, for its tarball (the high-entropy hints, else the user agent).
@@ -309,7 +330,7 @@ export default function LandingPage({
       <Header signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
-          <Hero signedIn={signedIn} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
+          <Hero signedIn={signedIn} invite={invite} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="journey">
             <SectionHead
               label={t("End-to-end encrypted")}
@@ -368,7 +389,7 @@ export default function LandingPage({
           </Section>
           <Features />
           <Security />
-          <Footer signedIn={signedIn} />
+          <Footer signedIn={signedIn} invite={invite} />
         </main>
       </div>
     </div>

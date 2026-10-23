@@ -9,9 +9,10 @@ import { PRO_PRICE } from "./pricing-plans";
 import { publicLink, PRIVACY_PATH } from "./route";
 
 /*
- * The waitlist form on droppen.app/pricing (`#waitlist`): a plan — Free (an
- * invite: sign-up is invite-only) or Pro (word when it can be bought) — and an
- * e-mail address. Submitting is joining: no confirmation mail, and the hub
+ * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
+ * for Pro (word when it can be bought), or — where sign-up is by invite — a
+ * plan to choose too: Free (an invite) or Pro. Submitting is joining: no
+ * confirmation mail, and the hub
  * answers the same whether the address was on the list already
  * (`POST /v1/waitlist`, docs/hub-api/http.md). Its outcomes, said plainly:
  * on the list; not an address; a throwaway address; too many tries from this
@@ -115,7 +116,7 @@ function Joined({ plan, onAgain }: { plan: WaitlistPlan; onAgain: () => void }) 
     <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex max-w-[34rem] flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
       <p className="flex items-start gap-2.5 text-[15px] leading-6 font-semibold text-fg">
         <Check aria-hidden="true" className="mt-1 size-4 shrink-0" />
-        <span>{plan === "pro" ? t("You're on the list: we'll e-mail you an invite when Pro opens.") : t("You're on the list: we'll e-mail you an invite.")}</span>
+        <span>{plan === "pro" ? t("You're on the list: we'll e-mail you when Pro opens.") : t("You're on the list: we'll e-mail you an invite.")}</span>
       </p>
       <p className="text-xs leading-5 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
       <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-xs text-fg underline underline-offset-4 hover:no-underline">
@@ -126,8 +127,9 @@ function Joined({ plan, onAgain }: { plan: WaitlistPlan; onAgain: () => void }) 
 }
 
 /**
- * The form. `plan` is the page's (the plan cards choose it too); `state`
- * stands in for the form's own (tests, previews).
+ * The form. `plan` is the page's (the plan cards choose it too); with
+ * `onPlan` the form offers both plans to choose from, without it only `plan`
+ * is joined. `state` stands in for the form's own (tests, previews).
  */
 export function WaitlistForm({
   api,
@@ -137,7 +139,7 @@ export function WaitlistForm({
 }: {
   api: Pick<HubApi, "joinWaitlist">;
   plan: WaitlistPlan;
-  onPlan: (plan: WaitlistPlan) => void;
+  onPlan?: (plan: WaitlistPlan) => void;
   state?: WaitlistState;
 }) {
   const { t, i18n } = useTranslation();
@@ -154,8 +156,8 @@ export function WaitlistForm({
     setOwn(await submitWaitlist(api, { email, plan, locale: i18n.language }));
   };
   return (
-    <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" className="flex max-w-[34rem] flex-col gap-5">
-      <PlanChoice plan={plan} onPlan={onPlan} />
+    <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
+      {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
       <label className="flex flex-col gap-1.5">
         <CapsLabel>{t("E-mail address")}</CapsLabel>
         <input

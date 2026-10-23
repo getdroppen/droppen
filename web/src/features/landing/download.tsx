@@ -6,6 +6,7 @@ import { AppWindow, Download, ExternalLink, Laptop, Monitor, Server, Smartphone 
 import { CapsLabel } from "@/components/ui/caps-label";
 import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
+import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
 import { landingBundles } from "./copy";
 import { browserCpu, browserHints, detectKind, type EnvironmentHints, initialOs, LINUX_CPUS, osForKind } from "./detect";
@@ -27,6 +28,7 @@ import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./p
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
+import { byInvite } from "./signup-mode";
 
 /*
  * droppen.app/download: how Droppen gets onto a device, the way other
@@ -489,7 +491,7 @@ function Uninstall({ availability }: { availability: Availability }) {
   );
 }
 
-function End({ signedIn }: { signedIn: boolean }) {
+function End({ signedIn, invite }: { signedIn: boolean; invite: boolean }) {
   const { t } = useTranslation();
   return (
     <Section>
@@ -502,7 +504,9 @@ function End({ signedIn }: { signedIn: boolean }) {
           <p className="text-sm leading-6 text-muted">
             {signedIn
               ? t("Once it is signed in, it is in my devices: add another device the same way to see both on one screen.")
-              : t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })}
+              : invite
+                ? t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })
+                : t("No account yet? Sign up first, or in the {{app}} window when you sign the device in.", { app: appHost() })}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -577,12 +581,15 @@ export default function DownloadPage({
   hints,
   cpu,
   release,
+  signup = "open",
 }: {
   signedIn?: boolean;
   availability?: Availability;
   hints?: EnvironmentHints;
   cpu?: string | null;
   release?: LatestRelease | null;
+  /** The hub's sign-up mode (`signup-mode.ts`): by invite, the way to sign up names the invite code. */
+  signup?: SignupMode;
 }) {
   const { t } = useTranslation();
   useDocumentMeta();
@@ -622,7 +629,7 @@ export default function DownloadPage({
           <Requirements availability={availability} />
           <Manual />
           <Uninstall availability={availability} />
-          <End signedIn={signedIn} />
+          <End signedIn={signedIn} invite={byInvite(signup)} />
           <FooterLine />
         </main>
       </div>

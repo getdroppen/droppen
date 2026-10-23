@@ -797,6 +797,7 @@ export const ja: Record<string, string> = {
   "too many attempts: try again in {{n}} s": "操作が多すぎます：{{n}} 秒後にもう一度お試しください",
   "Sign-up is closed on this hub. If you have an account, sign in.": "現在、新規登録は受け付けていません。アカウントをお持ちの方はログインしてください。",
   "invite code (optional)": "招待コード（任意）",
+  "have an invite code?": "招待コードをお持ちですか？",
   "send again in {{n}} s": "{{n}} 秒後に再送できます",
   "send the link again": "リンクを再送",
   "sent: check your inbox, and the spam folder": "送信しました：受信トレイと迷惑メールフォルダを確認してください",

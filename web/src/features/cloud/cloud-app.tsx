@@ -856,8 +856,10 @@ export function authMethod(webauthn: boolean, config: SignupConfig | "failed" | 
 }
 
 /**
- * Sign in, or sign up as the hub allows (`/v1/signup/config`): by invite, open
- * (an invite optional), or not at all. Sign-up passes Turnstile when the hub
+ * Sign in, or sign up as the hub allows (`/v1/signup/config`): by invite (the
+ * invite code asked for first), open (an invite optional — it may give the
+ * account a plan — so its field waits behind "have an invite code?"), or not
+ * at all. Sign-up passes Turnstile when the hub
  * runs it; sign-in only once the hub asks (after many failures). Every answer
  * spends the widget's token, so a refusal resets it. An account whose e-mail
  * must be verified first waits on "check your e-mail" before going on.
@@ -886,6 +888,8 @@ export function AuthScreen({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [invite, setInvite] = useState("");
+  // Open sign-up: the person asked for the optional invite field (or the hub refused an invite).
+  const [inviteShown, setInviteShown] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The browser's passkey prompt was closed: said, but not as an error.
   const [note, setNote] = useState<string | null>(null);
@@ -950,9 +954,10 @@ export function AuthScreen({
   const known = config && config !== "failed" ? config : null;
   const turnstile = known?.turnstile ?? null;
   const closed = known?.signup === "closed";
-  // Asked for while the hub has not said otherwise; marked optional only once it says so.
+  // Asked for once the hub says sign-up is by invite. Otherwise optional, behind a link — once the hub
+  // has answered (or could not be asked: its refusal says the rest), so an open hub's form never flickers.
   const inviteRequired = known ? known.inviteRequired : false;
-  const inviteOptional = known !== null && !known.inviteRequired;
+  const inviteOffered = config !== null && !inviteRequired;
   const widget = turnstile && (mode === "signup" ? !closed : loginCheck) ? turnstile : null;
   const method = authMethod(webauthn, config, wantPassword);
   // Passkeys here at all: the e-mail field offers them, and the form offers both ways in.
@@ -977,6 +982,11 @@ export function AuthScreen({
         if (!turnstile) setConfigTry((n) => n + 1);
       }
       if (kind === "signupClosed" && known) setConfig({ ...known, signup: "closed" });
+      if (kind === "badInvite") {
+        setInviteShown(true);
+        // None was given, and the hub wants one: its sign-up is by invite since this page asked.
+        if (known && !invite.trim()) setConfig({ ...known, signup: "invite", inviteRequired: true });
+      }
       // The hub turned passkeys off since: the password form, and no more passkey wording.
       if (kind === "passkeysOff") setConfig((c) => (c && c !== "failed" ? { ...c, passkeys: null } : c));
       setError(authErrorText(err, context));
@@ -1162,9 +1172,18 @@ export function AuthScreen({
               </Note>
             ) : (
               <>
-                {mode === "signup" && (
-                  <Field label={inviteOptional ? t("invite code (optional)") : t("invite code")}>
-                    <input value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" spellCheck={false} className={field} />
+                {mode === "signup" && (inviteRequired || (inviteOffered && inviteShown)) && (
+                  <Field label={inviteRequired ? t("invite code") : t("invite code (optional)")}>
+                    <input
+                      data-testid="auth-invite"
+                      value={invite}
+                      onChange={(e) => setInvite(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      // Asked for: the person just opened it.
+                      autoFocus={!inviteRequired}
+                      className={field}
+                    />
                   </Field>
                 )}
                 <Field label={t("e-mail")}>
@@ -1235,6 +1254,11 @@ export function AuthScreen({
               >
                 {(busy || method === "pending") && <Loader2 className="size-3.5 animate-spin" />}
                 {mode === "signup" ? t("create account") : t("sign in")}
+              </button>
+            )}
+            {mode === "signup" && !closed && inviteOffered && !inviteShown && (
+              <button type="button" data-testid="show-invite" className={quiet} onClick={() => setInviteShown(true)}>
+                {t("have an invite code?")}
               </button>
             )}
             {passkeys && !(mode === "signup" && closed) && (

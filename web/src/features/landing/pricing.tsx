@@ -4,13 +4,14 @@ import { useTranslation } from "react-i18next";
 import { Check, Minus } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { primary, secondary } from "@/features/cloud/ui";
-import { HubApi, type WaitlistPlan } from "@/lib/hub/api";
+import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
 import { DOWNLOAD_PATH } from "./get-droppen";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { APP_PATH, publicLink, SIGN_UP_PATH } from "./route";
+import { byInvite } from "./signup-mode";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
 
 /*
@@ -26,16 +27,19 @@ import { type WaitlistState, WaitlistForm } from "./waitlist";
  * is end-to-end encrypted alike — the page says so on each.
  *
  * There is nothing to pay with yet (Stripe comes with M4): Pro's button is
- * "Join the waitlist", and it, like Free's, brings the visitor to the form
- * (`#waitlist`) with that plan chosen; `?plan=pro` in the address does the
- * same. One primary action in view at a time (docs/ui-spec.md V10): Pro's,
- * and the form's own further down.
+ * "Join the waitlist", and brings the visitor to the form (`#waitlist`).
+ * Free is a plain sign-up where the hub's sign-up is open (droppen.app since
+ * 2026-10-23), and the form is Pro's alone. Where sign-up is by invite
+ * (`signup-mode.ts`: a hub that says so), Free's button joins the waitlist
+ * too, the form has both plans, each card's button choosing its own, and
+ * `?plan=pro` in the address chooses Pro. One primary action in view at a
+ * time (docs/ui-spec.md V10): Pro's, and the form's own further down.
  */
 
 // Added, never overwriting: a key the app already translates keeps its wording.
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
-/** The plan an address names (`?plan=pro`), Free otherwise. */
+/** The plan an address names (`?plan=pro`), Free otherwise (where Free has a waitlist: sign-up by invite). */
 export function planOfSearch(search: string): WaitlistPlan {
   return new URLSearchParams(search).get("plan") === "pro" ? "pro" : "free";
 }
@@ -91,7 +95,7 @@ function PlanCard({
   );
 }
 
-function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: WaitlistPlan) => void }) {
+function Plans({ signedIn, invite, onChoose }: { signedIn: boolean; invite: boolean; onChoose: (plan: WaitlistPlan) => void }) {
   const { t } = useTranslation();
   const { free, pro } = PLAN_NUMBERS;
   const encrypted = t("End-to-end encrypted: we can't see your code");
@@ -128,26 +132,30 @@ function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: Wai
           name={t("Free")}
           price="$0"
           unit={t("USD / month")}
-          note={t("Sign-up is by invite for now")}
+          note={invite ? t("Sign-up is by invite for now") : t("Sign up with an e-mail address")}
           action={
             signedIn ? (
               <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(secondary, "w-full")}>
                 {t("Open app")}
               </a>
-            ) : (
+            ) : invite ? (
               <a href="#waitlist" onClick={choose("free")} data-testid="plan-free-waitlist" className={cn(secondary, "w-full")}>
                 {t("Join the waitlist")}
+              </a>
+            ) : (
+              <a {...publicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className={cn(secondary, "w-full")}>
+                {t("Sign up")}
               </a>
             )
           }
           aside={
             signedIn ? (
               <span className="font-mono text-2xs leading-4 text-faint">{t("You have an account already.")}</span>
-            ) : (
+            ) : invite ? (
               <a {...publicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className="w-fit text-xs text-muted underline underline-offset-4 hover:text-fg">
                 {t("Have an invite code? Sign up")}
               </a>
-            )
+            ) : undefined
           }
           lead={t("Your AI on your phone, wherever you are.")}
           points={[
@@ -186,7 +194,7 @@ function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: Wai
 }
 
 /** The plans side by side, row by row: a table from 768px, each row's name over its three values below. */
-function Compare() {
+function Compare({ invite }: { invite: boolean }) {
   const { t } = useTranslation();
   const { free, pro } = PLAN_NUMBERS;
   const yes = (
@@ -204,7 +212,7 @@ function Compare() {
   const rows: { name: string; values: [ReactNode, ReactNode, ReactNode] }[] = [
     {
       name: t("Price"),
-      values: [t("Free forever, no account"), t("Free; sign-up by invite for now"), t("${{monthly}} a month, or ${{yearly}} a year", { monthly: PRO_PRICE.monthly, yearly: PRO_PRICE.yearly })],
+      values: [t("Free forever, no account"), invite ? t("Free; sign-up by invite for now") : t("Free, with an account"), t("${{monthly}} a month, or ${{yearly}} a year", { monthly: PRO_PRICE.monthly, yearly: PRO_PRICE.yearly })],
     },
     { name: t("Devices that run AI"), values: [t("1: this device"), String(free.hosts), String(pro.hosts)] },
     { name: t("All your devices, phones and browsers included"), values: [t("This device, and browsers on the same network"), String(free.devices), String(pro.devices)] },
@@ -262,15 +270,34 @@ function Compare() {
   );
 }
 
-function Waitlist({ api, plan, onPlan, state }: { api: Pick<HubApi, "joinWaitlist">; plan: WaitlistPlan; onPlan: (plan: WaitlistPlan) => void; state?: WaitlistState }) {
+/**
+ * The waitlist: Pro's alone where sign-up is open (no plan to choose), or
+ * Free's invite and Pro's where sign-up is by invite (`onPlan` given: the
+ * form offers both).
+ */
+function Waitlist({
+  api,
+  plan,
+  onPlan,
+  state,
+}: {
+  api: Pick<HubApi, "joinWaitlist">;
+  plan: WaitlistPlan;
+  onPlan?: (plan: WaitlistPlan) => void;
+  state?: WaitlistState;
+}) {
   const { t } = useTranslation();
   return (
     <Section id="waitlist">
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <SectionHead
           label={t("Waitlist")}
-          title={t("Leave your address, and we'll write when it's your turn.")}
-          lead={t("Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.")}
+          title={onPlan ? t("Leave your address, and we'll write when it's your turn.") : t("Leave your address, and we'll write when Pro opens.")}
+          lead={
+            onPlan
+              ? t("Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.")
+              : t("Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.")
+          }
           className="lg:border-r lg:border-border"
         />
         <div className="px-6 pt-10 pb-10 max-lg:border-t max-lg:border-border max-md:px-4 max-md:py-8">
@@ -339,8 +366,8 @@ function Faq() {
   );
 }
 
-/** The page's title and description in the reader's language. */
-function useDocumentMeta() {
+/** The page's title and description in the reader's language (`invite`: sign-up is by invite here). */
+function useDocumentMeta(invite: boolean) {
   const { t, i18n: active } = useTranslation();
   useEffect(() => {
     const before = document.title;
@@ -348,28 +375,47 @@ function useDocumentMeta() {
     document.documentElement.lang = active.language;
     const meta = document.querySelector('meta[name="description"]');
     const description = meta?.getAttribute("content") ?? null;
-    meta?.setAttribute("content", t("Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."));
+    meta?.setAttribute(
+      "content",
+      invite
+        ? t("Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.")
+        : t("Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."),
+    );
     return () => {
       document.title = before;
       if (meta && description !== null) meta.setAttribute("content", description);
     };
-  }, [t, active.language]);
+  }, [t, active.language, invite]);
 }
 
 /**
  * droppen.app/pricing, signed in or not. `api` is the hub's (the page's own
- * origin by default); `waitlist` stands in for the form's state (tests, previews).
+ * origin by default); `waitlist` stands in for the form's state (tests,
+ * previews); `signup` is the hub's sign-up mode (`signup-mode.ts`).
  */
-export default function PricingPage({ signedIn = false, api, waitlist }: { signedIn?: boolean; api?: Pick<HubApi, "joinWaitlist">; waitlist?: WaitlistState }) {
+export default function PricingPage({
+  signedIn = false,
+  api,
+  waitlist,
+  signup = "open",
+}: {
+  signedIn?: boolean;
+  api?: Pick<HubApi, "joinWaitlist">;
+  waitlist?: WaitlistState;
+  signup?: SignupMode;
+}) {
   const { t } = useTranslation();
-  useDocumentMeta();
+  const invite = byInvite(signup);
+  useDocumentMeta(invite);
   const hub = useMemo(() => api ?? new HubApi(), [api]);
   // Arrived at a part of the page (`/pricing#waitlist` from the landing page): the page was not there to scroll to yet.
   useEffect(() => {
     const id = location.hash.slice(1);
     if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
   }, []);
-  const [plan, setPlan] = useState<WaitlistPlan>(() => planOfSearch(typeof location === "undefined" ? "" : location.search));
+  const [chosen, setPlan] = useState<WaitlistPlan>(() => planOfSearch(typeof location === "undefined" ? "" : location.search));
+  // Open sign-up: Free needs no waitlist, so the form is Pro's.
+  const plan = invite ? chosen : "pro";
   return (
     <div data-testid="pricing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
@@ -385,9 +431,9 @@ export default function PricingPage({ signedIn = false, api, waitlist }: { signe
             </p>
             <p className="font-mono text-2xs text-faint">{t("Prices in US dollars.")}</p>
           </div>
-          <Plans signedIn={signedIn} onChoose={setPlan} />
-          <Compare />
-          <Waitlist api={hub} plan={plan} onPlan={setPlan} state={waitlist} />
+          <Plans signedIn={signedIn} invite={invite} onChoose={setPlan} />
+          <Compare invite={invite} />
+          <Waitlist api={hub} plan={plan} onPlan={invite ? setPlan : undefined} state={waitlist} />
           <Faq />
           <FooterLine />
         </main>

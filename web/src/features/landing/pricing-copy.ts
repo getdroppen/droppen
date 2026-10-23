@@ -31,6 +31,8 @@ export const pricingZhCN: Bundle = {
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen 定价 — 免费起步，Pro 每月 ${{price}}",
   "Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "一台设备不用账号就能用；凭邀请码免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
+  "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
+    "一台设备不用账号就能用；注册账号免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
   "Start free. Go Pro when you need more.": "先免费用起来，不够再升 Pro。",
   "Every plan is end-to-end encrypted: we can't see your code on any of them. A plan only decides how many devices you connect, how far back your phone can read while a device is off, and how much our servers carry for you each month.":
     "每个方案都端到端加密，哪个方案我们都看不到你的代码。方案只决定三件事：能连几台设备，设备关机时手机能往回看多久，以及每月我们的服务器替你转发多少流量。",
@@ -48,6 +50,8 @@ export const pricingZhCN: Bundle = {
   "Free": "免费版",
   "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前凭邀请码注册",
+  "Sign up with an e-mail address": "用邮箱注册即可",
+  "Sign up": "注册",
   "Join the waitlist": "加入等候名单",
   "You have an account already.": "你已经有账号了。",
   "Have an invite code? Sign up": "有邀请码？去注册",
@@ -70,6 +74,7 @@ export const pricingZhCN: Bundle = {
   "Price": "价格",
   "Free forever, no account": "永久免费，无需账号",
   "Free; sign-up by invite for now": "免费；目前凭邀请码注册",
+  "Free, with an account": "免费，需注册账号",
   "${{monthly}} a month, or ${{yearly}} a year": "每月 ${{monthly}}，或每年 ${{yearly}}",
   "Devices that run AI": "可运行 AI 的设备",
   "1: this device": "1 台：这台设备",
@@ -85,6 +90,8 @@ export const pricingZhCN: Bundle = {
 
   // Waitlist
   "Leave your address, and we'll write when it's your turn.": "留下邮箱，轮到你时我们写信给你。",
+  "Leave your address, and we'll write when Pro opens.": "留下邮箱，Pro 开放时我们写信给你。",
+  "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 还没开卖，付款功能正在准备中。提交表单就算加入，不用再确认。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen 还是邀请制测试版，注册需要邀请码，Pro 也还没开卖。选好你在等哪一个：我们会把邀请发到你的邮箱，或在 Pro 开放时通知你。提交表单就算加入，不用再确认。",
   "Plan": "方案",
@@ -95,7 +102,7 @@ export const pricingZhCN: Bundle = {
   "Use an address you keep: throwaway mail providers are not accepted.": "请用你长期使用的邮箱：不接受一次性邮箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的网络尝试次数太多，请 {{n}} 分钟后再试。",
   "Could not reach Droppen. Check your connection and try again.": "连不上 Droppen，检查网络后再试。",
-  "You're on the list: we'll e-mail you an invite when Pro opens.": "你已在名单上，Pro 开放时我们会把邀请发到你的邮箱。",
+  "You're on the list: we'll e-mail you when Pro opens.": "你已在名单上，Pro 开放时我们会发邮件通知你。",
   "You're on the list: we'll e-mail you an invite.": "你已在名单上，我们会把邀请发到你的邮箱。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外我们不会发任何邮件。想退出名单，请写信到 {{email}}。",
   "Add another address": "再添加一个邮箱",
@@ -208,6 +215,8 @@ export const pricingZhTW: Bundle = {
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen 價格 — 免費起步，Pro 每月 ${{price}}",
   "Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "一台裝置不用帳號就能用；憑邀請碼免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
+  "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
+    "一台裝置不用帳號就能用；註冊帳號免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
   "Start free. Go Pro when you need more.": "先免費用起來，不夠再升 Pro。",
   "Every plan is end-to-end encrypted: we can't see your code on any of them. A plan only decides how many devices you connect, how far back your phone can read while a device is off, and how much our servers carry for you each month.":
     "每個方案都端對端加密，哪個方案我們都看不到你的程式碼。方案只決定三件事：能連幾台裝置，裝置關機時手機能往回看多久，以及每月我們的伺服器替你轉送多少流量。",
@@ -224,6 +233,8 @@ export const pricingZhTW: Bundle = {
   "Free": "免費版",
   "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前憑邀請碼註冊",
+  "Sign up with an e-mail address": "用電子郵件註冊即可",
+  "Sign up": "註冊",
   "Join the waitlist": "加入等候名單",
   "You have an account already.": "你已經有帳號了。",
   "Have an invite code? Sign up": "有邀請碼？去註冊",
@@ -245,6 +256,7 @@ export const pricingZhTW: Bundle = {
   "Price": "價格",
   "Free forever, no account": "永久免費，不需要帳號",
   "Free; sign-up by invite for now": "免費；目前憑邀請碼註冊",
+  "Free, with an account": "免費，需註冊帳號",
   "${{monthly}} a month, or ${{yearly}} a year": "每月 ${{monthly}}，或每年 ${{yearly}}",
   "Devices that run AI": "可執行 AI 的裝置",
   "1: this device": "1 台：這台裝置",
@@ -259,6 +271,8 @@ export const pricingZhTW: Bundle = {
     "裝置關機超過這個天數，它在雲端的副本會被刪除：裝置上的紀錄不受影響，重新上線後會自動補回最近 {{free}} 天（Pro 為 {{pro}} 天）。",
 
   "Leave your address, and we'll write when it's your turn.": "留下電子郵件，輪到你時我們寫信給你。",
+  "Leave your address, and we'll write when Pro opens.": "留下電子郵件，Pro 開放時我們寫信給你。",
+  "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 還沒開賣，付款功能正在準備中。送出表單就算加入，不用再確認。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen 還是邀請制測試版，註冊需要邀請碼，Pro 也還沒開賣。選好你在等哪一個：我們會把邀請寄到你的信箱，或在 Pro 開放時通知你。送出表單就算加入，不用再確認。",
   "Plan": "方案",
@@ -269,7 +283,7 @@ export const pricingZhTW: Bundle = {
   "Use an address you keep: throwaway mail providers are not accepted.": "請用你長期使用的信箱：不接受拋棄式信箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的網路嘗試次數太多，請 {{n}} 分鐘後再試。",
   "Could not reach Droppen. Check your connection and try again.": "連不上 Droppen，檢查網路後再試。",
-  "You're on the list: we'll e-mail you an invite when Pro opens.": "你已在名單上，Pro 開放時我們會把邀請寄到你的信箱。",
+  "You're on the list: we'll e-mail you when Pro opens.": "你已在名單上，Pro 開放時我們會寄信通知你。",
   "You're on the list: we'll e-mail you an invite.": "你已在名單上，我們會把邀請寄到你的信箱。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外我們不會寄任何信。想退出名單，請寫信到 {{email}}。",
   "Add another address": "再新增一個信箱",
@@ -380,6 +394,8 @@ export const pricingJa: Bundle = {
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen の料金 — 無料から、Pro は月 ${{price}}",
   "Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "1 台ならアカウントなしで、招待があれば無料で、もっと多くのデバイスと長いオフライン閲覧なら Pro で。どのプランもエンドツーエンド暗号化です。",
+  "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
+    "1 台ならアカウントなしで、アカウントがあれば無料で、もっと多くのデバイスと長いオフライン閲覧なら Pro で。どのプランもエンドツーエンド暗号化です。",
   "Start free. Go Pro when you need more.": "まずは無料で。足りなくなったら Pro へ。",
   "Every plan is end-to-end encrypted: we can't see your code on any of them. A plan only decides how many devices you connect, how far back your phone can read while a device is off, and how much our servers carry for you each month.":
     "どのプランもエンドツーエンド暗号化で、私たちにはあなたのコードが見えません。プランで決まるのは 3 つだけ。つなげるデバイスの数、デバイスの電源が切れているときにスマホで読める範囲、そして私たちのサーバーが毎月転送する量です。",
@@ -396,6 +412,8 @@ export const pricingJa: Bundle = {
   "Free": "無料",
   "USD / month": "USD / 月",
   "Sign-up is by invite for now": "現在は招待コードで登録",
+  "Sign up with an e-mail address": "メールアドレスで登録できます",
+  "Sign up": "新規登録",
   "Join the waitlist": "ウェイトリストに登録",
   "You have an account already.": "アカウントはすでにお持ちです。",
   "Have an invite code? Sign up": "招待コードをお持ちなら登録へ",
@@ -417,6 +435,7 @@ export const pricingJa: Bundle = {
   "Price": "料金",
   "Free forever, no account": "ずっと無料、アカウント不要",
   "Free; sign-up by invite for now": "無料（現在は招待制）",
+  "Free, with an account": "無料（アカウント登録が必要）",
   "${{monthly}} a month, or ${{yearly}} a year": "月 ${{monthly}}、または年 ${{yearly}}",
   "Devices that run AI": "AI を実行できるデバイス",
   "1: this device": "1 台：このデバイス",
@@ -431,6 +450,8 @@ export const pricingJa: Bundle = {
     "それより長く電源が切れたデバイスは、クラウド上のコピーが削除されます。デバイス内の記録はそのままで、オンラインに戻ると直近 {{free}} 日分（Pro は {{pro}} 日分）が自動で戻ります。",
 
   "Leave your address, and we'll write when it's your turn.": "メールアドレスを残してください。順番が来たらご連絡します。",
+  "Leave your address, and we'll write when Pro opens.": "メールアドレスを残してください。Pro が始まったらご連絡します。",
+  "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro はまだ販売していません。お支払いの仕組みを準備中です。フォームを送信するだけで登録完了です。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen は招待制ベータのため登録には招待コードが必要で、Pro もまだ販売していません。待っているものを選んでください。招待をメールでお送りするか、Pro の開始をお知らせします。フォームを送信するだけで登録完了です。",
   "Plan": "プラン",
@@ -441,7 +462,7 @@ export const pricingJa: Bundle = {
   "Use an address you keep: throwaway mail providers are not accepted.": "普段お使いのアドレスを入力してください。使い捨てメールは受け付けていません。",
   "Too many tries from your network. Try again in {{n}} min.": "このネットワークからの試行が多すぎます。{{n}} 分後にもう一度お試しください。",
   "Could not reach Droppen. Check your connection and try again.": "Droppen に接続できませんでした。接続を確認してもう一度お試しください。",
-  "You're on the list: we'll e-mail you an invite when Pro opens.": "登録しました。Pro が始まったら招待をメールでお送りします。",
+  "You're on the list: we'll e-mail you when Pro opens.": "登録しました。Pro が始まったらメールでお知らせします。",
   "You're on the list: we'll e-mail you an invite.": "登録しました。招待をメールでお送りします。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "それ以外のメールは送りません。リストから外れたい場合は {{email}} までご連絡ください。",
   "Add another address": "別のアドレスを登録",

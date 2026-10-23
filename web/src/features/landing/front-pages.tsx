@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import type { HubApi } from "@/lib/hub/api";
 import type { FrontPage } from "./route";
+import { useSignupMode } from "./signup-mode";
 
 /** The landing page (signed out, at `/`): its own chunk, so the app's boot never carries it. */
 const LandingPage = lazy(() => import("@/features/landing/landing"));
@@ -14,14 +15,18 @@ const SecurityPage = lazy(() => import("@/features/landing/security/security"));
 /** The terms of service (`/terms`), signed in or not: its own chunk, with its own words, too. */
 const TermsPage = lazy(() => import("@/features/landing/terms/terms"));
 
+/** The pages that say how to sign up, and so ask the hub how (`signup-mode.ts`). */
+const SAYS_SIGNUP: readonly FrontPage[] = ["landing", "download", "pricing"];
+
 /** One of the pages that are pages of their own, signed in or not. */
 export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
+  const signup = useSignupMode(SAYS_SIGNUP.includes(page) ? api : undefined);
   return (
     <Suspense fallback={<div className="h-full w-full bg-bg" />}>
       {page === "download" ? (
-        <DownloadPage signedIn={signedIn} />
+        <DownloadPage signedIn={signedIn} signup={signup} />
       ) : page === "pricing" ? (
-        <PricingPage signedIn={signedIn} api={api} />
+        <PricingPage signedIn={signedIn} api={api} signup={signup} />
       ) : page === "privacy" ? (
         <PrivacyPage signedIn={signedIn} />
       ) : page === "security" ? (
@@ -29,7 +34,7 @@ export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signed
       ) : page === "terms" ? (
         <TermsPage signedIn={signedIn} />
       ) : (
-        <LandingPage signedIn={signedIn} />
+        <LandingPage signedIn={signedIn} signup={signup} />
       )}
     </Suspense>
   );

@@ -79,6 +79,8 @@ const zhCN: Bundle = {
   "Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.":
     "Claude Code 和 Codex 照常在你自己的电脑上跑；人走开了，在手机上照样看它干活、回答它的提问、打开终端。所有设备一个屏，全程端到端加密：你的代码，我们看不到。",
   "Invite-only for now: sign-up needs an invite code.": "目前邀请制，注册需要邀请码。",
+  "Public beta: sign-up is open.": "公开测试版，注册已开放。",
+  "See the plans": "查看各个方案",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同一台电脑上用浏览器直连，按键回显（实测 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "手机 4G 直连电脑的往返；不能直连时 215–227 ms（实测 p50）",
   "keys on our servers that can open your code or your conversations": "我们服务器上能解开你代码和对话的钥匙",
@@ -179,13 +181,15 @@ const zhCN: Bundle = {
   "A computer's identity key: on that computer only": "电脑的身份钥匙：只在那台电脑上",
   "Recovery words: with you only; neither Droppen Hub nor we can recover them for you": "恢复词：只在你手里，Droppen Hub 和我们都没法替你找回",
   "Us (Droppen Hub and relays): no key that can decrypt anything": "我们（Droppen Hub 和中继）：没有任何能解密的钥匙",
-  "Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
-    "Droppen 目前是邀请制测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
 
   // Footer
   "Invite-only beta": "邀请制测试版",
+  "Public beta": "公开测试版",
   "Your AI keeps working. You can walk away.": "AI 接着干活，你可以走开了。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "用邀请码注册，接上你的电脑，然后在手机上接着用。",
+  "Sign up with your e-mail, connect your computer, and pick up from your phone.": "用邮箱注册，接上你的电脑，然后在手机上接着用。",
 };
 
 const zhTW: Bundle = {
@@ -228,6 +232,8 @@ const zhTW: Bundle = {
   "Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.":
     "Claude Code 和 Codex 照常在你自己的電腦上跑；人走開了，在手機上照樣看它工作、回答它的提問、開啟終端機。所有裝置一個畫面，全程端對端加密：你的程式碼，我們看不到。",
   "Invite-only for now: sign-up needs an invite code.": "目前採邀請制，註冊需要邀請碼。",
+  "Public beta: sign-up is open.": "公開測試版，註冊已開放。",
+  "See the plans": "查看各個方案",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同一台電腦上用瀏覽器直連，按鍵回顯（實測 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "手機 4G 直連電腦的往返；無法直連時 215–227 ms（實測 p50）",
   "keys on our servers that can open your code or your conversations": "我們伺服器上能解開你程式碼和對話的金鑰",
@@ -323,12 +329,14 @@ const zhTW: Bundle = {
   "A computer's identity key: on that computer only": "電腦的身分金鑰：只在那台電腦上",
   "Recovery words: with you only; neither Droppen Hub nor we can recover them for you": "復原詞：只在你手上，Droppen Hub 和我們都沒辦法替你找回",
   "Us (Droppen Hub and relays): no key that can decrypt anything": "我們（Droppen Hub 和中繼）：沒有任何能解密的金鑰",
-  "Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
-    "Droppen 目前是邀請制測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
 
   "Invite-only beta": "邀請制測試版",
+  "Public beta": "公開測試版",
   "Your AI keeps working. You can walk away.": "AI 繼續工作，你可以走開了。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "用邀請碼註冊，接上你的電腦，然後在手機上接著用。",
+  "Sign up with your e-mail, connect your computer, and pick up from your phone.": "用電子郵件註冊，接上你的電腦，然後在手機上接著用。",
 };
 
 const ja: Bundle = {
@@ -371,6 +379,8 @@ const ja: Bundle = {
   "Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.":
     "Claude Code と Codex は自分のコンピュータで動かしたまま。席を離れても、スマホで様子を見て、質問に答え、ターミナルも開けます。すべてのデバイスをひとつの画面に。エンドツーエンド暗号化で、あなたのコードは私たちにも見えません。",
   "Invite-only for now: sign-up needs an invite code.": "いまは招待制です。登録には招待コードが必要です。",
+  "Public beta: sign-up is open.": "パブリックベータです。どなたでも登録できます。",
+  "See the plans": "プランを見る",
   "keystroke echo in a browser on the same computer, direct (measured p50)": "同じコンピュータのブラウザで直結したときのキー入力エコー（実測 p50）",
   "round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)": "4G のスマホから直結したときの往復。直結できないときは 215–227 ms（実測 p50）",
   "keys on our servers that can open your code or your conversations": "私たちのサーバーにある、あなたのコードや会話を開ける鍵の数",
@@ -466,12 +476,14 @@ const ja: Bundle = {
   "A computer's identity key: on that computer only": "コンピュータの識別鍵：そのコンピュータの中だけ",
   "Recovery words: with you only; neither Droppen Hub nor we can recover them for you": "リカバリーワード：あなたの手元だけ。Droppen Hub にも私たちにも復元できません",
   "Us (Droppen Hub and relays): no key that can decrypt anything": "私たち（Droppen Hub と中継）：復号できる鍵は何ひとつ持たない",
-  "Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
-    "Droppen は招待制ベータです。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
 
   "Invite-only beta": "招待制ベータ",
+  "Public beta": "パブリックベータ",
   "Your AI keeps working. You can walk away.": "AI は動かしたまま、席を離れよう。",
   "Sign up with your invite code, connect your computer, and pick up from your phone.": "招待コードで登録し、コンピュータをつなげば、あとはスマホで続きから。",
+  "Sign up with your e-mail, connect your computer, and pick up from your phone.": "メールアドレスで登録し、コンピュータをつなげば、あとはスマホで続きから。",
 };
 
 /** The landing page's tables, by i18next language. */

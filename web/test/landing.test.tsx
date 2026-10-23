@@ -25,6 +25,7 @@ import { JOURNEY_STEPS, journeyLayout, journeyWires, stepAt } from "../src/featu
 import LandingPage from "../src/features/landing/landing.js";
 import { cipherOf, corners, pointAt, type Pt, seal } from "../src/features/landing/motion.js";
 import { APP_PATH, bootRoute, isAuthPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
+import type { SignupMode } from "../src/lib/hub/api.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -46,11 +47,11 @@ void i18n.use(initReactI18next).init({
   nsSeparator: false,
 });
 
-function draw(lng: string, { signedIn = false }: { signedIn?: boolean } = {}): string {
+function draw(lng: string, { signedIn = false, signup }: { signedIn?: boolean; signup?: SignupMode } = {}): string {
   void i18n.changeLanguage(lng);
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <LandingPage signedIn={signedIn} />
+      <LandingPage signedIn={signedIn} signup={signup} />
     </I18nextProvider>,
   );
 }
@@ -71,7 +72,7 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     "我们能看到什么、看不到什么，一条条写清楚。",
     "开始使用",
     "登录",
-    "邀请制测试版",
+    "公开测试版",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
@@ -110,8 +111,9 @@ test("signed in, the landing page is still the landing page, with a way back int
     for (const id of ["journey", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
   }
   const words = text(draw("zh-CN", { signedIn: true }));
-  for (const gone of ["注册需要邀请码。", "开始使用", "AI 接着干活，你可以走开了。"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
-  assert.ok(text(draw("zh-CN")).includes("注册需要邀请码。"), "signed out keeps the sign-up prompt");
+  for (const gone of ["注册已开放。", "开始使用", "AI 接着干活，你可以走开了。"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
+  assert.ok(!text(draw("zh-CN", { signedIn: true, signup: "invite" })).includes("注册需要邀请码。"), "by invite too");
+  assert.ok(text(draw("zh-CN")).includes("注册已开放。"), "signed out keeps the sign-up prompt");
 });
 
 test("routing: `/` is the landing page signed in or not; the app keeps its own routes and starts at its start", () => {
@@ -153,11 +155,43 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   // Only stored data is padded; live connections are not (as /security and /privacy say).
   assert.match(words, /stored data is padded to fixed sizes, live connections are not/);
   assert.doesNotMatch(words, /in padded sizes/);
-  assert.match(words, /invite-only beta/i);
+  assert.match(words, /Droppen is in beta\./);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /open[- ]source/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
+});
+
+test("open sign-up by default: no invite wording; the invite wording only where the hub says sign-up is by invite (or closed)", () => {
+  // Open (droppen.app since 2026-10-23), and what the page draws before the hub has answered.
+  for (const signup of [undefined, "open"] as const) {
+    const html = draw("en", { signup });
+    const words = text(html);
+    assert.doesNotMatch(words, /invite/i, `${signup}: no invite`);
+    assert.ok(words.includes("Public beta: sign-up is open."));
+    assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
+    assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
+    assert.ok(words.includes("Public beta"));
+    assert.ok(words.includes("Sign up with your e-mail, connect your computer, and pick up from your phone."));
+    assert.match(html, /<a href="\/signup"[^>]*>Get started<\/a>/);
+  }
+  for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
+    assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
+  }
+  assert.ok(text(draw("zh-CN")).includes("公开测试版，注册已开放。"));
+  // By invite, or closed: as before — the code, and the waitlist for those without one.
+  for (const signup of ["invite", "closed"] as const) {
+    const html = draw("en", { signup });
+    const words = text(html);
+    assert.ok(words.includes("Invite-only for now: sign-up needs an invite code."), signup);
+    assert.match(html, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
+    assert.doesNotMatch(html, /data-testid="hero-pricing"/);
+    assert.ok(words.includes("Invite-only beta"));
+    assert.ok(words.includes("Sign up with your invite code, connect your computer, and pick up from your phone."));
+  }
+  assert.ok(text(draw("zh-CN", { signup: "invite" })).includes("邀请制测试版"));
+  // Signed in: no invitation to sign up either way.
+  for (const signup of ["open", "invite"] as const) assert.doesNotMatch(draw("en", { signedIn: true, signup }), /hero-(waitlist|pricing)|Public beta|Invite-only/);
 });
 
 /** Every `t("…")` key in the landing page's sources. */
@@ -275,7 +309,8 @@ test("sign-up has its own page: /signup opens the form on its sign-up tab, with 
     );
   const signup = form("signup");
   assert.match(signup, /aria-selected="true"[^>]*>sign up</);
-  assert.match(text(signup), /invite code/);
+  // Until the hub says how sign-up works, no invite field and no link to one: an open hub's form never flickers.
+  assert.doesNotMatch(text(signup), /invite code/);
   const signin = form();
   assert.match(signin, /aria-selected="true"[^>]*>sign in</);
   assert.doesNotMatch(text(signin), /invite code/);

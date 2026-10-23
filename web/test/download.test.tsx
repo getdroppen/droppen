@@ -40,6 +40,7 @@ import {
 } from "../src/features/landing/get-droppen.js";
 import LandingPage from "../src/features/landing/landing.js";
 import { bootRoute, isAuthPath, isFrontPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
+import type { SignupMode } from "../src/lib/hub/api.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -86,14 +87,14 @@ const MAC_CHROME: EnvironmentHints = {
 
 function draw(
   lng: string,
-  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null } = {},
+  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null; signup?: SignupMode } = {},
 ): string {
   void i18n.changeLanguage(lng);
   place.search = opts.os ? `?os=${opts.os}` : "";
   const availability = opts.availability ?? { app: opts.app ?? false, appSignIn: opts.appSignIn ?? false, linux: opts.linux ?? false };
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} />
+      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} signup={opts.signup} />
     </I18nextProvider>,
   );
 }
@@ -313,6 +314,11 @@ test("what it runs on, the manual download with its checksums, and the uninstall
 test("signed out it invites to sign up; signed in it goes back to 「我的设备」 — never asks to sign in again", () => {
   const out = draw("en");
   assert.match(out, /<a href="\/signup"[^>]*>Get started<\/a>/);
+  // Open sign-up (the default): no invite code; by invite, the code first.
+  assert.ok(text(out).includes("No account yet? Sign up first, or in the"));
+  assert.doesNotMatch(text(out), /invite/i);
+  assert.ok(text(draw("zh-CN")).includes("还没有账号？先注册，或者在设备登录时弹出的"));
+  assert.ok(text(draw("en", { signup: "invite" })).includes("No account yet? Sign up with your invite code first, or in the"));
   const signedIn = draw("en", { signedIn: true, os: "windows" });
   assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
   assert.match(signedIn, /<a href="\/devices"[^>]*data-testid="download-open-devices"/);

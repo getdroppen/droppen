@@ -796,6 +796,7 @@ export const zhCN: Record<string, string> = {
   "too many attempts: try again in {{n}} s": "操作太频繁：请 {{n}} 秒后再试",
   "Sign-up is closed on this hub. If you have an account, sign in.": "这里暂不开放注册。已有账户请直接登录。",
   "invite code (optional)": "邀请码（可选）",
+  "have an invite code?": "有邀请码？",
   "send again in {{n}} s": "{{n}} 秒后可重发",
   "send the link again": "重新发送链接",
   "sent: check your inbox, and the spam folder": "已发送：请查看收件箱和垃圾邮件",

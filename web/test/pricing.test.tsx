@@ -4,8 +4,10 @@
 // What these pin: the page leads with what you get and reads in zh-CN, en,
 // zh-TW and ja; its numbers are the plans' own (`pricing-plans.ts`, which
 // the hub's own tests hold to its plans) and Pro is $10 a month or $96 a
-// year; Pro's button is "Join the waitlist" — no checkout anywhere — and,
-// like Free's, it brings you to the form with that plan chosen; one primary
+// year; Pro's button is "Join the waitlist" — no checkout anywhere — and
+// brings you to the form; Free is a plain sign-up and the form is Pro's
+// alone where the hub's sign-up is open (the default), while by invite
+// Free's button joins the waitlist too and the form offers both plans; one primary
 // action in each part of the page; the form says how it went (on the list;
 // not an address; a throwaway address; too many tries, and for how long;
 // out of reach) and sends nothing it cannot; the hub client posts
@@ -30,7 +32,8 @@ import PrivacyPage, { PRIVACY_UPDATED, UNVERIFIED_ACCOUNT_DAYS } from "../src/fe
 import { PLAN_TABLE } from "../src/lib/hub/plan.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, PRICING_PATH, PRIVACY_PATH, publicPage } from "../src/features/landing/route.js";
 import { looksLikeEmail, PRIVACY_EMAIL, submitWaitlist, type WaitlistState, waitlistProblem } from "../src/features/landing/waitlist.js";
-import { HubApi, HubApiError, type WaitlistPlan } from "../src/lib/hub/api.js";
+import { HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "../src/lib/hub/api.js";
+import { byInvite, signupModeOf } from "../src/features/landing/signup-mode.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -59,12 +62,12 @@ Object.assign(globalThis, { location: place });
 /** A hub that never answers: the static render never sends. */
 const silent = { joinWaitlist: async () => undefined };
 
-function draw(lng: string, opts: { signedIn?: boolean; waitlist?: WaitlistState; search?: string } = {}): string {
+function draw(lng: string, opts: { signedIn?: boolean; waitlist?: WaitlistState; search?: string; signup?: SignupMode } = {}): string {
   void i18n.changeLanguage(lng);
   place.search = opts.search ?? "";
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <PricingPage signedIn={opts.signedIn} api={silent} waitlist={opts.waitlist} />
+      <PricingPage signedIn={opts.signedIn} api={silent} waitlist={opts.waitlist} signup={opts.signup} />
     </I18nextProvider>,
   );
 }
@@ -112,7 +115,7 @@ test("the pricing page leads with what you get, in zh-CN first", () => {
     "或每年 $96，省 20%",
     "加入等候名单",
     "每个方案包含什么",
-    "留下邮箱，轮到你时我们写信给你。",
+    "留下邮箱，Pro 开放时我们写信给你。",
     "每月的流量用完了会怎样？",
     "「仅本地」是什么意思？",
     "可以自己部署吗？",
@@ -162,10 +165,15 @@ test("in English, and every number on the page is a plan's own", () => {
 
 test("nothing can be bought yet: Pro's button joins the waitlist, and no page offers a checkout", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
-    const html = draw(lng);
-    assert.match(html, /<a href="#waitlist"[^>]*data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, lng);
-    assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/, lng);
-    assert.doesNotMatch(html, /stripe|checkout|buy now|subscribe/i, lng);
+    for (const signup of ["open", "invite"] as const) {
+      const html = draw(lng, { signup });
+      assert.match(html, /<a href="#waitlist"[^>]*data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, lng);
+      assert.doesNotMatch(html, /stripe|checkout|buy now|subscribe/i, lng);
+    }
+    // Free: a sign-up where sign-up is open, the waitlist where it is by invite.
+    assert.match(draw(lng), /<a href="\/signup"[^>]*data-testid="plan-free-signup"/, lng);
+    assert.doesNotMatch(draw(lng), /data-testid="plan-free-waitlist"/, lng);
+    assert.match(draw(lng, { signup: "invite" }), /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/, lng);
   }
   const words = text(draw("en"));
   assert.ok(words.includes("Payments are not open yet: we'll e-mail you when they are."));
@@ -173,8 +181,8 @@ test("nothing can be bought yet: Pro's button joins the waitlist, and no page of
 });
 
 test("one primary action in each part of the page: Pro's among the plans, the form's own below the comparison", () => {
-  for (const lng of ["en", "zh-CN"]) {
-    const html = draw(lng);
+  for (const [lng, signup] of [["en", "open"], ["zh-CN", "open"], ["en", "invite"]] as const) {
+    const html = draw(lng, { signup });
     assert.equal(primaries(html), 2, lng);
     assert.equal(primaries(part(html, "plans", "compare")), 1, `${lng}: the plans`);
     assert.equal(primaries(part(html, "compare", "waitlist")), 0, `${lng}: the comparison keeps them apart`);
@@ -183,26 +191,77 @@ test("one primary action in each part of the page: Pro's among the plans, the fo
   }
 });
 
-test("the form starts on Free, or on Pro when the address says so; both cards' buttons choose their plan", () => {
+test("by invite, the form starts on Free, or on Pro when the address says so; both cards' buttons choose their plan", () => {
   assert.equal(planOfSearch(""), "free");
   assert.equal(planOfSearch("?plan=pro"), "pro");
   assert.equal(planOfSearch("?plan=internal"), "free");
   const checked = (html: string) => /<input type="radio"[^>]*name="plan" checked=""[^>]*value="(\w+)"/.exec(html)?.[1];
-  assert.equal(checked(draw("en")), "free");
-  assert.equal(checked(draw("en", { search: "?plan=pro" })), "pro");
+  assert.equal(checked(draw("en", { signup: "invite" })), "free");
+  assert.equal(checked(draw("en", { signup: "invite", search: "?plan=pro" })), "pro");
   // The plan choice is two native radios in a fieldset, named for screen readers.
-  const html = draw("en");
+  const html = draw("en", { signup: "invite" });
   assert.equal((html.match(/<input type="radio"[^>]*name="plan"/g) ?? []).length, 2);
   assert.match(html, /<fieldset[^>]*><legend[^>]*><span[^>]*>Plan<\/span><\/legend>/);
+  assert.match(html, /data-testid="waitlist-form" data-plan="free"/);
   assert.match(html, /<input id="waitlist-email" type="email" autoComplete="email" inputMode="email" required=""[^>]*name="email"/);
   // The form links the privacy notice.
   assert.match(html, /<a href="\/privacy"[^>]*data-testid="waitlist-privacy"/);
 });
 
-test("signed out, Free offers sign-up with an invite; signed in, the way back into the app", () => {
+test("open sign-up: the form is Pro's alone — no plan to choose, whatever the address says — and the page never speaks of invites", () => {
+  for (const search of ["", "?plan=free", "?plan=pro"]) {
+    const html = draw("en", { search });
+    assert.doesNotMatch(html, /<input type="radio"/, search);
+    assert.doesNotMatch(html, /<fieldset/, search);
+    assert.match(html, /data-testid="waitlist-form" data-plan="pro"/, search);
+  }
+  const words = text(draw("en"));
+  for (const line of [
+    "Sign up with an e-mail address",
+    "Free, with an account",
+    "Leave your address, and we'll write when Pro opens.",
+    "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.",
+  ]) {
+    assert.ok(words.includes(line), `missing: ${line}`);
+  }
+  assert.doesNotMatch(words, /invite/i);
+  for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
+    assert.doesNotMatch(text(draw(lng)), invite, lng);
+    assert.match(text(draw(lng, { signup: "invite" })), invite, `${lng}: by invite it says so`);
+  }
+  // By invite (or closed), as before.
+  for (const signup of ["invite", "closed"] as const) {
+    const invited = text(draw("en", { signup }));
+    for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn."]) {
+      assert.ok(invited.includes(line), `${signup} missing: ${line}`);
+    }
+  }
+});
+
+test("the page asks the hub once how sign-up works, and keeps the open wording when it cannot", async () => {
+  let asked = 0;
+  const hub = (signup: SignupMode | Error) => ({
+    signupConfig: async () => {
+      asked++;
+      if (signup instanceof Error) throw signup;
+      return { signup, inviteRequired: signup === "invite", turnstile: null, verification: "required" as const, passkeys: null };
+    },
+  });
+  const invite = hub("invite");
+  assert.equal(await signupModeOf(invite), "invite");
+  assert.equal(await signupModeOf(invite), "invite");
+  assert.equal(asked, 1, "asked once per hub client");
+  assert.equal(await signupModeOf(hub("open")), "open");
+  assert.equal(await signupModeOf(hub(new TypeError("Failed to fetch"))), "open");
+  assert.deepEqual((["open", "invite", "closed"] as const).map(byInvite), [false, true, true]);
+});
+
+test("signed out, Free offers sign-up (with an invite where sign-up is by invite); signed in, the way back into the app", () => {
   const out = draw("en");
-  assert.match(out, /<a href="\/signup"[^>]*data-testid="plan-free-signup"[^>]*>Have an invite code\? Sign up<\/a>/);
+  assert.match(out, /<a href="\/signup"[^>]*data-testid="plan-free-signup"[^>]*>Sign up<\/a>/);
   assert.match(out, /<a href="\/download"[^>]*data-testid="plan-local-download"/);
+  assert.match(draw("zh-CN"), /data-testid="plan-free-signup"[^>]*>注册<\/a>/);
+  assert.match(draw("en", { signup: "invite" }), /<a href="\/signup"[^>]*data-testid="plan-free-signup"[^>]*>Have an invite code\? Sign up<\/a>/);
   const signedIn = draw("en", { signedIn: true });
   assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
   assert.match(signedIn, /<a href="\/sessions"[^>]*data-testid="plan-free-open"[^>]*>Open app<\/a>/);
@@ -213,12 +272,12 @@ test("signed out, Free offers sign-up with an invite; signed in, the way back in
 test("joined: the form says you're on the list and what comes next, in each language", () => {
   const joined = (lng: string, plan: WaitlistPlan) => text(draw(lng, { waitlist: { kind: "done", plan } }));
   assert.ok(joined("en", "free").includes("You're on the list: we'll e-mail you an invite."));
-  assert.ok(joined("en", "pro").includes("You're on the list: we'll e-mail you an invite when Pro opens."));
+  assert.ok(joined("en", "pro").includes("You're on the list: we'll e-mail you when Pro opens."));
   assert.ok(joined("en", "pro").includes(`To be taken off the list, write to ${PRIVACY_EMAIL}.`));
   assert.ok(joined("zh-CN", "free").includes("你已在名单上，我们会把邀请发到你的邮箱。"));
-  assert.ok(joined("zh-CN", "pro").includes("你已在名单上，Pro 开放时我们会把邀请发到你的邮箱。"));
+  assert.ok(joined("zh-CN", "pro").includes("你已在名单上，Pro 开放时我们会发邮件通知你。"));
   assert.ok(joined("zh-TW", "free").includes("你已在名單上，我們會把邀請寄到你的信箱。"));
-  assert.ok(joined("ja", "pro").includes("登録しました。Pro が始まったら招待をメールでお送りします。"));
+  assert.ok(joined("ja", "pro").includes("登録しました。Pro が始まったらメールでお知らせします。"));
   const html = draw("en", { waitlist: { kind: "done", plan: "pro" } });
   assert.match(html, /role="status" data-testid="waitlist-done" data-plan="pro"/);
   assert.doesNotMatch(html, /data-testid="waitlist-form"/, "the form gives way to the answer");
@@ -339,14 +398,16 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="footer-pricing"/, `${name}: the footer`);
     assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>Privacy notice<\/a>/, `${name}: the footer`);
   }
-  // Below 640px the header has no room for it: there, the landing page's hero offers the waitlist itself.
-  assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>), /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
-  assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signedIn /></I18nextProvider>), /data-testid="hero-waitlist"/);
+  // Below 640px the header has no room for it: there, the landing page's hero links the plans itself (by invite: the waitlist).
+  assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>), /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
+  assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
+  assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signedIn /></I18nextProvider>), /data-testid="hero-(waitlist|pricing)"/);
   void i18n.changeLanguage("zh-CN");
   const cn = renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>);
   assert.match(cn, /data-testid="header-pricing"[^>]*>定价<\/a>/);
   assert.match(cn, /data-testid="footer-privacy"[^>]*>隐私说明<\/a>/);
-  assert.match(cn, /data-testid="hero-waitlist"[^>]*>还没有邀请码？加入等候名单<\/a>/);
+  assert.match(cn, /data-testid="hero-pricing"[^>]*>查看各个方案<\/a>/);
+  assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /data-testid="hero-waitlist"[^>]*>还没有邀请码？加入等候名单<\/a>/);
 });
 
 test("the privacy notice: what the waitlist keeps and why, for how long, how to be removed, and what our servers can and cannot see", () => {
