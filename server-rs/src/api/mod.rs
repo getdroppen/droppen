@@ -302,7 +302,7 @@ const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 /// died without a `FIN` — a laptop that slept, a NAT that forgot, a phone that
 /// changed network. Those sockets would otherwise hold a feed watcher (and, for
 /// a terminal, a pty) open until the process restarts.
-const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(90);
+pub(crate) const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// The keepalive half of a websocket loop.
 ///
