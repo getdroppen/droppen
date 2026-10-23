@@ -412,8 +412,11 @@ fetch_sums() {
       return 0
     elif [ "${DROPPEN_ALLOW_UNSIGNED:-}" = 1 ]; then
       warn "$VERSION has no signed checksums (SHA256SUMS-server.sig): going by its SHA256SUMS alone (DROPPEN_ALLOW_UNSIGNED=1)"
-    else
+    elif [ -n "${DROPPEN_VERSION:-}" ]; then
+      # A release named on purpose may be one from before they were signed.
       die "could not download the signed checksums of $VERSION ($at/SHA256SUMS-server and .sig). A release published before they were signed has none: to install it anyway, checked against its SHA256SUMS alone, run this again with DROPPEN_ALLOW_UNSIGNED=1. Nothing was installed."
+    else
+      die "the release $VERSION has no signature over its checksums ($at/SHA256SUMS-server and .sig could not be downloaded). Nothing was installed."
     fi
   fi
   fetch -o "$TMP/SHA256SUMS" "$at/SHA256SUMS" || die "could not download $at/SHA256SUMS"

@@ -157,15 +157,26 @@ describe("install.sh with a release key pinned", () => {
     assert.ok(!existsSync(staged()), "nothing staged");
   });
 
-  test("a release without a signature is refused, unless DROPPEN_ALLOW_UNSIGNED=1", async () => {
+  test("the latest release without a signature is refused, with no way around it offered", async () => {
     signedRelease(privateKey);
     rmSync(join(release, "SHA256SUMS-server.sig"));
     const refused = await download(library(pem(publicKey)));
     assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /the release v9\.9\.9 has no signature over its checksums/);
+    assert.doesNotMatch(refused.stderr, /DROPPEN_ALLOW_UNSIGNED/);
+    assert.ok(!existsSync(staged()), "nothing staged");
+  });
+
+  test("a release named with DROPPEN_VERSION without a signature is refused, unless DROPPEN_ALLOW_UNSIGNED=1", async () => {
+    signedRelease(privateKey);
+    rmSync(join(release, "SHA256SUMS-server.sig"));
+    const refused = await download(library(pem(publicKey)), { DROPPEN_VERSION: VERSION });
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /published before they were signed has none/);
     assert.match(refused.stderr, /DROPPEN_ALLOW_UNSIGNED=1/);
     assert.ok(!existsSync(staged()), "nothing staged");
 
-    const allowed = await download(library(pem(publicKey)), { DROPPEN_ALLOW_UNSIGNED: "1" });
+    const allowed = await download(library(pem(publicKey)), { DROPPEN_VERSION: VERSION, DROPPEN_ALLOW_UNSIGNED: "1" });
     assert.equal(allowed.code, 0, allowed.stderr);
     assert.match(allowed.stderr, /going by its SHA256SUMS alone/);
     assert.match(allowed.stdout, /installed: droppen 9\.9\.9/);
