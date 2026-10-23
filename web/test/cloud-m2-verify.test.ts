@@ -398,6 +398,66 @@ test("N1 (REVIEW2): while an activation is held, removing another device is refu
   assert.equal(back.heldBack?.device, z.deviceId);
 });
 
+test("while an activation is held, this device pairs no device — not even one already listed, which needs no new entry; after the veto it does", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  const words = (await createV2Genesis(a, true))!.join(" ");
+  await a.sync();
+  // b was added, but its keys never arrived: it pairs again, with the same keys.
+  const b = await hub.device("tok", new RecordingKeyStore());
+  await a.append({ type: "addDevice", device: (b as unknown as { info(): DeviceInfo }).info() });
+  const z = await hub.device("tok", new RecordingKeyStore());
+  await z.recover(words);
+  hub.chainNow = () => Date.now() + DAY + 60_000;
+  await z.activateRecovered(words, Date.now() + DAY + 60_000);
+  hub.chainNow = () => Date.now();
+  const back = await hub.reload(a);
+  assert.equal(back.heldBack?.device, z.deviceId);
+  const responder = (who: CloudAccount) =>
+    new PairingResponder({
+      api: who.api,
+      token: who.session.token,
+      account: who.account,
+      device: who.deviceId,
+      signPublic: who.keys.signPublic,
+      noise: who.noiseKeys,
+      chain: async () => (await who.sync(), who.chain),
+      storeUserKeys: (keys) => who.storeUserKeys(keys),
+      pollMs: 1,
+    });
+  // b, opened afresh, would take the held activation as history: no delivery goes to it.
+  const r = responder(await hub.reload(b));
+  try {
+    const c = await candidateFromOffer(await r.startOffer(), back.chain!);
+    const before = hub.mailLog.length;
+    await assert.rejects(back.pairDevice(c, { admin: true }), (e: unknown) => {
+      assert.ok(e instanceof AccountError && e.kind === "heldBack", String(e));
+      assert.equal(e.vars?.id, z.deviceId, "it names the held device");
+      return true;
+    });
+    assert.equal(hub.mailLog.length, before, "no delivery went");
+    // A new device likewise: refused before anything is signed.
+    const n = await hub.device("tok", new RecordingKeyStore());
+    const appends = hub.chainPosts;
+    await assert.rejects(back.pairDevice({ ...c, device: n.deviceId, signKey: n.keys.signPublic, dhKey: n.keys.dhPublic }, { admin: true }), (e: unknown) => e instanceof AccountError && e.kind === "heldBack");
+    assert.equal(hub.chainPosts, appends);
+  } finally {
+    r.stop();
+  }
+  // The veto; then b pairs again as usual.
+  await back.removeDevice(z.deviceId, new FakeCourier());
+  assert.equal(back.heldBack, null);
+  const again = responder(await hub.reload(b));
+  try {
+    const c = await candidateFromOffer(await again.startOffer(), back.chain!);
+    assert.equal(await back.pairDevice(c, { admin: true }), "redelivered");
+    for (let i = 0; i < 10 && again.state.kind !== "paired"; i++) await again.tick();
+    assert.equal(again.state.kind, "paired", JSON.stringify(again.state));
+  } finally {
+    again.stop();
+  }
+});
+
 test("N1: a veto takes out what the thief brought in, but stands what a device this view trusted signed meanwhile", async (t) => {
   const t0 = Date.now();
   t.mock.timers.enable({ apis: ["Date"], now: t0 });

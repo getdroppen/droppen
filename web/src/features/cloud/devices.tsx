@@ -2383,7 +2383,7 @@ export function ConfirmCandidate({
   onAdded,
   onCancel,
 }: {
-  account: Pick<CloudAccount, "chain" | "pairDevice"> & Partial<Pick<CloudAccount, "onChange">>;
+  account: Pick<CloudAccount, "chain" | "pairDevice"> & Partial<Pick<CloudAccount, "onChange" | "heldBack">>;
   me: ReturnType<typeof useMe>;
   candidate: Candidate;
   onAdded: () => void;
@@ -2396,6 +2396,8 @@ export function ConfirmCandidate({
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<LimitHit | null>(null);
   const record = account.chain?.deviceRecord(candidate.device);
+  // While this device holds an activation back it pairs no device, not even one already listed (`CloudAccount.pairDevice`): said before the click.
+  const held = account.heldBack ?? null;
   // Waiting after a passkey join when this was read: approving it is what this does.
   const [joining] = useState(() => record?.viaPasskey != null && record.status.type === "pending");
   // …and a newer join (or a removal) took its place meanwhile: nothing to approve any more.
@@ -2428,12 +2430,19 @@ export function ConfirmCandidate({
         <Fingerprint value={candidate.fingerprint} />
       </div>
       {limit && <LimitNote hit={limit} action={{ label: t("devices"), onClick: onCancel }} />}
+      {held && (
+        <Note tone="danger">
+          <p data-testid="pairing-held" className="text-xs leading-5 text-muted">
+            {t("approve or remove the device whose activation is held back first")}
+          </p>
+        </Note>
+      )}
       <ErrorLine message={error} />
       <div className="flex gap-2">
         <button
           type="button"
           data-variant="primary" className={primary}
-          disabled={busy}
+          disabled={busy || !!held}
           onClick={async () => {
             setBusy(true);
             setError(null);

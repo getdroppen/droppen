@@ -547,6 +547,17 @@ test("adding a browser or phone always makes it a full device — no choice, on 
   }
 });
 
+test("while this device holds an activation back, the pairing says so and cannot be confirmed", () => {
+  const candidate = { device: "d-again", fingerprint: "ABCD-EFGH-IJKL-MNOP" } as unknown as Parameters<typeof ConfirmCandidate>[0]["candidate"];
+  const account = { chain: { isV3: true, deviceRecord: () => ({ status: { type: "active" }, viaPasskey: null }) }, heldBack: { device: "d-z", readyMs: 0, entries: [] }, pairDevice: async () => "redelivered" };
+  const props = { account: account as never, me: null, candidate, onAdded: () => undefined, onCancel: () => undefined };
+  const { html, tree } = drive(ConfirmCandidate, props, []);
+  assert.match(html, /data-testid="pairing-held"/);
+  assert.ok(html.includes("approve or remove the device whose activation is held back first"), html);
+  const add = tree.find((e) => e.type === "button" && e.props["data-variant"] === "primary");
+  assert.equal(add?.props.disabled, true);
+});
+
 test("chain v3's alerts in words: a full device added is just added, a limited one is named so; a device made a full device is loud, the rest are notes", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const base = { seq: 1, by: "d-1", atMs: 0, remove: null };
