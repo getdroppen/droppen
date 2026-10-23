@@ -33,8 +33,27 @@
       logs: "Open logs",
     },
   };
-  var lang = (navigator.language || "en").toLowerCase();
-  var key = /^zh/.test(lang) ? (/tw|hk|mo|hant/.test(lang) ? "zh-TW" : "zh-CN") : /^ja/.test(lang) ? "ja" : "en";
+  // The first of the system's languages (all of them: src-tauri/src/init.js,
+  // part 5) that the app speaks, else English — as the web app's "auto" and
+  // the app's menus choose.
+  function language(tag) {
+    var parts = String(tag || "").replace(/_/g, "-").toLowerCase().split("-");
+    if (parts[0] === "en" || parts[0] === "ja") return parts[0];
+    if (parts[0] !== "zh") return null;
+    var rest = parts.slice(1);
+    if (rest.indexOf("hant") !== -1) return "zh-TW";
+    if (rest.indexOf("hans") !== -1) return "zh-CN";
+    return rest.indexOf("tw") !== -1 || rest.indexOf("hk") !== -1 || rest.indexOf("mo") !== -1 ? "zh-TW" : "zh-CN";
+  }
+  var tags = [].concat(navigator.languages || [], navigator.language || []);
+  var key = "en";
+  for (var i = 0; i < tags.length; i++) {
+    var found = language(tags[i]);
+    if (found) {
+      key = found;
+      break;
+    }
+  }
   var t = TEXT[key];
   document.documentElement.lang = key;
 

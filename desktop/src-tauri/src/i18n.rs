@@ -1,5 +1,7 @@
 //! The app's own words — the menu bar item and the menus — in the four
-//! languages the web app ships, chosen from the system's preferred language.
+//! languages the web app ships, chosen from the system's preferred languages
+//! as the web app chooses for `auto` (`web/src/i18n/index.ts`): the first of
+//! them, in the system's order, that the app speaks; English when none is.
 //!
 //! The rule of the web app applies here too (`web/test/ui-wording.test.ts`):
 //! a device is a 设备 / 裝置 / デバイス / "device", never a machine or a
@@ -19,25 +21,57 @@ pub enum Lang {
 }
 
 impl Lang {
-    /// From a BCP 47 tag (`zh-Hans-CN`, `zh-TW`, `ja-JP`, `en-US`).
-    pub fn from_tag(tag: &str) -> Self {
-        let tag = tag.to_ascii_lowercase();
-        if tag.starts_with("zh") {
-            if ["tw", "hk", "mo", "hant"].iter().any(|part| tag.contains(part)) {
-                Self::ZhTw
-            } else {
-                Self::ZhCn
+    /// The language of a BCP 47 tag (`zh-Hans-CN`, `zh-TW`, `ja-JP`, `en-US`),
+    /// if the app speaks it. Chinese in Traditional script (`Hant`, else
+    /// Taiwan, Hong Kong or Macao) is 繁體中文, any other Chinese 简体中文; the
+    /// script, where the tag names one, decides over the region.
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        let tag = tag.trim().replace('_', "-").to_ascii_lowercase();
+        let mut parts = tag.split('-');
+        match parts.next() {
+            Some("en") => Some(Self::En),
+            Some("ja") => Some(Self::Ja),
+            Some("zh") => {
+                let rest: Vec<&str> = parts.collect();
+                if rest.contains(&"hant") {
+                    Some(Self::ZhTw)
+                } else if rest.contains(&"hans") {
+                    Some(Self::ZhCn)
+                } else if rest.iter().any(|part| matches!(*part, "tw" | "hk" | "mo")) {
+                    Some(Self::ZhTw)
+                } else {
+                    Some(Self::ZhCn)
+                }
             }
-        } else if tag.starts_with("ja") {
-            Self::Ja
-        } else {
-            Self::En
+            _ => None,
         }
     }
 
-    /// The system's preferred language.
+    /// The first of `tags` the app speaks; English when none is.
+    pub fn pick<S: AsRef<str>>(tags: impl IntoIterator<Item = S>) -> Self {
+        tags.into_iter().find_map(|tag| Self::from_tag(tag.as_ref())).unwrap_or(Self::En)
+    }
+
+    /// The system's preferred languages, in order (macOS: Language & Region).
+    pub fn system_tags() -> Vec<String> {
+        sys_locale::get_locales().collect()
+    }
+
+    /// The first of the system's preferred languages the app speaks.
     pub fn system() -> Self {
-        sys_locale::get_locale().map(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
+        Self::pick(Self::system_tags())
+    }
+
+    /// `tags` as `init.js` takes them (`__DROPPEN_LANGUAGES__`, inside a
+    /// string literal): comma-separated, and only tags of letters, digits,
+    /// `-` and `_`.
+    pub fn script_list<S: AsRef<str>>(tags: impl IntoIterator<Item = S>) -> String {
+        let tags: Vec<String> = tags
+            .into_iter()
+            .map(|tag| tag.as_ref().to_string())
+            .filter(|tag| !tag.is_empty() && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .collect();
+        tags.join(",")
     }
 
     /// The words.
@@ -253,13 +287,35 @@ mod tests {
 
     #[test]
     fn languages_are_picked_from_the_tag() {
-        assert_eq!(Lang::from_tag("zh-Hans-CN"), Lang::ZhCn);
-        assert_eq!(Lang::from_tag("zh-CN"), Lang::ZhCn);
-        assert_eq!(Lang::from_tag("zh-Hant-TW"), Lang::ZhTw);
-        assert_eq!(Lang::from_tag("zh-HK"), Lang::ZhTw);
-        assert_eq!(Lang::from_tag("ja-JP"), Lang::Ja);
-        assert_eq!(Lang::from_tag("en-GB"), Lang::En);
-        assert_eq!(Lang::from_tag("fr-FR"), Lang::En);
+        for tag in ["zh", "zh-CN", "zh-SG", "zh-Hans", "zh-Hans-CN", "zh-Hans-HK", "zh_CN"] {
+            assert_eq!(Lang::from_tag(tag), Some(Lang::ZhCn), "{tag}");
+        }
+        for tag in ["zh-Hant", "zh-TW", "zh-HK", "zh-MO", "zh-Hant-TW", "zh-Hant-CN", "ZH_hk"] {
+            assert_eq!(Lang::from_tag(tag), Some(Lang::ZhTw), "{tag}");
+        }
+        assert_eq!(Lang::from_tag("ja-JP"), Some(Lang::Ja));
+        assert_eq!(Lang::from_tag("ja"), Some(Lang::Ja));
+        assert_eq!(Lang::from_tag("en-GB"), Some(Lang::En));
+        assert_eq!(Lang::from_tag("en-JP"), Some(Lang::En));
+        for tag in ["fr-FR", "de", "ko-KR", "jav", "zhx", ""] {
+            assert_eq!(Lang::from_tag(tag), None, "{tag}");
+        }
+    }
+
+    #[test]
+    fn the_first_language_the_app_speaks_wins_else_english() {
+        assert_eq!(Lang::pick(["fr-FR", "ja-JP", "zh-Hans-CN"]), Lang::Ja);
+        assert_eq!(Lang::pick(["de-DE", "zh-Hant-TW", "en-US"]), Lang::ZhTw);
+        assert_eq!(Lang::pick(["en-JP", "ja-JP"]), Lang::En);
+        assert_eq!(Lang::pick(["fr-FR", "de-DE"]), Lang::En);
+        assert_eq!(Lang::pick(Vec::<String>::new()), Lang::En);
+    }
+
+    #[test]
+    fn the_script_gets_only_tags() {
+        assert_eq!(Lang::script_list(["fr-FR", "ja-JP", "zh-Hans-CN"]), "fr-FR,ja-JP,zh-Hans-CN");
+        assert_eq!(Lang::script_list(["en_US", "", "x\"y", "a,b", "de</script>", "ja"]), "en_US,ja");
+        assert_eq!(Lang::script_list(Vec::<String>::new()), "");
     }
 
     /// The same words `web/test/ui-wording.test.ts` keeps off the screen.

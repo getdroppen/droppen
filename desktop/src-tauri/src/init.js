@@ -18,10 +18,17 @@
 //      Whether Claude Code or Codex is ready is said by the web app's
 //      first-run guide (web/src/features/setup), not here;
 //   4. carries the app's update status to the web app's quiet "ready" entry,
-//      and its "restart" back to the app.
+//      and its "restart" back to the app;
+//   5. lists the system's preferred languages, all of them, in
+//      navigator.languages: WebKit lists only the first, so a page's "auto"
+//      (web/src/i18n/index.ts) would show English to a reader whose first
+//      language the app does not speak, while the app's menus take the first
+//      one it does (src-tauri/src/i18n.rs). On every page, the start-up page
+//      included.
 //
 // __DROPPEN_NONCE__ is replaced with this launch's nonce when the window is made,
-// __DROPPEN_BRIDGE__ with the update bridge's own token (part 4).
+// __DROPPEN_BRIDGE__ with the update bridge's own token (part 4),
+// __DROPPEN_LANGUAGES__ with the system's languages, comma-separated (part 5).
 //
 // It runs on any http://127.0.0.1 page, whatever its port: the server's port
 // can change while the window lives, and this script is fixed when the window
@@ -30,6 +37,26 @@
 // the nonce or the bridge token; they only decide what this script accepts.
 (function () {
   "use strict";
+
+  // 5. The system's languages, in its order.
+  var LANGUAGES = "__DROPPEN_LANGUAGES__".split(",").filter(function (tag) {
+    return /^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})*$/.test(tag);
+  });
+  if (LANGUAGES.length) {
+    Object.freeze(LANGUAGES);
+    try {
+      Object.defineProperty(navigator, "languages", {
+        configurable: true,
+        enumerable: true,
+        get: function () {
+          return LANGUAGES;
+        },
+      });
+    } catch (e) {
+      // WebKit's one language stays
+    }
+  }
+
   if (location.protocol !== "http:" || location.hostname !== "127.0.0.1") return;
 
   var NONCE = "__DROPPEN_NONCE__";

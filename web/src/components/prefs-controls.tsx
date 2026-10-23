@@ -2,24 +2,18 @@ import { Menu } from "@base-ui-components/react/menu";
 import { Check, Globe, Monitor, Moon, Sun } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { applyLanguage, type LanguagePref } from "@/i18n";
+import { applyLanguage, browserLanguages, LANGUAGE_NAMES, pickLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { applyThemeMode, storedThemeMode, type ThemeMode } from "@/lib/theme";
 
 /*
  * Language and theme for the public pages (the landing page, sign-in and
  * sign-up), at the right of their header beside the way in: two compact
- * 36px controls with hairline frames. Language opens a square menu of the
- * four languages, each in its own script; theme cycles auto → light → dark,
- * as the app's own toggle does.
+ * 36px controls with hairline frames. Language opens a square menu: auto
+ * (the browser's language, named beside it) and the four languages, each in
+ * its own script; theme cycles auto → light → dark, as the app's own toggle
+ * does.
  */
-
-const LANGUAGES: { id: Exclude<LanguagePref, "auto">; label: string }[] = [
-  { id: "zh-CN", label: "简体中文" },
-  { id: "zh-TW", label: "繁體中文" },
-  { id: "ja", label: "日本語" },
-  { id: "en", label: "English" },
-];
 
 const NEXT_MODE: Record<ThemeMode, ThemeMode> = { auto: "light", light: "dark", dark: "auto" };
 const MODE_ICONS: Record<ThemeMode, typeof Sun> = { auto: Monitor, light: Sun, dark: Moon };
@@ -35,7 +29,13 @@ export function PrefsControls() {
       return "auto";
     }
   });
-  const active = LANGUAGES.find((l) => l.id === i18n.language) ?? LANGUAGES[LANGUAGES.length - 1]!;
+  const [language, setLanguage] = useState<LanguagePref>(storedLanguagePref);
+  const active = LANGUAGE_NAMES.find((l) => l.id === i18n.language) ?? LANGUAGE_NAMES[LANGUAGE_NAMES.length - 1]!;
+  const browser = LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
+  const chooseLanguage = (value: LanguagePref) => {
+    applyLanguage(value);
+    setLanguage(value);
+  };
   const Icon = MODE_ICONS[theme];
   const themeLabel = t("theme: {{mode}} (click for {{next}})", { mode: t(theme), next: t(NEXT_MODE[theme]) });
   return (
@@ -48,8 +48,23 @@ export function PrefsControls() {
         <Menu.Portal>
           <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
             <Menu.Popup className="min-w-36 border border-border-strong bg-bg py-1 outline-none">
-              <Menu.RadioGroup value={active.id} onValueChange={(value: LanguagePref) => applyLanguage(value)}>
-                {LANGUAGES.map((l) => (
+              <Menu.RadioGroup value={language} onValueChange={(value: LanguagePref) => chooseLanguage(value)}>
+                <Menu.RadioItem
+                  value="auto"
+                  closeOnClick
+                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-xs text-fg outline-none data-[highlighted]:bg-hover"
+                >
+                  <span className="flex size-3.5 shrink-0 items-center justify-center">
+                    <Menu.RadioItemIndicator>
+                      <Check className="size-3.5" />
+                    </Menu.RadioItemIndicator>
+                  </span>
+                  {t("auto")}
+                  <span lang={browser.id} className="text-faint">
+                    {browser.label}
+                  </span>
+                </Menu.RadioItem>
+                {LANGUAGE_NAMES.map((l) => (
                   <Menu.RadioItem
                     key={l.id}
                     value={l.id}

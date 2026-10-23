@@ -45,6 +45,7 @@ use droppen_desktop_core::web::{self, Route};
 use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent, PageLoadPayload};
 use tauri::{AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::i18n::Lang;
 use crate::shell::Shell;
 
 /// The main window's label.
@@ -55,7 +56,8 @@ const START_PAGE: &str = "tauri://localhost/index.html";
 
 /// Runs at the start of every document (see `init.js`); `__DROPPEN_NONCE__` is
 /// replaced with this launch's nonce, `__DROPPEN_BRIDGE__` with the update
-/// bridge's own token (`updater::bridge_token`).
+/// bridge's own token (`updater::bridge_token`), `__DROPPEN_LANGUAGES__` with
+/// the system's preferred languages (`i18n::Lang::script_list`).
 const INIT_JS: &str = include_str!("init.js");
 
 static WINDOWS: AtomicU32 = AtomicU32::new(1);
@@ -65,6 +67,7 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
     INIT_JS
         .replace("__DROPPEN_NONCE__", &nonce)
         .replace("__DROPPEN_BRIDGE__", &crate::updater::bridge_token(app))
+        .replace("__DROPPEN_LANGUAGES__", &Lang::script_list(Lang::system_tags()))
 }
 
 /// Create the main window on the start-up page.

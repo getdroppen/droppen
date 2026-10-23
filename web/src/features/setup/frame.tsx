@@ -17,7 +17,7 @@ import type { components } from "@/api/schema";
 import { BrandMark } from "@/components/brand-mark";
 import { RegMark } from "@/components/reg-mark";
 import { Button } from "@/components/ui/button";
-import { applyLanguage, type LanguagePref } from "@/i18n";
+import { applyLanguage, browserLanguages, LANGUAGE_NAMES, pickLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
@@ -48,14 +48,7 @@ export function useOnline(): boolean {
   return online;
 }
 
-const LANGUAGES: { id: Exclude<LanguagePref, "auto">; label: string }[] = [
-  { id: "zh-CN", label: "简体中文" },
-  { id: "zh-TW", label: "繁體中文" },
-  { id: "ja", label: "日本語" },
-  { id: "en", label: "English" },
-];
-
-/** The four languages, each in its own script; the choice is this device's language pref (`/api/prefs`). */
+/** Auto (the browser's language) and the four languages, each in its own script; the choice is this device's language pref (`/api/prefs`). */
 function LanguagePicker() {
   const { t, i18n } = useTranslation();
   const api = useApi();
@@ -66,9 +59,12 @@ function LanguagePicker() {
     queryFn: async () => (await api.GET("/api/prefs")).data,
     staleTime: 30_000,
   });
-  const active = LANGUAGES.find((l) => l.id === i18n.language) ?? LANGUAGES[LANGUAGES.length - 1]!;
+  const [chosen, setChosen] = useState<LanguagePref>(storedLanguagePref);
+  const active = LANGUAGE_NAMES.find((l) => l.id === i18n.language) ?? LANGUAGE_NAMES[LANGUAGE_NAMES.length - 1]!;
+  const browser = LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
   const choose = (language: LanguagePref) => {
     applyLanguage(language);
+    setChosen(language);
     if (!prefs) return;
     const next = { ...prefs, language } as Prefs;
     queryClient.setQueryData(mq(machine, "prefs"), next);
@@ -90,8 +86,23 @@ function LanguagePicker() {
       <Menu.Portal>
         <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
           <Menu.Popup className="min-w-36 border border-border-strong bg-bg py-1 outline-none">
-            <Menu.RadioGroup value={active.id} onValueChange={(value: LanguagePref) => choose(value)}>
-              {LANGUAGES.map((l) => (
+            <Menu.RadioGroup value={prefs?.language ?? chosen} onValueChange={(value: LanguagePref) => choose(value)}>
+              <Menu.RadioItem
+                value="auto"
+                closeOnClick
+                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-xs text-fg outline-none data-[highlighted]:bg-hover"
+              >
+                <span className="flex size-3.5 shrink-0 items-center justify-center">
+                  <Menu.RadioItemIndicator>
+                    <Check className="size-3.5" />
+                  </Menu.RadioItemIndicator>
+                </span>
+                {t("auto")}
+                <span lang={browser.id} className="text-faint">
+                  {browser.label}
+                </span>
+              </Menu.RadioItem>
+              {LANGUAGE_NAMES.map((l) => (
                 <Menu.RadioItem
                   key={l.id}
                   value={l.id}
