@@ -7,7 +7,7 @@ publish = false
 description = "A headless remote-hand device for tests: signs up at a hub, keeps a device chain, enrolls machines and opens end-to-end channels"
 
 # The direct-path measurement probe (`src/bin/rh-p2p-probe.rs`): a WebRTC
-# DataChannel peer for `web/public/p2p-probe.html`. Behind a feature so the
+# DataChannel peer for `web/dev/p2p-probe.html`. Behind a feature so the
 # hub's tests, which link this crate, never build a WebRTC stack.
 [[bin]]
 name = "rh-p2p-probe"

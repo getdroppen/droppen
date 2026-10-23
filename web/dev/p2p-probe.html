@@ -3,6 +3,8 @@
   直连探测页：浏览器 ↔ 电脑能否直连（WebRTC / ICE 打洞，不用 TURN），比 hub 中转快多少。
   只是测量工具，不是产品功能：不登录、不碰任何会话数据。配合电脑上运行的
   `rh-p2p-probe`（server-rs/crates/rh-devkit）使用，它会打印本页的链接（# 后是房间号）。
+  不进任何构建（droppen.app 上没有它）：由网页的开发服务器提供（web/build/dev-tools.ts），
+  用 `RH_DEV_HUB=<hub> pnpm dev:web` 启动，信令房间经开发服务器转到那个 hub。
   脚本在 p2p-probe.js（hub 的 CSP 只允许同源脚本，不允许内联脚本）。
 -->
 <html lang="zh-CN">

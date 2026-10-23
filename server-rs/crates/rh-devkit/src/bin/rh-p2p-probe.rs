@@ -2,11 +2,13 @@
 //! feature): how often can a browser reach this machine directly (WebRTC,
 //! ICE hole punching, no TURN), and how much faster is that than the hub?
 //!
-//!   rh-p2p-probe [--hub https://droppen.app] [--room <32 hex>] [--new-room] [--results <file>]
+//!   rh-p2p-probe [--hub https://droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]
 //!
 //! It joins a signaling room on the hub (`/v1/probe/rooms/{room}`, only
 //! there when the hub runs with `DROPPEN_HUB_P2P_PROBE=1`) and prints the page to
-//! open, `<hub>/p2p-probe.html#<room>`. For every page load it answers the
+//! open, `<page>/p2p-probe.html#<room>`. The page is no part of a web build:
+//! the web dev server serves it (`web/dev/`; `RH_DEV_HUB=<hub> pnpm dev:web`,
+//! which proxies the room to the hub), at `--page`. For every page load it answers the
 //! page's WebRTC offer with a DataChannel peer (str0m, sans-IO): host
 //! candidates on this machine's default-route addresses, server-reflexive ones
 //! from public STUN (Cloudflare, Google), peer-reflexive ones as checks arrive
@@ -75,6 +77,8 @@ fn main() {
 
 struct Args {
     hub: String,
+    /// Where the probe page is served: the web dev server (`web/build/dev-tools.ts`).
+    page: String,
     room: Option<String>,
     new_room: bool,
     results: Option<PathBuf>,
@@ -84,6 +88,7 @@ impl Args {
     fn parse() -> Result<Self, String> {
         let mut args = Args {
             hub: "https://droppen.app".into(),
+            page: "http://localhost:5180".into(),
             room: None,
             new_room: false,
             results: None,
@@ -92,11 +97,12 @@ impl Args {
         while let Some(a) = it.next() {
             match a.as_str() {
                 "--hub" => args.hub = it.next().ok_or("--hub takes a URL")?.trim_end_matches('/').to_string(),
+                "--page" => args.page = it.next().ok_or("--page takes a URL")?.trim_end_matches('/').to_string(),
                 "--room" => args.room = Some(it.next().ok_or("--room takes 32 hex digits")?),
                 "--new-room" => args.new_room = true,
                 "--results" => args.results = Some(it.next().ok_or("--results takes a file")?.into()),
                 "-h" | "--help" => {
-                    println!("rh-p2p-probe [--hub https://droppen.app] [--room <32 hex>] [--new-room] [--results <file>]");
+                    println!("rh-p2p-probe [--hub https://droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]");
                     std::process::exit(0);
                 }
                 other => return Err(format!("unknown argument {other:?}")),
@@ -104,6 +110,9 @@ impl Args {
         }
         if !(args.hub.starts_with("https://") || args.hub.starts_with("http://")) {
             return Err("--hub is an http(s) URL".into());
+        }
+        if !(args.page.starts_with("https://") || args.page.starts_with("http://")) {
+            return Err("--page is an http(s) URL".into());
         }
         Ok(args)
     }
@@ -187,7 +196,7 @@ async fn run(args: Args) -> Result<(), String> {
     let room = room(&args, &dir)?;
     let results = Arc::new(Results::open(args.results.clone().unwrap_or_else(|| dir.join("results.jsonl")))?);
     std::fs::write(dir.join("probe.pid"), format!("{}\n", std::process::id())).map_err(|e| e.to_string())?;
-    let page = format!("{}/p2p-probe.html#{room}", args.hub);
+    let page = format!("{}/p2p-probe.html#{room}", args.page);
     let ws_url = format!(
         "{}/v1/probe/rooms/{room}?role=probe",
         args.hub.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1)
