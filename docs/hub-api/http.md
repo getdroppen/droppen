@@ -90,7 +90,9 @@ Each `url` is exactly
 `releases_page` is the release's page on GitHub (notes, `SHA256SUMS`, every
 other file), made from the tag. The hub serves its last good answer
 whatever later reads fail with; `fetched_ms` says when it read it. The
-answer carries `Cache-Control: public, max-age=300`.
+answer carries `Cache-Control: public, max-age=300`. The hub never takes an
+answer that names an older version than its last good one. The route is
+limited like `/healthz` (the static routes' share per address).
 
 A client links the files: a plain `<a href>`, which downloads in place. It
 checks the names and addresses as strictly. On any failure it links

@@ -90,7 +90,8 @@ const HINTS: Record<"mac" | "linux" | "windows" | "phone" | "unknown", Environme
   unknown: { userAgent: "" },
 };
 
-const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ");
+// `&amp;` last, so an escaped entity (`&amp;lt;`) is not decoded twice.
+const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 const primaries = (html: string) => (html.match(/data-variant="primary"/g) ?? []).length;
 const esc = (s: string) => s.replace(/[.?*+^$()[\]{}|/\\]/g, "\\$&");
 
