@@ -14,13 +14,14 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 
 - **Who can publish.** Only a run of `release.yml` for a `v*` tag of a commit
   on main (the workflow checks the commit is on main), and only once a person
-  has approved it: the one job that signs and publishes runs in the protected
-  `release` environment, whose required reviewer is the owner and which
-  deploys only for `v*` tags and main (dry runs); GitHub enforces the
-  approval, once per run. Who may create such a tag is the tag ruleset's
-  to say (the owner). The job that publishes uses the run's own token, with
-  `contents: write` in that job only; there is no other token that can write
-  a release.
+  has approved it: the one job that holds the secrets and signs, `release`,
+  runs in the protected `release` environment, whose required reviewer is
+  the owner and which deploys only for `v*` tags and main (dry runs); GitHub
+  enforces the approval, once per run. Who may create such a tag is the tag
+  ruleset's to say (the owner). The job that publishes, `publish`, runs only
+  after `release` succeeded, only for a `v*` tag, and uses the run's own
+  token with `contents: write`, in that job only; there is no other token
+  that can write a release.
 - **What is published.** One release per tag, made once: a draft with every
   file, checked, then published and marked latest. Releases are immutable:
   nothing is added, replaced or deleted afterwards, so a bad release is
@@ -96,7 +97,7 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    publishes: a draft with every file, `latest.json` last, checked, then
    published as the latest release. Installed apps and
    `curl -fsSL https://droppen.app/install.sh | sh` take it at once. The
-   `release` job's summary lists every file with its sha256.
+   `publish` job's summary lists every file with its sha256.
 
 **When it fails.** Before publishing nothing is written: fix the cause and
 *Re-run failed jobs* (or, for a fix in the source, a new version). If
@@ -124,7 +125,9 @@ the fallback whenever GitHub Actions cannot be used.
 | `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt`: the binary checks, `THIRD_PARTY_NOTICES`, macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks, `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
 | `desktop` | macOS | nothing | `desktop/build.sh --sidecar` with the staged universal server (unsigned) |
-| `release` | macOS | every secret, `contents: write`, the OIDC token; approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh` with `droppen-update-signer`; `scripts/publish-release.sh --dry-run` (every check, `latest.json` against its archive and the key included); only when publishing, the attestations and `scripts/publish-release.sh --verify-tag` |
+| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature) |
+| `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key); `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
+| `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected`: the release of the tag, made once |
 
 The trust boundaries:
 
@@ -146,22 +149,24 @@ The trust boundaries:
   all the secrets it names when it starts, for its whole run, so what runs
   in it is kept to what can be read in a few minutes:
   - this repository's scripts (`desktop/notarise.sh`,
-    `desktop/updater-artifacts.sh`, `scripts/publish-release.sh`, the text
-    checks), read from the checked-out commit;
-  - Apple's tools (`codesign`, `notarytool`, `stapler`, `hdiutil`, `spctl`),
-    `gh`, and GitHub's attest action, pinned by commit;
-  - two programs of ours, built by `signer` (a job without secrets) from
-    this repository's locked sources and checked by sha256:
-    `droppen-update-signer` (`desktop/update-signer`: minisign, its scrypt
-    and Ed25519 code, base64) and `droppen-update-manifest` (`desktop/core`).
+    `desktop/updater-artifacts.sh`, the text checks), read from the
+    checked-out commit;
+  - Apple's tools (`codesign`, `notarytool`, `stapler`, `hdiutil`, `spctl`);
+  - one program of ours, `droppen-update-signer` (`desktop/update-signer`:
+    minisign, its scrypt and Ed25519 code, base64; about 25 crates), built
+    by `signer` (a job without secrets) from this repository's locked
+    sources and checked by sha256.
 
-  No third-party build tool (tauri-cli, cargo, npm) runs there, and nothing
-  from an artifact is run: the app, the DMG and the tarballs are only read,
-  signed and uploaded; the staged tarballs are read member by member, never
-  unpacked by their own paths. Each step gets only the secrets it uses in its
-  own `env:`: the Developer ID and the notary's password the keychain and
-  notarisation steps (the keychain is deleted right after, whatever
-  happened), the updater key the updater step, the names the text checks.
+  No third-party build tool (tauri-cli, cargo, npm) runs there, nor the
+  manifest tool (its 80 crates run in `verify`, which holds nothing), and
+  nothing from an artifact is run: the app, the DMG and the tarballs are only
+  read, signed and handed on; the staged tarballs are read member by member,
+  never unpacked by their own paths. The job has no write token and no OIDC
+  token (`contents: read`), so a dry run never holds one. Each step gets only
+  the secrets it uses in its own `env:`: the Developer ID and the notary's
+  password the keychain and notarisation steps (the keychain is deleted right
+  after, whatever happened), the updater key the updater step, the names the
+  text checks.
 - **The updater's signer is ours, and checked against the Tauri updater.**
   `droppen-update-signer` writes what `tauri signer sign --app-version`
   (tauri-cli 2.12.3) writes: a minisign signature (minisign 0.9, as
@@ -174,16 +179,27 @@ The trust boundaries:
   the signed version against the announced one, `requireSignedVersion`);
   `desktop/core`'s `update.rs` tests check one of its signatures with the
   app's own checks, version and file name included. `signer` runs those
-  tests on every run.
-- **Write and OIDC tokens only where they are used.** GitHub grants a job's
-  `permissions` for the whole job, so `release` has `contents: write` and
-  `id-token: write` on dry runs too; only its attest and publish steps,
-  which run only when publishing, use them, and nothing else that runs there
-  (above) asks for them.
-- **What is attested is what was checked, and what is published.** The
-  dry-run check writes the release's `SHA256SUMS`; it is attested with every
-  file, and the publishing step refuses to write anything unless its own is
-  the same (`--sums-expected`).
+  tests on every run. Before the first release of the app it signs, run the
+  updater's end-to-end test once (`desktop/e2e-updater-macos.sh`, on the
+  Mac): the real app then takes an update signed by it
+  (`updater-artifacts.sh --test-build` signs with it).
+- **Write and OIDC tokens only in `publish`.** `publish` has no environment
+  and asks for no second approval: it holds no secret, only the tokens
+  GitHub makes for this run (`contents: write` on this repository, and the
+  OIDC token that signs the attestations), and runs only when `meta` says
+  the run publishes (a `v*` tag of a commit on main), after `release` (the
+  approved job) and `verify` succeeded. What protects those tokens is that
+  only the owner can push a `v*` tag (the tag ruleset), and that every
+  attestation names the workflow and the ref it ran for: a release attested
+  for anything but `refs/tags/vX.Y.Z` by `release.yml` fails the check
+  users run ([Verifying a download](#verifying-a-download)). It runs this
+  repository's scripts, `gh`, Apple's `stapler` and GitHub's attest action,
+  on files handed over by sha256 (`publish-release.sh --skip-manifest-check`:
+  `verify` checked `latest.json`).
+- **What is attested is what was checked, and what is published.** `verify`
+  writes the release's `SHA256SUMS`; `publish` attests it with every file,
+  and refuses to write anything unless its own is the same
+  (`--sums-expected`).
 - **No caches.** Every dependency is fetched and built afresh, so no earlier
   run can leave anything for a release to pick up.
 - **Pinned inputs.** Every action by commit; Rust 1.98.1 (rustup checks its

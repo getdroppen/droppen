@@ -10,6 +10,7 @@
 #
 #   desktop/updater-artifacts.sh <Droppen.app> <version> --out <dir>
 #                                [--notes-url <url>] [--key <file>] [--verify-pubkey <file>]
+#                                [--no-manifest]
 #                                [--test-build --key <file> --pubkey <file> --base-url <url>]
 #
 #   <version>     the release's version (0.2.125 or v0.2.125); the app's own
@@ -27,6 +28,13 @@
 #                 "Rotating the key"): the .pub file of the key installed apps
 #                 trust, which signs this archive, while the app itself carries
 #                 tauri.conf.json's new key. Refused when it is that same key.
+#   --no-manifest the archive and its signature only: no latest.json, and none
+#                 of droppen-update-manifest's checks (the key's id): the one
+#                 program run where the key is, is the signer. release.yml
+#                 writes and checks latest.json in a job without secrets
+#                 (`droppen-update-manifest write`, which verifies the
+#                 signature with tauri.conf.json's key). Not with
+#                 --verify-pubkey or --test-build.
 #   --test-build  for the updater's end-to-end test only (e2e-updater-macos.sh):
 #                 accept an ad hoc signed, unstapled app, and an http://127.0.0.1
 #                 --base-url. It needs a throwaway --key and its --pubkey: never
@@ -71,6 +79,7 @@ OUT=""
 NOTES=""
 KEY=""
 TEST=0
+NO_MANIFEST=0
 BASE_URL=""
 PUBKEY_FILE=""
 VERIFY_PUBKEY=""
@@ -80,6 +89,7 @@ while [ $# -gt 0 ]; do
     --notes-url) NOTES=${2:?--notes-url needs a value}; shift 2 ;;
     --key) KEY=${2:?--key needs a path}; shift 2 ;;
     --test-build) TEST=1; shift ;;
+    --no-manifest) NO_MANIFEST=1; shift ;;
     --base-url) BASE_URL=${2:?--base-url needs a value}; shift 2 ;;
     --pubkey) PUBKEY_FILE=${2:?--pubkey needs a path}; shift 2 ;;
     --verify-pubkey) VERIFY_PUBKEY=${2:?--verify-pubkey needs a path}; shift 2 ;;
@@ -88,6 +98,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$OUT" ] || die "--out is required"
+if [ "$NO_MANIFEST" = 1 ] && { [ "$TEST" = 1 ] || [ -n "$VERIFY_PUBKEY" ]; }; then
+  die "--no-manifest is for a release's signature only: not with --test-build or --verify-pubkey, whose checks need the manifest tool"
+fi
 if [ "$TEST" = 0 ] && { [ -n "$BASE_URL" ] || [ -n "$PUBKEY_FILE" ]; }; then
   die "--base-url and --pubkey are for --test-build only; a release is verified with tauri.conf.json's key and served from the release"
 fi
@@ -225,6 +238,9 @@ manifest_tool() {
   cargo run --quiet --release --locked --manifest-path "$DESKTOP/Cargo.toml" -p droppen-desktop-core --bin droppen-update-manifest -- "$@"
 }
 
+if [ "$NO_MANIFEST" = 1 ]; then
+  echo "--no-manifest: the key is checked when latest.json is written (droppen-update-manifest write)"
+else
 say "the key it is checked with"
 RELEASE_KEY_ID=$(manifest_tool key-id --pubkey "$RELEASE_PUBKEY") || die "cannot read the updater key in $RELEASE_PUBKEY"
 CHECK_KEY_ID=$(manifest_tool key-id --pubkey "$PUBKEY_FILE") || die "$PUBKEY_FILE holds no minisign public key"
@@ -246,6 +262,8 @@ elif [ -n "$VERIFY_PUBKEY" ]; then
 else
   echo "the release key, $RELEASE_KEY_ID"
 fi
+
+fi # (the key's checks, without --no-manifest)
 
 WORK=$(mktemp -d /tmp/droppen-updater-artifacts.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
@@ -293,6 +311,13 @@ fi
 unset KEY_PASSWORD ENV_KEY
 [ -s "$OUT/$ARCHIVE.sig" ] || die "no $ARCHIVE.sig"
 echo "ok: $ARCHIVE.sig ($(base64 -d <"$OUT/$ARCHIVE.sig" | sed -n 's/^trusted comment: //p' | tr '\t' ' '))"
+
+if [ "$NO_MANIFEST" = 1 ]; then
+  say "made in $OUT (--no-manifest)"
+  ls -l "$OUT"
+  (cd "$OUT" && shasum -a 256 "$ARCHIVE" "$ARCHIVE.sig")
+  exit 0
+fi
 
 say "latest.json"
 MANIFEST_ARGS=(write --version "$VERSION" --archive "$OUT/$ARCHIVE" --signature "$OUT/$ARCHIVE.sig"
