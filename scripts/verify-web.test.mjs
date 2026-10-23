@@ -19,6 +19,9 @@ const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-
 const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
 const { checkedRedirect, markerProblem, RETIRING_WORKER, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
+/** `text` as a regular expression that matches it literally: every special escaped. */
+const escapeRegExp = (text) => text.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+
 const INLINE = "window.boot=1";
 const INLINE_HASH = `'sha256-${createHash("sha256").update(INLINE).digest("base64")}'`;
 /** The policy the hub serves the web app with (docs/hub-api/http.md). */
@@ -438,8 +441,8 @@ describe("verify-web.mjs against a hub", () => {
       const r = await verify([...sites(urls), "--manifest", manifestFile]);
       assert.equal(r.code, 0, r.out);
       assert.equal(r.out.match(/^PASS: /gm)?.length, 3, r.out);
-      for (const u of urls) assert.match(r.out, new RegExp(`marker: +rh-hub ${siteHubOrigin(u).replace(/[.]/g, "\\.")}$`, "m"));
-      assert.match(r.out, new RegExp(`files: +\\d+ of \\d+ match, 4 redirect to ${hosts.my.replace(/[.]/g, "\\.")}, checked there`));
+      for (const u of urls) assert.match(r.out, new RegExp(`marker: +rh-hub ${escapeRegExp(siteHubOrigin(u))}$`, "m"));
+      assert.match(r.out, new RegExp(`files: +\\d+ of \\d+ match, 4 redirect to ${escapeRegExp(hosts.my)}, checked there`));
       assert.match(r.out, /\/sw\.js is the retiring worker/);
       assert.match(r.out, /summary:\n +PASS +http:\/\/127\.0\.0\.1:\d+\n +PASS/);
     });
@@ -456,7 +459,7 @@ describe("verify-web.mjs against a hub", () => {
         const r = await verify([...sites(urls), "--manifest", manifestFile]);
         assert.equal(r.code, 1, r.out);
         assert.match(r.out, why);
-        assert.match(r.out, new RegExp(`FAIL: ${hosts[bad].replace(/[.]/g, "\\.")} does not serve`));
+        assert.match(r.out, new RegExp(`FAIL: ${escapeRegExp(hosts[bad])} does not serve`));
         assert.equal(r.out.match(/^PASS: /gm)?.length, 2, r.out);
       }
     });
@@ -466,8 +469,8 @@ describe("verify-web.mjs against a hub", () => {
       const www = await hub({ redirect: (p) => to("apex", p) });
       const r = await verify(["--site", www, "--site", hosts.apex, "--manifest", manifestFile]);
       assert.equal(r.code, 0, r.out);
-      assert.match(r.out, new RegExp(`droppen-build redirects to ${hosts.apex.replace(/[.]/g, "\\.")}: the build that one serves`));
-      assert.match(r.out, new RegExp(`files: +0 of 13 match, 13 redirect to ${hosts.apex.replace(/[.]/g, "\\.")}, checked there`));
+      assert.match(r.out, new RegExp(`droppen-build redirects to ${escapeRegExp(hosts.apex)}: the build that one serves`));
+      assert.match(r.out, new RegExp(`files: +0 of 13 match, 13 redirect to ${escapeRegExp(hosts.apex)}, checked there`));
       const alone = await verify(["--site", www, "--manifest", manifestFile]);
       assert.equal(alone.code, 1, alone.out);
     });
@@ -494,8 +497,8 @@ describe("verify-web.mjs against a hub", () => {
       });
       const r = await verify([...sites([up, closed]), "--manifest", manifestFile]);
       assert.equal(r.code, 2, r.out);
-      assert.match(r.out, new RegExp(`could not check ${closed.replace(/[.]/g, "\\.")}: `));
-      assert.match(r.out, new RegExp(`summary:\\n +PASS +${up.replace(/[.]/g, "\\.")}\\n +could not check +${closed.replace(/[.]/g, "\\.")}`));
+      assert.match(r.out, new RegExp(`could not check ${escapeRegExp(closed)}: `));
+      assert.match(r.out, new RegExp(`summary:\\n +PASS +${escapeRegExp(up)}\\n +could not check +${escapeRegExp(closed)}`));
     });
   });
 
