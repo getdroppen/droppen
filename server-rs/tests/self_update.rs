@@ -230,8 +230,20 @@ impl Drop for Supervisor {
     }
 }
 
+/// Forget the port an earlier server on `home` recorded.
+///
+/// [`wait_for_listener`] trusts whatever port the file names and answers, so
+/// a file left by a server that has since stopped (the in-process probe
+/// several tests start with) could send it to that port while the new server
+/// was still on its way up. Once the port is reused by another test's server,
+/// the requests that follow reach a server that is not this test's.
+fn forget_port(home: &Path) {
+    let _ = std::fs::remove_file(home.join(".local/share/remote-hand/instances/default/server.port"));
+}
+
 impl Supervisor {
     async fn start(home: &Path) -> Supervisor {
+        forget_port(home);
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
         command
             .args(["up", "--", "serve"])
@@ -694,6 +706,7 @@ impl Unsupervised {
     }
 
     async fn start_from(home: &Path, exe: &Path) -> Unsupervised {
+        forget_port(home);
         let mut command = tokio::process::Command::new(exe);
         command
             .arg("serve")
