@@ -574,7 +574,7 @@ test("every string the page and the passkey join use is translated into zh-CN, z
   // The pairing's refusal of an offer from another device than the one waiting.
   keys.add("the device that showed this code is not the one that asked to join with a passkey: nothing was approved");
   // Pairing while this device holds an activation back (`CloudAccount.pairDevice`).
-  keys.add("{{id}} activated itself sooner than this device allows: approve it or remove it first. Until then this device adds no device and sends none its keys.");
+  keys.add("{{id}} activated itself sooner than this device allows: approve it or remove it first. Until then this device adds no device and pairs none again.");
   // Approving a passkey's join any other way than by pairing (`CloudAccount.approveDevice`).
   keys.add("{{id}} joined with a passkey: approve it by scanning its QR code or typing its code in my devices → add a browser or phone");
   for (const src of files) {

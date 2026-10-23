@@ -3795,6 +3795,9 @@ export class CloudAccount {
    * ({@link approvePasskeyJoin}).
    */
   async pairDevice(candidate: Candidate, opts: { admin: boolean }): Promise<"delivered" | "redelivered"> {
+    // The hub's chain as it stands first: a self-activation this page has not
+    // seen yet is held back here (and so refuses the pairing) before any key goes.
+    await this.sync();
     this.refuseWhileHeld();
     const chain = this.requireAdmin();
     const listed = chain.deviceRecord(candidate.device);
@@ -3848,7 +3851,7 @@ export class CloudAccount {
     if (!held) return;
     throw new AccountError(
       "heldBack",
-      "{{id}} activated itself sooner than this device allows: approve it or remove it first. Until then this device adds no device and sends none its keys.",
+      "{{id}} activated itself sooner than this device allows: approve it or remove it first. Until then this device adds no device and pairs none again.",
       held.readyMs,
       undefined,
       { id: held.device ?? "?" },

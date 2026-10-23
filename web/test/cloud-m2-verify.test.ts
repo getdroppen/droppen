@@ -398,6 +398,21 @@ test("N1 (REVIEW2): while an activation is held, removing another device is refu
   assert.equal(back.heldBack?.device, z.deviceId);
 });
 
+/** `who`'s pairing screen (QR), as it waits for a delivery. */
+function responder(who: CloudAccount): PairingResponder {
+  return new PairingResponder({
+    api: who.api,
+    token: who.session.token,
+    account: who.account,
+    device: who.deviceId,
+    signPublic: who.keys.signPublic,
+    noise: who.noiseKeys,
+    chain: async () => (await who.sync(), who.chain),
+    storeUserKeys: (keys) => who.storeUserKeys(keys),
+    pollMs: 1,
+  });
+}
+
 test("while an activation is held, this device pairs no device — not even one already listed, which needs no new entry; after the veto it does", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
@@ -413,18 +428,6 @@ test("while an activation is held, this device pairs no device — not even one 
   hub.chainNow = () => Date.now();
   const back = await hub.reload(a);
   assert.equal(back.heldBack?.device, z.deviceId);
-  const responder = (who: CloudAccount) =>
-    new PairingResponder({
-      api: who.api,
-      token: who.session.token,
-      account: who.account,
-      device: who.deviceId,
-      signPublic: who.keys.signPublic,
-      noise: who.noiseKeys,
-      chain: async () => (await who.sync(), who.chain),
-      storeUserKeys: (keys) => who.storeUserKeys(keys),
-      pollMs: 1,
-    });
   // b, opened afresh, would take the held activation as history: no delivery goes to it.
   const r = responder(await hub.reload(b));
   try {
@@ -455,6 +458,32 @@ test("while an activation is held, this device pairs no device — not even one 
     assert.equal(again.state.kind, "paired", JSON.stringify(again.state));
   } finally {
     again.stop();
+  }
+});
+
+test("a page that has not seen a join and its early self-activation yet catches up before it pairs, and so pairs no device", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  const words = (await createV2Genesis(a, true))!.join(" ");
+  await a.sync();
+  const b = await hub.device("tok", new RecordingKeyStore());
+  await a.append({ type: "addDevice", device: (b as unknown as { info(): DeviceInfo }).info() });
+  // A device joins with the words and activates itself at once, by the hub's clock; a has not looked since.
+  const z = await hub.device("tok", new RecordingKeyStore());
+  await z.recover(words);
+  hub.chainNow = () => Date.now() + DAY + 60_000;
+  await z.activateRecovered(words, Date.now() + DAY + 60_000);
+  hub.chainNow = () => Date.now();
+  assert.equal(a.heldBack, null, "a has not seen it yet");
+  const r = responder(await hub.reload(b));
+  try {
+    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
+    const before = hub.mailLog.length;
+    await assert.rejects(a.pairDevice(c, { admin: true }), (e: unknown) => e instanceof AccountError && e.kind === "heldBack" && e.vars?.id === z.deviceId);
+    assert.equal(a.heldBack?.device, z.deviceId, "it caught up, and holds the activation back");
+    assert.equal(hub.mailLog.length, before, "no delivery went");
+  } finally {
+    r.stop();
   }
 });
 
