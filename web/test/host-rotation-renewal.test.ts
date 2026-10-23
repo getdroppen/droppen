@@ -1985,14 +1985,14 @@ test("Codex 1: kept disputes are one per renewal; copies, or many others, never 
   const bus = tabsBus();
   const tab1 = await tabOf(b, bus(), refusingDisputes(browserStorage(b.store)));
   const tab2 = await tabOf(b, bus(), refusingDisputes(browserStorage(b.store)));
-  let heard = 0;
-  tab2.onChange(() => heard++);
+  const told: boolean[] = [];
+  tab2.onChange(() => told.push(tab2.isolated("m-1")));
   tab1.keepDisputes([await keptOf(b, "m-1", bh1.signPrivate, b1)]);
   assert.equal(tab1.isolated("m-1"), true, "the write failed; memory keeps it");
   // Another tab hears of it at once, and counts it once it has verified it on its own chain — then tells its listeners (its channels among them).
   assert.equal(tab2.isolated("m-1"), false, "heard of, not yet verified there: it counts for nothing yet");
-  await until(() => tab2.isolated("m-1"));
-  assert.ok(heard > 0, "and told its listeners");
+  await until(() => told.includes(true));
+  assert.equal(tab2.isolated("m-1"), true, "its listeners were told once it checked out");
   assert.equal(tab2.keptDisputes().length, 1);
 });
 
@@ -2009,11 +2009,28 @@ test("a dispute heard from another tab counts only once verified there; one abou
   const told: boolean[] = [];
   tab2.onChange(() => told.push(tab2.isolated("m-1")));
   tab1.keepDisputes([await keptOf(tab1, "m-1", h1.signPrivate, s1)]);
-  assert.equal(tab2.isolated("m-1"), true, "behind, it cannot judge it: the host is held isolated meanwhile");
+  // Behind, it cannot judge it; this browser has verified that far, so the host is held isolated meanwhile.
+  await until(() => told.includes(true));
   await until(() => tab2.chain!.seq >= s1);
   assert.equal(tab2.isolated("m-1"), true, "caught up, checked on the view that brought the renewal: still isolated");
-  assert.ok(!told.includes(false), "never let go in between");
+  assert.ok(!told.slice(told.indexOf(true)).includes(false), "never let go in between");
   assert.equal(tab2.keptDisputes().length, 1);
+});
+
+test("a kept dispute about an entry past anything this browser has verified never counts, and is dropped", async () => {
+  const { hub, a } = await account();
+  const far = { host: "m-1", seq: 1_000_000, sig: "ab".repeat(64) };
+  browserStorage(a.store).setItem(`rh.hub.renewal.disputes.${a.account}`, JSON.stringify([far]));
+  const page = await hub.reload(a);
+  const told: boolean[] = [];
+  page.onChange(() => told.push(page.isolated("m-1")));
+  assert.equal(page.isolated("m-1"), false);
+  await until(() => told.length > 0);
+  assert.ok(!told.includes(true), "never isolated by it");
+  assert.equal(page.isolated("m-1"), false);
+  // Dropped: the next dispute this page keeps writes storage without it.
+  page.keepDisputes([{ host: "gone", seq: 1, sig: "00".repeat(64) }]);
+  assert.ok(!(browserStorage(a.store).getItem(`rh.hub.renewal.disputes.${a.account}`) ?? "").includes("1000000"));
 });
 
 test("Codex 1: the runner's evidence from the hub now never stands in for what this page kept", async () => {
@@ -2227,8 +2244,7 @@ test("R6 review: kept disputes carry their signature and are verified again when
   // The real one: kept, read back on a reload, verified again — and isolating.
   a.keepDisputes([d1]);
   const again = await hub.reload(a);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(again.isolated("m-1"), true, "it checks out");
+  assert.equal(again.isolated("m-1"), true, "it checks out, on the chain as it was loaded");
   assert.ok(again.keptDisputes().some((d) => d.sig === d1.sig));
 });
 
