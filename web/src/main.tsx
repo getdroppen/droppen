@@ -12,7 +12,9 @@ import { CloudApp } from "./features/cloud/cloud-app";
 import { isReturnPath } from "./features/link/handoff";
 import { LinkReturnPage } from "./features/link/link-return";
 import { isCloud } from "./lib/hub/config";
-import { appUrl, notInstallable, resolveHostMode, siteOrigin } from "./lib/hub/hosts";
+import { appUrl, hubHosts, notInstallable, resolveHostMode, siteOrigin, webOf } from "./lib/hub/hosts";
+import { MOVE_PATH } from "./lib/move/types";
+import { MovePage } from "./features/move";
 import { frontPage } from "./features/landing/route";
 import { SiteApp } from "./features/landing/site-app";
 import { startLegacy } from "./features/hosts/legacy";
@@ -97,6 +99,16 @@ if (returning) {
       return root.render(
         <StrictMode>
           <SiteApp />
+        </StrictMode>,
+      );
+    }
+    // The browser key move's popup (`features/move`): the pull's sending side on the hub's origin, the push's
+    // receiving side on the app host. Nothing else of either starts in it: no notice, no app, no worker.
+    const hosts = hubHosts();
+    if (location.pathname === MOVE_PATH && hosts?.app && (mode === "legacy" || mode === "app")) {
+      return root.render(
+        <StrictMode>
+          <MovePage origins={{ legacy: webOf(hosts.origin), app: hosts.app }} />
         </StrictMode>,
       );
     }

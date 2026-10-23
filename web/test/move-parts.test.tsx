@@ -154,3 +154,18 @@ test("the /move popup says which device it would send, and how a move ended, in 
   }
   void i18n.changeLanguage("en");
 });
+
+test("the move notice's seam (features/move): every outcome as the notice takes it, nothing wiped unless moved", async () => {
+  const { noticeOutcome, moveSupported } = await import("../src/features/move/index.js");
+  const origins = { legacy: "https://droppen.app", app: "https://my.droppen.app" };
+  assert.deepEqual(noticeOutcome({ kind: "moved", account: ACCOUNT, device: DEVICE, pushWasOn: null, resumed: false, senderWiped: true }, origins), { kind: "moved" });
+  assert.deepEqual(noticeOutcome({ kind: "popupBlocked" }, origins), { kind: "blocked" });
+  assert.deepEqual(noticeOutcome({ kind: "closed" }, origins), { kind: "cancelled" });
+  assert.deepEqual(noticeOutcome({ kind: "cancelled" }, origins), { kind: "cancelled" });
+  for (const ended of [{ kind: "verifyFailed", reason: "denied" }, { kind: "changed" }, { kind: "busy" }, { kind: "timeout" }, { kind: "targetHasDevice" }, { kind: "nothingToMove" }, { kind: "failed", reason: "x" }] as const) {
+    const out = noticeOutcome(ended, origins);
+    assert.equal(out.kind, "failed", ended.kind);
+    assert.ok(out.kind === "failed" && out.message.length > 0);
+  }
+  assert.equal(moveSupported(), false, "no window here: not offered");
+});
