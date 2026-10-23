@@ -168,6 +168,7 @@ export const downloadZhCN: Bundle = {
   "Install it, then sign it in to Droppen.": "装好，再登录 Droppen。",
   "No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.": "还没有账号？先用邀请码注册，或者在设备登录时弹出的 {{app}} 窗口里注册。",
   "No account yet? Sign up first, or in the {{app}} window when you sign the device in.": "还没有账号？先注册，或者在设备登录时弹出的 {{app}} 窗口里注册。",
+  "No account yet? Sign-up is closed for now: join the waitlist.": "还没有账号？目前暂停注册，可以先加入等候名单。",
   "Open my devices": "打开「我的设备」",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登录之后，它就在「我的设备」里了。再用同样的方法加一台设备，就能在一个屏里同时看两台。",
 
@@ -326,6 +327,7 @@ export const downloadZhTW: Bundle = {
   "Install it, then sign it in to Droppen.": "裝好，再登入 Droppen。",
   "No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.": "還沒有帳號？先用邀請碼註冊，或在裝置登入時彈出的 {{app}} 視窗裡註冊。",
   "No account yet? Sign up first, or in the {{app}} window when you sign the device in.": "還沒有帳號？先註冊，或在裝置登入時彈出的 {{app}} 視窗裡註冊。",
+  "No account yet? Sign-up is closed for now: join the waitlist.": "還沒有帳號？目前暫停註冊，可以先加入等候名單。",
   "Open my devices": "打開「我的裝置」",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登入之後，它就在「我的裝置」裡了。再用同樣的方法加一台裝置，就能在一個畫面裡同時看兩台。",
 
@@ -488,6 +490,7 @@ export const downloadJa: Bundle = {
     "アカウントがまだなら、先に招待コードで登録するか、デバイスをサインインするときに開く {{app}} のウィンドウで登録できます。",
   "No account yet? Sign up first, or in the {{app}} window when you sign the device in.":
     "アカウントがまだなら、先に登録するか、デバイスをサインインするときに開く {{app}} のウィンドウで登録できます。",
+  "No account yet? Sign-up is closed for now: join the waitlist.": "アカウントがまだの方へ：現在は新規登録を停止しています。ウェイトリストにご登録ください。",
   "Open my devices": "「マイデバイス」を開く",
   "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.":
     "サインインすれば「マイデバイス」に入ります。同じ手順でもう 1 台追加すれば、2 台をひとつの画面で見られます。",

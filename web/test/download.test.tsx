@@ -319,12 +319,14 @@ test("signed out it invites to sign up; signed in it goes back to 「我的设�
   assert.doesNotMatch(text(out), /invite/i);
   assert.ok(text(draw("zh-CN")).includes("还没有账号？先注册，或者在设备登录时弹出的"));
   assert.ok(text(draw("en", { signup: "invite" })).includes("No account yet? Sign up with your invite code first, or in the"));
-  // Closed: closed for now, and the waitlist.
+  // Closed: closed for now, and the waitlist where "Get started" was; sign-in stays.
   const closed = draw("en", { signup: "closed" });
-  assert.ok(text(closed).includes("Sign-up is closed for now. Join the waitlist"));
+  assert.ok(text(closed).includes("No account yet? Sign-up is closed for now: join the waitlist."));
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="download-waitlist"[^>]*>Join the waitlist<\/a>/);
-  assert.doesNotMatch(text(closed), /invite|No account yet/i);
-  assert.ok(text(draw("ja", { signup: "closed" })).includes("現在、新規登録を停止しています。"));
+  assert.doesNotMatch(closed, /href="\/signup"|Get started/);
+  assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
+  assert.doesNotMatch(text(closed), /invite/i);
+  assert.ok(text(draw("ja", { signup: "closed" })).includes("現在は新規登録を停止しています。"));
   const signedIn = draw("en", { signedIn: true, os: "windows" });
   assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
   assert.match(signedIn, /<a href="\/devices"[^>]*data-testid="download-open-devices"/);

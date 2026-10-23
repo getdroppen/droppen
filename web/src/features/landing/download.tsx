@@ -504,12 +504,7 @@ function End({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) {
             {signedIn ? (
               t("Once it is signed in, it is in my devices: add another device the same way to see both on one screen.")
             ) : signup === "closed" ? (
-              <>
-                {t("Sign-up is closed for now.")}{" "}
-                <a {...publicLink(WAITLIST_HREF)} data-testid="download-waitlist" className="text-fg underline underline-offset-4 hover:no-underline">
-                  {t("Join the waitlist")}
-                </a>
-              </>
+              t("No account yet? Sign-up is closed for now: join the waitlist.")
             ) : signup === "invite" ? (
               t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })
             ) : (
@@ -524,9 +519,15 @@ function End({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) {
             </a>
           ) : (
             <>
-              <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
-                {t("Get started")}
-              </a>
+              {signup === "closed" ? (
+                <a {...publicLink(WAITLIST_HREF)} data-testid="download-waitlist" className={secondary}>
+                  {t("Join the waitlist")}
+                </a>
+              ) : (
+                <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
+                  {t("Get started")}
+                </a>
+              )}
               <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
                 {t("Sign in")}
               </a>

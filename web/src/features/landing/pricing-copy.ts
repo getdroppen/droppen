@@ -92,6 +92,7 @@ export const pricingZhCN: Bundle = {
 
   // Waitlist
   "Leave your address, and we'll write when it's your turn.": "留下邮箱，轮到你时我们写信给你。",
+  "Leave your address, and we'll write when sign-up or Pro opens.": "留下邮箱，开放注册或 Pro 开卖时我们写信给你。",
   "Leave your address, and we'll write when Pro opens.": "留下邮箱，Pro 开放时我们写信给你。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 还没开卖，付款功能正在准备中。提交表单就算加入，不用再确认。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
@@ -142,8 +143,8 @@ export const pricingZhCN: Bundle = {
   "If you joined the waitlist": "如果你加入了等候名单",
   "What we keep, and why": "我们保存什么、为什么",
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的邮箱地址、你在等的方案（免费版或 Pro）、页面语言，以及加入的时间。",
-  "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
-    "只用来给你发邀请，或在 Pro 开放时通知你。不会发别的邮件，你的邮箱也绝不出售、不用于营销。",
+  "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
+    "只用来给你发邀请，或在开放注册、Pro 开放时通知你。不会发别的邮件，你的邮箱也绝不出售、不用于营销。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
     "不保存你的 IP 地址，也不保存浏览器的任何其他信息；不过托管服务商的边缘日志会记录你的 IP 地址和 User-Agent（见下文）。为防止滥用，服务器会在内存里按网络计数请求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎么退出",
@@ -278,6 +279,7 @@ export const pricingZhTW: Bundle = {
     "裝置關機超過這個天數，它在雲端的副本會被刪除：裝置上的紀錄不受影響，重新上線後會自動補回最近 {{free}} 天（Pro 為 {{pro}} 天）。",
 
   "Leave your address, and we'll write when it's your turn.": "留下電子郵件，輪到你時我們寫信給你。",
+  "Leave your address, and we'll write when sign-up or Pro opens.": "留下電子郵件，開放註冊或 Pro 開賣時我們寫信給你。",
   "Leave your address, and we'll write when Pro opens.": "留下電子郵件，Pro 開放時我們寫信給你。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 還沒開賣，付款功能正在準備中。送出表單就算加入，不用再確認。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
@@ -326,8 +328,8 @@ export const pricingZhTW: Bundle = {
   "If you joined the waitlist": "如果你加入了等候名單",
   "What we keep, and why": "我們保存什麼、為什麼",
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的電子郵件地址、你在等的方案（免費版或 Pro）、頁面語言，以及加入的時間。",
-  "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
-    "只用來寄邀請給你，或在 Pro 開放時通知你。不會寄別的信，你的信箱也絕不出售、不用於行銷。",
+  "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
+    "只用來寄邀請給你，或在開放註冊、Pro 開放時通知你。不會寄別的信，你的信箱也絕不出售、不用於行銷。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
     "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊；不過託管服務商的邊緣日誌會記錄你的 IP 位址和 User-Agent（見下文）。為防止濫用，伺服器會在記憶體裡按網路計數請求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎麼退出",
@@ -462,10 +464,11 @@ export const pricingJa: Bundle = {
     "それより長く電源が切れたデバイスは、クラウド上のコピーが削除されます。デバイス内の記録はそのままで、オンラインに戻ると直近 {{free}} 日分（Pro は {{pro}} 日分）が自動で戻ります。",
 
   "Leave your address, and we'll write when it's your turn.": "メールアドレスを残してください。順番が来たらご連絡します。",
+  "Leave your address, and we'll write when sign-up or Pro opens.": "メールアドレスを残してください。新規登録の受付を再開したら、または Pro が始まったらご連絡します。",
   "Leave your address, and we'll write when Pro opens.": "メールアドレスを残してください。Pro が始まったらご連絡します。",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro はまだ販売していません。お支払いの仕組みを準備中です。フォームを送信するだけで登録完了です。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
-    "現在は新規登録を停止しており、Pro もまだ販売していません。待っているものを選んでください。登録の再開か Pro の開始を、メールでお知らせします。フォームを送信するだけで登録完了です。",
+    "現在は新規登録を停止しており、Pro もまだ販売していません。待っているものを選んでください。新規登録の受付を再開したら、または Pro が始まったら、メールでお知らせします。フォームを送信するだけで登録完了です。",
   "Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.":
     "Droppen は招待制ベータのため登録には招待コードが必要で、Pro もまだ販売していません。待っているものを選んでください。招待をメールでお送りするか、Pro の開始をお知らせします。フォームを送信するだけで登録完了です。",
   "Plan": "プラン",
@@ -478,7 +481,7 @@ export const pricingJa: Bundle = {
   "Could not reach Droppen. Check your connection and try again.": "Droppen に接続できませんでした。接続を確認してもう一度お試しください。",
   "You're on the list: we'll e-mail you when Pro opens.": "登録しました。Pro が始まったらメールでお知らせします。",
   "You're on the list: we'll e-mail you an invite.": "登録しました。招待をメールでお送りします。",
-  "You're on the list: we'll e-mail you when sign-up opens.": "登録しました。新規登録が始まったらメールでお知らせします。",
+  "You're on the list: we'll e-mail you when sign-up opens.": "登録しました。新規登録の受付を再開したらメールでお知らせします。",
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "それ以外のメールは送りません。リストから外れたい場合は {{email}} までご連絡ください。",
   "Add another address": "別のアドレスを登録",
 
@@ -510,8 +513,8 @@ export const pricingJa: Bundle = {
   "If you joined the waitlist": "ウェイトリストに登録した方へ",
   "What we keep, and why": "保管するものとその理由",
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "メールアドレス、お待ちのプラン（無料または Pro）、ページの言語、登録した日時。",
-  "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
-    "用途は招待のお送りと Pro 開始のお知らせだけです。それ以外のメールは送らず、アドレスを販売したりマーケティングに使ったりすることもありません。",
+  "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
+    "用途は招待のお送りと、新規登録の受付再開や Pro 開始のお知らせだけです。それ以外のメールは送らず、アドレスを販売したりマーケティングに使ったりすることもありません。",
   "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
     "IP アドレスやブラウザに関する情報は保管しません。ただし、ホスティング事業者のエッジのログには IP アドレスと User-Agent が記録されます（下記参照）。不正利用を防ぐため、サーバーはネットワークごとのリクエスト数をメモリ上で数えますが、保持は最長 1 日です。",
   "How long, and how to be taken off": "保管期間と削除の方法",

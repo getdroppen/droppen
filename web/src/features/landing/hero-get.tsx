@@ -1,13 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { Download } from "lucide-react";
 import { primary, secondary } from "@/features/cloud/ui";
+import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
 import { CommandLine } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
-import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
+import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The home page hero's actions, for the device reading it (`detect.ts`,
@@ -56,8 +57,12 @@ function ReleaseLink({ release }: { release: LatestRelease | null | undefined })
   );
 }
 
-/** The account's ways in: signed out, sign up and sign in; signed in, back into the app. `lead`: the hero's primary action is the first. */
-function Account({ signedIn, lead }: { signedIn: boolean; lead: boolean }) {
+/**
+ * The account's ways in: signed out, sign up (where sign-up is closed, the
+ * waitlist) and sign in; signed in, back into the app. `lead`: the hero's
+ * primary action is the first.
+ */
+function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
   const { t } = useTranslation();
   const first = lead ? { "data-variant": "primary", className: primary } : { className: secondary };
   if (signedIn) {
@@ -76,8 +81,8 @@ function Account({ signedIn, lead }: { signedIn: boolean; lead: boolean }) {
   }
   return (
     <>
-      <a {...publicLink(SIGN_UP_PATH)} {...first}>
-        {t("Get started")}
+      <a {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)} {...first}>
+        {closed ? t("Join the waitlist") : t("Get started")}
       </a>
       <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
         {t("Sign in")}
@@ -93,7 +98,7 @@ const small = "font-mono text-2xs leading-5 text-faint";
 /**
  * The hero's actions for `offer`. `release`: the latest release as the hub
  * names it (`undefined` while asked, `null`: none); `cpu`: the processor,
- * for Linux.
+ * for Linux; `signup`: the hub's sign-up mode (`signup-mode.ts`).
  */
 export function HeroGet({
   offer,
@@ -101,14 +106,17 @@ export function HeroGet({
   availability,
   release,
   cpu,
+  signup = "open",
 }: {
   offer: HeroOffer;
   signedIn: boolean;
   availability: Availability;
   release: LatestRelease | null | undefined;
   cpu: string | null;
+  signup?: SignupMode;
 }) {
   const { t } = useTranslation();
+  const closed = signup === "closed";
   const dmg = release?.files.macos;
   return (
     <div data-testid="hero-get" data-offer={offer} className="mt-8 flex flex-col gap-3">
@@ -120,7 +128,7 @@ export function HeroGet({
               <Download className="size-3.5" />
               {t("Download for Mac")}
             </a>
-            <Account signedIn={signedIn} lead={false} />
+            <Account signedIn={signedIn} lead={false} closed={closed} />
           </div>
           <p className={small}>
             {release && dmg && <span data-testid="hero-file-facts">{fileFacts(release, dmg)} · </span>}
@@ -139,14 +147,14 @@ export function HeroGet({
             <LinuxTarballs release={release} cpu={cpu} testId="hero-tarballs" />
           </div>
           <div className={row}>
-            <Account signedIn={signedIn} lead={false} />
+            <Account signedIn={signedIn} lead={false} closed={closed} />
           </div>
         </>
       )}
       {offer === "windows" && (
         <>
           <div className={row}>
-            <Account signedIn={signedIn} lead />
+            <Account signedIn={signedIn} lead closed={closed} />
           </div>
           <p data-testid="hero-windows" className={note}>
             {t("No Windows app yet. Droppen works in this browser: watch and answer your AI from here, while it runs on a Mac or a Linux server.")}{" "}
@@ -157,7 +165,7 @@ export function HeroGet({
       {offer === "phone" && (
         <>
           <div className={row}>
-            <Account signedIn={signedIn} lead />
+            <Account signedIn={signedIn} lead closed={closed} />
           </div>
           <p data-testid="hero-phone" className={note}>
             {t("On your phone, Droppen works in the browser: open {{app}} and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.", { app: appHost() })}{" "}
@@ -168,7 +176,7 @@ export function HeroGet({
       {offer === "all" && (
         <>
           <div className={row}>
-            <Account signedIn={signedIn} lead />
+            <Account signedIn={signedIn} lead closed={closed} />
           </div>
           <p data-testid="hero-all" className={small}>
             {t("Get Droppen:")}{" "}

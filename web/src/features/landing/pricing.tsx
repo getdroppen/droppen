@@ -303,7 +303,13 @@ function Waitlist({
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <SectionHead
           label={t("Waitlist")}
-          title={onPlan ? t("Leave your address, and we'll write when it's your turn.") : t("Leave your address, and we'll write when Pro opens.")}
+          title={
+            signup === "invite"
+              ? t("Leave your address, and we'll write when it's your turn.")
+              : signup === "closed"
+                ? t("Leave your address, and we'll write when sign-up or Pro opens.")
+                : t("Leave your address, and we'll write when Pro opens.")
+          }
           lead={
             signup === "invite"
               ? t("Sign-up is invite-only while Droppen is in beta, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you an invite, or tell you when Pro opens. Submitting the form is all it takes.")

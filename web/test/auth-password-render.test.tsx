@@ -212,6 +212,8 @@ test("sign-up: the hub could not be asked, then refused for want of an invite â€
     assert.deepEqual(sent, [undefined]);
     // Refused: asked again, and now the field is the required one, first.
     await until(() => asked === 2 && byTestId("auth-invite") !== null && !words().includes("invite code (optional)"));
+    await flush(100);
+    assert.equal(asked, 2, "asked again once, not on and on");
     assert.ok(words().includes("that invite code is unknown, used up or expired"));
     assert.equal(byTestId("show-invite"), null);
     assert.ok(byTestId("password-submit")?.hasAttribute("disabled"), "blocked without a code");

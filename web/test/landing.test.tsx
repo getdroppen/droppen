@@ -193,6 +193,11 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>Join the waitlist<\/a>/);
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
   assert.ok(text(closed).includes("Beta"));
+  // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
+  assert.doesNotMatch(closed, /href="\/signup"|Get started/);
+  assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>Join the waitlist<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
+  assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
+  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Get started<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
     assert.ok(words.includes(line), `${lng}: ${line}`);

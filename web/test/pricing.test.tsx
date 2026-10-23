@@ -255,13 +255,14 @@ test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite c
   for (const line of [
     "Sign-up is closed for now",
     "Free; sign-up is closed for now",
-    "Leave your address, and we'll write when it's your turn.",
+    "Leave your address, and we'll write when sign-up or Pro opens.",
     "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /invite/i);
   assert.doesNotMatch(html, /href="\/signup"[^>]*data-testid="plan-free-signup"/, "nothing to sign up with");
+  assert.doesNotMatch(words, /your turn/, "no queue: sign-up is closed, not rationed");
   assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/);
   // Pro's button leads the plans, as by invite; the form offers both plans.
   assert.match(part(html, "plans", "compare"), /data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/);
@@ -455,7 +456,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   const words = text(html);
   for (const line of [
     "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.",
-    "We use them only to e-mail you an invite, or to tell you when Pro opens.",
+    "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens.",
     "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below).",
     "never more than 12 months after you last joined: older entries are deleted automatically.",
     `To be taken off, write to ${PRIVACY_EMAIL} from that address and we will delete it.`,

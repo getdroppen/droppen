@@ -89,7 +89,7 @@ function Hero({
             {t("Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.")}
           </p>
           {/* The way onto this device, and the account's ways in (signed in: back into the app). */}
-          <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} />
+          <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
           {/* Below 640px the header has no room for its pricing link: this line is the way there. */}
           {!signedIn &&
             (signup === "invite" ? (
@@ -253,7 +253,7 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
             <div className="flex flex-col gap-3">
               <CapsLabel>{signup === "invite" ? t("Invite-only beta") : signup === "closed" ? t("Beta") : t("Public beta")}</CapsLabel>
               <p className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{t("Your AI keeps working. You can walk away.")}</p>
-              {/* Closed: nothing to sign up with (the hero says so, and offers the waitlist). */}
+              {/* Closed: no sign-up to describe; the way in below is the waitlist. */}
               {signup !== "closed" && (
                 <p className="text-sm leading-6 text-muted">
                   {signup === "invite"
@@ -263,8 +263,8 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
               )}
             </div>
             <div className="flex flex-wrap gap-3">
-              <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
-                {t("Get started")}
+              <a {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)} className={secondary}>
+                {signup === "closed" ? t("Join the waitlist") : t("Get started")}
               </a>
               <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
                 {t("Sign in")}
