@@ -138,12 +138,16 @@ desktop/build.sh --ref v$VERSION --sidecar /tmp/droppen-sidecar/droppen
 desktop/notarise.sh /tmp/droppen-desktop-release $VERSION
 # 4. The updater's files, from the stapled app.
 desktop/updater-artifacts.sh /tmp/droppen-desktop-release/Droppen.app $VERSION --out /tmp/droppen-desktop-release/updater
-# 5. Published: a draft, latest.json uploaded last, then the latest release.
+# 5. The server's checksums signed with the release key, which install.sh pins
+#    (docs/releasing.md, "The release key"); publish-release.sh refuses without it.
+openssl dgst -sha256 -sign ~/.config/droppen/install-signing.pem \
+  -out /tmp/droppen-public-release/SHA256SUMS-server.sig /tmp/droppen-public-release/SHA256SUMS
+# 6. Published: a draft, latest.json uploaded last, then the latest release.
 scripts/publish-release.sh v$VERSION --server /tmp/droppen-public-release --desktop /tmp/droppen-desktop-release --dry-run
 scripts/publish-release.sh v$VERSION --server /tmp/droppen-public-release --desktop /tmp/droppen-desktop-release
 ```
 
-A release without a new desktop app (a server-only fix) is steps 1 and 5,
+A release without a new desktop app (a server-only fix) is steps 1, 5 and 6,
 without `--desktop`: `scripts/publish-release.sh` then carries the latest
 release's `latest.json` forward ([Rules for a release](#rules-for-a-release)).
 
@@ -292,6 +296,7 @@ one for the release that needs it:
    ```sh
    desktop/updater-artifacts.sh "$APP" N --out "$OUT/updater" \
      --key ~/.config/droppen/tauri-updater.key --verify-pubkey ~/.config/droppen/tauri-updater.key.pub
+   openssl dgst -sha256 -sign ~/.config/droppen/install-signing.pem -out …/SHA256SUMS-server.sig …/SHA256SUMS
    scripts/publish-release.sh vN --server … --desktop "$OUT" --verify-pubkey ~/.config/droppen/tauri-updater.key.pub
    ```
 

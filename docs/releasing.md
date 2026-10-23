@@ -310,7 +310,9 @@ SUMS_KEY='-----BEGIN PUBLIC KEY-----
 `scripts/install-key.sh scripts/install.sh` must print it back. From the
 first run on a commit with the key pinned, `release` refuses to run without
 the secret, and a key that is not the pinned one. Keep a copy of the private
-key offline; it is not needed anywhere else.
+key offline as well. A release made by hand
+(`desktop/SIGNING.md`, "Making a release") signs with it too, from
+`~/.config/droppen/install-signing.pem` on the release Mac.
 
 **Rotating it**: a new key pair, the secret replaced, the new public key in
 `install.sh`, then a release. Each release's `install.sh` checks that
