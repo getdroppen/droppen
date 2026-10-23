@@ -23,7 +23,9 @@
 //! 1. Decrypt it under the binding `account | device | machine`.
 //! 2. Apply the hello's chain entries it lacks (signatures and rules checked as
 //!    for any entry). An entry that conflicts with what it has is a **fork** —
-//!    refuse, and alert every device.
+//!    refuse, and alert every device — when the hello comes from a current,
+//!    active device under its own key; from anyone else (a removed or pending
+//!    device included) it is a plain refusal.
 //! 3. If the device has seen further than the agent can now reach, reply
 //!    "send entries from N" and stop: the agent will not authorise anyone
 //!    against a view a device has proved stale.
@@ -377,13 +379,16 @@ fn accept_with_prologue(agent: AgentSide<'_>, device: &str, prologue: &[u8], mes
     let hello = responder.read_hello(message)?;
     let body = HelloBody::decode(&hello.payload)?;
 
-    // A fork is an alarm every device hears about — but only from a device
-    // whose key the chain names: the hub (or anyone) can send a hello under
-    // any device id and chain view, and must not be able to raise alarms at
-    // will (M2 re-review N3). From anyone else a conflict is a refusal.
-    let named = |chain: &ChainState| chain.device_record(device).is_some_and(|d| d.info.dh_key == hello.initiator_static);
+    // A fork is an alarm every device hears about — but only from a current,
+    // active device under its own key: the hub (or anyone) can send a hello
+    // under any device id and chain view, and must not be able to raise
+    // alarms at will (M2 re-review N3). Neither may a removed device that
+    // kept its key, nor a pending one: the chain does not admit them, so
+    // their view of it does not count either. From anyone else a conflict is
+    // a refusal, the same one an unauthorised hello gets.
+    let current = |chain: &ChainState| chain.authorize_device(device, &hello.initiator_static).is_ok();
     let fork = |chain: &ChainState, seq: u64| -> HandshakeError {
-        if named(chain) {
+        if current(chain) {
             ChainError::Fork { seq }.into()
         } else {
             HandshakeError::Unauthorized
@@ -872,7 +877,7 @@ mod tests {
 
     /// M2 re-review N3: the hub can send a hello under any device id with any
     /// chain view; a conflict it fakes is a refusal, not an alarm to every
-    /// device. Only a hello under a key the chain names raises one.
+    /// device. Only a hello under a current device's own key raises one.
     #[test]
     fn only_a_device_the_chain_names_can_raise_a_fork_alarm() {
         let f = fixture();
@@ -944,6 +949,88 @@ mod tests {
             Some(HandshakeError::Unauthorized)
         );
         assert!(agent.guard.snapshot().is_empty(), "the guard was never touched");
+    }
+
+    /// A hello under `key` for `device` that claims the view `(seq, head)` and
+    /// carries no entries.
+    fn hello_claiming(chain: &ChainState, key: &DhKeypair, device: &str, seq: u64, head: [u8; 32]) -> Vec<u8> {
+        let binding = Binding {
+            account: chain.account().into(),
+            device: device.into(),
+            machine: "m-1".into(),
+        };
+        let mut initiator = Initiator::new(key, &chain.machine("m-1").unwrap().info.dh_key, &binding).unwrap();
+        let body = HelloBody {
+            chain_seq: seq,
+            chain_head: head,
+            entries: vec![],
+            client: vec![],
+        };
+        initiator.write_hello(1_000, &body.encode().unwrap()).unwrap()
+    }
+
+    /// A removed device keeps its key, and a pending one holds its own; the
+    /// chain admits neither, so a view of theirs that conflicts with the
+    /// agent's — a claimed head or a conflicting entry — gets the refusal any
+    /// unauthorised hello gets, never a fork alarm. The same conflict from a
+    /// current device still is one.
+    #[test]
+    fn a_removed_or_pending_devices_conflicting_view_is_a_refusal_not_a_fork_alarm() {
+        let f = fixture();
+        let entries = sample_chain(&f);
+        // dev-1 was removed at seq 4; dev-r joins with the recovery key at
+        // seq 5 and stays pending.
+        let mut agent_view = ChainState::verify(&entries, None, &mut h()).unwrap();
+        let join = |chain: &ChainState| {
+            chain
+                .draft(Signer::Recovery, Action::RecoveryJoin(crate::chain::tests::recovered_device(&f)), 6_000)
+                .sign(&f.recovery.signing)
+        };
+        agent_view.apply(&join(&agent_view), &mut h()).unwrap();
+        assert!(matches!(
+            agent_view.device_record("dev-r").map(|d| d.status),
+            Some(crate::chain::DeviceStatus::Pending { .. })
+        ));
+        // A view whose seq 4 differs from the agent's, signed as any entry is,
+        // and that view with dev-r's join on top.
+        let mut forked = ChainState::verify(&entries[..4], None, &mut h()).unwrap();
+        forked
+            .apply(
+                &forked
+                    .draft(Signer::Device("dev-0".into()), Action::RemoveDevice("dev-2".into()), 9)
+                    .sign(&f.devices[0].0),
+                &mut h(),
+            )
+            .unwrap();
+        let mut forked_pending = forked.clone();
+        forked_pending.apply(&join(&forked), &mut h()).unwrap();
+
+        let mut agent = Agent::new(vec![], 8);
+        let removed = (&f.devices[1].1, "dev-1", &forked);
+        let pending = (&f.devices[3].1, "dev-r", &forked_pending);
+        for (key, id, view) in [removed, pending] {
+            // A conflicting entry in the hello.
+            let (_, hello) = start(view, key, id, "m-1", 1_000, b"").unwrap();
+            // Only a claimed head at a seq the agent has.
+            let claimed = hello_claiming(&agent_view, key, id, 2, [0xaa; 32]);
+            for (what, hello) in [("entry", hello), ("head", claimed)] {
+                let err = accept(agent.side(&mut agent_view, &f.machine.1), id, &hello, 1_000).err().unwrap();
+                assert_eq!(err, HandshakeError::Unauthorized, "{id}: {what}");
+                assert!(!err.is_alarm(), "{id}: {what}");
+            }
+        }
+        assert_eq!(agent_view.seq(), 5, "nothing was merged");
+        assert!(agent.guard.snapshot().is_empty(), "the guard was never touched");
+
+        // From current dev-0 under its own key, both conflicts are the alarm they are.
+        let (_, hello) = start(&forked, &f.devices[0].1, "dev-0", "m-1", 1_000, b"").unwrap();
+        let claimed = hello_claiming(&agent_view, &f.devices[0].1, "dev-0", 2, [0xaa; 32]);
+        for hello in [hello, claimed] {
+            assert!(accept(agent.side(&mut agent_view, &f.machine.1), "dev-0", &hello, 1_000)
+                .err()
+                .unwrap()
+                .is_alarm());
+        }
     }
 
     /// The hub channel's transports for dev-0 and a direct binding grown from it.
