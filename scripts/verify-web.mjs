@@ -2,10 +2,14 @@
 // Check that a site serves the attested open-source web build, byte for byte
 // (docs/web-integrity.md). Node >= 20, no dependencies, no credentials.
 //
-//   node scripts/verify-web.mjs                        droppen.app, against the release
-//                                                      whose manifest has the digest
-//                                                      the site reports
-//   node scripts/verify-web.mjs --site URL             another hub (or a local one)
+//   node scripts/verify-web.mjs                        droppen.app's three hosts —
+//                                                      my.droppen.app (the app),
+//                                                      www.droppen.app (the site) and
+//                                                      droppen.app — each against the
+//                                                      release whose manifest has the
+//                                                      digest it reports
+//   node scripts/verify-web.mjs --site URL             another hub (or a local one);
+//                                                      repeat it for each of its hosts
 //   node scripts/verify-web.mjs --release v0.2.109     against that release's manifest
 //   node scripts/verify-web.mjs --manifest FILE|URL    against a manifest you built
 //                                                      yourself (scripts/web-manifest.mjs)
@@ -33,20 +37,31 @@
 //      signed) is checked through the signer repository's release of the same
 //      tag: its manifest, which must have the same digest, and that
 //      manifest's bundle;
-//   3. fetches every file the manifest lists, and the shell at a few routes,
-//      and compares sha256s. The shell is compared after removing the one
+//   3. fetches every file the manifest lists, and the shell at the routes any
+//      host serves it on (the app's `/`, `/link`, `/signin`, `/sessions`,
+//      `/move`; the site's `/security`, `/download`), and compares sha256s.
+//      Nothing is followed: an answer that redirects passes only when it
+//      sends the browser to the same path on another site this run checks,
+//      where that is checked in turn (droppen.app's `/` goes to www, www's
+//      `/link` to my). The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
 //      after `<head>`, whose origin — where the page signs in and sends all
-//      hub traffic — must be the site's own (or a --hub-origin). Every page's
-//      Content-Security-Policy may let scripts (elements and attributes) run
-//      only from the site itself and the pages' own inline scripts;
+//      hub traffic — must be that host's own (or a --hub-origin). Every page's
+//      Content-Security-Policy, on every host, may let scripts (elements and
+//      attributes) run only from the host itself and the pages' own inline
+//      scripts;
 //   4. reads the integrity table in the attested `sw.js` — the sha256 of every
 //      asset and of the shell, which the service worker checks the browser's
 //      cache against, and the shell's inline scripts its offline shell is
 //      served with — and fails unless it is the manifest's files exactly, or
-//      when the worker has no table at all.
+//      when the worker has no table at all. `/sw.js`, fetched as the browser
+//      does and as a browser's update check does (`Service-Worker: script`),
+//      must be that worker, or the retiring worker a host that holds no app
+//      serves instead (it empties the caches and unregisters itself), byte
+//      for byte.
 //
-// Exit status: 0 pass, 1 fail, 2 could not check.
+// Each site is checked on its own, one after the other.
+// Exit status: 0 pass, 1 fail (any site), 2 could not check (and none failed).
 //
 // For tests only: DROPPEN_VERIFY_GITHUB_API and DROPPEN_VERIFY_GITHUB replace
 // https://api.github.com and https://github.com.
@@ -64,8 +79,22 @@ import { fileURLToPath } from "node:url";
 const FORMAT = "droppen-web-manifest/1";
 const BUILD_INFO = "/.well-known/droppen-build";
 const BUNDLE_ASSET = "web-manifest.sigstore.json";
-/** Client-side routes the hub answers with the shell; each must be it too. */
-const SHELL_ROUTES = ["/", "/link", "/signin"];
+/** The sites checked when none is named: droppen.app's app, site and apex hosts. */
+const DEFAULT_SITES = ["https://my.droppen.app", "https://www.droppen.app", "https://droppen.app"];
+/**
+ * Client-side routes a hub answers with the shell on one host or another —
+ * the app's and the site's; on each site each must be the shell, or a
+ * redirect to the same path on another site this run checks.
+ */
+const SHELL_ROUTES = ["/", "/link", "/signin", "/sessions", "/move", "/security", "/download"];
+/**
+ * What a host that holds no app (droppen.app once the app moved, www) serves
+ * at `/sw.js`, and every host for a worker fetched from anywhere else: a
+ * worker that empties the origin's caches and unregisters itself, touching
+ * nothing else (docs/web-integrity.md). Accepted at `/sw.js` byte for byte only.
+ */
+export const RETIRING_WORKER =
+  'self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",e=>e.waitUntil((async()=>{for(const k of await caches.keys())await caches.delete(k);await self.registration.unregister();})()));\n';
 // Nothing about whoever runs this goes out: no cookies, no tokens, this header.
 const HEADERS = { "user-agent": "droppen-verify-web/1" };
 const GITHUB_API = process.env.DROPPEN_VERIFY_GITHUB_API || "https://api.github.com";
@@ -79,7 +108,7 @@ class Unchecked extends Error {}
 
 function parseArgs(argv) {
   const opts = {
-    site: "https://droppen.app",
+    sites: [],
     // The release files live in the public binaries repository; the workflow
     // that builds and attests them runs in the source repository.
     repo: "getdroppen/droppen",
@@ -90,7 +119,6 @@ function parseArgs(argv) {
     hubOrigins: [],
   };
   const valued = {
-    "--site": "site",
     "--repo": "repo",
     "--signer-repo": "signerRepo",
     "--release": "release",
@@ -103,6 +131,9 @@ function parseArgs(argv) {
     if (a in valued) {
       if (argv[i + 1] === undefined) throw new Unchecked(`${a} needs a value`);
       opts[valued[a]] = argv[++i];
+    } else if (a === "--site") {
+      if (argv[i + 1] === undefined) throw new Unchecked(`${a} needs a value`);
+      opts.sites.push(argv[++i]);
     } else if (a === "--hub-origin") {
       if (argv[i + 1] === undefined) throw new Unchecked(`${a} needs a value`);
       opts.hubOrigins.push(argv[++i].toLowerCase());
@@ -111,8 +142,16 @@ function parseArgs(argv) {
     else if (a === "-h" || a === "--help") opts.help = true;
     else throw new Unchecked(`unknown argument ${a} (see --help)`);
   }
-  opts.site = opts.site.replace(/\/+$/, "");
-  if (!/^https?:\/\/[^/]+$/.test(opts.site)) throw new Unchecked(`--site must be an origin like https://droppen.app, not ${opts.site}`);
+  if (!opts.sites.length) opts.sites = [...DEFAULT_SITES];
+  opts.sites = [
+    ...new Set(
+      opts.sites.map((site) => {
+        const bare = site.replace(/\/+$/, "");
+        if (!/^https?:\/\/[^/?#@]+$/.test(bare)) throw new Unchecked(`--site must be an origin like https://droppen.app, not ${site}`);
+        return new URL(bare).origin;
+      }),
+    ),
+  ];
   if (!/^[\w.-]+\/[\w.-]+$/.test(opts.repo)) throw new Unchecked(`--repo must be OWNER/NAME`);
   if (!/^[\w.-]+\/[\w.-]+$/.test(opts.signerRepo)) throw new Unchecked(`--signer-repo must be OWNER/NAME`);
   if (opts.release && opts.manifest) throw new Unchecked("give --release or --manifest, not both");
@@ -124,18 +163,18 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function get(url, { json = false, optional = false } = {}) {
+async function get(url, { json = false, optional = false, headers = {} } = {}) {
   let res;
   try {
     // Never follow a redirect: what is checked is what this origin serves.
-    res = await fetch(url, { headers: { ...HEADERS, "cache-control": "no-cache" }, redirect: "manual" });
+    res = await fetch(url, { headers: { ...HEADERS, "cache-control": "no-cache", ...headers }, redirect: "manual" });
   } catch (error) {
     throw new Unchecked(`${url}: ${error.cause?.message ?? error.message}`);
   }
   if (optional && res.status === 404) return null;
   if (res.status !== 200) {
     const where = res.headers.get("location");
-    throw Object.assign(new Error(`${url}: HTTP ${res.status}${where ? ` → ${where}` : ""}`), { status: res.status });
+    throw Object.assign(new Error(`${url}: HTTP ${res.status}${where ? ` → ${where}` : ""}`), { status: res.status, location: where });
   }
   const body = Buffer.from(await res.arrayBuffer());
   return json ? JSON.parse(body.toString("utf8")) : { body, headers: res.headers };
@@ -265,6 +304,23 @@ export function unmark(html) {
   const m = /^([\s\S]*?<head>)<meta name="rh-hub" content="(wss?:\/\/[A-Za-z0-9.:[\]-]+)" \/>/.exec(text);
   if (!m || m[1].indexOf("<head>") !== m[1].length - "<head>".length) return { body: html, origin: null };
   return { body: Buffer.concat([html.subarray(0, m[1].length), html.subarray(m[0].length)]), origin: m[2] };
+}
+
+/**
+ * The site a redirect from `path` on `site` sends the browser to, when it is
+ * the same path (and query) on another of `sites` — which this run checks, so
+ * what the browser gets there is checked too; `null` for anywhere else.
+ */
+export function checkedRedirect(location, site, path, sites) {
+  if (!location) return null;
+  let to;
+  try {
+    to = new URL(location, `${site}${path}`);
+  } catch {
+    return null;
+  }
+  if (to.origin === new URL(site).origin || !sites.includes(to.origin)) return null;
+  return `${to.pathname}${to.search}` === path ? to.origin : null;
 }
 
 /** The hub origin a site's own pages name: `wss://` for https, `ws://` for http. */
@@ -406,29 +462,20 @@ async function pool(items, limit, work) {
   return results;
 }
 
-async function main(argv) {
-  const opts = parseArgs(argv);
-  if (opts.help) {
-    console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.slice(3)).join("\n"));
-    return 0;
-  }
+/**
+ * The attested manifest for a site that says it serves `served` (or the one
+ * named), with its attestation checked: `{manifest, manifestBytes, source,
+ * attestation, failures}`. The same for every site that says the same, so it
+ * is worked out once a run (`memo`).
+ */
+function attested(opts, served, memo) {
+  const key = opts.manifest || opts.release ? "named" : served;
+  if (!memo.has(key)) memo.set(key, findAttested(opts, served));
+  return memo.get(key);
+}
+
+async function findAttested(opts, served) {
   const failures = [];
-  const notes = [];
-  console.log(`droppen web integrity check`);
-  console.log(`  site:        ${opts.site}`);
-
-  // 1. Which build the site says it serves.
-  let info = null;
-  try {
-    info = await get(`${opts.site}${BUILD_INFO}`, { json: true, optional: true });
-  } catch (error) {
-    if (error instanceof Unchecked) throw error;
-    notes.push(`${BUILD_INFO}: ${error.message}`);
-  }
-  const served = typeof info?.web?.digest === "string" ? info.web.digest : null;
-  console.log(`  serves:      ${served ? `${served} (${info.web.files} files)` : "(not reported)"}${info?.commit ? `, built from ${info.commit}` : ""}`);
-
-  // 2. The attested manifest to compare with.
   let manifestBytes, bundleBytes, source;
   let tag = null;
   let missing = null;
@@ -439,13 +486,7 @@ async function main(argv) {
     source = opts.manifest;
   } else {
     const found = await releaseManifest(opts, served);
-    if (!found) {
-      console.log(`  manifest:    none of the last ${opts.releases} releases of ${opts.repo} has ${served}`);
-      console.log(
-        `\nFAIL: the site serves a build no release attests.${info?.commit ? ` To check it anyway, build ${info.commit} yourself (docs/web-integrity.md) and pass --manifest.` : ""}`,
-      );
-      return 1;
-    }
+    if (!found) return null;
     ({ tag, bytes: manifestBytes } = found);
     bundleBytes = await download(`${GITHUB}/${opts.repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`);
     source = `release ${tag} of ${opts.repo}`;
@@ -461,46 +502,131 @@ async function main(argv) {
     }
   }
   const manifest = checkManifest(JSON.parse(manifestBytes.toString("utf8")), source);
-  console.log(`  manifest:    ${source}: ${manifest.digest}${manifest.commit ? `, commit ${manifest.commit}` : ""}`);
-  if (served && served !== manifest.digest) failures.push(`the site says it serves ${served}, not the manifest's ${manifest.digest}`);
-  if (info?.commit && manifest.commit && !manifest.commit.startsWith(info.commit) && !info.commit.startsWith(manifest.commit))
-    notes.push(`the site was built from ${info.commit}, the manifest from ${manifest.commit}: the same web app if the digests agree`);
-
   // A release manifest came anonymously from a public repository, where every
   // release is attested: not checking it is a failure unless asked otherwise.
   const requireAttestation = opts.requireAttestation || (!opts.allowUnattested && (!opts.manifest || Boolean(opts.bundle)));
   const attestation = attest(opts, manifestBytes, bundleBytes, tag);
   if (!bundleBytes && missing) attestation.note = `not checked: ${missing}`;
-  console.log(`  attestation: ${attestation.note}`);
   if (attestation.failed) failures.push(`attestation ${attestation.note}`);
   else if (requireAttestation && !attestation.ok)
     failures.push(`attestation ${attestation.note}${opts.manifest ? "" : " (--allow-unattested accepts that)"}`);
+  return { manifest, source, attestation, failures };
+}
 
-  // 3. Every file, as served now.
+async function main(argv) {
+  const opts = parseArgs(argv);
+  if (opts.help) {
+    console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.slice(3)).join("\n"));
+    return 0;
+  }
+  console.log(`droppen web integrity check`);
+  const memo = new Map();
+  const outcomes = [];
+  for (const site of opts.sites) {
+    let code;
+    try {
+      code = await checkSite(opts, site, memo);
+    } catch (error) {
+      if (!(error instanceof Unchecked)) throw error;
+      console.log(`\ncould not check ${site}: ${error.message}`);
+      code = 2;
+    }
+    outcomes.push({ site, code });
+  }
+  if (opts.sites.length > 1) {
+    const said = { 0: "PASS", 1: "FAIL", 2: "could not check" };
+    console.log(`\nsummary:`);
+    for (const { site, code } of outcomes) console.log(`  ${said[code].padEnd(15)} ${site}`);
+  }
+  const codes = outcomes.map((o) => o.code);
+  return codes.includes(1) ? 1 : codes.includes(2) ? 2 : 0;
+}
+
+/** Check one site: 0 pass, 1 fail; throws `Unchecked` when it cannot be checked. */
+async function checkSite(opts, site, memo) {
+  const failures = [];
+  const notes = [];
+  console.log(`\n  site:        ${site}`);
+
+  // 1. Which build the site says it serves — or, for a host that sends
+  // everything on to another site of this run, which build that one serves.
+  let info = null;
+  try {
+    info = await get(`${site}${BUILD_INFO}`, { json: true, optional: true });
+  } catch (error) {
+    if (error instanceof Unchecked) throw error;
+    const to = error.status >= 300 && error.status < 400 ? checkedRedirect(error.location, site, BUILD_INFO, opts.sites) : null;
+    if (!to) notes.push(`${BUILD_INFO}: ${error.message}`);
+    else {
+      notes.push(`${BUILD_INFO} redirects to ${to}: the build that one serves`);
+      info = await get(`${to}${BUILD_INFO}`, { json: true, optional: true }).catch((e) => {
+        if (e instanceof Unchecked) throw e;
+        notes.push(`${to}${BUILD_INFO}: ${e.message}`);
+        return null;
+      });
+    }
+  }
+  const served = typeof info?.web?.digest === "string" ? info.web.digest : null;
+  console.log(`  serves:      ${served ? `${served} (${info.web.files} files)` : "(not reported)"}${info?.commit ? `, built from ${info.commit}` : ""}`);
+
+  // 2. The attested manifest to compare with.
+  if (!opts.manifest && !opts.release && !served)
+    throw new Unchecked(`the site does not say which build it serves; name one with --release or --manifest${notes.length ? ` (${notes.join("; ")})` : ""}`);
+  const found = await attested(opts, served, memo);
+  if (!found) {
+    console.log(`  manifest:    none of the last ${opts.releases} releases of ${opts.repo} has ${served}`);
+    console.log(
+      `\nFAIL: ${site} serves a build no release attests.${info?.commit ? ` To check it anyway, build ${info.commit} yourself (docs/web-integrity.md) and pass --manifest.` : ""}`,
+    );
+    return 1;
+  }
+  const { manifest, source, attestation } = found;
+  failures.push(...found.failures);
+  console.log(`  manifest:    ${source}: ${manifest.digest}${manifest.commit ? `, commit ${manifest.commit}` : ""}`);
+  if (served && served !== manifest.digest) failures.push(`the site says it serves ${served}, not the manifest's ${manifest.digest}`);
+  if (info?.commit && manifest.commit && !manifest.commit.startsWith(info.commit) && !info.commit.startsWith(manifest.commit))
+    notes.push(`the site was built from ${info.commit}, the manifest from ${manifest.commit}: the same web app if the digests agree`);
+  console.log(`  attestation: ${attestation.note}`);
+
+  // 3. Every file, as served now: the worker also as a browser's update
+  // check fetches it, and the shell at every route a host serves it on.
   const shell = manifest.files.find((f) => f.path === "index.html");
+  const swFile = manifest.files.find((f) => f.path === "sw.js");
   const checks = [
     ...manifest.files.map((f) => ({ url: `/${f.path.split("/").map(encodeURIComponent).join("/")}`, want: f, isShell: f.path === "index.html" })),
+    ...(swFile ? [{ url: "/sw.js", want: swFile, isShell: false, asWorker: true }] : []),
     ...SHELL_ROUTES.map((route) => ({ url: route, want: shell, isShell: true, route: true })),
   ];
-  const accepted = [siteHubOrigin(opts.site), ...opts.hubOrigins];
+  const accepted = [siteHubOrigin(site), ...opts.hubOrigins];
+  const retiring = sha256(RETIRING_WORKER);
   const policies = [];
   const attestedPages = [];
   const markerFailures = [];
   const origins = new Set();
+  const redirects = new Map();
+  let matched = 0;
+  const workers = new Set();
   let worker = null;
   let attestedShell;
   const results = await pool(checks, 6, async (c) => {
+    const label = c.asWorker ? `${c.url} (Service-Worker: script)` : c.url;
     let got;
     try {
-      got = await get(`${opts.site}${c.url}`);
+      got = await get(`${site}${c.url}`, c.asWorker ? { headers: { "service-worker": "script" } } : {});
     } catch (error) {
-      if (error instanceof Unchecked) return `unreachable ${c.url}: ${error.message}`;
+      if (error instanceof Unchecked) return `unreachable ${label}: ${error.message}`;
       // A route a static server does not answer is not a different shell.
       if (c.route && error.status === 404) {
         notes.push(`${c.url}: 404, not checked`);
         return null;
       }
-      return `${c.url}: ${error.message}`;
+      // Sent on to the same path on another site of this run: checked there.
+      const to = error.status >= 300 && error.status < 400 ? checkedRedirect(error.location, site, c.url, opts.sites) : null;
+      if (to) {
+        redirects.set(to, (redirects.get(to) ?? 0) + 1);
+        return null;
+      }
+      return `${label}: ${error.message}${error.status >= 300 && error.status < 400 ? " (not the same path on another site this run checks)" : ""}`;
     }
     let body = got.body;
     const page = c.isShell || c.want.path.endsWith(".html");
@@ -515,14 +641,28 @@ async function main(argv) {
     const hash = sha256(body);
     const same = hash === c.want.sha256;
     if (same && page) attestedPages.push(body);
-    if (same && c.want.path === "sw.js") worker = body;
+    if (same && c.want.path === "sw.js") {
+      worker = body;
+      workers.add("the app's");
+    }
     if (same && c.want.path === "index.html" && !c.route) attestedShell = body;
     if (wrongHub) markerFailures.push(`${c.url}: ${wrongHub}`);
-    return same ? null : `${c.url}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the rh-hub marker)" : ""}`;
+    // A host that holds no app retires the worker instead: that one, exactly.
+    if (!same && c.want.path === "sw.js" && hash === retiring) {
+      workers.add("the retiring");
+      matched++;
+      return null;
+    }
+    if (same) matched++;
+    return same ? null : `${label}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the rh-hub marker)" : ""}`;
   });
   const differing = results.filter(Boolean);
   failures.push(...differing, ...markerFailures.sort());
-  console.log(`  files:       ${checks.length - differing.length} of ${checks.length} match (${manifest.files.length} files, ${SHELL_ROUTES.length} shell routes)`);
+  const sent = [...redirects.values()].reduce((a, b) => a + b, 0);
+  const elsewhere = sent ? `${sent} redirect to ${[...redirects.keys()].join(", ")}, checked there` : "";
+  console.log(
+    `  files:       ${matched} of ${checks.length} match${elsewhere ? `, ${elsewhere}` : ""} (${manifest.files.length} files, the worker as a browser updates it, ${SHELL_ROUTES.length} shell routes)`,
+  );
   if (origins.size) console.log(`  marker:      rh-hub ${[...origins].join(", ")}`);
 
   // The worker's integrity table: what it lets out of the browser's cache.
@@ -538,6 +678,8 @@ async function main(argv) {
       console.log(`  worker:      ${problems.length ? `sw.js disagrees with the manifest in ${problems.length} place(s)` : `sw.js lists ${Object.keys(table.assets).length} assets and the shell, as the manifest has them`}`);
     }
   }
+  if (workers.has("the retiring"))
+    console.log(`  worker:      /sw.js is ${workers.size > 1 ? "the app's worker or " : ""}the retiring worker (it empties this host's caches and unregisters itself)`);
 
   // Every page's policy, read against the attested pages' inline scripts
   // (unknown when no page matched, and then the pages have failed already).
@@ -547,16 +689,16 @@ async function main(argv) {
     for (const v of verdicts.filter((v) => !v.ok)) failures.push(`${v.url}: Content-Security-Policy: ${v.note}`);
     const good = verdicts.filter((v) => v.ok);
     console.log(`  policy:      ${good.length} of ${verdicts.length} pages${good.length ? `: ${[...new Set(good.map((v) => v.note))].join("; ")}` : ""}`);
-  } else console.log(`  policy:      not checked: no served page matched`);
+  } else console.log(`  policy:      not checked: ${policies.length ? "no served page matched" : "no page served here"}`);
 
   for (const n of notes) console.log(`  note:        ${n}`);
   if (failures.length) {
-    console.log(`\nFAIL: ${opts.site} does not serve the attested build:`);
+    console.log(`\nFAIL: ${site} does not serve the attested build:`);
     for (const f of failures) console.log(`  - ${f}`);
     return 1;
   }
   console.log(
-    `\nPASS: every file ${opts.site} served just now is byte-identical to ${source}${attestation.ok ? ", whose attestation checks out" : " (attestation not checked)"}.`,
+    `\nPASS: every file ${site} served just now is byte-identical to ${source}${attestation.ok ? ", whose attestation checks out" : " (attestation not checked)"}${elsewhere ? `; ${elsewhere}` : ""}.`,
   );
   return 0;
 }

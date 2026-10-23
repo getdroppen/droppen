@@ -17,7 +17,7 @@ import { digestOf, filesOf, FORMAT, workerProblems as manifestWorkerProblems } f
 
 const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-web.mjs", import.meta.url));
 const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
-const { markerProblem, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
+const { checkedRedirect, markerProblem, RETIRING_WORKER, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
 const INLINE = "window.boot=1";
 const INLINE_HASH = `'sha256-${createHash("sha256").update(INLINE).digest("base64")}'`;
@@ -41,6 +41,30 @@ describe("the rh-hub marker", () => {
     assert.equal(markerProblem(origin, ["wss://droppen.app", "wss://evil.example"]), null);
     assert.equal(markerProblem("wss://DROPPEN.app", ["wss://droppen.app"]), null);
     assert.equal(markerProblem(null, ["wss://droppen.app"]), null, "no marker: the page talks to no hub");
+  });
+});
+
+describe("a redirect", () => {
+  const sites = ["https://my.droppen.app", "https://www.droppen.app", "https://droppen.app"];
+  test("to the same path on another site of the run is checked there", () => {
+    assert.equal(checkedRedirect("https://www.droppen.app/", "https://droppen.app", "/", sites), "https://www.droppen.app");
+    assert.equal(checkedRedirect("https://my.droppen.app/link", "https://www.droppen.app", "/link", sites), "https://my.droppen.app");
+    assert.equal(checkedRedirect("https://MY.droppen.app:443/signin", "https://droppen.app", "/signin", sites), "https://my.droppen.app");
+  });
+  test("anywhere else is not", () => {
+    for (const [location, from, path] of [
+      ["https://evil.example/", "https://droppen.app", "/"],
+      ["https://www.droppen.app/elsewhere", "https://droppen.app", "/"],
+      ["https://www.droppen.app/?x=1", "https://droppen.app", "/"],
+      ["/link/", "https://droppen.app", "/link"],
+      ["https://droppen.app/", "https://droppen.app", "/"],
+      ["http://my.droppen.app/link", "https://droppen.app", "/link"],
+      [null, "https://droppen.app", "/"],
+      ["https://[bad", "https://droppen.app", "/"],
+    ]) {
+      assert.equal(checkedRedirect(location, from, path, sites), null, `${from}${path} → ${location}`);
+    }
+    assert.equal(checkedRedirect("https://my.droppen.app/link", "https://droppen.app", "/link", ["https://droppen.app"]), null, "a site this run does not check");
   });
 });
 
@@ -164,11 +188,22 @@ const { dist, files, manifest, manifestFile } = build;
 /**
  * A hub that serves a build (`dist` by default) the way rh-hub does.
  * `marker`: the origin written into the shell (`self` for the site's own);
- * `csp(path)`: the policy header.
+ * `csp(path)`: the policy header; `redirect(path)`: a `308` there instead
+ * (`null`: none); `worker(req)`: another `/sw.js` (`null`: the build's).
  */
-function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build } = {}) {
+function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null } = {}) {
   const server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname.slice(1);
+    const sw = path === "sw.js" ? worker(req) : null;
+    if (sw !== null) {
+      res.setHeader("content-type", "text/javascript");
+      return res.end(sw);
+    }
+    const location = redirect(`/${path}`);
+    if (location) {
+      res.writeHead(308, { location });
+      return res.end();
+    }
     if (path === ".well-known/droppen-build") {
       res.setHeader("content-type", "application/json");
       return res.end(JSON.stringify({ commit: "0123abc", web: { digest: serves.manifest.digest, files: serves.files.length } }));
@@ -379,6 +414,89 @@ describe("verify-web.mjs against a hub", () => {
     } finally {
       rmSync(links, { recursive: true, force: true });
     }
+  });
+
+  describe("droppen.app's three hosts", () => {
+    // As the hub serves them once the app moved: my. holds the app; www. the
+    // site, sending app paths to my.; the apex sends the site's paths to www.,
+    // the app's own to my. (or shows its interstitial, the shell), and
+    // retires the worker. Each host is a port of its own on 127.0.0.1.
+    const site = new Set(["/", "/security", "/download"]);
+    const app = new Set(["/link", "/signin", "/sessions", "/move"]);
+    const hosts = {};
+    const to = (name, path) => `${hosts[name]}${path}`;
+    const hostsUp = async (overrides = {}) => {
+      hosts.my = await hub({ redirect: (p) => (["/security", "/download"].includes(p) ? to("www", p) : null), ...overrides.my });
+      hosts.www = await hub({ redirect: (p) => (app.has(p) ? to("my", p) : null), worker: () => RETIRING_WORKER, ...overrides.www });
+      hosts.apex = await hub({ redirect: (p) => (site.has(p) ? to("www", p) : null), worker: () => RETIRING_WORKER, ...overrides.apex });
+      return [hosts.my, hosts.www, hosts.apex];
+    };
+    const sites = (urls) => urls.flatMap((u) => ["--site", u]);
+
+    test("each passes on its own: own marker, own policy, redirects to the others checked there, the retiring worker", async () => {
+      const urls = await hostsUp();
+      const r = await verify([...sites(urls), "--manifest", manifestFile]);
+      assert.equal(r.code, 0, r.out);
+      assert.equal(r.out.match(/^PASS: /gm)?.length, 3, r.out);
+      for (const u of urls) assert.match(r.out, new RegExp(`marker: +rh-hub ${siteHubOrigin(u).replace(/[.]/g, "\\.")}$`, "m"));
+      assert.match(r.out, new RegExp(`files: +\\d+ of \\d+ match, 4 redirect to ${hosts.my.replace(/[.]/g, "\\.")}, checked there`));
+      assert.match(r.out, /\/sw\.js is the retiring worker/);
+      assert.match(r.out, /summary:\n +PASS +http:\/\/127\.0\.0\.1:\d+\n +PASS/);
+    });
+
+    test("one host's policy, worker or marker fails that host, and the run", async () => {
+      const cases = [
+        [{ www: { csp: (p) => (p === "/security" ? `${HUB_CSP}; script-src-elem 'self' https://evil.example` : HUB_CSP) } }, "www", /\/security: Content-Security-Policy: script-src-elem/],
+        [{ apex: { worker: () => "self.addEventListener('fetch', () => {});\n" } }, "apex", /\/sw\.js: sha256 [0-9a-f]{64}, attested/],
+        [{ apex: { worker: (req) => (req.headers["service-worker"] === "script" ? "evil()\n" : RETIRING_WORKER) } }, "apex", /\/sw\.js \(Service-Worker: script\): sha256/],
+        [{ www: { marker: "ws://127.0.0.1:1" } }, "www", /pointed at the hub ws:\/\/127\.0\.0\.1:1,/],
+      ];
+      for (const [overrides, bad, why] of cases) {
+        const urls = await hostsUp(overrides);
+        const r = await verify([...sites(urls), "--manifest", manifestFile]);
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.out, why);
+        assert.match(r.out, new RegExp(`FAIL: ${hosts[bad].replace(/[.]/g, "\\.")} does not serve`));
+        assert.equal(r.out.match(/^PASS: /gm)?.length, 2, r.out);
+      }
+    });
+
+    test("a host that sends everything on to another of the run passes through it", async () => {
+      hosts.apex = await hub();
+      const www = await hub({ redirect: (p) => to("apex", p) });
+      const r = await verify(["--site", www, "--site", hosts.apex, "--manifest", manifestFile]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, new RegExp(`droppen-build redirects to ${hosts.apex.replace(/[.]/g, "\\.")}: the build that one serves`));
+      assert.match(r.out, new RegExp(`files: +0 of 13 match, 13 redirect to ${hosts.apex.replace(/[.]/g, "\\.")}, checked there`));
+      const alone = await verify(["--site", www, "--manifest", manifestFile]);
+      assert.equal(alone.code, 1, alone.out);
+    });
+
+    test("a redirect to a host the run does not check, or to another path, fails", async () => {
+      const urls = await hostsUp();
+      const alone = await verify(["--site", hosts.apex, "--manifest", manifestFile]);
+      assert.equal(alone.code, 1, alone.out);
+      assert.match(alone.out, /\/: .*HTTP 308 → .*\/ \(not the same path on another site this run checks\)/);
+      const elsewhere = await hostsUp({ apex: { redirect: (p) => (p === "/" ? to("www", "/download") : null) } });
+      const r = await verify([...sites(elsewhere), "--manifest", manifestFile]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /\/: .*HTTP 308 → .*\/download \(not the same path/);
+      assert.ok(urls.length === 3);
+    });
+
+    test("a host that cannot be reached is not checked; the others are", async () => {
+      const up = await hub();
+      const closed = await new Promise((resolve) => {
+        const probe = createServer().listen(0, "127.0.0.1", () => {
+          const url = `http://127.0.0.1:${probe.address().port}`;
+          probe.close(() => resolve(url));
+        });
+      });
+      const r = await verify([...sites([up, closed]), "--manifest", manifestFile]);
+      assert.equal(r.code, 2, r.out);
+      assert.match(r.out, new RegExp(`could not check ${closed.replace(/[.]/g, "\\.")}: `));
+      assert.match(r.out, new RegExp(`summary:\\n +PASS +${up.replace(/[.]/g, "\\.")}\\n +could not check +${closed.replace(/[.]/g, "\\.")}`));
+    });
   });
 
   test("releases come from getdroppen/droppen unless --repo names another", async () => {

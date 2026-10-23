@@ -17,28 +17,32 @@ droppen.app 的网页由闭源的 Hub 下发。端到端加密防得住 Hub 读�
 
 **高保障的做法**是不从 Hub 加载代码：用 Droppen 桌面应用（macOS，目前是 v0.2.128；用 Apple 的 Developer ID 签名并经 Apple 公证，安装后只接受更新密钥为那个版本签名的更新，见 [`docs/releasing.md`](releasing.md)「Verifying a download」），或本机 `droppen` 二进制自带的界面。桌面应用带着本机的 `droppen` 服务器，窗口里显示的是这个服务器内嵌的网页，不从 Hub 加载；`droppen` 二进制内嵌的网页，发版时 CI 核对过与发版清单逐字节相同（§3）。网页版适合方便，不适合对抗一个有针对性的 Hub。
 
-**检查 droppen.app** 用的是每次发版（v0.2.127 起）附带、经 GitHub Actions 证明的网页清单（`web-manifest.json` 和它的 Sigstore bundle `web-manifest.sigstore.json`），加上验证脚本 `scripts/verify-web.mjs`，步骤见下一节。droppen.app/security 的 7.1 和 8.5 节链接到这里。
+**检查 droppen.app** 的三个主机——应用所在的 `my.droppen.app`、站点 `www.droppen.app` 和 `droppen.app` 本身，三者由同一个 Hub 下发同一份构建——用的是每次发版（v0.2.127 起）附带、经 GitHub Actions 证明的网页清单（`web-manifest.json` 和它的 Sigstore bundle `web-manifest.sigstore.json`），加上验证脚本 `scripts/verify-web.mjs`，步骤见下一节。droppen.app/security 的 7.1 和 8.5 节链接到这里。
 
 ## 2. 怎么验证
 
 需要 Node 20 以上，核对证明还要装 GitHub CLI（`gh`）。不需要任何账号或令牌；脚本只访问被检查的站点和 GitHub 的公开发版（`gh` 还会取 Sigstore 的公开信任根），不发送 Cookie，User-Agent 是 `droppen-verify-web/1`。
 
 ```sh
-node scripts/verify-web.mjs                       # 检查 droppen.app
+node scripts/verify-web.mjs                       # 检查 my.droppen.app、www.droppen.app、droppen.app
 node scripts/verify-web.mjs --release v0.2.109    # 指定对照哪次发版
-node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub
+node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub；它有几个主机就给几次 --site
+node scripts/verify-web.mjs --site https://droppen.app   # 只查一个主机
 ```
 
-脚本做这几件事：
+不给 `--site` 时依次检查 droppen.app 的三个主机，每个主机单独检查、单独给出 `PASS` 或 `FAIL`，最后列出汇总。还没有上线的主机（`my.`、`www.` 的 DNS 未建）报「没能检查」；这时只查 `--site https://droppen.app`。
+
+对每个主机，脚本做这几件事：
 
 1. 问站点它跑的是哪个构建：`GET /.well-known/droppen-build` 返回提交和构建摘要（下一节）。这只是指路，不是证据。
 2. 在最近的发版里找摘要相同的 `web-manifest.json`，用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版在 getdroppen/droppen（`--repo`）：从 v0.2.127 起，`release.yml` 构建、签名并发布每一次发版，清单和它的 bundle（`web-manifest.sigstore.json`）就在同一个发版上。v0.2.126 及以前的发版在 getdroppen/releases（`--repo getdroppen/releases`），清单由 `scripts/release-public.sh` 在本机生成，文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名），而 bundle 签的是字节。所以发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
-3. 下载清单里的每个文件，再取 `/`、`/link`、`/signin` 三个路由的页面外壳，逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
-4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是站点自己的（`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出。字节相同、却指向别的 Hub 的页面，不算同一个页面。
-5. 检查每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。
-6. 读清单里那份 `sw.js` 的完整性表（[下文](#service-worker-的缓存)），它必须与清单逐项一致：`assets/` 下的每个文件和它的 sha256，不多不少，外壳是 `index.html` 的 sha256，离线外壳允许的内联脚本正是 `index.html` 自己的。没有这张表的 `sw.js`（早于这项检查的构建）也算失败：它的缓存不经核对就交给页面。
+3. 下载清单里的每个文件，再取各主机会给出页面外壳的路由——应用的 `/`、`/link`、`/signin`、`/sessions`、`/move`，站点的 `/security`、`/download`——逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
+   脚本不跟随重定向，查的是这个主机自己给出的东西。一个回答若是重定向，只有它把浏览器送到**这次也在检查的另一个主机上的同一路径**（查询串也相同）才算通过，那边的内容在检查那个主机时核对；送去别处、或换了路径，都算失败。三个主机分工后正是这样：droppen.app 的 `/` 去 `www`，`www` 的 `/link` 去 `my`，`my` 的 `/download` 去 `www`。整个主机都重定向到另一个主机时（如分工之前的 `www.droppen.app`），连 `/.well-known/droppen-build` 也按那个主机的回答对照。
+4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是**这个主机自己的**（`https://my.droppen.app` 对应 `wss://my.droppen.app`，`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出（对每个主机都有效）。字节相同、却指向别的 Hub 的页面，不算同一个页面。
+5. 检查每个主机上每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。各主机的 CSP 各不相同（`connect-src` 写的是自己的主机），所以每个主机单独检查。
+6. 读清单里那份 `sw.js` 的完整性表（[下文](#service-worker-的缓存)），它必须与清单逐项一致：`assets/` 下的每个文件和它的 sha256，不多不少，外壳是 `index.html` 的 sha256，离线外壳允许的内联脚本正是 `index.html` 自己的。没有这张表的 `sw.js`（早于这项检查的构建）也算失败：它的缓存不经核对就交给页面。`/sw.js` 还按浏览器检查更新时的样子（带 `Service-Worker: script`）再取一次。不放应用的主机（应用搬到 `my.` 之后的 droppen.app，以及 `www`）在 `/sw.js` 给的是「退役 Worker」：清空这个源的缓存、注销自己，别的什么都不碰（[下文](#service-worker-的缓存)）。脚本只接受与它内置的那段代码逐字节相同的退役 Worker，别的都算失败。
 
-结果是 `PASS` 或 `FAIL`，并列出不同的文件。退出码：0 通过，1 不通过，2 没能检查（网络、参数）。
+结果是每个主机一个 `PASS` 或 `FAIL`，并列出不同的文件。退出码：0 全部通过，1 有主机不通过，2 有主机没能检查（网络、参数）、其余都通过。
 
 ### 不信 CI，自己重建
 
@@ -94,13 +98,16 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 **紧急开关。** 怀疑缓存被投毒，或缓存逻辑本身出了错：改掉 `web/public/sw.js` 里的 `CACHE`（如 `rh-sw-v1` → `rh-sw-v2`）并发版。新 Worker 激活时删掉所有别的缓存，从空缓存开始。它管不到的：已经在运行被篡改代码的页面（要等它关掉或刷新）；还没取到新 `sw.js` 的浏览器（浏览器在页面导航时检查 `sw.js` 有没有变，`sw-register.ts` 每次回到前台也调用 `update()`；没再打开过这个网站的浏览器就一直没换）；恶意代码写进 IndexedDB、localStorage 的东西（那要在浏览器设置里清除这个网站的数据）。
 
+**不放应用的主机上的 Worker。** 应用搬到 `my.droppen.app` 之后，droppen.app 和 `www.droppen.app` 上不再有应用，但浏览器里可能还注册着以前的 `/sw.js`，它会在离线时继续拿出缓存的旧外壳。这两个主机对 `/sw.js`（以及任何 Worker 请求）回一段「退役 Worker」：装上后清空这个源的所有缓存并注销自己。它不碰 IndexedDB 和 localStorage：这台浏览器的设备钥还要从那里搬到 `my.`。`verify-web.mjs` 内置这段代码（`RETIRING_WORKER`），只接受与它逐字节相同的回答。
+
 **别的地址上的 Worker。** 一次恶意投递还可以从别的地址（如 `/x.js`）为 `/` 注册一个 Worker，替掉 `/sw.js` 的注册。以前诚实的 Hub 对那个地址回 HTML 外壳，浏览器的更新检查因 MIME 类型失败，就一直留着旧 Worker，改 `CACHE` 也换不掉它。现在 Droppen Hub 对带 `Service-Worker: script` 请求头、路径不是 `/sw.js` 的请求，回一段小 Worker（`text/javascript`，`no-store`）：它装上后清空本站所有缓存并注销自己，页面下次加载时再注册 `/sw.js`。本机 `droppen` 服务器也这样回答（`server-rs/src/static_files.rs`）。
 
 ## 4. 现状和剩下的风险
 
 - **v0.2.127 之前的发版没有证明。** 它们在发版用的 Mac 上构建，私有仓库也用不了构建证明，所以只附了未证明的 `web-manifest.json`；从 v0.2.127 起，每次发版都由 `release.yml` 构建并证明。对照更早的发版要加 `--allow-unattested`，或者拿自己重建的清单来比（`--manifest`）。
 - **Hub 可能跑着没发过版的网页。** Hub 由运营者手动从选定的提交部署，`/.well-known/droppen-build` 报告的就是这个提交；它不一定是发版标签。如果这个提交里 `web/` 有还没发版的改动，站点的摘要就不在任何发版里，验证会失败。这时按站点报告的提交自己重建。只从发版标签部署 Hub 能彻底避免这种情况。
-- **只核对列出的文件。** Hub 可以多放别的路径，但开源代码不会去加载它们，除非外壳或已核对的 JS 引用。外壳只抽查了三个路由；Hub 理论上能在别的路由上给出不同的外壳。
+- **只核对列出的文件。** Hub 可以多放别的路径，但开源代码不会去加载它们，除非外壳或已核对的 JS 引用。外壳只抽查了七个路由；Hub 理论上能在别的路由上给出不同的外壳。
+- **只核对检查的主机。** 不给 `--site` 时是 droppen.app 的三个主机。别的主机（如中继）不下发这份网页，不在检查之内。
 - **CSP 只检查脚本来源。** 其它指令和响应头不在证明范围内。
 - **信任链的其余部分：** GitHub Actions、npm 注册表（锁文件带完整性哈希）、Node 镜像。可复现构建让人可以不信 CI，自己重建来比。
 
