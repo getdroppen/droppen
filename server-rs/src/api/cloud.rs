@@ -2518,7 +2518,14 @@ mod tests {
     /// opened from the server's own page towards `hub` (`None`: the default,
     /// or the hub an enrolled device stays with).
     async fn opened_from_a_page(home: &std::path::Path, hub: Option<String>, enroll: bool) -> (AppState, LinkAttempt) {
+        opened_from_a_page_with(home, hub, enroll, false).await
+    }
+
+    /// [`opened_from_a_page`], asking the hub where its app is when
+    /// `discover` ([`super::super::hub_web`]).
+    async fn opened_from_a_page_with(home: &std::path::Path, hub: Option<String>, enroll: bool, discover: bool) -> (AppState, LinkAttempt) {
         let (state, addr) = crate::api::test_support::served(home).await;
+        state.cloud.hub_webs.set_discover(discover);
         state.cloud.control.attach(crate::agent::link::LinkEnv {
             addr,
             credential: "test".into(),
@@ -2581,27 +2588,7 @@ mod tests {
         .await;
         let app = format!("http://my.localhost:{}", port(&hub));
         let home = tempfile::tempdir().unwrap();
-        let (state, addr) = crate::api::test_support::served(home.path()).await;
-        state.cloud.control.attach(crate::agent::link::LinkEnv {
-            addr,
-            credential: "test".into(),
-            drive: state.drive.clone(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-        });
-        state.cloud.hub_webs.set_discover(true);
-        state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
-        let alice = signed_in(&state, "alice").await;
-        let Json(opened) = post_link(
-            State(state.clone()),
-            alice,
-            PageOrigin(Some(format!("http://{addr}"))),
-            ApiJson(LinkRequest {
-                hub: Some(hub.clone()),
-                aggregate: None,
-            }),
-        )
-        .await
-        .unwrap();
+        let (state, opened) = opened_from_a_page_with(home.path(), Some(hub.clone()), false, true).await;
         assert_eq!(opened.hub_web, app);
         let url = opened.handoff_url.clone().expect("opened from a page");
         assert!(url.starts_with(&format!("{app}/link#droppen-link=")), "{url}");
