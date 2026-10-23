@@ -42,7 +42,9 @@
 //      only from the site itself and the pages' own inline scripts;
 //   4. reads the integrity table in the attested `sw.js` — the sha256 of every
 //      asset and of the shell, which the service worker checks the browser's
-//      cache against — and fails unless it is the manifest's files exactly.
+//      cache against, and the shell's inline scripts its offline shell is
+//      served with — and fails unless it is the manifest's files exactly, or
+//      when the worker has no table at all.
 //
 // Exit status: 0 pass, 1 fail, 2 could not check.
 //
@@ -345,30 +347,35 @@ export function scriptPolicy(header, allowedHashes) {
 
 /**
  * The service worker's integrity table in `sw.js` (web/build/service-worker.ts
- * writes it): `{assets: {"/assets/…": sha256}, shell}`, or `null` when the
- * worker has none (a build from before it checked its cache).
- * scripts/web-manifest.mjs reads it the same way.
+ * writes it): `{assets: {"/assets/…": sha256}, shell, scripts}` — `scripts`,
+ * the CSP sources of the shell's inline scripts its offline shell is served
+ * with — or `null` when the worker has none (a build from before it checked
+ * its cache). scripts/web-manifest.mjs reads it the same way.
  */
 export function workerTable(text) {
   const assets = /^const INTEGRITY = (\{.*\});$/m.exec(text);
   const shell = /^const SHELL_SHA256 = "([0-9a-f]*)";$/m.exec(text);
-  if (!assets || !shell) return null;
-  let table;
+  const scripts = /^const SHELL_SCRIPTS = (\[.*\]);$/m.exec(text);
+  if (!assets || !shell || !scripts) return null;
+  let table, sources;
   try {
     table = JSON.parse(assets[1]);
+    sources = JSON.parse(scripts[1]);
   } catch {
     return null;
   }
   if (!table || typeof table !== "object" || Array.isArray(table) || Object.values(table).some((v) => typeof v !== "string")) return null;
-  return { assets: table, shell: shell[1] };
+  if (!Array.isArray(sources) || sources.some((v) => typeof v !== "string")) return null;
+  return { assets: table, shell: shell[1], scripts: sources };
 }
 
 /**
  * Where the worker's table disagrees with the manifest's files: every file
- * under `assets/` listed with its sha256, nothing else, and `index.html` as
- * the shell. `[]` when it agrees.
+ * under `assets/` listed with its sha256, nothing else, `index.html` as the
+ * shell, and (given the attested shell's bytes, `shellHtml`) its inline
+ * scripts as the shell's own. `[]` when it agrees.
  */
-export function workerProblems(table, files) {
+export function workerProblems(table, files, shellHtml) {
   const out = [];
   const assets = new Map(files.filter((f) => f.path.startsWith("assets/")).map((f) => [`/${f.path}`, f.sha256]));
   for (const [path, sha] of assets) {
@@ -378,6 +385,10 @@ export function workerProblems(table, files) {
   for (const path of Object.keys(table.assets)) if (!assets.has(path)) out.push(`sw.js lists ${path}, which the manifest does not`);
   const shell = files.find((f) => f.path === "index.html")?.sha256 ?? null;
   if (table.shell !== shell) out.push(`sw.js has the shell as ${table.shell || "(none)"}, the manifest's index.html is ${shell ?? "missing"}`);
+  if (shellHtml !== undefined) {
+    const want = inlineHashes(shellHtml);
+    if (JSON.stringify(table.scripts) !== JSON.stringify(want)) out.push(`sw.js allows the shell's inline scripts ${table.scripts.join(" ") || "(none)"}, index.html has ${want.join(" ") || "none"}`);
+  }
   return out;
 }
 
@@ -477,6 +488,7 @@ async function main(argv) {
   const markerFailures = [];
   const origins = new Set();
   let worker = null;
+  let attestedShell;
   const results = await pool(checks, 6, async (c) => {
     let got;
     try {
@@ -504,6 +516,7 @@ async function main(argv) {
     const same = hash === c.want.sha256;
     if (same && page) attestedPages.push(body);
     if (same && c.want.path === "sw.js") worker = body;
+    if (same && c.want.path === "index.html" && !c.route) attestedShell = body;
     if (wrongHub) markerFailures.push(`${c.url}: ${wrongHub}`);
     return same ? null : `${c.url}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the rh-hub marker)" : ""}`;
   });
@@ -515,9 +528,12 @@ async function main(argv) {
   // The worker's integrity table: what it lets out of the browser's cache.
   if (worker) {
     const table = workerTable(worker.toString("utf8"));
-    if (!table) console.log(`  worker:      sw.js has no integrity table (a build from before the worker checked its cache)`);
-    else {
-      const problems = workerProblems(table, manifest.files);
+    if (!table) {
+      // Its cache is then whatever a page or an earlier delivery put there, served as it is.
+      failures.push("sw.js has no integrity table: the service worker would serve whatever is in the browser's cache, unchecked");
+      console.log(`  worker:      sw.js has no integrity table`);
+    } else {
+      const problems = workerProblems(table, manifest.files, attestedShell);
       failures.push(...problems);
       console.log(`  worker:      ${problems.length ? `sw.js disagrees with the manifest in ${problems.length} place(s)` : `sw.js lists ${Object.keys(table.assets).length} assets and the shell, as the manifest has them`}`);
     }

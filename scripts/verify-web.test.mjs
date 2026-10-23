@@ -79,12 +79,14 @@ describe("the service worker's integrity table", () => {
     { path: "sw.js", sha256: "d".repeat(64) },
     { path: "p2p-probe.js", sha256: "e".repeat(64) },
   ];
-  const sw = (assets, shell = "a".repeat(64)) => `const PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(assets)};\nconst SHELL_SHA256 = "${shell}";\n`;
+  const sw = (assets, shell = "a".repeat(64), scripts = [INLINE_HASH]) =>
+    `const PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(assets)};\nconst SHELL_SHA256 = "${shell}";\nconst SHELL_SCRIPTS = ${JSON.stringify(scripts)};\n`;
+  const html = Buffer.from(`<html><head><script>${INLINE}</script><script type="module" src="/assets/app-1.js"></script></head></html>`);
   const good = { "/assets/app-1.css": "c".repeat(64), "/assets/app-1.js": "b".repeat(64) };
 
   test("one that lists every asset and the shell, as built, agrees (in both scripts)", () => {
-    assert.deepEqual(workerProblems(workerTable(sw(good)), files), []);
-    assert.deepEqual(manifestWorkerProblems(files, sw(good)), []);
+    assert.deepEqual(workerProblems(workerTable(sw(good)), files, html), []);
+    assert.deepEqual(manifestWorkerProblems(files, sw(good), html), []);
   });
 
   test("a missing, extra or different asset, or another shell, is a disagreement (in both scripts)", () => {
@@ -102,6 +104,19 @@ describe("the service worker's integrity table", () => {
     }
   });
 
+  test("the shell's inline scripts the worker allows must be the shell's own (in both scripts)", () => {
+    for (const [scripts, why] of [
+      [[], /allows the shell's inline scripts \(none\), index\.html has 'sha256-/],
+      [[INLINE_HASH, "'unsafe-inline'"], /allows the shell's inline scripts 'sha256-\S+ 'unsafe-inline'/],
+      [["'sha256-AAAA'"], /allows the shell's inline scripts 'sha256-AAAA'/],
+    ]) {
+      assert.match(workerProblems(workerTable(sw(good, undefined, scripts)), files, html).join("\n"), why);
+      assert.match(manifestWorkerProblems(files, sw(good, undefined, scripts), html).join("\n"), why);
+    }
+    assert.equal(workerTable(sw(good).replace(/^const SHELL_SCRIPTS.*$/m, "")), null, "a table without them is none");
+    assert.equal(workerTable(sw(good, undefined, [1])), null, "not a list of strings");
+  });
+
   test("a worker with no table (an older build) has none; web-manifest.mjs refuses it", () => {
     assert.equal(workerTable("const CACHE = 1;\nconst ASSETS = [];\n"), null);
     assert.equal(workerTable('const INTEGRITY = {"/assets/a.js": 1};\nconst SHELL_SHA256 = "";\n'), null, "not a table of sha256 strings");
@@ -117,10 +132,11 @@ const SHELL = `<!doctype html><html><head><title>Droppen</title><script>${INLINE
 
 /**
  * A build in `root/<name>`: its shell, one asset, the p2p probe, and a
- * `sw.js` whose integrity table is right — or `table(assets, shell)` makes
- * another — and its manifest (`<name>.json`).
+ * `sw.js` whose integrity table is right — or `table(assets, shell, scripts)`
+ * makes another (`null`: a worker with no table) — and its manifest
+ * (`<name>.json`).
  */
-function makeBuild(name, table = (assets, shell) => ({ assets, shell })) {
+function makeBuild(name, table = (assets, shell, scripts) => ({ assets, shell, scripts })) {
   const dist = join(root, name);
   mkdirSync(join(dist, "assets"), { recursive: true });
   const APP = "console.log('the app')";
@@ -128,8 +144,13 @@ function makeBuild(name, table = (assets, shell) => ({ assets, shell })) {
   writeFileSync(join(dist, "assets", "app-1.js"), APP);
   writeFileSync(join(dist, "p2p-probe.html"), '<!doctype html><script src="/p2p-probe.js"></script>');
   writeFileSync(join(dist, "p2p-probe.js"), "probe()");
-  const t = table({ "/assets/app-1.js": sha(APP) }, sha(SHELL));
-  writeFileSync(join(dist, "sw.js"), `const CACHE = "x";\nconst PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(t.assets)};\nconst SHELL_SHA256 = ${JSON.stringify(t.shell)};\n`);
+  const t = table({ "/assets/app-1.js": sha(APP) }, sha(SHELL), [INLINE_HASH]);
+  writeFileSync(
+    join(dist, "sw.js"),
+    t === null
+      ? `const CACHE = "x";\nconst ASSETS = [];\n`
+      : `const CACHE = "x";\nconst PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(t.assets)};\nconst SHELL_SHA256 = ${JSON.stringify(t.shell)};\nconst SHELL_SCRIPTS = ${JSON.stringify(t.scripts ?? [INLINE_HASH])};\n`,
+  );
   const files = filesOf(dist);
   const manifest = { format: FORMAT, commit: "0123abc", ref: "refs/tags/v9.9.9", distribution: "public", digest: digestOf(files), files };
   const manifestFile = join(root, `${name}.json`);
@@ -287,6 +308,22 @@ describe("verify-web.mjs against a hub", () => {
     const r = await verify(["--site", site, "--manifest", odd.manifestFile]);
     assert.equal(r.code, 1, r.out);
     assert.match(r.out, /sw\.js lists \/assets\/vendor-old\.js, which the manifest does not/);
+  });
+
+  test("an attested worker with no integrity table fails: its cache would be served unchecked", async () => {
+    const old = makeBuild("old-worker", () => null);
+    const site = await hub({ serves: old });
+    const r = await verify(["--site", site, "--manifest", old.manifestFile]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /sw\.js has no integrity table: the service worker would serve whatever is in the browser's cache, unchecked/);
+  });
+
+  test("an attested worker that allows other inline scripts than the shell's fails", async () => {
+    const odd = makeBuild("odd-scripts", (assets, shell) => ({ assets, shell, scripts: [INLINE_HASH, "'sha256-AAAA'"] }));
+    const site = await hub({ serves: odd });
+    const r = await verify(["--site", site, "--manifest", odd.manifestFile]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /sw\.js allows the shell's inline scripts/);
   });
 
   test("web-manifest.mjs writes no manifest for such a build, and --check reports it", async () => {
