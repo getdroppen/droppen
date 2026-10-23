@@ -264,7 +264,7 @@ test("another tab moving (its lock held): busy, nothing touched", async () => {
   await seedDevice(w);
   const before = stateOf(legacy);
   let release!: () => void;
-  const held = legacy.locks.request("rh.move", { mode: "exclusive" }, () => new Promise<void>((resolve) => (release = resolve)));
+  const held = legacy.locks.request("rh.hub.move", { mode: "exclusive" }, () => new Promise<void>((resolve) => (release = resolve)));
   assert.deepEqual(await startMove({ origins: ORIGINS, env: w.env(legacyTab) }), { kind: "busy" });
   release();
   await held;

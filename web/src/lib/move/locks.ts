@@ -1,7 +1,7 @@
 /*
  * The Web Locks a move holds, so no other tab of the origin writes what it
  * is copying while it copies it (or what it is writing while it writes it):
- * the move's own (`rh.move`: one move per origin at a time), and the app's
+ * the move's own (`rh.hub.move`: one move per origin at a time), and the app's
  * — the device keys', the local wrap key's and each account's seen record's.
  * They are taken all at once or not at all (each `ifAvailable`, all let go
  * and tried again a moment later if one is held), so a tab holding one and
@@ -11,7 +11,7 @@
  */
 import type { MoveLocks } from "./env";
 
-export const MOVE_LOCK = "rh.move";
+export const MOVE_LOCK = "rh.hub.move";
 /** The app's locks around the device keys and the local wrap key (`keystore.ts`, `keyring.ts`). */
 export const DEVICE_KEYS_LOCK = "rh-device-keys";
 export const LOCAL_WRAP_LOCK = "rh-local-wrap";

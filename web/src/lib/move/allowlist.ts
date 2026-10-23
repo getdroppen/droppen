@@ -70,7 +70,7 @@ const MOVED_PREFIXES = [
 const MOVED_NAMES = [SEEN_IN_IDB, "rh.relays.manual", "droppen.e2e-compat", "rh.theme", "rh.fontSize", "rh.lang"];
 
 /** Never moved, whatever the lists above say: the session, the push subscription, the move's own notes. */
-const NEVER_MOVED = ["rh.hub.session", "rh.hub.push.", "rh.move."];
+const NEVER_MOVED = ["rh.hub.session", "rh.hub.push.", "rh.hub.move."];
 
 /** Whether the `localStorage` entry `name` is moved. */
 export function movesLocal(name: string): boolean {

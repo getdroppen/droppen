@@ -3,7 +3,7 @@
  *
  * A bundle is taken only into an origin that holds no device — or that holds
  * this very device from a move that did not finish:
- * - what an earlier move wrote and never signed in with (`rh.move.in` says
+ * - what an earlier move wrote and never signed in with (`rh.hub.move.in` says
  *   `writing`) is written over;
  * - the same device, signed in with before (`verified`), only gains what it
  *   lacks — nothing it holds is replaced — and is signed in with again (the
@@ -34,7 +34,7 @@ import type { PriorRecord } from "./stores";
 import type { MoveOrigins } from "./types";
 
 /** What this origin noted of a move into it: `writing` until it signed in with what it got, then `verified`. */
-export const MOVE_MARKER = "rh.move.in";
+export const MOVE_MARKER = "rh.hub.move.in";
 
 export interface MoveMarker {
   v: 1;

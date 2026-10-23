@@ -58,7 +58,7 @@ test("the allowlist: the account's notes and a few settings move; the session, p
     "rh.fontSize",
   ])
     assert.ok(movesLocal(key), key);
-  for (const key of ["rh.hub.session", "rh.hub.push.subscribed", "rh.hub.push.renew", "rh.hub.push.moved", "rh.move.in", "rh.draft.x", "rh.hub.device.", "rh.auth.token", "rh.hub.knownClient:a@b.c", "rh.chat.pending.x"])
+  for (const key of ["rh.hub.session", "rh.hub.push.subscribed", "rh.hub.push.renew", "rh.hub.push.moved", "rh.hub.move.in", "rh.draft.x", "rh.hub.device.", "rh.auth.token", "rh.hub.knownClient:a@b.c", "rh.chat.pending.x"])
     assert.ok(!movesLocal(key), key);
 });
 

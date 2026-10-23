@@ -60,7 +60,7 @@ export interface MoveEnv {
 }
 
 /** The channel the tabs of one origin tell each other about a move on. */
-export const MOVE_CHANNEL = "rh.move";
+export const MOVE_CHANNEL = "rh.hub.move";
 
 function pageTabs(): MoveEnv["tabs"] {
   const Channel = (globalThis as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
