@@ -15,18 +15,18 @@ import "@xterm/xterm/css/xterm.css";
 
 /** Terminals stay dark in both themes, like most embedded terminals. */
 const XTERM_THEME = {
-  background: "#0a0a0a",
-  foreground: "#e5e5e5",
-  cursor: "#f5f5f5",
-  cursorAccent: "#0a0a0a",
+  background: "#0f1115",
+  foreground: "#e9ebee",
+  cursor: "#e9ebee",
+  cursorAccent: "#0f1115",
   // Inverted ink, like the app's own text selection.
-  selectionBackground: "#5e5e5e",
-  green: "#3fd170",
-  brightGreen: "#5fe08a",
-  yellow: "#f5b031",
+  selectionBackground: "#5c6470",
+  green: "#3ed273",
+  brightGreen: "#6ae397",
+  yellow: "#f4b13a",
   brightYellow: "#ffc95c",
-  red: "#ff5c50",
-  brightRed: "#ff7f75",
+  red: "#ff665b",
+  brightRed: "#ff8a80",
 };
 
 /** What the pane's socket is doing, as far as the user needs to care. */
@@ -217,12 +217,12 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
     // The padding lives on the wrapper: FitAddon sizes rows from the mount
     // element's full height, so padding there would overcount by a row and
     // clip the bottom line.
-    <div className={visible ? "relative h-full w-full bg-[#0a0a0a] p-1.5" : "hidden"}>
+    <div className={visible ? "relative h-full w-full bg-[#0f1115] p-1.5" : "hidden"}>
       <div ref={containerRef} className="h-full w-full" />
       {note && (
         // Hard-coded colors, like the theme above: this badge sits on the
         // terminal, which is dark in both app themes.
-        <div className="pointer-events-none absolute right-3 top-2 flex items-center gap-1.5 border border-[#5e5e5e] bg-[#0a0a0a] px-1.5 py-0.5 font-mono text-2xs text-[#a3a3a3]">
+        <div className="pointer-events-none absolute right-3 top-2 flex items-center gap-1.5 border border-[#5c6470] bg-[#0f1115] px-1.5 py-0.5 font-mono text-2xs text-[#a4abb5]">
           {/* "gone" is a settled fact and sits still; "reconnecting" is work in
               progress, so it gets the 1 Hz heartbeat instead of an always-on
               CSS pulse — a terminal left open on a flapping link would

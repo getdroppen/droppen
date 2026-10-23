@@ -33,7 +33,7 @@ const splashDir = join(publicDir, "splash");
 // app's own paper and ink: an ink tile on white, a paper tile on ink.
 const INK = "#0a0a0a";
 const PAPER = "#f5f5f5";
-const DARK = { name: "dark", bg: "#0a0a0a", tile: PAPER, glyph: INK };
+const DARK = { name: "dark", bg: "#0f1115", tile: PAPER, glyph: INK };
 const LIGHT = { name: "light", bg: "#ffffff", tile: INK, glyph: "#ffffff" };
 
 // Portrait only: a launch image whose orientation does not match is ignored

@@ -26,7 +26,7 @@
     <link rel="icon" href="/favicon.svg?v=95fcd1389a76" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3ff622daea76" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#0f1115" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Droppen" />
@@ -93,7 +93,7 @@
         if (dark) document.documentElement.classList.add("dark");
         // Match the installed app's chrome to the theme we just resolved.
         var meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute("content", dark ? "#0a0a0a" : "#ffffff");
+        if (meta) meta.setAttribute("content", dark ? "#0f1115" : "#ffffff");
         // Cached copy of the server-side fontSize pref; avoids a resize flash.
         var pct = { small: "87.5%", large: "112.5%", xlarge: "125%" }[
           localStorage.getItem("rh.fontSize")

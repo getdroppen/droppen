@@ -146,7 +146,7 @@ function Elapsed({ since }: { since: string }) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <span className="font-mono text-2xs text-[#a3a3a3] tabular-nums">{elapsed(since, now)}</span>;
+  return <span className="font-mono text-2xs text-[#a4abb5] tabular-nums">{elapsed(since, now)}</span>;
 }
 
 /**
@@ -158,13 +158,13 @@ function Elapsed({ since }: { since: string }) {
 export function TaskTerminal({ terminalId, startedAt, onStop, stopLabel }: { terminalId: string; startedAt: string; onStop: (() => void) | null; stopLabel?: string }) {
   const { t } = useTranslation();
   return (
-    <div role="region" aria-label={t("Terminal · on this device")} data-setup-terminal={terminalId} className="mt-2.5 border border-[#2a2a2a] bg-[#0a0a0a]">
-      <div className="flex h-7 items-center gap-2 border-b border-[#2a2a2a] pr-1 pl-2.5 font-mono text-2xs text-[#a3a3a3]">
+    <div role="region" aria-label={t("Terminal · on this device")} data-setup-terminal={terminalId} className="mt-2.5 border border-[#2b313a] bg-[#0f1115]">
+      <div className="flex h-7 items-center gap-2 border-b border-[#2b313a] pr-1 pl-2.5 font-mono text-2xs text-[#a4abb5]">
         <SquareTerminal className="size-3" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{t("Terminal · on this device")}</span>
         <Elapsed since={startedAt} />
         {onStop && (
-          <button type="button" data-testid="task-stop" onClick={onStop} className="h-5 border border-[#5e5e5e] px-2 text-[#e5e5e5] hover:bg-[#1f1f1f]">
+          <button type="button" data-testid="task-stop" onClick={onStop} className="h-5 border border-[#5c6470] px-2 text-[#e9ebee] hover:bg-[#1e222a]">
             {stopLabel ?? t("Stop")}
           </button>
         )}
@@ -184,7 +184,7 @@ export function TailBlock({ lines }: { lines: string[] }) {
     <pre
       aria-label={t("Terminal · on this device")}
       data-testid="task-tail"
-      className="mt-2.5 max-h-40 overflow-auto border border-[#2a2a2a] bg-[#0a0a0a] px-2.5 py-2 font-mono text-2xs leading-4 whitespace-pre-wrap text-[#e5e5e5]"
+      className="mt-2.5 max-h-40 overflow-auto border border-[#2b313a] bg-[#0f1115] px-2.5 py-2 font-mono text-2xs leading-4 whitespace-pre-wrap text-[#e9ebee]"
     >
       {lines.join("\n")}
     </pre>

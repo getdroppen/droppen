@@ -66,7 +66,7 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 ## 5. 功能特有的合理例外
 
 - Files 的 breadcrumb 是文字链接，搜索框内部 input 是无边框内容；外框与排序和工具按钮同为 32px。
-- 终端（xterm）在两种主题下都是深色，底色 `#0a0a0a`，ANSI 色沿用信号色相。
+- 终端（xterm）在两种主题下都是深色，底色 `#0f1115`（与暗色主题的墨面同值），ANSI 色沿用信号色相。
 - 账户额度微型图表、状态 chip、未读数量、session receipt、消息气泡和终端字体各有语义，不强行统一成输入框或操作按钮。
 - 用户上传的图片和屏幕 emoji 是用户内容，不去色。应用图标、favicon 与启动图由 `web/scripts/gen-pwa-assets.mjs` 从套准标记矢量生成，不手工改 PNG。
 

@@ -82,30 +82,37 @@
   color-scheme: light;
 }
 
+/* The dark sheet is graphite, not the void: #0f1115 keeps a trace of blue so
+   the surface reads as a material under the ink, and so the hairlines and the
+   raised wells have somewhere to sit. Pure (or 10/255) black turns every large
+   area into a hole and makes 18:1 body text halo on OLED; this lands at ~16:1
+   with a softer white. `faint` is lifted to 5.07:1 against `bg` because it is
+   used at 11px; the old 6f6f6f sat at 3.94:1. The ramp keeps `panel` = `bg`,
+   `accent` = `fg`, and colour only for state, as in light. */
 .dark {
   color-scheme: dark;
 
-  --color-bg: #0a0a0a;
-  --color-panel: #0a0a0a;
-  --color-raised: #131313;
-  --color-hover: #1a1a1a;
-  --color-border: #262626;
-  --color-border-strong: #5e5e5e;
-  --color-fg: #f5f5f5;
-  --color-muted: #a3a3a3;
-  --color-faint: #6f6f6f;
-  --color-mark: #f5f5f5;
-  --color-accent: #f5f5f5;
-  --color-ok: #3fd170;
-  --color-warn: #f5b031;
-  --color-warn-fg: #f5b031;
-  --color-danger: #ff5c50;
-  --color-unread: #f5f5f5;
+  --color-bg: #0f1115;
+  --color-panel: #0f1115;
+  --color-raised: #161920;
+  --color-hover: #1e222a;
+  --color-border: #2b313a;
+  --color-border-strong: #5c6470;
+  --color-fg: #e9ebee;
+  --color-muted: #a4abb5;
+  --color-faint: #7d8590;
+  --color-mark: #e9ebee;
+  --color-accent: #e9ebee;
+  --color-ok: #3ed273;
+  --color-warn: #f4b13a;
+  --color-warn-fg: #f4b13a;
+  --color-danger: #ff665b;
+  --color-unread: #e9ebee;
   --color-key-secret: #fb923c;
   --color-key-derived: #c084fc;
   --color-key-public: #34d399;
-  --color-claude: #a3a3a3;
-  --color-codex: #a3a3a3;
+  --color-claude: #a4abb5;
+  --color-codex: #a4abb5;
 }
 
 /* Keyboard focus is ink, never blue, and always visible: a 2px outline from

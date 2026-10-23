@@ -9,11 +9,11 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0a0a0a;
-    --fg: #f5f5f5;
-    --muted: #a3a3a3;
-    --border: #262626;
-    --border-strong: #5e5e5e;
+    --bg: #0f1115;
+    --fg: #e9ebee;
+    --muted: #a4abb5;
+    --border: #2b313a;
+    --border-strong: #5c6470;
   }
 }
 html,

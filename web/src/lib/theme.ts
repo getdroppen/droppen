@@ -4,7 +4,7 @@ const KEY = "rh.theme";
 
 /** --color-bg for each theme. index.html's boot script resolves the same pair
  *  for first paint; this is the only other place they appear. */
-const THEME_COLOR = { dark: "#0a0a0a", light: "#ffffff" } as const;
+const THEME_COLOR = { dark: "#0f1115", light: "#ffffff" } as const;
 
 export function storedThemeMode(): ThemeMode {
   const v = localStorage.getItem(KEY);
