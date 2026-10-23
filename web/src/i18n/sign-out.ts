@@ -27,6 +27,15 @@ export const signOutZhCN: Record<string, string> = {
     "这个浏览器的钥匙已删除，但它仍是你账户里的设备。请在另一台设备的「我的设备」里把它移除。",
   "Sign out on this browser. Its offline copies are cleared and its notifications stop. On a device of your own it stays a device of the account; on a shared one, sign out and remove it.":
     "在这个浏览器上退出登录。它的离线副本会被清除，也不再收到通知。在你自己的设备上，它仍是账户里的设备；在共用的设备上，请退出登录并移除它。",
+  "On a shared or borrowed device: its keys are deleted here, but it stays on your account's devices, as the account's last full device. The account has no recovery words: without its keys, no device can add or remove devices, or become a full device, ever again.":
+    "适合共用或借来的设备：它在这里的钥匙会被删除，但它是账户里最后一台完整设备，所以仍留在设备列表中。这个账户没有恢复词：没有它的钥匙，就再也没有设备能添加或移除设备，也没有设备能再成为完整设备。",
+  "On a shared or borrowed device: its keys are deleted here. The account could not be opened, so it stays on your account's devices: remove it in my devices on another device.":
+    "适合共用或借来的设备：它在这里的钥匙会被删除。账户没能打开，所以它仍留在你账户的设备列表中：请在另一台设备的「我的设备」里把它移除。",
+  "This is your account's last full device. Once its keys are deleted, only your recovery words bring back a full device.":
+    "这是你账户里最后一台完整设备。它的钥匙一旦删除，只有恢复词能找回一台完整设备。",
+  "This is your account's last full device, and the account has no recovery words. Once its keys are deleted, no device can add or remove devices, or become a full device, ever again.":
+    "这是你账户里最后一台完整设备，而这个账户没有恢复词。它的钥匙一旦删除，就再也没有设备能添加或移除设备，也没有设备能再成为完整设备。",
+  "delete its keys anyway": "仍然删除它的钥匙",
 };
 
 export const signOutZhTW: Record<string, string> = {
@@ -51,6 +60,15 @@ export const signOutZhTW: Record<string, string> = {
     "這個瀏覽器的金鑰已刪除，但它仍是你帳戶裡的裝置。請在另一台裝置的「我的裝置」裡把它移除。",
   "Sign out on this browser. Its offline copies are cleared and its notifications stop. On a device of your own it stays a device of the account; on a shared one, sign out and remove it.":
     "在這個瀏覽器上登出。它的離線副本會被清除，也不再收到通知。在你自己的裝置上，它仍是帳戶裡的裝置；在共用的裝置上，請登出並移除它。",
+  "On a shared or borrowed device: its keys are deleted here, but it stays on your account's devices, as the account's last full device. The account has no recovery words: without its keys, no device can add or remove devices, or become a full device, ever again.":
+    "適合共用或借來的裝置：它在這裡的金鑰會被刪除，但它是帳戶裡最後一台完整裝置，所以仍留在裝置清單中。這個帳戶沒有復原詞：沒有它的金鑰，就再也沒有裝置能加入或移除裝置，也沒有裝置能再成為完整裝置。",
+  "On a shared or borrowed device: its keys are deleted here. The account could not be opened, so it stays on your account's devices: remove it in my devices on another device.":
+    "適合共用或借來的裝置：它在這裡的金鑰會被刪除。帳戶沒能開啟，所以它仍留在你帳戶的裝置清單中：請在另一台裝置的「我的裝置」裡把它移除。",
+  "This is your account's last full device. Once its keys are deleted, only your recovery words bring back a full device.":
+    "這是你帳戶裡最後一台完整裝置。它的金鑰一旦刪除，只有復原詞能找回一台完整裝置。",
+  "This is your account's last full device, and the account has no recovery words. Once its keys are deleted, no device can add or remove devices, or become a full device, ever again.":
+    "這是你帳戶裡最後一台完整裝置，而這個帳戶沒有復原詞。它的金鑰一旦刪除，就再也沒有裝置能加入或移除裝置，也沒有裝置能再成為完整裝置。",
+  "delete its keys anyway": "仍然刪除它的金鑰",
 };
 
 export const signOutJa: Record<string, string> = {
@@ -75,4 +93,13 @@ export const signOutJa: Record<string, string> = {
     "このブラウザの鍵は削除されましたが、まだアカウントのデバイスです。別のデバイスの「マイデバイス」で削除してください。",
   "Sign out on this browser. Its offline copies are cleared and its notifications stop. On a device of your own it stays a device of the account; on a shared one, sign out and remove it.":
     "このブラウザでログアウトします。オフラインコピーは消去され、通知も届かなくなります。自分のデバイスならアカウントのデバイスのままです。共用のデバイスでは、ログアウトしてこのブラウザを削除してください。",
+  "On a shared or borrowed device: its keys are deleted here, but it stays on your account's devices, as the account's last full device. The account has no recovery words: without its keys, no device can add or remove devices, or become a full device, ever again.":
+    "共用や借りたデバイス向け：ここにある鍵は削除されますが、アカウント最後のフルデバイスなので、デバイスの一覧には残ります。このアカウントにはリカバリーワードがありません。その鍵がなければ、デバイスを追加・削除できるデバイスも、フルデバイスになれるデバイスも、二度となくなります。",
+  "On a shared or borrowed device: its keys are deleted here. The account could not be opened, so it stays on your account's devices: remove it in my devices on another device.":
+    "共用や借りたデバイス向け：ここにある鍵は削除されます。アカウントを開けなかったため、デバイスの一覧には残ります。別のデバイスの「マイデバイス」で削除してください。",
+  "This is your account's last full device. Once its keys are deleted, only your recovery words bring back a full device.":
+    "これはアカウント最後のフルデバイスです。鍵を削除すると、フルデバイスを取り戻せるのはリカバリーワードだけです。",
+  "This is your account's last full device, and the account has no recovery words. Once its keys are deleted, no device can add or remove devices, or become a full device, ever again.":
+    "これはアカウント最後のフルデバイスで、このアカウントにはリカバリーワードがありません。鍵を削除すると、デバイスを追加・削除できるデバイスも、フルデバイスになれるデバイスも、二度となくなります。",
+  "delete its keys anyway": "それでも鍵を削除",
 };
