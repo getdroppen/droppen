@@ -17,7 +17,7 @@ import { digestOf, filesOf, FORMAT, workerProblems as manifestWorkerProblems } f
 
 const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-web.mjs", import.meta.url));
 const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
-const { checkedRedirect, markerProblem, RETIRING_WORKER, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
+const { checkedRedirect, markerProblem, pagePolicy, RETIRING_WORKER, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
 /** `text` as a regular expression that matches it literally: every special escaped. */
 const escapeRegExp = (text) => text.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
@@ -26,6 +26,8 @@ const INLINE = "window.boot=1";
 const INLINE_HASH = `'sha256-${createHash("sha256").update(INLINE).digest("base64")}'`;
 /** The policy the hub serves the web app with (docs/hub-api/http.md). */
 const HUB_CSP = `default-src 'self'; script-src 'self' ${INLINE_HASH}; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://hub.example; frame-ancestors 'none'; object-src 'none'`;
+/** rh-hub's whole policy, as its golden tests have it. */
+const HUB_CSP_FULL = `default-src 'self'; script-src 'self' ${INLINE_HASH}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://hub.example; worker-src 'self' blob:; manifest-src 'self'; frame-src https://verify.example; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`;
 
 // ------------------------------------------------------------------ units
 
@@ -95,6 +97,49 @@ describe("the script policy", () => {
     assert.equal(scriptPolicy("script-src 'self' 'unsafe-inline', script-src 'self'", hashes).ok, true);
     assert.equal(scriptPolicy("script-src-elem 'self'; script-src-attr 'unsafe-inline', script-src-attr 'none'; script-src-elem https://x", hashes).ok, true);
     assert.equal(scriptPolicy("script-src 'self'; script-src 'unsafe-inline'", hashes).ok, true, "a repeated directive is ignored");
+  });
+  test("no policy at all fails", () => {
+    for (const header of [null, ""]) {
+      const r = scriptPolicy(header, hashes);
+      assert.equal(r.ok, false);
+      assert.match(r.note, /no Content-Security-Policy header/);
+      assert.equal(pagePolicy(header, hashes).ok, false);
+    }
+  });
+});
+
+describe("the page policy", () => {
+  const hashes = [INLINE_HASH];
+  test("the hub's policies pass, and a local server's own framing", () => {
+    assert.equal(pagePolicy(HUB_CSP, hashes).ok, true);
+    const full = pagePolicy(HUB_CSP_FULL, hashes);
+    assert.equal(full.ok, true, full.note);
+    assert.match(full.note, /framing and plugin content limited to 'self'/);
+    assert.equal(pagePolicy(`default-src 'self'; script-src 'self' ${INLINE_HASH}; frame-ancestors 'self'`, hashes).ok, true, "object-src falls back to default-src 'self'");
+  });
+  test("framing must be limited: no frame-ancestors, or another site in it, fails", () => {
+    const none = pagePolicy(`default-src 'self'; script-src 'self' ${INLINE_HASH}; object-src 'none'`, hashes);
+    assert.equal(none.ok, false);
+    assert.match(none.note, /no frame-ancestors limits framing by another site/);
+    const other = pagePolicy(`${HUB_CSP}`.replace("frame-ancestors 'none'", "frame-ancestors 'self' https://evil.example"), hashes);
+    assert.equal(other.ok, false);
+    assert.match(other.note, /frame-ancestors https:\/\/evil\.example allows framing by another site/);
+    assert.equal(pagePolicy(`default-src 'self'; script-src 'self'; frame-ancestors *`, hashes).ok, false);
+  });
+  test("plugin content must be limited: object-src, or default-src without it", () => {
+    const r = pagePolicy(`script-src 'self'; frame-ancestors 'none'`, hashes);
+    assert.equal(r.ok, false);
+    assert.match(r.note, /no object-src or default-src limits plugin content/);
+    assert.match(pagePolicy(`default-src 'self'; script-src 'self'; frame-ancestors 'none'; object-src https:`, hashes).note, /object-src https: allows plugin content/);
+  });
+  test("one enforced policy strict enough is enough, here too", () => {
+    assert.equal(pagePolicy(`script-src 'self'; object-src 'none', frame-ancestors 'none'`, hashes).ok, true);
+    assert.equal(pagePolicy(`${HUB_CSP}, frame-ancestors *`, hashes).ok, true);
+  });
+  test("a script problem is still reported with the others", () => {
+    const r = pagePolicy(`script-src 'self' 'unsafe-inline'`, hashes);
+    assert.equal(r.ok, false);
+    assert.match(r.note, /script-src lets script elements come from 'unsafe-inline'.*no frame-ancestors limits framing/);
   });
 });
 
@@ -191,7 +236,7 @@ const { dist, files, manifest, manifestFile } = build;
 /**
  * A hub that serves a build (`dist` by default) the way rh-hub does.
  * `marker`: the origin written into the shell (`self` for the site's own);
- * `csp(path)`: the policy header; `redirect(path)`: a `308` there instead
+ * `csp(path)`: the policy header (`null`: none); `redirect(path)`: a `308` there instead
  * (`null`: none); `worker(req)`: another `/sw.js` (`null`: the build's).
  */
 function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null } = {}) {
@@ -212,7 +257,8 @@ function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirec
       return res.end(JSON.stringify({ commit: "0123abc", web: { digest: serves.manifest.digest, files: serves.files.length } }));
     }
     const file = serves.files.find((f) => f.path === path && path !== "index.html");
-    res.setHeader("content-security-policy", csp(`/${path}`));
+    const policy = csp(`/${path}`);
+    if (policy !== null) res.setHeader("content-security-policy", policy);
     if (file) return res.end(readFileSync(join(serves.dist, file.path)));
     if (path.startsWith("assets/")) {
       res.statusCode = 404;
@@ -241,9 +287,14 @@ const otherManifest = (() => {
   return Buffer.from(JSON.stringify({ ...manifest, digest: digestOf(files2), files: files2 }));
 })();
 
+/** How often a test run asked each repository for its latest release. */
+const latestAsked = new Map();
+
 /**
  * A GitHub with one release in o/r whose manifest is ours and no Sigstore
- * bundle, and signer repositories with a release of the same tag:
+ * bundle; u/r, whose latest release v9.9.10 has another build and whose
+ * v9.9.9 has ours; m/r, whose latest release has no manifest; and signer
+ * repositories with a release of the same tag:
  *   s/r  the signed manifest and its bundle;
  *   x/r  the signed manifest and a bundle over other bytes (the release's own manifest);
  *   d/r  another build's manifest, signed;
@@ -251,12 +302,22 @@ const otherManifest = (() => {
  *   anything else: nothing (404).
  */
 function fakeGitHub() {
+  const release = (tag_name, assets = ["web-manifest.json"]) => ({ tag_name, draft: false, assets: assets.map((name) => ({ name })) });
+  const releases = {
+    "o/r": [release("v9.9.9")],
+    "u/r": [release("v9.9.10"), release("v9.9.9")],
+    "m/r": [release("v9.9.11", ["SHA256SUMS"]), release("v9.9.9")],
+  };
   const server = createServer((req, res) => {
-    if (req.url.startsWith("/repos/o/r/releases")) {
+    const api = /^\/repos\/(\w\/r)\/releases(\/latest|\?per_page=\d+)$/.exec(req.url);
+    if (api && releases[api[1]]) {
       res.setHeader("content-type", "application/json");
-      return res.end(JSON.stringify([{ tag_name: "v9.9.9", draft: false, assets: [{ name: "web-manifest.json" }] }]));
+      if (api[2] !== "/latest") return res.end(JSON.stringify(releases[api[1]]));
+      latestAsked.set(api[1], (latestAsked.get(api[1]) ?? 0) + 1);
+      return res.end(JSON.stringify(releases[api[1]][0]));
     }
-    if (req.url === "/o/r/releases/download/v9.9.9/web-manifest.json") return res.end(JSON.stringify(manifest));
+    if (/^\/[oum]\/r\/releases\/download\/v9\.9\.9\/web-manifest\.json$/.test(req.url)) return res.end(JSON.stringify(manifest));
+    if (req.url === "/u/r/releases/download/v9.9.10/web-manifest.json") return res.end(otherManifest);
     const signer = /^\/([sxde])\/r\/releases\/download\/v9\.9\.9\/(web-manifest\.json|web-manifest\.sigstore\.json)$/.exec(req.url);
     if (signer) {
       const [, who, asset] = signer;
@@ -402,6 +463,21 @@ describe("verify-web.mjs against a hub", () => {
     }
   });
 
+  test("a page without a policy, or one that lets another site frame it, fails", async () => {
+    for (const [csp, why] of [
+      [(path) => (path === "/signin" ? null : HUB_CSP), /\/signin: Content-Security-Policy: no Content-Security-Policy header/],
+      [() => null, /\/: Content-Security-Policy: no Content-Security-Policy header/],
+      [() => HUB_CSP.replace("; frame-ancestors 'none'", ""), /\/link: Content-Security-Policy: no frame-ancestors limits framing by another site/],
+    ]) {
+      const site = await hub({ csp });
+      const r = await verify(["--site", site, "--manifest", manifestFile]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, why);
+    }
+    const full = await verify(["--site", await hub({ csp: () => HUB_CSP_FULL }), "--manifest", manifestFile]);
+    assert.equal(full.code, 0, full.out);
+  });
+
   test("both scripts run when started through a symlink (macOS /tmp is one)", async () => {
     const links = mkdtempSync(join(tmpdir(), "verify-web-links-"));
     try {
@@ -487,6 +563,15 @@ describe("verify-web.mjs against a hub", () => {
       assert.ok(urls.length === 3);
     });
 
+    test("all three against the latest release: asked for once, each passes", async () => {
+      const urls = await hostsUp();
+      latestAsked.delete("o/r");
+      const r = await verify([...sites(urls), "--repo", "o/r", "--allow-unattested"], { DROPPEN_VERIFY_GITHUB_API: github, DROPPEN_VERIFY_GITHUB: github });
+      assert.equal(r.code, 0, r.out);
+      assert.equal(r.out.match(/^PASS: .* byte-identical to release v9\.9\.9 of o\/r/gm)?.length, 3, r.out);
+      assert.equal(latestAsked.get("o/r"), 1, "the latest release is looked up once a run");
+    });
+
     test("a host that cannot be reached is not checked; the others are", async () => {
       const up = await hub();
       const closed = await new Promise((resolve) => {
@@ -505,10 +590,64 @@ describe("verify-web.mjs against a hub", () => {
   test("releases come from getdroppen/droppen unless --repo names another", async () => {
     const site = await hub();
     const env = { DROPPEN_VERIFY_GITHUB_API: github, DROPPEN_VERIFY_GITHUB: github };
-    // The fake GitHub only knows o/r: the default repository is asked, and is not there.
+    // The fake GitHub does not know it: the default repository is asked, and is not there.
     const r = await verify(["--site", site], env);
     assert.equal(r.code, 2, r.out);
-    assert.match(r.out, /\/repos\/getdroppen\/droppen\/releases\?per_page=30: HTTP 404/);
+    assert.match(r.out, /\/repos\/getdroppen\/droppen\/releases\/latest: HTTP 404/);
+  });
+
+  describe("by default, the latest release", () => {
+    const env = () => ({ DROPPEN_VERIFY_GITHUB_API: github, DROPPEN_VERIFY_GITHUB: github });
+
+    test("a site serving the latest release's build passes", async () => {
+      const r = await verify(["--site", await hub(), "--repo", "o/r", "--allow-unattested"], env());
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /manifest: +release v9\.9\.9 of o\/r/);
+      assert.doesNotMatch(r.out, /not the latest/);
+    });
+
+    test("a site serving an earlier release's build fails, naming both", async () => {
+      const r = await verify(["--site", await hub(), "--repo", "u/r", "--allow-unattested"], env());
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /release v9\.9\.9 of u\/r has sha256:[0-9a-f]{64}; the latest release is v9\.9\.10/);
+      assert.match(r.out, /FAIL: .* serves the web app of release v9\.9\.9, not that of the latest release v9\.9\.10\. To check it against v9\.9\.9 anyway, pass --allow-older/);
+    });
+
+    test("--allow-older checks it against that release, and says so", async () => {
+      const r = await verify(["--site", await hub(), "--repo", "u/r", "--allow-unattested", "--allow-older"], env());
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /manifest: +release v9\.9\.9 of u\/r/);
+      assert.match(r.out, /note: +release v9\.9\.9 is not the latest release, v9\.9\.10: checked against it because of --allow-older/);
+      assert.match(r.out, /PASS: .* byte-identical to release v9\.9\.9 of u\/r \(not the latest release, v9\.9\.10\)/);
+    });
+
+    test("--release names the release to check against, latest or not", async () => {
+      const r = await verify(["--site", await hub(), "--repo", "u/r", "--allow-unattested", "--release", "v9.9.9"], env());
+      assert.equal(r.code, 0, r.out);
+      const latest = await verify(["--site", await hub(), "--repo", "u/r", "--allow-unattested", "--release", "v9.9.10"], env());
+      assert.equal(latest.code, 1, latest.out);
+      assert.match(latest.out, /the site says it serves sha256:[0-9a-f]{64}, not the manifest's/);
+      const both = await verify(["--repo", "u/r", "--release", "v9.9.9", "--allow-older"], env());
+      assert.equal(both.code, 2, both.out);
+      assert.match(both.out, /--allow-older goes with the check against the latest release/);
+    });
+
+    test("a latest release without a web manifest cannot be checked against", async () => {
+      const r = await verify(["--site", await hub(), "--repo", "m/r", "--allow-unattested"], env());
+      assert.equal(r.code, 2, r.out);
+      assert.match(r.out, /the latest release of m\/r, v9\.9\.11, has no web-manifest\.json; name a release with --release/);
+    });
+
+    test("a build no release has fails as before", async () => {
+      const unreleased = makeBuild("unreleased");
+      writeFileSync(join(unreleased.dist, "extra.txt"), "x");
+      const files2 = filesOf(unreleased.dist);
+      const serves = { ...unreleased, files: files2, manifest: { ...unreleased.manifest, digest: digestOf(files2), files: files2 } };
+      const r = await verify(["--site", await hub({ serves }), "--repo", "u/r", "--allow-unattested", "--allow-older"], env());
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /neither the latest release v9\.9\.10 nor any of the last 30 releases of u\/r has sha256:/);
+      assert.match(r.out, /serves a build no release attests/);
+    });
   });
 
   test("--signer-repo must be OWNER/NAME", async () => {

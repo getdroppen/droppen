@@ -55,7 +55,8 @@ whenever `commit` is set, and a reader trusts a commit only with it) and the
 digest of the files as built — one
 `<sha256>  <path>\n` line per file, sorted by path bytewise, hashed; the shell
 before the hub adds its `rh-hub` marker. A release's `web-manifest.json` has
-the same `digest`; `scripts/verify-web.mjs` uses this to pick the manifest and
+the same `digest`; `scripts/verify-web.mjs` compares it with the latest
+release's manifest (naming the earlier release that has it, if one does) and
 then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
 A claim like everything else here, not a proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.

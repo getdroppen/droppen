@@ -6,8 +6,7 @@
 //                                                      my.droppen.app (the app),
 //                                                      www.droppen.app (the site) and
 //                                                      droppen.app — each against the
-//                                                      release whose manifest has the
-//                                                      digest it reports
+//                                                      latest release's manifest
 //   node scripts/verify-web.mjs --site URL             another hub (or a local one);
 //                                                      repeat it for each of its hosts
 //   node scripts/verify-web.mjs --release v0.2.109     against that release's manifest
@@ -25,12 +24,19 @@
 //                            (the default for a release manifest, or with --bundle)
 //   --allow-unattested       accept a release manifest whose attestation was not
 //                            checked (no gh, or no bundle published)
-//   --releases N             how many recent releases to search (default 30)
+//   --allow-older            accept a site that serves an earlier release's build
+//                            (one of the last --releases), checked against that
+//                            release, instead of failing it
+//   --releases N             how many recent releases to search for the build a
+//                            site serves when it is not the latest's (default 30)
 //
 // What it does:
 //   1. asks the site which build it serves (`/.well-known/droppen-build`);
-//   2. takes the release manifest with that digest (or the one named), and
-//      checks its attestation with `gh attestation verify --bundle` — that
+//   2. takes the latest release's manifest (GitHub's latest release of
+//      --repo, as install.sh takes it; or the one named), which must have
+//      that digest: a site serving an earlier release's build fails, naming
+//      that release, unless --allow-older. It checks the manifest's
+//      attestation with `gh attestation verify --bundle` — that
 //      needs `gh` installed but no GitHub login. A release without a bundle
 //      of its own (getdroppen/releases, up to v0.2.126: its manifest was
 //      staged by the release script, the same files but not the bytes CI
@@ -46,10 +52,13 @@
 //      `/link` to my). The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
 //      after `<head>`, whose origin — where the page signs in and sends all
-//      hub traffic — must be that host's own (or a --hub-origin). Every page's
-//      Content-Security-Policy, on every host, may let scripts (elements and
-//      attributes) run only from the host itself and the pages' own inline
-//      scripts;
+//      hub traffic — must be that host's own (or a --hub-origin). Every page,
+//      on every host, must come with a Content-Security-Policy header that lets
+//      scripts (elements and attributes) run only from the host itself and the
+//      pages' own inline scripts, lets no other site frame the page
+//      (`frame-ancestors` 'none' or 'self') and loads no plugin content
+//      (`object-src`, or `default-src`, 'none' or 'self'). A page without one
+//      fails;
 //   4. reads the integrity table in the attested `sw.js` — the sha256 of every
 //      asset and of the shell, which the service worker checks the browser's
 //      cache against, and the shell's inline scripts its offline shell is
@@ -116,6 +125,7 @@ function parseArgs(argv) {
     releases: 30,
     requireAttestation: false,
     allowUnattested: false,
+    allowOlder: false,
     hubOrigins: [],
   };
   const valued = {
@@ -139,6 +149,7 @@ function parseArgs(argv) {
       opts.hubOrigins.push(argv[++i].toLowerCase());
     } else if (a === "--require-attestation") opts.requireAttestation = true;
     else if (a === "--allow-unattested") opts.allowUnattested = true;
+    else if (a === "--allow-older") opts.allowOlder = true;
     else if (a === "-h" || a === "--help") opts.help = true;
     else throw new Unchecked(`unknown argument ${a} (see --help)`);
   }
@@ -157,6 +168,7 @@ function parseArgs(argv) {
   if (opts.release && opts.manifest) throw new Unchecked("give --release or --manifest, not both");
   if (opts.bundle && !opts.manifest) throw new Unchecked("--bundle goes with --manifest");
   if (opts.requireAttestation && opts.allowUnattested) throw new Unchecked("give --require-attestation or --allow-unattested, not both");
+  if (opts.allowOlder && (opts.release || opts.manifest)) throw new Unchecked("--allow-older goes with the check against the latest release, not with --release or --manifest");
   for (const o of opts.hubOrigins) if (!/^wss?:\/\/[^/]+$/.test(o)) throw new Unchecked(`--hub-origin must be like wss://hub.example, not ${o}`);
   opts.releases = Number(opts.releases);
   if (!Number.isInteger(opts.releases) || opts.releases < 1 || opts.releases > 100) throw new Unchecked("--releases must be 1 to 100");
@@ -204,28 +216,76 @@ function checkManifest(manifest, where) {
   return manifest;
 }
 
-/** The release manifest to compare with: by tag, or the newest with the site's digest. */
-async function releaseManifest(opts, digest) {
-  const base = `${GITHUB}/${opts.repo}/releases/download`;
-  const fetchOne = async (tag) => {
-    const bytes = await download(`${base}/${encodeURIComponent(tag)}/web-manifest.json`);
-    return bytes && { tag, bytes, manifest: JSON.parse(bytes.toString("utf8")) };
-  };
+/** A release's `web-manifest.json`: `{tag, bytes, manifest}`, or `null` when it has none. */
+async function releaseFile(opts, tag) {
+  const bytes = await download(`${GITHUB}/${opts.repo}/releases/download/${encodeURIComponent(tag)}/web-manifest.json`);
+  return bytes && { tag, bytes, manifest: JSON.parse(bytes.toString("utf8")) };
+}
+
+/** GitHub's API, read anonymously; a failure is `Unchecked`. */
+async function githubApi(path, why) {
+  const api = `${GITHUB_API}${path}`;
+  let res;
+  try {
+    res = await fetch(api, { headers: { ...HEADERS, accept: "application/vnd.github+json" } });
+  } catch (error) {
+    throw new Unchecked(`${api}: ${error.cause?.message ?? error.message}`);
+  }
+  if (!res.ok) throw new Unchecked(`${api}: HTTP ${res.status} (${why})`);
+  return res.json();
+}
+
+/**
+ * The latest release of `--repo` — GitHub's latest release, the one
+ * install.sh installs — and its manifest: `{tag, bytes, manifest}`. Asked
+ * once a run (`memo`), for every site.
+ */
+function latestRelease(opts, memo) {
+  if (!memo.has("latest")) {
+    memo.set(
+      "latest",
+      (async () => {
+        const release = await githubApi(
+          `/repos/${opts.repo}/releases/latest`,
+          `is ${opts.repo} public, with a release? otherwise name one with --release or --manifest`,
+        );
+        const tag = release?.tag_name;
+        if (typeof tag !== "string" || !tag) throw new Unchecked(`the latest release of ${opts.repo} has no tag`);
+        const found = release.assets?.some((a) => a.name === "web-manifest.json") ? await releaseFile(opts, tag) : null;
+        if (!found) throw new Unchecked(`the latest release of ${opts.repo}, ${tag}, has no web-manifest.json; name a release with --release`);
+        return found;
+      })(),
+    );
+  }
+  return memo.get("latest");
+}
+
+/**
+ * The release manifest to compare with: `{match, latest}`. `match`: the
+ * named release's (`--release`), or else the latest release's when it has
+ * the site's `digest`, or else the newest of the last --releases releases
+ * that has it (which is then not the latest's), or `null`. `latest`: the
+ * latest release's tag (`null` with --release).
+ */
+async function releaseManifest(opts, digest, memo) {
   if (opts.release) {
-    const found = await fetchOne(opts.release);
+    const found = await releaseFile(opts, opts.release);
     if (!found) throw new Unchecked(`release ${opts.release} of ${opts.repo} has no web-manifest.json`);
-    return found;
+    return { match: found, latest: null };
   }
   if (!digest) throw new Unchecked(`the site does not say which build it serves; name one with --release or --manifest`);
-  const api = `${GITHUB_API}/repos/${opts.repo}/releases?per_page=${opts.releases}`;
-  const res = await fetch(api, { headers: { ...HEADERS, accept: "application/vnd.github+json" } });
-  if (!res.ok) throw new Unchecked(`${api}: HTTP ${res.status} (is ${opts.repo} public? otherwise name a manifest with --manifest)`);
-  for (const release of await res.json()) {
-    if (release.draft || !release.assets?.some((a) => a.name === "web-manifest.json")) continue;
-    const found = await fetchOne(release.tag_name);
-    if (found?.manifest?.digest === digest) return found;
+  const latest = await latestRelease(opts, memo);
+  if (latest.manifest?.digest === digest) return { match: latest, latest: latest.tag };
+  const releases = await githubApi(
+    `/repos/${opts.repo}/releases?per_page=${opts.releases}`,
+    `is ${opts.repo} public? otherwise name a manifest with --manifest`,
+  );
+  for (const release of releases) {
+    if (release.draft || release.tag_name === latest.tag || !release.assets?.some((a) => a.name === "web-manifest.json")) continue;
+    const found = await releaseFile(opts, release.tag_name);
+    if (found?.manifest?.digest === digest) return { match: found, latest: latest.tag };
   }
-  return null;
+  return { match: null, latest: latest.tag };
 }
 
 /**
@@ -360,6 +420,21 @@ function inlineHashes(html) {
 }
 
 /**
+ * The policies of a header (comma-separated, each enforced), each as its
+ * directives: lowercase name → sources. A repeated directive is ignored: the
+ * first one counts.
+ */
+function policiesOf(header) {
+  return header.split(",").map((policy) => {
+    const directives = new Map();
+    for (const [name, ...values] of policy.split(";").map((d) => d.trim().split(/\s+/)).filter((d) => d[0])) {
+      if (!directives.has(name.toLowerCase())) directives.set(name.toLowerCase(), values);
+    }
+    return directives;
+  });
+}
+
+/**
  * Which directive governs each kind of script, most specific first (CSP 3):
  * `<script>` elements and inline event-handler attributes.
  */
@@ -375,16 +450,11 @@ const SCRIPT_DIRECTIVES = {
  * strict enough is enough.
  */
 export function scriptPolicy(header, allowedHashes) {
-  if (!header) return { ok: true, note: "no Content-Security-Policy header (nothing beyond the files above is checked)" };
+  if (!header) return { ok: false, note: "no Content-Security-Policy header: nothing limits which scripts the page runs" };
   const allowed = (source) => ["'self'", "'none'"].includes(source.toLowerCase()) || allowedHashes.includes(source);
   const restricted = new Set();
   const problems = new Set();
-  for (const policy of header.split(",")) {
-    // A repeated directive is ignored: the first one counts.
-    const directives = new Map();
-    for (const [name, ...values] of policy.split(";").map((d) => d.trim().split(/\s+/)).filter((d) => d[0])) {
-      if (!directives.has(name.toLowerCase())) directives.set(name.toLowerCase(), values);
-    }
+  for (const directives of policiesOf(header)) {
     for (const [kind, chain] of Object.entries(SCRIPT_DIRECTIVES)) {
       const name = chain.find((n) => directives.has(n));
       if (!name) {
@@ -399,6 +469,43 @@ export function scriptPolicy(header, allowedHashes) {
   if (Object.keys(SCRIPT_DIRECTIVES).every((kind) => restricted.has(kind)))
     return { ok: true, note: `scripts run only from 'self' and the pages' ${allowedHashes.length} inline script(s)` };
   return { ok: false, note: [...problems].join("; ") };
+}
+
+/**
+ * What else every page's policy must hold to 'self' or 'none', with the
+ * directive that governs it first: who may frame the page (`frame-ancestors`
+ * has no fallback; another site's frame could lay the signed-in page under
+ * its own) and plugin content (`<object>`, `<embed>`).
+ */
+const LOCKED_DIRECTIVES = {
+  "framing by another site": ["frame-ancestors"],
+  "plugin content": ["object-src", "default-src"],
+};
+
+/**
+ * The whole verdict on a page's policy header: its scripts ([`scriptPolicy`])
+ * and [`LOCKED_DIRECTIVES`]; a page without a policy fails. As with scripts,
+ * one enforced policy strict enough is enough.
+ */
+export function pagePolicy(header, allowedHashes) {
+  const scripts = scriptPolicy(header, allowedHashes);
+  if (!header) return scripts;
+  const problems = scripts.ok ? [] : [scripts.note];
+  const policies = policiesOf(header);
+  for (const [kind, chain] of Object.entries(LOCKED_DIRECTIVES)) {
+    const loose = new Set();
+    let restricted = false;
+    for (const directives of policies) {
+      const name = chain.find((n) => directives.has(n));
+      if (!name) continue;
+      const extra = directives.get(name).filter((source) => !["'self'", "'none'"].includes(source.toLowerCase()));
+      if (extra.length) loose.add(`${name} ${extra.join(" ")}`);
+      else restricted = true;
+    }
+    if (!restricted) problems.push(loose.size ? `${[...loose].join("; ")} allows ${kind}` : `no ${chain.join(" or ")} limits ${kind}`);
+  }
+  if (problems.length) return { ok: false, note: problems.join("; ") };
+  return { ok: true, note: `${scripts.note}; framing and plugin content limited to 'self'` };
 }
 
 /**
@@ -464,29 +571,38 @@ async function pool(items, limit, work) {
 
 /**
  * The attested manifest for a site that says it serves `served` (or the one
- * named), with its attestation checked: `{manifest, manifestBytes, source,
- * attestation, failures}`. The same for every site that says the same, so it
- * is worked out once a run (`memo`).
+ * named), with its attestation checked: `{manifest, source, attestation,
+ * failures, tag, olderThan}`; `{none, latest}` when no release has it, and
+ * `{older, latest}` when only a release other than the latest has it (unless
+ * --allow-older). The same for every site that says the same, so it is
+ * worked out once a run (`memo`).
  */
 function attested(opts, served, memo) {
-  const key = opts.manifest || opts.release ? "named" : served;
-  if (!memo.has(key)) memo.set(key, findAttested(opts, served));
+  const key = opts.manifest || opts.release ? "named" : `digest ${served}`;
+  if (!memo.has(key)) memo.set(key, findAttested(opts, served, memo));
   return memo.get(key);
 }
 
-async function findAttested(opts, served) {
+async function findAttested(opts, served, memo) {
   const failures = [];
   let manifestBytes, bundleBytes, source;
   let tag = null;
   let missing = null;
+  let olderThan = null;
   if (opts.manifest) {
     manifestBytes = /^https?:\/\//.test(opts.manifest) ? await download(opts.manifest) : readFileSync(opts.manifest);
     if (!manifestBytes) throw new Unchecked(`${opts.manifest}: not found`);
     bundleBytes = opts.bundle ? readFileSync(opts.bundle) : null;
     source = opts.manifest;
   } else {
-    const found = await releaseManifest(opts, served);
-    if (!found) return null;
+    const { match: found, latest } = await releaseManifest(opts, served, memo);
+    if (!found) return { none: true, latest };
+    // Every release's build stays attested: one that is not the latest's is
+    // a site still serving an earlier release, without what came after it.
+    if (latest && found.tag !== latest) {
+      if (!opts.allowOlder) return { older: found.tag, latest };
+      olderThan = latest;
+    }
     ({ tag, bytes: manifestBytes } = found);
     bundleBytes = await download(`${GITHUB}/${opts.repo}/releases/download/${encodeURIComponent(tag)}/${BUNDLE_ASSET}`);
     source = `release ${tag} of ${opts.repo}`;
@@ -510,7 +626,7 @@ async function findAttested(opts, served) {
   if (attestation.failed) failures.push(`attestation ${attestation.note}`);
   else if (requireAttestation && !attestation.ok)
     failures.push(`attestation ${attestation.note}${opts.manifest ? "" : " (--allow-unattested accepts that)"}`);
-  return { manifest, source, attestation, failures };
+  return { manifest, source, attestation, failures, tag, olderThan };
 }
 
 async function main(argv) {
@@ -573,14 +689,22 @@ async function checkSite(opts, site, memo) {
   if (!opts.manifest && !opts.release && !served)
     throw new Unchecked(`the site does not say which build it serves; name one with --release or --manifest${notes.length ? ` (${notes.join("; ")})` : ""}`);
   const found = await attested(opts, served, memo);
-  if (!found) {
-    console.log(`  manifest:    none of the last ${opts.releases} releases of ${opts.repo} has ${served}`);
+  if (found.none) {
+    console.log(`  manifest:    neither the latest release ${found.latest} nor any of the last ${opts.releases} releases of ${opts.repo} has ${served}`);
     console.log(
       `\nFAIL: ${site} serves a build no release attests.${info?.commit ? ` To check it anyway, build ${info.commit} yourself (docs/web-integrity.md) and pass --manifest.` : ""}`,
     );
     return 1;
   }
-  const { manifest, source, attestation } = found;
+  if (found.older) {
+    console.log(`  manifest:    release ${found.older} of ${opts.repo} has ${served}; the latest release is ${found.latest}`);
+    console.log(
+      `\nFAIL: ${site} serves the web app of release ${found.older}, not that of the latest release ${found.latest}. To check it against ${found.older} anyway, pass --allow-older (or --release ${found.older}).`,
+    );
+    return 1;
+  }
+  const { manifest, source, attestation, olderThan } = found;
+  if (olderThan) notes.push(`release ${found.tag} is not the latest release, ${olderThan}: checked against it because of --allow-older`);
   failures.push(...found.failures);
   console.log(`  manifest:    ${source}: ${manifest.digest}${manifest.commit ? `, commit ${manifest.commit}` : ""}`);
   if (served && served !== manifest.digest) failures.push(`the site says it serves ${served}, not the manifest's ${manifest.digest}`);
@@ -685,7 +809,7 @@ async function checkSite(opts, site, memo) {
   // (unknown when no page matched, and then the pages have failed already).
   if (attestedPages.length) {
     const hashes = [...new Set(attestedPages.flatMap(inlineHashes))];
-    const verdicts = policies.sort((a, b) => a.url.localeCompare(b.url)).map((p) => ({ ...p, ...scriptPolicy(p.header, hashes) }));
+    const verdicts = policies.sort((a, b) => a.url.localeCompare(b.url)).map((p) => ({ ...p, ...pagePolicy(p.header, hashes) }));
     for (const v of verdicts.filter((v) => !v.ok)) failures.push(`${v.url}: Content-Security-Policy: ${v.note}`);
     const good = verdicts.filter((v) => v.ok);
     console.log(`  policy:      ${good.length} of ${verdicts.length} pages${good.length ? `: ${[...new Set(good.map((v) => v.note))].join("; ")}` : ""}`);
@@ -698,7 +822,7 @@ async function checkSite(opts, site, memo) {
     return 1;
   }
   console.log(
-    `\nPASS: every file ${site} served just now is byte-identical to ${source}${attestation.ok ? ", whose attestation checks out" : " (attestation not checked)"}${elsewhere ? `; ${elsewhere}` : ""}.`,
+    `\nPASS: every file ${site} served just now is byte-identical to ${source}${olderThan ? ` (not the latest release, ${olderThan})` : ""}${attestation.ok ? ", whose attestation checks out" : " (attestation not checked)"}${elsewhere ? `; ${elsewhere}` : ""}.`,
   );
   return 0;
 }
