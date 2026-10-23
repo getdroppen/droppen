@@ -54,6 +54,7 @@ import {
   type KeptDispute,
   RenewalError,
   renewalHelps,
+  type RenewalReport,
   type RenewOptions,
 } from "./account";
 import { type AccountView, type HostDispute, type HostRotationView, HubApiError, disputePush, rotationPush, type RotationsView } from "./api";
@@ -275,6 +276,8 @@ export class RenewalRunner {
   private readonly marked = new Set<string>();
   /** Rows this page withdrew (abandoned ones, pending ones nothing exposes any more), by `host@requestedMs`: once each. */
   private readonly withdrawn = new Set<string>();
+  /** This browser's attempts this page took up from a page that went away (`resume`), by `host@nonceHash`: once each. */
+  private readonly resumed = new Set<string>();
   /** When {@link withdrawUnexposed} last read the hub. */
   private lastUnexposedCheck = Number.NEGATIVE_INFINITY;
   /** Disputes checked against the chain, by host. */
@@ -782,6 +785,24 @@ export class RenewalRunner {
       chain = account.chain;
       if (!chain || this.view.hosts.some((r) => r.state === "committed" && r.committedSeq !== null && r.committedSeq > chain!.seq)) return;
     }
+    // This browser's own attempt, left by a page of it that went away before writing it (a reload, a crash, a closed
+    // tab in the window): only the page that asked could check the host's answer, so nobody else will write it. Taken
+    // up here — written, or (left before its answer checked out) withdrawn at once and started again (§4.2).
+    let resumed = false;
+    for (const row of [...this.view.hosts]) {
+      if (this.stopped || this.running === row.host || !row.nonceHash || (row.state !== "staged" && row.state !== "attempt")) continue;
+      const key = `${row.host}@${row.nonceHash}`;
+      if (this.resumed.has(key) || !(await account.keptRenewal(row.host, row.nonceHash))) continue;
+      const outcome = await this.resume(row.host);
+      // Another tab of this browser on it (alive): looked at again later.
+      if (outcome !== "busy") this.resumed.add(key);
+      resumed ||= outcome !== "busy";
+    }
+    // What it changed (the chain, the hub's rows) is looked at afresh: the next look.
+    if (resumed) {
+      this.again = true;
+      return;
+    }
     // Attempts nobody will finish: withdrawn, so the renewal can start again (§4.2).
     for (const row of [...this.view.hosts]) if (this.running !== row.host && this.abandoned(row)) await this.withdraw(row);
     const exposed = account.hostsToRotate();
@@ -883,9 +904,11 @@ export class RenewalRunner {
   /**
    * Wake for the earliest retry that is due later — and for when another
    * page's attempt or staging is to be taken for abandoned ({@link abandoned}):
-   * a staging is committed only by the page that asked for it, and once that
-   * page is gone nothing else need wake a quiet page to withdraw it and start
-   * again, while the host waits with its device role suspended.
+   * a staging is committed only by the page that asked for it (or, should that
+   * one go away, the next page of its browser: `CloudAccount.resumeRenewal`),
+   * and once that browser is gone nothing else need wake a quiet page to
+   * withdraw it and start again, while the host waits with its device role
+   * suspended.
    */
   private schedule(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -914,19 +937,37 @@ export class RenewalRunner {
    */
   private async attempt(host: string, how: Pick<RenewOptions, "assurance" | "askCode" | "onStep">, auto: boolean): Promise<boolean> {
     const { account } = this.opts;
+    return (await this.go(host, auto, () => account.renewIdentity(host, this.opts.courier(), { ...this.opts.renewOptions, ...how }))) === "renewed";
+  }
+
+  /**
+   * Take up this browser's attempt of `host` that a page of it left
+   * (`CloudAccount.resumeRenewal`), as an automatic attempt: `renewed`,
+   * `busy` (another tab of this browser is on it), or `none` (nothing to
+   * finish, withdrawn, or failed — counted as {@link failed} says).
+   */
+  private resume(host: string): Promise<"renewed" | "busy" | "none"> {
+    const { account } = this.opts;
+    return this.go(host, true, () => account.resumeRenewal(host, this.opts.courier(), this.opts.renewOptions));
+  }
+
+  /** `work` on `host` as this page's renewal in progress (its row says so), and the hub's renewals read again after. */
+  private async go(host: string, auto: boolean, work: () => Promise<RenewalReport | "busy" | null>): Promise<"renewed" | "busy" | "none"> {
+    const { account } = this.opts;
     const run = this.run(host);
     this.running = host;
     this.emit();
     try {
-      await account.renewIdentity(host, this.opts.courier(), { ...this.opts.renewOptions, ...how });
+      const done = await work();
+      if (done === "busy" || done === null) return done === "busy" ? "busy" : "none";
       this.runs.set(host, { attempts: 0, nextMs: null, error: null, outcome: null, waiting: [], doneMs: this.now() });
-      return true;
+      return "renewed";
     } catch (error) {
       // A failed attempt was withdrawn at the hub: mark it waiting again (its device role stays suspended).
       for (const key of [...this.marked]) if (key.startsWith(`${host}@`)) this.marked.delete(key);
       if (!auto) throw error;
       this.failed(host, run, error);
-      return false;
+      return "none";
     } finally {
       this.running = null;
       try {

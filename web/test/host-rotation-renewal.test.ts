@@ -16,12 +16,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Attestation, type ChainState, encodeEntry, fromHex, hex, MANAGE_FRESHNESS_MS, MAX_PAUSE_ENTRY_LEN, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
-import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal, splitPauseRemovals } from "../src/lib/hub/account.js";
+import { type AccountLocks, AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal, splitPauseRemovals } from "../src/lib/hub/account.js";
 import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush } from "../src/lib/hub/api.js";
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
 import { enablePush, followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
-import { browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
+import { browserOf, browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
 import type { RotateRequest } from "../src/lib/hub/deliver.js";
 
 const rotated = (a: CloudAccount): string[] =>
@@ -1004,6 +1004,178 @@ test("an attempt or staging nobody will finish is withdrawn and the renewal star
   assert.deepEqual(agents.rotateCalls, []);
   assert.deepEqual(hub.rotationDeletes, []);
   runner.stop();
+});
+
+/**
+ * One browser's Web Locks across its pages, as `navigator.locks` keeps them:
+ * `page()` opens a page's view of them, and `gone()` is that page unloading —
+ * reloaded, crashed, its tab closed — which lets go of every lock it held.
+ */
+function browserLocks() {
+  const held = new Map<string, symbol>();
+  const waiting = new Map<string, (() => void)[]>();
+  const free = (name: string) => {
+    held.delete(name);
+    const next = waiting.get(name)?.shift();
+    next?.();
+  };
+  return () => {
+    const me = Symbol("page");
+    const mine = new Set<string>();
+    const locks: AccountLocks = {
+      async request(name, options, callback) {
+        while (held.has(name)) {
+          if (options.ifAvailable) return callback(null);
+          await new Promise<void>((resolve) => waiting.set(name, [...(waiting.get(name) ?? []), resolve]));
+        }
+        held.set(name, me);
+        mine.add(name);
+        try {
+          return await callback({ name, mode: options.mode });
+        } finally {
+          if (held.get(name) === me) {
+            mine.delete(name);
+            free(name);
+          }
+        }
+      },
+    };
+    return {
+      locks,
+      gone: () => {
+        for (const name of mine) free(name);
+        mine.clear();
+      },
+    };
+  };
+}
+
+/** A page of `a`'s browser (its key store, its storage, its device session) with `locks` for its Web Locks. */
+const pageOf = (hub: FakeKeysHub, a: CloudAccount, locks: AccountLocks) => CloudAccount.open(hub.api(), { ...a.session }, a.store, { origin: HUB_ORIGIN, ...browserOf(a.store), locks });
+
+/** A runner for `page`, every host of the account online. */
+function runnerOf(page: CloudAccount, agents: FakeAgents) {
+  const link = new FakeLink();
+  for (const id of ["m-1", "m-2", "m-3"]) link.set(id, "online");
+  return new RenewalRunner({ account: page, link: link as never, courier: () => agents, me: meOf({ "m-1": true, "m-2": true, "m-3": true }), renewOptions: quick });
+}
+
+test("the page that asked is reloaded a second after the host staged its new key — the next page of this browser writes that staging, its answer checked again; nobody waits for it to lapse", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.rotationWindowMs = 300;
+  const tabs = browserLocks();
+  const first = tabs();
+  const asking = await pageOf(hub, a, first.locks);
+  // The page that asks goes away once the host staged: its wait for the window never ends, and nothing after it runs —
+  // no write, no withdrawal; the browser lets go of its locks.
+  let left!: () => void;
+  const gone = new Promise<void>((resolve) => (left = resolve));
+  void asking.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep: () => (left(), new Promise<void>(() => undefined)) });
+  await gone;
+  first.gone();
+  assert.equal(hub.rotationRows.get("m-1")!.state, "staged");
+  assert.deepEqual(rotated(asking), []);
+  // The reload: a new page of the same browser, and its runner.
+  const page = await pageOf(hub, a, tabs().locks);
+  const runner = runnerOf(page, agents);
+  runner.start();
+  await until(() => rotated(page).includes("m-1"));
+  await runner.idle();
+  runner.stop();
+  assert.equal(hub.rotationRows.get("m-1")!.state, "committed");
+  assert.deepEqual(agents.rotateCalls, ["m-1"], "the host was asked once: the staging it made is the one written");
+  assert.deepEqual(hub.rotationDeletes, [], "nothing withdrawn");
+  assert.equal(hex(page.chain!.machine("m-1")!.info.signKey), hub.rotationRows.get("m-1")!.sign_key, "its new key is the one it staged");
+  assert.equal(runner.status("m-1").kind, "renewed");
+  assert.deepEqual(exposedIds(page.chain!), []);
+  assert.equal(await a.store.get(`rn/${a.account}/m-1`), undefined, "nothing of it kept once written");
+});
+
+test("a page that goes away before the host's answer checked out (no MAC without its ephemeral key): the next page withdraws that attempt at once and renews with a fresh nonce", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const tabs = browserLocks();
+  const first = tabs();
+  const asking = await pageOf(hub, a, first.locks);
+  // The host stages, but its answer never reaches the page that asked.
+  const answer = agents.rotate.bind(agents);
+  let left!: () => void;
+  const gone = new Promise<void>((resolve) => (left = resolve));
+  agents.rotate = async (m, b) => {
+    await answer(m, b);
+    left();
+    return new Promise(() => undefined);
+  };
+  void asking.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  await gone;
+  first.gone();
+  agents.rotate = answer;
+  const left1 = String(hub.rotationRows.get("m-1")!.nonce_hash);
+  const page = await pageOf(hub, a, tabs().locks);
+  const runner = runnerOf(page, agents);
+  runner.start();
+  await until(() => rotated(page).includes("m-1"));
+  await runner.idle();
+  runner.stop();
+  assert.deepEqual(hub.rotationDeletes, ["m-1"], "withdrawn at once, not left for ten minutes");
+  assert.deepEqual(agents.rotateCalls, ["m-1", "m-1"], "asked again");
+  assert.equal(hub.rotationPuts.filter((p) => p === "m-1 attempt 0").length, 2, "a second attempt");
+  assert.notEqual(String(hub.rotationRows.get("m-1")!.nonce_hash), left1);
+  assert.equal(hub.rotationRows.get("m-1")!.state, "committed");
+});
+
+test("another tab of this browser still on its renewal is left alone (its Web Lock): no second write, no withdrawal — and a record this browser did not seal finishes nothing", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.rotationWindowMs = 400;
+  const tabs = browserLocks();
+  const asking = await pageOf(hub, a, tabs().locks);
+  let waiting!: () => void;
+  const inWindow = new Promise<void>((resolve) => (waiting = resolve));
+  const sleep = (ms: number) => (waiting(), new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const renewing = asking.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep });
+  await inWindow;
+  // A second tab opens while the first waits for the window.
+  const other = await pageOf(hub, a, tabs().locks);
+  const runner = runnerOf(other, agents);
+  runner.start();
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "renewing", elsewhere: true });
+  await renewing;
+  await runner.idle();
+  runner.stop();
+  assert.deepEqual(rotated(asking), ["m-1"], "written once, by the tab that asked");
+  await other.sync();
+  assert.deepEqual(rotated(other), ["m-1"]);
+  assert.deepEqual(hub.rotationDeletes, []);
+
+  // A record this browser did not seal (or one tampered with): it does not open, so nothing of it is written.
+  const t = await account({ chain: false });
+  await t.a.removeDevice(t.x.deviceId, new FakeCourier());
+  t.hub.rotationWindowMs = 300;
+  const tTabs = browserLocks();
+  const tFirst = tTabs();
+  const tAsking = await pageOf(t.hub, t.a, tFirst.locks);
+  let tLeft!: () => void;
+  const tGone = new Promise<void>((resolve) => (tLeft = resolve));
+  void tAsking.renewIdentity("m-1", t.agents, { assurance: ASSURANCE_AUTO, ...quick, sleep: () => (tLeft(), new Promise<void>(() => undefined)) });
+  await tGone;
+  tFirst.gone();
+  const name = `rn/${t.a.account}/m-1`;
+  const kept = (await t.a.store.get(name)) as { v: 1; iv: Uint8Array; ct: Uint8Array };
+  const ct = new Uint8Array(kept.ct);
+  ct[0] = ct[0]! ^ 1;
+  await t.a.store.put(name, { ...kept, ct });
+  const tPage = await pageOf(t.hub, t.a, tTabs().locks);
+  const tRunner = runnerOf(tPage, t.agents);
+  tRunner.start();
+  await tRunner.idle();
+  await tRunner.idle();
+  tRunner.stop();
+  assert.deepEqual(rotated(tPage), [], "nothing written of a record that does not open");
+  assert.deepEqual(t.hub.rotationDeletes, [], "and nothing withdrawn: it is another page's, as far as this one knows");
+  assert.deepEqual(tRunner.status("m-1"), { kind: "renewing", elsewhere: true });
 });
 
 test("a renewal the hub committed that this page's chain lacks: synced first, the host never marked again", async () => {

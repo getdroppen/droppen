@@ -158,7 +158,7 @@ import {
   verifyRotateConfirm,
   WrapError,
 } from "@/lib/e2e";
-import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HubApi, HubApiError, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
+import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
 import { hubOrigin } from "./config";
 import {
   ChannelUnavailable,
@@ -175,6 +175,7 @@ import {
 import {
   forgetLocalWrapKey,
   HostKeyVault,
+  type KeptRenewal,
   keyName,
   Keyring,
   legacyMachineKeyName,
@@ -185,6 +186,7 @@ import {
   type Rewrap,
   rewrapMachineKeys,
   recoveryTag,
+  RenewalStash,
   UserKeyVault,
   wrapMachineKey,
 } from "./keyring";
@@ -253,6 +255,10 @@ const keptDisputesKey = (account: string) => `rh.hub.renewal.disputes.${account}
 const localAssuredKey = (account: string) => `rh.hub.renewal.localAssured.${account}`;
 /** A renewal superseded by a loss after it staged is started again at most this many times in all (§4.1 「清除」). */
 const RENEW_RESTARTS = 3;
+/** What `holdRenewal` answers while another tab of this browser holds the renewal of that host. */
+const BUSY: unique symbol = Symbol("busy");
+/** The Web Lock a page holds while it renews `host` (asking, waiting for the window, writing): across this browser's tabs. */
+const renewalLockName = (account: string, host: string) => `rh.hub.renewal.${account}.${host}`;
 
 /**
  * At most this many RESOLVED disputes kept: a dispute that
@@ -353,7 +359,12 @@ export type AccountStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
  * `seen-store.ts`).
  */
 export interface AccountLocks {
-  request<T>(name: string, options: { mode: "exclusive" }, callback: () => T | Promise<T>): Promise<T>;
+  /**
+   * With `ifAvailable`, the callback is handed `null` (and runs at once) when
+   * another page holds the lock — as `navigator.locks` does; the renewal
+   * this browser is finishing in another tab (`CloudAccount.resumeRenewal`).
+   */
+  request<T>(name: string, options: { mode: "exclusive"; ifAvailable?: boolean }, callback: (lock?: unknown) => T | Promise<T>): Promise<T>;
 }
 
 type EventTargetLike = Pick<EventTarget, "addEventListener" | "removeEventListener">;
@@ -1071,6 +1082,8 @@ export class CloudAccount {
   readonly keyring: Keyring;
   /** The hosts' machine keys handed to this device one by one (it is not an admin: chain v3). */
   readonly hostKeys: HostKeyVault;
+  /** The renewals this browser asked for and has not finished (`renewIdentity`, `resumeRenewal`). */
+  private readonly renewalStash: RenewalStash;
   private readonly listeners = new Set<Listener>();
   /** Set once the hub refused this device a session (see {@link Refusal}). */
   refusal: Refusal | null = null;
@@ -1161,6 +1174,7 @@ export class CloudAccount {
     this.crossTab?.subscribe((message) => this.heardDisputes(message));
     this.vault = new UserKeyVault(store, session.account);
     this.hostKeys = new HostKeyVault(store, session.account);
+    this.renewalStash = new RenewalStash(store, session.account);
     this.keyring = new Keyring(
       {
         list: () => api.keys(this.session.token),
@@ -4279,18 +4293,15 @@ export class CloudAccount {
     }
   }
 
-  /** One try of {@link renewIdentity}: anything that does not check out withdraws it. */
-  private async renewOnce(host: string, unguarded: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
-    // Nothing of a renewal leaves a page whose view forked: every call to the host and every key goes through the latch.
-    this.assertNotForked();
-    const courier = this.guardedRenewal(unguarded);
-    // What an automatic renewal may not go past, as it stands now: when it moves, the attempt checks again at once.
-    let gen = this.assuranceGen;
-    const recheck = () => {
-      if (gen === this.assuranceGen || !this.state) return;
-      gen = this.assuranceGen;
-      if (this.state.machine(host)) this.checkAssurance(this.state, host, opts.assurance);
-    };
+  /**
+   * The checks every renewal of `host` signed here goes through first,
+   * whoever asks (the runner or a person) and whether it starts or is
+   * finished after a reload ({@link resumeRenewal}): an admin, chain v3, a
+   * current host, never ahead of an exposed host it lets control it, the
+   * account's policy chosen; and an automatic one never for an isolated host,
+   * nor against the account's policy or this device's own guard.
+   */
+  private requireRenewable(host: string, assurance: Assurance): void {
     const chain0 = this.requireAdmin();
     this.requireUpgraded(chain0);
     if (!chain0.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
@@ -4298,7 +4309,6 @@ export class CloudAccount {
     this.requireRenewFirst(host);
     // The account chose how renewals are confirmed first (§5.6 「打开的顺序」).
     if (chain0.renewalPolicySeq === null) throw new RenewalError("policyUnset", "choose how identity key renewals are confirmed first");
-    const assurance = opts.assurance;
     if (assurance !== ASSURANCE_ON_DEVICE && this.isolated(host)) {
       throw new RenewalError("needsAssurance", `${host} is isolated: renew its identity key with the code its screen shows`);
     }
@@ -4306,128 +4316,59 @@ export class CloudAccount {
     if (assurance !== ASSURANCE_ON_DEVICE && this.renewalsAssured) {
       throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
     }
-    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-    const now = opts.now ?? Date.now;
-    const nonce = crypto.getRandomValues(new Uint8Array(16));
-    const eph = (await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
-    const ephPublic = await exportPublic(eph.publicKey);
-    opts.onStep?.("requesting");
-    const nonceHash = await sha256(nonce);
+  }
+
+  /** What an automatic renewal of `host` may not go past, as it stands now: when it moves, the attempt checks again at once. */
+  private assuranceRecheck(host: string, assurance: Assurance): () => void {
+    let gen = this.assuranceGen;
+    return () => {
+      if (gen === this.assuranceGen || !this.state) return;
+      gen = this.assuranceGen;
+      if (this.state.machine(host)) this.checkAssurance(this.state, host, assurance);
+    };
+  }
+
+  /**
+   * `work` holding this browser's lock on renewing `host` (`navigator.locks`),
+   * from before the attempt is registered until it is written or withdrawn —
+   * or {@link BUSY}, without running it, while another tab of this browser
+   * holds it: that tab is alive, and on it. Without Web Locks it just runs.
+   */
+  private async holdRenewal<T>(host: string, work: () => Promise<T>): Promise<T | typeof BUSY> {
+    if (!this.locks) return work();
+    return this.locks.request<T | typeof BUSY>(renewalLockName(this.account, host), { mode: "exclusive", ifAvailable: true }, async (lock) => (lock === null ? BUSY : await work()));
+  }
+
+  /** Keep `kept` for the next page of this browser ({@link resumeRenewal}); a store that fails leaves it as before: lost with this page. */
+  private async keepRenewal(kept: KeptRenewal): Promise<void> {
     try {
-      await this.api.putRotation(this.session.token, host, { nonceHash, assurance });
+      await this.renewalStash.put(kept);
     } catch (error) {
-      throw renewalRefusal(error);
+      console.warn(`cloud account: could not keep ${kept.host}'s renewal for a reload in its window:`, error);
     }
+  }
+
+  /** Forget what was kept of the attempt `nonceHash` (hex) names, if it still is that one. */
+  private async forgetRenewal(host: string, nonceHash: string): Promise<void> {
+    try {
+      await this.renewalStash.drop(host, nonceHash);
+    } catch (error) {
+      console.warn(`cloud account: could not forget ${host}'s renewal:`, error);
+    }
+  }
+
+  /**
+   * The rest of the attempt `nonceHash` names (`work`, told how to say it was
+   * written): unless it was, withdrawn at the hub — and, either way, nothing
+   * of it kept for another page after.
+   */
+  private async settleRenewal<T>(host: string, nonceHash: Uint8Array, work: (written: () => Promise<void>) => Promise<T>): Promise<T> {
     let committed = false;
     try {
-      try {
-        await this.sync();
-      } catch (error) {
-        console.warn("cloud account: sync before renewing:", error);
-      }
-      // The head the request is about, vouched for before it goes: a page that just changed the account (its renewal
-      // policy, which starts the renewals) would otherwise ask on a head it never vouched for.
-      const vouched = await this.vouch(courier);
-      const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now, vouched);
-      recheck();
-      const chain = this.state!;
-      const old = chain.machine(host)?.info;
-      if (!old) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
-      const rotation = await checkRotateAnswer(chain, host, old, answer, view, nonce, assurance);
-      const body = hostRotationBody(this.account, rotation, old.signKey, old.dhKey);
-      if (!(await verifyRotateConfirm(eph.privateKey, rotation.dhKey, body, answer.mac))) {
-        throw new RenewalError("badAnswer", `${host}'s answer does not prove it holds its new key`, "mac");
-      }
-      if (assurance === ASSURANCE_ON_DEVICE) {
-        opts.onStep?.("confirming");
-        const typed = opts.askCode ? await answeredWithin(opts.askCode(host), opts.codeWaitMs ?? CODE_WAIT_MS) : null;
-        if (typed === null) throw new RenewalError("cancelled", "no code was typed");
-        const want = (await rotateSas(body)).replace("-", "");
-        if (typed.toUpperCase().replace(/[^A-Z2-7]/g, "") !== want) {
-          throw new RenewalError("wrongCode", `the code typed is not the one ${host} shows: something else may be answering as it`);
-        }
-      }
-      opts.onStep?.("waiting");
-      let readyMs = await this.waitStaged(host, rotation, answer.readyMs, sleep, now, opts, recheck);
-      opts.onStep?.("writing");
-      const mk = random32();
-      try {
-        let issued: { mkEpoch: number; ukEpoch: number; userKey: FreshUserKey | null } | null = null;
-        for (let tries = 0; issued === null; tries++) {
-          const wait = readyMs - now();
-          if (wait > 0) await sleep(Math.min(wait + 250, opts.maxWaitMs ?? 10 * 60_000));
-          try {
-            // Checked on the chain it is built on — after any wait, and again on a newer head after a 409.
-            issued = await this.commitHostKey(
-              host,
-              mk,
-              (chain) => {
-                this.checkRenewalOn(chain, host, rotation, assurance);
-                return [{ type: "rotateHostKey", rotation }];
-              },
-              // …and once more right before publication, after the signing's awaits: the guard or a dispute
-              // that arrived meanwhile stops it there.
-              (build) => this.appendBatch(build, { beforePublish: (base) => this.checkRenewalOn(base, host, rotation, assurance) }),
-            );
-          } catch (error) {
-            // Early by the hub's clock: its `ready_ms` says when (a few times; the window is short).
-            if (error instanceof HubApiError && error.code === "rotation_not_ready" && error.reason === "window" && tries < 5) {
-              readyMs = Math.max(error.readyMs ?? 0, now() + 1000);
-              continue;
-            }
-            // Not staged any more: the hub voided it in the window — and says why (graded evidence, §3.3).
-            if (error instanceof HubApiError && error.code === "rotation_not_ready" && (error.reason === "not_staged" || error.reason === "mismatch")) {
-              const row = await this.api.rotations(this.session.token).then((v) => v.hosts.find((r) => r.host === host), () => undefined);
-              if (row?.failure) throw new RenewalError("voided", `the hub voided ${host}'s renewal: ${row.failure.reason}`, row.failure.reason);
-            }
-            throw renewalRefusal(error);
-          }
-        }
+      return await work(async () => {
         committed = true;
-        const { mkEpoch, ukEpoch, userKey } = issued;
-        const seq = this.state!.deviceRecord(host)?.rotatedSeq ?? this.state!.seq;
-        // No longer waiting: the hosts' keys go to its new key from here on. Confirmed on the device, it is no longer isolated either (§3.8).
-        const pending = new Set(this.renewal.pending);
-        pending.delete(host);
-        const isolated = new Set(this.renewal.isolated);
-        if (assurance === ASSURANCE_ON_DEVICE) isolated.delete(host);
-        this.noteRenewals({ ...this.renewal, pending, isolated });
-        opts.onStep?.("handing");
-        // Its keys to the devices it lets control it (purpose 5), then the key to it — sealed to the new DH key only — with a re-encryption.
-        await this.mailHostKey(host, mkEpoch, mk);
-        let result: DeliveryResult;
-        try {
-          result = await this.handOver(host, mkEpoch, ukEpoch, mk, courier, true);
-        } catch (error) {
-          result = { via: "refused", status: 0, message: error instanceof Error ? error.message : String(error) };
-        }
-        let hostKeys: number | null = null;
-        try {
-          hostKeys = await this.handHostKeys(host, opts.hostKeysWait ?? HOST_KEYS_WAIT);
-        } catch (error) {
-          console.warn(`cloud account: could not seal ${host}'s device role the hosts' keys again (it asks):`, error);
-        }
-        try {
-          await courier.attest();
-        } catch (error) {
-          console.warn("cloud account: attesting after a renewal:", error);
-        }
-        this.emit();
-        return {
-          host,
-          seq,
-          assurance,
-          signKey: rotation.signKey,
-          dhKey: rotation.dhKey,
-          fingerprint: await deviceFingerprint(rotation.signKey, rotation.dhKey),
-          mkEpoch,
-          result,
-          hostKeys,
-          ...(userKey ? { userKey } : {}),
-        };
-      } finally {
-        mk.fill(0);
-      }
+        await this.forgetRenewal(host, hex(nonceHash));
+      });
     } finally {
       if (!committed) {
         // Withdrawn: a staging nobody will write is void (an answer that did not check out may not have been the computer's).
@@ -4437,7 +4378,241 @@ export class CloudAccount {
         } catch {
           // the attempt lapses in 10 minutes anyway
         }
+        // Whatever the withdrawal did: this attempt is over, and no other page writes it.
+        await this.forgetRenewal(host, hex(nonceHash));
       }
+    }
+  }
+
+  /** One try of {@link renewIdentity}: anything that does not check out withdraws it. */
+  private async renewOnce(host: string, unguarded: RenewalCourier, opts: RenewOptions): Promise<RenewalReport> {
+    // Nothing of a renewal leaves a page whose view forked: every call to the host and every key goes through the latch.
+    this.assertNotForked();
+    const courier = this.guardedRenewal(unguarded);
+    const assurance = opts.assurance;
+    const recheck = this.assuranceRecheck(host, assurance);
+    this.requireRenewable(host, assurance);
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const now = opts.now ?? Date.now;
+    const nonce = crypto.getRandomValues(new Uint8Array(16));
+    const eph = (await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
+    const ephPublic = await exportPublic(eph.publicKey);
+    opts.onStep?.("requesting");
+    const nonceHash = await sha256(nonce);
+    const done = await this.holdRenewal(host, async () => {
+      try {
+        await this.api.putRotation(this.session.token, host, { nonceHash, assurance });
+      } catch (error) {
+        throw renewalRefusal(error);
+      }
+      // Kept before anything is asked of the host: should this page go away now, the next page of this browser withdraws
+      // it at once (`resumeRenewal`) instead of the host waiting for it to lapse.
+      const kept: KeptRenewal = { host, device: this.deviceId, nonceHash: hex(nonceHash), assurance, askedMs: now() };
+      await this.keepRenewal(kept);
+      return this.settleRenewal(host, nonceHash, async (written) => {
+        try {
+          await this.sync();
+        } catch (error) {
+          console.warn("cloud account: sync before renewing:", error);
+        }
+        // The head the request is about, vouched for before it goes: a page that just changed the account (its renewal
+        // policy, which starts the renewals) would otherwise ask on a head it never vouched for.
+        const vouched = await this.vouch(courier);
+        const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now, vouched);
+        recheck();
+        const chain = this.state!;
+        const old = chain.machine(host)?.info;
+        if (!old) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+        const rotation = await checkRotateAnswer(chain, host, old, answer, view, nonce, assurance);
+        const body = hostRotationBody(this.account, rotation, old.signKey, old.dhKey);
+        if (!(await verifyRotateConfirm(eph.privateKey, rotation.dhKey, body, answer.mac))) {
+          throw new RenewalError("badAnswer", `${host}'s answer does not prove it holds its new key`, "mac");
+        }
+        if (assurance === ASSURANCE_ON_DEVICE) {
+          opts.onStep?.("confirming");
+          const typed = opts.askCode ? await answeredWithin(opts.askCode(host), opts.codeWaitMs ?? CODE_WAIT_MS) : null;
+          if (typed === null) throw new RenewalError("cancelled", "no code was typed");
+          const want = (await rotateSas(body)).replace("-", "");
+          if (typed.toUpperCase().replace(/[^A-Z2-7]/g, "") !== want) {
+            throw new RenewalError("wrongCode", `the code typed is not the one ${host} shows: something else may be answering as it`);
+          }
+        }
+        // All of it checked here: what writes it is kept (sealed) for the window, which this page may not live through —
+        // a reload, a crash, a closed tab — so that the next page of this browser writes it (`resumeRenewal`).
+        await this.keepRenewal({ ...kept, checked: { nonce: hex(nonce), view: { seq: view.seq, head: hex(view.head) }, answer: rotateAnswerJson(answer) } });
+        return this.writeRenewal(host, courier, opts, { rotation, readyMs: answer.readyMs, sleep, now, recheck, written });
+      });
+    });
+    if (done === BUSY) throw new RenewalError("inProgress", `another tab of this browser is renewing ${host} now`, "tab");
+    return done;
+  }
+
+  /** Whether this browser kept the attempt `nonceHash` (hex) names of `host`: one a page of it asked for, maybe gone since ({@link resumeRenewal}). */
+  async keptRenewal(host: string, nonceHash: string): Promise<boolean> {
+    const kept = await this.renewalStash.get(host).catch(() => null);
+    return kept !== null && kept.nonceHash === nonceHash;
+  }
+
+  /**
+   * Finish what this browser asked of `host` in a page that went away before
+   * writing it — reloaded, crashed or closed in the window (§4.2: only the
+   * page that asked can check the host's answer, so nobody else writes it,
+   * and the host would wait for the staging to lapse). The hub's row must
+   * still be the attempt this browser kept ({@link KeptRenewal}); its answer
+   * is checked again on this page's chain — the view, both signatures, keys
+   * the chain never named — and then written as the page that asked would
+   * have, after the same checks of order, policy and isolation. An attempt
+   * left before its answer checked out here is withdrawn at once instead:
+   * never written.
+   *
+   * `null`: nothing of this browser's to finish (what it kept of it is
+   * forgotten), or withdrawn — the runner starts again with a fresh nonce;
+   * `"busy"`: another tab of this browser holds it, and is alive. Anything
+   * that does not check out withdraws it and throws, as {@link renewIdentity}.
+   */
+  async resumeRenewal(host: string, unguarded: RenewalCourier, opts: Partial<Omit<RenewOptions, "assurance">> = {}): Promise<RenewalReport | "busy" | null> {
+    if (!(await this.renewalStash.get(host).catch(() => null))) return null;
+    const done = await this.holdRenewal(host, async (): Promise<RenewalReport | null> => {
+      // Read again under the lock: the tab that held it may have finished it meanwhile.
+      const kept = await this.renewalStash.get(host).catch(() => null);
+      if (!kept) return null;
+      let row: HostRotationView | undefined;
+      try {
+        row = (await this.api.rotations(this.session.token)).hosts.find((r) => r.host === host);
+      } catch (error) {
+        throw renewalRefusal(error);
+      }
+      if (!row || (row.state !== "attempt" && row.state !== "staged") || row.nonceHash !== kept.nonceHash || kept.device !== this.deviceId) {
+        // Written, withdrawn, voided or run out since (or another device's now): nothing of it to finish.
+        await this.forgetRenewal(host, kept.nonceHash);
+        return null;
+      }
+      const nonceHash = fromHex(kept.nonceHash);
+      const assurance = kept.assurance;
+      const full: RenewOptions = { ...opts, assurance };
+      const sleep = full.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+      const now = full.now ?? Date.now;
+      try {
+        return await this.settleRenewal(host, nonceHash, async (written) => {
+          const checked = kept.checked;
+          // Left before its answer checked out here (the MAC needs the ephemeral key, which went with that page): withdrawn.
+          if (!checked) return null;
+          this.assertNotForked();
+          const courier = this.guardedRenewal(unguarded);
+          const recheck = this.assuranceRecheck(host, assurance);
+          this.requireRenewable(host, assurance);
+          const nonce = fromHex(checked.nonce);
+          if (!equal(await sha256(nonce), nonceHash)) throw new RenewalError("badAnswer", `what this browser kept of ${host}'s renewal is not its attempt`, "nonce");
+          const chain = this.state!;
+          const old = chain.machine(host)!.info;
+          const answer = parseRotateAnswer(checked.answer);
+          const rotation = await checkRotateAnswer(chain, host, old, answer, { seq: checked.view.seq, head: fromHex(checked.view.head) }, nonce, assurance);
+          return this.writeRenewal(host, courier, full, { rotation, readyMs: answer.readyMs, sleep, now, recheck, written });
+        });
+      } catch (error) {
+        // A loss after it staged (§4.1 「清除」): withdrawn already — the runner starts again with a fresh nonce and seed.
+        if (error instanceof RenewalError && error.kind === "superseded") return null;
+        throw error;
+      }
+    });
+    return done === BUSY ? "busy" : done;
+  }
+
+  /**
+   * The end of a renewal whose answer checked out (`renewOnce`, or
+   * `resumeRenewal` after a reload): wait until the hub staged `rotation` and
+   * its window passed, write `[rotateHostKey, keyEpochs]` — checked on the
+   * very chain each build signs on — and hand the new machine key over.
+   * `written` is told as soon as the chain took it.
+   */
+  private async writeRenewal(
+    host: string,
+    courier: RenewalCourier,
+    opts: RenewOptions,
+    r: { rotation: HostRotation; readyMs: number | null; sleep: (ms: number) => Promise<void>; now: () => number; recheck: () => void; written: () => Promise<void> },
+  ): Promise<RenewalReport> {
+    const { rotation, sleep, now } = r;
+    const assurance = rotation.assurance;
+    opts.onStep?.("waiting");
+    let readyMs = await this.waitStaged(host, rotation, r.readyMs, sleep, now, opts, r.recheck);
+    opts.onStep?.("writing");
+    const mk = random32();
+    try {
+      let issued: { mkEpoch: number; ukEpoch: number; userKey: FreshUserKey | null } | null = null;
+      for (let tries = 0; issued === null; tries++) {
+        const wait = readyMs - now();
+        if (wait > 0) await sleep(Math.min(wait + 250, opts.maxWaitMs ?? 10 * 60_000));
+        try {
+          // Checked on the chain it is built on — after any wait, and again on a newer head after a 409.
+          issued = await this.commitHostKey(
+            host,
+            mk,
+            (chain) => {
+              this.checkRenewalOn(chain, host, rotation, assurance);
+              return [{ type: "rotateHostKey", rotation }];
+            },
+            // …and once more right before publication, after the signing's awaits: the guard or a dispute
+            // that arrived meanwhile stops it there.
+            (build) => this.appendBatch(build, { beforePublish: (base) => this.checkRenewalOn(base, host, rotation, assurance) }),
+          );
+        } catch (error) {
+          // Early by the hub's clock: its `ready_ms` says when (a few times; the window is short).
+          if (error instanceof HubApiError && error.code === "rotation_not_ready" && error.reason === "window" && tries < 5) {
+            readyMs = Math.max(error.readyMs ?? 0, now() + 1000);
+            continue;
+          }
+          // Not staged any more: the hub voided it in the window — and says why (graded evidence, §3.3).
+          if (error instanceof HubApiError && error.code === "rotation_not_ready" && (error.reason === "not_staged" || error.reason === "mismatch")) {
+            const row = await this.api.rotations(this.session.token).then((v) => v.hosts.find((x) => x.host === host), () => undefined);
+            if (row?.failure) throw new RenewalError("voided", `the hub voided ${host}'s renewal: ${row.failure.reason}`, row.failure.reason);
+          }
+          throw renewalRefusal(error);
+        }
+      }
+      await r.written();
+      const { mkEpoch, ukEpoch, userKey } = issued;
+      const seq = this.state!.deviceRecord(host)?.rotatedSeq ?? this.state!.seq;
+      // No longer waiting: the hosts' keys go to its new key from here on. Confirmed on the device, it is no longer isolated either (§3.8).
+      const pending = new Set(this.renewal.pending);
+      pending.delete(host);
+      const isolated = new Set(this.renewal.isolated);
+      if (assurance === ASSURANCE_ON_DEVICE) isolated.delete(host);
+      this.noteRenewals({ ...this.renewal, pending, isolated });
+      opts.onStep?.("handing");
+      // Its keys to the devices it lets control it (purpose 5), then the key to it — sealed to the new DH key only — with a re-encryption.
+      await this.mailHostKey(host, mkEpoch, mk);
+      let result: DeliveryResult;
+      try {
+        result = await this.handOver(host, mkEpoch, ukEpoch, mk, courier, true);
+      } catch (error) {
+        result = { via: "refused", status: 0, message: error instanceof Error ? error.message : String(error) };
+      }
+      let hostKeys: number | null = null;
+      try {
+        hostKeys = await this.handHostKeys(host, opts.hostKeysWait ?? HOST_KEYS_WAIT);
+      } catch (error) {
+        console.warn(`cloud account: could not seal ${host}'s device role the hosts' keys again (it asks):`, error);
+      }
+      try {
+        await courier.attest();
+      } catch (error) {
+        console.warn("cloud account: attesting after a renewal:", error);
+      }
+      this.emit();
+      return {
+        host,
+        seq,
+        assurance,
+        signKey: rotation.signKey,
+        dhKey: rotation.dhKey,
+        fingerprint: await deviceFingerprint(rotation.signKey, rotation.dhKey),
+        mkEpoch,
+        result,
+        hostKeys,
+        ...(userKey ? { userKey } : {}),
+      };
+    } finally {
+      mk.fill(0);
     }
   }
 
@@ -5576,6 +5751,7 @@ export class CloudAccount {
     this.stopSession();
     await this.vault.wipe();
     await this.hostKeys.wipe();
+    await this.renewalStash.wipe();
     await this.keyring.wipe();
     for (const m of this.state?.hosts() ?? []) {
       for (let epoch = 0; epoch < 64; epoch++) {
@@ -6390,6 +6566,20 @@ export interface RotateAnswer {
   stagedHead: Bytes;
   /** When its window closes by the hub's clock, if the host was told (`null`: ask the hub). */
   readyMs: number | null;
+}
+
+/** `answer` in the shape `POST /rh/rotate` answers it ({@link parseRotateAnswer} reads it back): what a renewal under way keeps of it. */
+function rotateAnswerJson(answer: RotateAnswer): Record<string, unknown> {
+  return {
+    signKey: hex(answer.signKey),
+    dhKey: hex(answer.dhKey),
+    oldSig: hex(answer.oldSig),
+    newSig: hex(answer.newSig),
+    mac: hex(answer.mac),
+    stagedSeq: answer.stagedSeq,
+    stagedHead: hex(answer.stagedHead),
+    readyMs: answer.readyMs,
+  };
 }
 
 /** `POST /rh/rotate`'s 200, or a {@link RenewalError} `badAnswer` if it is not of that shape. */

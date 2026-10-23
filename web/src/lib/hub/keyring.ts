@@ -50,6 +50,7 @@ import {
   copy,
   equal,
   fromHex,
+  fromUtf8,
   hex,
   importMachineKey,
   type KeyStore,
@@ -76,12 +77,14 @@ import type { KeyringEntry } from "./api";
 const LOCAL_WRAP = "local-wrap/v1";
 const UK_LABEL = utf8("rh/v1 local UK\0");
 const HK_LABEL = utf8("rh/v1 local MK\0");
+const RN_LABEL = utf8("rh/v1 local renewal\0");
 
 const ukRecord = (account: string, epoch: number) => `uk/${account}/${epoch}`;
 const ukIndex = (account: string) => `uk-epochs/${account}`;
 const keyringCache = (account: string) => `keyring/${account}`;
 const hkRecord = (account: string, host: string, epoch: number) => `hk/${account}/${host}/${epoch}`;
 const hkIndex = (account: string) => `hk-index/${account}`;
+const rnRecord = (account: string, host: string) => `rn/${account}/${host}`;
 /** Where M1 and M2a kept a machine key as raw hex (migrated away, see `migrateLegacyMachineKeys`). */
 export const legacyMachineKeyName = (machine: string, epoch: number) => `mk/${machine}/${epoch}`;
 
@@ -108,8 +111,8 @@ function ukAad(account: string, epoch: number): Bytes {
 /** One device-local wrap key per key store, however many vaults use it (two creating it at once would orphan one's keys). */
 const localKeys = new WeakMap<KeyStore, Promise<CryptoKey>>();
 
-/** The records sealed under the device-local wrap key, every account's: the user keys and the hosts' machine keys, with their lists. */
-const SEALED_LOCALLY = ["uk/", "uk-epochs/", "hk/", "hk-index/"];
+/** The records sealed under the device-local wrap key, every account's: the user keys and the hosts' machine keys, with their lists, and the renewals under way. */
+const SEALED_LOCALLY = ["uk/", "uk-epochs/", "hk/", "hk-index/", "rn/"];
 
 /**
  * Forget every record sealed under a device-local wrap key that is gone, with
@@ -375,6 +378,106 @@ export class HostKeyVault {
 }
 
 /** The recovery key a package is sealed to, as its keyring name says it: the first 8 bytes of `RSK`, in hex. */
+/**
+ * An identity key renewal this browser asked for, kept from the moment it is
+ * asked until it is written or withdrawn (`CloudAccount.renewIdentity`,
+ * docs/host-identity-rotation.md §4.2). Only the page that asked can check the
+ * host's answer, and that page may be reloaded, crash or close inside the
+ * window — a second after the staging, say. The next page of this browser
+ * then finishes it, or withdraws it at once, instead of leaving the host
+ * waiting with its device role suspended until the staging lapses.
+ */
+export interface KeptRenewal {
+  host: string;
+  /** This device's id when it asked: another device of this browser finishes nothing of it. */
+  device: string;
+  /** The hash of the attempt's nonce (hex): what names it at the hub. */
+  nonceHash: string;
+  assurance: 0 | 1;
+  /** When it was asked for (the asking page's clock). */
+  askedMs: number;
+  /**
+   * Once the host's answer checked out here — its MAC under the ephemeral key,
+   * and the code the person typed for a renewal confirmed on the device —
+   * what writes it: the nonce, the view asked about and the answer (hex), all
+   * of it the hub's to see by then. The ephemeral key is not kept: the seal
+   * under the device-local key is what says this browser checked it, and the
+   * rest is checked again on the chain before it is written. Absent: left
+   * before that, and so withdrawn, never written.
+   */
+  checked?: { nonce: string; view: { seq: number; head: string }; answer: Record<string, unknown> };
+}
+
+function rnAad(account: string, host: string): Bytes {
+  return new Writer().raw(RN_LABEL).str16(account).str16(host).finish();
+}
+
+const HEX = /^[0-9a-f]*$/;
+
+/** `raw` as a {@link KeptRenewal} of `host`, or `null` when it is not one. */
+function keptRenewal(raw: unknown, host: string): KeptRenewal | null {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const hexOf = (v: unknown, bytes: number) => typeof v === "string" && v.length === bytes * 2 && HEX.test(v);
+  if (r.host !== host || typeof r.device !== "string" || !hexOf(r.nonceHash, 32) || (r.assurance !== 0 && r.assurance !== 1) || typeof r.askedMs !== "number") return null;
+  const out: KeptRenewal = { host, device: r.device as string, nonceHash: r.nonceHash as string, assurance: r.assurance as 0 | 1, askedMs: r.askedMs as number };
+  if (r.checked === undefined) return out;
+  const c = (r.checked && typeof r.checked === "object" ? r.checked : {}) as Record<string, unknown>;
+  const view = (c.view && typeof c.view === "object" ? c.view : {}) as Record<string, unknown>;
+  if (!hexOf(c.nonce, 16) || !Number.isSafeInteger(view.seq) || !hexOf(view.head, 32) || !c.answer || typeof c.answer !== "object") return null;
+  return { ...out, checked: { nonce: c.nonce as string, view: { seq: view.seq as number, head: view.head as string }, answer: c.answer as Record<string, unknown> } };
+}
+
+/**
+ * The renewals this browser asked for and has not finished ({@link KeptRenewal}),
+ * one per host, sealed under the device-local key as the user keys are, with
+ * an AAD naming the account and the host: nothing of it is a secret any more
+ * (the ephemeral key is never kept), but a record this browser did not seal
+ * does not open — so no page writes a renewal on a record it did not make.
+ */
+export class RenewalStash {
+  constructor(
+    readonly store: KeyStore,
+    readonly account: string,
+  ) {}
+
+  /** Keep `renewal`, in place of whatever was kept for its host. */
+  async put(renewal: KeptRenewal): Promise<void> {
+    const local = await localWrapKey(this.store);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plain = utf8(JSON.stringify(renewal));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: rnAad(this.account, renewal.host) }, local, plain));
+    const record: StoredUserKey = { v: 1, iv, ct };
+    await this.store.put(rnRecord(this.account, renewal.host), record);
+  }
+
+  /** What is kept for `host`: `null` when nothing is, or what is there does not open as this browser sealed it. */
+  async get(host: string): Promise<KeptRenewal | null> {
+    const record = await this.store.get(rnRecord(this.account, host));
+    if (!isStoredUserKey(record)) return null;
+    try {
+      const local = await localWrapKey(this.store);
+      const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: record.iv, additionalData: rnAad(this.account, host) }, local, record.ct));
+      return keptRenewal(JSON.parse(fromUtf8(plain)), host);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Forget what is kept for `host` — when `nonceHash` is given, only if it is that attempt. */
+  async drop(host: string, nonceHash?: string): Promise<void> {
+    if (nonceHash !== undefined) {
+      const kept = await this.get(host);
+      if (kept && kept.nonceHash !== nonceHash) return;
+    }
+    await this.store.delete(rnRecord(this.account, host));
+  }
+
+  /** Forget every renewal kept for this account (a removed device's wipe). */
+  async wipe(): Promise<void> {
+    for (const name of (await this.store.list?.(`rn/${this.account}/`)) ?? []) await this.store.delete(name);
+  }
+}
+
 export function recoveryTag(rsk: Uint8Array): string {
   return hex(rsk.slice(0, 8));
 }
