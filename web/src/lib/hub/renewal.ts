@@ -280,6 +280,8 @@ export class RenewalRunner {
   private readonly resumed = new Set<string>();
   /** When {@link withdrawUnexposed} last read the hub. */
   private lastUnexposedCheck = Number.NEGATIVE_INFINITY;
+  /** When this browser's records of attempts the hub no longer has were last looked for (`forgetLeftRenewals`). */
+  private lastLeftCheck = Number.NEGATIVE_INFINITY;
   /** Disputes checked against the chain, by host. */
   private checked: KeptDispute[] = [];
   /** Sign-ins with a retired key checked here, by host: the latest (information only, never isolation). */
@@ -802,6 +804,12 @@ export class RenewalRunner {
     if (resumed) {
       this.again = true;
       return;
+    }
+    // What this browser kept of attempts the hub no longer has (written, withdrawn or run out by any page): forgotten,
+    // at most every 10 s.
+    if (this.now() - this.lastLeftCheck >= 10_000) {
+      this.lastLeftCheck = this.now();
+      await account.forgetLeftRenewals(this.view.hosts);
     }
     // Attempts nobody will finish: withdrawn, so the renewal can start again (§4.2).
     for (const row of [...this.view.hosts]) if (this.running !== row.host && this.abandoned(row)) await this.withdraw(row);

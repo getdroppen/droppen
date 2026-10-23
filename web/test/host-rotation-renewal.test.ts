@@ -1050,8 +1050,8 @@ function browserLocks() {
   };
 }
 
-/** A page of `a`'s browser (its key store, its storage, its device session) with `locks` for its Web Locks. */
-const pageOf = (hub: FakeKeysHub, a: CloudAccount, locks: AccountLocks) => CloudAccount.open(hub.api(), { ...a.session }, a.store, { origin: HUB_ORIGIN, ...browserOf(a.store), locks });
+/** A page of `a`'s browser (its key store, its storage, its device session) with `locks` for its Web Locks (`null`: a browser without them). */
+const pageOf = (hub: FakeKeysHub, a: CloudAccount, locks: AccountLocks | null) => CloudAccount.open(hub.api(), { ...a.session }, a.store, { origin: HUB_ORIGIN, ...browserOf(a.store), locks });
 
 /** A runner for `page`, every host of the account online. */
 function runnerOf(page: CloudAccount, agents: FakeAgents) {
@@ -1176,6 +1176,60 @@ test("another tab of this browser still on its renewal is left alone (its Web Lo
   assert.deepEqual(rotated(tPage), [], "nothing written of a record that does not open");
   assert.deepEqual(t.hub.rotationDeletes, [], "and nothing withdrawn: it is another page's, as far as this one knows");
   assert.deepEqual(tRunner.status("m-1"), { kind: "renewing", elsewhere: true });
+});
+
+test("without Web Locks a page cannot tell a live tab from one that went away: a second tab takes nothing over — the tab typing the code writes it, nothing is withdrawn", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const asking = await pageOf(hub, a, null);
+  let type!: (code: string | null) => void;
+  let asked!: () => void;
+  const prompted = new Promise<void>((resolve) => (asked = resolve));
+  const renewing = asking.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: () => (asked(), new Promise<string | null>((resolve) => (type = resolve))), ...quick });
+  await prompted;
+  // The host staged; the person is typing the code its screen shows. A second tab of the same browser opens.
+  const other = await pageOf(hub, a, null);
+  const runner = runnerOf(other, agents);
+  runner.start();
+  await runner.idle();
+  await runner.idle();
+  assert.deepEqual(hub.rotationDeletes, [], "the live tab's attempt is not withdrawn");
+  assert.deepEqual(runner.status("m-1"), { kind: "renewing", elsewhere: true });
+  type(agents.sas.get("m-1")!);
+  await renewing;
+  await runner.idle();
+  runner.stop();
+  assert.deepEqual(rotated(asking), ["m-1"], "written by the tab that asked, as confirmed on the device");
+  assert.deepEqual(hub.rotationDeletes, []);
+  assert.deepEqual(agents.rotateCalls, ["m-1"]);
+});
+
+test("what this browser kept of an attempt the hub no longer has (withdrawn by another browser's page, say) is forgotten — and nothing is withdrawn or written of it", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  hub.rotationWindowMs = 300;
+  const tabs = browserLocks();
+  const first = tabs();
+  const asking = await pageOf(hub, a, first.locks);
+  let left!: () => void;
+  const gone = new Promise<void>((resolve) => (left = resolve));
+  void asking.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick, sleep: () => (left(), new Promise<void>(() => undefined)) });
+  await gone;
+  first.gone();
+  const name = `rn/${a.account}/m-1`;
+  assert.notEqual(await a.store.get(name), undefined, "kept while the page waited");
+  hub.rotationRows.delete("m-1");
+  const page = await pageOf(hub, a, tabs().locks);
+  const link = new FakeLink();
+  link.set("m-1", "offline");
+  const runner = new RenewalRunner({ account: page, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await until(() => hub.rotationPuts.includes("m-1 pending 0"));
+  await runner.idle();
+  runner.stop();
+  assert.equal(await a.store.get(name), undefined, "forgotten");
+  assert.deepEqual(hub.rotationDeletes, []);
+  assert.deepEqual(rotated(page), []);
 });
 
 test("a renewal the hub committed that this page's chain lacks: synced first, the host never marked again", async () => {

@@ -4447,6 +4447,28 @@ export class CloudAccount {
     return done;
   }
 
+  /**
+   * Forget what this browser kept of attempts the hub no longer has (`rows`,
+   * its renewals as last read): written, withdrawn, voided or run out, by
+   * whichever page. Each is read at the hub again first, and kept while the
+   * hub still has it open — a tab of this browser that is on it keeps it.
+   */
+  async forgetLeftRenewals(rows: readonly HostRotationView[]): Promise<void> {
+    const open = (r: HostRotationView | undefined, nonceHash: string) => !!r && (r.state === "attempt" || r.state === "staged") && r.nonceHash === nonceHash;
+    for (const host of await this.renewalStash.hosts().catch(() => [] as string[])) {
+      // One that does not open now (a store that hands back nothing for a while, say) is left as it is.
+      const kept = await this.renewalStash.get(host).catch(() => null);
+      if (!kept || open(rows.find((r) => r.host === host), kept.nonceHash)) continue;
+      let now: HostRotationView | undefined;
+      try {
+        now = (await this.api.rotations(this.session.token)).hosts.find((r) => r.host === host);
+      } catch {
+        return;
+      }
+      if (!open(now, kept.nonceHash)) await this.forgetRenewal(host, kept.nonceHash);
+    }
+  }
+
   /** Whether this browser kept the attempt `nonceHash` (hex) names of `host`: one a page of it asked for, maybe gone since ({@link resumeRenewal}). */
   async keptRenewal(host: string, nonceHash: string): Promise<boolean> {
     const kept = await this.renewalStash.get(host).catch(() => null);
@@ -4467,11 +4489,16 @@ export class CloudAccount {
    *
    * `null`: nothing of this browser's to finish (what it kept of it is
    * forgotten), or withdrawn — the runner starts again with a fresh nonce;
-   * `"busy"`: another tab of this browser holds it, and is alive. Anything
-   * that does not check out withdraws it and throws, as {@link renewIdentity}.
+   * `"busy"`: another tab of this browser holds it, and is alive — or, in a
+   * browser without Web Locks, may be (nothing tells a live tab from one that
+   * went away there: its attempt is left for the runner's
+   * abandonment, as another page's). Anything that does not check out
+   * withdraws it and throws, as {@link renewIdentity}.
    */
   async resumeRenewal(host: string, unguarded: RenewalCourier, opts: Partial<Omit<RenewOptions, "assurance">> = {}): Promise<RenewalReport | "busy" | null> {
     if (!(await this.renewalStash.get(host).catch(() => null))) return null;
+    // No Web Locks: the tab that asked may still be on it (typing the code, waiting for the window) — never taken from it.
+    if (!this.locks) return "busy";
     const done = await this.holdRenewal(host, async (): Promise<RenewalReport | null> => {
       // Read again under the lock: the tab that held it may have finished it meanwhile.
       const kept = await this.renewalStash.get(host).catch(() => null);

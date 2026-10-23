@@ -377,7 +377,6 @@ export class HostKeyVault {
   }
 }
 
-/** The recovery key a package is sealed to, as its keyring name says it: the first 8 bytes of `RSK`, in hex. */
 /**
  * An identity key renewal this browser asked for, kept from the moment it is
  * asked until it is written or withdrawn (`CloudAccount.renewIdentity`,
@@ -476,8 +475,15 @@ export class RenewalStash {
   async wipe(): Promise<void> {
     for (const name of (await this.store.list?.(`rn/${this.account}/`)) ?? []) await this.store.delete(name);
   }
+
+  /** The hosts something is kept for (none where the store cannot list its records). */
+  async hosts(): Promise<string[]> {
+    const prefix = `rn/${this.account}/`;
+    return ((await this.store.list?.(prefix)) ?? []).map((name) => name.slice(prefix.length));
+  }
 }
 
+/** The recovery key a package is sealed to, as its keyring name says it: the first 8 bytes of `RSK`, in hex. */
 export function recoveryTag(rsk: Uint8Array): string {
   return hex(rsk.slice(0, 8));
 }
