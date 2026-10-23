@@ -207,7 +207,7 @@ test("isolated (§3.8 「页面」): first look at Droppen on it; “replaced el
   assert.ok(html.includes("Until m-1 is removed or confirmed on the device, the devices that let it control them still accept whoever holds its current key."));
   // Step 1: look at it.
   assert.ok(at('data-testid="renewal-look-m-1"') > 0 && at('data-testid="renewal-look-m-1"') < at('data-testid="renewal-replaced-m-1"'));
-  assert.ok(html.includes("Look at Droppen on m-1 (Settings → Droppen)."));
+  assert.ok(html.includes("Look at Droppen on m-1 (Settings → Access → Droppen)."));
   // "Replaced elsewhere": removing is the main action (danger), then add it again under a new identity.
   assert.ok(html.includes("It says “this device&#x27;s identity key was replaced elsewhere”:") || html.includes("It says “this device's identity key was replaced elsewhere”:"));
   assert.match(html, /<button[^>]*data-testid="renewal-remove-m-1"[^>]*>remove m-1</);

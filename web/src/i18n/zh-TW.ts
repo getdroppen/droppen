@@ -554,8 +554,8 @@ export const zhTW: Record<string, string> = {
   "wrong username or password": "使用者名稱或密碼不對",
   "Accounts are created on the server with `{{command}} user add <name>`.":
     "帳號在伺服器端建立：`{{command}} user add <名字>`。",
-  /* settings › security: who you are, your password, your devices */
-  security: "安全",
+  /* settings › access: this device's login first, then its Droppen link */
+  access: "存取",
   "signed in": "目前登入",
   "The Droppen app signs in for you on this device.": "Droppen App 會在這台裝置上替你登入。",
   "this browser's account": "這個瀏覽器登入的帳號",
@@ -568,7 +568,7 @@ export const zhTW: Record<string, string> = {
   "the two do not match": "兩次輸入不一致",
   "that is not the current password": "目前密碼不對",
   "Changing it signs out every other device, but not this one.": "改完之後，除了這台裝置，其它裝置都會被登出。",
-  devices: "裝置",
+  "signed-in devices": "已登入的裝置",
   "unknown device": "未知裝置",
   "this device": "本裝置",
   "since {{when}}": "自 {{when}}",

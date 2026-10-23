@@ -305,7 +305,7 @@ test("what it runs on, the manual download with its checksums, and the uninstall
   assert.ok(words.includes("SHA-256"));
   assert.ok(words.includes(CHECKSUM_COMMAND), "how to check the file");
   assert.ok(words.includes(UNINSTALL_COMMAND));
-  assert.ok(words.includes("Settings → Droppen → Disconnect this device"));
+  assert.ok(words.includes("Settings → Access → Droppen → Disconnect this device"));
   assert.ok(text(draw("en", { app: true })).includes("quit Droppen and drag it from Applications to the Trash"));
   for (const id of ["get", "requirements", "manual", "uninstall"]) assert.match(html, new RegExp(`id="${id}"`));
 });

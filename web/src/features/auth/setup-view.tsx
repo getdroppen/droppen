@@ -315,7 +315,7 @@ export function FirstAccountForm({
   );
 }
 
-/** What this device's owner is told about the first account, here and in Settings › Security. */
+/** What this device's owner is told about the first account, here and in Settings › Access. */
 export const OWNER_EXPLANATION =
   "You opened this page as this device's owner. This device has no account yet: create one to sign in from other devices; from then on every browser signs in, this one too.";
 

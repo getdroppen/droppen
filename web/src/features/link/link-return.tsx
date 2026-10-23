@@ -15,7 +15,7 @@ import { Centered, Note, Panel } from "@/features/cloud/ui";
  * It stands alone, before the app's router and login: the browser it opens in
  * (the system browser, for the desktop app) has no login here, and needs none
  * — the answer is its own credential (`POST /api/cloud/link/return`). The
- * Droppen app's window and Settings → Droppen show the rest; droppen.app, in
+ * Droppen app's window and Settings → Access → Droppen show the rest; droppen.app, in
  * the tab that opened this one, finishes adding the device.
  */
 
@@ -65,7 +65,7 @@ function failureText(t: (key: string, options?: Record<string, unknown>) => stri
     case "already_enrolled":
       return t("This device is in a Droppen account already.");
     case "local_auth_required":
-      return t("Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.");
+      return t("Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.");
     case "hub_unreachable":
       return t("This device could not reach droppen.app. Check its connection, then start again from Droppen on this device.");
     case "unreachable":
@@ -96,7 +96,7 @@ export function LinkReturnView({ state }: { state: ReturnState }) {
               <p className="text-xs leading-5 text-fg">{t("droppen.app, in the other tab, finishes adding it. You can close this tab and go back to Droppen.")}</p>
             </Note>
           ) : state.kind === "nothing" ? (
-            <p className="text-xs leading-5 text-fg">{t("Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Droppen → Sign in to Droppen.")}</p>
+            <p className="text-xs leading-5 text-fg">{t("Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Access → Droppen → Sign in to Droppen.")}</p>
           ) : (
             <Note tone="danger">
               <p data-signal="failed" role="alert" className="text-xs leading-5 text-danger">

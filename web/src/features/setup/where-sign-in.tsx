@@ -2,7 +2,7 @@
  * Step 02's "On my phone and other devices too → Sign in to Droppen": this
  * Mac signs in to Droppen through the system browser
  * (`features/link/browser-sign-in.tsx`, the same sign-in
- * as Settings → Droppen and the first-run card: one per page, so leaving the
+ * as Settings → Access → Droppen and the first-run card: one per page, so leaving the
  * step keeps it going), and the step shows how it stands — continue in the
  * browser, in the account, or what went wrong. The guide does not wait for
  * it: "Keep going; I'll finish in the browser" goes on, and the guide says
@@ -97,7 +97,7 @@ export function useGuideSignIn(): GuideSignIn {
     },
     refetchInterval: (q) => (busy || q.state.data?.state === "enrolling" ? 1000 : false),
   });
-  // In the account while the flow waited: the flow is over (as in Settings → Droppen).
+  // In the account while the flow waited: the flow is over (as in Settings → Access → Droppen).
   useEffect(() => {
     if ((status?.state === "linked" || status?.state === "not_hosting") && busy) setFlow({ kind: "idle" });
   }, [status?.state, busy, setFlow]);
@@ -137,7 +137,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
     if (state.kind !== "linked") return null;
     return (
       <p data-testid="where-stays-linked" className="mt-4 max-w-[720px] text-xs leading-[19px] text-muted">
-        {t("This Mac stays in your Droppen account. To take it out, use Settings → Droppen.")}
+        {t("This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.")}
       </p>
     );
   }
@@ -148,10 +148,10 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
       state.reason === "broken"
         ? t("this device's Droppen state does not load")
         : state.reason === "no_local_auth"
-          ? t("Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.")
+          ? t("Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.")
           : state.owner
             ? t("Only {{owner}} can sign this device in.", { owner: state.owner })
-            : t("This window cannot sign this device in. See Settings → Droppen.");
+            : t("This window cannot sign this device in. See Settings → Access → Droppen.");
     return (
       <p data-testid="where-unavailable" data-reason={state.reason} className="mt-4 max-w-[720px] text-xs leading-[19px] text-muted">
         {line}
@@ -201,7 +201,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
         <p className="text-[13px] leading-[18px] font-semibold">{heading}</p>
         {state.failure === "unreachable" && (
           <>
-            <p className="text-xs leading-[19px] text-muted">{t("Use Droppen on this Mac for now. When you're online, sign in from Settings → Droppen; nothing done here is lost.")}</p>
+            <p className="text-xs leading-[19px] text-muted">{t("Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.")}</p>
             {state.message && (
               <p data-signal="failed" className="font-mono text-2xs break-words text-danger">
                 {state.message}

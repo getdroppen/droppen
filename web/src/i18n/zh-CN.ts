@@ -554,8 +554,8 @@ export const zhCN: Record<string, string> = {
   "wrong username or password": "用户名或密码不对",
   "Accounts are created on the server with `{{command}} user add <name>`.":
     "账号在服务端创建：`{{command}} user add <名字>`。",
-  /* settings › security: who you are, your password, your devices */
-  security: "安全",
+  /* settings › access: this device's login first, then its Droppen link */
+  access: "访问",
   "signed in": "当前登录",
   "The Droppen app signs in for you on this device.": "Droppen App 会在这台设备上替你登录。",
   "this browser's account": "这个浏览器登录的账号",
@@ -568,7 +568,7 @@ export const zhCN: Record<string, string> = {
   "the two do not match": "两次输入不一致",
   "that is not the current password": "当前密码不对",
   "Changing it signs out every other device, but not this one.": "改完之后，除这台设备外的其它设备都会被登出。",
-  devices: "设备",
+  "signed-in devices": "已登录的设备",
   "unknown device": "未知设备",
   "this device": "本设备",
   "since {{when}}": "自 {{when}}",

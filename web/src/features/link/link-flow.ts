@@ -10,10 +10,10 @@ import { type Attempt, type HandoffStatus, LinkOpener, type OpenerState, type Op
 
 /*
  * The local page's one sign-in to Droppen (`opener.ts`), per device and for
- * the life of the page: Settings → Droppen (`link-settings.tsx`) and the
+ * the life of the page: Settings → Access → Droppen (`link-settings.tsx`) and the
  * first-run card on the sessions page (`first-run.tsx`) start and show the
  * same attempt, so 「登录 Droppen」 on the card opens the droppen.app window in
- * the click itself and Settings → Droppen goes on showing how it stands.
+ * the click itself and Settings → Access → Droppen goes on showing how it stands.
  */
 
 /** `GET /api/cloud`'s cache entry: the device's Droppen state. */
@@ -57,7 +57,7 @@ export function linkFlowFor(machine: MachineKey, api: ApiClient, queryClient: Qu
     cancel: async (attempt) => {
       await api.POST("/api/cloud/link/cancel", { body: { attempt } });
     },
-    // The browser hand-off follows the attempt here; shared with Settings → Droppen's own polling.
+    // The browser hand-off follows the attempt here; shared with Settings → Access → Droppen's own polling.
     status: async () =>
       (await queryClient.fetchQuery({
         queryKey: cloudKey(machine),

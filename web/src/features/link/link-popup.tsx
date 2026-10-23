@@ -172,7 +172,7 @@ export function NoOpenerScreen() {
     <Centered>
       <Panel title={t("add a device")}>
         <p className="text-xs leading-5 text-muted" data-testid="link-no-opener">
-          {t("Open this from Droppen's local settings on the device that runs it: Settings → Droppen → Sign in to Droppen.")}
+          {t("Open this from Droppen's local settings on the device that runs it: Settings → Access → Droppen → Sign in to Droppen.")}
         </p>
         <p className="text-xs leading-5 text-muted">
           {t("Droppen is not on that device yet?")}{" "}
@@ -449,7 +449,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
         <Panel title={t("add a device")}>
           <p className="text-xs leading-5 text-fg" data-testid={step.kind === "cancelled" ? "link-cancelled" : "link-expired"}>
             {step.kind !== "cancelled"
-              ? t("This sign-in link has expired. Start again from Droppen on the device: Settings → Droppen → Sign in to Droppen.")
+              ? t("This sign-in link has expired. Start again from Droppen on the device: Settings → Access → Droppen → Sign in to Droppen.")
               : t("Cancelled: nothing was added. You can close this tab.")}
           </p>
         </Panel>

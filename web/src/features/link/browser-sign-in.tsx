@@ -8,7 +8,7 @@ import type { Attempt, LinkOpener, OpenerState } from "./opener";
 /*
  * Signing this device in to Droppen through the system browser
  * (docs/local-aggregator.md §4.9, the browser hand-off), as pieces any screen
- * can use — Settings → Droppen, the first-run card, and the desktop app's
+ * can use — Settings → Access → Droppen, the first-run card, and the desktop app's
  * first-run guide (「在手机和其它设备上也能用 → 登录 Droppen」,
  * `features/setup/where-sign-in.tsx`):
  *

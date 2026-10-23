@@ -237,7 +237,7 @@ export function WhereStep({ progress, online, onChange, signIn, signInReady = DE
             !signInReady
               ? t("Signing in from the app is coming soon")
               : !online
-                ? t("droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Droppen.")
+                ? t("droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.")
                 : null
           }
           recommended
@@ -258,7 +258,7 @@ export function WhereStep({ progress, online, onChange, signIn, signInReady = DE
       {signIn && <WhereSignInPanel signIn={signIn} chosen={chosen} />}
       <FootNote>
         {t("The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.")}{" "}
-        {t("Change it later in Settings → Droppen and Settings → Security.")}
+        {t("Change it later in Settings → Access.")}
       </FootNote>
     </>
   );
@@ -345,7 +345,7 @@ export function WrapStep({ progress, tools, signIn, signInReady = DESKTOP_SIGN_I
             linked?.email
               ? t("Open droppen.app and sign in as {{email}}.", { email: linked.email })
               : signInReady
-                ? t("Want it on your phone too? Sign in to Droppen any time in Settings → Droppen.")
+                ? t("Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.")
                 : t("Signing in from the app is coming soon")
           }
         />

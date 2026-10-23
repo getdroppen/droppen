@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { Spinner } from "@/components/ui/spinner";
@@ -14,8 +14,8 @@ import { useApi, useMachine } from "@/lib/machines/context";
 import { SquareSwitch } from "@/features/cloud/devices";
 
 /*
- * Settings → Droppen, on the computer's own page (never on droppen.app):
- * sign this computer in to Droppen through a droppen.app popup
+ * The Droppen half of Settings → Access, on the computer's own page (never on
+ * droppen.app): sign this computer in to Droppen through a droppen.app popup
  * (docs/local-aggregator.md §3.1) — or, in the Droppen desktop app and when a
  * browser blocks the popup, through a browser tab (the browser hand-off,
  * §4.9, `browser-sign-in.tsx`) — see how its link stands, disconnect it.
@@ -49,11 +49,14 @@ function Fingerprint({ value }: { value: string | null | undefined }) {
   return <span data-testid="machine-fingerprint" className="font-mono text-xs tracking-wide text-fg">{value}</span>;
 }
 
-export function DroppenSection({ onOpenSecurity }: { onOpenSecurity?: () => void }) {
+export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}) {
   const machine = useMachine();
   const api = useApi();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // The access tab frames this below the local login (`access-section.tsx`);
+  // on its own it stays a page, as the tests mount it.
+  const Page = embedded ? Fragment : Sheet;
   // The page's one sign-in: the first-run card may have started it (`link-flow.ts`).
   const { flow, setFlow, opener } = useLinkFlow();
   const [hubInput, setHubInput] = useState("");
@@ -159,14 +162,14 @@ export function DroppenSection({ onOpenSecurity }: { onOpenSecurity?: () => void
   }
 
   return (
-    <Sheet>
+    <Page>
       <section className="border-b border-border p-3" data-testid="droppen-section" data-state={status.state} data-flow={flow.kind}>
         <h2 data-label="" className={sectionTitle}>
           Droppen
         </h2>
         <div className="flex max-w-xl flex-col gap-3">
           {!status.localAuth ? (
-            <NoLocalAccount onOpenSecurity={onOpenSecurity} />
+            <NoLocalAccount />
           ) : busy || flow.kind === "closed" || flow.kind === "expired" || (flow.kind === "error" && status.state === "none") ? (
             <InProgress
               flow={flow}
@@ -259,7 +262,7 @@ export function DroppenSection({ onOpenSecurity }: { onOpenSecurity?: () => void
           </div>
         </section>
       )}
-    </Sheet>
+    </Page>
   );
 }
 
@@ -365,21 +368,13 @@ export function RemoteAccess({
   );
 }
 
-function NoLocalAccount({ onOpenSecurity }: { onOpenSecurity?: () => void }) {
+/** The link needs a login to rest on; the login is the half of the tab above. */
+function NoLocalAccount() {
   const { t } = useTranslation();
   return (
-    <>
-      <p className="text-xs text-fg" data-testid="droppen-no-local-account">
-        {t("Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.")}
-      </p>
-      {onOpenSecurity && (
-        <div>
-          <button type="button" className={quiet} onClick={onOpenSecurity}>
-            {t("open Security")}
-          </button>
-        </div>
-      )}
-    </>
+    <p className="text-xs text-fg" data-testid="droppen-no-local-account">
+      {t("Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.")}
+    </p>
   );
 }
 

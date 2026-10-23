@@ -194,7 +194,7 @@ export function RenewalLine({
               </span>
               <ol className="flex list-decimal flex-col gap-1.5 pl-4">
                 <li data-testid={`renewal-look-${id}`} className="text-fg">
-                  {t("Look at Droppen on {{id}} (Settings → Droppen).", { id })}
+                  {t("Look at Droppen on {{id}} (Settings → Access → Droppen).", { id })}
                 </li>
                 <li className="flex flex-col items-start gap-1.5">
                   <span data-testid={`renewal-replaced-${id}`} className="flex flex-col items-start gap-1">
@@ -398,7 +398,7 @@ export function EnterCode({ host, onCode, onCancel }: { host: string; onCode: (c
     >
       <span className="font-mono text-xs text-fg">{t("type the code {{id}} shows", { id: host })}</span>
       <span className="text-xs leading-5 text-muted">
-        {t("Open Droppen on {{id}} itself — Settings → Droppen, or droppen agent status on a server — and type the 8 characters it shows. If it shows none, or another code, cancel: nothing is changed then.", { id: host })}
+        {t("Open Droppen on {{id}} itself — Settings → Access → Droppen, or droppen agent status on a server — and type the 8 characters it shows. If it shows none, or another code, cancel: nothing is changed then.", { id: host })}
       </span>
       <input
         className={cn(field, "max-w-[12rem] tracking-[0.2em] uppercase")}

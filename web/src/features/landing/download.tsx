@@ -464,7 +464,7 @@ function Uninstall({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
   const steps = [
     { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.", { app: appHost() }) },
-    { title: t("Disconnect it"), body: t("On the device, Settings → Droppen → Disconnect this device deletes its Droppen keys there.") },
+    { title: t("Disconnect it"), body: t("On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.") },
   ];
   return (
     <Section id="uninstall">

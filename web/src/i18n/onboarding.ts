@@ -21,7 +21,7 @@ export const onboardingZhCN: Record<string, string> = {
   "The Droppen App cannot sign in to Droppen yet (that is coming in an update): to add a Mac now, run Droppen in the background.":
     "Droppen App 暂时还不能登录 Droppen（会在后续更新中推出）。现在要添加 Mac，请先让 Droppen 在后台运行。",
   "02 · in the App, click Sign in to Droppen": "02 · 在 App 里点「登录 Droppen」",
-  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Droppen).": "在那台设备的 Droppen App 里点「登录 Droppen」（也在「设置 → Droppen」里）。",
+  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Access → Droppen).": "在那台设备的 Droppen App 里点「登录 Droppen」（也在「设置 → 访问 → Droppen」里）。",
   "Server or running in the background?": "服务器或后台运行？",
   "Install it with one line:": "一行命令安装：",
   "Mac in the background": "Mac 后台运行",
@@ -33,8 +33,8 @@ export const onboardingZhCN: Record<string, string> = {
   "download page": "下载页",
   "It starts Droppen there, makes a local login for it, and opens its page.": "它会在那台设备上启动 Droppen，创建本地登录，并打开它的页面。",
   "02 · on its page, sign in to Droppen": "02 · 在它的页面上登录 Droppen",
-  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
-    "在那台设备打开的页面上，用本地登录进去，点「登录 Droppen」（也在「设置 → Droppen」里）。",
+  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Access → Droppen).":
+    "在那台设备打开的页面上，用本地登录进去，点「登录 Droppen」（也在「设置 → 访问 → Droppen」里）。",
   "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
     "那边会弹出 {{app}} 窗口：登录这个账户，核对指纹和它页面上显示的一致，然后点「加入这台设备」。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
@@ -81,7 +81,7 @@ export const onboardingZhTW: Record<string, string> = {
   "The Droppen App cannot sign in to Droppen yet (that is coming in an update): to add a Mac now, run Droppen in the background.":
     "Droppen App 暫時還不能登入 Droppen（會在後續更新中推出）。現在要新增 Mac，請先讓 Droppen 在背景執行。",
   "02 · in the App, click Sign in to Droppen": "02 · 在 App 裡點「登入 Droppen」",
-  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Droppen).": "在那台裝置的 Droppen App 裡點「登入 Droppen」（也在「設定 → Droppen」裡）。",
+  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Access → Droppen).": "在那台裝置的 Droppen App 裡點「登入 Droppen」（也在「設定 → 存取 → Droppen」裡）。",
   "Server or running in the background?": "伺服器或背景執行？",
   "Install it with one line:": "一行指令安裝：",
   "Mac in the background": "Mac 背景執行",
@@ -92,8 +92,8 @@ export const onboardingZhTW: Record<string, string> = {
   "download page": "下載頁",
   "It starts Droppen there, makes a local login for it, and opens its page.": "它會在那台裝置上啟動 Droppen，建立本地登入，並打開它的頁面。",
   "02 · on its page, sign in to Droppen": "02 · 在它的頁面上登入 Droppen",
-  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
-    "在那台裝置打開的頁面上，用本地登入進去，點「登入 Droppen」（也在「設定 → Droppen」裡）。",
+  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Access → Droppen).":
+    "在那台裝置打開的頁面上，用本地登入進去，點「登入 Droppen」（也在「設定 → 存取 → Droppen」裡）。",
   "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
     "那邊會彈出 {{app}} 視窗：登入這個帳戶，核對指紋和它頁面上顯示的一致，然後點「加入這台裝置」。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
@@ -136,7 +136,7 @@ export const onboardingJa: Record<string, string> = {
   "The Droppen App cannot sign in to Droppen yet (that is coming in an update): to add a Mac now, run Droppen in the background.":
     "Droppen アプリからの Droppen へのサインインは、今後のアップデートで対応します。今 Mac を追加するには、Droppen をバックグラウンドで動かします。",
   "02 · in the App, click Sign in to Droppen": "02 · アプリで「Droppen にサインイン」を押す",
-  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Droppen).": "そのデバイスの Droppen アプリで「Droppen にサインイン」を押します（「設定 → Droppen」にもあります）。",
+  "In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Access → Droppen).": "そのデバイスの Droppen アプリで「Droppen にサインイン」を押します（「設定 → アクセス → Droppen」にもあります）。",
   "Server or running in the background?": "サーバーやバックグラウンドで動かすなら",
   "Install it with one line:": "コマンド 1 行でインストール：",
   "Mac in the background": "Mac のバックグラウンド",
@@ -147,8 +147,8 @@ export const onboardingJa: Record<string, string> = {
   "download page": "ダウンロードページ",
   "It starts Droppen there, makes a local login for it, and opens its page.": "そのデバイスで Droppen を起動し、ローカルログインを作って、ページを開きます。",
   "02 · on its page, sign in to Droppen": "02 · そのページで Droppen にサインイン",
-  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
-    "そのデバイスで開いたページにローカルログインで入り、「Droppen にサインイン」を押します（「設定 → Droppen」にもあります）。",
+  "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Access → Droppen).":
+    "そのデバイスで開いたページにローカルログインで入り、「Droppen にサインイン」を押します（「設定 → アクセス → Droppen」にもあります）。",
   "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
     "{{app}} のウィンドウが開くので、このアカウントでサインインし、フィンガープリントがページの表示と一致することを確かめて「このデバイスを追加」を押します。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":

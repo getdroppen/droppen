@@ -21,9 +21,8 @@ export const linkZhCN: Record<string, string> = {
   "also delete its encrypted copy on droppen.app": "同时删除它在 droppen.app 上的加密副本",
   "disconnecting…": "正在断开…",
   "disconnect": "断开",
-  "Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
-    "请先在「安全」里为这台设备建一个本地账号。登录 Droppen 后，你的其它设备可经这里到达，所以它不能对任何人敞开。",
-  "open Security": "打开「安全」",
+  "Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
+    "请先在 设置 → 访问 里为这台设备建一个本地账号。登录 Droppen 后，你的其它设备可经这里到达，所以它不能对任何人敞开。",
   "Sign in to use this device from your phone on droppen.app, and to see your other devices here too. Everything works without signing in as well.":
     "登录后可以在手机上用 droppen.app 访问这台设备，也能在这里一起看你的其它设备。不登录也一样能用。",
   "Only {{owner}} can sign this device in.": "只有 {{owner}} 能让这台设备登录。",
@@ -57,8 +56,8 @@ export const linkZhCN: Record<string, string> = {
   "signed in by": "登录者",
   "This device was removed from the account on droppen.app. It keeps working locally.": "这台设备已在 droppen.app 上被移出账户，在本地照常可用。",
   "join again": "重新加入",
-  "Open this from Droppen's local settings on the device that runs it: Settings → Droppen → Sign in to Droppen.":
-    "请从运行 Droppen 的设备上的本地设置里打开：设置 → Droppen → 登录 Droppen。",
+  "Open this from Droppen's local settings on the device that runs it: Settings → Access → Droppen → Sign in to Droppen.":
+    "请从运行 Droppen 的设备上的本地设置里打开：设置 → 访问 → Droppen → 登录 Droppen。",
   "This device is already in another Droppen account (account key {{fp}}).": "这台设备已加入另一个 Droppen 账户（账户指纹 {{fp}}）。",
   "This device says it is {{id}} in this account, but the account does not list it with these keys.":
     "这台设备说它是本账户的 {{id}}，但账户里登记的不是这对钥匙。",
@@ -137,9 +136,8 @@ export const linkZhTW: Record<string, string> = {
   "also delete its encrypted copy on droppen.app": "同時刪除它在 droppen.app 上的加密副本",
   "disconnecting…": "正在中斷…",
   "disconnect": "中斷",
-  "Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
-    "請先在「安全」中為這台裝置建立本地帳號。登入 Droppen 後，你的其他裝置可經由這裡連到，所以它不能對任何人敞開。",
-  "open Security": "開啟「安全」",
+  "Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
+    "請先在 設定 → 存取 中為這台裝置建立本地帳號。登入 Droppen 後，你的其他裝置可經由這裡連到，所以它不能對任何人敞開。",
   "Sign in to use this device from your phone on droppen.app, and to see your other devices here too. Everything works without signing in as well.":
     "登入後可以在手機上用 droppen.app 存取這台裝置，也能在這裡一起查看你的其他裝置。不登入也一樣能用。",
   "Only {{owner}} can sign this device in.": "只有 {{owner}} 能讓這台裝置登入。",
@@ -173,8 +171,8 @@ export const linkZhTW: Record<string, string> = {
   "signed in by": "登入者",
   "This device was removed from the account on droppen.app. It keeps working locally.": "這台裝置已在 droppen.app 上被移出帳戶，在本地照常可用。",
   "join again": "重新加入",
-  "Open this from Droppen's local settings on the device that runs it: Settings → Droppen → Sign in to Droppen.":
-    "請從執行 Droppen 的裝置上的本地設定開啟：設定 → Droppen → 登入 Droppen。",
+  "Open this from Droppen's local settings on the device that runs it: Settings → Access → Droppen → Sign in to Droppen.":
+    "請從執行 Droppen 的裝置上的本地設定開啟：設定 → 存取 → Droppen → 登入 Droppen。",
   "This device is already in another Droppen account (account key {{fp}}).": "這台裝置已加入另一個 Droppen 帳戶（帳戶指紋 {{fp}}）。",
   "This device says it is {{id}} in this account, but the account does not list it with these keys.":
     "這台裝置說它是本帳戶的 {{id}}，但帳戶中登記的不是這組金鑰。",
@@ -253,9 +251,8 @@ export const linkJa: Record<string, string> = {
   "also delete its encrypted copy on droppen.app": "droppen.app 上の暗号化コピーも削除する",
   "disconnecting…": "解除しています…",
   "disconnect": "解除",
-  "Create a local account for this device first, in Security. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
-    "先に「セキュリティ」でこのデバイスのローカルアカウントを作成してください。Droppen にサインインすると他のデバイスにもここから届くため、誰でも使える状態にしておくことはできません。",
-  "open Security": "「セキュリティ」を開く",
+  "Create a local account for this device first, in Settings → Access. Once it is signed in to Droppen, your other devices are reachable through it, so it must not be open to anyone.":
+    "先に 設定 → アクセス でこのデバイスのローカルアカウントを作成してください。Droppen にサインインすると他のデバイスにもここから届くため、誰でも使える状態にしておくことはできません。",
   "Sign in to use this device from your phone on droppen.app, and to see your other devices here too. Everything works without signing in as well.":
     "サインインすると、スマートフォンの droppen.app からこのデバイスを使え、ここで他のデバイスもまとめて見られます。サインインしなくてもすべて使えます。",
   "Only {{owner}} can sign this device in.": "このデバイスでサインインできるのは {{owner}} だけです。",
@@ -289,8 +286,8 @@ export const linkJa: Record<string, string> = {
   "signed in by": "サインインしたユーザー",
   "This device was removed from the account on droppen.app. It keeps working locally.": "このデバイスは droppen.app でアカウントから削除されました。ローカルではそのまま使えます。",
   "join again": "もう一度追加",
-  "Open this from Droppen's local settings on the device that runs it: Settings → Droppen → Sign in to Droppen.":
-    "Droppen を動かしているデバイスのローカル設定から開いてください：設定 → Droppen → Droppen にサインイン。",
+  "Open this from Droppen's local settings on the device that runs it: Settings → Access → Droppen → Sign in to Droppen.":
+    "Droppen を動かしているデバイスのローカル設定から開いてください：設定 → アクセス → Droppen → Droppen にサインイン。",
   "This device is already in another Droppen account (account key {{fp}}).": "このデバイスはすでに別の Droppen アカウントに追加されています（アカウントキー {{fp}}）。",
   "This device says it is {{id}} in this account, but the account does not list it with these keys.":
     "このデバイスはこのアカウントの {{id}} だと名乗っていますが、アカウントに登録された鍵と一致しません。",

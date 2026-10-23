@@ -163,7 +163,7 @@ test("step 02: two radios, signing in to Droppen shown as coming soon and not ch
   assert.match(html, /Recommended/);
   assert.doesNotMatch(html, /Let browsers on my local network in too/, "the local network waits for its own change");
   assert.match(html, /The Droppen app on this Mac never asks for a password\./);
-  assert.match(html, /Change it later in Settings → Droppen and Settings → Security\./);
+  assert.match(html, /Change it later in Settings → Access\./);
   // A stored "droppen" while it cannot be had still shows this Mac only.
   assert.match(draw(<WhereStep progress={{ ...started, where: { choice: "droppen", lan: false } }} tools={undefined} online onChange={noop} signInReady={false} />), /aria-checked="true" tabindex="0" data-choice="local"/);
   // Once the app can sign in, it is the recommended default — unless offline.
@@ -301,11 +301,11 @@ test("step 02 says why it cannot sign in from here, and that a Mac in an account
   assert.doesNotMatch(where({ kind: "unavailable", reason: "loading", owner: null }), /where-unavailable/, "nothing while it loads");
   assert.match(where({ kind: "unavailable", reason: "broken", owner: null }), /data-testid="where-unavailable" data-reason="broken"[^>]*>this device&#x27;s Droppen state does not load</);
   assert.match(where({ kind: "unavailable", reason: "not_manager", owner: "ada" }), /data-reason="not_manager"[^>]*>Only ada can sign this device in\.</);
-  assert.match(where({ kind: "unavailable", reason: "not_manager", owner: null }), /data-reason="not_manager"[^>]*>This window cannot sign this device in\. See Settings → Droppen\.</);
+  assert.match(where({ kind: "unavailable", reason: "not_manager", owner: null }), /data-reason="not_manager"[^>]*>This window cannot sign this device in\. See Settings → Access → Droppen\.</);
   assert.match(where({ kind: "unavailable", reason: "no_local_auth", owner: null }), /data-reason="no_local_auth"[^>]*>Create a local account for this device first/);
   // "Only on this Mac" for a Mac in an account: it stays in it, and where to take it out.
   const stays = where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local");
-  assert.match(stays, /data-testid="where-stays-linked"[^>]*>This Mac stays in your Droppen account\. To take it out, use Settings → Droppen\.</);
+  assert.match(stays, /data-testid="where-stays-linked"[^>]*>This Mac stays in your Droppen account\. To take it out, use Settings → Access → Droppen\.</);
   assert.doesNotMatch(stays, /where-linked/);
   assert.doesNotMatch(where({ kind: "none" }, "local"), /where-stays-linked/);
   assert.match(where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local", "zh-CN"), /这台 Mac 仍在你的 Droppen 账户里/);

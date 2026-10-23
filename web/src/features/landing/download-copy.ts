@@ -13,7 +13,7 @@
  * 「我的设备」, 「我的裝置」, 「マイデバイス」 (`test/ui-wording.test.ts`) — and
  * names a platform (Mac, a Linux server, Windows) where that is the point;
  * the buttons are named exactly as the app names them (「登录 Droppen」,
- * 「设置 → Droppen」, 「断开这台设备」, 「显示一次性注册码」).
+ * 「设置 → 访问 → Droppen」, 「断开这台设备」, 「显示一次性注册码」).
  */
 
 type Bundle = Record<string, string>;
@@ -157,7 +157,7 @@ export const downloadZhCN: Bundle = {
   "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
     "在 {{app}} 的「我的设备」里移除这台设备。密钥会随之轮换，之后写下的内容它都打不开。",
   "Disconnect it": "断开连接",
-  "On the device, Settings → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台设备上，「设置 → Droppen → 断开这台设备」会删除它本地的 Droppen 密钥。",
+  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台设备上，「设置 → 访问 → Droppen → 断开这台设备」会删除它本地的 Droppen 密钥。",
   "Remove the program": "删除程序",
   "The App: quit Droppen and drag it from Applications to the Trash.": "App：退出 Droppen，把它从「应用程序」拖进废纸篓。",
   "In the background: run the install script again with --uninstall:": "后台运行：加上 --uninstall 再运行一次安装脚本：",
@@ -315,7 +315,7 @@ export const downloadZhTW: Bundle = {
   "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
     "在 {{app}} 的「我的裝置」裡移除這台裝置。金鑰會隨之輪換，之後寫下的內容它都打不開。",
   "Disconnect it": "中斷連線",
-  "On the device, Settings → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台裝置上，「設定 → Droppen → 中斷這台裝置」會刪除它本地的 Droppen 金鑰。",
+  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台裝置上，「設定 → 存取 → Droppen → 中斷這台裝置」會刪除它本地的 Droppen 金鑰。",
   "Remove the program": "刪除程式",
   "The App: quit Droppen and drag it from Applications to the Trash.": "App：結束 Droppen，把它從「應用程式」拖進垃圾桶。",
   "In the background: run the install script again with --uninstall:": "背景執行：加上 --uninstall 再執行一次安裝腳本：",
@@ -473,8 +473,8 @@ export const downloadJa: Bundle = {
   "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
     "{{app}} の「マイデバイス」でそのデバイスを削除します。鍵がローテーションされ、以後に書かれた内容は開けなくなります。",
   "Disconnect it": "接続を解除する",
-  "On the device, Settings → Droppen → Disconnect this device deletes its Droppen keys there.":
-    "そのデバイスで「設定 → Droppen → このデバイスの接続を解除」を選ぶと、そこにある Droppen の鍵が削除されます。",
+  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.":
+    "そのデバイスで「設定 → アクセス → Droppen → このデバイスの接続を解除」を選ぶと、そこにある Droppen の鍵が削除されます。",
   "Remove the program": "プログラムを削除する",
   "The App: quit Droppen and drag it from Applications to the Trash.": "アプリ：Droppen を終了し、「アプリケーション」からゴミ箱にドラッグします。",
   "In the background: run the install script again with --uninstall:": "バックグラウンド版：インストールスクリプトを --uninstall 付きでもう一度実行します：",

@@ -25,8 +25,8 @@ export const linkHandoffZhCN: Record<string, string> = {
   "handing the code to the device…": "正在把注册码交给设备…",
   "Added {{id}}. Go back to Droppen on that device: it comes online in a moment. You can close this tab.":
     "已加入 {{id}}。回到那台设备上的 Droppen，它马上就会上线。这个标签页可以关掉了。",
-  "This sign-in link has expired. Start again from Droppen on the device: Settings → Droppen → Sign in to Droppen.":
-    "这个登录链接已过期。请在那台设备的 Droppen 里重新开始：设置 → Droppen → 登录 Droppen。",
+  "This sign-in link has expired. Start again from Droppen on the device: Settings → Access → Droppen → Sign in to Droppen.":
+    "这个登录链接已过期。请在那台设备的 Droppen 里重新开始：设置 → 访问 → Droppen → 登录 Droppen。",
   "Cancelled: nothing was added. You can close this tab.": "已取消，没有加入任何设备。这个标签页可以关掉了。",
   "Check that Droppen on that device shows the same fingerprint. When you add it, a new tab hands the code to that device, then closes.":
     "请核对那台设备上的 Droppen 显示的是同一串指纹。加入时会打开一个新标签页，把注册码交给那台设备，然后自动关闭。",
@@ -40,8 +40,8 @@ export const linkHandoffZhCN: Record<string, string> = {
   "This device has the sign-in.": "这台设备已收到登录。",
   "droppen.app, in the other tab, finishes adding it. You can close this tab and go back to Droppen.":
     "droppen.app 会在另一个标签页里完成加入。这个标签页可以关掉，回到 Droppen 即可。",
-  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Droppen → Sign in to Droppen.":
-    "这里没有要交接的内容。要让这台设备登录，请在它上面打开 Droppen：设置 → Droppen → 登录 Droppen。",
+  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Access → Droppen → Sign in to Droppen.":
+    "这里没有要交接的内容。要让这台设备登录，请在它上面打开 Droppen：设置 → 访问 → Droppen → 登录 Droppen。",
   "This sign-in ran out of time. Start again from Droppen on this device.": "这次登录已超时。请在这台设备的 Droppen 里重新开始。",
   "This sign-in is no longer open on this device: it was used, cancelled or started again. If it did not finish, start again from Droppen on this device.":
     "这台设备上已没有这次登录：它已被使用、取消或重新开始。如果没有完成，请在这台设备的 Droppen 里重新开始。",
@@ -69,8 +69,8 @@ export const linkHandoffZhTW: Record<string, string> = {
   "handing the code to the device…": "正在把註冊碼交給裝置…",
   "Added {{id}}. Go back to Droppen on that device: it comes online in a moment. You can close this tab.":
     "已加入 {{id}}。回到那台裝置上的 Droppen，它很快就會上線。這個分頁可以關掉了。",
-  "This sign-in link has expired. Start again from Droppen on the device: Settings → Droppen → Sign in to Droppen.":
-    "這個登入連結已過期。請在那台裝置的 Droppen 裡重新開始：設定 → Droppen → 登入 Droppen。",
+  "This sign-in link has expired. Start again from Droppen on the device: Settings → Access → Droppen → Sign in to Droppen.":
+    "這個登入連結已過期。請在那台裝置的 Droppen 裡重新開始：設定 → 存取 → Droppen → 登入 Droppen。",
   "Cancelled: nothing was added. You can close this tab.": "已取消，沒有加入任何裝置。這個分頁可以關掉了。",
   "Check that Droppen on that device shows the same fingerprint. When you add it, a new tab hands the code to that device, then closes.":
     "請核對那台裝置上的 Droppen 顯示的是同一串指紋。加入時會打開一個新分頁，把註冊碼交給那台裝置，然後自動關閉。",
@@ -83,8 +83,8 @@ export const linkHandoffZhTW: Record<string, string> = {
   "This device has the sign-in.": "這台裝置已收到登入。",
   "droppen.app, in the other tab, finishes adding it. You can close this tab and go back to Droppen.":
     "droppen.app 會在另一個分頁裡完成加入。這個分頁可以關掉，回到 Droppen 即可。",
-  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Droppen → Sign in to Droppen.":
-    "這裡沒有要交接的內容。要讓這台裝置登入，請在它上面打開 Droppen：設定 → Droppen → 登入 Droppen。",
+  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Access → Droppen → Sign in to Droppen.":
+    "這裡沒有要交接的內容。要讓這台裝置登入，請在它上面打開 Droppen：設定 → 存取 → Droppen → 登入 Droppen。",
   "This sign-in ran out of time. Start again from Droppen on this device.": "這次登入已逾時。請在這台裝置的 Droppen 裡重新開始。",
   "This sign-in is no longer open on this device: it was used, cancelled or started again. If it did not finish, start again from Droppen on this device.":
     "這台裝置上已沒有這次登入：它已被使用、取消或重新開始。如果沒有完成，請在這台裝置的 Droppen 裡重新開始。",
@@ -112,8 +112,8 @@ export const linkHandoffJa: Record<string, string> = {
   "handing the code to the device…": "コードをデバイスに渡しています…",
   "Added {{id}}. Go back to Droppen on that device: it comes online in a moment. You can close this tab.":
     "{{id}} を追加しました。そのデバイスの Droppen に戻ってください。まもなくオンラインになります。このタブは閉じてかまいません。",
-  "This sign-in link has expired. Start again from Droppen on the device: Settings → Droppen → Sign in to Droppen.":
-    "このサインインのリンクは期限切れです。そのデバイスの Droppen でやり直してください：設定 → Droppen → Droppen にサインイン。",
+  "This sign-in link has expired. Start again from Droppen on the device: Settings → Access → Droppen → Sign in to Droppen.":
+    "このサインインのリンクは期限切れです。そのデバイスの Droppen でやり直してください：設定 → アクセス → Droppen → Droppen にサインイン。",
   "Cancelled: nothing was added. You can close this tab.": "キャンセルしました。何も追加されていません。このタブは閉じてかまいません。",
   "Check that Droppen on that device shows the same fingerprint. When you add it, a new tab hands the code to that device, then closes.":
     "そのデバイスの Droppen に同じフィンガープリントが表示されていることを確認してください。追加すると新しいタブが開いてコードをそのデバイスに渡し、自動で閉じます。",
@@ -126,8 +126,8 @@ export const linkHandoffJa: Record<string, string> = {
   "This device has the sign-in.": "このデバイスがサインインを受け取りました。",
   "droppen.app, in the other tab, finishes adding it. You can close this tab and go back to Droppen.":
     "追加はもう一方のタブの droppen.app が完了します。このタブを閉じて Droppen に戻ってください。",
-  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Droppen → Sign in to Droppen.":
-    "ここで渡すものはありません。このデバイスをサインインさせるには、このデバイスで Droppen を開いてください：設定 → Droppen → Droppen にサインイン。",
+  "Nothing to hand over here. To sign this device in, open Droppen on it: Settings → Access → Droppen → Sign in to Droppen.":
+    "ここで渡すものはありません。このデバイスをサインインさせるには、このデバイスで Droppen を開いてください：設定 → アクセス → Droppen → Droppen にサインイン。",
   "This sign-in ran out of time. Start again from Droppen on this device.": "このサインインは時間切れです。このデバイスの Droppen でやり直してください。",
   "This sign-in is no longer open on this device: it was used, cancelled or started again. If it did not finish, start again from Droppen on this device.":
     "このサインインはこのデバイスではもう開いていません（使用済み、キャンセル、またはやり直し済み）。完了していなければ、このデバイスの Droppen でやり直してください。",

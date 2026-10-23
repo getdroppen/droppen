@@ -164,8 +164,8 @@ export const welcomeZhCN: Record<string, string> = {
   "The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "这台 Mac 上的 Droppen 应用永远不用密码。这台 Mac 上的浏览器，在应用的菜单栏菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote
   "Sign in in the browser": "在浏览器中登录", // where.go.droppen
   "Set the password": "设置密码", // where.go.lan
-  "Change it later in Settings → Droppen and Settings → Security.": "之后在 设置 → Droppen 和 设置 → 安全 里改。", // where.changeLater
-  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Droppen.": "登录 droppen.app 需要联网。先选「只在这台 Mac 上用」，之后在 设置 → Droppen 里登录。", // where.offline
+  "Change it later in Settings → Access.": "之后在 设置 → 访问 里改。", // where.changeLater
+  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.": "登录 droppen.app 需要联网。先选「只在这台 Mac 上用」，之后在 设置 → 访问 → Droppen 里登录。", // where.offline
   "Continue in your browser": "在浏览器里继续", // where.wait.title
   "Sign in to droppen.app, or create an account.": "登录 droppen.app，或者注册一个账户。", // where.wait.1
   "Check that the fingerprint there matches this one, then choose Allow.": "核对那边显示的指纹和这里一致，然后点「同意」。", // where.wait.2
@@ -181,7 +181,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Device name": "设备名称", // where.deviceName
   "Scan with your phone": "用手机扫一扫", // where.scan
   "Can't reach droppen.app": "连不上 droppen.app", // where.err.title
-  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Droppen; nothing done here is lost.": "先只在这台 Mac 上用。联网后在 设置 → Droppen 里登录，这里做的都不会丢。", // where.err.body
+  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "先只在这台 Mac 上用。联网后在 设置 → 访问 → Droppen 里登录，这里做的都不会丢。", // where.err.body
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "你的套餐里可运行 AI 的设备已经用满。到 droppen.app 移除一台或换套餐；在那之前这台 Mac 照常单独使用。", // where.err.limit
   "Only on this Mac for now": "先只在这台 Mac 上用", // where.localNow
   "A password for browsers on your network": "给局域网里的浏览器设一个密码", // where.lan.formTitle
@@ -228,7 +228,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Open System Settings": "打开系统设置", // wrap.notif.open
   "On your phone": "在手机上", // wrap.phone
   "Open droppen.app and sign in as {{email}}.": "打开 droppen.app，用 {{email}} 登录。", // wrap.phone.linked
-  "Want it on your phone too? Sign in to Droppen any time in Settings → Droppen.": "也想在手机上用？随时在 设置 → Droppen 里登录。", // wrap.phone.not
+  "Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.": "也想在手机上用？随时在 设置 → 访问 → Droppen 里登录。", // wrap.phone.not
   "What's set": "设置结果", // wrap.summary
   "Droppen · {{email}}": "Droppen · {{email}}", // wrap.sum.linked
   "Local network · {{addr}}": "局域网 · {{addr}}", // wrap.sum.lan
@@ -248,8 +248,8 @@ export const welcomeZhCN: Record<string, string> = {
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登录，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
   "Signing in from the app is coming soon": "很快就能在应用里登录", // where.droppen.soon
-  "This Mac stays in your Droppen account. To take it out, use Settings → Droppen.": "这台 Mac 仍在你的 Droppen 账户里。要把它移出，请到 设置 → Droppen。", // where.local.stays (as built)
-  "This window cannot sign this device in. See Settings → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → Droppen。", // where.unavailable (as built)
+  "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台 Mac 仍在你的 Droppen 账户里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
+  "This window cannot sign this device in. See Settings → Access → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → 访问 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "随时可以在菜单栏的 Droppen 图标里打开或关闭「登录时启动」。", // wrap.login.menuBar
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
@@ -447,8 +447,8 @@ export const welcomeZhTW: Record<string, string> = {
   "The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "這台 Mac 上的 Droppen 應用程式永遠不用密碼。這台 Mac 上的瀏覽器，在應用程式的選單列選單中選擇「在瀏覽器中打開」，打開時已經登入。替這台裝置設定密碼以後，瀏覽器會要這個密碼。", // where.browserNote
   "Sign in in the browser": "在瀏覽器中登入", // where.go.droppen
   "Set the password": "設定密碼", // where.go.lan
-  "Change it later in Settings → Droppen and Settings → Security.": "之後在 設定 → Droppen 和 設定 → 安全 裡修改。", // where.changeLater
-  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Droppen.": "登入 droppen.app 需要網路。先選「只在這台 Mac 上用」，之後在 設定 → Droppen 裡登入。", // where.offline
+  "Change it later in Settings → Access.": "之後在 設定 → 存取 裡修改。", // where.changeLater
+  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.": "登入 droppen.app 需要網路。先選「只在這台 Mac 上用」，之後在 設定 → 存取 → Droppen 裡登入。", // where.offline
   "Continue in your browser": "在瀏覽器裡繼續", // where.wait.title
   "Sign in to droppen.app, or create an account.": "登入 droppen.app，或註冊一個帳戶。", // where.wait.1
   "Check that the fingerprint there matches this one, then choose Allow.": "核對那邊顯示的指紋和這裡一致，然後按「同意」。", // where.wait.2
@@ -464,7 +464,7 @@ export const welcomeZhTW: Record<string, string> = {
   "Device name": "裝置名稱", // where.deviceName
   "Scan with your phone": "用手機掃描", // where.scan
   "Can't reach droppen.app": "連不上 droppen.app", // where.err.title
-  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Droppen; nothing done here is lost.": "先只在這台 Mac 上用。連網後在 設定 → Droppen 裡登入，這裡做的都不會遺失。", // where.err.body
+  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "先只在這台 Mac 上用。連網後在 設定 → 存取 → Droppen 裡登入，這裡做的都不會遺失。", // where.err.body
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "你的方案中可執行 AI 的裝置已經用滿。到 droppen.app 移除一台或更換方案；在那之前這台 Mac 照常單獨使用。", // where.err.limit
   "Only on this Mac for now": "先只在這台 Mac 上用", // where.localNow
   "A password for browsers on your network": "給區域網路裡的瀏覽器設一個密碼", // where.lan.formTitle
@@ -511,7 +511,7 @@ export const welcomeZhTW: Record<string, string> = {
   "Open System Settings": "打開系統設定", // wrap.notif.open
   "On your phone": "在手機上", // wrap.phone
   "Open droppen.app and sign in as {{email}}.": "打開 droppen.app，用 {{email}} 登入。", // wrap.phone.linked
-  "Want it on your phone too? Sign in to Droppen any time in Settings → Droppen.": "也想在手機上用？隨時在 設定 → Droppen 裡登入。", // wrap.phone.not
+  "Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.": "也想在手機上用？隨時在 設定 → 存取 → Droppen 裡登入。", // wrap.phone.not
   "What's set": "設定結果", // wrap.summary
   "Droppen · {{email}}": "Droppen · {{email}}", // wrap.sum.linked
   "Local network · {{addr}}": "區域網路 · {{addr}}", // wrap.sum.lan
@@ -531,8 +531,8 @@ export const welcomeZhTW: Record<string, string> = {
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登入，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
   "Signing in from the app is coming soon": "很快就能在應用程式裡登入", // where.droppen.soon
-  "This Mac stays in your Droppen account. To take it out, use Settings → Droppen.": "這台 Mac 仍在你的 Droppen 帳戶裡。要把它移出，請到 設定 → Droppen。", // where.local.stays (as built)
-  "This window cannot sign this device in. See Settings → Droppen.": "這個視窗不能讓這台裝置登入。請看 設定 → Droppen。", // where.unavailable (as built)
+  "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "這台 Mac 仍在你的 Droppen 帳戶裡。要把它移出，請到 設定 → 存取 → Droppen。", // where.local.stays (as built)
+  "This window cannot sign this device in. See Settings → Access → Droppen.": "這個視窗不能讓這台裝置登入。請看 設定 → 存取 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "隨時可以在選單列的 Droppen 圖示裡開啟或關閉「登入時啟動」。", // wrap.login.menuBar
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
@@ -730,8 +730,8 @@ export const welcomeJa: Record<string, string> = {
   "The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "この Mac の Droppen アプリはパスワードを求めません。この Mac のブラウザでは、アプリのメニューバーのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。", // where.browserNote
   "Sign in in the browser": "ブラウザでログイン", // where.go.droppen
   "Set the password": "パスワードを設定", // where.go.lan
-  "Change it later in Settings → Droppen and Settings → Security.": "あとから 設定 → Droppen と 設定 → セキュリティ で変更できます。", // where.changeLater
-  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Droppen.": "droppen.app にはインターネットが必要です。いまは「この Mac だけで使う」を選び、あとで 設定 → Droppen からログインしてください。", // where.offline
+  "Change it later in Settings → Access.": "あとから 設定 → アクセス で変更できます。", // where.changeLater
+  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.": "droppen.app にはインターネットが必要です。いまは「この Mac だけで使う」を選び、あとで 設定 → アクセス → Droppen からログインしてください。", // where.offline
   "Continue in your browser": "ブラウザで続けてください", // where.wait.title
   "Sign in to droppen.app, or create an account.": "droppen.app にサインインするか、アカウントを作成します。", // where.wait.1: the app's own wording
   "Check that the fingerprint there matches this one, then choose Allow.": "表示されたフィンガープリントがこれと一致することを確認して「許可」を選びます。", // where.wait.2
@@ -747,7 +747,7 @@ export const welcomeJa: Record<string, string> = {
   "Device name": "デバイス名", // where.deviceName
   "Scan with your phone": "スマートフォンで読み取る", // where.scan
   "Can't reach droppen.app": "droppen.app に接続できません", // where.err.title
-  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Droppen; nothing done here is lost.": "いまはこの Mac だけで使ってください。オンラインになったら 設定 → Droppen からログインできます。ここでの設定は失われません。", // where.err.body
+  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "いまはこの Mac だけで使ってください。オンラインになったら 設定 → アクセス → Droppen からログインできます。ここでの設定は失われません。", // where.err.body
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "プランで AI を動かせるデバイスが上限に達しています。droppen.app で 1 台外すかプランを変更してください。それまではこの Mac 単体で使えます。", // where.err.limit
   "Only on this Mac for now": "今はこの Mac だけで使う", // where.localNow
   "A password for browsers on your network": "ネットワーク上のブラウザ用のパスワード", // where.lan.formTitle
@@ -794,7 +794,7 @@ export const welcomeJa: Record<string, string> = {
   "Open System Settings": "システム設定を開く", // wrap.notif.open
   "On your phone": "スマートフォンで", // wrap.phone
   "Open droppen.app and sign in as {{email}}.": "droppen.app を開いて {{email}} でログインします。", // wrap.phone.linked
-  "Want it on your phone too? Sign in to Droppen any time in Settings → Droppen.": "スマートフォンでも使いたいときは、いつでも 設定 → Droppen からログインできます。", // wrap.phone.not
+  "Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.": "スマートフォンでも使いたいときは、いつでも 設定 → アクセス → Droppen からログインできます。", // wrap.phone.not
   "What's set": "設定内容", // wrap.summary
   "Droppen · {{email}}": "Droppen · {{email}}", // wrap.sum.linked
   "Local network · {{addr}}": "ローカルネットワーク · {{addr}}", // wrap.sum.lan
@@ -814,8 +814,8 @@ export const welcomeJa: Record<string, string> = {
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code にログインしました。Droppen に戻れます。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
   "Signing in from the app is coming soon": "アプリからのログインはまもなく対応します", // where.droppen.soon
-  "This Mac stays in your Droppen account. To take it out, use Settings → Droppen.": "この Mac は Droppen アカウントに残ります。外すには 設定 → Droppen から。", // where.local.stays (as built)
-  "This window cannot sign this device in. See Settings → Droppen.": "このウィンドウからはこのデバイスをサインインできません。設定 → Droppen を見てください。", // where.unavailable (as built)
+  "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "この Mac は Droppen アカウントに残ります。外すには 設定 → アクセス → Droppen から。", // where.local.stays (as built)
+  "This window cannot sign this device in. See Settings → Access → Droppen.": "このウィンドウからはこのデバイスをサインインできません。設定 → アクセス → Droppen を見てください。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "メニューバーの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。", // wrap.login.menuBar
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation

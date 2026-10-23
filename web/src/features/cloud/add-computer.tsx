@@ -25,7 +25,7 @@ import { CopyButton, ErrorLine, errorText, Note, primary, quiet, secondary } fro
 /*
  * Adding a computer that runs AI (docs/local-aggregator.md §3.7 「添加可运行 AI
  * 的设备」): the first way is the guide (`AddComputer`) — install Droppen
- * there, sign it in from its own page (Settings → Droppen → Sign in to
+ * there, sign it in from its own page (Settings → Access → Droppen → Sign in to
  * Droppen, `features/link`), watch it come online; the other is an
  * enrollment code for the command line (`AddMachine`). It runs
  * AI because it says so, and does not manage the account: a computer that
@@ -324,8 +324,8 @@ export function AddComputer({
           <CapsLabel>{viaApp ? t("02 · in the App, click Sign in to Droppen") : t("02 · on its page, sign in to Droppen")}</CapsLabel>
           <p className="text-xs leading-5 text-muted">
             {viaApp
-              ? t("In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Droppen).")
-              : t("On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).")}
+              ? t("In the Droppen App on that device, click Sign in to Droppen (it is also under Settings → Access → Droppen).")
+              : t("On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Access → Droppen).")}
           </p>
           <p className="text-xs leading-5 text-muted">
             {t("A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.", { app: appHost() })}

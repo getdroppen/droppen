@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApiClient } from "@/api/client";
 import { ApiError } from "@/api/errors";
@@ -255,7 +255,7 @@ function SessionsSection() {
   return (
     <section className="@container/security p-3">
       <div className="mb-2 flex max-w-2xl items-center justify-between gap-4">
-        <h2 data-label="" className={sectionTitle + " mb-0"}>{t("devices")}</h2>
+        <h2 data-label="" className={sectionTitle + " mb-0"}>{t("signed-in devices")}</h2>
         {others.length > 0 && (
           <button
             type="button"
@@ -293,8 +293,11 @@ function SessionsSection() {
 }
 
 /**
- * The security tab: who you are, your password, and every device holding a
- * token for the account.
+ * This device's login: who you are, your password, and every device holding a
+ * token for the account. The access tab (`access-section.tsx`) shows it above
+ * the Droppen link, which is why `embedded` skips the page frame there; the
+ * standalone default keeps it a page of its own for the tests and any caller
+ * that has no frame around it.
  *
  * With authentication switched off (`auth.enabled = false`) there is nothing
  * here to configure, so the tab says why instead of drawing controls that
@@ -306,10 +309,13 @@ function SessionsSection() {
  * A status the server did not give is said to be missing, never read as
  * authentication switched off.
  */
-export function SecuritySection() {
+export function SecuritySection({ embedded = false }: { embedded?: boolean } = {}) {
   const machine = useMachine();
   const api = useApi();
   const { t } = useTranslation();
+  // Inside the access tab the sheet is the caller's; a second one would nest
+  // scroll areas that each carry their own frame and registration marks.
+  const Page = embedded ? Fragment : Sheet;
   // Asked fresh rather than read from the module cache in `lib/auth`: this is
   // the page where the answer can change while it is open.
   const {
@@ -385,21 +391,21 @@ export function SecuritySection() {
   // Browser" opened) is an ordinary one, and gets the ordinary view.
   if (status.desktopApp && !isPersonsAccount(status.user)) {
     return (
-      <Sheet>
+      <Page>
         <section className="border-b border-border p-3" data-testid="security-desktop-app">
           <h2 data-label="" className={sectionTitle}>{t("signed in")}</h2>
           <div className="max-w-xl text-2xs text-faint">{t("The Droppen app signs in for you on this device.")}</div>
         </section>
         <SessionsSection />
-      </Sheet>
+      </Page>
     );
   }
 
   return (
-    <Sheet>
+    <Page>
       {status.user && <AccountSection user={status.user} />}
       <PasswordSection />
       <SessionsSection />
-    </Sheet>
+    </Page>
   );
 }

@@ -1,5 +1,5 @@
 // The browser hand-off's screens (docs/local-aggregator.md §4.9), rendered:
-// Settings → Droppen's "continue in your browser" (the desktop app's sign-in),
+// Settings → Access → Droppen's "continue in your browser" (the desktop app's sign-in),
 // droppen.app's consent page answering through the browser, and the device's
 // /link/return page — in English and in Chinese, device-only wording.
 //
@@ -74,7 +74,7 @@ test("continue in your browser: the steps, this device's fingerprint, how long t
   assert.doesNotMatch(zh, FORBIDDEN_ZH);
 });
 
-test("Settings → Droppen shows the browser hand-off while it runs", async () => {
+test("Settings → Access → Droppen shows the browser hand-off while it runs", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, gcTime: Infinity } } });
   client.setQueryData(cloudKey(LOCAL), {
     state: "none",

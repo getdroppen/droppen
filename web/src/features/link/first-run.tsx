@@ -18,10 +18,11 @@ import { startDroppenSignIn } from "./browser-sign-in";
  * put in front of the person, with the one line that says why — their other
  * devices here, this one from their phone. The button starts the sign-in in
  * the click (the droppen.app window opens — in the Droppen desktop app, a
- * tab of the system browser: `browser-sign-in.tsx`) and goes on to Settings → Droppen,
- * which shows how it stands; without a local account to sign in with, it only
- * goes there, where Droppen asks for one first. Local sign-in itself is not
- * touched. "Not now" puts it away for good on this browser.
+ * tab of the system browser: `browser-sign-in.tsx`) and goes on to
+ * Settings → Access → Droppen, which shows how it stands; without a local
+ * account to sign in with, it only goes there, where the login above asks for
+ * one first. Local sign-in itself is not touched. "Not now" puts it away for
+ * good on this browser.
  */
 
 /** Where "not now" is remembered: this device's, on this browser. */
@@ -71,7 +72,7 @@ function FirstRunCard({ className }: { className?: string }) {
     }
     setDismissed(true);
   };
-  const toSettings = () => void navigate({ to: "/settings", search: { section: "Droppen" } });
+  const toSettings = () => void navigate({ to: "/settings", search: { section: "access" } });
   const signIn = () => {
     // In the click itself: a popup blocker only lets through windows a click opens.
     if (status.localAuth && status.canManage) startDroppenSignIn(opener, status.hubWeb);

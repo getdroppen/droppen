@@ -554,8 +554,8 @@ export const ja: Record<string, string> = {
   "wrong username or password": "ユーザー名かパスワードが違います",
   "Accounts are created on the server with `{{command}} user add <name>`.":
     "アカウントはサーバー側で作成します：`{{command}} user add <名前>`。",
-  /* settings › security: who you are, your password, your devices */
-  security: "セキュリティ",
+  /* settings › access: this device's login first, then its Droppen link */
+  access: "アクセス",
   "signed in": "ログイン中",
   "The Droppen app signs in for you on this device.": "このデバイスでは Droppen アプリが代わりにサインインします。",
   "this browser's account": "このブラウザーのアカウント",
@@ -569,7 +569,7 @@ export const ja: Record<string, string> = {
   "that is not the current password": "現在のパスワードが違います",
   "Changing it signs out every other device, but not this one.":
     "変更すると、このデバイス以外はすべてログアウトされます。",
-  devices: "デバイス",
+  "signed-in devices": "サインイン中のデバイス",
   "unknown device": "不明なデバイス",
   "this device": "このデバイス",
   "since {{when}}": "{{when}} から",

@@ -9,12 +9,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Content, Panel, PanelHeader } from "@/components/panel";
 import { useShowHiddenFiles } from "@/features/files/use-files-prefs";
+import { AccessSection } from "@/features/settings/access-section";
 import { AccountsSection } from "@/features/settings/accounts-section";
 import { ScheduleSection } from "@/features/settings/schedule-section";
-import { SecuritySection } from "@/features/settings/security-section";
-import { DroppenSection } from "@/features/link/link-settings";
+import { ALL_SECTIONS, askedSection, type SectionId } from "@/features/settings/sections";
 import { SetupSection } from "@/features/setup/settings-section";
-import { isCloud } from "@/lib/hub/config";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
 import {
@@ -635,25 +634,12 @@ function GeneralSettings() {
   );
 }
 
-const ALL_SECTIONS = ["general", "accounts", "security", "Droppen", "plugins", "scheduled tasks"] as const;
-type SectionId = (typeof ALL_SECTIONS)[number];
-
-/**
- * "Droppen" (signing this computer in) only on the computer's own page, never
- * on droppen.app. Inside the Droppen desktop app it signs in through the
- * system browser (`docs/local-aggregator.md` §4.9, `features/link/browser-sign-in.tsx`).
- */
-function sections(): readonly SectionId[] {
-  return isCloud() ? ALL_SECTIONS.filter((id) => id !== "Droppen") : ALL_SECTIONS;
-}
-
 export function SettingsView() {
   const { t } = useTranslation();
-  const SECTIONS = sections();
   // `?section=plugins` opens one directly (a disabled plugin's page links here).
   const search = useSearch({ strict: false }) as { section?: string };
   const navigate = useMachineNavigate();
-  const asked = SECTIONS.find((id) => id === search.section);
+  const asked = askedSection(search.section);
   // Whose settings these are: the address's device (`/m/<device>/settings`,
   // else the home). With more than one device, the header can go to another's.
   const machine = useMachine();
@@ -672,7 +658,7 @@ export function SettingsView() {
       <Panel className="max-md:hidden">
         <PanelHeader title={t("Settings")} />
         <div className="flex flex-col">
-          {SECTIONS.map((id) => (
+          {ALL_SECTIONS.map((id) => (
             <button
               key={id}
               type="button"
@@ -701,7 +687,7 @@ export function SettingsView() {
           >
             <Tabs value={section} onValueChange={(v) => setSection(v as SectionId)}>
               <TabsList className="w-max min-w-full">
-                {SECTIONS.map((id) => (
+                {ALL_SECTIONS.map((id) => (
                   <TabsTab key={id} value={id} className="shrink-0 whitespace-nowrap">
                     {t(id)}
                   </TabsTab>
@@ -716,10 +702,8 @@ export function SettingsView() {
             <GeneralSettings />
           ) : section === "accounts" ? (
             <AccountsSection />
-          ) : section === "security" ? (
-            <SecuritySection />
-          ) : section === "Droppen" ? (
-            <DroppenSection onOpenSecurity={() => setSection("security")} />
+          ) : section === "access" ? (
+            <AccessSection />
           ) : section === "plugins" ? (
             <Sheet>
               <PluginsSection />
