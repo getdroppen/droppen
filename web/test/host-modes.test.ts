@@ -15,24 +15,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bootPath } from "../src/lib/hub/boot-url.js";
-import { agentHub, appHost, appUrl, fetchHubHosts, hostMode, hostModeFor, HUB_HOSTS_PATH, parseHubHosts, resolveHostMode, setHostMode, siteOrigin } from "../src/lib/hub/hosts.js";
+import { agentHub, appHost, appUrl, fetchHubHosts, hostMode, hostModeFor, HUB_HOSTS_PATH, moveOrigins, parseHubHosts, resolveHostMode, setHostMode, siteOrigin } from "../src/lib/hub/hosts.js";
 import { codeInstallCommand, otherHub } from "../src/features/landing/get-droppen.js";
 import { bootRoute, isFrontPath, onPublicLink, publicHref, publicLink, publicPage } from "../src/features/landing/route.js";
 import { callbackTier } from "../src/features/link/handoff.js";
 
 const SPLIT = { origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apex_mode: "move" };
-const hosts = parseHubHosts(SPLIT)!;
+const MY = "https://my.droppen.app";
+const hosts = parseHubHosts(SPLIT, MY)!;
 
 const json = (body: unknown, init: { status?: number; type?: string } = {}) =>
   new Response(typeof body === "string" ? body : JSON.stringify(body), { status: init.status ?? 200, headers: { "content-type": init.type ?? "application/json" } });
 
 test("the hub's answer is read strictly: origins only, its mode or `app`, unknown fields ignored", () => {
-  assert.deepEqual(parseHubHosts(SPLIT), { origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apexMode: "move" });
-  assert.deepEqual(parseHubHosts({ origin: "wss://hub.example", app: null, site: null, later: { x: 1 } }), { origin: "wss://hub.example", app: null, site: null, apexMode: "app" });
-  assert.equal(parseHubHosts({ ...SPLIT, apex_mode: "whatever" })?.apexMode, "app", "a mode it does not know: the app stays where it was");
-  assert.equal(parseHubHosts({ ...SPLIT, apex_mode: "redirect" })?.apexMode, "redirect");
-  assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" })?.app, "http://127.0.0.1:8788");
-  assert.equal(parseHubHosts({ ...SPLIT, app: "https://My.Droppen.app" })?.app, "https://my.droppen.app", "a host name in any case, as the URL parser writes it");
+  assert.deepEqual(parseHubHosts(SPLIT, MY), { origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apexMode: "move" });
+  assert.deepEqual(parseHubHosts({ origin: "wss://hub.example", app: null, site: null, later: { x: 1 } }, "https://hub.example"), { origin: "wss://hub.example", app: null, site: null, apexMode: "app" });
+  assert.equal(parseHubHosts({ ...SPLIT, apex_mode: "whatever" }, MY)?.apexMode, "app", "a mode it does not know: the app stays where it was");
+  assert.equal(parseHubHosts({ ...SPLIT, apex_mode: "redirect" }, MY)?.apexMode, "redirect");
+  assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" }, "http://127.0.0.1:8788")?.app, "http://127.0.0.1:8788");
+  assert.equal(parseHubHosts({ ...SPLIT, app: "https://My.Droppen.app" }, MY)?.app, "https://my.droppen.app", "a host name in any case, as the URL parser writes it");
   for (const bad of [
     null,
     "wss://droppen.app",
@@ -45,8 +46,49 @@ test("the hub's answer is read strictly: origins only, its mode or `app`, unknow
     { ...SPLIT, site: "wss://www.droppen.app" },
     { ...SPLIT, app: 42 },
   ]) {
-    assert.equal(parseHubHosts(bad), null, JSON.stringify(bad));
+    assert.equal(parseHubHosts(bad, MY), null, JSON.stringify(bad));
   }
+});
+
+test("the hub's names are pinned to the apex the page came from: `https://` names under it at a label boundary, no port, no address; else one host as before", () => {
+  const with_ = (over: Record<string, unknown>, page = MY) => parseHubHosts({ ...SPLIT, ...over }, page);
+  // Accepted: names under the apex, the apex itself as the hub's own, on any of its hosts.
+  assert.ok(with_({}, "https://droppen.app") && with_({}, "https://www.droppen.app") && with_({}, MY));
+  assert.equal(with_({ app: "https://a.b.droppen.app" })?.app, "https://a.b.droppen.app");
+  assert.equal(with_({ app: "https://droppen.app", site: null })?.app, "https://droppen.app");
+  for (const [what, over] of [
+    ["a single-label host", { app: "https://app", site: null }],
+    ["a lookalike suffix", { app: "https://my.droppen.app.evil.com" }],
+    ["a lookalike prefix", { app: "https://evildroppen.app" }],
+    ["another domain", { site: "https://www.evil.example" }],
+    ["plain http", { app: "http://my.droppen.app" }],
+    ["plain http for the site", { site: "http://www.droppen.app" }],
+    ["a port", { app: "https://my.droppen.app:8443" }],
+    ["a default port written out", { app: "https://my.droppen.app:443" }],
+    ["user info", { app: "https://user@my.droppen.app" }],
+    ["an address", { app: "https://203.0.113.7" }],
+    ["an IPv6 address", { app: "https://[2001:db8::1]" }],
+    ["a trailing dot", { app: "https://my.droppen.app." }],
+    ["a loopback app for a public hub", { app: "http://127.0.0.1:8788" }],
+    ["an origin with a port", { origin: "wss://droppen.app:8443" }],
+    ["an origin on plain ws", { origin: "ws://droppen.app" }],
+    ["an origin that is an address", { origin: "wss://203.0.113.7", app: null, site: null }],
+    ["a top-level origin", { origin: "wss://app", app: "https://evil.app", site: null }],
+  ] as const) {
+    assert.equal(with_(over), null, what);
+  }
+  // A parent domain of the apex is not under it.
+  assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://droppen.app" }, "https://my.hub.droppen.app"), null, "a parent domain");
+  assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://my.hub.droppen.app" }, "https://my.hub.droppen.app")?.app, "https://my.hub.droppen.app");
+  // The page must be on the apex or under it: a hub answering for another name is not this page's.
+  assert.equal(with_({}, "https://evil.example"), null);
+  assert.equal(with_({}, "https://evildroppen.app"), null);
+  assert.equal(with_({}, "http://my.droppen.app"), null, "a hub's page over plain http");
+  assert.equal(parseHubHosts({ origin: "wss://droppen.app", app: "https://my.droppen.app" }, "not a url"), null);
+  // A test hub on this computer's loopback: plain http and ports, loopback names only, and only for a loopback page.
+  assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://localhost:8788" }, "http://127.0.0.1:8788")?.app, "http://localhost:8788");
+  assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "https://my.droppen.app" }, "http://127.0.0.1:8788"), null);
+  assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" }, MY), null);
 });
 
 test("each host gets its mode; a hub with no app host, or its origin still serving the app, is one host as before", () => {
@@ -58,13 +100,13 @@ test("each host gets its mode; a hub with no app host, or its origin still servi
   assert.equal(hostModeFor({ ...hosts, apexMode: "app" }, "https://droppen.app"), "single", "the dark launch: the origin still serves the app");
   assert.equal(hostModeFor({ ...hosts, apexMode: "app" }, "https://my.droppen.app"), "app");
   // The shape a hub answers without `apex_mode` (docs/hub-api/http.md): the origin keeps the app until it says `move`.
-  const plain = parseHubHosts({ origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app" })!;
+  const plain = parseHubHosts({ origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app" }, "https://droppen.app")!;
   assert.equal(plain.apexMode, "app");
   assert.equal(hostModeFor(plain, "https://droppen.app"), "single");
   assert.equal(hostModeFor(plain, "https://www.droppen.app"), "site");
-  assert.equal(hostModeFor(parseHubHosts({ origin: "wss://droppen.app", app: "https://droppen.app" }), "https://droppen.app"), "single", "`app` on the hub's own host");
+  assert.equal(hostModeFor(parseHubHosts({ origin: "wss://droppen.app", app: "https://droppen.app" }, "https://droppen.app"), "https://droppen.app"), "single", "`app` on the hub's own host");
   assert.equal(hostModeFor(hosts, "https://relay-sg.droppen.app"), "single", "a name it did not list");
-  const one = parseHubHosts({ origin: "wss://hub.example", app: null, site: null })!;
+  const one = parseHubHosts({ origin: "wss://hub.example", app: null, site: null }, "https://hub.example")!;
   assert.equal(hostModeFor(one, "https://hub.example"), "single", "a self-hosted hub on one host");
   assert.equal(hostModeFor({ ...one, app: "https://hub.example" }, "https://hub.example"), "single", "an app host that is the origin");
   assert.equal(hostModeFor({ ...one, site: "https://www.hub.example" }, "https://www.hub.example"), "site", "a site host alone");
@@ -81,7 +123,7 @@ test("anything but the hub's answer leaves the page as before: an older hub's 40
     if (res instanceof Error) throw res;
     return res;
   }) as typeof fetch;
-  assert.deepEqual(await fetchHubHosts(answer(json(SPLIT))), hosts);
+  assert.deepEqual(await fetchHubHosts(answer(json(SPLIT)), undefined, MY), hosts);
   assert.equal(asked[0]!.url, HUB_HOSTS_PATH, "the page's own host, nothing else");
   assert.equal(asked[0]!.init?.credentials, "omit");
   assert.equal(await fetchHubHosts(answer(json({ error: "not_found" }, { status: 404 }))), null);
@@ -163,7 +205,7 @@ test("the app's host name for the page's words, and the hub address a device tha
   setHostMode(hosts, "site");
   assert.equal(appHost(), "my.droppen.app");
   assert.equal(agentHub("wss://my.droppen.app"), "https://droppen.app", "the hub's origin, not the app host the page is on");
-  setHostMode(parseHubHosts({ origin: "wss://hub.example" }), "single");
+  setHostMode(parseHubHosts({ origin: "wss://hub.example" }, "https://hub.example"), "single");
   assert.equal(appHost(), "hub.example");
   setHostMode(null);
   // droppen.app's other names are droppen.app: no DROPPEN_HUB in the command.
@@ -185,9 +227,24 @@ test("`/link` refuses every name of the hub as a device's page: its origin, the 
   assert.equal(callbackTier("https://www.droppen.app", "https://droppen.app"), "public");
   assert.equal(callbackTier("https://droppen.app", "https://droppen.app"), "refuse");
   // A test hub on loopback shares it with the device: still "local", unless it is the page's own origin.
-  const local = parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" })!;
+  const local = parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" }, "http://127.0.0.1:8788")!;
   assert.equal(callbackTier("http://127.0.0.1:8700", "http://127.0.0.1:8788", local), "local");
   assert.equal(callbackTier("http://127.0.0.1:8788", "http://127.0.0.1:8788", local), "refuse");
+});
+
+test("the move's two ends exist whenever the hub names an app host of its own, whatever the origin does with the app's pages", () => {
+  for (const apexMode of ["app", "move", "redirect"] as const) {
+    setHostMode({ ...hosts, apexMode }, "single");
+    assert.deepEqual(moveOrigins("https://droppen.app"), { legacy: "https://droppen.app", app: MY }, apexMode);
+    assert.deepEqual(moveOrigins(MY), { legacy: "https://droppen.app", app: MY }, apexMode);
+    assert.equal(moveOrigins("https://www.droppen.app"), null, `${apexMode}: not on the site host`);
+  }
+  setHostMode({ ...hosts, app: null }, "single");
+  assert.equal(moveOrigins("https://droppen.app"), null, "no app host");
+  setHostMode({ ...hosts, app: "https://droppen.app" }, "single");
+  assert.equal(moveOrigins("https://droppen.app"), null, "the app on the hub's own host");
+  setHostMode(null);
+  assert.equal(moveOrigins("https://droppen.app"), null, "no answer");
 });
 
 test("the address the page loaded with is passed on whole: path, query and fragment", () => {

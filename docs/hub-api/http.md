@@ -82,8 +82,13 @@ The web app reads it before anything else of a hub's page starts
 (`web/src/lib/hub/hosts.ts`, README "Hosts"): on `app` it is the app (`/`
 included), on `site` only the public pages (no key store, no service worker;
 every way into the app a link to `app`), on the hub's origin as `apex_mode`
-says. Any other answer — none, a 404, the shell, a body that is not this, no
-answer within 8 seconds — leaves it on one host, exactly as before.
+says. The answer is not part of the attested build, so the page holds it to
+the hub's names: `origin` a `wss://` name of two labels or more with no port,
+the page on it or under it, and `app` and `site` `https://` names under it at
+a label boundary (or `origin`'s own host), with no port — `ws://`, `http://`
+and ports only for a hub on the loopback, with a loopback page. Any other
+answer — none, a 404, the shell, a body that is not this, a name outside the
+apex, no answer within 8 seconds — leaves it on one host, exactly as before.
 
 The local server reads it to know where the sign-in popup and the browser
 hand-off open ([link](link.md#which-host-the-popup-and-the-hand-off-open)): it

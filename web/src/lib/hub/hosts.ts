@@ -56,30 +56,82 @@ export type HostMode = "single" | "app" | "site" | "legacy";
 const WS_ORIGIN = /^wss?:\/\/[^/?#\s]+$/;
 const WEB_ORIGIN = /^https?:\/\/[^/?#\s]+$/;
 
-/** `value` as an origin (`scheme://host[:port]`), or `null` when it is not exactly one. */
-function originOf(value: unknown, shape: RegExp): string | null {
+/** `value` as an origin (`scheme://host[:port]`), or `null` when it is not exactly one (a path, user info, a default port written out, …). */
+function originOf(value: unknown, shape: RegExp): URL | null {
   if (typeof value !== "string" || !shape.test(value)) return null;
   try {
     const url = new URL(value);
-    const origin = `${url.protocol}//${url.host}`;
-    return origin === value.toLowerCase() ? origin : null;
+    if (url.username || url.password) return null;
+    return `${url.protocol}//${url.host}` === value.toLowerCase() ? url : null;
   } catch {
     return null;
   }
 }
 
-/** The answer of `GET /.well-known/droppen-hub`, or `null` when it is not one. Fields it does not know are ignored. */
-export function parseHubHosts(raw: unknown): HubHosts | null {
+/** A host name for this computer itself, where a test hub runs (`localhost`, 127.0.0.0/8, `[::1]`). */
+function loopbackHost(host: string): boolean {
+  return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/** An IP address rather than a name (v4, or v6 in brackets). */
+function ipHost(host: string): boolean {
+  return host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+/** Whether `host` is `apex` or a name under it, at a label boundary (`my.droppen.app` under `droppen.app`; never `evildroppen.app`). */
+function underApex(host: string, apex: string): boolean {
+  return host === apex || (host.length > apex.length + 1 && host.endsWith(`.${apex}`));
+}
+
+/**
+ * The answer of `GET /.well-known/droppen-hub`, for a page on `pageOrigin`,
+ * or `null` when it is not one to act on — then the page runs on one host,
+ * exactly as before. Fields it does not know are ignored.
+ *
+ * The answer is not part of the attested build, and it decides where the
+ * page sends this browser's keys (the move) and its deep links (with their
+ * fragments: a verification token, a browser hand-off), so it is held to the
+ * names of the hub this page came from. The apex is the hub's origin
+ * (`wss://droppen.app`): a name, not an address, of two labels or more, no
+ * port. The page itself must be on the apex or under it. `app` and `site` are
+ * `https://` names under the apex at a label boundary (`my.droppen.app`; or
+ * the apex itself, the hub's own), with no port. Only a hub on this
+ * computer's loopback, for tests, may answer `ws://` and `http://` loopback
+ * origins with ports. Anything else — a parent domain, a lookalike
+ * (`droppen.app.evil.com`, `evildroppen.app`), plain http, a port, an
+ * address, user info — and the whole answer is ignored.
+ */
+export function parseHubHosts(raw: unknown, pageOrigin: string): HubHosts | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  const origin = originOf(r.origin, WS_ORIGIN);
-  if (!origin) return null;
-  const app = r.app === null || r.app === undefined ? null : originOf(r.app, WEB_ORIGIN);
-  const site = r.site === null || r.site === undefined ? null : originOf(r.site, WEB_ORIGIN);
-  // A name that is there but not an origin: the answer is not one to act on.
-  if ((r.app !== null && r.app !== undefined && !app) || (r.site !== null && r.site !== undefined && !site)) return null;
+  const originUrl = originOf(r.origin, WS_ORIGIN);
+  let page: URL;
+  try {
+    page = new URL(pageOrigin);
+  } catch {
+    return null;
+  }
+  if (!originUrl) return null;
+  const apex = originUrl.hostname;
+  const loopback = loopbackHost(apex);
+  if (loopback) {
+    if (!loopbackHost(page.hostname)) return null;
+  } else {
+    if (originUrl.protocol !== "wss:" || originUrl.port || ipHost(apex) || !apex.includes(".") || page.protocol !== "https:" || !underApex(page.hostname, apex)) return null;
+  }
+  const name = (value: unknown): string | null | undefined => {
+    if (value === null || value === undefined) return null;
+    const url = originOf(value, WEB_ORIGIN);
+    if (!url) return undefined;
+    if (loopback) return loopbackHost(url.hostname) ? url.origin : undefined;
+    return url.protocol === "https:" && !url.port && !ipHost(url.hostname) && underApex(url.hostname, apex) ? url.origin : undefined;
+  };
+  const app = name(r.app);
+  const site = name(r.site);
+  // A name that is there but not one of the hub's: the answer is not one to act on.
+  if (app === undefined || site === undefined) return null;
   const apexMode: ApexMode = r.apex_mode === "move" || r.apex_mode === "redirect" ? r.apex_mode : "app";
-  return { origin, app, site, apexMode };
+  return { origin: `${originUrl.protocol}//${originUrl.host}`, app, site, apexMode };
 }
 
 /** A hub origin's web form: `wss://droppen.app` → `https://droppen.app`. */
@@ -125,16 +177,20 @@ export const HUB_HOSTS_WAIT_MS = 8_000;
 /**
  * `GET /.well-known/droppen-hub` on the page's own host: the answer, or
  * `null` on anything else — no such route (an older hub: a 404, or the app's
- * shell for an unknown path), a body that is not one, no network, or no
- * answer within `waitMs`.
+ * shell for an unknown path), a body that is not one, names that are not
+ * the hub's ({@link parseHubHosts}), no network, or no answer within `waitMs`.
  */
-export async function fetchHubHosts(fetchFn: typeof fetch = globalThis.fetch, waitMs = HUB_HOSTS_WAIT_MS): Promise<HubHosts | null> {
+export async function fetchHubHosts(
+  fetchFn: typeof fetch = globalThis.fetch,
+  waitMs = HUB_HOSTS_WAIT_MS,
+  pageOrigin: string = globalThis.location?.origin ?? "",
+): Promise<HubHosts | null> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), waitMs);
   try {
     const res = await fetchFn(HUB_HOSTS_PATH, { credentials: "omit", cache: "no-store", headers: { accept: "application/json" }, signal: abort.signal });
     if (!res.ok || !/^application\/json\b/i.test(res.headers.get("content-type") ?? "")) return null;
-    return parseHubHosts(await res.json());
+    return parseHubHosts(await res.json(), pageOrigin);
   } catch {
     return null;
   } finally {
@@ -208,4 +264,22 @@ export function agentHub(marker: string): string {
  */
 export function notInstallable(doc: Pick<Document, "querySelectorAll"> | undefined = globalThis.document): void {
   for (const el of doc?.querySelectorAll('link[rel="manifest"], meta[name="apple-mobile-web-app-capable"], meta[name="mobile-web-app-capable"]') ?? []) el.remove();
+}
+
+/**
+ * The two ends of the browser key move — the hub's origin, where a browser's
+ * device was set up before the app moved, and the app host — whenever the hub
+ * names an app host of its own and this page is on one of the two, whatever
+ * the origin does with the app's pages (`apex_mode`): the origin's `/move`
+ * page (the sending side of a move the app host asks for) works while the
+ * origin still serves the app, so the move can be tried before the cutover.
+ * `null` otherwise.
+ */
+export function moveOrigins(pageOrigin: string = globalThis.location?.origin ?? ""): { legacy: string; app: string } | null {
+  const hosts = state.hosts;
+  if (!hosts?.app) return null;
+  const legacy = webOf(hosts.origin);
+  if (hosts.app === legacy) return null;
+  const page = pageOrigin.toLowerCase();
+  return page === legacy || page === hosts.app ? { legacy, app: hosts.app } : null;
 }
