@@ -445,14 +445,22 @@ async fn input_frames_reach_the_process() {
 #[tokio::test]
 async fn every_attached_client_sees_the_same_stream() {
     let probe = Probe::start().await;
+    // The line waits on the test, not on the clock. `sleep 0.3` was a guess
+    // at when both clients would be attached; on a loaded machine the shell
+    // had printed and exited first, and an exited terminal refuses an attach.
     let info = probe
         .terminals
-        .create_terminal_with(sh("sleep 0.3; echo shared"))
+        .create_terminal_with(sh("read _; echo shared"))
         .await
         .expect("create terminal");
 
     let mut first = probe.attach(&info.id).await;
     let mut second = probe.attach(&info.id).await;
+    // Each attach opens with the replay frame, which is the server saying it
+    // has registered that client. Only then is the line asked for.
+    first.next_text().await.expect("the first client's replay");
+    second.next_text().await.expect("the second client's replay");
+    first.send(r#"{"type":"input","data":"\r"}"#).await;
 
     assert!(first.read_until(&["shared"]).await.contains("shared"));
     assert!(second.read_until(&["shared"]).await.contains("shared"));
