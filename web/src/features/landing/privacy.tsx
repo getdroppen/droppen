@@ -30,8 +30,9 @@ export const DELETED_EMAIL_HOLD_DAYS = 7;
  * How long copies in droppen.app's backups and logs live before they expire,
  * as the page says it (e.g. "30 days"). Only the owner can say: until then it
  * is a placeholder in capitals and brackets, which the page shows marked
- * ({@link marked}), and `test/privacy-placeholders.test.tsx` fails while it
- * is left, so the notice cannot ship unfilled by accident.
+ * ({@link marked}), listed in `web/owner-placeholders.txt`: a release refuses
+ * a web build that still holds one (`scripts/release-text-check.sh`), so the
+ * notice cannot ship unfilled by accident.
  */
 export const BACKUPS_EXPIRE_AFTER: string = "[BACKUP RETENTION]";
 

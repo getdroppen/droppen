@@ -338,6 +338,13 @@ node -e '
   if (m.distribution !== undefined && m.distribution !== "public") { console.error("distribution is", m.distribution); process.exit(1); }
   if ((m.plugins || []).length) { console.error("the public build bundles plugins:", m.plugins.map((p) => p.id)); process.exit(1); }
 ' "$SRC/web/dist/plugins/manifest.json" || die "web/dist is not the public distribution"
+# No fact only the owner can supply left unfilled on droppen.app's pages: the
+# placeholders show marked there and main's tests pass with them, but a
+# release ships none (web/owner-placeholders.txt, release_text_owner_placeholders).
+placeholders=$(release_text_owner_placeholders "$SRC/web/dist" "$SRC/web/owner-placeholders.txt")
+[ -z "$placeholders" ] || die "web/dist still holds owner placeholders: fill them in first (web/owner-placeholders.txt lists them)
+$placeholders"
+echo "ok: no owner placeholder left in web/dist"
 node "$SRC/scripts/web-manifest.mjs" "$SRC/web/dist" --commit "$SHA" --ref "refs/tags/$VERSION" --out "$STAGE/web-manifest.json"
 
 if [ "$LINUX" = 1 ] && [ -z "$PREBUILT" ]; then

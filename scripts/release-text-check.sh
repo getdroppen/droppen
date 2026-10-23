@@ -140,6 +140,30 @@ release_text_load_names() { # file
   fi
 }
 
+# The owner placeholders still in the built web app <dir>: facts only the
+# owner of droppen.app can supply (the privacy notice's, the terms'), written
+# `[IN CAPITALS]` until then and listed in <list> (web/owner-placeholders.txt:
+# one per line, as the source writes it; blank lines and `#` comments
+# skipped). Prints `<file>: <placeholder>` for each file that holds one (the
+# file relative to <dir>), nothing when none is left; a list that cannot be
+# read is a hit. Literal strings, so minified code never matches by chance.
+# Always succeeds: the caller decides (scripts/release-public.sh refuses).
+release_text_owner_placeholders() { # dir, list
+  local dir=$1 list=$2 marker file
+  if ! [ -f "$list" ] || ! [ -r "$list" ]; then
+    printf '%s: cannot be read\n' "$list"
+    return 0
+  fi
+  while IFS= read -r marker || [ -n "$marker" ]; do
+    marker=${marker%$'\r'}
+    case "$marker" in '' | '#'*) continue ;; esac
+    LC_ALL=C grep -rlF -e "$marker" "$dir" 2>/dev/null | LC_ALL=C sort | while IFS= read -r file; do
+      printf '%s: %s\n' "${file#"$dir"/}" "$marker"
+    done || true
+  done < "$list"
+  return 0
+}
+
 # What is wrong with the licence and notices an app carries
 # (<app>/Contents/Resources/LICENSE and THIRD_PARTY_NOTICES): missing or
 # empty, a LICENSE that is not the AGPL-3.0 text, or this check's hits. Prints

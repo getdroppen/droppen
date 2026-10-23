@@ -1,0 +1,16 @@
+# Owner placeholders: facts only the owner of droppen.app can supply (the
+# privacy notice's and the terms' own), written [IN CAPITALS] in the web app
+# until then and shown marked on the page. Main's tests pass with them; a
+# release refuses a web build that still holds any of them
+# (scripts/release-text-check.sh, release_text_owner_placeholders, which
+# scripts/release-public.sh runs on web/dist). One per line, exactly as the
+# source writes it; web/test/privacy-placeholders.test.tsx fails when the
+# source holds one that is not listed here.
+[BACKUP RETENTION]
+[OPERATOR]
+[JURISDICTION]
+[POSTAL ADDRESS]
+[MINIMUM AGE]
+[PRIVACY EMAIL]
+[EMAIL SERVICE]
+[RECORD DAYS]

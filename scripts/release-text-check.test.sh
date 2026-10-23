@@ -251,5 +251,23 @@ export DROPPEN_RELEASE_FORBIDDEN="alice example"
 check_deferred no "names that are set are checked"
 unset DROPPEN_RELEASE_NAMES_DEFERRED
 
+# Owner placeholders in a built web app: each file that still holds one,
+# named once per placeholder; none in a filled-in build; comments, blank
+# lines and a missing final newline in the list are fine; an unreadable list
+# is a hit.
+mkdir -p "$TMP/dist/assets" "$TMP/clean/assets"
+printf 'const a="x";const b="[BACKUP RETENTION]";\n' > "$TMP/dist/assets/privacy-abc.js"
+printf '<p>[OPERATOR] and [BACKUP RETENTION]</p>\n' > "$TMP/dist/terms.html"
+printf 'const b="30 days";const re=/\\[[A-Z][A-Z ]*\\]/;e[A]=1;\n' > "$TMP/clean/assets/privacy-abc.js"
+printf '# a comment: [NOT A MARKER]\n\n[BACKUP RETENTION]\r\n[OPERATOR]' > "$TMP/placeholders.txt"
+check_value "owner placeholders: each file that holds one" $'assets/privacy-abc.js: [BACKUP RETENTION]\nterms.html: [BACKUP RETENTION]\nterms.html: [OPERATOR]' \
+  "$(release_text_owner_placeholders "$TMP/dist" "$TMP/placeholders.txt")"
+check_value "owner placeholders: none in a filled-in build (a regex or an index in minified code is no placeholder)" "" \
+  "$(release_text_owner_placeholders "$TMP/clean" "$TMP/placeholders.txt")"
+check_value "owner placeholders: an unreadable list is a hit" "$TMP/none.txt: cannot be read" \
+  "$(release_text_owner_placeholders "$TMP/clean" "$TMP/none.txt")"
+check_value "owner placeholders: the repository's list reads" "" \
+  "$(release_text_owner_placeholders "$TMP/clean" "$ROOT/web/owner-placeholders.txt")"
+
 echo "release-text-check: $PASSED passed, $FAILED failed"
 [ "$FAILED" = 0 ]

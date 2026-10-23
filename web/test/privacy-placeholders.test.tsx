@@ -1,17 +1,22 @@
-// What only the owner can say on droppen.app's privacy notice
-// (`features/landing/privacy.tsx`): how long copies in backups and logs live
-// (`BACKUPS_EXPIRE_AFTER`).
+// What only the owner can say on droppen.app's pages: owner placeholders,
+// such as the privacy notice's backup retention (`BACKUPS_EXPIRE_AFTER` in
+// `features/landing/privacy.tsx`).
 //
-// What these pin: until it is filled in, it shows on the page as a marked
-// placeholder, in every language, and nowhere unmarked. The last test fails
-// while it is left, so the notice cannot ship unfilled by accident: set
-// `BACKUPS_EXPIRE_AFTER` (e.g. "30 days").
+// What these pin: until one is filled in, it shows on the page as a marked
+// placeholder, in every language, and nowhere unmarked; and every
+// placeholder the source writes is in `web/owner-placeholders.txt`, the list
+// a release checks its built web app against
+// (`scripts/release-text-check.sh`, `release_text_owner_placeholders`): main
+// stays green with a placeholder left, a release cannot ship one.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { landingBundles } from "../src/features/landing/copy.js";
 import PrivacyPage, { BACKUPS_EXPIRE_AFTER, marked, PLACEHOLDER } from "../src/features/landing/privacy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -66,9 +71,30 @@ test("the backups' period, still to supply, shows on the notice marked, in every
   }
 });
 
-// Fails until the owner sets `BACKUPS_EXPIRE_AFTER` (web/src/features/landing/privacy.tsx):
-// the privacy notice must not ship with a placeholder on the page.
-test("the owner's backup retention is filled in: no placeholder left on the privacy notice", () => {
-  assert.doesNotMatch(BACKUPS_EXPIRE_AFTER, PLACEHOLDER, "still to fill in: BACKUPS_EXPIRE_AFTER (how long copies in backups and logs live)");
-  for (const lng of LANGS) assert.doesNotMatch(draw(lng), PLACEHOLDER, `${lng}: a placeholder on the page`);
+/** Every file under `dir`. */
+function files(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory() ? files(path) : [path];
+  });
+}
+
+test("every owner placeholder the source writes is on the list a release checks its build against", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const listed = readFileSync(join(root, "owner-placeholders.txt"), "utf8")
+    .split("\n")
+    .map((l) => l.replace(/\r$/, ""))
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  for (const marker of listed) assert.match(marker, new RegExp(`^${PLACEHOLDER.source}$`), `listed: ${marker}`);
+  assert.ok(listed.includes("[BACKUP RETENTION]"));
+  // A placeholder is a string literal of the source that is one: "[IN CAPITALS]" (comments aside).
+  const written = new Set<string>();
+  for (const file of files(join(root, "src")).filter((f) => /\.(ts|tsx)$/.test(f))) {
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
+      for (const m of line.matchAll(new RegExp(`"(${PLACEHOLDER.source})"`, "g"))) written.add(m[1]);
+    }
+  }
+  assert.ok(written.has(BACKUPS_EXPIRE_AFTER) || !PLACEHOLDER.test(BACKUPS_EXPIRE_AFTER), "the scan sees the notice's own");
+  for (const marker of written) assert.ok(listed.includes(marker), `${marker} is in the source but not in web/owner-placeholders.txt`);
 });
