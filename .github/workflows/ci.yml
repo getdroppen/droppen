@@ -192,34 +192,20 @@ jobs:
       # this job on 2026-08-27 (macOS libc tolerates it, which is why it never
       # showed locally). `cargo test` had to run `--test-threads=1` for that;
       # with a process per test no test can write the environment another is
-      # reading. Each step keeps its own crate and feature set, as before.
+      # reading.
       # nextest does not run doctests, and no crate in the workspace has one
       # (`cargo test` ran zero): a crate that gets one needs a
       # `cargo test --doc -p <crate>` step.
-      # The cloud protocol crate: pure functions and in-memory state machines,
-      # no processes.
-      - run: cargo nextest run --profile ci -p rh-proto
-      # The device side of the hub API (sign-in, the client link, reading and
-      # folding streams), shared by the test device and the local install.
-      - run: cargo nextest run --profile ci -p rh-client
-      # The relay whole: its rules (rh-relay), and droppen-relay's
-      # `tests/relay.rs` from the outside — tickets, sign-ins, revocation, the
-      # outage grace, metering, limits — against a fake Hub and the
-      # `droppen-relay` binary. No database.
-      - run: cargo nextest run --profile ci -p rh-relay -p droppen-relay
-        timeout-minutes: 10
-      # The test device with its direct-path probe built in (a feature the
-      # default build leaves out, so nothing else compiles it).
-      - run: cargo nextest run --profile ci -p rh-devkit --features p2p-probe
-        timeout-minutes: 10
-      # The plugin contract crate: pure types and checks, run on their own, and
-      # a tree that may reach neither the host nor the hosted service.
-      - run: cargo nextest run --profile ci -p droppen-plugin-sdk
-      - run: ../scripts/check-sdk-crate-deps.sh
-      # The server itself (the root package; a bare run here means it alone).
-      # The timeout keeps any future wedge to minutes, not the 6-hour cap.
-      - run: cargo nextest run --profile ci
+      #
+      # One run over the whole workspace: cargo resolves features and compiles
+      # each crate once, where a run per crate recompiled the shared graph
+      # again for every feature set. `rh-devkit`'s direct-path probe is a
+      # feature the default build leaves out, named per package so the other
+      # crates still build without it. The timeout keeps any future wedge to
+      # minutes, not the 6-hour cap.
+      - run: cargo nextest run --profile ci --workspace --features rh-devkit/p2p-probe
         timeout-minutes: 20
+      - run: ../scripts/check-sdk-crate-deps.sh
       - name: Report Rust build storage
         if: always()
         run: |
