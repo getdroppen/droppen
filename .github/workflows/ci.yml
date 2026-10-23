@@ -141,40 +141,24 @@ jobs:
         run: node scripts/web-manifest.mjs web/dist --check linux/web-manifest.json
 
   server:
-    # The cluster's ARC runner has 16 CPUs and 32 GiB; the hosted runner has
-    # two cores, which is where the build and the tests' wall-clock went.
-    # Fork PRs must not run on it. This guard binds only this file as the pull
-    # request's merge commit has it, so a fork that edits the workflow can
-    # remove it: what contains that is the runner group (ephemeral pods, no
-    # cluster credentials, network-isolated), not this line.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: arc-hub
+    # A public repository's ubuntu-latest runner is 4 CPUs and 16 GiB, free
+    # and unlimited; the two-core figures this file used to assume made the
+    # build and the tests wait on half the machine. It stays GitHub-hosted:
+    # the cluster's runners must not run a public repository's pull requests.
+    runs-on: ubuntu-latest
     # This job never builds the SPA, and none of the tests needs it.
     env:
       RH_ALLOW_MISSING_WEB_DIST: "1"
       # Keep backtrace file/line data without full type/variable debug info.
-      # The pod has 16 CPUs, so more than the hosted runner's two links at a
-      # time, but not sixteen (two large links can take several GiB each).
+      # Four links at a time on four cores; the 16 GiB is the bound.
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
       CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
-      CARGO_BUILD_JOBS: "8"
+      CARGO_BUILD_JOBS: "4"
     defaults:
       run:
         working-directory: server-rs
     steps:
       - uses: actions/checkout@v4
-      # The ARC image is not the hosted image: the boundary check below wants
-      # Node, and the link steps want a C compiler.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build tools
-        run: |
-          if ! command -v cc >/dev/null 2>&1; then
-            if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=; fi
-            $SUDO apt-get update
-            $SUDO apt-get install -y --no-install-recommends build-essential pkg-config
-          fi
       # The action has no releases: pinned to a commit of its master branch,
       # which takes the toolchain as an input (the `@stable` branch only
       # fills in that input).
