@@ -1,8 +1,10 @@
 # The prebuilt tools .github/workflows/release.yml downloads instead of
 # building them: each one upstream's own release file, pinned here by its
 # sha256. The workflow checks every download against this file and fails on
-# any difference (.github/scripts/fetch-release-tool.sh); it never builds
-# these tools, and never fetches a hash. For a version bump (ABOUT_VERSION in
+# any difference (.github/scripts/fetch-release-tool.sh, which also fixes
+# where each tool comes from: the url column must be exactly the one it makes
+# from the tool, the version and the platform); it never builds these tools,
+# and never fetches a hash. For a version bump (ABOUT_VERSION in
 # scripts/release-public.sh, TAURI_CLI_VERSION in desktop/build.sh),
 # scripts/update-release-tool-pins.sh prints the new lines; a person checks
 # them and commits them here.

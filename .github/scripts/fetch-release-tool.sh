@@ -10,6 +10,11 @@
 #
 # <platform> is the Rust target the program is for (aarch64-apple-darwin, the
 # macOS runners').
+#
+# Where each tool comes from is fixed here, not in the lock: the URL is made
+# from the tool, the version and the platform (upstream_url below), and the
+# lock's url must be exactly it. A lock naming any other file (another
+# repository, release or name) is refused, whatever its hash.
 set -euo pipefail
 
 TOOL=${1:?usage: fetch-release-tool.sh <cargo-about|tauri-cli> <dest> [<platform>]}
@@ -19,24 +24,37 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 LOCK=$ROOT/.github/release-tools.lock
 die() { printf 'fetch-release-tool: %s: %s\n' "$TOOL" "$*" >&2; exit 1; }
 
+# Upstream's release file of <tool> <version> for <platform>: the one place
+# that says where a tool comes from (scripts/update-release-tool-pins.sh
+# makes the same URLs).
+upstream_url() { # tool, version, platform
+  case "$1" in
+    cargo-about) printf 'https://github.com/EmbarkStudios/cargo-about/releases/download/%s/cargo-about-%s-%s.tar.gz\n' "$2" "$2" "$3" ;;
+    tauri-cli) printf 'https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v%s/cargo-tauri-%s.zip\n' "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
 case "$TOOL" in
   cargo-about) PINNED=$(sed -n 's/^ABOUT_VERSION=//p' "$ROOT/scripts/release-public.sh"); PROGRAM=cargo-about ;;
   tauri-cli) PINNED=$(sed -n 's/^TAURI_CLI_VERSION=//p' "$ROOT/desktop/build.sh"); PROGRAM=cargo-tauri ;;
   *) die "not a tool of .github/release-tools.lock" ;;
 esac
-[ -n "$PINNED" ] || die "cannot read the version the source pins"
+[[ "$PINNED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "cannot read the version the source pins (got '$PINNED')"
+[[ "$PLATFORM" =~ ^(aarch64|x86_64)-(apple-darwin|unknown-linux-gnu)$ ]] || die "$PLATFORM is not a platform the release builds on"
 LINE=$(awk -v tool="$TOOL" -v platform="$PLATFORM" '!/^#/ && $1 == tool && $3 == platform' "$LOCK")
 [ -n "$LINE" ] || die "no line for $PLATFORM in $LOCK"
 [ "$(printf '%s\n' "$LINE" | wc -l | tr -d ' ')" = 1 ] || die "more than one line for $PLATFORM in $LOCK"
 read -r _ VERSION _ SHA256 URL <<<"$LINE"
 [ "$VERSION" = "$PINNED" ] || die "$LOCK pins $VERSION, but the source wants $PINNED: run scripts/update-release-tool-pins.sh and commit its lines"
 [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || die "$LOCK has no sha256 for it"
-case "$URL" in https://github.com/*) ;; *) die "$LOCK names $URL, not a GitHub release file" ;; esac
+WANT_URL=$(upstream_url "$TOOL" "$VERSION" "$PLATFORM")
+[ "$URL" = "$WANT_URL" ] || die "$LOCK names $URL, not upstream's release file $WANT_URL"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fetch-release-tool.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
-FILE=$WORK/$(basename "$URL")
-curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$FILE" "$URL" || die "cannot download $URL"
+FILE=$WORK/$(basename "$WANT_URL")
+curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$FILE" "$WANT_URL" || die "cannot download $WANT_URL"
 if command -v sha256sum >/dev/null 2>&1; then GOT=$(sha256sum "$FILE"); else GOT=$(shasum -a 256 "$FILE"); fi
 GOT=${GOT%% *}
 [ "$GOT" = "$SHA256" ] || die "$(basename "$URL") is $GOT, not the pinned $SHA256"

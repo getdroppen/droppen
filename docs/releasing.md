@@ -122,8 +122,8 @@ the fallback whenever GitHub Actions cannot be used.
 | `signer` | macOS | nothing | `droppen-update-signer` (`desktop/update-signer`, with its format tests) and `droppen-update-manifest`, built from this repository's locked sources, for the `release` job |
 | `server-macos` | macOS ×2 | nothing | the server for aarch64 and x86_64, as `scripts/release-public.sh` builds it |
 | `server-linux` | Linux ×2 | nothing | the server for x86_64 and aarch64 (glibc 2.28): `scripts/build-linux-in-container.sh` in the image `scripts/build-linux.sh` pins |
-| `notices` | macOS | nothing | `THIRD_PARTY_NOTICES` of the server's files (`scripts/third-party-notices.sh`) and of the app (`desktop/third-party-notices.sh`), beside the builds: cargo-about reads the locked dependency graph, not the binaries |
-| `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt --web-dist --notices` with `web`'s build (not built again: CI's `web-reproducible` checks that the build is reproducible) and `notices`' file: macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks (the binary checks on the programs in them, the tarballs in parallel), `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
+| `notices` | macOS | nothing | `THIRD_PARTY_NOTICES` of the server's files (`scripts/third-party-notices.sh`) and of the app (`desktop/third-party-notices.sh`), beside the builds: cargo-about reads the locked dependency graph, not the binaries; then the web app built once more, on macOS, which must be `web`'s build byte for byte |
+| `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt --web-dist --notices` with `web`'s build (not built again here: CI's `web-reproducible` checks that the build is reproducible, and `notices` that a macOS build gives the same bytes) and `notices`' file: macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks (the binary checks on the programs in them, the tarballs in parallel), `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
 | `desktop-arch` | macOS ×2 | nothing | `desktop/build.sh --arch aarch64` and `--arch x86_64`, each with that architecture's server from `server-macos` and the app's notices from `notices`, beside `stage` (unsigned, no DMG) |
 | `desktop` | macOS | nothing | `desktop/build.sh --from-apps`: the two apps' main programs fused with `lipo`, the staged universal server put in, sealed ad hoc and checked as a build (unsigned; nothing compiled) |
@@ -207,8 +207,10 @@ The trust boundaries:
 - **Two prebuilt tools, pinned.** cargo-about (the notices) and tauri-cli
   (the app's build) are not built here: they are upstream's release files
   (EmbarkStudios/cargo-about, tauri-apps/tauri) for the versions the source
-  pins, each checked against the sha256 in `.github/release-tools.lock`; any
-  difference fails the run, and nothing falls back to building. The trust is
+  pins, each downloaded from the one URL `.github/scripts/fetch-release-tool.sh`
+  makes from the tool, the version and the platform (the lock's url must be
+  exactly it) and checked against the sha256 in `.github/release-tools.lock`;
+  any difference fails the run, and nothing falls back to building. The trust is
   upstream's release plus our pinned hash (neither publishes an attestation
   for them; cargo-about publishes a `.sha256`, which
   `scripts/update-release-tool-pins.sh` checks, with the sha256 GitHub

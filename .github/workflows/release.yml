@@ -33,8 +33,9 @@ name: release
 #         │       └─ server-linux (x86_64, aarch64) ─┼─ stage ───────────────────────────┬─ smoke-linux ──┐
 #         ├─ tools ─ notices ────────────────────────┴─ desktop-arch (aarch64, x86_64) ──┴─ desktop ──────┼─ release ─ verify ─ publish
 #         └─ signer ──────────────────────────────────────────────────────────────────────────────────────┘
-#   (desktop-arch takes server-macos, not server-linux; desktop takes stage's
-#   universal server and fuses desktop-arch's two apps.)
+#   (notices also takes web's build, to compare; desktop-arch takes
+#   server-macos, not server-linux; desktop takes stage's universal server
+#   and fuses desktop-arch's two apps.)
 on:
   push:
     tags: ["v*"]
@@ -175,7 +176,8 @@ jobs:
   # The public web build (what droppen.app serves), once, for every binary to
   # embed: the same commands as the hub's Docker stage and CI's
   # `web-reproducible`, which checks that the build is reproducible. stage
-  # stages this very build (not a second one) and checks its manifest.
+  # stages this very build (not a second one) and checks its manifest;
+  # notices builds it once more, on macOS, and compares.
   web:
     needs: meta
     runs-on: ubuntu-latest
@@ -306,9 +308,11 @@ jobs:
   # and of the desktop app (desktop/third-party-notices.sh): cargo-about over
   # the locked crates, and the npm packages the web app bundles. Beside the
   # builds rather than after them: cargo-about reads the dependency graph, not
-  # the binaries. Handed to stage and the desktop jobs by sha256.
+  # the binaries. Handed to stage and the desktop jobs by sha256. Then, with
+  # the packages already installed, the web app built once more, on macOS,
+  # which must give web-dist's bytes (as CI's web-reproducible-macos checks).
   notices:
-    needs: [meta, tools]
+    needs: [meta, web, tools]
     runs-on: macos-latest
     timeout-minutes: 20
     permissions:
@@ -356,6 +360,22 @@ jobs:
           fi
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/notices.tar" -C "$RUNNER_TEMP/out" "${members[@]}"
           echo "sha=$(shasum -a 256 "$RUNNER_TEMP/notices.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/dl/web-dist
+      - name: The web app built here is web-dist, byte for byte
+        env:
+          WEB_SHA: ${{ needs.web.outputs.sha }}
+          TZ: UTC
+        run: |
+          set -euo pipefail
+          unset DROPPEN_DISTRIBUTION
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/web-dist/web-dist.tar" "$WEB_SHA" "$RUNNER_TEMP/a/web" "$ALLOW_WEB"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          pnpm --filter @remote-hand/web build
+          diff -r "$RUNNER_TEMP/a/web/dist" web/dist
+          echo "ok: the macOS build of the web app is web-dist ($(find web/dist -type f | wc -l | tr -d ' ') files)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notices

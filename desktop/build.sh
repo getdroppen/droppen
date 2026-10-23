@@ -541,26 +541,46 @@ check_binary "$APP/Contents/MacOS/$BIN_NAME"
 # The app's own binary: no builder paths either.
 if LC_ALL=C grep -aqF "$HOME/" "$APP/Contents/MacOS/Droppen"; then die "Droppen: still names paths under $HOME$HOME_HINT"; fi
 echo "ok: Droppen: no \$HOME paths"
+# What the app's program must contain is looked for in each architecture's
+# program on its own (a universal binary would pass with it in one slice
+# only); what it must not contain, in the whole file.
+SLICES=()
+mkdir -p "$WORK/slices"
+for arch in $(lipo -archs "$APP/Contents/MacOS/Droppen"); do
+  if [ "$(lipo -archs "$APP/Contents/MacOS/Droppen")" = "$arch" ]; then
+    cp "$APP/Contents/MacOS/Droppen" "$WORK/slices/Droppen-$arch"
+  else
+    lipo -thin "$arch" -output "$WORK/slices/Droppen-$arch" "$APP/Contents/MacOS/Droppen"
+  fi
+  SLICES+=("$WORK/slices/Droppen-$arch")
+done
+in_every_slice() { # needle
+  local slice
+  for slice in "${SLICES[@]}"; do LC_ALL=C grep -aqF -- "$1" "$slice" || return 1; done
+}
 # The test hooks are in an e2e build and in nothing else.
 HOOKS=0
+HOOKS_EVERYWHERE=0
 for needle in DROPPEN_DESKTOP_TEST_CONTROL DROPPEN_DESKTOP_KEYCHAIN 'test control is on' DROPPEN_DESKTOP_UPDATE_ENDPOINT DROPPEN_DESKTOP_TEST_HUB; do
   if LC_ALL=C grep -aqF "$needle" "$APP/Contents/MacOS/Droppen"; then HOOKS=$((HOOKS + 1)); fi
+  if in_every_slice "$needle"; then HOOKS_EVERYWHERE=$((HOOKS_EVERYWHERE + 1)); fi
 done
 # So is the end-to-end build's own identity (core/src/identity.rs).
 if LC_ALL=C grep -aqF app.droppen.desktop.e2e "$APP/Contents/MacOS/Droppen"; then E2E_IDENTITY=1; else E2E_IDENTITY=0; fi
 if [ "$E2E" = 1 ]; then
-  [ "$HOOKS" = 5 ] || die "an e2e build without its test hooks ($HOOKS/5 found)"
-  [ "$E2E_IDENTITY" = 1 ] || die "an e2e build without its own identity (app.droppen.desktop.e2e)"
+  [ "$HOOKS_EVERYWHERE" = 5 ] || die "an e2e build without its test hooks ($HOOKS_EVERYWHERE/5 found in every architecture)"
+  in_every_slice app.droppen.desktop.e2e || die "an e2e build without its own identity (app.droppen.desktop.e2e) in every architecture"
   echo "ok: e2e test build, test hooks and its own identity present"
 else
   [ "$HOOKS" = 0 ] || die "a release build with test hooks in it ($HOOKS found)"
   [ "$E2E_IDENTITY" = 0 ] || die "a release build with the end-to-end build's identity in it"
   echo "ok: no test hooks (test control, keychain switch, updater test endpoint, test hub) and no end-to-end identity in the release build"
 fi
-# The updater trusts the key in tauri.conf.json; the binary must carry it.
+# The updater trusts the key in tauri.conf.json; each architecture's program
+# must carry it.
 PUBKEY=$(sed -n 's/.*"pubkey": *"\([^"]*\)".*/\1/p' "$SRC/desktop/src-tauri/tauri.conf.json")
-{ [ -n "$PUBKEY" ] && LC_ALL=C grep -aqF "$PUBKEY" "$APP/Contents/MacOS/Droppen"; } || die "the app does not carry the updater public key of tauri.conf.json"
-echo "ok: the updater public key is the one in tauri.conf.json (key $(printf '%s' "$PUBKEY" | base64 -d | sed -n 's/^untrusted comment: minisign public key: //p'))"
+{ [ -n "$PUBKEY" ] && in_every_slice "$PUBKEY"; } || die "the app's program does not carry the updater public key of tauri.conf.json (in every architecture: $(lipo -archs "$APP/Contents/MacOS/Droppen"))"
+echo "ok: the updater public key is the one in tauri.conf.json, in each of $(lipo -archs "$APP/Contents/MacOS/Droppen") (key $(printf '%s' "$PUBKEY" | base64 -d | sed -n 's/^untrusted comment: minisign public key: //p'))"
 BUILT_ID=$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")
 [ "$BUILT_ID" = "$WANT_ID" ] || die "the bundle id is $BUILT_ID, but the app is compiled as $WANT_ID (desktop/core/src/identity.rs): it would refuse to start"
 echo "ok: bundle id $BUILT_ID, the app's own (core/src/identity.rs)"
