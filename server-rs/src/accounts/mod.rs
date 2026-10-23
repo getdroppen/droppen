@@ -50,7 +50,8 @@ pub struct AccountCreate {
     /// The OAuth token, for `kind: oauth_token`. Never returned.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub secret: Optional<String>,
-    /// The `KEY=VALUE` block, for `kind: env`. Never returned.
+    /// The `KEY=VALUE` block, for `kind: env`. Returned only by
+    /// `GET /api/accounts/{id}/env`.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub env: Optional<String>,
     /// Which CLI it is for; defaults to claude.
@@ -83,6 +84,15 @@ pub struct AccountUpdate {
     /// Put the account in or take it out of the rotation pool.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub rotation: Optional<bool>,
+}
+
+/// `GET /api/accounts/{id}/env` response.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountEnvBlock {
+    /// The account's whole block, one `KEY=VALUE` per line, as the editor
+    /// shows it. Values included: this route exists to read them back.
+    pub env: String,
 }
 
 /// `PUT /api/accounts/default` body.
@@ -410,6 +420,22 @@ pub async fn update_account(
         })),
         Ok(None) => Err(account_not_found()),
         Err(error) => Err(store_error(error, "cannot update account")),
+    }
+}
+
+/// The whole block of an env account, for editing it in place.
+///
+/// The account list carries only the variable names, so the settings page
+/// cannot prefill its editor without this read. Kept apart from
+/// `GET /api/accounts` on purpose: a credential should leave the server when
+/// somebody asks for that account, not with every list a picker fetches.
+#[api(id = "get_account_env", group = "accounts", summary = "Get an account's environment block")]
+pub async fn get_account_env(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
+    require_uuid(&id)?;
+    match state.drive.accounts.env_block(&id).await {
+        Ok(env) => Ok(Json(AccountEnvBlock { env })),
+        Err(AccountError::NotFound(_)) => Err(account_not_found()),
+        Err(error) => Err(store_error(error, "cannot read the environment block")),
     }
 }
 
@@ -890,6 +916,7 @@ pub fn routes(router: GotchaRouter<GotchaContext<AppState, AppConfig>>) -> Gotch
         .get("/api/accounts", list_accounts)
         .get("/api/accounts/limit-events", list_limit_events)
         .get("/api/accounts/start", account_start)
+        .get("/api/accounts/{id}/env", get_account_env)
         .get("/api/accounts/{id}/limit-events", list_account_limit_events)
         .delete("/api/accounts/{id}/rest", clear_account_rest)
         .post("/api/accounts", create_account)
@@ -917,6 +944,14 @@ pub fn describe(reg: &mut ExtraResponses) {
         )
         .describe("GET", "/api/accounts/{id}/limit-events", 200, "One account's limit events, newest first")
         .error("GET", "/api/accounts/{id}/limit-events", 404, "Account not found")
+        .describe(
+            "GET",
+            "/api/accounts/{id}/env",
+            200,
+            "The account's whole environment block, values included, for editing it",
+        )
+        .error("GET", "/api/accounts/{id}/env", 400, "The account has no environment block")
+        .error("GET", "/api/accounts/{id}/env", 404, "Account not found")
         .describe(
             "GET",
             "/api/accounts/start",

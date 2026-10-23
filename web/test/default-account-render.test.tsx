@@ -491,6 +491,21 @@ test("settings: automatic, always the local login, or an account — and automat
   assert.deepEqual(errors, []);
 });
 
+test("settings: an env account offers edit, an OAuth one re-auth", async (t) => {
+  const sent: Sent[] = [];
+  // A gateway (env) beside an OAuth account: only the first has fields to edit.
+  reset(sent, list([gateway(GATEWAY, "gateway"), account(WORK, "work")], "unknown"));
+  const { root, errors } = await mount(<AccountsSection />);
+  t.after(() => root.unmount());
+  const edit = () =>
+    first((n) => n.nodeName === "BUTTON" && n.getAttribute("title") === "edit this account's environment variables");
+  await until("the edit button", () => !!edit());
+  assert.match(edit()!.textContent, /^edit$/, "an env account is edited, not re-authorized");
+  const reauth = () => first((n) => n.nodeName === "BUTTON" && n.getAttribute("title") === "replace this account's credential, keeping its sessions");
+  assert.match(reauth()!.textContent, /^re-auth$/, "an OAuth account has a credential to replace");
+  assert.deepEqual(errors, []);
+});
+
 test("settings: a local login somebody chose stays chosen while it is signed out, and says so", async (t) => {
   const sent: Sent[] = [];
   const chosen = list([account(WORK, "work")], "signed_out");

@@ -31,7 +31,7 @@
             "type": "string"
           },
           "envKeys": {
-            "description": "The variable names an env account sets, in the order they were typed.\n\nNames only. A value is shown back to nobody, ever — not even to the\nperson who typed it: the box is write-only by design, because the only\nreason to read one back out is to read it somewhere it should not be.",
+            "description": "The variable names an env account sets, in the order they were typed.\n\nNames only: the list a picker, a session row and this page all read has\nno value in it. The block itself is returned only by\n`GET /api/accounts/{id}/env`, which the settings page calls when it\nopens an env account for editing — an explicit read, not one every list\nresponse carries.",
             "items": {
               "type": "string"
             },
@@ -161,6 +161,19 @@
         },
         "required": [
           "accountId"
+        ],
+        "type": "object"
+      },
+      "AccountEnvBlock": {
+        "description": "`GET /api/accounts/{id}/env` response.",
+        "properties": {
+          "env": {
+            "description": "The account's whole block, one `KEY=VALUE` per line, as the editor\nshows it. Values included: this route exists to read them back.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "env"
         ],
         "type": "object"
       },
@@ -6859,6 +6872,59 @@
           }
         },
         "summary": "Update an account",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/api/accounts/{id}/env": {
+      "get": {
+        "deprecated": false,
+        "description": "The whole block of an env account, for editing it in place.\n\nThe account list carries only the variable names, so the settings page\ncannot prefill its editor without this read. Kept apart from\n`GET /api/accounts` on purpose: a credential should leave the server when\nsomebody asks for that account, not with every list a picker fetches.",
+        "operationId": "get_account_env",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountEnvBlock"
+                }
+              }
+            },
+            "description": "The account's whole environment block, values included, for editing it"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The account has no environment block"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Account not found"
+          }
+        },
+        "summary": "Get an account's environment block",
         "tags": [
           "accounts"
         ]

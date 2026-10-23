@@ -194,6 +194,31 @@ export interface paths {
         patch: operations["update_account"];
         trace?: never;
     };
+    "/api/accounts/{id}/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an account's environment block
+         * @description The whole block of an env account, for editing it in place.
+         *
+         *     The account list carries only the variable names, so the settings page
+         *     cannot prefill its editor without this read. Kept apart from
+         *     `GET /api/accounts` on purpose: a credential should leave the server when
+         *     somebody asks for that account, not with every list a picker fetches.
+         */
+        get: operations["get_account_env"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts/{id}/limit-events": {
         parameters: {
             query?: never;
@@ -2483,9 +2508,11 @@ export interface components {
             /**
              * @description The variable names an env account sets, in the order they were typed.
              *
-             *     Names only. A value is shown back to nobody, ever — not even to the
-             *     person who typed it: the box is write-only by design, because the only
-             *     reason to read one back out is to read it somewhere it should not be.
+             *     Names only: the list a picker, a session row and this page all read has
+             *     no value in it. The block itself is returned only by
+             *     `GET /api/accounts/{id}/env`, which the settings page calls when it
+             *     opens an env account for editing — an explicit read, not one every list
+             *     response carries.
              */
             envKeys?: string[];
             /** @description Stable uuid; also the name of the account's data directory. */
@@ -2537,7 +2564,7 @@ export interface components {
         };
         /** @description `POST /api/accounts` body. */
         AccountCreate: {
-            /** @description The `KEY=VALUE` block, for `kind: env`. Never returned. */
+            /** @description The `KEY=VALUE` block, for `kind: env`. Returned only by `GET /api/accounts/{id}/env`. */
             env?: string;
             /** @description How it authenticates. */
             kind: components["schemas"]["AccountKind"];
@@ -2566,6 +2593,14 @@ export interface components {
             automatic?: boolean;
             /** @description Which CLI's default to set; defaults to claude. */
             provider?: components["schemas"]["AccountProvider"];
+        };
+        /** @description `GET /api/accounts/{id}/env` response. */
+        AccountEnvBlock: {
+            /**
+             * @description The account's whole block, one `KEY=VALUE` per line, as the editor
+             *     shows it. Values included: this route exists to read them back.
+             */
+            env: string;
         };
         /**
          * @description Where a request's `accountId` came from, when it was not somebody's pick.
@@ -6412,6 +6447,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountConflict"];
+                };
+            };
+        };
+    };
+    get_account_env: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's whole environment block, values included, for editing it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountEnvBlock"];
+                };
+            };
+            /** @description The account has no environment block */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Account not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

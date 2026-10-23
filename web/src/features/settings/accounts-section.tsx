@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -251,9 +251,10 @@ function AccountRow({
         />
       ))}
       {/*
-        The names only — the values are write-only and never came back from the
-        server. A long block truncates rather than pushing the row's buttons
-        onto another line; the whole list is on the tooltip.
+        The names only, so the row never carries a credential. A long block
+        truncates rather than pushing the row's buttons onto another line; the
+        whole list is on the tooltip, and `edit` reads the values back for the
+        account it is editing.
       */}
       {envKeys.length > 0 && (
         <span className="max-w-56 truncate font-mono text-2xs text-faint" title={envKeys.join(", ")}>
@@ -310,14 +311,26 @@ function AccountRow({
             <span className="font-mono text-2xs text-faint">{t("auto-rotation")}</span>
           </label>
         )}
+        {/*
+          An env account's block is editable in place; an OAuth one has a
+          credential to replace, not fields to correct.
+        */}
         <button
           type="button"
           onClick={onReauth}
-          title={t("replace this account's credential, keeping its sessions")}
+          title={
+            account.kind === "env"
+              ? t("edit this account's environment variables")
+              : t("replace this account's credential, keeping its sessions")
+          }
           className="rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
         >
-          <RefreshCw className="mr-1 inline size-3 align-[-2px]" />
-          {t("re-auth")}
+          {account.kind === "env" ? (
+            <Pencil className="mr-1 inline size-3 align-[-2px]" />
+          ) : (
+            <RefreshCw className="mr-1 inline size-3 align-[-2px]" />
+          )}
+          {account.kind === "env" ? t("edit") : t("re-auth")}
         </button>
         {confirming ? (
           <>

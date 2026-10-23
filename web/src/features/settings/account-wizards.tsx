@@ -341,37 +341,60 @@ export function SetupTokenDialog({
  *
  * Two ways in, because there are two ways to hold a credential: run the OAuth
  * wizard here, or paste one in. An env account — either CLI's — has no OAuth
- * flow at all, so for those the block is the only offer, and it is replaced
- * whole: the stored values never come back to the browser to be edited.
+ * flow at all, so for those the block is the only offer. The block is read
+ * back from the server first, so this opens on what is stored: a value can be
+ * corrected without every other line being retyped. Saving still replaces the
+ * whole block, which is what the box says.
  */
 export function ReauthDialog({
   account,
   onOpenChange,
 }: {
-  /** The account to re-authorize; null keeps the dialog closed. */
+  /** The account to re-authorize or edit; null keeps the dialog closed. */
   account: Account | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const machine = useMachine();
   const api = useApi();
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [capture, setCapture] = useState<SetupTokenStarted | null>(null);
   const [secret, setSecret] = useState("");
-  const [env, setEnv] = useState("");
+  // `null` until the stored block arrives: the box must not open empty and
+  // then fill under somebody who has started typing.
+  const [env, setEnv] = useState<string | null>(null);
   const [unverified, setUnverified] = useState<string | null>(null);
   const settled = useCaptureSettled(() => onOpenChange(false));
   const provider = account ? accountProvider(account) : "claude";
   const kind = account?.kind ?? "oauth_token";
   const oauth = kind === "oauth_token";
-  // Write-only: the stored values were never sent to the browser, so the box
-  // starts empty and what is typed replaces the block outright.
-  const block = parseEnvBlock(env, provider);
+  // The list carries the names only; this is the one read that brings the
+  // values back, and only for the account being edited.
+  const stored = useQuery({
+    queryKey: mq(machine, "account-env", account?.id ?? ""),
+    queryFn: async () => {
+      const res = await api.GET("/api/accounts/{id}/env", { params: { path: { id: account!.id } } });
+      if (res.error) throw new Error(res.error.error);
+      return res.data;
+    },
+    enabled: account !== null && !oauth,
+  });
 
   useEffect(() => {
     setCapture(null);
     setSecret("");
-    setEnv("");
+    setEnv(null);
     setUnverified(null);
   }, [account]);
+
+  useEffect(() => {
+    // Filling it again when the same account is reopened is wanted; filling it
+    // over edits in progress is not, so this follows the account object and
+    // the data it read, not every refetch.
+    if (!oauth && stored.data) setEnv(stored.data.env ?? "");
+  }, [account, oauth, stored.data]);
+
+  const block = parseEnvBlock(env ?? "", provider);
 
   const start = useMutation({
     mutationFn: async (id: string) => {
@@ -388,15 +411,18 @@ export function ReauthDialog({
         params: { path: { id } },
         // The block replaces the whole previous one; an OAuth account takes a
         // token instead. Never both.
-        body: oauth ? { secret: secret.trim() } : { env },
+        body: oauth ? { secret: secret.trim() } : { env: env ?? "" },
       });
       if (res.error) throw new Error(res.error.error);
       return res.data;
     },
     onSuccess: (data) => {
-      // Never keep the secret around once the server has it.
+      // Never keep the token around once the server has it. The block stays
+      // on screen: it is what was just saved, and the dialog may stay open to
+      // report an unverified save.
       setSecret("");
-      setEnv("");
+      // Opening the editor again shows the saved text, not the pre-edit one.
+      if (!oauth && env !== null) queryClient.setQueryData(mq(machine, "account-env", account?.id ?? ""), { env });
       // Stored, but no check ran: say so and stay open rather than close on a
       // green tick the server never earned.
       setUnverified(data?.unverified ?? null);
@@ -406,7 +432,7 @@ export function ReauthDialog({
 
   return (
     <Dialog open={account !== null} onOpenChange={onOpenChange}>
-      <DialogContent title={t("re-authorize account")} className={capture ? WIDE : undefined}>
+      <DialogContent title={t(oauth ? "re-authorize account" : "edit environment variables")} className={capture ? WIDE : undefined}>
         {capture ? (
           <CapturePanel
             capture={capture}
@@ -418,7 +444,9 @@ export function ReauthDialog({
           <div className="flex flex-col gap-2">
             <p className="text-2xs text-faint">
               {t(
-                "Replaces this account's credential in place. The account keeps its id, so every session already running under it carries on.",
+                oauth
+                  ? "Replaces this account's credential in place. The account keeps its id, so every session already running under it carries on."
+                  : "Shown as stored. Saving replaces the whole block; the account keeps its id, so every session already running under it carries on.",
               )}
             </p>
             {oauth && (
@@ -452,14 +480,26 @@ export function ReauthDialog({
                   className={field}
                 />
               </label>
+            ) : stored.isPending ? (
+              <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
+                <Loader2 className="size-3 animate-spin" />
+                {t("reading this account's environment variables…")}
+              </div>
+            ) : stored.isError ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span data-signal="failed" className="font-mono text-2xs text-danger">{stored.error.message}</span>
+                <button type="button" onClick={() => void stored.refetch()} className={secondary}>
+                  {t("try again")}
+                </button>
+              </div>
             ) : (
               <EnvBlockField
                 provider={provider}
-                value={env}
+                value={env ?? ""}
                 onChange={setEnv}
                 issue={block.issue}
                 warning={block.warning}
-                hint={t("not shown again once saved; re-authorizing replaces the whole block")}
+                hint={t("this is the block as stored; saving replaces it whole")}
               />
             )}
             {paste.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{paste.error.message}</span>}
@@ -470,12 +510,12 @@ export function ReauthDialog({
             )}
             <button
               type="button"
-              disabled={!account || (oauth ? secret.trim() === "" : block.issue !== null) || paste.isPending}
+              disabled={!account || (oauth ? secret.trim() === "" : env === null || block.issue !== null) || stored.isError || paste.isPending}
               onClick={() => account && paste.mutate(account.id)}
               className={oauth ? secondary : primary}
             >
               {paste.isPending && <Loader2 className="size-3 animate-spin" />}
-              {paste.isPending ? t("checking the token…") : t("save token")}
+              {paste.isPending ? t("checking the token…") : t(oauth ? "save token" : "save environment variables")}
             </button>
           </div>
         )}

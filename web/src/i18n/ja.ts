@@ -323,7 +323,11 @@ export const ja: Record<string, string> = {
     "ブロック全体が、このアカウントで起動する claude プロセスに注入されます。よく使うもの：ANTHROPIC_AUTH_TOKEN、ANTHROPIC_API_KEY、ANTHROPIC_BASE_URL、ANTHROPIC_MODEL。",
   "OPENAI_API_KEY becomes the api key of the model provider Droppen defines for codex, and OPENAI_BASE_URL its base url; everything else is injected as-is.":
     "OPENAI_API_KEY は Droppen が codex 用に定義するモデルプロバイダの API キーになり、OPENAI_BASE_URL はその Base URL になります。ほかはそのまま注入されます。",
-  "not shown again once saved; re-authorizing replaces the whole block": "保存後は表示されません。再認可ではブロックごと置き換わります",
+  "edit": "編集",
+  "edit this account's environment variables": "このアカウントの環境変数を編集",
+  "reading this account's environment variables…": "このアカウントの環境変数を読み込んでいます…",
+  "this is the block as stored; saving replaces it whole": "保存されているブロックです。保存するとブロックごと置き換わります",
+  "save environment variables": "環境変数を保存",
   "A local token is handed to the CLI through its environment instead, for the session it starts.":
     "ローカルトークンは代わりに環境変数として CLI に渡され、そこで起動したセッションにのみ効きます。",
   "stored on the server, never shown again": "サーバーに保存され、二度と表示されません",
@@ -358,6 +362,9 @@ export const ja: Record<string, string> = {
   "saved, but it could not be checked: {{why}}": "保存しましたが、検証できませんでした: {{why}}",
   "re-auth": "再認証",
   "re-authorize account": "アカウントを再認証",
+  "edit environment variables": "環境変数を編集",
+  "Shown as stored. Saving replaces the whole block; the account keeps its id, so every session already running under it carries on.":
+    "保存されている内容をそのまま表示します。保存するとブロック全体が差し替わります。id は変わらないので、そのアカウントで動いているセッションはそのまま続きます。",
   "replace this account's credential, keeping its sessions": "セッションの紐付けは保ったまま、この認証情報を差し替えます",
   "Replaces this account's credential in place. The account keeps its id, so every session already running under it carries on.":
     "このアカウントの認証情報をその場で差し替えます。id は変わらないので、そのアカウントで動いているセッションはそのまま続きます。",

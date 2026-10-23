@@ -323,7 +323,11 @@ export const zhCN: Record<string, string> = {
     "整块变量会注入该账号启动的 claude 进程。常用：ANTHROPIC_AUTH_TOKEN、ANTHROPIC_API_KEY、ANTHROPIC_BASE_URL、ANTHROPIC_MODEL。",
   "OPENAI_API_KEY becomes the api key of the model provider Droppen defines for codex, and OPENAI_BASE_URL its base url; everything else is injected as-is.":
     "OPENAI_API_KEY 会成为 Droppen 为 codex 定义的模型提供方的 API key，OPENAI_BASE_URL 成为它的 Base URL；其余变量原样注入。",
-  "not shown again once saved; re-authorizing replaces the whole block": "保存后不再显示，重新授权时整块替换",
+  "edit": "编辑",
+  "edit this account's environment variables": "编辑这个账号的环境变量",
+  "reading this account's environment variables…": "正在读取这个账号的环境变量…",
+  "this is the block as stored; saving replaces it whole": "这是目前保存的整块变量；保存会整块替换",
+  "save environment variables": "保存环境变量",
   "A local token is handed to the CLI through its environment instead, for the session it starts.":
     "本地 token 则通过环境变量传给 CLI，只作用于它启动的会话。",
   "stored on the server, never shown again": "保存在服务端，不会再次显示",
@@ -358,6 +362,9 @@ export const zhCN: Record<string, string> = {
   "saved, but it could not be checked: {{why}}": "已保存，但未能验证：{{why}}",
   "re-auth": "重新授权",
   "re-authorize account": "重新授权账号",
+  "edit environment variables": "编辑环境变量",
+  "Shown as stored. Saving replaces the whole block; the account keeps its id, so every session already running under it carries on.":
+    "按已存储的内容显示。保存会整块替换；账号 id 保持不变，因此已经在它下面运行的会话可以继续。",
   "replace this account's credential, keeping its sessions": "替换该账号的凭据，会话绑定保持不变",
   "Replaces this account's credential in place. The account keeps its id, so every session already running under it carries on.":
     "就地替换该账号的凭据。账号 id 保持不变，因此已经在它下面运行的会话可以继续。",

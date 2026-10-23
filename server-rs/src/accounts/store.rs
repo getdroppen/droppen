@@ -206,7 +206,8 @@ pub const CODEX_BASE_URL_VAR: &str = "OPENAI_BASE_URL";
 pub struct EnvVar {
     /// The variable's name. Shown back to the user; never a secret.
     pub key: String,
-    /// Its value. Never serialized to a client, never logged.
+    /// Its value. Part of no list response and never logged; read back only by
+    /// the explicit [`AccountsStore::env_block`] route the editor calls.
     pub value: String,
 }
 
@@ -296,6 +297,20 @@ pub fn parse_env_block(text: &str) -> Result<Vec<EnvVar>, AccountError> {
         return Err(AccountError::Invalid("the environment block is empty".to_string()));
     }
     Ok(parsed)
+}
+
+/// One stored variable as a line [`parse_env_block`] reads back unchanged.
+///
+/// A value with no surrounding whitespace needs no quoting. One that has it
+/// does: the parser trims a line's value, so an unquoted ` x ` would come back
+/// as `x`. Quoting only applies when both ends agree because that is the only
+/// shape [`unquote`] strips.
+fn render_env_var(var: &EnvVar) -> String {
+    if var.value.trim() != var.value {
+        format!("{}=\"{}\"", var.key, var.value)
+    } else {
+        format!("{}={}", var.key, var.value)
+    }
 }
 
 /// `"x"` and `'x'` become `x`; anything else is returned as it stands.
@@ -403,9 +418,11 @@ pub struct Account {
     pub provider: AccountProvider,
     /// The variable names an env account sets, in the order they were typed.
     ///
-    /// Names only. A value is shown back to nobody, ever — not even to the
-    /// person who typed it: the box is write-only by design, because the only
-    /// reason to read one back out is to read it somewhere it should not be.
+    /// Names only: the list a picker, a session row and this page all read has
+    /// no value in it. The block itself is returned only by
+    /// `GET /api/accounts/{id}/env`, which the settings page calls when it
+    /// opens an env account for editing — an explicit read, not one every list
+    /// response carries.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub env_keys: Optional<Vec<String>>,
     /// The limits this instance has seen the account hit that have not lifted
@@ -1523,18 +1540,38 @@ impl AccountsStore {
         redacted
     }
 
-    /// The one place a stored secret is read.
+    /// The one place a stored secret is read for a spawn.
     ///
-    /// Everything else goes through [`Account`], which has no field for it.
+    /// Everything the API lists goes through [`Account`], which has no field
+    /// for it. The one other caller that reads the block itself is
+    /// [`Self::env_block`], which hands it back to the person editing it.
     pub async fn account_env(&self, id: &str) -> Result<AccountLaunch, AccountError> {
         self.stored(id).ok_or_else(|| AccountError::NotFound(id.to_string()))?.launch()
+    }
+
+    /// An env account's whole block, as the text it was typed as.
+    ///
+    /// The account list names only the variables ([`Account::env_keys`]); this
+    /// is how the settings page opens its editor on what is stored instead of
+    /// on an empty box. It is deliberately a route of its own rather than a
+    /// field on [`Account`]: reading a credential back is an act, and only the
+    /// editor asks for it.
+    ///
+    /// Values are rendered as they were stored, with quotes around the ones
+    /// whose leading or trailing spaces would otherwise be trimmed on the way
+    /// back in, so this text parses to the same block.
+    pub async fn env_block(&self, id: &str) -> Result<String, AccountError> {
+        let account = self.stored(id).ok_or_else(|| AccountError::NotFound(id.to_string()))?;
+        if account.kind != AccountKind::Env {
+            return Err(AccountError::Invalid("this account has no environment block".to_string()));
+        }
+        Ok(account.env.iter().map(render_env_var).collect::<Vec<_>>().join("\n"))
     }
 
     /// The values of a few *named* variables of an env account's block.
     ///
     /// Deliberately not "the block": the caller says which keys it wants and
-    /// gets nothing else, so [`Self::account_env`] stays the one place a whole
-    /// credential is read. What this exists for is the handful of variables
+    /// gets nothing else. What this exists for is the handful of variables
     /// that are configuration rather than credential — `ANTHROPIC_MODEL` and
     /// the alias overrides beside it, which decide what the model picker may
     /// honestly offer for this account.
@@ -2506,6 +2543,36 @@ mod tests {
         // No escape processing: a backslash in a token is a backslash.
         assert_eq!(parse_env_block("K=a\\nb").expect("literal")[0].value, "a\\nb");
         assert_eq!(parse_env_block("_UNDERSCORE1=x").expect("a legal name")[0].key, "_UNDERSCORE1");
+    }
+
+    /// The editor opens on what is stored, so reading a block back must produce
+    /// text that parses to the same variables — an edit may change one line
+    /// without the others silently changing with it.
+    #[tokio::test]
+    async fn an_env_accounts_block_reads_back_as_text_that_parses_to_itself() {
+        let (_dir, store) = store();
+        let block = "ANTHROPIC_AUTH_TOKEN=sk-ant-one\n\
+                     ANTHROPIC_BASE_URL=https://gw.example.com\n\
+                     PADDED=\"  spaced  \"\n\
+                     EMPTY=\n\
+                     WITH_EQUALS=a=b=c";
+        let account = store.create("Gateway", AccountProvider::Claude, env(block)).await.expect("create");
+        let text = store.env_block(&account.id).await.expect("read back");
+        assert_eq!(
+            parse_env_block(&text).expect("the text the editor shows is a block"),
+            parse_env_block(block).expect("the block that was stored"),
+            "leading and trailing spaces survive inside quotes"
+        );
+
+        let token_account = store.create("Work", AccountProvider::Claude, oauth("sk-ant-two")).await.expect("create");
+        assert!(
+            matches!(store.env_block(&token_account.id).await, Err(AccountError::Invalid(_))),
+            "an OAuth account has no environment block to read"
+        );
+        assert!(matches!(
+            store.env_block("11111111-2222-3333-4444-555555555555").await,
+            Err(AccountError::NotFound(_))
+        ));
     }
 
     /// A line that is not a pair is a typo, and dropping it silently would
