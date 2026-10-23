@@ -324,7 +324,7 @@ function Definitions() {
       id: "client",
       name: t("Your browsers and phones"),
       rows: [
-        [t("What it is"), t("Where you watch and control from: droppen.app, in a browser or on a phone. The local web app is different: it shows the view of the device that serves it and holds no keys.")],
+        [t("What it is"), t("Where you watch and control from: my.droppen.app, in a browser or on a phone. The local web app is different: it shows the view of the device that serves it and holds no keys.")],
         [t("Keys it holds"), t("Its device key, and the user key, which opens every content key in the account's keyring.")],
         [t("What it may do"), t("Each one you pair now is a full device: it adds, approves and removes devices, vouches for the chain, and may control your devices that run AI.")],
       ],
@@ -483,7 +483,7 @@ function OverviewSection() {
         <SectionHead
           label={`01 · ${t("Overview")}`}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
-          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything."))}
+          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything."))}
         />
         <Overview />
         <Topic n="1.1" title={t("What Droppen Hub sees, and what it never sees")}>
@@ -837,7 +837,7 @@ function ThreatsSection() {
   const rows = [
     [
       t("Droppen Hub, or whoever runs or compels it"),
-      t("- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**"),
+      t("- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**"),
       t("Through the protocol alone:\n- **decrypt content**\n- **forge commands** (only devices on the chain are admitted, and the first message asks for nothing)\n- **add a device of its own**\n- **slip in keys** (they are sender-authenticated and committed on the chain)\n- **forge or quietly change records** (signed heads)\n- **take over a device that runs AI with a new genesis** (it pinned the account key)"),
     ],
     [t("A Droppen relay"), t("- See **ids, IP addresses, and the sizes and timing** of the channels it carries\n- **Drop them**"), t("- **Read or change them**\n- **Splice two sessions together** (the prologue binds both ids)")],
@@ -870,10 +870,11 @@ function ThreatsSection() {
         />
         <Table label={t("Threat model")} heads={heads} rows={rows} />
         <Topic n="7.1" title={t("The web-delivery gap")}>
-          <P>{t("The app at droppen.app comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
+          <P>{t("The app at **my.droppen.app** comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
+          <P>{t("**www.droppen.app** shows this page and the other public ones: the same attested build, which never reads or stores a key there. droppen.app is the Hub's own address, where devices that run AI and relays connect. A browser set up at droppen.app before the app moved to my.droppen.app either moves its keys there once, from one page to the other inside the browser, or is added again as a new device; either way they never pass through the Hub.")}</P>
           <List
             items={[
-              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest ([[docs/web-integrity.md]] says how)."),
+              t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what my.droppen.app and www.droppen.app serve with a release's manifest ([[docs/web-integrity.md]] says how)."),
               t("A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one."),
               t("For high assurance, use the **desktop app**, signed with Apple's Developer ID and notarised, or the **local web app** that the droppen program serves from its own binary: neither loads code from Droppen Hub."),
             ]}
@@ -950,7 +951,7 @@ function VerifySection() {
           <P>{t("Each implementation writes test vectors ([[vectors/rust.json|server-rs/crates/rh-proto/vectors/rust.json]], [[vectors/ts.json|server-rs/crates/rh-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains in which every refusal gives the same error\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way, from Rust to TypeScript. Attacks found in our reviews stay as regression tests on both sides.")}</P>
         </Topic>
         <Topic n="8.5" title={t("The page you are reading")}>
-          <P>{t("node [[scripts/verify-web.mjs]] checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).")}</P>
+          <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against a release's manifest; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).")}</P>
         </Topic>
         <Topic n="8.6" title={t("Report a vulnerability")}>
           <P>

@@ -129,7 +129,14 @@ export const CHECKSUM_COMMAND = "shasum -a 256 <file>";
 /** The hub droppen.app is: a computer signed in elsewhere needs the hub address set under 「高级」. */
 export const DROPPEN_ORIGIN = "https://droppen.app";
 
-/** Whether the page is on a hub other than droppen.app (a self-hosted or a development one). */
+/**
+ * droppen.app's other names: the app at `my.droppen.app` and the site at
+ * `www.droppen.app` are the same hub, whose address devices dial stays
+ * {@link DROPPEN_ORIGIN} (docs/hub-api/README.md, "Hosts").
+ */
+const DROPPEN_NAMES = new Set([DROPPEN_ORIGIN, "https://my.droppen.app", "https://www.droppen.app"]);
+
+/** Whether the page is on a hub other than droppen.app (a self-hosted or a development one): droppen.app's own names are droppen.app. */
 export function otherHub(origin: string): boolean {
-  return origin.replace(/\/+$/, "") !== DROPPEN_ORIGIN;
+  return !DROPPEN_NAMES.has(origin.replace(/\/+$/, ""));
 }

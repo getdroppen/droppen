@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore } fr
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, ClipboardPaste, ExternalLink, Hash, KeyRound, Loader2, MonitorSmartphone, Plus, RefreshCw, Server } from "lucide-react";
 import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
+import { publicHref } from "@/features/landing/route";
 import { osLabel, versionLabel } from "@/features/machines/device-facts";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { needsYou, recentSessions } from "@/features/machines/needs-you";
@@ -789,7 +790,7 @@ export function FirstHostLine() {
   return (
     <p data-testid="first-host" className="flex flex-wrap items-center gap-x-2 text-xs leading-5 text-fg">
       <span>{t("Next: install Droppen on the device your AI runs on, then add it here.")}</span>
-      <a href={DOWNLOAD_PATH} target="_blank" rel="noopener" data-testid="first-host-download" className="inline-flex items-center gap-1 text-fg underline underline-offset-2 hover:no-underline">
+      <a href={publicHref(DOWNLOAD_PATH)} target="_blank" rel="noopener" data-testid="first-host-download" className="inline-flex items-center gap-1 text-fg underline underline-offset-2 hover:no-underline">
         {t("download page")}
         <ExternalLink className="size-3" />
       </a>

@@ -66,7 +66,7 @@
 
 | 程序 | 二进制（今天 → 以后） | 源码 | 跑在哪 | 职责 | 不做 |
 |---|---|---|---|---|---|
-| Droppen Hub | `rh-hub` → `droppen-hub` | **闭源** | Droppen 运营的云端 | 账号、登录、邮箱、Turnstile、套餐与计量、设备链、信箱、钥环、加密流存储、在线态、票据、中继目录；托管 droppen.app 的 SPA（开源 `web/` 的构建产物，含新页面 `/link`） | 不转发通道；不持任何能解密的钥 |
+| Droppen Hub | `rh-hub` → `droppen-hub` | **闭源** | Droppen 运营的云端 | 账号、登录、邮箱、Turnstile、套餐与计量、设备链、信箱、钥环、加密流存储、在线态、票据、中继目录；托管 SPA（开源 `web/` 的构建产物，含新页面 `/link`）：应用在 `my.droppen.app`，公开页面在 `www.droppen.app`，`droppen.app` 本身留给设备与中继连接（`docs/hub-api/README.md`「Hosts」） | 不转发通道；不持任何能解密的钥 |
 | 中继 | `droppen-relay`（不变） | 开源 | 运营者部署的各个区域 | 凭票据配对；只转发 `DATA` 密文；计量 | 不存东西；没有钥 |
 | 本机 | `remote-hand-server` → `droppen` | 开源 | 用户的电脑；以后也作为 Tauri 应用分发（§7.3） | 连接 AI CLI、本机界面（内嵌 SPA）、本机账号。**登录后**，这台设备用同一个身份做两件事：运行 AI（agent，Noise 响应方），以及控制其它设备（Noise 发起方，经本机网关给本机界面用） | 不登录时不连任何云端 |
 
@@ -483,11 +483,13 @@ droppen.app 的「设备」页与「机器页」合成一页：**我的设备**�
 
 ![在本机设置里登录：本机备好公钥 → 弹窗在 droppen.app 登录并同意 → 注册码经 postMessage 交回本机 → 进程内注册 → 弹窗上链、交钥 → 本机不重启即上线](local-aggregator/signin.svg)
 
-参与者有四个：本机页面 P（已用本机账号 U 登录）、弹窗 W（`https://droppen.app/link`，一台 admin 设备）、本机 `droppen` S、Hub H。
+参与者有四个：本机页面 P（已用本机账号 U 登录）、弹窗 W（`<hubWeb>/link`，即应用的源上的 `/link`，例如 `https://my.droppen.app/link`；一台 admin 设备）、本机 `droppen` S、Hub H。
+
+`hubWeb` 是应用的源（S 读 Hub 的 `/.well-known/droppen-hub`，见 §4.9 与 `docs/hub-api/link.md`）。旧版本机（v0.2.103–v0.2.128）不读它，打开的是 `https://droppen.app/link?v=1`，它只接受来自 `https://droppen.app` 的应答；应用搬到 `my.droppen.app` 后，那里是搬迁提示（`web/src/features/hosts/legacy.tsx`）：这个浏览器在那里有设备时先提议搬移，再请用户关掉窗口、在 Droppen 里选「改在浏览器标签页里继续」（§4.9，v0.2.125 起才有，交回不绑 Hub 的主机）；v0.2.103–v0.2.124 没有这一项，要先更新 Droppen，或用一次性注册码加入。
 
 **1. 发起**
 
-P 在点击事件里同步调用 `window.open("https://droppen.app/link?v=1", "droppen-link", "popup,width=480,height=760")`，URL 不带数据。同时 P 调用 `POST /api/cloud/link {hub?}`。
+P 在点击事件里同步调用 `window.open("<hubWeb>/link?v=1", "droppen-link", "popup,width=480,height=760")`，URL 不带数据。同时 P 调用 `POST /api/cloud/link {hub?}`。
 
 S 依次做：
 
@@ -587,7 +589,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 - 其它源，**包括局域网与 Tailscale**：显示红色警告「这个地址不像是你自己电脑上的 Droppen」。用户要多勾一项「我确认 <主机> 是我自己的电脑」才能继续，并比对指纹。
   - 私网 IPv4（10/8、172.16/12、192.168/16）、`fd00::/8`、`*.local`、`100.64/10`：都是「浏览器所在网络上谁应答就是谁」，同一个咖啡馆 Wi-Fi 上的人就能伪装。
   - `*.ts.net`：Tailscale Funnel 免费给任何人一个公网 `https://x.<tailnet>.ts.net`。（实现评审发现：起初这几类都不警告，一个假设置页点一下就能拿走注册码。）
-- Droppen Hub 自己的主机名（任何协议与端口）永远拒绝。
+- Droppen Hub 自己的主机名（任何协议与端口）永远拒绝；Hub 在 `/.well-known/droppen-hub` 里列出主机时，它的源、应用与站点主机，以及源之下的任何名字（`*.droppen.app`），一样拒绝（`web/src/features/link/handoff.ts` `callbackTier`）。
 - **已知、暂缓**：
   - 同一台电脑回环上另一个端口的程序也算「本机」，不警告；
   - 同意页开着时，opener 可以再发一个 `request` 把它换掉（同源）。
@@ -659,7 +661,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 
 ### 4.9 没有弹窗时：经系统浏览器交回（桌面应用、拦截弹窗的浏览器）
 
-弹窗与 `postMessage` 要求本机页面打开 droppen.app、并留着 `window.opener`。有三种场合做不到：
+弹窗与 `postMessage` 要求本机页面打开应用的源（`hubWeb`）、并留着 `window.opener`。有三种场合做不到：
 
 - 桌面应用（§7.3）：窗口里的新窗口一律交给系统浏览器，`window.opener` 不存在；
 - 浏览器拦截了弹窗（Safari 默认就会拦异步打开的窗口）；
@@ -675,10 +677,10 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 - 桌面应用：页面 `window.open(handoffUrl, "_blank", "noopener")`，应用把它交给系统浏览器。应用往外交地址时一向去掉片段（本机地址的片段可能是登录令牌）；只有形如 `/link#droppen-link=…`、又不是应用自己服务器的地址保留片段（`desktop/core/src/sign_in.rs`）。
 - 浏览器：弹窗被拦或被关后，「改在浏览器标签页里继续」用同一个 attempt 打开这个地址（点击里打开，不会被拦）。
 
-**2. 同意**（droppen.app `/link`）
+**2. 同意**（应用的源上的 `/link`；旧版本机给的 `https://droppen.app/link#droppen-link=…` 经搬迁提示原样转到 `my.droppen.app`，片段一起带过去）
 
 - 页面最先运行的模块（`fragment-boot.ts`）把片段从地址栏拿掉，存进这个标签页的 `sessionStorage`（登录、注册途中刷新还在），答完或取消就删。
-- 没有 opener 时用这份请求：`cb` = 请求里写的源，§4.4 的三档规则照旧（本机回环不警告；局域网、Tailscale、公网要勾「这是我自己的设备」；Hub 自己的主机拒绝）。同意页同样显示来源、主机名、指纹，并提示「核对那台设备上的 Droppen 显示的是同一串指纹」。
+- 没有 opener 时用这份请求：`cb` = 请求里写的源，§4.4 的三档规则照旧（本机回环不警告；局域网、Tailscale、公网要勾「这是我自己的设备」；Hub 自己的主机拒绝，Hub 在 `/.well-known/droppen-hub` 里列出的各个主机名——源、应用、站点——以及源之下的任何名字（`*.droppen.app`）也拒绝）。同意页同样显示来源、主机名、指纹，并提示「核对那台设备上的 Droppen 显示的是同一串指纹」。
 - 过期（按 S 的时钟，留 2 分钟误差）就不再发码，提示回设备上重来。
 
 **3. 交回**

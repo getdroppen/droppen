@@ -17,10 +17,10 @@
 #   2. creates the first account for the server's local page (you choose the
 #      password; without a terminal one is generated and shown once, or saved
 #      to a file only you can read when nobody is watching the output);
-#   3. with a one-time code from droppen.app (my devices → add a device that
+#   3. with a one-time code from my.droppen.app (my devices → add a device that
 #      runs AI → show a one-time code), joins this device to your Droppen
 #      account (`droppen agent enroll`), so it can be used from
-#      droppen.app with no browser here at all;
+#      my.droppen.app with no browser here at all;
 #   4. installs the server to ~/.local/share/remote-hand/bin/remote-hand-server,
 #      with the command `droppen` beside it (a link to the same file),
 #      and runs it as a service on 127.0.0.1:8700 or the next free port,
@@ -78,7 +78,7 @@ BIN_NAME=remote-hand-server
 CMD_NAME=droppen
 # The oldest glibc the Linux builds run on.
 GLIBC_MIN=2.28
-# Where droppen.app shows a one-time code.
+# Where my.droppen.app shows a one-time code.
 WHERE_CODES="my devices → add a device that runs AI → show a one-time code"
 
 say() { printf '%s\n' "$*"; }
@@ -106,7 +106,7 @@ Options:
 
 Settings (environment):
   DROPPEN_CODE=<code>       join the account the code is from
-                            (droppen.app: my devices → add a device that runs AI
+                            (my.droppen.app: my devices → add a device that runs AI
                             → show a one-time code)
   DROPPEN_HUB=wss://...     the Droppen hub to join (default wss://droppen.app)
   DROPPEN_VERSION=v...      install this release instead of the latest
@@ -553,7 +553,7 @@ agent_standing() {
 }
 
 # Join the account the one-time code is from: the existing CLI enrolment, with
-# the code on stdin. It waits until the droppen.app page that showed the code
+# the code on stdin. It waits until the my.droppen.app page that showed the code
 # adds this device, which it does by itself; up to the code's ten minutes.
 enroll() {
   ENROLLED=""
@@ -582,8 +582,8 @@ enroll() {
         say "Stopped the server, which was waiting on an earlier code."
       fi ;;
   esac
-  say "Keep the droppen.app page that showed the code open: it adds this device by itself. Waiting up to 10 minutes..."
-  say "请保持显示该代码的 droppen.app 页面打开，它会自动添加这台设备（最多等待 10 分钟）。"
+  say "Keep the my.droppen.app page that showed the code open: it adds this device by itself. Waiting up to 10 minutes..."
+  say "请保持显示该代码的 my.droppen.app 页面打开，它会自动添加这台设备（最多等待 10 分钟）。"
   # The command's exit status says how it ended (`agent enroll --help`): 0 the
   # device is added, 76 the hub took the code and the page has not added the
   # device yet, anything else the code did not take. The state on disk cannot
@@ -1150,14 +1150,14 @@ do_install() {
   fi
   say ""
   if [ -n "$ENROLLED" ]; then
-    say "  Use it:     on droppen.app, from any device signed in to your account"
+    say "  Use it:     on my.droppen.app, from any device signed in to your account"
     if has_display; then say "  Local page: $URL (signing in as $ACCOUNT_NOTE)"; fi
   elif has_display; then
     say "  Local page: $URL"
     say "  Sign in:    $ACCOUNT_NOTE"
     say "  Next:       choose 「登录 Droppen」 on that page to add this device to your Droppen account"
   else
-    say "  Join:       on droppen.app, $WHERE_CODES; then run the installer again with DROPPEN_CODE=<code>"
+    say "  Join:       on my.droppen.app, $WHERE_CODES; then run the installer again with DROPPEN_CODE=<code>"
     say "  Local page: on this device only; from elsewhere, an SSH tunnel to port $PORT, signing in as $ACCOUNT_NOTE"
   fi
   say "  Command:    $CMD (the server; $BIN_NAME is the same program)"
@@ -1234,7 +1234,7 @@ Droppen 已卸载；数据已保留，重新安装即可继续使用：
     $DATA_DIR
     $CONFIG_DIR
     $LOG_DIR
-If this device joined a Droppen account, remove it on droppen.app too (my devices).
+If this device joined a Droppen account, remove it on my.droppen.app too (my devices).
 To delete the data as well (sessions, accounts, settings, this device's key), run:
     rm -rf "$DATA_DIR" "$CONFIG_DIR" "$LOG_DIR"
 EOF
@@ -1251,14 +1251,14 @@ ask_code() {
   trap 'code_interrupted 129' HUP
   # Echo off before the prompt shows, so nothing typed or pasted is echoed.
   stty -echo </dev/tty 2>/dev/null || true
-  printf 'One-time code from droppen.app (%s): ' "$WHERE_CODES" >/dev/tty
+  printf 'One-time code from my.droppen.app (%s): ' "$WHERE_CODES" >/dev/tty
   IFS= read -r CODE </dev/tty || CODE=""
   echo_back
   # A pasted code may bring a space or a carriage return along.
   CODE=$(printf '%s' "$CODE" | tr -d '[:space:]')
   trap - INT TERM HUP
   printf '\n' >/dev/tty
-  [ -n "$CODE" ] || die "no code was typed. Get one on droppen.app ($WHERE_CODES) and run the installer again."
+  [ -n "$CODE" ] || die "no code was typed. Get one on my.droppen.app ($WHERE_CODES) and run the installer again."
 }
 
 echo_back() { [ -z "$saved" ] || stty "$saved" </dev/tty 2>/dev/null || true; }
@@ -1291,7 +1291,7 @@ main() {
     shift
   done
   case "$CODE" in
-    *[!A-Za-z0-9-]*) die "that does not look like a one-time code from droppen.app" ;;
+    *[!A-Za-z0-9-]*) die "that does not look like a one-time code from my.droppen.app" ;;
   esac
   set_paths
   "$action"

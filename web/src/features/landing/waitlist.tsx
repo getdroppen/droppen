@@ -6,7 +6,7 @@ import { field, primary } from "@/features/cloud/ui";
 import { type HubApi, HubApiError, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
-import { onPublicLink, PRIVACY_PATH } from "./route";
+import { publicLink, PRIVACY_PATH } from "./route";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): a plan — Free (an
@@ -189,7 +189,7 @@ export function WaitlistForm({
         </button>
         <p className="text-xs leading-5 text-muted">
           {t("No confirmation mail and no newsletter: we use your address only to send what you asked for.")}{" "}
-          <a href={PRIVACY_PATH} onClick={onPublicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="text-fg underline underline-offset-4 hover:no-underline">
+          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="text-fg underline underline-offset-4 hover:no-underline">
             {t("Privacy notice")}
           </a>
         </p>

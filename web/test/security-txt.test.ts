@@ -27,7 +27,8 @@ test("security.txt names where to report, the policy and the languages, as RFC 9
   assert.ok(security.includes("security@droppen.app"), "the mailbox SECURITY.md names");
   assert.deepEqual(all("Policy"), ["https://github.com/getdroppen/droppen/blob/main/SECURITY.md"]);
   assert.deepEqual(all("Preferred-Languages"), ["en, zh"]);
-  assert.deepEqual(all("Canonical"), ["https://droppen.app/.well-known/security.txt"]);
+  // Served on every host of droppen.app (docs/hub-api/README.md, "Hosts"): each is a place it is canonical at.
+  assert.deepEqual(all("Canonical"), ["https://droppen.app/.well-known/security.txt", "https://my.droppen.app/.well-known/security.txt", "https://www.droppen.app/.well-known/security.txt"]);
   for (const [name] of fields) assert.ok(["Contact", "Expires", "Policy", "Preferred-Languages", "Canonical"].includes(name), name);
 });
 

@@ -1,7 +1,10 @@
 # `/link`: signing a computer in from its local settings
 
 `https://<hub>/link?v=1` is a page of the web app the hub serves (the same
-open `web/` build as everywhere; `web/src/features/link/`). A computer's
+open `web/` build as everywhere; `web/src/features/link/`), on the app's
+origin, `hubWeb`: the hub's app host where it has one
+(`https://my.droppen.app/link?v=1`; [below](#which-host-the-popup-and-the-hand-off-open)),
+else the hub's own. A computer's
 local settings open it in a popup to add that computer to the account
 (`docs/local-aggregator.md` §3.3–3.4). The contract has two sides: the
 **opener** — the local page, on the computer's own origin (`http://127.0.0.1:8700`,
@@ -37,8 +40,14 @@ All are plain objects with `v: 1` and a type `t`. Hex is lower-case.
 ## Rules
 
 - The opener answers only messages whose `event.source` is the window it
-  opened **and** whose `event.origin` is the hub's web origin, and posts only
-  to that origin.
+  opened **and** whose `event.origin` is the app's origin, and posts only
+  to that origin. An opener from before discovery (v0.2.103–v0.2.128) knows
+  only the hub's own origin: once the app has moved off it, the popup there
+  gets the move notice (`web/src/features/hosts/legacy.tsx`), which offers to
+  move a device that browser keeps there first, then says to close the window
+  and pick "continue in a browser tab instead" (the hand-off, v0.2.125 on),
+  or else to update Droppen or add the device with a one-time code (the table
+  below).
 - The popup takes the `request` only from `window.opener`, and remembers the
   origin the browser reports for it as **`cb`**; every later message goes to
   `cb` only, and only messages from the opener at `cb` with the request's
@@ -55,7 +64,9 @@ All are plain objects with `v: 1` and a type `t`. Hex is lower-case.
   `*.ts.net` is public through Funnel), gets a red warning and an extra
   "this is my own computer" checkbox, next to the fingerprint to compare. The
   hub's own host on any scheme or port, or anything that is not an http(s)
-  origin, is refused. Known and deferred: another program on this computer's
+  origin, is refused — and so, where the hub names its hosts
+  (`/.well-known/droppen-hub`), are its origin, app and site hosts and any name
+  under its origin's (`*.droppen.app`): none of them is a computer's own page. Known and deferred: another program on this computer's
   loopback is "local" too, and the opener can send a second `request` while
   the consent page is open.
 - `machine.hostname` is for reference only: the popup drops control and

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { appUrl, hostMode, siteOrigin } from "@/lib/hub/hosts";
 import { DOWNLOAD_PATH } from "./get-droppen";
 
 /*
@@ -15,6 +16,10 @@ import { DOWNLOAD_PATH } from "./get-droppen";
  * is current.
  *
  * Local mode (a remote-hand server's own shell) never reaches any of this.
+ *
+ * Where the hub serves the app and the public pages on hosts of their own
+ * (`lib/hub/hosts.ts`), a link between them is an ordinary link to the other
+ * host ({@link publicLink}), and `/` on the app host is the app.
  */
 
 export const SIGN_IN_PATH = "/signin";
@@ -45,11 +50,13 @@ export type PublicPage = "landing" | "download" | "pricing" | "privacy" | "secur
  * Only the bare root is the landing page. Sign-in and sign-up have their own
  * paths; every other path is a deep link into the app (a session, a terminal),
  * which keeps showing the sign-in form in place so the link still opens once
- * the visitor is in.
+ * the visitor is in. On the app host of a hub that has one (`hostMode()`
+ * `app`), the root is the app too: signed in, its start; signed out, the
+ * sign-in form.
  */
 export function publicPage(pathname: string): PublicPage {
   const path = pathname.replace(/\/+$/, "") || "/";
-  if (path === "/") return "landing";
+  if (path === "/") return hostMode() === "app" ? "signin" : "landing";
   if (path === DOWNLOAD_PATH) return "download";
   if (path === PRICING_PATH) return "pricing";
   if (path === PRIVACY_PATH) return "privacy";
@@ -145,13 +152,45 @@ export function goPublic(path: string, { replace = false }: { replace?: boolean 
 }
 
 /**
+ * Where a link to `path` (with any query and fragment) goes from this page:
+ * the path itself, or the same path on the other host where the hub keeps
+ * the app and the public pages apart (`lib/hub/hosts.ts`) — from the site
+ * host, every page but the public ones is the app's; from the app host, the
+ * public pages are the site's; from the hub's origin after the move,
+ * everything is the app's.
+ */
+export function publicHref(path: string): string {
+  const bare = path.replace(/[?#].*$/, "") || "/";
+  switch (hostMode()) {
+    case "site":
+      return isFrontPath(bare) ? path : appUrl(path);
+    case "legacy":
+      return appUrl(path);
+    default: {
+      // On the app host a link to `/` is one to the landing page (the app's start is `APP_PATH`).
+      const site = siteOrigin();
+      return site && (bare === "/" || isFrontPath(bare)) ? `${site}${path}` : path;
+    }
+  }
+}
+
+type LinkClick = { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; preventDefault(): void };
+
+/**
  * A link's click, done in place: a plain left click moves without a reload;
- * a modified click (new tab, new window) is left to the browser.
+ * a modified click (new tab, new window) is left to the browser, and so is
+ * any click on a link to another host ({@link publicHref}).
  */
 export function onPublicLink(path: string) {
-  return (event: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; preventDefault(): void }) => {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const elsewhere = publicHref(path) !== path;
+  return (event: LinkClick) => {
+    if (elsewhere || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     goPublic(path);
   };
+}
+
+/** A public link's `href` and click, for `<a {...publicLink(path)}>`. */
+export function publicLink(path: string): { href: string; onClick: (event: LinkClick) => void } {
+  return { href: publicHref(path), onClick: onPublicLink(path) };
 }

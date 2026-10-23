@@ -230,10 +230,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。",
   ],
   [
-    "Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything.",
-    "Claude Code 和 Codex 跑在你可运行 AI 的设备上（协议里叫 host），你的浏览器和手机经端到端加密的通道控制它们。Droppen Hub（droppen.app）保管账户、设备链和加密副本，并提供网页版；通道里的密文由 Droppen 中继转发，没有中继承载的通道则由 Droppen Hub 转发。两者都没有任何能解密的钥匙。",
-    "Claude Code 和 Codex 跑在你可執行 AI 的裝置上（協定裡叫 host），你的瀏覽器和手機經端對端加密的通道控制它們。Droppen Hub（droppen.app）保管帳戶、裝置鏈和加密副本，並提供網頁版；通道裡的密文由 Droppen 中繼轉送，沒有中繼承載的通道則由 Droppen Hub 轉送。兩者都沒有任何能解密的金鑰。",
-    "Claude Code と Codex は、AI を実行できるあなたのデバイス（プロトコル上は host）で動き、ブラウザやスマホはエンドツーエンドで暗号化されたチャネルでそれを操作します。Droppen Hub（droppen.app）はアカウント、デバイスチェーン、暗号化コピーを預かり、ウェブアプリを配信します。チャネルの暗号文を渡すのは Droppen 中継で、中継が運ばないチャネルでは Droppen Hub です。どちらも、何かを復号できる鍵は持っていません。",
+    "Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app; Droppen relays, or Droppen Hub where no relay carries a channel, pass a channel's ciphertext on. Neither holds a key that can decrypt anything.",
+    "Claude Code 和 Codex 跑在你可运行 AI 的设备上（协议里叫 host），你的浏览器和手机经端到端加密的通道控制它们。Droppen Hub（droppen.app）保管账户、设备链和加密副本，并在 my.droppen.app 提供网页版；通道里的密文由 Droppen 中继转发，没有中继承载的通道则由 Droppen Hub 转发。两者都没有任何能解密的钥匙。",
+    "Claude Code 和 Codex 跑在你可執行 AI 的裝置上（協定裡叫 host），你的瀏覽器和手機經端對端加密的通道控制它們。Droppen Hub（droppen.app）保管帳戶、裝置鏈和加密副本，並在 my.droppen.app 提供網頁版；通道裡的密文由 Droppen 中繼轉送，沒有中繼承載的通道則由 Droppen Hub 轉送。兩者都沒有任何能解密的金鑰。",
+    "Claude Code と Codex は、AI を実行できるあなたのデバイス（プロトコル上は host）で動き、ブラウザやスマホはエンドツーエンドで暗号化されたチャネルでそれを操作します。Droppen Hub（droppen.app）はアカウント、デバイスチェーン、暗号化コピーを預かり、my.droppen.app でウェブアプリを配信します。チャネルの暗号文を渡すのは Droppen 中継で、中継が運ばないチャネルでは Droppen Hub です。どちらも、何かを復号できる鍵は持っていません。",
   ],
   [
     "What Droppen Hub sees, and what it never sees",
@@ -1364,10 +1364,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Droppen Hub、その運営者、または Hub に強制できる者",
   ],
   [
-    "- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**",
-    "- **看到[[第 01 节|overview]]列出的元数据**\n- 给使用 droppen.app 的浏览器**下发被篡改的网页**（见最后一行与 [[7.1|t7-1]]）\n- 在没有中继的地方**承载通道的密文**\n- **拒绝服务**\n- **删除数据**\n- **延迟最新的记录或链条目**\n- **做流量分析**",
-    "- **看到[[第 01 節|overview]]列出的中繼資料**\n- 給使用 droppen.app 的瀏覽器**下發被竄改的網頁**（見最後一行與 [[7.1|t7-1]]）\n- 在沒有中繼的地方**承載通道的密文**\n- **拒絕服務**\n- **刪除資料**\n- **延遲最新的紀錄或鏈項目**\n- **做流量分析**",
-    "- **[[01 節|overview]]のメタデータを見る**\n- droppen.app を使うブラウザに**改ざんしたページを配信する**（最終行と [[7.1|t7-1]]）\n- 中継がないところで**チャネルの暗号文を運ぶ**\n- **サービスを拒否する**\n- **データを消す**\n- **最新のレコードやチェーンのエントリを遅らせる**\n- **通信を分析する**",
+    "- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**",
+    "- **看到[[第 01 节|overview]]列出的元数据**\n- 给使用 my.droppen.app 的浏览器**下发被篡改的网页**（见最后一行与 [[7.1|t7-1]]）\n- 在没有中继的地方**承载通道的密文**\n- **拒绝服务**\n- **删除数据**\n- **延迟最新的记录或链条目**\n- **做流量分析**",
+    "- **看到[[第 01 節|overview]]列出的中繼資料**\n- 給使用 my.droppen.app 的瀏覽器**下發被竄改的網頁**（見最後一行與 [[7.1|t7-1]]）\n- 在沒有中繼的地方**承載通道的密文**\n- **拒絕服務**\n- **刪除資料**\n- **延遲最新的紀錄或鏈項目**\n- **做流量分析**",
+    "- **[[01 節|overview]]のメタデータを見る**\n- my.droppen.app を使うブラウザに**改ざんしたページを配信する**（最終行と [[7.1|t7-1]]）\n- 中継がないところで**チャネルの暗号文を運ぶ**\n- **サービスを拒否する**\n- **データを消す**\n- **最新のレコードやチェーンのエントリを遅らせる**\n- **通信を分析する**",
   ],
   [
     "Through the protocol alone:\n- **decrypt content**\n- **forge commands** (only devices on the chain are admitted, and the first message asks for nothing)\n- **add a device of its own**\n- **slip in keys** (they are sender-authenticated and committed on the chain)\n- **forge or quietly change records** (signed heads)\n- **take over a device that runs AI with a new genesis** (it pinned the account key)",
@@ -1520,16 +1520,22 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "ウェブ配信の穴",
   ],
   [
-    "The app at droppen.app comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.",
-    "droppen.app 上的网页由 Droppen Hub 下发，所以端到端加密能防 Hub 读你的数据，却**防不了 Hub 改过的网页**：这样的网页能做这个浏览器能做的任何事。WebCrypto 的「不可导出」**挡不住同源代码**：这种代码能像正常页面一样解开存储的设备钥和用户钥，再发往任何地方。",
-    "droppen.app 上的網頁由 Droppen Hub 下發，所以端對端加密能防 Hub 讀你的資料，卻**防不了 Hub 改過的網頁**：這樣的網頁能做這個瀏覽器能做的任何事。WebCrypto 的「不可匯出」**擋不住同源程式碼**：這種程式碼能像正常頁面一樣解開儲存的裝置金鑰和使用者金鑰，再傳往任何地方。",
-    "droppen.app のアプリは Droppen Hub から届くので、エンドツーエンド暗号化は Hub からデータを守れても、**Hub が変えたページからは守れません**。そうしたページは、このブラウザにできることを何でもできます。WebCrypto のエクスポート不可の鍵も、**同一オリジンのコードは止められません**。そのコードは本物のページと同じように、保存されたデバイス鍵とユーザー鍵を開け、どこへでも送れます。",
+    "The app at **my.droppen.app** comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.",
+    "**my.droppen.app** 上的网页由 Droppen Hub 下发，所以端到端加密能防 Hub 读你的数据，却**防不了 Hub 改过的网页**：这样的网页能做这个浏览器能做的任何事。WebCrypto 的「不可导出」**挡不住同源代码**：这种代码能像正常页面一样解开存储的设备钥和用户钥，再发往任何地方。",
+    "**my.droppen.app** 上的網頁由 Droppen Hub 下發，所以端對端加密能防 Hub 讀你的資料，卻**防不了 Hub 改過的網頁**：這樣的網頁能做這個瀏覽器能做的任何事。WebCrypto 的「不可匯出」**擋不住同源程式碼**：這種程式碼能像正常頁面一樣解開儲存的裝置金鑰和使用者金鑰，再傳往任何地方。",
+    "**my.droppen.app** のアプリは Droppen Hub から届くので、エンドツーエンド暗号化は Hub からデータを守れても、**Hub が変えたページからは守れません**。そうしたページは、このブラウザにできることを何でもできます。WebCrypto のエクスポート不可の鍵も、**同一オリジンのコードは止められません**。そのコードは本物のページと同じように、保存されたデバイス鍵とユーザー鍵を開け、どこへでも送れます。",
   ],
   [
-    "Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what droppen.app serves with a release's manifest ([[docs/web-integrity.md]] says how).",
-    "每次发版都附带 **web-manifest.json**，即网页每个文件的 SHA-256；从 v0.2.127 起还附带它的**签名证明**，两者都由发版流程（[[.github/workflows/release.yml]]）生成；页面的 Content-Security-Policy 只允许它自己的脚本。验证脚本 [[scripts/verify-web.mjs]] 会拿 droppen.app 实际下发的内容和某次发版的清单比对（做法见 [[docs/web-integrity.md]]）。",
-    "每次發版都附帶 **web-manifest.json**，即網頁每個檔案的 SHA-256；從 v0.2.127 起還附帶它的**簽章證明**，兩者都由發版流程（[[.github/workflows/release.yml]]）產生；頁面的 Content-Security-Policy 只允許它自己的指令碼。驗證指令碼 [[scripts/verify-web.mjs]] 會拿 droppen.app 實際下發的內容和某次發版的清單比對（做法見 [[docs/web-integrity.md]]）。",
-    "リリースにはそれぞれ **web-manifest.json** が付きます。ウェブアプリの全ファイルの SHA-256 で、v0.2.127 からはその**署名付きの証明**も付き、どちらもリリースのワークフロー（[[.github/workflows/release.yml]]）が作ります。ページの Content-Security-Policy は自分のスクリプトしか許しません。スクリプト [[scripts/verify-web.mjs]] が、droppen.app が実際に配信するものとリリースのマニフェストを比べます（手順は [[docs/web-integrity.md]]）。",
+    "**www.droppen.app** shows this page and the other public ones: the same attested build, which never reads or stores a key there. droppen.app is the Hub's own address, where devices that run AI and relays connect. A browser set up at droppen.app before the app moved to my.droppen.app either moves its keys there once, from one page to the other inside the browser, or is added again as a new device; either way they never pass through the Hub.",
+    "**www.droppen.app** 提供本页和其他公开页面：同一个经过证明的构建，在那里从不读取或保存任何钥匙。droppen.app 是 Hub 自己的地址，可运行 AI 的设备和中继连到那里。在网页版搬到 my.droppen.app 之前就在 droppen.app 上设置好的浏览器，要么在浏览器内从一个页面到另一个页面，把钥匙一次性搬到 my.droppen.app，要么重新作为新设备加入；无论哪种，钥匙都不会经过 Hub。",
+    "**www.droppen.app** 提供本頁和其他公開頁面：同一個經過證明的建置，在那裡從不讀取或儲存任何金鑰。droppen.app 是 Hub 自己的位址，可執行 AI 的裝置和中繼連到那裡。在網頁版搬到 my.droppen.app 之前就在 droppen.app 上設定好的瀏覽器，要麼在瀏覽器內從一個頁面到另一個頁面，把金鑰一次性搬到 my.droppen.app，要麼重新作為新裝置加入；無論哪種，金鑰都不會經過 Hub。",
+    "**www.droppen.app** はこのページなどの公開ページを配信します。同じ証明付きビルドですが、そこで鍵を読むことも保存することもありません。droppen.app は Hub 自身のアドレスで、AI を実行できるデバイスと中継はそこに接続します。ウェブアプリが my.droppen.app に移る前に droppen.app で設定したブラウザは、ブラウザの中でページからページへ鍵を一度だけ my.droppen.app に移すか、新しいデバイスとして追加し直します。どちらの場合も、鍵が Hub を通ることはありません。",
+  ],
+  [
+    "Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what my.droppen.app and www.droppen.app serve with a release's manifest ([[docs/web-integrity.md]] says how).",
+    "每次发版都附带 **web-manifest.json**，即网页每个文件的 SHA-256；从 v0.2.127 起还附带它的**签名证明**，两者都由发版流程（[[.github/workflows/release.yml]]）生成；页面的 Content-Security-Policy 只允许它自己的脚本。验证脚本 [[scripts/verify-web.mjs]] 会拿 my.droppen.app 和 www.droppen.app 实际下发的内容和某次发版的清单比对（做法见 [[docs/web-integrity.md]]）。",
+    "每次發版都附帶 **web-manifest.json**，即網頁每個檔案的 SHA-256；從 v0.2.127 起還附帶它的**簽章證明**，兩者都由發版流程（[[.github/workflows/release.yml]]）產生；頁面的 Content-Security-Policy 只允許它自己的指令碼。驗證指令碼 [[scripts/verify-web.mjs]] 會拿 my.droppen.app 和 www.droppen.app 實際下發的內容和某次發版的清單比對（做法見 [[docs/web-integrity.md]]）。",
+    "リリースにはそれぞれ **web-manifest.json** が付きます。ウェブアプリの全ファイルの SHA-256 で、v0.2.127 からはその**署名付きの証明**も付き、どちらもリリースのワークフロー（[[.github/workflows/release.yml]]）が作ります。ページの Content-Security-Policy は自分のスクリプトしか許しません。スクリプト [[scripts/verify-web.mjs]] が、my.droppen.app と www.droppen.app が実際に配信するものとリリースのマニフェストを比べます（手順は [[docs/web-integrity.md]]）。",
   ],
   [
     "A check **cannot see a page served once, to one person**, nor clean a browser that already cached a bad one.",
@@ -1712,10 +1718,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "いま読んでいるこのページ",
   ],
   [
-    "node [[scripts/verify-web.mjs]] checks what droppen.app serves against a release's manifest; /.well-known/droppen-build says which build it is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).",
-    "node [[scripts/verify-web.mjs]] 会拿 droppen.app 下发的内容和某次发版的清单比对；/.well-known/droppen-build 说明站点跑的是哪个构建。源码公开以后的发版，清单都带**签名的证明**；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（[[docs/web-integrity.md]]）。",
-    "node [[scripts/verify-web.mjs]] 會拿 droppen.app 下發的內容和某次發版的清單比對；/.well-known/droppen-build 說明站點跑的是哪個建置。原始碼公開以後的發版，清單都帶**簽章的證明**；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（[[docs/web-integrity.md]]）。",
-    "node [[scripts/verify-web.mjs]] は、droppen.app が配信するものをリリースのマニフェストと照合します。/.well-known/droppen-build はどのビルドかを示します。ソースの公開以降のリリースでは、マニフェストに**署名付きの証明**が付いています。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（[[docs/web-integrity.md]]）。",
+    "node [[scripts/verify-web.mjs]] checks what my.droppen.app and www.droppen.app serve against a release's manifest; /.well-known/droppen-build says which build each is. Releases made since the source went public carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]).",
+    "node [[scripts/verify-web.mjs]] 会拿 my.droppen.app 和 www.droppen.app 下发的内容和某次发版的清单比对；/.well-known/droppen-build 说明站点跑的是哪个构建。源码公开以后的发版，清单都带**签名的证明**；Droppen Hub 也可能跑着一个不是发版的构建，那只有用那个提交自己构建出来才能比对（[[docs/web-integrity.md]]）。",
+    "node [[scripts/verify-web.mjs]] 會拿 my.droppen.app 和 www.droppen.app 下發的內容和某次發版的清單比對；/.well-known/droppen-build 說明站點跑的是哪個建置。原始碼公開以後的發版，清單都帶**簽章的證明**；Droppen Hub 也可能跑著一個不是發版的建置，那只有用那個提交自己建置出來才能比對（[[docs/web-integrity.md]]）。",
+    "node [[scripts/verify-web.mjs]] は、my.droppen.app と www.droppen.app が配信するものをリリースのマニフェストと照合します。/.well-known/droppen-build はそれぞれどのビルドかを示します。ソースの公開以降のリリースでは、マニフェストに**署名付きの証明**が付いています。Droppen Hub がリリースではないビルドを動かしていることもあり、それに合わせられるのはそのコミットからのビルドだけです（[[docs/web-integrity.md]]）。",
   ],
   [
     "Report a vulnerability",
@@ -1957,10 +1963,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "あなたのフルデバイスから操作されます。ほかのデバイスからは、受け入れリストが許すときだけ。フルデバイスになることはなく、チェーンのエントリに署名せず、ユーザー鍵も持ちません。",
   ],
   [
-    "Where you watch and control from: droppen.app, in a browser or on a phone. The local web app is different: it shows the view of the device that serves it and holds no keys.",
-    "你查看和操控的地方：浏览器或手机上的 droppen.app。本地网页版不同：它显示的是提供它的那台设备的视图，自己不持有任何钥。",
-    "你查看和操控的地方：瀏覽器或手機上的 droppen.app。本地網頁版不同：它顯示的是提供它的那台裝置的視圖，自己不持有任何金鑰。",
-    "見たり操作したりする場所：ブラウザやスマホで開く droppen.app。ローカルのウェブアプリは別で、それを配信するデバイスの視点を表示し、自分では鍵を持ちません。",
+    "Where you watch and control from: my.droppen.app, in a browser or on a phone. The local web app is different: it shows the view of the device that serves it and holds no keys.",
+    "你查看和操控的地方：浏览器或手机上的 my.droppen.app。本地网页版不同：它显示的是提供它的那台设备的视图，自己不持有任何钥。",
+    "你查看和操控的地方：瀏覽器或手機上的 my.droppen.app。本地網頁版不同：它顯示的是提供它的那台裝置的視圖，自己不持有任何金鑰。",
+    "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。ローカルのウェブアプリは別で、それを配信するデバイスの視点を表示し、自分では鍵を持ちません。",
   ],
   [
     "Its device key, and the user key, which opens every content key in the account's keyring.",
@@ -1987,10 +1993,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "droppen プログラムかデスクトップアプリが動くデバイスで、AI のセッションはそこで動きます。自分の ID 鍵とコンテンツ鍵を持ち、フルデバイスになることはありません。",
   ],
   [
-    "Where you watch and control from: droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries.",
-    "你查看和操控的地方：浏览器或手机上的 droppen.app。你现在配对的每一台都是完整设备：它持有用户钥，并签署账户的链条目。",
-    "你查看和操控的地方：瀏覽器或手機上的 droppen.app。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
-    "見たり操作したりする場所：ブラウザやスマホで開く droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
+    "Where you watch and control from: my.droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries.",
+    "你查看和操控的地方：浏览器或手机上的 my.droppen.app。你现在配对的每一台都是完整设备：它持有用户钥，并签署账户的链条目。",
+    "你查看和操控的地方：瀏覽器或手機上的 my.droppen.app。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
+    "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
 ];
 

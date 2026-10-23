@@ -10,7 +10,7 @@ import { landingBundles } from "./copy";
 import { DOWNLOAD_PATH } from "./get-droppen";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
-import { APP_PATH, onPublicLink, SIGN_UP_PATH } from "./route";
+import { APP_PATH, publicLink, SIGN_UP_PATH } from "./route";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
 
 /*
@@ -110,7 +110,7 @@ function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: Wai
           unit={t("forever")}
           note={t("No account, nothing to sign up for")}
           action={
-            <a href={DOWNLOAD_PATH} onClick={onPublicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(secondary, "w-full")}>
+            <a {...publicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(secondary, "w-full")}>
               {t("Download Droppen")}
             </a>
           }
@@ -131,7 +131,7 @@ function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: Wai
           note={t("Sign-up is by invite for now")}
           action={
             signedIn ? (
-              <a href={APP_PATH} onClick={onPublicLink(APP_PATH)} data-testid="plan-free-open" className={cn(secondary, "w-full")}>
+              <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(secondary, "w-full")}>
                 {t("Open app")}
               </a>
             ) : (
@@ -144,7 +144,7 @@ function Plans({ signedIn, onChoose }: { signedIn: boolean; onChoose: (plan: Wai
             signedIn ? (
               <span className="font-mono text-2xs leading-4 text-faint">{t("You have an account already.")}</span>
             ) : (
-              <a href={SIGN_UP_PATH} onClick={onPublicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className="w-fit text-xs text-muted underline underline-offset-4 hover:text-fg">
+              <a {...publicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className="w-fit text-xs text-muted underline underline-offset-4 hover:text-fg">
                 {t("Have an invite code? Sign up")}
               </a>
             )

@@ -1,4 +1,4 @@
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -40,37 +40,9 @@ import { UnsupportedBrowserScreen } from "./browser-support";
 import { Turnstile } from "./turnstile";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
-import { APP_PATH, bootRoute, type FrontPage, frontPage, goPublic, isAuthPath, isFrontPath, onPublicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, usePathname } from "@/features/landing/route";
+import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, usePathname } from "@/features/landing/route";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
-
-/** The landing page (signed out, at `/`): its own chunk, so the app's boot never carries it. */
-const LandingPage = lazy(() => import("@/features/landing/landing"));
-/** The download page (`/download`, signed in or not): its own chunk too. */
-const DownloadPage = lazy(() => import("@/features/landing/download"));
-/** The pricing page with the waitlist (`/pricing`) and the privacy notice (`/privacy`), signed in or not: chunks of their own. */
-const PricingPage = lazy(() => import("@/features/landing/pricing"));
-const PrivacyPage = lazy(() => import("@/features/landing/privacy"));
-/** How the encryption works (`/security`), signed in or not: its own chunk, with its own words. */
-const SecurityPage = lazy(() => import("@/features/landing/security/security"));
-
-/** One of the pages that are pages of their own, signed in or not. */
-function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
-  return (
-    <Suspense fallback={<div className="h-full w-full bg-bg" />}>
-      {page === "download" ? (
-        <DownloadPage signedIn={signedIn} />
-      ) : page === "pricing" ? (
-        <PricingPage signedIn={signedIn} api={api} />
-      ) : page === "privacy" ? (
-        <PrivacyPage signedIn={signedIn} />
-      ) : page === "security" ? (
-        <SecurityPage signedIn={signedIn} />
-      ) : (
-        <LandingPage signedIn={signedIn} />
-      )}
-    </Suspense>
-  );
-}
+import { FrontPageView } from "@/features/landing/front-pages";
 
 /*
  * The page in cloud mode, before (and around) the app: sign in or sign up at
@@ -1260,7 +1232,7 @@ export function AuthScreen({
               ) : null
             )}
           </form>
-          <a href="/" onClick={onPublicLink("/")} className="mt-6 self-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
+          <a {...publicLink("/")} className="mt-6 self-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
             {t("What is Droppen?")}
           </a>
         </div>

@@ -1,7 +1,7 @@
 # Droppen hub API, v1
 
 This is the contract between the **open** clients — the local server and its
-agent (`server-rs`), the web app (`web/`, which droppen.app also serves),
+agent (`server-rs`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
 `droppen-relay` (`server-rs/crates/rh-relay`), `rh-proto`, `rh-client` (the
 device side, in Rust) and `rh-devkit` —
 and the **closed** Droppen Hub (a separate, private repository). Open code may rely
@@ -51,26 +51,49 @@ abuse control, not security.
 
 | host | serves |
 |---|---|
-| the hub's origin (e.g. `https://droppen.app`, sockets on `wss://droppen.app`) | `/v1/*`, `/healthz`, `/install.sh` (a redirect to the public installer), and the web app for every other `GET` |
+| the hub's origin (e.g. `https://droppen.app`, sockets on `wss://droppen.app`) | `/v1/*` (never redirected: sockets and agents do not follow redirects), `/healthz`, `/install.sh` (a redirect to the public installer), `/.well-known/*`, and — unless an app host takes it — the web app for every other `GET` |
+| the app host (optional, e.g. `https://my.droppen.app`) | the web app (`/` is the app), `/v1/*` for the page's own requests, `/.well-known/*`, `/healthz`; the public pages are redirected to the site host |
+| the site host (optional, e.g. `https://www.droppen.app`) | the web app's public pages (`/`, `/pricing`, `/download`, `/security`, `/privacy`, `/terms`), the `/v1/*` they call, `/.well-known/*`, `/healthz`; every other page is redirected to the app host |
 | the Turnstile host (optional, e.g. `https://verify.droppen.app`) | `GET /turnstile` only, and `/healthz`; everything else is 404 |
 | other host names the hub is configured with | `308` to the same path on the origin |
 | a relay's origin (open, `droppen-relay`) | `/healthz`, `/v1/ping`, `/v1/relay-id`, `/v1/connect` |
 
+A hub with an app host says which of its names does what at
+`GET /.well-known/droppen-hub` (http.md), the same answer on every host:
+`{origin, app, site?, apex_mode?}`. The web app reads it before anything else
+and runs as the app on the app host, as the public pages alone (no key store,
+no service worker) on the site host, and, on the origin, as before
+(`apex_mode: app`), as the move notice (`move`: a browser that keeps a device
+there is offered to move it to the app host, remove it, or go on without it;
+any other is sent on to the app host with its path, query and fragment), or
+not at all (`redirect`: the hub sends the origin's pages to the app host).
+A hub that does not answer it serves everything on one host, as before, and
+the web app behaves as it always has. Devices that run AI, relays, the
+installer and every relay ticket keep the origin: only pages move.
+
 The origin a client signs (`HubLogin.hub`) is the one **it dialled**
 (`wss://host[:port]`), never the one the hub announces in its `challenge`.
+A browser on the app host dials the app host (its shell's marker names the
+host it was served on, `wss://my.droppen.app`), and the hub takes a browser
+device's sign-in (`device` on `/v1/client`, `deviceSession` on
+`/v1/session`) bound to any of its origin and app host; every other role is
+bound to the origin.
 
-**WebAuthn only on the app's origin** (`docs/passkeys.md` §3.8). Every
-response for the hub's own host carries `Permissions-Policy:
+**WebAuthn only on the app's host** (`docs/passkeys.md` §3.8). Every
+response for the host the app is on (the app host, or the hub's own host
+when there is none) carries `Permissions-Policy:
 publickey-credentials-get=(self), publickey-credentials-create=(self)`;
-every response for any other host it answers (the Turnstile host, a
-redirected name, any subdomain) and every relay response carries
+every response for any other host it answers (the hub's origin once there
+is an app host, the site host, the Turnstile host, a redirected name, any
+subdomain) and every relay response carries
 `publickey-credentials-get=(), publickey-credentials-create=()`. A page
 there cannot ask for the app's passkeys, though they are bound to the
-parent domain; the hub takes no ceremony made on another origin either.
-Any other host under the relying party id that the hub does not serve
-(another `*.droppen.app` site) must send the `=()` policy itself. The hub
-refuses to start with its Turnstile page on the relying party id or a
-subdomain of it.
+parent domain; the hub takes no ceremony made on an origin it does not
+list (`https://my.droppen.app`, and `https://droppen.app` while browsers are
+still moving off it). Any other host under the relying party id that the hub
+does not serve (another `*.droppen.app` site) must send the `=()` policy
+itself. The hub refuses to start with its Turnstile page on the relying party
+id or a subdomain of it.
 
 ## Authentication
 

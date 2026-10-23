@@ -139,6 +139,21 @@ export interface SignOutOptions {
   dropPush?: () => Promise<void>;
   /** How long each hub call may take ({@link SIGN_OUT_HUB_MS}; tests make it short). */
   hubWithinMs?: number;
+  /**
+   * Where the page goes once it is all done, told what could not be cleared
+   * and why the account still lists this browser, if it does. Without it
+   * (the app's sign-out) both are kept for the sign-in screen and the page
+   * goes there. The move notice on the hub's origin
+   * (`features/hosts/legacy.tsx`) says them itself: the app host's sign-in
+   * screen could not read this origin's storage.
+   */
+  finish?: (result: SignOutResult) => void;
+}
+
+/** What a sign-out could not clear, and why the account still lists the browser it removed ({@link SignOutOptions.finish}). */
+export interface SignOutResult {
+  failures: string[];
+  stillListed: StillListed | null;
 }
 
 /**
@@ -205,6 +220,10 @@ export async function signOut(from?: CloudAccount, held?: HeldSession, opts: Sig
   shell?.link.stop();
   clearSession();
   failures.unshift(...(await clearing));
+  if (opts.finish) {
+    if (failures.length) console.warn("cloud: sign-out could not clear:", failures);
+    return opts.finish({ failures, stillListed });
+  }
   if (failures.length) {
     console.warn("cloud: sign-out could not clear:", failures);
     rememberFailures(failures);

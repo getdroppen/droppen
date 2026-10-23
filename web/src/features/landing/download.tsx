@@ -25,7 +25,8 @@ import {
 } from "./get-droppen";
 import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
-import { APP_PATH, onPublicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
+import { appHost } from "@/lib/hub/hosts";
+import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
 
 /*
  * droppen.app/download: how Droppen gets onto a device, the way other
@@ -176,7 +177,7 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
           { title: t("Drag Droppen to Applications"), body: t("Like any other Mac app.") },
           { title: t("Open Droppen"), body: t("It starts by itself and opens its own window. Nothing to type.") },
           ...(availability.appSignIn
-            ? [{ title: t("Click Sign in to Droppen in the app"), body: t("A droppen.app window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.") }]
+            ? [{ title: t("Click Sign in to Droppen in the app"), body: t("A {{app}} window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.", { app: appHost() }) }]
             : []),
         ]}
       />
@@ -209,7 +210,7 @@ function BackgroundPanel() {
         items={[
           { title: t("It installs and starts at login"), body: t("The script installs Droppen, starts it now and at every login, and creates your first local login: it prints it, or asks you to choose one.") },
           { title: t("Its page opens"), body: t("Your browser opens Droppen on that device. Sign in with the local login: everything already works there, with no account.") },
-          { title: t("Sign in to Droppen"), body: t("Click Sign in to Droppen on that page. A droppen.app window opens: sign in, check the fingerprint matches, and add the device.") },
+          { title: t("Sign in to Droppen"), body: t("Click Sign in to Droppen on that page. A {{app}} window opens: sign in, check the fingerprint matches, and add the device.", { app: appHost() }) },
           { title: t("It is in my devices"), body: t("Within seconds it is online in my devices, on every phone and browser of your account. Add another device the same way, and put both on one screen.") },
         ]}
       />
@@ -255,14 +256,14 @@ function LinuxPanel({
         )}
         <div className="flex max-w-[44rem] flex-col gap-2">
           <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
-          <p className="text-xs leading-5 text-muted">{t("Replace <code> with a one-time code: on droppen.app, open my devices → add a device that runs AI → show a one-time code.")}</p>
+          <p className="text-xs leading-5 text-muted">{t("Replace <code> with a one-time code: on {{app}}, open my devices → add a device that runs AI → show a one-time code.", { app: appHost() })}</p>
           <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
         </div>
       </PanelHead>
       <Steps
         testId="linux-steps"
         items={[
-          { title: t("Get a one-time code"), body: t("On droppen.app: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.") },
+          { title: t("Get a one-time code"), body: t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() }) },
           { title: t("Run the command on the server"), body: t("It installs Droppen, starts it as a service, and joins your account with the code.") },
           { title: t("It is in my devices"), body: t("Within seconds it is online in my devices, on every phone and browser of your account.") },
         ]}
@@ -279,7 +280,7 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
       <Soon testId="windows-soon" label={t("not yet")} body={t("What works on Windows today:")}>
         <ul className="flex flex-col gap-2">
           {[
-            t("Control your other devices from this browser: sign in at droppen.app."),
+            t("Control your other devices from this browser: sign in at {{app}}.", { app: appHost() }),
             availability.app ? t("Run the AI on a Mac, with the Droppen App.") : t("Run the AI on a Mac: in the background today, with the Droppen App soon."),
             availability.linux ? t("Run the AI on a Linux server, or in WSL.") : t("Once Linux is supported: a Linux server, or WSL."),
           ].map((line) => (
@@ -290,8 +291,8 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
           ))}
         </ul>
         <div className="flex flex-wrap gap-2">
-          <a href={into} onClick={onPublicLink(into)} data-variant="primary" data-testid="use-in-browser" className={primary}>
-            {t("use droppen.app in this browser")}
+          <a {...publicLink(into)} data-variant="primary" data-testid="use-in-browser" className={primary}>
+            {t("use {{app}} in this browser", { app: appHost() })}
           </a>
           <button type="button" data-testid="to-macos-app" onClick={() => onPick("macos-app")} className={secondary}>
             {t("the Mac options")}
@@ -315,17 +316,17 @@ function MobilePanel({ signedIn }: { signedIn: boolean }) {
     <>
       <PanelHead
         title={t("On your phone, Droppen is the remote control")}
-        body={t("The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put droppen.app on your home screen and it opens like an app.")}
+        body={t("The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put {{app}} on your home screen and it opens like an app.", { app: appHost() })}
       >
-        <a href={into} onClick={onPublicLink(into)} data-variant="primary" data-testid="open-droppen" className={cn(primary, "w-fit")}>
-          {t("open droppen.app")}
+        <a {...publicLink(into)} data-variant="primary" data-testid="open-droppen" className={cn(primary, "w-fit")}>
+          {t("open {{app}}", { app: appHost() })}
         </a>
       </PanelHead>
       <Steps
         testId="mobile-steps"
         items={[
-          { title: t("iPhone and iPad (Safari)"), body: t("Open droppen.app in Safari, tap Share, then Add to Home Screen.") },
-          { title: t("Android (Chrome)"), body: t("Open droppen.app in Chrome, tap ⋮, then Add to Home screen or Install app.") },
+          { title: t("iPhone and iPad (Safari)"), body: t("Open {{app}} in Safari, tap Share, then Add to Home Screen.", { app: appHost() }) },
+          { title: t("Android (Chrome)"), body: t("Open {{app}} in Chrome, tap ⋮, then Add to Home screen or Install app.", { app: appHost() }) },
           {
             title: t("Install it where your AI runs"),
             body: (
@@ -462,7 +463,7 @@ function Manual() {
 function Uninstall({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
   const steps = [
-    { title: t("Remove it from your account"), body: t("On droppen.app, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.") },
+    { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.", { app: appHost() }) },
     { title: t("Disconnect it"), body: t("On the device, Settings → Droppen → Disconnect this device deletes its Droppen keys there.") },
   ];
   return (
@@ -501,20 +502,20 @@ function End({ signedIn }: { signedIn: boolean }) {
           <p className="text-sm leading-6 text-muted">
             {signedIn
               ? t("Once it is signed in, it is in my devices: add another device the same way to see both on one screen.")
-              : t("No account yet? Sign up with your invite code first, or in the droppen.app window when you sign the device in.")}
+              : t("No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.", { app: appHost() })}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
           {signedIn ? (
-            <a href="/devices" onClick={onPublicLink("/devices")} data-testid="download-open-devices" className={secondary}>
+            <a {...publicLink("/devices")} data-testid="download-open-devices" className={secondary}>
               {t("Open my devices")}
             </a>
           ) : (
             <>
-              <a href={SIGN_UP_PATH} onClick={onPublicLink(SIGN_UP_PATH)} className={secondary}>
+              <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
                 {t("Get started")}
               </a>
-              <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={secondary}>
+              <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
                 {t("Sign in")}
               </a>
             </>

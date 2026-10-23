@@ -5,7 +5,7 @@ import { authErrorKind, type EmailStanding, type HubApi, HubApiError, type Signe
 import type { CloudAccount } from "@/lib/hub/account";
 import { cn } from "@/lib/cn";
 import { PrefsControls } from "@/components/prefs-controls";
-import { onPublicLink, SIGN_IN_PATH } from "@/features/landing/route";
+import { publicLink, SIGN_IN_PATH } from "@/features/landing/route";
 import { Turnstile } from "./turnstile";
 import { authErrorText, Centered, ErrorLine, errorText, Note, Panel, primary, quiet, secondary } from "./ui";
 
@@ -336,7 +336,7 @@ export function VerifyEmailPage({ api, onContinue }: { api: HubApi; onContinue?:
       {t("open the app")}
     </button>
   ) : (
-    <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} data-variant="primary" className={cn(primary, "self-start")}>
+    <a {...publicLink(SIGN_IN_PATH)} data-variant="primary" className={cn(primary, "self-start")}>
       {t("sign in")}
     </a>
   );
@@ -404,7 +404,7 @@ export function VerifyEmailPage({ api, onContinue }: { api: HubApi; onContinue?:
                   {t("open the app")}
                 </button>
               ) : (
-                <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={quiet}>
+                <a {...publicLink(SIGN_IN_PATH)} className={quiet}>
                   {t("sign in")}
                 </a>
               )}

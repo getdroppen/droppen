@@ -252,7 +252,7 @@ function useConceptWords(): Record<ConceptId, { name: string; says: string }> {
     },
     client: {
       name: t("Your browsers and phones"),
-      says: t("Where you watch and control from: droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries."),
+      says: t("Where you watch and control from: my.droppen.app, in a browser or on a phone. Each one you pair now is a full device: it holds the user key and signs the account's chain entries."),
     },
   };
 }

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { landingBundles } from "./copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
-import { onPublicLink, SECURITY_PATH } from "./route";
+import { publicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
 
 /*
@@ -151,7 +151,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
               </div>
             </div>
             <p className="border-t border-border px-6 py-4 text-xs leading-5 max-md:px-4">
-              <a href={SECURITY_PATH} onClick={onPublicLink(SECURITY_PATH)} data-testid="privacy-security" className="text-fg underline underline-offset-4 hover:no-underline">
+              <a {...publicLink(SECURITY_PATH)} data-testid="privacy-security" className="text-fg underline underline-offset-4 hover:no-underline">
                 {t("How the encryption works, in detail")}
               </a>
             </p>

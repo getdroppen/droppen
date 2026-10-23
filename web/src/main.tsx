@@ -2,6 +2,9 @@
 // comes off it (`lib/local-open.ts`), and so do the browser hand-off's
 // fragments — before the router or the service worker reads it.
 import "./lib/local-open-boot";
+// The address as it loaded (the hand-off's fragment still on it), for the
+// move notice on the hub's origin to pass on whole (`lib/hub/boot-url.ts`).
+import "./lib/hub/boot-url";
 import { takeReturn } from "./features/link/fragment-boot";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
@@ -9,6 +12,10 @@ import { CloudApp } from "./features/cloud/cloud-app";
 import { isReturnPath } from "./features/link/handoff";
 import { LinkReturnPage } from "./features/link/link-return";
 import { isCloud } from "./lib/hub/config";
+import { appUrl, notInstallable, resolveHostMode, siteOrigin } from "./lib/hub/hosts";
+import { frontPage } from "./features/landing/route";
+import { SiteApp } from "./features/landing/site-app";
+import { startLegacy } from "./features/hosts/legacy";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { router } from "./app/router";
@@ -32,7 +39,6 @@ const queryClient = new QueryClient({
   },
 });
 
-registerSw();
 // The phone keyboard: left to WebKit's own reveal of the focused field, or
 // (`?kb=legacy`) measured and the shell sized above it (`lib/kb-mode.ts`).
 if (kbMode() === "legacy") startKbWatch();
@@ -51,6 +57,12 @@ startBadgeSync();
 // app's router and login: droppen.app sends the system browser there with its
 // answer to a sign-in, and that browser has no login here
 // (`features/link/link-return.tsx`).
+//
+// Which of its hosts the hub serves this page on (`lib/hub/hosts.ts`) is read
+// first, before anything of cloud mode starts: the app host (or the one host
+// of a hub that does not say) runs the app as above; the site host only the
+// public pages, with no key store and no service worker; the hub's origin,
+// once the app has moved off it, the move notice (`features/hosts/legacy.tsx`).
 const returning = !isCloud() && isReturnPath(location.pathname);
 if (!isCloud() && !returning) {
   startLocalShell();
@@ -60,16 +72,47 @@ if (!isCloud() && !returning) {
 }
 const root = createRoot(document.getElementById("root")!);
 if (returning) {
+  registerSw();
   root.render(
     <StrictMode>
       <LinkReturnPage answer={takeReturn()} />
     </StrictMode>,
   );
-} else {
-  const app = <RouterProvider router={router} />;
+} else if (!isCloud()) {
+  registerSw();
   root.render(
     <StrictMode>
-      <QueryClientProvider client={queryClient}>{isCloud() ? <CloudApp>{app}</CloudApp> : app}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
     </StrictMode>,
   );
+} else {
+  void resolveHostMode().then((mode) => {
+    const here = `${location.pathname}${location.search}${location.hash}`;
+    if (mode === "site") {
+      // Not one of the public pages: the app's, on the app host.
+      if (!frontPage(location.pathname)) return location.replace(appUrl(here));
+      notInstallable();
+      return root.render(
+        <StrictMode>
+          <SiteApp />
+        </StrictMode>,
+      );
+    }
+    if (mode === "legacy") return startLegacy(root);
+    // The app host: the public pages are the site host's.
+    const site = siteOrigin();
+    if (site && frontPage(location.pathname)) return location.replace(`${site}${here}`);
+    registerSw();
+    root.render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <CloudApp>
+            <RouterProvider router={router} />
+          </CloudApp>
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+  });
 }

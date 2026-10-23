@@ -10,6 +10,8 @@ import type { HubLink } from "@/lib/hub/link";
 import { atLimit, HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
 import { hubShell } from "@/features/cloud/hub-shell";
 import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
+import { publicHref } from "@/features/landing/route";
+import { hubHosts } from "@/lib/hub/hosts";
 import { LimitNote, useMe } from "@/features/cloud/plan";
 import { Centered, ErrorLine, errorText, field, Note, Panel, primary, quiet } from "@/features/cloud/ui";
 import { callbackTier, confirmsHost, type HandoffRequest, hostToType, LINK_PATH, type LinkMessage, machineFingerprintHex, parseLinkMessage, returnAddress } from "./handoff";
@@ -174,7 +176,7 @@ export function NoOpenerScreen() {
         </p>
         <p className="text-xs leading-5 text-muted">
           {t("Droppen is not on that device yet?")}{" "}
-          <a href={DOWNLOAD_PATH} data-testid="link-download" className="text-fg underline underline-offset-2 hover:no-underline">
+          <a href={publicHref(DOWNLOAD_PATH)} data-testid="link-download" className="text-fg underline underline-offset-2 hover:no-underline">
             {t("download page")}
           </a>
         </p>
@@ -231,7 +233,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
   const handoff = hs.handoff;
   const expired = handoff !== null && Date.now() > handoff.expiresMs + HANDOFF_SKEW_MS;
   const request = hs.request;
-  const tier = useMemo(() => (hs.cb ? callbackTier(hs.cb, location.origin) : "refuse"), [hs.cb]);
+  const tier = useMemo(() => (hs.cb ? callbackTier(hs.cb, location.origin, hubHosts()) : "refuse"), [hs.cb]);
   const email = me?.view?.email.address ?? "";
 
   useEffect(() => {

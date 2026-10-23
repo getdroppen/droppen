@@ -14,6 +14,8 @@ import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { type Availability, AVAILABILITY, codeInstallCommand, downloadHref, INSTALL_COMMAND, otherHub, stdinEnrollCommand } from "@/features/landing/get-droppen";
 import { fileLink, useLatestRelease } from "@/features/landing/release-files";
+import { publicHref } from "@/features/landing/route";
+import { agentHub, appHost } from "@/lib/hub/hosts";
 import { hubShell, useShellMachines } from "./hub-shell";
 import { type NewHost, partnerFor, watchNewHost } from "./onboarding";
 import { FirstMachineNote, LimitNote, useMe } from "./plan";
@@ -52,7 +54,8 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
   const [state, setState] = useState<AddState>({ kind: "starting" });
   const started = useRef(false);
   const me = useMe(account, link);
-  const hubUrl = origin.replace(/^ws/, "http");
+  // The hub's own address, which the device dials (not the app host this page may be on).
+  const hubUrl = agentHub(origin);
   useEffect(() => {
     if (started.current) return;
     started.current = true;
@@ -262,7 +265,7 @@ export function AddComputer({
   const full = atLimit(me?.plan, HOSTS_KEY);
   if (mode === "code") return <AddMachine account={account} link={link} origin={origin} onDone={onDone} />;
   if (watch.kind === "ready") return <NewDeviceReady account={account} added={watch.info} machines={machines} onDone={onDone} />;
-  const hub = otherHub(origin.replace(/^ws/, "http")) ? origin.replace(/^ws/, "http") : null;
+  const hub = otherHub(agentHub(origin)) ? agentHub(origin) : null;
   const pad = "flex min-w-0 flex-col gap-3 px-6 py-5 max-md:px-4";
   // The App only once it can sign itself in (`APP_SIGN_IN_AVAILABLE`): this guide is how a device joins the account.
   const viaApp = availability.app && availability.appSignIn;
@@ -288,7 +291,7 @@ export function AddComputer({
                   <Download className="size-3.5" />
                   {t("Download Droppen App (macOS)")}
                 </a>
-                <a href={downloadHref("macos-app")} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
+                <a href={publicHref(downloadHref("macos-app"))} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
                   {t("download page")}
                   <ExternalLink className="size-3" />
                 </a>
@@ -308,7 +311,7 @@ export function AddComputer({
               </code>
               <div className="flex flex-wrap items-center gap-2">
                 <CopyButton text={INSTALL_COMMAND} label={t("copy command")} />
-                <a href={downloadHref("macos-bg")} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
+                <a href={publicHref(downloadHref("macos-bg"))} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
                   {t("download page")}
                   <ExternalLink className="size-3" />
                 </a>
@@ -325,7 +328,7 @@ export function AddComputer({
               : t("On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).")}
           </p>
           <p className="text-xs leading-5 text-muted">
-            {t("A droppen.app window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.")}
+            {t("A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.", { app: appHost() })}
           </p>
           {hub && (
             <p data-testid="add-other-hub" className="text-xs leading-5 text-muted">
@@ -359,11 +362,11 @@ export function AddComputer({
         <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-2xs leading-4 text-muted">
           <span className="font-medium text-fg">{t("Server or running in the background?")}</span>
           <span>{t("Install it with one line:")}</span>
-          <a href={downloadHref("macos-bg")} target="_blank" rel="noopener" data-testid="add-server-macos" className="text-fg underline underline-offset-2 hover:no-underline">
+          <a href={publicHref(downloadHref("macos-bg"))} target="_blank" rel="noopener" data-testid="add-server-macos" className="text-fg underline underline-offset-2 hover:no-underline">
             {t("Mac in the background")}
           </a>
           <span aria-hidden="true">·</span>
-          <a href={downloadHref("linux")} target="_blank" rel="noopener" data-testid="add-server-linux" className="text-fg underline underline-offset-2 hover:no-underline">
+          <a href={publicHref(downloadHref("linux"))} target="_blank" rel="noopener" data-testid="add-server-linux" className="text-fg underline underline-offset-2 hover:no-underline">
             {t("Linux server")}
           </a>
           <span>{t("— or add it from its command line with a one-time code:")}</span>

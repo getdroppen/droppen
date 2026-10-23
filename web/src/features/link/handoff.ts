@@ -150,7 +150,11 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  * - `refuse`: not an http(s) origin at all, the hub's own origin, or the
  *   hub's host on another scheme or port (a page there asking for a code for
  *   itself) — unless that host is loopback, where a test hub and the
- *   computer share it.
+ *   computer share it. Where the hub names its hosts (`hosts`, from
+ *   `/.well-known/droppen-hub`: `lib/hub/hosts.ts`), any of them too — its
+ *   origin, the app host, the site host — and any name under its origin's
+ *   (`*.droppen.app`: relays, the Turnstile page): none of them is a
+ *   device's own page.
  *
  * Known and accepted for now (docs/local-aggregator.md §3.4): another program
  * on this computer's loopback, on another port, is "local" too.
@@ -183,7 +187,29 @@ export function privateHost(host: string): boolean {
   return !name.includes(".") || PRIVATE_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
-export function callbackTier(cb: string, hubWeb: string): CallbackTier {
+/** Whether `host` (lower-case) is one of the hub's names, or a name under its origin's ({@link callbackTier}). */
+function hubName(host: string, hosts: HubHostNames): boolean {
+  const name = (origin: string) => {
+    try {
+      return new URL(origin.replace(/^ws(s?):/, "http$1:")).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  };
+  const apex = name(hosts.origin);
+  const names = [hosts.origin, hosts.app, hosts.site].map((o) => (o ? name(o) : null));
+  return names.includes(host) || (apex !== null && host.endsWith(`.${apex}`));
+}
+
+/** The hub's names `callbackTier` refuses besides the page's own (`HubHosts` of `lib/hub/hosts.ts`). */
+export interface HubHostNames {
+  /** `wss://droppen.app` */
+  origin: string;
+  app: string | null;
+  site: string | null;
+}
+
+export function callbackTier(cb: string, hubWeb: string, hosts: HubHostNames | null = null): CallbackTier {
   let url: URL;
   try {
     url = new URL(cb);
@@ -203,6 +229,7 @@ export function callbackTier(cb: string, hubWeb: string): CallbackTier {
   // The hub's host on another scheme or port is the hub's too — but a hub
   // run on this computer for testing shares its loopback with the computer.
   if (!loopback && host === hub.hostname.toLowerCase()) return "refuse";
+  if (!loopback && hosts && hubName(host, hosts)) return "refuse";
   if (loopback) return "local";
   return privateHost(host) ? "warn" : "public";
 }

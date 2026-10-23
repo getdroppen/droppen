@@ -17,7 +17,7 @@ import { Journey } from "./journey";
 import { OfflineCopy } from "./offline-copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { useLatestRelease } from "./release-files";
-import { APP_PATH, onPublicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -89,7 +89,7 @@ function Hero({
           {!signedIn && (
             <p className="mt-3 font-mono text-2xs text-faint">
               {t("Invite-only for now: sign-up needs an invite code.")}{" "}
-              <a href={WAITLIST_HREF} onClick={onPublicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
+              <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="text-muted underline underline-offset-4 hover:text-fg">
                 {t("No code yet? Join the waitlist")}
               </a>
             </p>
@@ -213,7 +213,7 @@ function Security() {
         <Info className="mt-0.5 size-4 shrink-0 text-muted" />
         <p className="max-w-[60em] text-xs leading-5 text-muted">
           {t("Droppen is an invite-only beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.")}{" "}
-          <a href={SECURITY_PATH} onClick={onPublicLink(SECURITY_PATH)} data-testid="landing-security" className="text-fg underline underline-offset-4 hover:no-underline">
+          <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="text-fg underline underline-offset-4 hover:no-underline">
             {t("How the encryption works, in detail")}
           </a>
         </p>
@@ -236,10 +236,10 @@ function Footer({ signedIn }: { signedIn: boolean }) {
               <p className="text-sm leading-6 text-muted">{t("Sign up with your invite code, connect your computer, and pick up from your phone.")}</p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <a href={SIGN_UP_PATH} onClick={onPublicLink(SIGN_UP_PATH)} className={secondary}>
+              <a {...publicLink(SIGN_UP_PATH)} className={secondary}>
                 {t("Get started")}
               </a>
-              <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={secondary}>
+              <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
                 {t("Sign in")}
               </a>
             </div>

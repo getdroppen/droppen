@@ -8,11 +8,16 @@ import { ARRIVE_EVENT, internalNavPath } from "@/lib/sw-nav";
  * HMR for no benefit. Registration is also allowed to fail silently — over
  * plain http on a LAN address the context is not secure and there is simply no
  * service worker to be had, which is a normal way to run this app, not an error.
+ *
+ * Only where the app runs: never on a hub's site host, or on its origin once
+ * the app moved off it (`lib/hub/hosts.ts`), whose pages hold no keys and
+ * have nothing to keep offline. In cloud mode it is called once the page
+ * knows which host it is on, which may be after `load`.
  */
 export function registerSw(): void {
   if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return;
 
-  window.addEventListener("load", () => {
+  const register = () => {
     navigator.serviceWorker
       .register("/sw.js")
       .then((reg) => {
@@ -24,7 +29,9 @@ export function registerSw(): void {
         });
       })
       .catch(() => undefined);
-  });
+  };
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register, { once: true });
 
   // A tapped notification routes inside the running SPA (sw.js posts this
   // rather than navigating), so the transcript and websockets are not torn down.

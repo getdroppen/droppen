@@ -59,16 +59,31 @@ the same `digest`; `scripts/verify-web.mjs` uses this to pick the manifest and
 then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
 A claim like everything else here, not a proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.
+Served the same on every host of the hub that serves the web app (the origin,
+the app host, the site host), as is `/.well-known/security.txt`.
 
 ### `GET /.well-known/droppen-hub` — which hosts this hub serves
-→ `{origin: "wss://<host>", app: "https://<host>", site?: "https://<host>" | null}`.
+→ `{origin: "wss://<host>", app: "https://<host>", site?: "https://<host>" | null, apex_mode?: "app" | "move" | "redirect"}`.
 `origin` is the hub as agents, relays and the agent's own sign-in dial it
 (`wss://droppen.app`); it does not move. `app` is where a browser signs in,
 pairs and uses the account (`https://my.droppen.app`), `site` where the
 landing, download and policy pages are (`https://www.droppen.app`). A hub that
 serves everything on one host may have no such document (a 404, or the web
 app's shell as for any path); a client then uses the hub's own origin for
-everything.
+everything. `apex_mode` says what the hub's own origin does with the web
+app's pages while `app` is another host: it still serves the app there
+(`app`, also when absent: the move has not started), shows the move notice in
+its place (`move`: a browser that keeps a device there is offered to move it
+to `app`, remove it, or go on without it; any other is sent on to `app` with
+its path, query and fragment), or redirects them to `app` (`redirect`). The
+same answer on every host the hub serves.
+
+The web app reads it before anything else of a hub's page starts
+(`web/src/lib/hub/hosts.ts`, README "Hosts"): on `app` it is the app (`/`
+included), on `site` only the public pages (no key store, no service worker;
+every way into the app a link to `app`), on the hub's origin as `apex_mode`
+says. Any other answer — none, a 404, the shell, a body that is not this, no
+answer within 8 seconds — leaves it on one host, exactly as before.
 
 The local server reads it to know where the sign-in popup and the browser
 hand-off open ([link](link.md#which-host-the-popup-and-the-hand-off-open)): it
@@ -79,7 +94,9 @@ answer for ten minutes.
 
 ### A service worker fetched from any path but `/sw.js` — only when the hub serves the web app
 A `GET` carrying `Service-Worker: script` (the browser fetching or updating a
-service worker) for any path other than `/sw.js` gets a small worker that
+service worker) for any path other than `/sw.js` — or for `/sw.js` too on a
+host that does not run the app (the site host, and the hub's origin once an
+app host runs it: README, "Hosts"), before any redirect — gets a small worker that
 deletes every cache of the origin and unregisters itself, as
 `text/javascript; charset=utf-8` with `Cache-Control: no-store`, instead of
 the shell. A worker registered for `/` from another address by a page that
@@ -205,9 +222,10 @@ one stores nothing), good for 2 minutes and answered once; send it back
 exactly as given, with the credential that answers it.
 
 The relying party id is the hub's (`droppen.app`; `/v1/signup/config`
-names it) and the only origins taken are the app's own, compared exactly:
-an answer made on any other origin — a subdomain included — or in a
-cross-origin frame is refused. Passkeys are discoverable (`residentKey:
+names it) and the only origins taken are the app's own, compared exactly
+(`https://my.droppen.app`, and `https://droppen.app` while browsers move off
+it: README, "Hosts"): an answer made on any other origin — another subdomain
+included — or in a cross-origin frame is refused. Passkeys are discoverable (`residentKey:
 required`), need user verification (`userVerification: required`), and
 take Ed25519 (-8), ES256 (-7) or RS256 (-257, 2048–4096 bits);
 `attestation: none` (a statement is not read).

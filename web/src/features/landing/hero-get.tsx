@@ -6,7 +6,8 @@ import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
 import { CommandLine } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
-import { APP_PATH, onPublicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
+import { appHost } from "@/lib/hub/hosts";
+import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH } from "./route";
 
 /*
  * The home page hero's actions, for the device reading it (`detect.ts`,
@@ -39,7 +40,7 @@ const quietLink = "text-muted underline underline-offset-4 hover:text-fg";
 function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId: string }) {
   const href = downloadHref(os);
   return (
-    <a href={href} onClick={onPublicLink(href)} data-testid={testId} className={quietLink}>
+    <a {...publicLink(href)} data-testid={testId} className={quietLink}>
       {label}
     </a>
   );
@@ -62,7 +63,7 @@ function Account({ signedIn, lead }: { signedIn: boolean; lead: boolean }) {
   if (signedIn) {
     return (
       <>
-        <a href={APP_PATH} onClick={onPublicLink(APP_PATH)} {...first}>
+        <a {...publicLink(APP_PATH)} {...first}>
           {t("Open app")}
         </a>
         {lead && (
@@ -75,10 +76,10 @@ function Account({ signedIn, lead }: { signedIn: boolean; lead: boolean }) {
   }
   return (
     <>
-      <a href={SIGN_UP_PATH} onClick={onPublicLink(SIGN_UP_PATH)} {...first}>
+      <a {...publicLink(SIGN_UP_PATH)} {...first}>
         {t("Get started")}
       </a>
-      <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={secondary}>
+      <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
         {t("Sign in")}
       </a>
     </>
@@ -159,7 +160,7 @@ export function HeroGet({
             <Account signedIn={signedIn} lead />
           </div>
           <p data-testid="hero-phone" className={note}>
-            {t("On your phone, Droppen works in the browser: open droppen.app and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.")}{" "}
+            {t("On your phone, Droppen works in the browser: open {{app}} and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.", { app: appHost() })}{" "}
             <TabLink os="mobile" label={t("how to set it up")} testId="hero-mobile-tab" />
           </p>
         </>

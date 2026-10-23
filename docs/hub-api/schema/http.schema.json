@@ -1073,6 +1073,14 @@
               ],
               "pattern": "^https?://[^/?#@]+$",
               "description": "the site's origin (`https://www.droppen.app`): the landing, download, pricing, security, privacy and terms pages; `null` or absent when the app's host has them"
+            },
+            "apex_mode": {
+              "enum": [
+                "app",
+                "move",
+                "redirect"
+              ],
+              "description": "what the hub's own origin does with the web app's pages while `app` is another host: still serves the app (`app`, also when absent), shows the move notice (`move`), or redirects them to `app` (`redirect`)"
             }
           }
         }

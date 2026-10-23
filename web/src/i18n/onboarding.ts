@@ -35,8 +35,8 @@ export const onboardingZhCN: Record<string, string> = {
   "02 · on its page, sign in to Droppen": "02 · 在它的页面上登录 Droppen",
   "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
     "在那台设备打开的页面上，用本地登录进去，点「登录 Droppen」（也在「设置 → Droppen」里）。",
-  "A droppen.app window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
-    "那边会弹出 droppen.app 窗口：登录这个账户，核对指纹和它页面上显示的一致，然后点「加入这台设备」。",
+  "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
+    "那边会弹出 {{app}} 窗口：登录这个账户，核对指纹和它页面上显示的一致，然后点「加入这台设备」。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
     "这个账户在 {{hub}} 上，不在 droppen.app：先在那个页面上打开「高级选项」，把 Hub 地址设成 {{hub}}。",
   "Is that window's browser new to your account? It shows a code first: add it from here.": "那个窗口所在的浏览器还没加入你的账户？它会先显示一个配对码，在这里添加它：",
@@ -94,8 +94,8 @@ export const onboardingZhTW: Record<string, string> = {
   "02 · on its page, sign in to Droppen": "02 · 在它的頁面上登入 Droppen",
   "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
     "在那台裝置打開的頁面上，用本地登入進去，點「登入 Droppen」（也在「設定 → Droppen」裡）。",
-  "A droppen.app window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
-    "那邊會彈出 droppen.app 視窗：登入這個帳戶，核對指紋和它頁面上顯示的一致，然後點「加入這台裝置」。",
+  "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
+    "那邊會彈出 {{app}} 視窗：登入這個帳戶，核對指紋和它頁面上顯示的一致，然後點「加入這台裝置」。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
     "這個帳戶在 {{hub}} 上，不在 droppen.app：先在那個頁面上打開「進階選項」，把 Hub 位址設成 {{hub}}。",
   "Is that window's browser new to your account? It shows a code first: add it from here.": "那個視窗所在的瀏覽器還沒加入你的帳戶？它會先顯示一個配對碼，在這裡新增它：",
@@ -149,8 +149,8 @@ export const onboardingJa: Record<string, string> = {
   "02 · on its page, sign in to Droppen": "02 · そのページで Droppen にサインイン",
   "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Droppen).":
     "そのデバイスで開いたページにローカルログインで入り、「Droppen にサインイン」を押します（「設定 → Droppen」にもあります）。",
-  "A droppen.app window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
-    "droppen.app のウィンドウが開くので、このアカウントでサインインし、フィンガープリントがページの表示と一致することを確かめて「このデバイスを追加」を押します。",
+  "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
+    "{{app}} のウィンドウが開くので、このアカウントでサインインし、フィンガープリントがページの表示と一致することを確かめて「このデバイスを追加」を押します。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
     "このアカウントは droppen.app ではなく {{hub}} にあります。先にそのページで「詳細設定」を開き、Hub のアドレスを {{hub}} にしてください。",
   "Is that window's browser new to your account? It shows a code first: add it from here.": "そのウィンドウのブラウザがまだアカウントにない場合は、先にコードが表示されます。ここから追加してください：",

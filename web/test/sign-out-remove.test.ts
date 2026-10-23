@@ -169,6 +169,20 @@ test("a device that cannot take itself off is wiped all the same, and the sign-i
   assert.equal(takeStillListed(), "failed: the hub did not answer");
 });
 
+test("a sign-out told where to go (the move notice on the hub's origin) hands over what it would keep for the sign-in screen, and stays", async () => {
+  const { hub, a } = await account();
+  const d = await pairAs(hub, a, { admin: false });
+  setHubShell(null);
+  replaced.length = 0;
+  tab.values.clear();
+  const results: unknown[] = [];
+  await signOut(d, undefined, { removeBrowser: true, dropPush: async () => undefined, finish: (result) => void results.push(result) });
+  assert.deepEqual(results, [{ failures: [], stillListed: "notAdmin" }]);
+  assert.deepEqual(replaced, [], "the page is not sent to its sign-in screen");
+  assert.equal(tab.values.size, 0, "nothing kept for a sign-in screen on this origin");
+  assert.deepEqual(await kept(d), { keys: false, id: false });
+});
+
 test("a hub that does not answer cannot keep the keys here: the wipe follows the removal at once, and each hub call is capped", async () => {
   const { hub, a } = await account();
   const c = await pairAs(hub, a, { admin: true });

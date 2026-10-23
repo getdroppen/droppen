@@ -10,7 +10,7 @@
 >
 > 只有 admin 持用户钥 `UK`；其它设备由 admin 把各 host 的 `MK` 封给它。新鲜度按操作计：控制 7 天，管理 12 小时。通行密钥的链条目是 v3 的 16–18 号，外加签名者 `Passkey(slot)`，编码以聚合器文档 §3.2 为准。§2 描述今天 v2 的代码，所以那里仍用 v2 的名字。
 >
-> **已定**（2026-10-17）：第二层做，默认关闭；方案 (c)，两位数批准或 24 小时；通行密钥永不授予管理权；待定期间什么都读不到；droppen.app 的子域不能用 WebAuthn（§3.8）。见 §10。
+> **已定**（2026-10-17）：第二层做，默认关闭；方案 (c)，两位数批准或 24 小时；通行密钥永不授予管理权；待定期间什么都读不到；droppen.app 的子域不能用 WebAuthn（§3.8；2026-10-23 起，应用自己的主机 `my.droppen.app` 例外，只有它能用）。见 §10。
 >
 > **本文改动一条既有原则。** 架构文档 §1「为什么不算托管」和 §10 写着「不做 passkey PRF 解锁：那等于把钥匙托管给 Apple/Google 的同步账号」。这个判断本身没错，所以本文把它改成一个**默认关闭、按把开启、开启时明说代价**的例外（§4.1、§6.3），扫码配对和恢复词仍是默认和最后的退路。
 >
@@ -101,8 +101,8 @@
 
 | 参数 | 值 | 理由 |
 |---|---|---|
-| `rp.id` | `droppen.app`（Hub 的配置，默认取 Web 源的主机名；`/v1/signup/config` 的 `passkeys.rp_id`） | 与本机登录的 `/link` 同源 |
-| 合法 origin | 恰好 `https://droppen.app`（Hub 的配置；开发时加 `http://localhost:<端口>`；以后加原生应用的源，§5.4） | 子域即使能调 WebAuthn，Hub 也不收它的应答（§3.8） |
+| `rp.id` | `droppen.app`（Hub 的配置，`DROPPEN_HUB_WEBAUTHN_RP_ID` 明确写出；`/v1/signup/config` 的 `passkeys.rp_id`） | 应用搬到 `my.droppen.app` 后不变：`droppen.app` 是它的可注册后缀，已有的通行密钥照常可用，PRF 输出只取决于凭据与盐，与 origin 无关 |
+| 合法 origin | 恰好应用的源 `https://my.droppen.app`；搬迁窗口内再加 `https://droppen.app`（Hub 的配置 `DROPPEN_HUB_WEBAUTHN_ORIGINS`；开发时加 `http://localhost:<端口>`；以后加原生应用的源，§5.4） | 其它子域即使能调 WebAuthn，Hub 也不收它的应答（§3.8） |
 | `user.id` | 账户的随机 32 字节（§3.3） | 不泄漏邮箱或账户 id；规范上限 64 字节 [42] |
 | `user.name`、`user.displayName` | 邮箱 | 只显示在用户自己的密码管理器里，用来认出账户；改邮箱后用 Signal API 更新（§3.6） |
 | `pubKeyCredParams` | Ed25519（-8）、ES256（-7）、RS256（-257） | 覆盖平台认证器与旧安全钥匙 |
@@ -216,14 +216,15 @@ challenge = 1 ‖ 用途 u8 ‖ issued_ms u64 ‖ rand 16 ‖ HMAC(session_key, 
 
 ### 3.8 子域与 origin：钓鱼抗性的边界
 
-- 通行密钥绑在 RP ID 上：`droppen-app.com` 之类的钓鱼站拿不到 droppen.app 的断言，也拿不到 PRF 输出。中间人转发断言也没用：`clientDataJSON` 里的 origin 由浏览器写入，Hub 只收 `https://droppen.app`。
+- 通行密钥绑在 RP ID 上：`droppen-app.com` 之类的钓鱼站拿不到 droppen.app 的断言，也拿不到 PRF 输出。中间人转发断言也没用：`clientDataJSON` 里的 origin 由浏览器写入，Hub 只收应用的源。
+- **只有应用的主机能用 WebAuthn**（2026-10-23 起）。应用在 `my.droppen.app`，公开页面在 `www.droppen.app`，`droppen.app` 本身留给设备与中继连接（`docs/hub-api/README.md`「Hosts」）。Hub 的合法 origin 是 `https://my.droppen.app`；搬迁窗口内也收 `https://droppen.app`（还没搬走的浏览器在那里登录），窗口结束后只剩 `my`。`Permissions-Policy` 的 `(self)` 只发给应用的主机；`www`、`droppen.app` 与其它子域一律 `()`。`www` 必须一直由 Hub 自己提供，不交给第三方托管：`*.droppen.app` 上任何页面都能以 RP ID `droppen.app` 求 PRF 输出。
 - **但 RP ID 允许子域。** `verify.droppen.app` 上的页面可以用 `rpId: "droppen.app"` 调 WebAuthn。Hub 不收它的 origin，所以登录无碍；可 **PRF 输出在客户端**，Hub 的 origin 检查保护不了它。而这个子域正好在加载 Cloudflare 的脚本（Turnstile）。
 - 规则（第 1 条已定）：
   1. **Turnstile 页搬到独立的可注册域名**（例如 `droppen-verify.net`；只是换一个配置值，`frame-src` 跟着改）。K1 没有做这一条，见 §8。
-  2. 在那之前、以及之后 droppen.app 的**每个子域**的每个响应都带 `Permissions-Policy: publickey-credentials-get=(), publickey-credentials-create=()`。嵌入 Turnstile 的 `<iframe>` 不带 `allow="publickey-credentials-*"`（跨源 iframe 默认就不能调，这里写成测试）。
+  2. 在那之前、以及之后，除了应用的主机，droppen.app 及其**每个子域**的每个响应都带 `Permissions-Policy: publickey-credentials-get=(), publickey-credentials-create=()`。嵌入 Turnstile 的 `<iframe>` 不带 `allow="publickey-credentials-*"`（跨源 iframe 默认就不能调，这里写成测试）。
   3. 中继的源（`*.relay.droppen.app`）只回 JSON 与 WebSocket，不回 HTML，响应同样带上面的头。客户自建的中继（聚合器文档 §9）永远不发 droppen.app 的子域。
   4. 应用页自己的 CSP 已经不放行第三方脚本（中继文档 §10「安全相关」）；新增的 WebAuthn 代码不引入任何第三方库。
-- 不需要 Related Origin Requests（`/.well-known/webauthn`）：只有一个源。以后若真要第二个域名再说（Chrome/Edge 128+、Safari 18 支持，Firefox 未定 [20][21]）。
+- 不需要 Related Origin Requests（`/.well-known/webauthn`）：应用只有一个源，`my.droppen.app` 也在 RP ID 之下。以后若真要第二个可注册域名再说（Chrome/Edge 128+、Safari 18 支持，Firefox 未定 [20][21]）。
 
 ### 3.9 全部通行密钥都丢了、限流、账户枚举
 

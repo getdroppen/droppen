@@ -7,8 +7,9 @@ import { RegMark } from "@/components/reg-mark";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
+import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { APP_PATH, onPublicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, usePathname } from "./route";
+import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, usePathname } from "./route";
 
 /*
  * The public pages' frame, in the landing page's drafting-sheet language: a
@@ -98,7 +99,7 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
 function PageLink({ path, label, className, testId }: { path: string; label: string; className: string; testId?: string }) {
   const here = usePathname().replace(/\/+$/, "") === path;
   return (
-    <a href={path} onClick={onPublicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn(className, here && "text-fg")}>
+    <a {...publicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn(className, here && "text-fg")}>
       {label}
     </a>
   );
@@ -114,7 +115,7 @@ export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: 
   return (
     <header className="sticky top-0 z-40 h-14 shrink-0 border-b border-border bg-bg md:px-8">
       <div className="relative mx-auto flex h-full max-w-[1152px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
-        <a href="/" onClick={onPublicLink("/")} className="flex items-center gap-3" aria-label="Droppen">
+        <a {...publicLink("/")} className="flex items-center gap-3" aria-label="Droppen">
           <BrandMark size={20} />
           <span className="font-mono text-sm font-medium text-fg">Droppen</span>
         </a>
@@ -131,11 +132,11 @@ export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: 
         <PageLink path={PRICING_PATH} label={t("Pricing")} testId="header-pricing" className="label-caps mr-1 text-2xs whitespace-nowrap text-muted hover:text-fg max-sm:hidden" />
         <PrefsControls />
         {signedIn ? (
-          <a href={APP_PATH} onClick={onPublicLink(APP_PATH)} className={secondary}>
+          <a {...publicLink(APP_PATH)} className={secondary}>
             {t("Open app")}
           </a>
         ) : (
-          <a href={SIGN_IN_PATH} onClick={onPublicLink(SIGN_IN_PATH)} className={secondary}>
+          <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
             {t("Sign in")}
           </a>
         )}
@@ -160,8 +161,17 @@ export function FooterLine() {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-5 max-md:px-4">
         <span className="flex items-center gap-2 font-mono text-2xs text-faint">
           <BrandMark size={12} />© 2026 Droppen · droppen.app
+          {/* The app, where the hub keeps it on a host of its own (my.droppen.app): a link there from these pages. */}
+          {appOrigin() && (
+            <>
+              {" · "}
+              <a href={appUrl("/")} data-testid="footer-app" className="text-faint underline-offset-4 hover:text-fg hover:underline">
+                {appHost()}
+              </a>
+            </>
+          )}
         </span>
-        <a href={DOWNLOAD_PATH} onClick={onPublicLink(DOWNLOAD_PATH)} data-testid="footer-download" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+        <a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Download Droppen")}
         </a>
         <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
