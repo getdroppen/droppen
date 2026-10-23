@@ -739,6 +739,7 @@ export const zhCN: Record<string, string> = {
   "invite code": "邀请码",
   "At least 10 characters. Your password signs you in; it cannot decrypt anything.": "至少 10 个字符。密码只用于登录，无法解密任何内容。",
   "create account": "创建账户",
+  "By signing up you agree to the <terms>Terms of Service</terms> and have read the <privacy>Privacy notice</privacy>.": "注册即表示你同意<terms>服务条款</terms>，并已阅读<privacy>隐私说明</privacy>。",
   "set up this device": "设置这台设备",
   "This browser now holds this account's device keys. They stay on this device and are never sent to our servers: everything you see here is decrypted on this device.": "这个浏览器将保存该账户的设备密钥。密钥只留在这台设备上，从不发送到我们的服务器：你在这里看到的一切都在本设备上解密。",
   "A recovery key lets you get back in if you lose every device. It is shown once, and nobody — not the hub, not us — can recover it for you.": "恢复钥能在你丢失所有设备时找回数据。它只显示一次，任何人（包括云端和我们）都无法替你找回。",

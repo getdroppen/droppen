@@ -401,8 +401,13 @@ test("the hero's first frame: the last message on both ends, the Droppen relay's
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {
   const region = /Singapore|新加坡|シンガポール|Tokyo|东京|東京/;
+  // Only the privacy notice says where its providers keep data, as a privacy notice must (`privacy.tsx`).
+  const privacy = readFileSync(new URL("../src/features/landing/privacy.tsx", import.meta.url), "utf8");
+  const privacyKeys = new Set([...privacy.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string));
+  assert.ok([...privacyKeys].some((key) => region.test(key)), "the privacy notice names where");
   for (const lng of ["zh-CN", "zh-TW", "ja"] as const) {
     for (const [key, value] of Object.entries(landingBundles[lng])) {
+      if (privacyKeys.has(key)) continue;
       assert.doesNotMatch(key, region, `${lng} key: ${key}`);
       assert.doesNotMatch(value, region, `${lng}: ${value}`);
     }

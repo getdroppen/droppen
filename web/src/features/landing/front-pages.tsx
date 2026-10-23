@@ -11,6 +11,8 @@ const PricingPage = lazy(() => import("@/features/landing/pricing"));
 const PrivacyPage = lazy(() => import("@/features/landing/privacy"));
 /** How the encryption works (`/security`), signed in or not: its own chunk, with its own words. */
 const SecurityPage = lazy(() => import("@/features/landing/security/security"));
+/** The terms of service (`/terms`), signed in or not: its own chunk, with its own words, too. */
+const TermsPage = lazy(() => import("@/features/landing/terms/terms"));
 
 /** One of the pages that are pages of their own, signed in or not. */
 export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
@@ -24,6 +26,8 @@ export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signed
         <PrivacyPage signedIn={signedIn} />
       ) : page === "security" ? (
         <SecurityPage signedIn={signedIn} />
+      ) : page === "terms" ? (
+        <TermsPage signedIn={signedIn} />
       ) : (
         <LandingPage signedIn={signedIn} />
       )}

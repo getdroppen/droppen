@@ -73,7 +73,7 @@ export function problemText(state: { reason: WaitlistProblem; retryMinutes?: num
   }
 }
 
-/** The privacy contact, for removals. To be confirmed by the user (a placeholder). */
+/** The privacy contact, for removals and requests about data (the owner's word, 2026-10-23). */
 export const PRIVACY_EMAIL = "privacy@droppen.app";
 
 /** The two plans as one segmented choice: native radios, so keyboards and screen readers get them for free. */

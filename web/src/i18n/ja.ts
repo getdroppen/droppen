@@ -740,6 +740,7 @@ export const ja: Record<string, string> = {
   "invite code": "招待コード",
   "At least 10 characters. Your password signs you in; it cannot decrypt anything.": "10 文字以上。パスワードはサインイン用で、何も復号できません。",
   "create account": "アカウントを作成",
+  "By signing up you agree to the <terms>Terms of Service</terms> and have read the <privacy>Privacy notice</privacy>.": "登録すると、<terms>利用規約</terms>に同意し、<privacy>プライバシーについて</privacy>を読んだものとみなされます。",
   "set up this device": "このデバイスを設定",
   "This browser now holds this account's device keys. They stay on this device and are never sent to our servers: everything you see here is decrypted on this device.": "このブラウザがアカウントのデバイス鍵を保持します。鍵はこのデバイスにとどまり、私たちのサーバーへ送られることはありません。ここに表示される内容はすべてこのデバイスで復号されます。",
   "A recovery key lets you get back in if you lose every device. It is shown once, and nobody — not the hub, not us — can recover it for you.": "リカバリーキーがあれば、すべてのデバイスを失っても復旧できます。表示は一度だけで、ハブも私たちも代わりに復元できません。",

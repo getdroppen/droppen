@@ -1,9 +1,9 @@
 // What only the owner can say on droppen.app's pages: owner placeholders,
-// such as the privacy notice's backup retention (`BACKUPS_EXPIRE_AFTER` in
-// `features/landing/privacy.tsx`).
+// such as the privacy notice's backup retention was until the owner gave it
+// (`BACKUPS_EXPIRE_DAYS` in `features/landing/privacy.tsx`, 2026-10-23).
 //
-// What these pin: until one is filled in, it shows on the page as a marked
-// placeholder, in every language, and nowhere unmarked; and every
+// What these pin: a placeholder shows on the page marked, in every
+// language, and nowhere unmarked; and every
 // placeholder the source writes is in `web/owner-placeholders.txt`, the list
 // a release checks its built web app against
 // (`scripts/release-text-check.sh`, `release_text_owner_placeholders`): main
@@ -18,7 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { landingBundles } from "../src/features/landing/copy.js";
-import PrivacyPage, { BACKUPS_EXPIRE_AFTER, marked, PLACEHOLDER } from "../src/features/landing/privacy.js";
+import PrivacyPage, { BACKUPS_EXPIRE_DAYS, marked, PLACEHOLDER } from "../src/features/landing/privacy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -59,14 +59,12 @@ test("a placeholder is a value in capitals and brackets, marked where it is said
   assert.equal(html, '<p>after <mark data-placeholder="" class="bg-warn/25 px-0.5 font-mono text-warn-fg">[BACKUP RETENTION]</mark>.</p>');
 });
 
-test("the backups' period, still to supply, shows on the notice marked, in every language, and nowhere unmarked", () => {
+test("the backups' period is said on the notice in every language, and no placeholder is left unmarked", () => {
+  assert.equal(BACKUPS_EXPIRE_DAYS, 30);
+  const said = { en: "expire within 30 days", "zh-CN": "会在 30 天内过期", "zh-TW": "會在 30 天內過期", ja: "30 日以内に期限切れ" };
   for (const lng of LANGS) {
     const html = draw(lng);
-    if (PLACEHOLDER.test(BACKUPS_EXPIRE_AFTER)) {
-      assert.ok(html.includes(`<mark data-placeholder="" class="bg-warn/25 px-0.5 font-mono text-warn-fg">${BACKUPS_EXPIRE_AFTER}</mark>`), `${lng}: marked`);
-    } else {
-      assert.ok(html.includes(BACKUPS_EXPIRE_AFTER), `${lng}: said`);
-    }
+    assert.ok(html.includes(said[lng]), `${lng}: said`);
     assert.doesNotMatch(unmarked(html), PLACEHOLDER, `${lng}: a placeholder unmarked`);
   }
 });
@@ -95,6 +93,5 @@ test("every owner placeholder the source writes is on the list a release checks 
       for (const m of line.matchAll(new RegExp(`"(${PLACEHOLDER.source})"`, "g"))) written.add(m[1]);
     }
   }
-  assert.ok(written.has(BACKUPS_EXPIRE_AFTER) || !PLACEHOLDER.test(BACKUPS_EXPIRE_AFTER), "the scan sees the notice's own");
   for (const marker of written) assert.ok(listed.includes(marker), `${marker} is in the source but not in web/owner-placeholders.txt`);
 });

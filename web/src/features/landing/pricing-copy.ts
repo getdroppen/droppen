@@ -1,7 +1,8 @@
 /*
  * The words of the pricing page (`pricing.tsx`), its waitlist form
  * (`waitlist.tsx`), the privacy notice (`privacy.tsx`) and the public pages'
- * links to them (`page-kit.tsx`) — merged into the landing page's tables
+ * links to them and to the terms of service (`page-kit.tsx`; the terms'
+ * own words are in `terms/terms-copy.ts`) — merged into the landing page's tables
  * (`copy.ts`), so the landing test holds them to the same rules: keys are the
  * English text, zh-CN is written as native copy first, zh-TW and ja say the
  * same things.
@@ -22,6 +23,7 @@ export const pricingZhCN: Bundle = {
   // The public pages' links
   "Pricing": "定价",
   "Privacy notice": "隐私说明",
+  "Terms of Service": "服务条款",
   "How the encryption works, in detail": "加密是怎么做的：详细说明",
   "No code yet? Join the waitlist": "还没有邀请码？加入等候名单",
 
@@ -130,8 +132,8 @@ export const pricingZhCN: Bundle = {
   "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "你的邮箱地址、你选的方案（免费版或 Pro）、页面语言，以及加入的时间。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用来给你发邀请，或在 Pro 开放时通知你。不会发别的邮件，你的邮箱也绝不出售、不用于营销。",
-  "Not your IP address, nor anything else about your browser. To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "不保存你的 IP 地址，也不保存浏览器的任何其他信息。为防止滥用，服务器会在内存里按网络计数请求，最多保留一天。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
+    "不保存你的 IP 地址，也不保存浏览器的任何其他信息；不过托管服务商的边缘日志会记录你的 IP 地址和 User-Agent（见下文）。为防止滥用，服务器会在内存里按网络计数请求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎么退出",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求删除为止，最长不超过你最后一次加入后的 12 个月：超过的记录会自动删除。",
@@ -143,8 +145,8 @@ export const pricingZhCN: Bundle = {
   "What our servers can see": "我们的服务器看得到",
   "Your e-mail address, and when you sign in": "你的邮箱地址，以及登录时间",
   "Which of your devices are online, when they connect and from which IP address": "你的哪些设备在线、何时连接、从哪个 IP 地址",
-  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself":
-    "每台设备的类型和浏览器，只记一个简称，比如「iPhone · Chrome」，由它的 User-Agent 得出；User-Agent 本身从不保存",
+  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; our servers do not keep the User-Agent itself, though our hosting provider's edge logs do (see below)":
+    "每台设备的类型和浏览器，只记一个简称，比如「iPhone · Chrome」，由它的 User-Agent 得出；我们的服务器从不保存 User-Agent 本身，不过托管服务商的边缘日志会记录它（见下文）",
   "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "传了多少数据、什么时候传的。我们保存的数据会填充到固定大小；实时连接不做填充，所以经我们的服务器转发时，它的时序、流量和终端里的打字节奏都看得到：也就是你大概什么时候在工作",
   "Your plan, and how much of it you use": "你的方案，以及用了多少",
   "What they cannot see": "我们的服务器看不到",
@@ -152,6 +154,25 @@ export const pricingZhCN: Bundle = {
   "Session titles, folders, repositories and branches": "会话标题、文件夹、仓库和分支",
   "Model names, which AI tool you use, your AI accounts and their quotas": "模型名、你用哪个 AI 工具、你的 AI 账号和额度",
   "The names of your devices, your files and their names": "设备名、你的文件以及文件名",
+  "Providers and retention": "服务商与保存期限",
+  "Who else handles it, and for how long": "还有谁经手，保存多久",
+  "These services run parts of Droppen for us. Like our servers, none of them can read what is end-to-end encrypted.":
+    "这些服务替我们运行 Droppen 的一部分。和我们的服务器一样，它们都读不了端到端加密的内容。",
+  "Our providers": "我们的服务商",
+  "Railway, in Singapore, runs our servers. Its edge logs record the IP address and User-Agent of every request to droppen.app, and keep them for as long as Railway keeps its logs.":
+    "Railway（位于新加坡）托管我们的服务器。它的边缘日志会记录每个发往 droppen.app 的请求的 IP 地址和 User-Agent，并按 Railway 自己的日志保存期限保留。",
+  "PlanetScale runs our database (Postgres), in Singapore.":
+    "PlanetScale 替我们运行数据库（Postgres），位于新加坡。",
+  "Tigris stores the encrypted pages of your sessions.": "Tigris 存储你会话的加密页面。",
+  "Cloudflare runs our DNS and routes mail to our addresses. It also runs one of the STUN servers for direct connections (Google runs the other): a STUN server sees your device's public IP address.":
+    "Cloudflare 负责我们的 DNS，并把发往我们地址的邮件转给我们。直连用的 STUN 服务器也有一台是它的（另一台是 Google 的）：STUN 服务器看得到你设备的公网 IP 地址。",
+  "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
+    "我们自己运营的一个邮件转发服务负责把我们的邮件（比如验证邮件）发到你的邮箱。",
+  "How long we keep it": "保存多久",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
+    "你会话的加密副本：免费版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不对外销售的内部方案保存 {{internal}} 天。设备关机超过这个天数，它的副本会被删除。",
+  "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
+    "邮箱从未验证、也从未添加过设备的账号，会在 {{days}} 天后删除。",
   "Contact": "联系我们",
   "Questions, or a request about your data:": "有疑问，或想处理你的数据，请写信到：",
   // Deleting an account (privacy notice)
@@ -173,13 +194,14 @@ export const pricingZhCN: Bundle = {
     "你邮箱地址的带密钥哈希（不是地址本身），保留 {{days}} 天，防止同一个邮箱马上重新注册。保留多久由 Droppen Hub 的设置决定：droppen.app 上是 {{days}} 天。",
   "For the same {{days}} days, your account's and your devices' random ids and your devices' public keys, which open nothing: our servers use them to turn the account's connections away, and to tell a device that comes back that the account is gone, so it forgets its keys.":
     "同样保留 {{days}} 天：你账号和各个设备的随机 ID，以及设备的公钥（打不开任何东西）。我们的服务器用它们拒绝这个账号的连接，并告诉再次连上的设备账号已删除，让它忘掉自己的钥匙。",
-  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
-    "删除会立即把这些从我们的在线系统中移除。备份和日志中的副本会在 {{period}} 后过期。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire within {{days}} days.":
+    "删除会立即把这些从我们的在线系统中移除。备份和日志中的副本会在 {{days}} 天内过期。",
 };
 
 export const pricingZhTW: Bundle = {
   "Pricing": "價格",
   "Privacy notice": "隱私權聲明",
+  "Terms of Service": "服務條款",
   "How the encryption works, in detail": "加密是怎麼做的：詳細說明",
   "No code yet? Join the waitlist": "還沒有邀請碼？加入等候名單",
 
@@ -282,8 +304,8 @@ export const pricingZhTW: Bundle = {
   "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "你的電子郵件地址、你選的方案（免費版或 Pro）、頁面語言，以及加入的時間。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用來寄邀請給你，或在 Pro 開放時通知你。不會寄別的信，你的信箱也絕不出售、不用於行銷。",
-  "Not your IP address, nor anything else about your browser. To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊。為防止濫用，伺服器會在記憶體裡按網路計數請求，最多保留一天。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
+    "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊；不過託管服務商的邊緣日誌會記錄你的 IP 位址和 User-Agent（見下文）。為防止濫用，伺服器會在記憶體裡按網路計數請求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎麼退出",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求刪除為止，最長不超過你最後一次加入後的 12 個月：超過的紀錄會自動刪除。",
@@ -295,8 +317,8 @@ export const pricingZhTW: Bundle = {
   "What our servers can see": "我們的伺服器看得到",
   "Your e-mail address, and when you sign in": "你的電子郵件地址，以及登入時間",
   "Which of your devices are online, when they connect and from which IP address": "你的哪些裝置在線、何時連線、從哪個 IP 位址",
-  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself":
-    "每台裝置的類型和瀏覽器，只記一個簡稱，例如「iPhone · Chrome」，由它的 User-Agent 得出；User-Agent 本身從不保存",
+  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; our servers do not keep the User-Agent itself, though our hosting provider's edge logs do (see below)":
+    "每台裝置的類型和瀏覽器，只記一個簡稱，例如「iPhone · Chrome」，由它的 User-Agent 得出；我們的伺服器從不保存 User-Agent 本身，不過託管服務商的邊緣日誌會記錄它（見下文）",
   "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "傳了多少資料、什麼時候傳的。我們保存的資料會填充到固定大小；即時連線不做填充，所以經我們的伺服器轉送時，它的時序、流量和終端機裡的打字節奏都看得到：也就是你大概什麼時候在工作",
   "Your plan, and how much of it you use": "你的方案，以及用了多少",
   "What they cannot see": "我們的伺服器看不到",
@@ -304,6 +326,25 @@ export const pricingZhTW: Bundle = {
   "Session titles, folders, repositories and branches": "工作階段標題、資料夾、儲存庫和分支",
   "Model names, which AI tool you use, your AI accounts and their quotas": "模型名稱、你用哪個 AI 工具、你的 AI 帳號和額度",
   "The names of your devices, your files and their names": "裝置名稱、你的檔案以及檔名",
+  "Providers and retention": "服務商與保存期限",
+  "Who else handles it, and for how long": "還有誰經手，保存多久",
+  "These services run parts of Droppen for us. Like our servers, none of them can read what is end-to-end encrypted.":
+    "這些服務替我們運行 Droppen 的一部分。和我們的伺服器一樣，它們都讀不了端對端加密的內容。",
+  "Our providers": "我們的服務商",
+  "Railway, in Singapore, runs our servers. Its edge logs record the IP address and User-Agent of every request to droppen.app, and keep them for as long as Railway keeps its logs.":
+    "Railway（位於新加坡）託管我們的伺服器。它的邊緣日誌會記錄每個發往 droppen.app 的請求的 IP 位址和 User-Agent，並依 Railway 自己的日誌保存期限保留。",
+  "PlanetScale runs our database (Postgres), in Singapore.":
+    "PlanetScale 替我們運行資料庫（Postgres），位於新加坡。",
+  "Tigris stores the encrypted pages of your sessions.": "Tigris 儲存你工作階段的加密頁面。",
+  "Cloudflare runs our DNS and routes mail to our addresses. It also runs one of the STUN servers for direct connections (Google runs the other): a STUN server sees your device's public IP address.":
+    "Cloudflare 負責我們的 DNS，並把寄往我們地址的郵件轉給我們。直連用的 STUN 伺服器也有一台是它的（另一台是 Google 的）：STUN 伺服器看得到你裝置的公網 IP 位址。",
+  "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
+    "我們自己營運的一個郵件轉發服務負責把我們的郵件（例如驗證信）寄到你的信箱。",
+  "How long we keep it": "保存多久",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
+    "你工作階段的加密副本：免費版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不對外銷售的內部方案保存 {{internal}} 天。裝置關機超過這個天數，它的副本會被刪除。",
+  "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
+    "信箱從未驗證、也從未新增過裝置的帳號，會在 {{days}} 天後刪除。",
   "Contact": "聯絡我們",
   "Questions, or a request about your data:": "有疑問，或想處理你的資料，請寫信到：",
   // Deleting an account (privacy notice)
@@ -325,13 +366,14 @@ export const pricingZhTW: Bundle = {
     "你電子郵件地址的帶金鑰雜湊（不是地址本身），保留 {{days}} 天，防止同一個信箱馬上重新註冊。保留多久由 Droppen Hub 的設定決定：droppen.app 上是 {{days}} 天。",
   "For the same {{days}} days, your account's and your devices' random ids and your devices' public keys, which open nothing: our servers use them to turn the account's connections away, and to tell a device that comes back that the account is gone, so it forgets its keys.":
     "同樣保留 {{days}} 天：你帳號和各個裝置的隨機 ID，以及裝置的公鑰（打不開任何東西）。我們的伺服器用它們拒絕這個帳號的連線，並告訴再次連上的裝置帳號已刪除，讓它忘掉自己的金鑰。",
-  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
-    "刪除會立即把這些從我們的線上系統中移除。備份和日誌中的副本會在 {{period}} 後過期。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire within {{days}} days.":
+    "刪除會立即把這些從我們的線上系統中移除。備份和日誌中的副本會在 {{days}} 天內過期。",
 };
 
 export const pricingJa: Bundle = {
   "Pricing": "料金",
   "Privacy notice": "プライバシーについて",
+  "Terms of Service": "利用規約",
   "How the encryption works, in detail": "暗号化のしくみ（詳しく）",
   "No code yet? Join the waitlist": "招待コードがない方はウェイトリストへ",
 
@@ -434,8 +476,8 @@ export const pricingJa: Bundle = {
   "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.": "メールアドレス、選んだプラン（無料または Pro）、ページの言語、登録した日時。",
   "We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "用途は招待のお送りと Pro 開始のお知らせだけです。それ以外のメールは送らず、アドレスを販売したりマーケティングに使ったりすることもありません。",
-  "Not your IP address, nor anything else about your browser. To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "IP アドレスやブラウザに関する情報は保管しません。不正利用を防ぐため、サーバーはネットワークごとのリクエスト数をメモリ上で数えますが、保持は最長 1 日です。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
+    "IP アドレスやブラウザに関する情報は保管しません。ただし、ホスティング事業者のエッジのログには IP アドレスと User-Agent が記録されます（下記参照）。不正利用を防ぐため、サーバーはネットワークごとのリクエスト数をメモリ上で数えますが、保持は最長 1 日です。",
   "How long, and how to be taken off": "保管期間と削除の方法",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "削除のご依頼をいただくまで保管しますが、最後に登録してから 12 か月を超えることはありません。それより古い記録は自動で削除されます。",
@@ -447,8 +489,8 @@ export const pricingJa: Bundle = {
   "What our servers can see": "私たちのサーバーに見えるもの",
   "Your e-mail address, and when you sign in": "メールアドレスとログインの時刻",
   "Which of your devices are online, when they connect and from which IP address": "どのデバイスがオンラインか、いつ、どの IP アドレスから接続したか",
-  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself":
-    "各デバイスの種類とブラウザ（「iPhone · Chrome」のような短い名前。User-Agent から作り、User-Agent そのものは保存しません）",
+  "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; our servers do not keep the User-Agent itself, though our hosting provider's edge logs do (see below)":
+    "各デバイスの種類とブラウザ（「iPhone · Chrome」のような短い名前。User-Agent から作り、User-Agent そのものは私たちのサーバーには保存しません。ホスティング事業者のエッジのログには記録されます。下記参照）",
   "How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working": "どれだけのデータがいつ流れたか。保存するデータは決まったサイズまでパディングしますが、ライブの接続はしません。そのため私たちのサーバーを通る間は、そのタイミング、量、ターミナルでの打鍵のリズムが見えます。つまり、だいたいいつ作業しているか",
   "Your plan, and how much of it you use": "契約プランと、その使用量",
   "What they cannot see": "見えないもの",
@@ -456,6 +498,25 @@ export const pricingJa: Bundle = {
   "Session titles, folders, repositories and branches": "セッションのタイトル、フォルダ、リポジトリ、ブランチ",
   "Model names, which AI tool you use, your AI accounts and their quotas": "モデル名、どの AI ツールを使っているか、AI のアカウントと使用枠",
   "The names of your devices, your files and their names": "デバイス名、ファイルとファイル名",
+  "Providers and retention": "委託先と保管期間",
+  "Who else handles it, and for how long": "ほかに誰が扱い、どれだけ保管するか",
+  "These services run parts of Droppen for us. Like our servers, none of them can read what is end-to-end encrypted.":
+    "これらのサービスが、Droppen の一部を私たちに代わって動かしています。私たちのサーバーと同じく、どれもエンドツーエンド暗号化された内容は読めません。",
+  "Our providers": "委託先",
+  "Railway, in Singapore, runs our servers. Its edge logs record the IP address and User-Agent of every request to droppen.app, and keep them for as long as Railway keeps its logs.":
+    "Railway（シンガポール）が私たちのサーバーをホストしています。そのエッジのログには、droppen.app へのすべてのリクエストの IP アドレスと User-Agent が記録され、Railway 自身のログ保存期間のあいだ保管されます。",
+  "PlanetScale runs our database (Postgres), in Singapore.":
+    "PlanetScale が、私たちのデータベース（Postgres）をシンガポールで運用しています。",
+  "Tigris stores the encrypted pages of your sessions.": "Tigris が、セッションの暗号化されたページを保存しています。",
+  "Cloudflare runs our DNS and routes mail to our addresses. It also runs one of the STUN servers for direct connections (Google runs the other): a STUN server sees your device's public IP address.":
+    "Cloudflare が私たちの DNS を運用し、私たちのアドレス宛てのメールを転送しています。直結に使う STUN サーバーの一つも Cloudflare のものです（もう一つは Google）。STUN サーバーには、あなたのデバイスのパブリック IP アドレスが見えます。",
+  "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
+    "私たちが運用するメール配信サービスが、確認メールなど私たちからのメールをあなたのアドレスに送っています。",
+  "How long we keep it": "保管期間",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
+    "セッションの暗号化コピー：無料プランは直近 {{free}} 日分、Pro は {{pro}} 日分、一般には提供していない内部プランは {{internal}} 日分を保管します。それより長く電源が切れたデバイスは、そのコピーが削除されます。",
+  "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
+    "メールアドレスが一度も確認されず、デバイスも追加されなかったアカウントは、{{days}} 日後に削除されます。",
   "Contact": "お問い合わせ",
   "Questions, or a request about your data:": "ご質問やデータに関するご依頼は：",
   // Deleting an account (privacy notice)
@@ -477,6 +538,6 @@ export const pricingJa: Bundle = {
     "メールアドレスの鍵付きハッシュ（アドレスそのものではありません）を {{days}} 日間。同じ受信箱ですぐに再登録できないようにするためです。期間は Droppen Hub の設定で、droppen.app では {{days}} 日です。",
   "For the same {{days}} days, your account's and your devices' random ids and your devices' public keys, which open nothing: our servers use them to turn the account's connections away, and to tell a device that comes back that the account is gone, so it forgets its keys.":
     "同じ {{days}} 日間、アカウントと各デバイスのランダムな ID、そしてデバイスの公開鍵（何も開けません）。私たちのサーバーはこれを使ってこのアカウントの接続を断り、戻ってきたデバイスにアカウントが削除されたことを伝えて、その鍵を消させます。",
-  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.":
-    "削除すると、これらは稼働中のシステムからすぐに消えます。バックアップとログに残る写しは {{period}} で期限切れになります。",
+  "Deleting removes all this from our live systems at once. Copies in our backups and logs expire within {{days}} days.":
+    "削除すると、これらは稼働中のシステムからすぐに消えます。バックアップとログに残る写しは {{days}} 日以内に期限切れになります。",
 };

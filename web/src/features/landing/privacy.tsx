@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useEffect } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { PLAN_TABLE } from "@/lib/hub/plan";
 import { landingBundles } from "./copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { publicLink, SECURITY_PATH } from "./route";
@@ -12,9 +13,11 @@ import { PRIVACY_EMAIL } from "./waitlist";
  * for how long and how to be taken off it, what Droppen's servers can and
  * cannot see of an account (docs/cross-machine-architecture.md §2, the
  * landing page's security section; the security design at `/security` says
- * how), and what deleting an account erases and keeps (docs/hub-api/http.md
- * `DELETE /v1/account`). Signed in or not; drawn like the other
- * public pages. The contact address is a placeholder for the user to confirm.
+ * how), what deleting an account erases and keeps (docs/hub-api/http.md
+ * `DELETE /v1/account`), the providers that run parts of the service and
+ * where, and how long what they keep stays (the plans' retention from
+ * `lib/hub/plan.ts`, which the hub's tests hold to its plans). Signed in or
+ * not; drawn like the other public pages.
  */
 
 // Added, never overwriting: a key the app already translates keeps its wording.
@@ -26,17 +29,18 @@ export const PRIVACY_UPDATED = "2026-10-23";
 /** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = 7;
 
-/**
- * How long copies in droppen.app's backups and logs live before they expire,
- * as the page says it (e.g. "30 days"). Only the owner can say: until then it
- * is a placeholder in capitals and brackets, which the page shows marked
- * ({@link marked}), listed in `web/owner-placeholders.txt`: a release refuses
- * a web build that still holds one (`scripts/release-text-check.sh`), so the
- * notice cannot ship unfilled by accident.
- */
-export const BACKUPS_EXPIRE_AFTER: string = "[BACKUP RETENTION]";
+/** Within how many days copies in droppen.app's backups and logs expire (the owner's word, 2026-10-23). */
+export const BACKUPS_EXPIRE_DAYS = 30;
 
-/** A value still to be supplied by the owner: `[IN CAPITALS]`. */
+/** How long an account that never verified its e-mail, and never added a device, lasts (the hub's sweep of unverified accounts). */
+export const UNVERIFIED_ACCOUNT_DAYS = 7;
+
+/**
+ * A value still to be supplied by the owner: `[IN CAPITALS]`. The page shows
+ * one marked ({@link marked}); each is listed in `web/owner-placeholders.txt`,
+ * and a release refuses a web build that still holds one
+ * (`scripts/release-text-check.sh`), so the notice cannot ship unfilled.
+ */
 export const PLACEHOLDER = /\[[A-Z][A-Z ]*\]/;
 
 /** `text` with every placeholder in it marked, so an unfilled notice shows it. */
@@ -107,7 +111,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 items={[
                   t("Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined."),
                   t("We use them only to e-mail you an invite, or to tell you when Pro opens. Nothing else is sent, and your address is never sold or used for marketing."),
-                  t("Not your IP address, nor anything else about your browser. To stop abuse, our servers count requests per network in memory, for a day at most."),
+                  t("Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most."),
                 ]}
               />
               <div className="max-md:border-t max-md:border-border md:border-l md:border-border">
@@ -133,7 +137,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 items={[
                   t("Your e-mail address, and when you sign in"),
                   t("Which of your devices are online, when they connect and from which IP address"),
-                  t("What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself"),
+                  t("What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; our servers do not keep the User-Agent itself, though our hosting provider's edge logs do (see below)"),
                   t("How much data moves and when. What we store is padded to fixed sizes; live connections are not, so while our servers carry one they see its timing, its volume and the rhythm of typing in a terminal: roughly when you are working"),
                   t("Your plan, and how much of it you use"),
                 ]}
@@ -173,7 +177,39 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                   items={[
                     t("A keyed hash of your e-mail address, never the address itself, for {{days}} days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: {{days}} days on droppen.app.", { days: DELETED_EMAIL_HOLD_DAYS }),
                     t("For the same {{days}} days, your account's and your devices' random ids and your devices' public keys, which open nothing: our servers use them to turn the account's connections away, and to tell a device that comes back that the account is gone, so it forgets its keys.", { days: DELETED_EMAIL_HOLD_DAYS }),
-                    t("Deleting removes all this from our live systems at once. Copies in our backups and logs expire after {{period}}.", { period: BACKUPS_EXPIRE_AFTER }),
+                    t("Deleting removes all this from our live systems at once. Copies in our backups and logs expire within {{days}} days.", { days: BACKUPS_EXPIRE_DAYS }),
+                  ]}
+                />
+              </div>
+            </div>
+          </Section>
+          <Section id="processing">
+            <SectionHead
+              label={t("Providers and retention")}
+              title={t("Who else handles it, and for how long")}
+              lead={t("These services run parts of Droppen for us. Like our servers, none of them can read what is end-to-end encrypted.")}
+            />
+            <div className="grid border-t border-border md:grid-cols-2">
+              <Block
+                title={t("Our providers")}
+                items={[
+                  t("Railway, in Singapore, runs our servers. Its edge logs record the IP address and User-Agent of every request to droppen.app, and keep them for as long as Railway keeps its logs."),
+                  t("PlanetScale runs our database (Postgres), in Singapore."),
+                  t("Tigris stores the encrypted pages of your sessions."),
+                  t("Cloudflare runs our DNS and routes mail to our addresses. It also runs one of the STUN servers for direct connections (Google runs the other): a STUN server sees your device's public IP address."),
+                  t("An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address."),
+                ]}
+              />
+              <div className="max-md:border-t max-md:border-border md:border-l md:border-border">
+                <Block
+                  title={t("How long we keep it")}
+                  items={[
+                    t("The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.", {
+                      free: PLAN_TABLE.free!.retentionDays,
+                      pro: PLAN_TABLE.pro!.retentionDays,
+                      internal: PLAN_TABLE.internal!.retentionDays,
+                    }),
+                    t("An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.", { days: UNVERIFIED_ACCOUNT_DAYS }),
                   ]}
                 />
               </div>

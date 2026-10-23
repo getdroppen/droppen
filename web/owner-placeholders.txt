@@ -6,6 +6,10 @@
 # scripts/release-public.sh runs on web/dist). One per line, exactly as the
 # source writes it; web/test/privacy-placeholders.test.tsx fails when the
 # source holds one that is not listed here.
+#
+# All of these were filled in on 2026-10-23 (the owner's word): none is left
+# in the source. They stay listed, so a release still refuses a build in
+# which one comes back.
 [BACKUP RETENTION]
 [OPERATOR]
 [JURISDICTION]

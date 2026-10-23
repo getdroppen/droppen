@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { securityBundles } from "../src/features/landing/security/security-copy.js";
+import { termsBundles } from "../src/features/landing/terms/terms-copy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "../src/i18n/cross-device.js";
 import { ja } from "../src/i18n/ja.js";
@@ -60,9 +61,9 @@ const ALLOWED: Allowed[] = [
 ];
 
 const TABLES: Record<string, Record<string, string>> = {
-  "zh-CN": { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN, ...landingBundles["zh-CN"], ...securityBundles["zh-CN"] },
-  "zh-TW": { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW, ...landingBundles["zh-TW"], ...securityBundles["zh-TW"] },
-  ja: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...setupJa, ...welcomeJa, ...ja, ...landingBundles.ja, ...securityBundles.ja },
+  "zh-CN": { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN, ...landingBundles["zh-CN"], ...securityBundles["zh-CN"], ...termsBundles["zh-CN"] },
+  "zh-TW": { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW, ...landingBundles["zh-TW"], ...securityBundles["zh-TW"], ...termsBundles["zh-TW"] },
+  ja: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...setupJa, ...welcomeJa, ...ja, ...landingBundles.ja, ...securityBundles.ja, ...termsBundles.ja },
 };
 
 const used = new Set<Allowed>();

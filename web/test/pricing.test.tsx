@@ -11,10 +11,12 @@
 // out of reach) and sends nothing it cannot; the hub client posts
 // `/v1/waitlist` without a session; `/pricing` and `/privacy` are public
 // pages signed in or not, linked from every public page's header or footer;
-// the privacy notice says what is kept, why, how long, how to be removed, and
-// what our servers can and cannot see.
+// the privacy notice says what is kept, why, how long, how to be removed,
+// what our servers can and cannot see, which providers run parts of the
+// service and where, and how long each kind of data stays.
 import * as React from "react";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -24,7 +26,8 @@ import DownloadPage from "../src/features/landing/download.js";
 import LandingPage from "../src/features/landing/landing.js";
 import PricingPage, { planOfSearch } from "../src/features/landing/pricing.js";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "../src/features/landing/pricing-plans.js";
-import PrivacyPage, { PRIVACY_UPDATED } from "../src/features/landing/privacy.js";
+import PrivacyPage, { PRIVACY_UPDATED, UNVERIFIED_ACCOUNT_DAYS } from "../src/features/landing/privacy.js";
+import { PLAN_TABLE } from "../src/lib/hub/plan.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, PRICING_PATH, PRIVACY_PATH, publicPage } from "../src/features/landing/route.js";
 import { looksLikeEmail, PRIVACY_EMAIL, submitWaitlist, type WaitlistState, waitlistProblem } from "../src/features/landing/waitlist.js";
 import { HubApi, HubApiError, type WaitlistPlan } from "../src/lib/hub/api.js";
@@ -301,7 +304,8 @@ test("the page reads in zh-TW and ja, with nothing left in English", () => {
 test("product words, not implementation: no relay, no plan keys, and never a machine or a computer", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
     for (const words of [text(draw(lng)), text(drawPrivacy(lng))]) {
-      assert.doesNotMatch(words, /\brelays?\b|hosts\.max|devices\.max|entitlement|中继|中繼|中継|机器|機器|电脑|電腦|マシン|コンピュータ|\bmachines?\b|\bcomputers?\b/i, lng);
+      // A relay is Droppen's own, never named here; the privacy notice's "e-mail relay service" is the mail's.
+      assert.doesNotMatch(words, /(?<!e-mail )\brelays?\b|hosts\.max|devices\.max|entitlement|中继|中繼|中継|机器|機器|电脑|電腦|マシン|コンピュータ|\bmachines?\b|\bcomputers?\b/i, lng);
       // Never a lower-case "hub": Droppen Hub is a name.
       assert.doesNotMatch(words, /(?<![A-Za-z])hub(?![A-Za-z])/, `${lng}: lower-case hub`);
     }
@@ -351,12 +355,12 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   for (const line of [
     "Your e-mail address, the plan you chose (Free or Pro), the language of the page and when you joined.",
     "We use them only to e-mail you an invite, or to tell you when Pro opens.",
-    "Not your IP address, nor anything else about your browser.",
+    "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below).",
     "never more than 12 months after you last joined: older entries are deleted automatically.",
     `To be taken off, write to ${PRIVACY_EMAIL} from that address and we will delete it.`,
     "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys.",
     "Which of your devices are online, when they connect and from which IP address",
-    "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; it does not keep the User-Agent itself",
+    "What kind of device each one is and which browser, as a short name such as “iPhone · Chrome” made from its User-Agent; our servers do not keep the User-Agent itself, though our hosting provider's edge logs do (see below)",
     "What is said in a session, or typed and shown in a terminal",
     "The names of your devices, your files and their names",
     // Stored data is padded; live connections are not (as /security says).
@@ -378,5 +382,29 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));
   for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
-  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash/, lng);
+  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash|Our providers|How long we keep it/, lng);
+});
+
+test("the privacy notice names the providers that run parts of the service, where, and how long each kind of data stays", () => {
+  const words = text(drawPrivacy("en"));
+  for (const line of [
+    "Like our servers, none of them can read what is end-to-end encrypted.",
+    "Railway, in Singapore, runs our servers. Its edge logs record the IP address and User-Agent of every request to droppen.app",
+    "PlanetScale runs our database (Postgres), in Singapore.",
+    "Tigris stores the encrypted pages of your sessions.",
+    "Cloudflare runs our DNS and routes mail to our addresses. It also runs one of the STUN servers for direct connections (Google runs the other)",
+    "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.",
+    "Copies in our backups and logs expire within 30 days.",
+    // The retention of each plan, as the hub's plans have it (`lib/hub/plan.ts`, held to them by the hub's tests).
+    `The encrypted copies of your sessions: the last ${PLAN_TABLE.free!.retentionDays} days on Free, ${PLAN_TABLE.pro!.retentionDays} on Pro, and ${PLAN_TABLE.internal!.retentionDays} on the internal plan, which is not for sale.`,
+    `An account whose e-mail address was never verified, and that never added a device, is deleted after ${UNVERIFIED_ACCOUNT_DAYS} days.`,
+  ]) {
+    assert.ok(words.includes(line), `missing: ${line}`);
+  }
+  assert.deepEqual([PLAN_TABLE.free!.retentionDays, PLAN_TABLE.pro!.retentionDays, PLAN_TABLE.internal!.retentionDays, UNVERIFIED_ACCOUNT_DAYS], [7, 30, 3650, 7]);
+  // The STUN servers are the ones the direct path asks (`lib/transport/p2p.ts`).
+  const p2p = readFileSync(new URL("../src/lib/transport/p2p.ts", import.meta.url), "utf8");
+  assert.match(p2p, /STUN_SERVERS[^\n]*stun\.cloudflare\.com[^\n]*stun\.l\.google\.com/);
+  const cn = text(drawPrivacy("zh-CN"));
+  for (const line of ["服务商与保存期限", "Railway（位于新加坡）托管我们的服务器", "免费版保存最近 7 天，Pro 保存 30 天", "会在 7 天后删除"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
 });

@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
 import { compatAgreedFor, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
@@ -40,7 +40,7 @@ import { UnsupportedBrowserScreen } from "./browser-support";
 import { Turnstile } from "./turnstile";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
-import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, usePathname } from "@/features/landing/route";
+import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, PRIVACY_PATH, publicHref, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "@/features/landing/route";
 import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
 import { hostMode, moveOrigins } from "@/lib/hub/hosts";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
@@ -322,8 +322,8 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     booted.current = true;
     const session = loadSession();
     const route = bootRoute(location.pathname, session !== null);
-    // `/`, `/download`, `/pricing`, `/privacy` and `/security` are pages of their own, signed in or not; signed in, they start nothing until "Open app".
-    if (route.show === "landing" || route.show === "download" || route.show === "pricing" || route.show === "privacy" || route.show === "security") setPhase(session ? { kind: "front", session } : { kind: "auth" });
+    // `/`, `/download`, `/pricing`, `/privacy`, `/security` and `/terms` are pages of their own, signed in or not; signed in, they start nothing until "Open app".
+    if (route.show === "landing" || route.show === "download" || route.show === "pricing" || route.show === "privacy" || route.show === "security" || route.show === "terms") setPhase(session ? { kind: "front", session } : { kind: "auth" });
     // The verification link: the same page signed in or not (signed out, it is one of the public pages).
     else if (route.show === "verify") setPhase(session ? { kind: "verify", session } : { kind: "auth" });
     else if (route.show === "auth" || !session) setPhase({ kind: "auth" });
@@ -349,7 +349,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   // Back (or forward) to `/` once signed in: the landing page, from a clean
   // load. The app's router would send `/` on to the sessions (and back would
   // never get past it); a navigation started here outlives that redirect.
-  // The download, pricing, privacy and security pages likewise.
+  // The download, pricing, privacy, security and terms pages likewise.
   const signedIn = phase.kind !== "auth" && phase.kind !== "front";
   useEffect(() => {
     if (!signedIn) return;
@@ -378,7 +378,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         />
       );
     case "auth": {
-      // Signed out: the landing, download, pricing, privacy and security pages at their
+      // Signed out: the landing, download, pricing, privacy, security and terms pages at their
       // paths, sign-in and sign-up at their own, the verification link's page
       // at `/verify`, and any other path (a deep link into the app) the
       // sign-in form in place, so the link still opens once the visitor is in.
@@ -1198,6 +1198,7 @@ export function AuthScreen({
                   <p className="text-xs text-faint">{t("A passkey signs you in with your device's screen lock; it cannot decrypt anything.")}</p>
                 )}
                 {widget && <Turnstile key={mode} config={widget} action={mode === "signup" ? "signup" : "login"} onToken={setCheck} reset={reset} />}
+                {mode === "signup" && <SignUpTerms />}
               </>
             )}
             <ErrorLine message={error} />
@@ -1254,6 +1255,29 @@ export function AuthScreen({
         </div>
       </div>
     </CloudPage>
+  );
+}
+
+/**
+ * What signing up agrees to, said above the button: the terms of service and
+ * the privacy notice (on the site host where the hub has one: `publicHref`),
+ * each opening in a new tab so the form keeps what was typed (and the human
+ * check its token).
+ */
+function SignUpTerms() {
+  const { t } = useTranslation();
+  const link = "text-muted underline underline-offset-4 hover:text-fg";
+  return (
+    <p data-testid="signup-terms" className="text-xs leading-5 text-faint">
+      <Trans
+        t={t}
+        i18nKey="By signing up you agree to the <terms>Terms of Service</terms> and have read the <privacy>Privacy notice</privacy>."
+        components={{
+          terms: <a href={publicHref(TERMS_PATH)} target="_blank" rel="noopener" data-testid="signup-terms-link" className={link} />,
+          privacy: <a href={publicHref(PRIVACY_PATH)} target="_blank" rel="noopener" data-testid="signup-privacy-link" className={link} />,
+        }}
+      />
+    </p>
   );
 }
 

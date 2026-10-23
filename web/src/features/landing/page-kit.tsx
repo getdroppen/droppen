@@ -9,15 +9,16 @@ import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, usePathname } from "./route";
+import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, TERMS_PATH, usePathname } from "./route";
 
 /*
  * The public pages' frame, in the landing page's drafting-sheet language: a
  * sticky header over a 1152px framed column, hairline
  * sections with registration marks at their seams, and the one-line footer.
  * The landing page (`landing.tsx`), the download page (`download.tsx`), the
- * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`) and the
- * security design (`security/security.tsx`) are all drawn with these; the
+ * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`), the
+ * security design (`security/security.tsx`) and the terms of service
+ * (`terms/terms.tsx`) are all drawn with these; the
  * header links the pricing page, the footer every page. A command to paste
  * (`CommandLine`) looks the same on the landing page's hero and the download
  * page.
@@ -153,6 +154,9 @@ export const NOTICES_PATH = "/THIRD_PARTY_NOTICES.txt";
 /** Where the source of this web app (AGPL-3.0-only) and of the local program is. */
 export const SOURCE_URL = "https://github.com/getdroppen/droppen";
 
+/** Where to report a vulnerability, besides GitHub's private vulnerability reporting (SECURITY.md). */
+export const SECURITY_EMAIL = "security@droppen.app";
+
 /** The last line of every public page: the mark, the other public pages, the source and the licences. */
 export function FooterLine() {
   const { t } = useTranslation();
@@ -177,6 +181,7 @@ export function FooterLine() {
         <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <a href={SOURCE_URL} data-testid="footer-source" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Source code")}
         </a>

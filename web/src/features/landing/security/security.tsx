@@ -5,7 +5,7 @@ import { Info } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
-import { FooterLine, PublicHeader, Section, SectionHead } from "../page-kit";
+import { FooterLine, PublicHeader, SECURITY_EMAIL, Section, SectionHead } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
 import { securityBundles } from "./security-copy";
@@ -42,8 +42,8 @@ for (const bundles of [landingBundles, securityBundles]) {
 /** When the page last changed, as the page says it. */
 export const SECURITY_UPDATED = "2026-10-23";
 
-/** Where to report a vulnerability, besides GitHub's private vulnerability reporting (SECURITY.md). */
-export const SECURITY_EMAIL = "security@droppen.app";
+/** Where to report a vulnerability (`page-kit.tsx`, so the terms can name it without this page's chunk). */
+export { SECURITY_EMAIL };
 
 /** The page's sections, in order: the table of contents and the anchors. */
 export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offline", "renewal", "threats", "verify"] as const;

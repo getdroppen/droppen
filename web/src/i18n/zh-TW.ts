@@ -739,6 +739,7 @@ export const zhTW: Record<string, string> = {
   "invite code": "邀請碼",
   "At least 10 characters. Your password signs you in; it cannot decrypt anything.": "至少 10 個字元。密碼只用於登入，無法解密任何內容。",
   "create account": "建立帳戶",
+  "By signing up you agree to the <terms>Terms of Service</terms> and have read the <privacy>Privacy notice</privacy>.": "註冊即表示你同意<terms>服務條款</terms>，並已閱讀<privacy>隱私權聲明</privacy>。",
   "set up this device": "設定這台裝置",
   "This browser now holds this account's device keys. They stay on this device and are never sent to our servers: everything you see here is decrypted on this device.": "這個瀏覽器將保存該帳戶的裝置金鑰。金鑰只留在這台裝置上，從不傳送到我們的伺服器：你在這裡看到的一切都在本裝置上解密。",
   "A recovery key lets you get back in if you lose every device. It is shown once, and nobody — not the hub, not us — can recover it for you.": "恢復金鑰能在你遺失所有裝置時找回資料。它只顯示一次，任何人（包括雲端和我們）都無法替你找回。",
