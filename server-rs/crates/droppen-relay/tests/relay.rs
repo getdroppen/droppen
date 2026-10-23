@@ -1118,3 +1118,41 @@ async fn a_host_is_an_agent_and_a_device_on_two_connections_and_never_reaches_it
         f => panic!("an agent's OPEN: {f:?}"),
     }
 }
+
+/// A machine id is the account's own name for it: another account's agent
+/// signing in under the same id is another machine. It closes nothing, both
+/// stay reachable by their own account's devices, and each account hears
+/// only of its own machine coming and going.
+#[tokio::test]
+async fn another_accounts_agent_with_the_same_machine_id_replaces_nothing() {
+    let r = relay("sin-1", None, Timing::default(), |_| {}).await;
+    let o = r.origin.as_str();
+    let dev_h = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 91, &["m-1"]);
+    let agent_h = Holder::new("sin-1", "a-1", TicketRole::Agent, "m-1", 92, &[]);
+    let mut agent = Client::login(o, &agent_h).await;
+    let mut dev = Client::login(o, &dev_h).await;
+    let snapshot = dev.next_text(SECS).await;
+    assert_eq!(snapshot["machines"][0]["state"], "online", "{snapshot}");
+    let ch = pair(&mut dev, &mut agent, 1, "m-1").await;
+
+    let other_dev_h = Holder::new("sin-1", "a-2", TicketRole::Device, "d-2", 93, &["m-1"]);
+    let other_agent_h = Holder::new("sin-1", "a-2", TicketRole::Agent, "m-1", 94, &[]);
+    let mut other_agent = Client::login(o, &other_agent_h).await;
+    assert_eq!(agent.closed_within(Duration::from_millis(500)).await, None, "a-1's m-1 stays signed in");
+    traffic(&mut dev, &mut agent, 1, ch, 1000).await;
+    let mut other_dev = Client::login(o, &other_dev_h).await;
+    let other_ch = pair(&mut other_dev, &mut other_agent, 1, "m-1").await;
+    traffic(&mut other_dev, &mut other_agent, 1, other_ch, 1000).await;
+    // a-2's machine going away is not a-1's: a-1's pair and presence stay.
+    other_agent.sink.close().await.unwrap();
+    assert!(matches!(
+        other_dev.next_frame(SECS).await,
+        Some(Frame::Close { ch: 1, code: 4410, .. })
+    ));
+    traffic(&mut dev, &mut agent, 1, ch, 1000).await;
+    assert!(
+        !dev.controls.iter().any(|v| v["t"] == "presence"),
+        "a-1's device heard nothing of a-2's machine: {:?}",
+        dev.controls
+    );
+}

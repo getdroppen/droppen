@@ -424,7 +424,7 @@ that closes the connection (4400).
 | 1011 | the server cannot serve now (database, chain); reconnect later | hub |
 | 1012 | the server is restarting; reconnect | hub, relay |
 | 1013 | not reading fast enough (outbound budget), or the relay is full or shutting down | hub, relay |
-| 4001 | the same device, machine or relay signed in again elsewhere | hub, relay |
+| 4001 | the same device, machine or relay signed in again elsewhere (on a relay: the same account's machine id; another account's machine of the same id is another machine) | hub, relay |
 | 4002 | no heartbeat (silent for 90 s) | hub, relay |
 | 4005 | this host's identity key was renewed (`error rotated` with the new key's fingerprint before it): sign in with the new key. Only to a renewed host's agent and device connections | hub |
 | 4400 | a message or frame the server does not understand, or one not allowed here | hub, relay |

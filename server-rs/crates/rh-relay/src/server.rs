@@ -395,10 +395,7 @@ impl Server {
         let machines: Vec<serde_json::Value> = peers
             .into_iter()
             .map(|m| {
-                let online = inner
-                    .route
-                    .agent(m)
-                    .is_some_and(|c| inner.conns.get(&c).is_some_and(|i| i.account == info.account));
+                let online = inner.route.agent(&info.account, m).is_some();
                 json!({"id": m, "state": if online { "online" } else { "offline" }})
             })
             .collect();
@@ -439,7 +436,7 @@ impl Server {
                         inner.account_buckets.remove(&info.account);
                     }
                 }
-                if info.role == TicketRole::Agent && inner.route.agent(&info.id).is_none() {
+                if info.role == TicketRole::Agent && inner.route.agent(&info.account, &info.id).is_none() {
                     presence_change(&inner, &info.account, &info.id, false);
                 }
             }

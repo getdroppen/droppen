@@ -97,8 +97,10 @@ struct Conn {
 #[derive(Debug, Default)]
 pub struct Relay {
     conns: HashMap<ConnId, Conn>,
-    /// The live connection of each machine.
-    agents: HashMap<String, ConnId>,
+    /// The live connection of each machine, by `(account, machine)`: a
+    /// machine id is the account's own name for it, so another account's
+    /// machine of the same id is another machine and never replaces it.
+    agents: HashMap<(String, String), ConnId>,
 }
 
 fn close(to: ConnId, ch: u32, code: u16, reason: &str) -> Delivery {
@@ -118,10 +120,11 @@ impl Relay {
     }
 
     /// Register a signed-in connection. For an agent, returns the connection
-    /// it replaces (the same machine signed in again), which the caller closes.
+    /// it replaces (the same machine of the same account signed in again),
+    /// which the caller closes.
     pub fn add(&mut self, id: ConnId, peer: Peer, max_channels: usize) -> Option<ConnId> {
         let replaced = match &peer {
-            Peer::Agent { machine, .. } => self.agents.insert(machine.clone(), id),
+            Peer::Agent { account, machine } => self.agents.insert((account.clone(), machine.clone()), id),
             Peer::Device { .. } => None,
         };
         self.conns.insert(
@@ -140,9 +143,9 @@ impl Relay {
         self.conns.get(&id).map(|c| &c.peer)
     }
 
-    /// The connection a machine is on, if it is connected.
-    pub fn agent(&self, machine: &str) -> Option<ConnId> {
-        self.agents.get(machine).copied()
+    /// The connection `account`'s machine is on, if it is connected.
+    pub fn agent(&self, account: &str, machine: &str) -> Option<ConnId> {
+        self.agents.get(&(account.to_string(), machine.to_string())).copied()
     }
 
     pub fn channels(&self, id: ConnId) -> usize {
@@ -154,9 +157,10 @@ impl Relay {
         let Some(conn) = self.conns.remove(&id) else {
             return Vec::new();
         };
-        if let Peer::Agent { machine, .. } = &conn.peer {
-            if self.agents.get(machine) == Some(&id) {
-                self.agents.remove(machine);
+        if let Peer::Agent { account, machine } = &conn.peer {
+            let key = (account.clone(), machine.clone());
+            if self.agents.get(&key) == Some(&id) {
+                self.agents.remove(&key);
             }
         }
         let mut out = Vec::new();
@@ -190,7 +194,7 @@ impl Relay {
         if let Err(reason) = allowed {
             return vec![close(from, ch, CLOSE_FORBIDDEN, reason)];
         }
-        let Some(agent_id) = self.agents.get(machine).copied() else {
+        let Some(agent_id) = self.agent(&account, machine) else {
             return vec![close(from, ch, CLOSE_OFFLINE, "the device is offline")];
         };
         let agent = self.conns.get_mut(&agent_id).expect("indexed agents are registered");
@@ -418,6 +422,32 @@ mod tests {
     }
 
     #[test]
+    fn another_accounts_machine_of_the_same_id_replaces_nothing() {
+        let mut r = relay();
+        let other_agent = Peer::Agent {
+            account: "a-2".into(),
+            machine: "m-1".into(),
+        };
+        assert_eq!(r.add(3, other_agent, 8), None, "a-1's m-1 stays signed in");
+        r.add(
+            4,
+            Peer::Device {
+                account: "a-2".into(),
+                device: "d-2".into(),
+            },
+            4,
+        );
+        assert_eq!((r.agent("a-1", "m-1"), r.agent("a-2", "m-1")), (Some(AGENT), Some(3)));
+        // Each account's device reaches its own machine.
+        assert!(matches!(r.open(DEV, 1, "m-1", Ok(())).as_slice(), [Delivery { to: AGENT, .. }]));
+        assert!(matches!(r.open(4, 1, "m-1", Ok(())).as_slice(), [Delivery { to: 3, .. }]));
+        // One going away leaves the other, and its channel, alone.
+        assert_eq!(closed(&r.remove(3)), vec![(4, 1, CLOSE_PEER_GONE)]);
+        assert_eq!((r.agent("a-1", "m-1"), r.agent("a-2", "m-1")), (Some(AGENT), None));
+        assert_eq!(r.channels(AGENT), 1);
+    }
+
+    #[test]
     fn credit_is_enforced_both_ways() {
         let mut r = relay();
         r.open(DEV, 1, "m-1", Ok(()));
@@ -456,7 +486,7 @@ mod tests {
         let mut gone = closed(&r.remove(AGENT));
         gone.sort();
         assert_eq!(gone, vec![(DEV, 1, CLOSE_PEER_GONE), (DEV, 2, CLOSE_PEER_GONE)]);
-        assert_eq!(r.agent("m-1"), None);
+        assert_eq!(r.agent("a-1", "m-1"), None);
         assert_eq!(
             r.add(
                 5,
@@ -481,6 +511,6 @@ mod tests {
             "the old connection is the caller's to close"
         );
         assert!(r.remove(5).is_empty());
-        assert_eq!(r.agent("m-1"), Some(6), "removing the replaced connection leaves the new one");
+        assert_eq!(r.agent("a-1", "m-1"), Some(6), "removing the replaced connection leaves the new one");
     }
 }
