@@ -39,7 +39,10 @@
 //      after `<head>`, whose origin — where the page signs in and sends all
 //      hub traffic — must be the site's own (or a --hub-origin). Every page's
 //      Content-Security-Policy may let scripts (elements and attributes) run
-//      only from the site itself and the pages' own inline scripts.
+//      only from the site itself and the pages' own inline scripts;
+//   4. reads the integrity table in the attested `sw.js` — the sha256 of every
+//      asset and of the shell, which the service worker checks the browser's
+//      cache against — and fails unless it is the manifest's files exactly.
 //
 // Exit status: 0 pass, 1 fail, 2 could not check.
 //
@@ -340,6 +343,44 @@ export function scriptPolicy(header, allowedHashes) {
   return { ok: false, note: [...problems].join("; ") };
 }
 
+/**
+ * The service worker's integrity table in `sw.js` (web/build/service-worker.ts
+ * writes it): `{assets: {"/assets/…": sha256}, shell}`, or `null` when the
+ * worker has none (a build from before it checked its cache).
+ * scripts/web-manifest.mjs reads it the same way.
+ */
+export function workerTable(text) {
+  const assets = /^const INTEGRITY = (\{.*\});$/m.exec(text);
+  const shell = /^const SHELL_SHA256 = "([0-9a-f]*)";$/m.exec(text);
+  if (!assets || !shell) return null;
+  let table;
+  try {
+    table = JSON.parse(assets[1]);
+  } catch {
+    return null;
+  }
+  if (!table || typeof table !== "object" || Array.isArray(table) || Object.values(table).some((v) => typeof v !== "string")) return null;
+  return { assets: table, shell: shell[1] };
+}
+
+/**
+ * Where the worker's table disagrees with the manifest's files: every file
+ * under `assets/` listed with its sha256, nothing else, and `index.html` as
+ * the shell. `[]` when it agrees.
+ */
+export function workerProblems(table, files) {
+  const out = [];
+  const assets = new Map(files.filter((f) => f.path.startsWith("assets/")).map((f) => [`/${f.path}`, f.sha256]));
+  for (const [path, sha] of assets) {
+    if (!Object.hasOwn(table.assets, path)) out.push(`sw.js does not list ${path}`);
+    else if (table.assets[path] !== sha) out.push(`sw.js lists ${path} as ${table.assets[path]}, the manifest has ${sha}`);
+  }
+  for (const path of Object.keys(table.assets)) if (!assets.has(path)) out.push(`sw.js lists ${path}, which the manifest does not`);
+  const shell = files.find((f) => f.path === "index.html")?.sha256 ?? null;
+  if (table.shell !== shell) out.push(`sw.js has the shell as ${table.shell || "(none)"}, the manifest's index.html is ${shell ?? "missing"}`);
+  return out;
+}
+
 async function pool(items, limit, work) {
   const results = new Array(items.length);
   let next = 0;
@@ -435,6 +476,7 @@ async function main(argv) {
   const attestedPages = [];
   const markerFailures = [];
   const origins = new Set();
+  let worker = null;
   const results = await pool(checks, 6, async (c) => {
     let got;
     try {
@@ -461,6 +503,7 @@ async function main(argv) {
     const hash = sha256(body);
     const same = hash === c.want.sha256;
     if (same && page) attestedPages.push(body);
+    if (same && c.want.path === "sw.js") worker = body;
     if (wrongHub) markerFailures.push(`${c.url}: ${wrongHub}`);
     return same ? null : `${c.url}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the rh-hub marker)" : ""}`;
   });
@@ -468,6 +511,17 @@ async function main(argv) {
   failures.push(...differing, ...markerFailures.sort());
   console.log(`  files:       ${checks.length - differing.length} of ${checks.length} match (${manifest.files.length} files, ${SHELL_ROUTES.length} shell routes)`);
   if (origins.size) console.log(`  marker:      rh-hub ${[...origins].join(", ")}`);
+
+  // The worker's integrity table: what it lets out of the browser's cache.
+  if (worker) {
+    const table = workerTable(worker.toString("utf8"));
+    if (!table) console.log(`  worker:      sw.js has no integrity table (a build from before the worker checked its cache)`);
+    else {
+      const problems = workerProblems(table, manifest.files);
+      failures.push(...problems);
+      console.log(`  worker:      ${problems.length ? `sw.js disagrees with the manifest in ${problems.length} place(s)` : `sw.js lists ${Object.keys(table.assets).length} assets and the shell, as the manifest has them`}`);
+    }
+  }
 
   // Every page's policy, read against the attested pages' inline scripts
   // (unknown when no page matched, and then the pages have failed already).

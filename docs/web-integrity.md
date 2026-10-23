@@ -34,6 +34,7 @@ node scripts/verify-web.mjs --site https://…      # 检查另一个 Hub
 3. 下载清单里的每个文件，再取 `/`、`/link`、`/signin` 三个路由的页面外壳，逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
 4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是站点自己的（`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出。字节相同、却指向别的 Hub 的页面，不算同一个页面。
 5. 检查每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP：`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希。
+6. 读清单里那份 `sw.js` 的完整性表（[下文](#service-worker-的缓存)），它必须与清单逐项一致：`assets/` 下的每个文件和它的 sha256，不多不少，外壳是 `index.html` 的 sha256。没有这张表的 `sw.js`（早于这项检查的构建）只提示，不算失败。
 
 结果是 `PASS` 或 `FAIL`，并列出不同的文件。退出码：0 通过，1 不通过，2 没能检查（网络、参数）。
 
@@ -72,6 +73,23 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 签名与构建分开。构建任务要跑依赖代码（安装、vite、cargo），所以没有签名权限（没有 `id-token`），也拿不到任何密钥。签名的 `attest` 任务只在真正发版时运行（试运行不生成证明），不装依赖、不编译，也不运行任何构建出来的程序，构建产物都先按产出它的任务给的 sha256 核对：它用 GitHub 自己的 `actions/attest-build-provenance` 为发版的每个文件（清单也在内）生成 SLSA 构建来源证明，再为清单单独生成一份；`publish` 任务把清单和这份 bundle（`web-manifest.sigstore.json`）连同发版的其他文件一起发布到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
 
 **Hub 报告自己跑的构建。** Hub 启动时对它加载的文件（外壳取加标记之前的原样）算同一个摘要，在 `GET /.well-known/droppen-build` 返回 `{commit, web: {digest, files}}`（`docs/hub-api/http.md`）。提交是构建这个 Hub 时记下的那个。发版提交通常只改 Cargo 版本号，所以 Hub 部署的提交与发版标签不同也没关系：验证按摘要找清单，不按提交。
+
+### Service Worker 的缓存
+
+网页带的 Service Worker（`web/public/sw.js`）把 `/assets/` 下的文件存进浏览器的缓存，以后先用缓存。这是一个能留下来的入口：页面里的脚本能写 Cache Storage，一次恶意投递就能在那里放下改过的资源；Vite 的文件名只随内容变，很少变的块（如 `vendor`）名字一直不变，之后干净的发版也不会把它换掉。
+
+所以构建时（`web/build/service-worker.ts`）把 `assets/` 下每个文件的 sha256 和外壳 `index.html` 的 sha256 写进 `sw.js` 自己（`INTEGRITY`、`SHELL_SHA256`）。Worker 只信自己脚本里的这张表，不信缓存里的任何东西：
+
+- 资源的字节与表里的 sha256 相同才写进缓存；每次从缓存取出都重新算一遍，不同就删掉，改从网络取。
+- 从网络取到的对不上，就绕过浏览器的 HTTP 缓存（`/assets/` 在那里一年不过期）再取一次；还对不上就拒绝（`502`），不交给页面，也不缓存。表里没有的资源（Worker 还是旧版、页面已是新发版时）直接走网络，不缓存。
+- 激活时删掉 `CACHE` 以外的所有缓存，再删掉表里没有、或字节对不上的每一项。离线外壳也一样：去掉 Hub 的标记（与验证脚本去掉的方式相同）后是这次构建的 `index.html`，才保存，才在离线时使用。
+- 每次发版这张表都变，`sw.js` 的字节随之改变，浏览器就会装上新的 Worker：`sw-register.ts` 每次回到前台都调用 `update()`，浏览器自己也至少每 24 小时检查一次 `sw.js`（取它时不经 HTTP 缓存）。
+
+`scripts/web-manifest.mjs` 不为表与文件不符的构建写清单（`--check` 也会报告），`verify-web.mjs` 拿这张表对照证明过的清单。
+
+代价：以前缓存会把旧构建的懒加载块再留一周，好让还开着旧版本的标签页继续用。这些块不在新表里，无法核对，现在新 Worker 一激活就删掉；旧标签页之后要用的块改从网络取，Hub 已不提供时就加载失败，刷新页面即可。
+
+**紧急开关。** 怀疑缓存被投毒，或缓存逻辑本身出了错：改掉 `web/public/sw.js` 里的 `CACHE`（如 `rh-sw-v1` → `rh-sw-v2`）并发版。新 Worker 激活时删掉所有别的缓存，从空缓存开始。它管不到的：已经在运行被篡改代码的页面（要等它关掉或刷新）；还没取到新 `sw.js` 的浏览器（下次 `update()`，最迟约 24 小时后才换）；恶意代码写进 IndexedDB、localStorage 的东西（那要在浏览器设置里清除这个网站的数据）。
 
 ## 4. 现状和剩下的风险
 

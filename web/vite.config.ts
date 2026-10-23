@@ -1,10 +1,9 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { droppenPlugins, isPluginModule } from "./build/droppen-plugins";
+import { fillServiceWorker } from "./build/service-worker";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 
 /**
@@ -51,7 +50,8 @@ function vendorChunk(id: string): string | undefined {
 }
 
 /**
- * Tell the service worker (`public/sw.js`) which assets this build boots from.
+ * Tell the service worker (`public/sw.js`) which assets this build boots from,
+ * and the sha256 of every asset and of the shell (`build/service-worker.ts`).
  *
  * The worker caches hashed assets as they are fetched, which helps every load
  * but the first one after a release: that one still waits on the new app chunk
@@ -60,11 +60,12 @@ function vendorChunk(id: string): string | undefined {
  * checks — on returning to the tab, or when the version banner appears — and
  * the install fetches the new chunks in the background, before the reload that
  * needs them. Only the entry chunk, its static imports and their CSS: lazy
- * chunks are fetched when used, not on every install over a weak link.
+ * chunks are fetched when used, not on every install over a weak link. The
+ * hashes are what the worker checks every asset against before it caches or
+ * serves it.
  */
 function precacheBootSet(): Plugin {
   let boot: string[] = [];
-  let all: string[] = [];
   return {
     name: "rh-precache-boot-set",
     apply: "build",
@@ -81,26 +82,11 @@ function precacheBootSet(): Plugin {
         if (chunk.type === "chunk" && chunk.isEntry) visit(chunk.fileName);
       }
       boot = [...files].sort().map((file) => `/${file}`);
-      // Every asset, so the worker knows which of what it holds this build
-      // still has: a lazy chunk a release did not touch is kept, not fetched
-      // again.
-      all = Object.keys(bundle)
-        .filter((file) => file.startsWith("assets/"))
-        .sort()
-        .map((file) => `/${file}`);
     },
-    // After the public directory has been copied, so `sw.js` is there to edit.
+    // After every file is written and the public directory copied, so `sw.js`
+    // is there to edit and the hashes are of the bytes as served.
     writeBundle(options) {
-      const file = join(options.dir ?? "dist", "sw.js");
-      let text = readFileSync(file, "utf8");
-      for (const [marker, value] of [
-        ["const PRECACHE = [];", boot],
-        ["const ASSETS = [];", all],
-      ] as const) {
-        if (!text.includes(marker)) throw new Error(`${file} has no \`${marker}\` to fill in`);
-        text = text.replace(marker, `const ${marker.split(" ")[1]} = ${JSON.stringify(value)};`);
-      }
-      writeFileSync(file, text);
+      fillServiceWorker(options.dir ?? "dist", boot);
     },
   };
 }

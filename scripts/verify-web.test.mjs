@@ -13,10 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { digestOf, filesOf, FORMAT } from "./web-manifest.mjs";
+import { digestOf, filesOf, FORMAT, workerProblems as manifestWorkerProblems } from "./web-manifest.mjs";
 
 const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-web.mjs", import.meta.url));
-const { markerProblem, scriptPolicy, siteHubOrigin, unmark } = await import(pathToFileURL(script).href);
+const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
+const { markerProblem, scriptPolicy, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
 const INLINE = "window.boot=1";
 const INLINE_HASH = `'sha256-${createHash("sha256").update(INLINE).digest("base64")}'`;
@@ -70,35 +71,90 @@ describe("the script policy", () => {
   });
 });
 
+describe("the service worker's integrity table", () => {
+  const files = [
+    { path: "index.html", sha256: "a".repeat(64) },
+    { path: "assets/app-1.js", sha256: "b".repeat(64) },
+    { path: "assets/app-1.css", sha256: "c".repeat(64) },
+    { path: "sw.js", sha256: "d".repeat(64) },
+    { path: "p2p-probe.js", sha256: "e".repeat(64) },
+  ];
+  const sw = (assets, shell = "a".repeat(64)) => `const PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(assets)};\nconst SHELL_SHA256 = "${shell}";\n`;
+  const good = { "/assets/app-1.css": "c".repeat(64), "/assets/app-1.js": "b".repeat(64) };
+
+  test("one that lists every asset and the shell, as built, agrees (in both scripts)", () => {
+    assert.deepEqual(workerProblems(workerTable(sw(good)), files), []);
+    assert.deepEqual(manifestWorkerProblems(files, sw(good)), []);
+  });
+
+  test("a missing, extra or different asset, or another shell, is a disagreement (in both scripts)", () => {
+    const cases = [
+      [{ "/assets/app-1.js": "b".repeat(64) }, undefined, /does not list \/assets\/app-1\.css/],
+      [{ ...good, "/assets/evil.js": "f".repeat(64) }, undefined, /lists \/assets\/evil\.js, which/],
+      [{ ...good, "/assets/app-1.js": "f".repeat(64) }, undefined, /lists \/assets\/app-1\.js as f{64}/],
+      [good, "f".repeat(64), /the shell as f{64}/],
+      [good, "", /the shell as \(none\)/],
+    ];
+    for (const [assets, shell, why] of cases) {
+      const text = sw(assets, shell);
+      assert.match(workerProblems(workerTable(text), files).join("\n"), why);
+      assert.match(manifestWorkerProblems(files, text).join("\n"), why);
+    }
+  });
+
+  test("a worker with no table (an older build) has none; web-manifest.mjs refuses it", () => {
+    assert.equal(workerTable("const CACHE = 1;\nconst ASSETS = [];\n"), null);
+    assert.equal(workerTable('const INTEGRITY = {"/assets/a.js": 1};\nconst SHELL_SHA256 = "";\n'), null, "not a table of sha256 strings");
+    assert.match(manifestWorkerProblems(files, "const ASSETS = [];\n").join(), /no integrity table/);
+  });
+});
+
 // ------------------------------------------------------------- end to end
 
 const root = mkdtempSync(join(tmpdir(), "verify-web-test-"));
-const dist = join(root, "dist");
-mkdirSync(join(dist, "assets"), { recursive: true });
+const sha = (text) => createHash("sha256").update(text).digest("hex");
 const SHELL = `<!doctype html><html><head><title>Droppen</title><script>${INLINE}</script></head><body><script type="module" src="/assets/app-1.js"></script></body></html>`;
-writeFileSync(join(dist, "index.html"), SHELL);
-writeFileSync(join(dist, "assets", "app-1.js"), "console.log('the app')");
-writeFileSync(join(dist, "p2p-probe.html"), '<!doctype html><script src="/p2p-probe.js"></script>');
-writeFileSync(join(dist, "p2p-probe.js"), "probe()");
-const files = filesOf(dist);
-const manifest = { format: FORMAT, commit: "0123abc", ref: "refs/tags/v9.9.9", distribution: "public", digest: digestOf(files), files };
-const manifestFile = join(root, "web-manifest.json");
-writeFileSync(manifestFile, JSON.stringify(manifest));
 
 /**
- * A hub that serves `dist` the way rh-hub does. `marker`: the origin written
- * into the shell (`self` for the site's own); `csp(path)`: the policy header.
+ * A build in `root/<name>`: its shell, one asset, the p2p probe, and a
+ * `sw.js` whose integrity table is right — or `table(assets, shell)` makes
+ * another — and its manifest (`<name>.json`).
  */
-function fakeHub({ marker = "self", csp = () => HUB_CSP } = {}) {
+function makeBuild(name, table = (assets, shell) => ({ assets, shell })) {
+  const dist = join(root, name);
+  mkdirSync(join(dist, "assets"), { recursive: true });
+  const APP = "console.log('the app')";
+  writeFileSync(join(dist, "index.html"), SHELL);
+  writeFileSync(join(dist, "assets", "app-1.js"), APP);
+  writeFileSync(join(dist, "p2p-probe.html"), '<!doctype html><script src="/p2p-probe.js"></script>');
+  writeFileSync(join(dist, "p2p-probe.js"), "probe()");
+  const t = table({ "/assets/app-1.js": sha(APP) }, sha(SHELL));
+  writeFileSync(join(dist, "sw.js"), `const CACHE = "x";\nconst PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(t.assets)};\nconst SHELL_SHA256 = ${JSON.stringify(t.shell)};\n`);
+  const files = filesOf(dist);
+  const manifest = { format: FORMAT, commit: "0123abc", ref: "refs/tags/v9.9.9", distribution: "public", digest: digestOf(files), files };
+  const manifestFile = join(root, `${name}.json`);
+  writeFileSync(manifestFile, JSON.stringify(manifest));
+  return { dist, files, manifest, manifestFile };
+}
+
+const build = makeBuild("dist");
+const { dist, files, manifest, manifestFile } = build;
+
+/**
+ * A hub that serves a build (`dist` by default) the way rh-hub does.
+ * `marker`: the origin written into the shell (`self` for the site's own);
+ * `csp(path)`: the policy header.
+ */
+function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build } = {}) {
   const server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname.slice(1);
     if (path === ".well-known/droppen-build") {
       res.setHeader("content-type", "application/json");
-      return res.end(JSON.stringify({ commit: "0123abc", web: { digest: manifest.digest, files: files.length } }));
+      return res.end(JSON.stringify({ commit: "0123abc", web: { digest: serves.manifest.digest, files: serves.files.length } }));
     }
-    const file = files.find((f) => f.path === path && path !== "index.html");
+    const file = serves.files.find((f) => f.path === path && path !== "index.html");
     res.setHeader("content-security-policy", csp(`/${path}`));
-    if (file) return res.end(readFileSync(join(dist, file.path)));
+    if (file) return res.end(readFileSync(join(serves.dist, file.path)));
     if (path.startsWith("assets/")) {
       res.statusCode = 404;
       return res.end("not found");
@@ -222,6 +278,31 @@ describe("verify-web.mjs against a hub", () => {
     const r = await verify(["--site", site, "--manifest", manifestFile]);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /PASS/);
+    assert.match(r.out, /worker: +sw\.js lists 1 assets and the shell, as the manifest has them/);
+  });
+
+  test("an attested worker whose integrity table disagrees with the manifest fails", async () => {
+    const odd = makeBuild("odd", (assets, shell) => ({ assets: { ...assets, "/assets/vendor-old.js": "f".repeat(64) }, shell }));
+    const site = await hub({ serves: odd });
+    const r = await verify(["--site", site, "--manifest", odd.manifestFile]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /sw\.js lists \/assets\/vendor-old\.js, which the manifest does not/);
+  });
+
+  test("web-manifest.mjs writes no manifest for such a build, and --check reports it", async () => {
+    const odd = makeBuild("odd-shell", (assets) => ({ assets, shell: "f".repeat(64) }));
+    mkdirSync(join(odd.dist, "plugins"));
+    writeFileSync(join(odd.dist, "plugins", "manifest.json"), JSON.stringify({ distribution: "public", plugins: [] }));
+    const run = (args) =>
+      new Promise((resolve) => execFile(process.execPath, [manifestScript, ...args], (error, stdout, stderr) => resolve({ code: error ? error.code : 0, out: stdout + stderr })));
+    const write = await run([odd.dist]);
+    assert.equal(write.code, 2, write.out);
+    assert.match(write.out, /integrity table does not match the build:\n +sw\.js has the shell as f{64}, index\.html is [0-9a-f]{64}/);
+    const check = await run([odd.dist, "--check", odd.manifestFile]);
+    assert.equal(check.code, 1, check.out);
+    assert.match(check.out, /worker +sw\.js has the shell as f{64}/);
+    const fine = await run([dist, "--check", manifestFile]);
+    assert.equal(fine.code, 0, fine.out);
   });
 
   test("a byte-identical page pointed at another hub fails", async () => {
