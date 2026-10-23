@@ -12,7 +12,7 @@ import { removeBrowserText, StillListedNote } from "@/features/cloud/sign-out-di
 import type { SignOutResult } from "@/features/cloud/sign-out";
 import { Centered, danger, ErrorLine, Note, Panel, primary, quiet } from "@/features/cloud/ui";
 import { isLinkPath } from "@/features/link/link-popup";
-import { moveSupported, startMove } from "@/features/move";
+import { moveSupported, moveUnfinished, startMove } from "@/features/move";
 import { prepareRemoval, type Removal, removeHere } from "./remove-here";
 
 /*
@@ -102,7 +102,7 @@ type Step =
   | { kind: "opening" }
   | { kind: "confirm"; removal: Removal; again: boolean }
   | { kind: "removing" }
-  | { kind: "removed"; result: SignOutResult };
+  | { kind: "removed"; result: SignOutResult; localOnly?: boolean };
 
 /** Whose device this browser is, as `/v1/me` says (a kept session that still works), or `null`. */
 function useWho(here: DeviceHere): { email: string; device: string | null } | null {
@@ -151,6 +151,12 @@ export function MoveNotice({
   const who = useWho(here);
   const onward = () => go(`${app}${continueTo}`);
   const offerMove = canMove && !standalone;
+  // A move of this browser's device that did not finish: the app host may be using it, so Move finishes it and Remove
+  // deletes only this copy (`remove-here.ts`). Read again whenever the step changes (a move may have just left it).
+  const unfinished = useMemo(() => {
+    const u = moveUnfinished();
+    return u && here.accounts.includes(u.account) ? u : null;
+  }, [here, step.kind]);
 
   const startMoving = () => {
     setStep({ kind: "moving" });
@@ -173,7 +179,7 @@ export function MoveNotice({
   };
   const remove = (removal: Removal) => {
     setStep({ kind: "removing" });
-    void removeHere(removal).then((result) => setStep({ kind: "removed", result }));
+    void removeHere(removal).then((result) => setStep({ kind: "removed", result, localOnly: !!removal.localOnly }));
   };
 
   const busy = step.kind === "moving" || step.kind === "opening" || step.kind === "removing";
@@ -197,6 +203,15 @@ export function MoveNotice({
                   : t("This browser is set up as a device of your Droppen account, here at {{apex}}.", { apex })}
             </p>
           )}
+          {here.held && step.kind === "choose" && unfinished && (
+            <Note tone="warn">
+              <p data-testid="move-notice-unfinished" data-state={unfinished.state} className="text-xs leading-5 text-fg">
+                {unfinished.state === "verified"
+                  ? t("{{host}} is already using this browser's device: a move did not finish. Press Move this browser to finish it; its copy here is then deleted.", { host })
+                  : t("{{host}} may already be using this browser's device: a move was cut off. Press Move this browser to finish it; its copy here is then deleted.", { host })}
+              </p>
+            </Note>
+          )}
           {here.held && step.kind === "choose" && (
             <div className="flex flex-col gap-4">
               {standalone && (
@@ -219,7 +234,9 @@ export function MoveNotice({
                   {offerMove ? t("Remove this browser instead") : t("Remove this browser")}
                 </button>
                 <p className="text-2xs leading-4 text-muted">
-                  {t("Takes this browser off your account's devices where it can, and deletes its keys here.")}
+                  {unfinished
+                    ? t("Deletes only this browser's copy of its keys here. The device stays on your account, as {{host}} may be using it.", { host })
+                    : t("Takes this browser off your account's devices where it can, and deletes its keys here.")}
                 </p>
               </div>
               {!standalone && (
@@ -251,9 +268,20 @@ export function MoveNotice({
             </Note>
           )}
           {step.kind === "confirm" && (
-            <div className="flex flex-col gap-3" data-testid="move-notice-confirm" data-why={step.removal.why}>
-              <p className="text-xs leading-5 text-muted">{removeBrowserText(step.removal.why, t, step.removal.recoveryWords)}</p>
-              {step.again && (
+            <div className="flex flex-col gap-3" data-testid="move-notice-confirm" data-why={step.removal.why} data-local-only={step.removal.localOnly ?? ""}>
+              <p className="text-xs leading-5 text-muted">
+                {step.removal.localOnly
+                  ? t("Only this copy of the keys is deleted here. The device stays on your account and is not taken off it, as {{host}} may be using it.", { host })
+                  : removeBrowserText(step.removal.why, t, step.removal.recoveryWords)}
+              </p>
+              {step.again && step.removal.localOnly && (
+                <Note tone="danger">
+                  <p data-testid="move-notice-local-only-warning" className="text-xs leading-5 text-danger">
+                    {t("The move was cut off before {{host}} said it has the keys. If it does not, they are lost with this copy. Move this browser instead to be sure.", { host })}
+                  </p>
+                </Note>
+              )}
+              {step.again && !step.removal.localOnly && (
                 <Note tone="danger">
                   <p className="text-xs leading-5 text-danger">
                     {step.removal.recoveryWords
@@ -267,7 +295,10 @@ export function MoveNotice({
                   type="button"
                   data-testid="move-notice-remove-confirm"
                   className={danger}
-                  onClick={() => (step.removal.why === "lastAdmin" && !step.again ? setStep({ ...step, again: true }) : remove(step.removal))}
+                  onClick={() =>
+                    // Asked twice: the last full device, or a copy the app host may not have taken after all.
+                    (step.removal.why === "lastAdmin" || step.removal.localOnly === "sent") && !step.again ? setStep({ ...step, again: true }) : remove(step.removal)
+                  }
                 >
                   {step.again ? t("delete its keys anyway") : t("Remove this browser")}
                 </button>
@@ -281,6 +312,7 @@ export function MoveNotice({
             <div className="flex flex-col gap-3" data-testid="move-notice-removed">
               <Note tone="ok">
                 <p className="text-xs leading-5 text-fg">{t("This browser's keys are deleted here.")}</p>
+                {step.localOnly && <p data-testid="move-notice-removed-local" className="text-xs leading-5 text-muted">{t("The device stays on your account, at {{host}}.", { host })}</p>}
               </Note>
               <StillListedNote why={step.result.stillListed} />
               {step.result.failures.length > 0 && (

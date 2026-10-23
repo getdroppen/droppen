@@ -171,6 +171,8 @@ export class World {
   readonly windows: FakeWindow[] = [];
   readonly pages = new Map<string, Page>();
   blockPopups = false;
+  /** The origins the hub pinned (`/.well-known/droppen-hub`). */
+  pinned: { legacy: string; app: string } | null = ORIGINS;
   private readonly handles = new Map<string, PeerWindow>();
 
   site(origin: string): Site {
@@ -240,6 +242,7 @@ export class World {
       tabs: { post: (e) => void site.events.push(e), subscribe: () => () => undefined },
       fetch: (input, init) => this.hub.fetch(win.origin, input, init),
       hub: `wss://${new URL(win.origin).host}`,
+      pinned: this.pinned,
       open: (url) => (this.blockPopups ? null : this.handle(win, this.window(url, win))),
       opener: () => (win.opener ? this.handle(win, win.opener) : null),
       onMessage: (fn) => {

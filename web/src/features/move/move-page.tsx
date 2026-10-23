@@ -44,8 +44,8 @@ export function outcomeText(t: T, outcome: MoveOutcome, hosts: { app: string; le
       return t("This browser is already set up as a device at {{app}}. Nothing was moved.", hosts);
     case "verifyFailed":
       return t("{{app}} could not sign in with the moved keys, so nothing was removed at {{legacy}}: {{why}}", { ...hosts, why: outcome.reason });
-    case "changed":
-      return t("Something changed at {{legacy}} while the keys were on their way (another tab). Nothing was removed: start again.", hosts);
+    case "unfinished":
+      return t("{{app}} may already be using this browser's device, and {{legacy}} still holds it too. Press Move this browser at {{legacy}} again to finish; do not remove it there meanwhile.", hosts);
     case "busy":
       return t("Another tab of this browser is busy with its keys right now. Try again in a moment.");
     case "timeout":

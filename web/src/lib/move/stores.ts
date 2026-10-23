@@ -148,7 +148,8 @@ export function idbRecordStore(factory: IDBFactory, db: string, store: string): 
     async write(records, mode, version) {
       const conn = await openForWrite(factory, db, store, version);
       try {
-        const tx = conn.transaction(store, "readwrite");
+        // On disk before it resolves: the app host answers "verified" only after this, and the sender then deletes its copy.
+        const tx = conn.transaction(store, "readwrite", { durability: "strict" });
         const os = tx.objectStore(store);
         checkShape(os);
         const prior: PriorRecord[] = [];
@@ -181,7 +182,7 @@ export function idbRecordStore(factory: IDBFactory, db: string, store: string): 
       if (!prior.length) return;
       const conn = await openForWrite(factory, db, store, 1);
       try {
-        const tx = conn.transaction(store, "readwrite");
+        const tx = conn.transaction(store, "readwrite", { durability: "strict" });
         const os = tx.objectStore(store);
         const finished = done(tx);
         for (const p of prior) {

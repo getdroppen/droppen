@@ -19,6 +19,16 @@
  * moved device key and only then says so; the sending side forgets its copy
  * only after that answer, and only if nothing changed meanwhile. Whatever
  * fails before that leaves the keys where they were.
+ *
+ * Both origins at once: a move cut off after the bundle went (the app host
+ * signed in, and the legacy origin did not hear it, or kept its copy because
+ * it changed) leaves the same device at both — the app host using it, the
+ * legacy origin still holding its keys. Nothing is lost, and the legacy
+ * origin knows it ({@link MoveUnfinished}, noted before the bundle is sent):
+ * pressing Move again finishes it (the app host takes what it lacks, the
+ * legacy origin forgets its copy). Until then "remove this browser" at the
+ * legacy origin must delete only its own copy and never take the device off
+ * the account — that would remove the device the app host is using.
  */
 
 /** The path the move's popup page is served on, on both hosts. */
@@ -77,7 +87,7 @@ export type MoveOutcome =
     }
   /** The browser would not open the other window: nothing happened. */
   | { kind: "popupBlocked" }
-  /** The other window was closed before the move finished: nothing was removed (a move started again picks up from there). */
+  /** The other window was closed before the keys went: nothing happened (after they went, it is `unfinished`). */
   | { kind: "closed" }
   /** Pull: the person cancelled in the droppen.app window. */
   | { kind: "cancelled" }
@@ -87,11 +97,18 @@ export type MoveOutcome =
   | { kind: "targetHasDevice" }
   /** The app host could not sign in with the moved keys (or they did not read back intact): it removed what it wrote, and droppen.app kept everything. */
   | { kind: "verifyFailed"; reason: string }
-  /** Something at droppen.app changed while the keys were on their way (another tab): nothing was removed there; start again. */
-  | { kind: "changed" }
+  /**
+   * The keys went, and the app host may hold the device now (it said so, or
+   * the move was cut off before it could): the legacy origin kept its copy
+   * ({@link MoveUnfinished}). Pressing Move again finishes it. `why`: the app
+   * host signed in but something here changed meanwhile (another tab), or
+   * answered for other keys; or the other window closed or went silent
+   * after the keys went.
+   */
+  | { kind: "unfinished"; why: "changed" | "mismatch" | "closed" | "timeout" }
   /** Another tab of this browser is moving, or renewing a key, right now: try again in a moment. */
   | { kind: "busy" }
-  /** The other window did not answer in time: nothing was removed. */
+  /** The other window did not answer in time, before the keys went: nothing happened. */
   | { kind: "timeout" }
   /** Anything else (a page on neither origin, a refused bundle, a storage error): nothing was removed. */
   | { kind: "failed"; reason: string };
@@ -150,3 +167,19 @@ export type MoveEvent =
   | { t: "stopped" }
   /** This origin (the app host) took a device over: reload to open it. */
   | { t: "arrived"; account: string };
+
+/**
+ * What the legacy origin notes of a move whose keys went but which did not
+ * finish (`rh.hub.move.out`): `sent` — the app host may or may not hold the
+ * device (the move was cut off before it answered); `verified` — it signed in
+ * with it. Gone once the move finishes (with the rest of the copy) or the app
+ * host refused the keys.
+ */
+export interface MoveUnfinished {
+  state: "sent" | "verified";
+  account: string;
+  device: string;
+  /** The app host the keys went to. */
+  app: string;
+  atMs: number;
+}

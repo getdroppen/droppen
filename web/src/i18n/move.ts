@@ -6,6 +6,13 @@
  */
 
 export const moveZhCN: Record<string, string> = {
+  "{{app}} may already be using this browser's device, and {{legacy}} still holds it too. Press Move this browser at {{legacy}} again to finish; do not remove it there meanwhile.": "{{app}} 可能已经在使用这个浏览器的设备，而 {{legacy}} 也仍保留着它。请在 {{legacy}} 再按一次「搬移这个浏览器」来完成；在此之前不要在那里移除它。",
+  "{{host}} is already using this browser's device: a move did not finish. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} 已经在使用这个浏览器的设备：有一次搬移没有完成。请按「搬移这个浏览器」来完成，之后这里的副本会被删除。",
+  "{{host}} may already be using this browser's device: a move was cut off. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} 可能已经在使用这个浏览器的设备：有一次搬移中途断了。请按「搬移这个浏览器」来完成，之后这里的副本会被删除。",
+  "Deletes only this browser's copy of its keys here. The device stays on your account, as {{host}} may be using it.": "只删除这个浏览器在这里的钥匙副本。这台设备仍留在你的账户里，因为 {{host}} 可能正在使用它。",
+  "Only this copy of the keys is deleted here. The device stays on your account and is not taken off it, as {{host}} may be using it.": "只会删除这里的这份钥匙副本。这台设备仍留在你的账户里，不会被移除，因为 {{host}} 可能正在使用它。",
+  "The move was cut off before {{host}} said it has the keys. If it does not, they are lost with this copy. Move this browser instead to be sure.": "搬移在 {{host}} 确认收到钥匙之前就断了。如果它没有收到，钥匙会随这份副本一起丢失。为稳妥起见，请改为搬移这个浏览器。",
+  "The device stays on your account, at {{host}}.": "这台设备仍留在你的账户里，在 {{host}}。",
   "Used Droppen at {{legacy}} in this browser?": "在这个浏览器里用过 {{legacy}} 上的 Droppen？",
   "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
     "迁移过来：会打开一个 {{legacy}} 窗口，你在那里确认后，这个浏览器就以同一台设备的身份在这里打开，无需重新添加。",
@@ -19,12 +26,11 @@ export const moveZhCN: Record<string, string> = {
   "This browser holds no device at {{legacy}} to move.": "这个浏览器在 {{legacy}} 没有可迁移的设备。",
   "This browser is already set up as a device at {{app}}. Nothing was moved.": "这个浏览器已经是 {{app}} 上的一台设备。没有迁移任何东西。",
   "{{app}} could not sign in with the moved keys, so nothing was removed at {{legacy}}: {{why}}": "{{app}} 无法用迁移过去的钥匙登录，所以 {{legacy}} 没有删除任何东西：{{why}}",
-  "Something changed at {{legacy}} while the keys were on their way (another tab). Nothing was removed: start again.": "钥匙迁移途中 {{legacy}} 有了变化（另一个标签页）。没有删除任何东西：请重新开始。",
   "Another tab of this browser is busy with its keys right now. Try again in a moment.": "这个浏览器的另一个标签页正在处理它的钥匙。请稍后重试。",
   "The other window did not answer in time. Nothing was removed: you can start again.": "另一个窗口没有及时回应。没有删除任何东西：你可以重新开始。",
   "The move did not finish, and nothing was removed: {{why}}": "迁移没有完成，也没有删除任何东西：{{why}}",
   "Moving this browser to {{app}}": "正在把这个浏览器迁移到 {{app}}",
-  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "这里没有要做的事。要把这个浏览器的设备从 {{legacy}} 迁移过来，请打开 {{legacy}} 并选择「迁移这个浏览器」。",
+  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "这里没有要做的事。要把这个浏览器的设备从 {{legacy}} 迁移过来，请打开 {{legacy}} 并选择「搬移这个浏览器」。",
   "waiting for {{legacy}}…": "正在等待 {{legacy}}…",
   "signing in with the moved keys…": "正在用迁移过来的钥匙登录…",
   "This browser is now at {{app}}.": "这个浏览器现在在 {{app}}。",
@@ -42,6 +48,13 @@ export const moveZhCN: Record<string, string> = {
 };
 
 export const moveZhTW: Record<string, string> = {
+  "{{app}} may already be using this browser's device, and {{legacy}} still holds it too. Press Move this browser at {{legacy}} again to finish; do not remove it there meanwhile.": "{{app}} 可能已經在使用這個瀏覽器的裝置，而 {{legacy}} 也仍保留著它。請在 {{legacy}} 再按一次「搬移這個瀏覽器」來完成；在此之前不要在那裡移除它。",
+  "{{host}} is already using this browser's device: a move did not finish. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} 已經在使用這個瀏覽器的裝置：有一次搬移沒有完成。請按「搬移這個瀏覽器」來完成，之後這裡的副本會被刪除。",
+  "{{host}} may already be using this browser's device: a move was cut off. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} 可能已經在使用這個瀏覽器的裝置：有一次搬移中途斷了。請按「搬移這個瀏覽器」來完成，之後這裡的副本會被刪除。",
+  "Deletes only this browser's copy of its keys here. The device stays on your account, as {{host}} may be using it.": "只刪除這個瀏覽器在這裡的鑰匙副本。這台裝置仍留在你的帳戶裡，因為 {{host}} 可能正在使用它。",
+  "Only this copy of the keys is deleted here. The device stays on your account and is not taken off it, as {{host}} may be using it.": "只會刪除這裡的這份鑰匙副本。這台裝置仍留在你的帳戶裡，不會被移除，因為 {{host}} 可能正在使用它。",
+  "The move was cut off before {{host}} said it has the keys. If it does not, they are lost with this copy. Move this browser instead to be sure.": "搬移在 {{host}} 確認收到鑰匙之前就斷了。如果它沒有收到，鑰匙會隨這份副本一起遺失。為穩妥起見，請改為搬移這個瀏覽器。",
+  "The device stays on your account, at {{host}}.": "這台裝置仍留在你的帳戶裡，在 {{host}}。",
   "Used Droppen at {{legacy}} in this browser?": "在這個瀏覽器裡用過 {{legacy}} 上的 Droppen？",
   "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
     "遷移過來：會開啟一個 {{legacy}} 視窗，你在那裡確認後，這個瀏覽器就以同一台裝置的身分在這裡開啟，無需重新新增。",
@@ -55,12 +68,11 @@ export const moveZhTW: Record<string, string> = {
   "This browser holds no device at {{legacy}} to move.": "這個瀏覽器在 {{legacy}} 沒有可遷移的裝置。",
   "This browser is already set up as a device at {{app}}. Nothing was moved.": "這個瀏覽器已經是 {{app}} 上的一台裝置。沒有遷移任何東西。",
   "{{app}} could not sign in with the moved keys, so nothing was removed at {{legacy}}: {{why}}": "{{app}} 無法用遷移過去的鑰匙登入，所以 {{legacy}} 沒有刪除任何東西：{{why}}",
-  "Something changed at {{legacy}} while the keys were on their way (another tab). Nothing was removed: start again.": "鑰匙遷移途中 {{legacy}} 有了變化（另一個分頁）。沒有刪除任何東西：請重新開始。",
   "Another tab of this browser is busy with its keys right now. Try again in a moment.": "這個瀏覽器的另一個分頁正在處理它的鑰匙。請稍後重試。",
   "The other window did not answer in time. Nothing was removed: you can start again.": "另一個視窗沒有及時回應。沒有刪除任何東西：你可以重新開始。",
   "The move did not finish, and nothing was removed: {{why}}": "遷移沒有完成，也沒有刪除任何東西：{{why}}",
   "Moving this browser to {{app}}": "正在把這個瀏覽器遷移到 {{app}}",
-  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "這裡沒有要做的事。要把這個瀏覽器的裝置從 {{legacy}} 遷移過來，請開啟 {{legacy}} 並選擇「遷移這個瀏覽器」。",
+  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "這裡沒有要做的事。要把這個瀏覽器的裝置從 {{legacy}} 遷移過來，請開啟 {{legacy}} 並選擇「搬移這個瀏覽器」。",
   "waiting for {{legacy}}…": "正在等待 {{legacy}}…",
   "signing in with the moved keys…": "正在用遷移過來的鑰匙登入…",
   "This browser is now at {{app}}.": "這個瀏覽器現在在 {{app}}。",
@@ -78,6 +90,13 @@ export const moveZhTW: Record<string, string> = {
 };
 
 export const moveJa: Record<string, string> = {
+  "{{app}} may already be using this browser's device, and {{legacy}} still holds it too. Press Move this browser at {{legacy}} again to finish; do not remove it there meanwhile.": "{{app}} がすでにこのブラウザのデバイスを使っている可能性があり、{{legacy}} にもまだ残っています。{{legacy}} でもう一度「このブラウザを移す」を押して完了してください。それまでそこで削除しないでください。",
+  "{{host}} is already using this browser's device: a move did not finish. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} はすでにこのブラウザのデバイスを使っています。移行が完了していません。「このブラウザを移す」を押して完了してください。その後ここのコピーは削除されます。",
+  "{{host}} may already be using this browser's device: a move was cut off. Press Move this browser to finish it; its copy here is then deleted.": "{{host}} がすでにこのブラウザのデバイスを使っている可能性があります。移行が途中で中断されました。「このブラウザを移す」を押して完了してください。その後ここのコピーは削除されます。",
+  "Deletes only this browser's copy of its keys here. The device stays on your account, as {{host}} may be using it.": "ここにあるこのブラウザの鍵のコピーだけを削除します。{{host}} が使っている可能性があるため、デバイスはアカウントに残ります。",
+  "Only this copy of the keys is deleted here. The device stays on your account and is not taken off it, as {{host}} may be using it.": "ここにある鍵のコピーだけが削除されます。{{host}} が使っている可能性があるため、デバイスはアカウントに残り、外されません。",
+  "The move was cut off before {{host}} said it has the keys. If it does not, they are lost with this copy. Move this browser instead to be sure.": "{{host}} が鍵を受け取ったと伝える前に移行が中断されました。受け取っていなければ、鍵はこのコピーと一緒に失われます。確実にするには、代わりにこのブラウザを移してください。",
+  "The device stays on your account, at {{host}}.": "デバイスはアカウントに残り、{{host}} にあります。",
   "Used Droppen at {{legacy}} in this browser?": "このブラウザで {{legacy}} の Droppen を使っていましたか？",
   "Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.":
     "移行する：{{legacy}} のウインドウが開きます。そこで確認すると、このブラウザは追加し直さずに同じデバイスとしてここで開きます。",
@@ -91,12 +110,11 @@ export const moveJa: Record<string, string> = {
   "This browser holds no device at {{legacy}} to move.": "このブラウザには {{legacy}} に移行できるデバイスがありません。",
   "This browser is already set up as a device at {{app}}. Nothing was moved.": "このブラウザはすでに {{app}} のデバイスです。何も移行されていません。",
   "{{app}} could not sign in with the moved keys, so nothing was removed at {{legacy}}: {{why}}": "{{app}} が移行した鍵でサインインできなかったため、{{legacy}} では何も削除されていません：{{why}}",
-  "Something changed at {{legacy}} while the keys were on their way (another tab). Nothing was removed: start again.": "鍵の移行中に {{legacy}} で変更がありました（別のタブ）。何も削除されていません。もう一度始めてください。",
   "Another tab of this browser is busy with its keys right now. Try again in a moment.": "このブラウザの別のタブが鍵を処理中です。少し待ってからもう一度お試しください。",
   "The other window did not answer in time. Nothing was removed: you can start again.": "もう一方のウインドウが時間内に応答しませんでした。何も削除されていません。もう一度始められます。",
   "The move did not finish, and nothing was removed: {{why}}": "移行は完了せず、何も削除されていません：{{why}}",
   "Moving this browser to {{app}}": "このブラウザを {{app}} に移行しています",
-  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "ここで行うことはありません。このブラウザのデバイスを {{legacy}} から移すには、{{legacy}} を開いて「このブラウザを移行」を選んでください。",
+  "Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.": "ここで行うことはありません。このブラウザのデバイスを {{legacy}} から移すには、{{legacy}} を開いて「このブラウザを移す」を選んでください。",
   "waiting for {{legacy}}…": "{{legacy}} を待っています…",
   "signing in with the moved keys…": "移行した鍵でサインインしています…",
   "This browser is now at {{app}}.": "このブラウザは {{app}} に移りました。",

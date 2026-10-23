@@ -5,7 +5,8 @@
  */
 import { indexedDbKeyStore, type KeyStore, MemoryKeyStore } from "@/lib/e2e/keystore";
 import { hubOrigin } from "@/lib/hub/config";
-import type { MoveEvent } from "./types";
+import { moveOrigins } from "@/lib/hub/hosts";
+import type { MoveEvent, MoveOrigins } from "./types";
 import { idbRecordStore, memoryRecordStore, type RecordStore } from "./stores";
 
 /** The other side's window, as this page holds it. */
@@ -45,6 +46,8 @@ export interface MoveEnv {
   fetch: (input: string, init?: RequestInit) => Promise<Response>;
   /** The hub origin this page's sign-ins name (`wss://…`, the shell's marker). */
   hub: string | null;
+  /** The move's two origins as this page's hub pinned them (its own origin, its app host); `null`: it names no app host. */
+  pinned: MoveOrigins | null;
   /** `window.open`: `null` when the browser would not open it. */
   open(url: string, name: string): PeerWindow | null;
   /** The window that opened this one (`null`: none, or `noopener`). */
@@ -132,6 +135,15 @@ function pageStorage(): MoveStorage {
   };
 }
 
+/**
+ * The hub's own origin and its app host as `/.well-known/droppen-hub` said
+ * them, held to the apex this page came from (`lib/hub/hosts.ts`
+ * `moveOrigins`): `null` on any other page, or when the hub names no app host.
+ */
+export function pinnedOrigins(): MoveOrigins | null {
+  return moveOrigins();
+}
+
 /** The page's own. */
 export function browserEnv(): MoveEnv {
   const idb = (globalThis as { indexedDB?: IDBFactory | null }).indexedDB ?? null;
@@ -144,6 +156,7 @@ export function browserEnv(): MoveEnv {
     tabs: sharedTabs(),
     fetch: (input, init) => globalThis.fetch(input, init),
     hub: hubOrigin(),
+    pinned: pinnedOrigins(),
     open: (url, name) => window.open(url, name, "popup,width=480,height=640"),
     opener: () => (window.opener as PeerWindow | null) ?? null,
     onMessage(fn) {

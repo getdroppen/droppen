@@ -88,23 +88,25 @@ export function asMessage(data: unknown, types: readonly MsgType[], id?: string)
   return m as Message;
 }
 
-/** Why `origins` are not the move's two (`null`: they are, and this page is the `role` side). */
-export function originsProblem(origins: MoveOrigins, here: string, role: "legacy" | "app"): string | null {
-  const parse = (s: string) => {
+/**
+ * Why `origins` are not the move's two (`null`: they are, and this page is
+ * the `role` side): exactly the hub's own origin and its app host as this
+ * page's hub pinned them (`pinned`, `/.well-known/droppen-hub`), each an
+ * exact https origin — no suffix or parent-domain match of any kind.
+ */
+export function originsProblem(origins: MoveOrigins, here: string, role: "legacy" | "app", pinned: MoveOrigins | null): string | null {
+  const exact = (s: string) => {
     try {
       const u = new URL(s);
-      return u.origin === s && u.protocol === "https:" ? u : null;
+      return u.origin === s && u.protocol === "https:";
     } catch {
-      return null;
+      return false;
     }
   };
-  const legacy = parse(origins.legacy);
-  const app = parse(origins.app);
-  if (!legacy || !app) return "the move's origins are not two https origins";
-  if (legacy.origin === app.origin) return "the move's two origins are the same";
-  const a = legacy.host;
-  const b = app.host;
-  if (!(b.endsWith(`.${a}`) || a.endsWith(`.${b}`))) return "the move's two origins are not of one site";
+  if (!exact(origins.legacy) || !exact(origins.app)) return "the move's origins are not two https origins";
+  if (origins.legacy === origins.app) return "the move's two origins are the same";
+  if (!pinned) return "this page's hub names no app host to move to";
+  if (origins.legacy !== pinned.legacy || origins.app !== pinned.app) return "the move's origins are not the hub's own and its app host";
   if (here !== origins[role]) return `this page is not at ${origins[role]}`;
   return null;
 }

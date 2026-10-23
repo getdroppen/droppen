@@ -3,8 +3,9 @@
  *
  * A bundle is taken only into an origin that holds no device — or that holds
  * this very device from a move that did not finish:
- * - what an earlier move wrote and never signed in with (`rh.hub.move.in` says
- *   `writing`) is written over;
+ * - what an earlier move of the same account and device wrote and never
+ *   signed in with (`rh.hub.move.in` says `writing`, and nothing else is
+ *   here) is written over;
  * - the same device, signed in with before (`verified`), only gains what it
  *   lacks — nothing it holds is replaced — and is signed in with again (the
  *   sender then forgets its copy: the move that was cut off finishes).
@@ -31,7 +32,7 @@ import { BUSY, DEVICE_KEYS_LOCK, holdLocks, MOVE_LOCK } from "./locks";
 import type { MoveBundle, Refusal } from "./protocol";
 import { bundleEntries, LOCK_WAIT_MS } from "./sender";
 import type { PriorRecord } from "./stores";
-import type { MoveOrigins } from "./types";
+import type { LocalDevice, MoveOrigins } from "./types";
 
 /** What this origin noted of a move into it: `writing` until it signed in with what it got, then `verified`. */
 export const MOVE_MARKER = "rh.hub.move.in";
@@ -62,7 +63,34 @@ function writeMarker(storage: MoveStorage, marker: MoveMarker | null): void {
 
 export type Received =
   | { ok: true; account: string; device: string; digest: string; pushWasOn: string | null; resumed: boolean }
-  | { ok: false; reason: Refusal; detail: string };
+  /** `holds`: whether this origin holds the bundle's device after the refusal (`null`: it did not look). */
+  | { ok: false; reason: Refusal; detail: string; holds: boolean | null };
+
+/**
+ * Forget a note that no longer says anything: nothing of a device here at
+ * all, or another device's id noted here and not the one it names (removed
+ * and replaced since). Keys with no device id noted yet are what a move cut
+ * off between its two writes leaves: the note stands. Returns the note that
+ * stands.
+ */
+export function settleMarker(storage: MoveStorage, here: LocalDevice | null): MoveMarker | null {
+  const marker = readMarker(storage);
+  if (!marker) return null;
+  const stands = !!here && (here.accounts.length === 0 || here.accounts.some((a) => a.account === marker.account && a.device === marker.device));
+  if (stands) return marker;
+  try {
+    storage.removeItem(MOVE_MARKER);
+  } catch {
+    // read again next time
+  }
+  return null;
+}
+
+/** Whether the device here is the one an unfinished move into this origin left (and so may be written over by its next bundle). */
+export function onlyUnfinishedHere(storage: MoveStorage, here: LocalDevice | null): boolean {
+  const marker = settleMarker(storage, here);
+  return !!here && marker?.state === "writing" && here.accounts.every((a) => a.account === marker.account && a.device === marker.device);
+}
 
 const ID_TEXT = /^[\x21-\x7e]{1,64}$/;
 
@@ -172,24 +200,26 @@ async function verify(env: MoveEnv, bundle: MoveBundle, written: { db: string; s
 /** Take `raw` (see the file's comment): what was taken in, or why not. Nothing it wrote stays unless it says `ok`. */
 export async function receiveBundle(env: MoveEnv, origins: MoveOrigins, raw: unknown): Promise<Received> {
   const checked = await checkBundle(raw, origins);
-  if (typeof checked === "string") return { ok: false, reason: "badBundle", detail: checked };
+  if (typeof checked === "string") return { ok: false, reason: "badBundle", detail: checked, holds: null };
   const bundle = checked;
   try {
     const out = await holdLocks(env.locks, [MOVE_LOCK, DEVICE_KEYS_LOCK], () => receiveLocked(env, bundle), LOCK_WAIT_MS);
-    return out === BUSY ? { ok: false, reason: "busy", detail: "another tab of this browser is moving or opening its device keys" } : out;
+    return out === BUSY ? { ok: false, reason: "busy", detail: "another tab of this browser is moving or opening its device keys", holds: null } : out;
   } catch (error) {
-    return { ok: false, reason: "verifyFailed", detail: error instanceof Error ? error.message : String(error) };
+    return { ok: false, reason: "verifyFailed", detail: error instanceof Error ? error.message : String(error), holds: null };
   }
 }
 
 async function receiveLocked(env: MoveEnv, bundle: MoveBundle): Promise<Received> {
   const here = await readLocalDevice(env);
-  const marker = readMarker(env.storage);
+  const marker = settleMarker(env.storage, here);
+  const ofBundle = (m: MoveMarker | null) => !!m && m.account === bundle.account && m.device === bundle.device;
   let mode: "fresh" | "resume";
   if (!here) mode = "fresh";
-  else if (marker?.state === "writing") mode = "fresh";
-  else if (marker?.state === "verified" && marker.account === bundle.account && marker.device === bundle.device && (await sameDeviceKeys(env, bundle))) mode = "resume";
-  else return { ok: false, reason: "targetHasDevice", detail: "this browser already holds a device here" };
+  // What an earlier move of this very device wrote and never signed in with, and nothing else here.
+  else if (marker?.state === "writing" && ofBundle(marker) && onlyUnfinishedHere(env.storage, here)) mode = "fresh";
+  else if (marker?.state === "verified" && ofBundle(marker) && (await sameDeviceKeys(env, bundle))) mode = "resume";
+  else return { ok: false, reason: "targetHasDevice", detail: "this browser already holds another device here", holds: null };
   const note = (state: MoveMarker["state"]): MoveMarker => ({ v: 1, state, account: bundle.account, device: bundle.device, from: bundle.from, atMs: Date.now() });
   if (mode === "fresh") writeMarker(env.storage, note("writing"));
   const written: { db: string; store: string; keys: string[]; prior: PriorRecord[] }[] = [];
@@ -227,6 +257,7 @@ async function receiveLocked(env: MoveEnv, bundle: MoveBundle): Promise<Received
     }
     if (mode === "fresh" && restored) writeMarker(env.storage, marker);
     const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: "verifyFailed", detail: detail.slice(0, 300) };
+    // Resumed: the device it had before stays (signed in with already). Fresh: nothing of it is live here.
+    return { ok: false, reason: "verifyFailed", detail: detail.slice(0, 300), holds: mode === "resume" };
   }
 }

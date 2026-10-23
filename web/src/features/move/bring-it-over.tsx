@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Note, secondary } from "@/features/cloud/ui";
 import { localDevice, watchMoves } from "@/lib/move";
-import { readMarker } from "@/lib/move/receiver";
+import { onlyUnfinishedHere } from "@/lib/move/receiver";
 import { type MoveOutcome, startPull } from "./index";
 
 /*
@@ -76,7 +76,8 @@ export function BringItOver({ legacy, onMoved = () => location.reload(), pull = 
   useEffect(() => {
     let live = true;
     void localDevice().then(
-      (here) => live && setShown(here === null || readMarker(localStorage)?.state === "writing"),
+      // No device here, or only what a move of one cut off before it signed in: never over another device.
+      (here) => live && setShown(here === null || onlyUnfinishedHere(localStorage, here)),
       () => undefined,
     );
     return () => {

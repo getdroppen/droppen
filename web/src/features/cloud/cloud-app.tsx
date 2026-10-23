@@ -42,7 +42,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, usePathname } from "@/features/landing/route";
 import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
-import { hostMode, hubHosts, webOf } from "@/lib/hub/hosts";
+import { hostMode, moveOrigins } from "@/lib/hub/hosts";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
 import { FrontPageView } from "@/features/landing/front-pages";
 
@@ -118,8 +118,7 @@ function startLink(account: CloudAccount, origin: string): HubLink {
  */
 /** On the app host, the hub's origin a browser's device can be brought over from (the key move); else `null`. */
 function movedFrom(): string | null {
-  const hosts = hubHosts();
-  return hostMode() === "app" && hosts?.app ? webOf(hosts.origin) : null;
+  return hostMode() === "app" ? (moveOrigins()?.legacy ?? null) : null;
 }
 
 export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { children: ReactNode; store?: KeyStore; keyReadRetryMs?: readonly number[] }) {

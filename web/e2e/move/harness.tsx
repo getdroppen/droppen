@@ -15,7 +15,15 @@
 //   evil    /steal  opens legacy /move and asks it for the keys
 //   evil    /plant  opens app /move and hands it keys of its own
 //
-// `?block=1` stands in for a popup blocker (window.open answers null).
+// `?block=1` stands in for a popup blocker (window.open answers null);
+// `?target=<origin>` on legacy / (or `?from=<origin>` on app /) asks the move
+// for another counterpart than the pinned one (it must refuse).
+//   legacy  /remove  the move notice's "Remove this browser"
+//                    (prepareRemoval + removeHere, as the notice runs them)
+//
+// The pinned pair (the hub's origin and its app host) is set as
+// `/.well-known/droppen-hub` leaves it on the real hosts: the stand-in's
+// names carry a port, which the hub's parser accepts only on loopback.
 import { createRoot } from "react-dom/client";
 import { hex } from "@/lib/e2e/bytes";
 import { indexedDbKeyStore, KEY_STORE_DB, KEY_STORE_STORE, loadOrCreateDeviceKeys, readDeviceKeys } from "@/lib/e2e/keystore";
@@ -26,6 +34,10 @@ import { SEEN_DB, SEEN_STORE } from "@/lib/hub/seen-store";
 import { localDevice, MOVE_PATH, type MoveOutcome, startMove, startPull } from "@/lib/move";
 import { readMarker } from "@/lib/move/receiver";
 import { idbRecordStore } from "@/lib/move/stores";
+import { setHostMode } from "@/lib/hub/hosts";
+import { deviceHere } from "@/lib/hub/device-here";
+import { prepareRemoval, removeHere } from "@/features/hosts/remove-here";
+import { moveUnfinished } from "@/features/move";
 import { MovePage } from "@/features/move/move-page";
 import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
 import "@/i18n";
@@ -45,6 +57,7 @@ const LEGACY = `https://droppen.test${port}`;
 const APP = `https://my.droppen.test${port}`;
 const origins = { legacy: LEGACY, app: APP };
 const params = new URLSearchParams(location.search);
+setHostMode({ origin: `wss://droppen.test${port}`, app: APP, site: null, apexMode: "move" });
 if (params.get("block") === "1") window.open = () => null;
 
 const root = document.getElementById("root")!;
@@ -94,6 +107,7 @@ async function check(): Promise<unknown> {
     seenRecords: seen?.map((r) => r.key) ?? null,
     local,
     marker: readMarker(localStorage),
+    unfinished: moveUnfinished(),
     pushMoved: localStorage.getItem("rh.hub.push.moved"),
   };
   if (records?.length) {
@@ -164,12 +178,22 @@ if (path === MOVE_PATH && (at === LEGACY || at === APP)) {
   sessionStorage.setItem("loads", String(loads));
   reloadOnArrival({ isOpen: () => false });
   show(`loads ${loads}`);
+} else if (path === "/remove" && at === LEGACY) {
+  // The move notice's "Remove this browser", confirmed: local-only after an unfinished move.
+  run(async () => {
+    const removal = await prepareRemoval(await deviceHere(), hubOrigin() ?? "");
+    const result = await removeHere(removal);
+    return { localOnly: removal.localOnly ?? null, why: removal.why, result };
+  });
 } else if (path === "/" && (at === LEGACY || at === APP)) {
   window.__steps = [];
   const go = at === LEGACY ? startMove : startPull;
+  const target = params.get("target");
+  const from = params.get("from");
+  const asked = target ? { legacy: LEGACY, app: target } : from ? { legacy: from, app: APP } : origins;
   // Synchronously from the click, as the interstitial and the host modes call them.
   button(at === LEGACY ? "move" : "pull", at === LEGACY ? "Move this browser" : "Bring it over", () => {
-    void go({ origins, onStep: (s) => window.__steps!.push(s) }).then((outcome) => {
+    void go({ origins: asked, onStep: (s) => window.__steps!.push(s) }).then((outcome) => {
       window.__outcome = outcome;
       show(JSON.stringify(outcome));
     });

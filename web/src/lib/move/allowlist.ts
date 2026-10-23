@@ -16,6 +16,7 @@
  */
 import { KEY_STORE_DB, KEY_STORE_STORE } from "@/lib/e2e/keystore";
 import { SEEN_DB, SEEN_IN_IDB, SEEN_STORE } from "@/lib/hub/seen-store";
+import { HUB_ONLY_KEY } from "@/lib/transport/p2p";
 
 /** An IndexedDB object store a move copies whole: out-of-line string keys, no key path, no indexes. */
 export interface MovedDatabase {
@@ -66,8 +67,12 @@ const MOVED_PREFIXES = [
   "rh.hub.knownClientHash:",
 ];
 
-/** `localStorage` entries moved by their whole name: the relay picked by hand, the soft-crypto consent, display settings. */
-const MOVED_NAMES = [SEEN_IN_IDB, "rh.relays.manual", "droppen.e2e-compat", "rh.theme", "rh.fontSize", "rh.lang"];
+/**
+ * `localStorage` entries moved by their whole name: the relay picked by hand,
+ * "no direct connections" (`lib/transport/p2p.ts`: a privacy setting a move
+ * must not turn off), the soft-crypto consent, display settings.
+ */
+const MOVED_NAMES = [SEEN_IN_IDB, "rh.relays.manual", HUB_ONLY_KEY, "droppen.e2e-compat", "rh.theme", "rh.fontSize", "rh.lang"];
 
 /** Never moved, whatever the lists above say: the session, the push subscription, the move's own notes. */
 const NEVER_MOVED = ["rh.hub.session", "rh.hub.push.", "rh.hub.move."];

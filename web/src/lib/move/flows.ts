@@ -11,7 +11,7 @@
 import { browserEnv, type MoveEnv, type PeerWindow } from "./env";
 import { readLocalDevice } from "./local";
 import { LinkEnded, type Message, MSG, newId, originsProblem, peerLink } from "./protocol";
-import { readMarker, receiveBundle } from "./receiver";
+import { onlyUnfinishedHere, receiveBundle, settleMarker } from "./receiver";
 import { failureOutcome, sendMove } from "./sender";
 import { MOVE_PATH, type MoveOutcome, type MoveStep, type StartOptions } from "./types";
 
@@ -39,7 +39,7 @@ const windowName = () => `droppen-move-${newId()}`;
 export function startMove(opts: Options): Promise<MoveOutcome> {
   const env = opts.env ?? browserEnv();
   const step = opts.onStep ?? (() => undefined);
-  const problem = originsProblem(opts.origins, env.origin, "legacy");
+  const problem = originsProblem(opts.origins, env.origin, "legacy", env.pinned);
   if (problem) return Promise.resolve({ kind: "failed", reason: problem });
   if (env.userActive() === false) return Promise.resolve({ kind: "failed", reason: "a move starts only from a click" });
   step("opening");
@@ -93,7 +93,7 @@ export type ReceiverView =
 export function servePushReceiver(opts: { origins: Options["origins"]; env?: MoveEnv; onView: (view: ReceiverView) => void }): () => void {
   const env = opts.env ?? browserEnv();
   const { origins, onView } = opts;
-  const problem = originsProblem(origins, env.origin, "app");
+  const problem = originsProblem(origins, env.origin, "app", env.pinned);
   if (problem) {
     onView({ step: "failed", detail: problem });
     return () => undefined;
@@ -123,7 +123,7 @@ export function servePushReceiver(opts: { origins: Options["origins"]; env?: Mov
     onView({ step: "verifying" });
     const got = await receiveBundle(env, origins, message.bundle);
     if (!got.ok) {
-      link.send({ t: MSG.refused, id, reason: got.reason, detail: got.detail });
+      link.send({ t: MSG.refused, id, reason: got.reason, detail: got.detail, holds: got.holds });
       onView({ step: "refused", detail: got.detail });
       return;
     }
@@ -154,7 +154,7 @@ export function startPull(opts: Options): Promise<MoveOutcome> {
   const env = opts.env ?? browserEnv();
   const step = opts.onStep ?? (() => undefined);
   const { origins } = opts;
-  const problem = originsProblem(origins, env.origin, "app");
+  const problem = originsProblem(origins, env.origin, "app", env.pinned);
   if (problem) return Promise.resolve({ kind: "failed", reason: problem });
   if (env.userActive() === false) return Promise.resolve({ kind: "failed", reason: "a move starts only from a click" });
   step("opening");
@@ -167,9 +167,10 @@ export function startPull(opts: Options): Promise<MoveOutcome> {
       step("waiting");
       const hello = await link.next([MSG.hello, MSG.none], READY_MS);
       if (hello.t === MSG.none) return { kind: "nothingToMove" };
-      // A device here already (and not one a move left unfinished): the click over there would be for nothing.
+      // A device here already (and not only what a move left unfinished, nor this device from a move cut off):
+      // the click over there would be for nothing.
       const here = await readLocalDevice(env);
-      if (here && !readMarker(env.storage)) return { kind: "targetHasDevice" };
+      if (here && !onlyUnfinishedHere(env.storage, here) && settleMarker(env.storage, here)?.state !== "verified") return { kind: "targetHasDevice" };
       const id = newId();
       link.send({ t: MSG.request, id });
       step("confirm");
@@ -178,7 +179,7 @@ export function startPull(opts: Options): Promise<MoveOutcome> {
       step("verifying");
       const got = await receiveBundle(env, origins, sent.bundle);
       if (!got.ok) {
-        link.send({ t: MSG.refused, id, reason: got.reason, detail: got.detail });
+        link.send({ t: MSG.refused, id, reason: got.reason, detail: got.detail, holds: got.holds });
         keepOpen = true;
         if (got.reason === "targetHasDevice") return { kind: "targetHasDevice" };
         if (got.reason === "busy") return { kind: "busy" };
@@ -235,7 +236,7 @@ export function servePullSender(opts: { origins: Options["origins"]; env?: MoveE
   const env = opts.env ?? browserEnv();
   const { origins, onView } = opts;
   const idle: PullSender = { confirm: () => undefined, cancel: () => undefined, stop: () => undefined };
-  const problem = originsProblem(origins, env.origin, "legacy");
+  const problem = originsProblem(origins, env.origin, "legacy", env.pinned);
   if (problem) {
     onView({ step: "done", outcome: { kind: "failed", reason: problem } });
     return idle;

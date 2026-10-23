@@ -33,6 +33,7 @@ const { default: i18n } = await import("../src/i18n/index.js");
 const { deviceHere, KEY_DB } = await import("../src/lib/hub/device-here.js");
 const { appleHomeScreenApp, goesStraightOn, MoveNotice } = await import("../src/features/hosts/legacy.js");
 const { hostsJa, hostsZhCN, hostsZhTW } = await import("../src/i18n/hosts.js");
+const { moveJa, moveZhCN, moveZhTW } = await import("../src/i18n/move.js");
 const { signOutJa, signOutZhCN, signOutZhTW } = await import("../src/i18n/sign-out.js");
 const { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } = await import("../src/i18n/cloud-devices.js");
 const { ja } = await import("../src/i18n/ja.js");
@@ -201,9 +202,9 @@ test("every word of the notice is in zh-CN, zh-TW and ja", () => {
   const keys = [...source.matchAll(/\bt\("((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string);
   assert.ok(keys.length >= 25, `${keys.length} keys`);
   const tables = {
-    "zh-CN": { ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN },
-    "zh-TW": { ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW },
-    ja: { ...ja, ...cloudDevicesJa, ...signOutJa, ...hostsJa },
+    "zh-CN": { ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...moveZhCN },
+    "zh-TW": { ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...moveZhTW },
+    ja: { ...ja, ...cloudDevicesJa, ...signOutJa, ...hostsJa, ...moveJa },
   };
   for (const [lng, table] of Object.entries(tables)) {
     for (const key of keys) {

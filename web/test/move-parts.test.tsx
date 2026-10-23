@@ -84,15 +84,24 @@ test("the digest: canonical, order-free, and refusing what it cannot compare", a
   assert.throws(() => canonical(new (class Thing {})()), Unmovable);
 });
 
-test("the origins: two https origins of one site, and this page the right side", () => {
-  assert.equal(originsProblem(ORIGINS, LEGACY, "legacy"), null);
-  assert.equal(originsProblem({ legacy: "https://droppen.app", app: "https://my.droppen.app" }, "https://my.droppen.app", "app"), null);
-  assert.match(originsProblem(ORIGINS, "https://my.droppen.test", "legacy")!, /not at/);
-  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://my.droppen.app.evil.test" }, "https://droppen.app", "legacy")!, /one site/);
-  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://notdroppen.app" }, "https://droppen.app", "legacy")!, /one site/);
-  assert.match(originsProblem({ legacy: "http://droppen.app", app: "https://my.droppen.app" }, "http://droppen.app", "legacy")!, /https/);
-  assert.match(originsProblem({ legacy: "https://droppen.app/", app: "https://my.droppen.app" }, "https://droppen.app", "legacy")!, /https origins/);
-  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://droppen.app" }, "https://droppen.app", "legacy")!, /same/);
+test("the origins: exactly the pinned pair, never a suffix or parent-domain match", () => {
+  const pinned = { legacy: "https://droppen.app", app: "https://my.droppen.app" };
+  assert.equal(originsProblem(pinned, "https://droppen.app", "legacy", pinned), null);
+  assert.equal(originsProblem(pinned, "https://my.droppen.app", "app", pinned), null);
+  assert.match(originsProblem(pinned, "https://my.droppen.app", "legacy", pinned)!, /not at/);
+  // What the old suffix rule let through: a parent domain as either side, an app host under another.
+  assert.match(originsProblem({ legacy: "https://app", app: "https://my.droppen.app" }, "https://my.droppen.app", "app", pinned)!, /not the hub's own/);
+  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://app" }, "https://droppen.app", "legacy", pinned)!, /not the hub's own/);
+  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://evil.droppen.app" }, "https://droppen.app", "legacy", pinned)!, /not the hub's own/);
+  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://my.droppen.app.evil.test" }, "https://droppen.app", "legacy", pinned)!, /not the hub's own/);
+  assert.match(originsProblem(pinned, "https://droppen.app", "legacy", null)!, /names no app host/);
+  assert.match(originsProblem({ legacy: "http://droppen.app", app: "https://my.droppen.app" }, "http://droppen.app", "legacy", pinned)!, /https/);
+  assert.match(originsProblem({ legacy: "https://droppen.app/", app: "https://my.droppen.app" }, "https://droppen.app", "legacy", pinned)!, /https origins/);
+  assert.match(originsProblem({ legacy: "https://droppen.app", app: "https://droppen.app" }, "https://droppen.app", "legacy", pinned)!, /same/);
+});
+
+test("the hub-only setting moves (a move must not turn direct connections back on)", () => {
+  assert.ok(movesLocal("rh.hub.hubOnly"));
 });
 
 test("the app host takes only a bundle from droppen.app, of the listed stores and entries, matching its digest", async () => {
@@ -147,7 +156,7 @@ test("the /move popup says which device it would send, and how a move ended, in 
   const t = (key: string, vars?: Record<string, unknown>) => i18n.t(key, vars);
   for (const lng of ["zh-CN", "zh-TW", "ja"]) {
     void i18n.changeLanguage(lng);
-    for (const kind of ["popupBlocked", "closed", "cancelled", "nothingToMove", "targetHasDevice", "changed", "busy", "timeout"] as const) {
+    for (const kind of ["popupBlocked", "closed", "cancelled", "nothingToMove", "targetHasDevice", "busy", "timeout"] as const) {
       const text = outcomeText(t, { kind }, hosts);
       assert.ok(!/^[\x20-\x7e]+$/.test(text), `${lng} ${kind} is translated: ${text}`);
     }
@@ -162,7 +171,7 @@ test("the move notice's seam (features/move): every outcome as the notice takes 
   assert.deepEqual(noticeOutcome({ kind: "popupBlocked" }, origins), { kind: "blocked" });
   assert.deepEqual(noticeOutcome({ kind: "closed" }, origins), { kind: "cancelled" });
   assert.deepEqual(noticeOutcome({ kind: "cancelled" }, origins), { kind: "cancelled" });
-  for (const ended of [{ kind: "verifyFailed", reason: "denied" }, { kind: "changed" }, { kind: "busy" }, { kind: "timeout" }, { kind: "targetHasDevice" }, { kind: "nothingToMove" }, { kind: "failed", reason: "x" }] as const) {
+  for (const ended of [{ kind: "verifyFailed", reason: "denied" }, { kind: "unfinished", why: "changed" }, { kind: "busy" }, { kind: "timeout" }, { kind: "targetHasDevice" }, { kind: "nothingToMove" }, { kind: "failed", reason: "x" }] as const) {
     const out = noticeOutcome(ended, origins);
     assert.equal(out.kind, "failed", ended.kind);
     assert.ok(out.kind === "failed" && out.message.length > 0);

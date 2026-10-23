@@ -12,6 +12,8 @@
  */
 import i18next from "i18next";
 import { type MoveOrigins, type MoveOutcome as Ended, startMove as startPush, startPull as startPullMove } from "@/lib/move";
+import { MOVE_OUT_KEY, readMoveOut } from "@/lib/move/sender";
+import type { MoveUnfinished } from "@/lib/move/types";
 import { outcomeText } from "./move-page";
 
 export { MovePage } from "./move-page";
@@ -41,6 +43,34 @@ export type MoveOutcome =
   | { kind: "failed"; message: string }
   /** This build, or this browser, cannot move a device. */
   | { kind: "unavailable" };
+
+/**
+ * A move of this browser's device that did not finish (the keys went; the
+ * app host may be using the device while this origin still holds it): `null`
+ * when there is none. While there is, "remove this browser" here deletes only
+ * this copy and never takes the device off the account (`hosts/remove-here.ts`),
+ * and Move finishes it.
+ */
+export function moveUnfinished(storage: Pick<Storage, "getItem"> | undefined = pageStorage()): MoveUnfinished | null {
+  return storage ? readMoveOut(storage) : null;
+}
+
+/** Forget the note of an unfinished move (this origin's copy is gone). */
+export function forgetMoveUnfinished(storage: Pick<Storage, "removeItem"> | undefined = pageStorage()): void {
+  try {
+    storage?.removeItem(MOVE_OUT_KEY);
+  } catch {
+    // nothing kept
+  }
+}
+
+function pageStorage(): Storage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Whether this browser can move its device here at all (the notice offers it only then): a secure page with IndexedDB, WebCrypto and windows. */
 export function moveSupported(): boolean {

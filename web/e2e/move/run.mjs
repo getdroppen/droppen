@@ -1,8 +1,10 @@
 // The browser key move on two real hosts, in Chromium, Firefox and WebKit
 // (Playwright): push, pull (also from the sign-in screen's offer, with
-// another tab reloading as the device arrives), a blocked popup, a foreign opener (steal and
+// another tab reloading as the device arrives), a counterpart that is not
+// exactly the pinned one (refused), a blocked popup, a foreign opener (steal and
 // plant), a failed verify (no wipe), and a move cut off (resumable, no key
-// lost) — once before the app host signed in, once after.
+// lost) — once before the app host signed in, once after, and once after
+// with "Remove this browser" at the apex then (local-only: my. keeps it).
 //
 //   node e2e/move/run.mjs [chromium,firefox,webkit]      (from web/; run.sh does it all)
 //
@@ -50,9 +52,9 @@ const seed = (ctx, account) => pageResult(ctx, `${LEGACY}/seed?account=${account
 const check = (ctx, origin) => pageResult(ctx, `${origin}/check`);
 
 /** Push from droppen.test's tab; `during` runs once the popup is open. */
-async function push(ctx, { block = false, during } = {}) {
+async function push(ctx, { block = false, during, query = "" } = {}) {
   const tab = await ctx.newPage();
-  await tab.goto(`${LEGACY}/${block ? "?block=1" : ""}`);
+  await tab.goto(`${LEGACY}/${block ? "?block=1" : query}`);
   const opened = block ? null : ctx.waitForEvent("page", { timeout: T });
   await tab.click("#move");
   const popup = opened ? await opened : null;
@@ -64,9 +66,9 @@ async function push(ctx, { block = false, during } = {}) {
 }
 
 /** Pull from my.droppen.test's tab, confirming in the popup; `during` runs once confirmed. */
-async function pull(ctx, { block = false, during } = {}) {
+async function pull(ctx, { block = false, during, query = "" } = {}) {
   const tab = await ctx.newPage();
-  await tab.goto(`${APP}/${block ? "?block=1" : ""}`);
+  await tab.goto(`${APP}/${block ? "?block=1" : query}`);
   const opened = block ? null : ctx.waitForEvent("page", { timeout: T });
   await tab.click("#pull");
   const popup = opened ? await opened : null;
@@ -109,7 +111,9 @@ function wipedThere(expect, legacy, tag) {
 /** What droppen.app holds when nothing was removed: exactly what it had. */
 function intactThere(expect, legacy, before, tag) {
   expect(legacy.keys?.found === true && legacy.keys.signKey === before.keys.signKey, `${tag}: droppen.test still holds the device's keys`);
-  expect(sameList(legacy.keyRecords, before.keyRecords) && sameList(legacy.local, before.local), `${tag}: droppen.test holds all it had`);
+  // Besides the note of a move that did not finish (`rh.hub.move.out`), checked where it is expected.
+  const notes = (local) => local.filter((k) => k !== "rh.hub.move.out");
+  expect(sameList(legacy.keyRecords, before.keyRecords) && sameList(notes(legacy.local), notes(before.local)), `${tag}: droppen.test holds all it had`);
   expect(legacy.signsIn === true, `${tag}: droppen.test still signs in with them (${legacy.signsIn})`);
 }
 function emptyHere(expect, app, tag) {
@@ -117,6 +121,64 @@ function emptyHere(expect, app, tag) {
 }
 
 const scenarios = {
+  async parentDomainRefused(ctx, expect, account) {
+    // A counterpart that is not exactly the pinned one — the apex's parent domain, the app host's parent (the apex
+    // itself as the app), a lookalike — is refused before any window opens, on both sides.
+    await seed(ctx, account);
+    const before = await check(ctx, LEGACY);
+    const outcomes = [];
+    for (const [side, query] of [
+      ["push", `?target=${encodeURIComponent(`https://test:${PORT}`)}`],
+      ["push", `?target=${encodeURIComponent(`https://droppen.test.evil.test:${PORT}`)}`],
+      ["pull", `?from=${encodeURIComponent(`https://test:${PORT}`)}`],
+      ["pull", `?from=${encodeURIComponent(`https://evil.test:${PORT}`)}`],
+    ]) {
+      const pages = ctx.pages().length;
+      const tab = await ctx.newPage();
+      await tab.goto(`${side === "push" ? LEGACY : APP}/${query}`);
+      await tab.click(side === "push" ? "#move" : "#pull");
+      await tab.waitForFunction(() => window.__outcome !== undefined, null, { timeout: T });
+      const outcome = await tab.evaluate(() => window.__outcome);
+      outcomes.push(outcome);
+      expect(outcome.kind === "failed" && /not the hub's own/.test(outcome.reason), `${side} ${query}: refused (${JSON.stringify(outcome)})`);
+      expect(ctx.pages().length === pages + 1, `${side} ${query}: no window opened`);
+      await tab.close();
+    }
+    intactThere(expect, await check(ctx, LEGACY), before, "parent domain");
+    emptyHere(expect, await check(ctx, APP), "parent domain");
+    return { outcomes };
+  },
+  async removeAfterUnfinished(ctx, expect, account) {
+    // Cut off after my. signed in (the apex popup closed first): the apex notes the move unfinished, and its
+    // "Remove this browser" then deletes only its own copy — my. keeps the device, still signing in.
+    const seeded = await seed(ctx, account);
+    await hub("/__test/hub", { hold: true });
+    let first;
+    try {
+      first = await pull(ctx, {
+        async during({ popup }) {
+          expect(await heldAtHub(), "my. was signing in");
+          await popup.close();
+          await hub("/__test/hub", { release: true });
+        },
+      });
+    } finally {
+      await hub("/__test/hub", { release: true });
+    }
+    expect(first.outcome.kind === "moved" && first.outcome.senderWiped === false, `my. has it, the apex kept its copy: ${JSON.stringify(first.outcome)}`);
+    const apex = await check(ctx, LEGACY);
+    expect(apex.unfinished?.state === "sent" && apex.unfinished.device === "dev-1", `the apex noted the move unfinished (${JSON.stringify(apex.unfinished)})`);
+    const logged = (await hub("/__test/state")).log.length;
+    const removed = await pageResult(ctx, `${LEGACY}/remove`);
+    expect(removed.localOnly === "sent", `Remove at the apex was local-only (${JSON.stringify(removed)})`);
+    // Local-only never opens the account (no device sign-in at the apex), so it can append nothing to it.
+    const opened = (await hub("/__test/state")).log.slice(logged).filter((l) => l.what.startsWith("session") && l.host === "droppen.test");
+    expect(opened.length === 0, `the apex did not sign in as the device to remove it (${JSON.stringify(opened)})`);
+    const after = await check(ctx, LEGACY);
+    expect(after.device === null && !after.local.includes("rh.hub.session") && after.unfinished === null, `the apex copy is gone (${JSON.stringify({ d: after.device, l: after.local, u: after.unfinished })})`);
+    movedHere(expect, await check(ctx, APP), seeded, "still at my.");
+    return { first: first.outcome, removed };
+  },
   async push(ctx, expect, account) {
     const seeded = await seed(ctx, account);
     const { outcome, steps, popup } = await push(ctx);
@@ -242,8 +304,10 @@ const scenarios = {
     } finally {
       await hub("/__test/hub", { release: true });
     }
-    expect(first.outcome.kind === "closed", `cut off: ${JSON.stringify(first.outcome)}`);
-    intactThere(expect, await check(ctx, LEGACY), before, "cut off");
+    expect(first.outcome.kind === "unfinished" && first.outcome.why === "closed", `cut off after the keys went: ${JSON.stringify(first.outcome)}`);
+    const cut = await check(ctx, LEGACY);
+    intactThere(expect, cut, before, "cut off");
+    expect(cut.unfinished?.state === "sent", `the apex noted the move unfinished (${JSON.stringify(cut.unfinished)})`);
     const residue = await check(ctx, APP);
     expect(!residue.signsIn, "my. never signed in with what it got");
     const again = await push(ctx);

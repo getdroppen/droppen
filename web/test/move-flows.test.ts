@@ -184,13 +184,15 @@ test("interrupted while my. signs in: nothing removed; the move started again fi
   const first = startMove({ origins: ORIGINS, env: w.env(legacyTab) });
   await until(() => views.receiver.some((v) => v.step === "verifying"));
   w.close(w.windows.find((x) => x.origin === APP && x.path === "/move")!);
-  assert.deepEqual(await first, { kind: "closed" });
-  assert.deepEqual(stateOf(legacy), before, "nothing removed at droppen.app");
+  assert.deepEqual(await first, { kind: "unfinished", why: "closed" }, "cut off after the keys went: not just closed");
+  const noted = stateOf(legacy);
+  assert.equal(JSON.parse(noted.local["rh.hub.move.out"]!).state, "sent", "droppen.app noted the move unfinished");
+  delete noted.local["rh.hub.move.out"];
+  assert.deepEqual(noted, before, "nothing removed at droppen.app");
   // The popup's sign-in still lands (its page was not gone yet): my. holds the device, droppen.app too.
   w.hub.gate = null;
   release();
   await until(() => readMarker(app.storage)?.state === "verified");
-  assert.deepEqual(stateOf(legacy), before);
 
   const again = await startMove({ origins: ORIGINS, env: w.env(legacyTab) });
   assert.deepEqual(again, { kind: "moved", account: ACCOUNT, device: DEVICE, pushWasOn: "host-1", resumed: true, senderWiped: true });
@@ -215,6 +217,19 @@ test("what an unfinished move left at my. (never signed in with) is written over
   await finish(w);
 });
 
+test("cut off between my.'s two writes (keys written, no device id noted yet): the note stands and the next move writes over it", async () => {
+  const { w, legacy, app, legacyTab } = setUp();
+  const { signPublic } = await seedDevice(w);
+  await app.keyStore().put("device-keys/v2", { half: "written" });
+  app.storage.setItem(MOVE_MARKER, JSON.stringify({ v: 1, state: "writing", account: ACCOUNT, device: DEVICE, from: LEGACY, atMs: 1 }));
+  const out = await startMove({ origins: ORIGINS, env: w.env(legacyTab) });
+  assert.equal(out.kind, "moved", JSON.stringify(out));
+  const read = await readDeviceKeys(app.keyStore());
+  assert.equal(read.kind === "found" && hex(read.keys.signPublic), signPublic);
+  assert.deepEqual(stateOf(legacy).keys, []);
+  await finish(w);
+});
+
 test("droppen.app changed while the keys were on their way: nothing removed; the next move adds what changed", async () => {
   const { w, legacy, app, legacyTab, views } = setUp();
   await seedDevice(w);
@@ -225,10 +240,14 @@ test("droppen.app changed while the keys were on their way: nothing removed; the
   // Another tab (one from before this version, which takes no lock) keeps a new user key epoch meanwhile.
   await legacy.keyStore().put(`uk/${ACCOUNT}/1`, { iv: new Uint8Array(12), sealed: new Uint8Array([4]) });
   const before = stateOf(legacy);
+  delete before.local["rh.hub.move.out"];
   w.hub.gate = null;
   release();
-  assert.deepEqual(await first, { kind: "changed" });
-  assert.deepEqual(stateOf(legacy), before, "nothing removed");
+  assert.deepEqual(await first, { kind: "unfinished", why: "changed" });
+  const noted = stateOf(legacy);
+  assert.equal(JSON.parse(noted.local["rh.hub.move.out"]!).state, "verified", "droppen.app knows my. signed in with it");
+  delete noted.local["rh.hub.move.out"];
+  assert.deepEqual(noted, before, "nothing removed");
   assert.equal(readMarker(app.storage)?.state, "verified");
   assert.ok(!app.keyNames().includes(`uk/${ACCOUNT}/1`));
   const again = await startMove({ origins: ORIGINS, env: w.env(legacyTab) });
@@ -269,6 +288,44 @@ test("another tab moving (its lock held): busy, nothing touched", async () => {
   release();
   await held;
   assert.deepEqual(stateOf(legacy), before);
+  await finish(w);
+});
+
+test("a counterpart other than the pinned one (a parent domain, a lookalike) is refused before any window opens", async () => {
+  const { w, legacy, legacyTab, appTab } = setUp();
+  await seedDevice(w);
+  const before = stateOf(legacy);
+  for (const app of ["https://test", "https://droppen.test.evil.test", "https://other.droppen.test"]) {
+    const out = await startMove({ origins: { legacy: LEGACY, app }, env: w.env(legacyTab) });
+    assert.equal(out.kind === "failed" && /not the hub's own/.test(out.reason), true, `${app}: ${JSON.stringify(out)}`);
+  }
+  const out = await startPull({ origins: { legacy: "https://test", app: APP }, env: w.env(appTab) });
+  assert.equal(out.kind, "failed");
+  w.pinned = null;
+  assert.equal((await startMove({ origins: ORIGINS, env: w.env(legacyTab) })).kind, "failed", "no pinned app host: no move");
+  assert.equal(w.windows.length, 2, "no window opened");
+  assert.deepEqual(stateOf(legacy), before);
+  await finish(w);
+});
+
+test("what an unfinished move of another device left is not written over, and a stale note is forgotten", async () => {
+  const { w, legacy, app, legacyTab, appTab } = setUp();
+  await seedDevice(w);
+  const before = stateOf(legacy);
+  // A device here, and a "writing" note naming another account's device: the next bundle may not write over it.
+  await app.keyStore().put("device-keys/v2", { someone: "else" });
+  app.storage.setItem("rh.hub.device.acct-2", "dev-9");
+  app.storage.setItem(MOVE_MARKER, JSON.stringify({ v: 1, state: "writing", account: "acct-2", device: "dev-9", from: LEGACY, atMs: 1 }));
+  assert.deepEqual(await startMove({ origins: ORIGINS, env: w.env(legacyTab) }), { kind: "targetHasDevice" });
+  assert.deepEqual(await startPull({ origins: ORIGINS, env: w.env(appTab) }), { kind: "targetHasDevice" }, "nor pulled over");
+  // The droppen.app popup hears the refusal a moment later, and forgets the note it made as the keys went.
+  await until(() => legacy.storage.getItem("rh.hub.move.out") === null);
+  assert.deepEqual(stateOf(legacy), before);
+  // Its device gone (removed here since), the note says nothing any more: forgotten, and the move goes through.
+  await app.keyStore().delete("device-keys/v2");
+  app.storage.removeItem("rh.hub.device.acct-2");
+  assert.equal((await startMove({ origins: ORIGINS, env: w.env(legacyTab) })).kind, "moved");
+  assert.equal(readMarker(app.storage)?.account, ACCOUNT);
   await finish(w);
 });
 

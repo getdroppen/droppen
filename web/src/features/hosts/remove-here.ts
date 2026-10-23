@@ -4,6 +4,7 @@ import { HubApi, type HubSession, saveSession } from "@/lib/hub/api";
 import { type DeviceHere, notedDevice } from "@/lib/hub/device-here";
 import type { RemoveCase } from "@/features/cloud/sign-out-dialog";
 import { type HeldSession, signOut, type SignOutResult } from "@/features/cloud/sign-out";
+import { forgetMoveUnfinished, moveUnfinished } from "@/features/move";
 
 /*
  * "Remove this browser" on the move notice (`legacy.tsx`): the app's own
@@ -13,6 +14,10 @@ import { type HeldSession, signOut, type SignOutResult } from "@/features/cloud/
  * passkey are asked — so that it can take itself off the account's devices
  * where it may; whatever it may not, its keys and everything else it kept go
  * from this origin all the same.
+ *
+ * Except after a move of this device that did not finish (`localOnly`): the
+ * app host may be using the same device, so only this origin's copy goes and
+ * the account is not opened at all.
  */
 
 /** The removal, ready to confirm: what it can do here ({@link RemoveCase}), for the account it opened or could not. */
@@ -25,6 +30,13 @@ export interface Removal {
   /** Further accounts this browser noted a device for: their keys go too (`CloudAccount.wipeLocal`). */
   others: string[];
   store: KeyStore;
+  /**
+   * A move of this very device did not finish (`features/move`
+   * `moveUnfinished`): the app host may be using it (`sent`), or is (`verified`).
+   * Then only this origin's copy goes — the device is never taken off the
+   * account, which would remove it from under the app host.
+   */
+  localOnly?: "sent" | "verified";
 }
 
 /** Open the account of the device `here` names, to remove it; `unopened` when that cannot be done. Never throws. */
@@ -33,6 +45,11 @@ export async function prepareRemoval(here: DeviceHere, origin: string, opts: { a
   const store = opts.store ?? indexedDbKeyStore();
   const [account = null, ...others] = here.accounts;
   const device = account ? (notedDevice(account) ?? (here.session?.account === account ? (here.session.device ?? null) : null)) : null;
+  const unfinished = moveUnfinished();
+  if (account && device && unfinished?.account === account && unfinished.device === device) {
+    // The same device may be live on the app host: nothing is opened (nothing at the hub is touched but this origin's session).
+    return { held: { api, token: here.session?.token ?? "", account, store }, why: "unopened", recoveryWords: false, others, store, localOnly: unfinished.state };
+  }
   if (account && device) {
     // The kept session if it is this device's (it may have run out: it is renewed with the device key), else none.
     const session: HubSession =
@@ -58,6 +75,11 @@ export async function removeHere(removal: Removal): Promise<SignOutResult> {
   const rest = removal.account || removal.held?.account ? removal.others : ["", ...removal.others];
   for (const account of rest) {
     await CloudAccount.wipeLocal(removal.store, account).catch((error: unknown) => result.failures.push(...wipeFailures(error).map((f) => `device keys: ${f}`)));
+  }
+  if (removal.localOnly) {
+    // Only this copy went, by design: the account still lists the device because the app host may be using it.
+    forgetMoveUnfinished();
+    return { ...result, stillListed: null };
   }
   return result;
 }
