@@ -29,7 +29,14 @@
 //!
 //! `rotate` with `ROTTEST_DEVICE_SEED=<the host's machine-key.json>` also signs
 //! in as the host's device role while its renewal is under way (refused:
-//! `rotation_pending`).
+//! `rotation_pending`), and takes a device-role relay ticket before the
+//! request (`ROTTEST_DEVICE_TICKET=<file saved by asdevice>`, else one minted
+//! then): it signs in on the relay with it before the request (and holds one
+//! such connection open), again and again from the request on until the
+//! relay refuses it as revoked (4403; the time from the attempt's
+//! registration is logged), once staged and after the commit — and, once
+//! staged, opens a channel to the host over its relay (its agent's tickets
+//! are left alone).
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -233,12 +240,20 @@ impl Watch {
 
 /// A relay ticket for `d` (`relay`: the account set's first, or the first listed).
 async fn ticket(base: &str, token: &str, who: &str) -> Option<(String, String, String)> {
+    ticket_for(base, token, who, None).await
+}
+
+/// [`ticket`], for the relay `want` when given.
+async fn ticket_for(base: &str, token: &str, who: &str, want: Option<&str>) -> Option<(String, String, String)> {
     let (s, relays) = call(base, Some(token), reqwest::Method::GET, "/v1/relays", None).await;
     if s != 200 {
         log!("{who}: GET /v1/relays {s} {}", short(&relays, 300));
         return None;
     }
-    let pick = relays["account_set"][0]["id"].as_str().or(relays["relays"][0]["id"].as_str())?.to_string();
+    let pick = match want {
+        Some(w) => w.to_string(),
+        None => relays["account_set"][0]["id"].as_str().or(relays["relays"][0]["id"].as_str())?.to_string(),
+    };
     let (s, t) = call(base, Some(token), reqwest::Method::POST, "/v1/relays/tickets", Some(json!({"relays": [pick]}))).await;
     let tk = &t["tickets"][0];
     if s != 200 || tk.is_null() {
@@ -527,7 +542,16 @@ async fn rotate(args: &[String]) -> R<()> {
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let eph = DhKeypair::generate(&mut rand::rngs::OsRng);
     let nonce_hash = hex(&Sha256::digest(nonce));
-    let before = probe_device_role(&st, &host, "before the request", None).await;
+    let (before, minted) = probe_device_role(&st, &host, "before the request", None).await;
+    // A device-role relay ticket from before the request: good now, and a
+    // connection on it held open across the request.
+    let old_tk = old_ticket(minted);
+    let held: Held = Arc::default();
+    if let Some(t) = &old_tk {
+        t.try_signin(&st, &host, "before the request", None).await;
+        t.try_signin(&st, &host, "before the request, held open", Some(held.clone())).await;
+    }
+    let t_put0 = now_ms();
     let (s, v) = call(
         &d.hub.http,
         Some(&d.token),
@@ -541,6 +565,28 @@ async fn rotate(args: &[String]) -> R<()> {
         return Err(format!("attempt refused: {s}"));
     }
     let t_put = now_ms();
+    log!("attempt registered: PUT took {} ms", t_put - t_put0);
+    // The gap: the ticket from before, tried again until the relay refuses it
+    // (at most 20 s: the attempt has its own clock).
+    if let Some(t) = &old_tk {
+        let mut n = 0;
+        loop {
+            let t_try = now_ms();
+            let r = t.try_signin(&st, &host, &format!("attempt, try {n} at +{} ms", t_try - t_put), None).await;
+            if matches!(&r, RelayIn::Closed(4403, _)) {
+                log!("GAP CHECK: the ticket from before is refused as revoked {} ms after the attempt was registered (try {n}, begun at +{} ms)", now_ms() - t_put, t_try - t_put);
+                break;
+            }
+            if now_ms() - t_put > 20_000 {
+                log!("GAP CHECK: the ticket from before is NOT refused 20 s after the attempt was registered: {r:?}");
+                break;
+            }
+            n += 1;
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        held_report(&held, t_put, "the attempt");
+    }
     probe_device_role(&st, &host, "attempt", before.as_deref()).await;
     let withdraw = |d: &Device| {
         let (base, token, host) = (d.hub.http.clone(), d.token.clone(), host.clone());
@@ -672,6 +718,20 @@ async fn rotate(args: &[String]) -> R<()> {
         hub_offset
     );
     probe_device_role(&st, &host, "staged", before.as_deref()).await;
+    if let Some(t) = &old_tk {
+        let r = t.try_signin(&st, &host, &format!("staged, +{} ms", now_ms() - t_put), None).await;
+        log!("GAP CHECK (staged): the ticket from before → {r:?}");
+        held_report(&held, t_put, "the staging");
+        // The host's agent, meanwhile, still on its relay.
+        match open_to(&mut d, None, &host, "admin (staged)").await {
+            Ok((Some(_l), o)) => match rpc(&o.channel, "GET", "/rh/info", None).await {
+                Ok(r) => log!("AGENT CHECK (staged): channel to {label} over its relay → GET /rh/info {}", r.status),
+                Err(e) => log!("AGENT CHECK (staged): channel to {label} over its relay, GET /rh/info: {e}"),
+            },
+            Ok((None, _)) => log!("AGENT CHECK (staged): no relay channel, the hub's"),
+            Err(e) => log!("AGENT CHECK (staged): no channel to {label} over a relay: {e}"),
+        }
+    }
     let mk = rh_devkit::random_key();
     let epoch = chain.machine_key_epochs(&host);
     let batch = |rot: &HostRotation| {
@@ -766,6 +826,11 @@ async fn rotate(args: &[String]) -> R<()> {
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+    if let Some(t) = &old_tk {
+        let r = t.try_signin(&st, &host, &format!("after the commit, +{} ms", now_ms() - t_put), None).await;
+        log!("GAP CHECK (after the commit): the ticket from before → {r:?}");
+        held_report(&held, t_put, "the end");
+    }
     w.attest(&d);
     tokio::time::sleep(Duration::from_secs(3)).await;
     for attempt in 0..6 {
@@ -795,26 +860,60 @@ async fn rotate(args: &[String]) -> R<()> {
 /// With `ROTTEST_DEVICE_SEED`: the host's device role (its own key) asks for
 /// a session and a relay ticket while its renewal is under way — both should
 /// be refused (`rotation_pending`).
-async fn probe_device_role(st: &State, host: &str, when: &str, before: Option<&str>) -> Option<String> {
-    let seed = std::env::var("ROTTEST_DEVICE_SEED").ok()?;
+async fn probe_device_role(st: &State, host: &str, when: &str, before: Option<&str>) -> (Option<String>, Option<OldTicket>) {
+    let Ok(seed) = std::env::var("ROTTEST_DEVICE_SEED") else { return (None, None) };
     let id = match seed_identity(&seed) {
         Ok(id) => id,
         Err(e) => {
             log!("device-role probe: {e}");
-            return None;
+            return (None, None);
         }
     };
-    let hub = HubUrl::parse(&st.hub).ok()?;
+    let Ok(hub) = HubUrl::parse(&st.hub) else { return (None, None) };
     let who = format!("{} device role ({when})", st.label(host));
     let fresh = session_signin(&st.hub, &hub, &st.account, host, id.signing_key(), &who).await;
     // A session made before the renewal was asked for, used now.
     if let Some(token) = before {
         ticket(&st.hub, token, &format!("{who}, with a session from before")).await;
     }
+    let mut minted = None;
     if let Some(token) = &fresh {
-        ticket(&st.hub, token, &who).await;
+        if let Some((relay, origin, text)) = ticket(&st.hub, token, &who).await {
+            minted = Some(OldTicket { relay, origin, text, key: id.signing_key().clone() });
+        }
     }
-    fresh
+    (fresh, minted)
+}
+
+fn held_report(held: &Held, t_put: u64, by: &str) {
+    match held.lock().unwrap().as_ref() {
+        Some((at, code, reason)) => log!("HELD CHECK (by {by}): the device-role connection from before was closed {code} {reason:?} at {:+} ms from the attempt's registration", *at as i64 - t_put as i64),
+        None => log!("HELD CHECK (by {by}): the device-role connection from before is STILL OPEN"),
+    }
+}
+
+/// The device-role ticket from before the request: `ROTTEST_DEVICE_TICKET`
+/// (saved by `asdevice`), else the one just minted.
+fn old_ticket(minted: Option<OldTicket>) -> Option<OldTicket> {
+    let Ok(file) = std::env::var("ROTTEST_DEVICE_TICKET") else { return minted };
+    let seed = std::env::var("ROTTEST_DEVICE_SEED").ok()?;
+    let read = || -> R<OldTicket> {
+        let t: Value = serde_json::from_str(&std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?).map_err(|e| e.to_string())?;
+        let s = |k: &str| t[k].as_str().unwrap_or("").to_string();
+        Ok(OldTicket { relay: s("relay"), origin: s("origin"), text: s("ticket"), key: seed_identity(&seed)?.signing_key().clone() })
+    };
+    match read() {
+        Ok(t) => {
+            if let Ok(p) = rh_proto::ticket::SignedTicket::parse(&t.text) {
+                log!("device-role ticket from {file}: relay {} role {:?} id {} issued {} expires {}", t.relay, p.ticket.role, p.ticket.id, p.ticket.issued_ms, p.ticket.expires_ms);
+            }
+            Some(t)
+        }
+        Err(e) => {
+            log!("ROTTEST_DEVICE_TICKET: {e}");
+            minted
+        }
+    }
 }
 
 /// Sign in with a key, raw, on the hub's `/v1/agent`; then one `chain_sub`.
@@ -907,10 +1006,31 @@ async fn session_signin(base: &str, hub: &HubUrl, account: &str, id: &str, key: 
     v["token"].as_str().map(String::from)
 }
 
-async fn relay_signin(origin: &str, ticket: &str, account: &str, id: &str, key: &SigningKey, role: LoginRole, what: &str) {
+/// What a relay sign-in came to.
+#[derive(Debug, Clone, PartialEq)]
+enum RelayIn {
+    Welcome,
+    Closed(u16, String),
+    Failed(String),
+}
+
+/// When a held relay connection was closed: (local ms, code, reason).
+type Held = Arc<Mutex<Option<(u64, u16, String)>>>;
+
+async fn relay_signin(origin: &str, ticket: &str, account: &str, id: &str, key: &SigningKey, role: LoginRole, what: &str) -> RelayIn {
+    relay_signin_hold(origin, ticket, account, id, key, role, what, None).await
+}
+
+/// [`relay_signin`]; with `hold`, a connection signed in is kept open (read
+/// until the relay closes it, which is noted in `hold`) instead of closed.
+#[allow(clippy::too_many_arguments)]
+async fn relay_signin_hold(origin: &str, ticket: &str, account: &str, id: &str, key: &SigningKey, role: LoginRole, what: &str, hold: Option<Held>) -> RelayIn {
     let ws = match tokio_tungstenite::connect_async(format!("{origin}{}", rh_devkit::CONNECT_PATH)).await {
         Ok((ws, _)) => ws,
-        Err(e) => return log!("{what}: dial {origin}: {e}"),
+        Err(e) => {
+            log!("{what}: dial {origin}: {e}");
+            return RelayIn::Failed(format!("dial: {e}"));
+        }
     };
     let (mut sink, mut stream) = ws.split();
     let mut nonce = [0u8; 32];
@@ -930,30 +1050,92 @@ async fn relay_signin(origin: &str, ticket: &str, account: &str, id: &str, key: 
                 let v: Value = serde_json::from_str(t.as_str()).unwrap_or_default();
                 log!("{what}: relay said {}", short(&v, 300));
                 if v["t"] == "welcome" {
-                    log!("{what}: SIGNED IN on the relay — closing");
-                    let _ = sink.close().await;
-                    return;
+                    let Some(held) = hold else {
+                        log!("{what}: SIGNED IN on the relay — closing");
+                        let _ = sink.close().await;
+                        return RelayIn::Welcome;
+                    };
+                    log!("{what}: SIGNED IN on the relay — holding the connection open");
+                    let what = what.to_string();
+                    tokio::spawn(async move {
+                        let _sink = sink;
+                        let (code, reason) = loop {
+                            match stream.next().await {
+                                Some(Ok(Message::Close(c))) => break (c.as_ref().map_or(0, |c| u16::from(c.code)), c.as_ref().map(|c| c.reason.to_string()).unwrap_or_default()),
+                                Some(Ok(Message::Text(t))) => log!("{what}: relay said {}", short(&serde_json::from_str::<Value>(t.as_str()).unwrap_or_default(), 300)),
+                                Some(Ok(_)) => {}
+                                Some(Err(e)) => break (0, format!("socket error {e}")),
+                                None => break (0, "socket ended".into()),
+                            }
+                        };
+                        log!("{what}: HELD CONNECTION CLOSED by the relay: {code} {reason:?}");
+                        *held.lock().unwrap() = Some((now_ms(), code, reason));
+                    });
+                    return RelayIn::Welcome;
                 }
             }
-            Ok(Some(Ok(Message::Close(c)))) => return log!("{what}: relay closed {} {:?}", c.as_ref().map_or(0, |c| u16::from(c.code)), c.as_ref().map(|c| c.reason.to_string())),
+            Ok(Some(Ok(Message::Close(c)))) => {
+                let (code, reason) = (c.as_ref().map_or(0, |c| u16::from(c.code)), c.as_ref().map(|c| c.reason.to_string()).unwrap_or_default());
+                log!("{what}: relay closed {code} {reason:?}");
+                return RelayIn::Closed(code, reason);
+            }
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(e))) => return log!("{what}: socket error {e}"),
-            Ok(None) => return log!("{what}: socket ended"),
-            Err(_) => return log!("{what}: nothing for 10 s"),
+            Ok(Some(Err(e))) => {
+                log!("{what}: socket error {e}");
+                return RelayIn::Failed(e.to_string());
+            }
+            Ok(None) => {
+                log!("{what}: socket ended");
+                return RelayIn::Failed("socket ended".into());
+            }
+            Err(_) => {
+                log!("{what}: nothing for 10 s");
+                return RelayIn::Failed("timeout".into());
+            }
         }
+    }
+}
+
+/// A device-role relay ticket of the host from before its renewal was asked
+/// for (`ROTTEST_DEVICE_TICKET`, saved by `asdevice`, or one minted with the
+/// session from before), and the key it is signed in with.
+struct OldTicket {
+    relay: String,
+    origin: String,
+    text: String,
+    key: SigningKey,
+}
+
+impl OldTicket {
+    async fn try_signin(&self, st: &State, host: &str, what: &str, hold: Option<Held>) -> RelayIn {
+        relay_signin_hold(
+            &self.origin,
+            &self.text,
+            &st.account,
+            host,
+            &self.key,
+            LoginRole::RelayDevice,
+            &format!("{} device role on relay {} with a ticket from before the request ({what})", st.label(host), self.relay),
+            hold,
+        )
+        .await
     }
 }
 
 /// A host's device role, from its seed: a session and a relay ticket (saved to `out`).
 async fn asdevice(args: &[String]) -> R<()> {
-    let [label, seed, out] = args else { return Err("asdevice <host> <seed-file> <out>".into()) };
+    let (label, seed, out, relay) = match args {
+        [l, s, o] => (l, s, o, None),
+        [l, s, o, r] => (l, s, o, Some(r.as_str())),
+        _ => return Err("asdevice <host> <seed-file> <out> [relay]".into()),
+    };
     let st = load()?;
     let host = st.host(label);
     let id = seed_identity(seed)?;
     let hub = HubUrl::parse(&st.hub)?;
     log!("{label} device role with key {}", fp(&id.sign_public()));
     let Some(token) = session_signin(&st.hub, &hub, &st.account, &host, id.signing_key(), &format!("{label} device session")).await else { return Ok(()) };
-    if let Some((relay, origin, text)) = ticket(&st.hub, &token, &format!("{label} as device")).await {
+    if let Some((relay, origin, text)) = ticket_for(&st.hub, &token, &format!("{label} as device"), relay).await {
         std::fs::write(out, json!({"relay": relay, "origin": origin, "ticket": text}).to_string()).map_err(|e| e.to_string())?;
         log!("saved {label}'s device ticket for {relay} to {out}");
     }
@@ -1272,7 +1454,7 @@ async fn main() {
         std::process::exit(2);
     }
     let Some((cmd, rest)) = args.split_first() else {
-        eprintln!("rottest signup|enroll|handover|policy|status|watch|rotate|asdevice|oldkey|accept|pause|control|hostkeys|put|redispute|tickets|channel …");
+        eprintln!("rottest signup|enroll|handover|policy|status|watch|rotate|asdevice|oldkey|accept|pause|control|hostkeys|put|redispute|tickets|channel|remove|relaylogin …");
         std::process::exit(2);
     };
     let r = match cmd.as_str() {
