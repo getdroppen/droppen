@@ -737,3 +737,21 @@ describe("publishing in the source repository", () => {
     assert.match(stray.stderr, /holds files release-public\.sh does not make: INSTALL-windows\.txt/);
   });
 });
+
+describe("under the runner's locale", () => {
+  // macOS runners sort in en_US.UTF-8, which mixes upper and lower case: the
+  // draft's files (listed as node sorts, by code unit) must still compare
+  // equal to the expected ones.
+  test("a draft with mixed-case file names is published", async () => {
+    env.LC_ALL = "en_US.UTF-8";
+    env.LANG = "en_US.UTF-8";
+    const server = serverDir("v0.2.126");
+    for (const name of ["install.sh", "INSTALL-macos.txt", "INSTALL-linux.txt", "web-manifest.sigstore.json", "droppen-v0.2.126.sigstore.json"]) {
+      writeFileSync(join(server, name), `${name}\n`);
+    }
+    const r = await run(["v0.2.126", "--server", server, "--desktop", desktopDir("0.2.126")]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(state().latest, "v0.2.126");
+    assert.equal(state().releases.find((x) => x.tag_name === "v0.2.126").draft, false);
+  });
+});

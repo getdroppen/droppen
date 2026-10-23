@@ -288,8 +288,8 @@ STRAY=$(cd "$SERVER" && ls | grep -v -x -e NOTES.md -e SHA256SUMS -e LICENSE -e 
   -e "droppen-$VERSION-.*\.tar\.gz" -e "remote-hand-$VERSION-.*\.tar\.gz" || true)
 [ -z "$STRAY" ] || die "$SERVER holds files release-public.sh does not make: $(echo "$STRAY" | tr '\n' ' ')"
 # SHA256SUMS lists exactly the tarballs, and they match.
-LISTED=$(awk '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); print n }' "$SERVER/SHA256SUMS" | sort)
-[ "$LISTED" = "$(for f in "${SERVER_ASSETS[@]}"; do basename "$f"; done | sort)" ] \
+LISTED=$(awk '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); print n }' "$SERVER/SHA256SUMS" | LC_ALL=C sort)
+[ "$LISTED" = "$(for f in "${SERVER_ASSETS[@]}"; do basename "$f"; done | LC_ALL=C sort)" ] \
   || die "$SERVER/SHA256SUMS does not list exactly the tarballs beside it"
 (cd "$SERVER" && shasum -a 256 -c SHA256SUMS >/dev/null) || die "$SERVER: a tarball does not match SHA256SUMS"
 echo "ok: ${#SERVER_ASSETS[@]} tarballs match SHA256SUMS; NOTES.md, LICENSE, THIRD_PARTY_NOTICES, web-manifest.json"
@@ -488,13 +488,16 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "(dry run: would check ${#EXPECTED[@]} files)"
 else
   releases >"$WORK/releases.tsv"
-  for file in "${EXPECTED[@]}"; do printf '%s\t%s\n' "$(basename "$file")" "$(size_of "$file")"; done | sort >"$WORK/expected"
+  # Byte order on both sides (LC_ALL=C sort; node's sort of ASCII names):
+  # a locale's collation (en_US on the macOS runners mixes the cases) would
+  # order the same files differently and leave a right draft unpublished.
+  for file in "${EXPECTED[@]}"; do printf '%s\t%s\n' "$(basename "$file")" "$(size_of "$file")"; done | LC_ALL=C sort >"$WORK/expected"
   node -e '
     const [file, tag] = process.argv.slice(1);
     const drafts = JSON.parse(require("fs").readFileSync(file, "utf8")).flat().filter((r) => r.tag_name === tag && r.draft);
     if (drafts.length !== 1) { console.error(`${drafts.length} drafts called ${tag}`); process.exit(1); }
     const lines = drafts[0].assets.map((a) => `${a.name}\t${a.state === "uploaded" ? a.size : a.state}`);
-    console.log(lines.sort().join("\n"));
+    console.log(lines.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).join("\n"));
   ' "$WORK/releases.json" "$VERSION" >"$WORK/uploaded" || die "cannot find the draft $VERSION"
   if ! diff "$WORK/expected" "$WORK/uploaded" >&2; then
     die "the draft $VERSION does not hold exactly the files above (name, size): it stays a draft; fix it or delete it"
