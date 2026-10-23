@@ -884,7 +884,9 @@ hub's clock, which every age here is measured against:
   are no evidence and not listed. A `retired_login` carries the signed login as it came:
   a device checks `sig` over `HubLogin {role, account, id, hub, nonce,
   time_ms}` with the chain's `keys_at(host, retired_seq - 1)` itself — the
-  hub can withhold evidence, never forge it.
+  hub can withhold evidence, never forge it. `login.hub` is the host the
+  sign-in dialled, as signed: the hub's origin, or, for `device` and
+  `device_session`, its app host (`wss://my.droppen.app`; README "Hosts").
 
 #### `PUT /v1/rotations/{host}` — requires a current full device
 `{nonce_hash?, assurance: 0|1}` → the host's `Rotation`. Without

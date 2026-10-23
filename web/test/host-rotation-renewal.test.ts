@@ -151,17 +151,26 @@ async function isolatingEvidence(a: CloudAccount, host: string, h: { signPrivate
 }
 
 /** A retired key's sign-in as the hub records it (§3.8): `HubLogin` signed by `key`, for `host`, retired at `retiredSeq`. */
-async function disputeJson(a: CloudAccount, host: string, key: CryptoKey, signKey: Uint8Array, retiredSeq: number, timeMs?: number) {
+async function disputeJson(
+  a: CloudAccount,
+  host: string,
+  key: CryptoKey,
+  signKey: Uint8Array,
+  retiredSeq: number,
+  timeMs?: number,
+  opts: { hub?: string; role?: "agent" | "device" | "deviceSession" } = {},
+) {
   // Signed after the renewal, past the clock skew allowed (R6 review) — unless a test says when.
   const after = (a.chain!.entryAt(retiredSeq)?.draft.createdMs ?? Date.now()) + 6 * 60_000;
-  const login = { role: "agent" as const, account: a.account, id: host, hub: HUB_ORIGIN, nonce: crypto.getRandomValues(new Uint8Array(32)), timeMs: timeMs ?? after };
+  const role = opts.role ?? "agent";
+  const login = { role, account: a.account, id: host, hub: opts.hub ?? HUB_ORIGIN, nonce: crypto.getRandomValues(new Uint8Array(32)), timeMs: timeMs ?? after };
   const sig = await signHubLogin(login, key);
   return {
     host,
     kind: "retired_login",
     seen_ms: Date.now(),
     retired_seq: retiredSeq,
-    role: "agent",
+    role: role === "deviceSession" ? "device_session" : role,
     login: { account: login.account, id: login.id, hub: login.hub, nonce: hex(login.nonce), time_ms: login.timeMs },
     sig: hex(sig),
     sign_key: hex(signKey),
@@ -831,6 +840,28 @@ test("a sign-in with a retired key is information only — never isolation, when
   assert.equal(runner.retiredLoginAt("m-1"), renewedAt + 3_600_000, "shown as information");
   assert.notEqual(runner.status("m-1").kind, "isolated");
   runner.stop();
+});
+
+test("a retired key's sign-in is the same evidence whichever of the hub's hosts it dialled: the origin, or the app host a browser device signs in on", async () => {
+  const { a, agents, x, h1 } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const retiredSeq = a.chain!.deviceRecord("m-1")!.rotatedSeq!;
+  const t = a.chain!.entryAt(retiredSeq)!.draft.createdMs + 3_600_000;
+  // The hub keeps the login exactly as signed (docs/hub-api/README.md "Hosts"): the browser roles bind the host dialled.
+  for (const [hub, role] of [
+    ["wss://droppen.app", "agent"],
+    ["wss://droppen.app", "device"],
+    ["wss://my.droppen.app", "device"],
+    ["wss://my.droppen.app", "deviceSession"],
+  ] as const) {
+    const d = hostDispute(await disputeJson(a, "m-1", h1.signPrivate, h1.sign, retiredSeq, t, { hub, role }))!;
+    assert.equal(d.login?.hub, hub);
+    assert.deepEqual(await checkRetiredLogin(a.chain!, d), { host: "m-1", retiredSeq, timeMs: t }, `${role} at ${hub}`);
+  }
+  // The host it names is the one signed: a login re-labelled to another host no longer checks out.
+  const signed = await disputeJson(a, "m-1", h1.signPrivate, h1.sign, retiredSeq, t, { hub: "wss://my.droppen.app", role: "device" });
+  assert.equal(await checkRetiredLogin(a.chain!, hostDispute({ ...signed, login: { ...signed.login, hub: "wss://droppen.app" } })!), null);
 });
 
 test("a host waiting to renew, or isolated, is sealed no host keys (purpose 5, no answer to purpose 4); one that cannot renew still is", async () => {

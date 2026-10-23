@@ -186,7 +186,11 @@ export async function checkStatement(chain: ChainState, d: HostDispute): Promise
  * A sign-in with a key `host` renewed away from (`retired_login`, §3.8): its
  * signed `HubLogin` checked against the key the renewal at `retiredSeq`
  * retired (`keysAt`). Information only — it never isolates (two clocks cannot
- * order it against the renewal): `null` when it does not check out.
+ * order it against the renewal): `null` when it does not check out. Its `hub`
+ * is checked as signed, not against a list: the hub keeps the login exactly as
+ * it came, bound to the host it dialled — its origin (`wss://droppen.app`), or
+ * for a browser device's roles its app host (`wss://my.droppen.app`; docs/hub-api
+ * README "Hosts") — and a retired key's signature on either is the same evidence.
  */
 export async function checkRetiredLogin(chain: ChainState, d: HostDispute): Promise<{ host: string; retiredSeq: number; timeMs: number } | null> {
   if (d.kind !== "retired_login" || !d.login || !d.sig || !d.signKey || d.retiredSeq === null) return null;
