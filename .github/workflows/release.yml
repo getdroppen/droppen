@@ -16,7 +16,8 @@ name: release
 # - One job holds the secrets: `release`, in the protected `release`
 #   environment, which a person approves once per run (GitHub enforces it;
 #   tags `v*` and main only). It signs (Developer ID, notarisation, the
-#   updater's signature) and runs nothing from an artifact and no third-party
+#   updater's signature, the installer's SHA256SUMS-server) and runs nothing
+#   from an artifact and no third-party
 #   build tool: this repository's scripts, Apple's tools, and
 #   droppen-update-signer from `signer`, checked by sha256. Each step gets
 #   only the secrets it uses; the keychain is deleted right after
@@ -810,6 +811,9 @@ jobs:
       DESKTOP: ${{ needs.meta.outputs.desktop }}
     outputs:
       sha: ${{ steps.pack.outputs.sha }}
+      # The installer's signature over SHA256SUMS-server, base64 (empty while
+      # install.sh pins no release key); verify and publish check it again.
+      install_sig: ${{ steps.install-sig.outputs.sig }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -854,6 +858,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           RELEASE_FORBIDDEN_ENV: ${{ secrets.RELEASE_FORBIDDEN_ENV }}
+          INSTALL_SIGNING_KEY: ${{ secrets.INSTALL_SIGNING_KEY }}
         run: |
           missing=()
           if [ "$DESKTOP" = true ]; then
@@ -862,6 +867,9 @@ jobs:
             done
           fi
           [ "$PUBLISH" != true ] || [ -n "$RELEASE_FORBIDDEN_ENV" ] || missing+=(RELEASE_FORBIDDEN_ENV)
+          # Once install.sh pins a release key, every run signs with it.
+          pinned=$(scripts/install-key.sh scripts/install.sh) || exit 1
+          [ -z "$pinned" ] || [ -n "$INSTALL_SIGNING_KEY" ] || missing+=(INSTALL_SIGNING_KEY)
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::the release environment lacks the secrets ${missing[*]} (docs/releasing.md, \"Once: the release environment\")"
             exit 1
@@ -903,6 +911,34 @@ jobs:
           scripts/release-notes.sh "${notes_args[@]}" >"$RUNNER_TEMP/NOTES.md"
           same "$RUNNER_TEMP/NOTES.md" NOTES.md
           [ "$bad" = 0 ]
+      # What install.sh checks before it trusts a checksum: a signature over
+      # the server's SHA256SUMS (published as SHA256SUMS-server) by the key it
+      # pins (SUMS_KEY), made here and nowhere else (docs/releasing.md, "The
+      # release key"). macOS's own openssl, nothing from an artifact.
+      - name: The installer's signature over SHA256SUMS-server
+        id: install-sig
+        env:
+          INSTALL_SIGNING_KEY: ${{ secrets.INSTALL_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          pinned=$(scripts/install-key.sh scripts/install.sh)
+          if [ -z "$pinned" ]; then
+            echo "install.sh pins no release key (SUMS_KEY=''): SHA256SUMS-server is not signed"
+            echo "sig=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          d=$RUNNER_TEMP/install-sig
+          mkdir -p "$d"
+          trap 'rm -f "$d/key.pem"' EXIT
+          (umask 077 && printf '%s\n' "$INSTALL_SIGNING_KEY" > "$d/key.pem")
+          printf '%s\n' "$pinned" > "$d/pinned.pem"
+          sums=$RUNNER_TEMP/a/staged/release/SHA256SUMS
+          /usr/bin/openssl dgst -sha256 -sign "$d/key.pem" -out "$d/SHA256SUMS-server.sig" "$sums"
+          rm -f "$d/key.pem"
+          /usr/bin/openssl dgst -sha256 -verify "$d/pinned.pem" -signature "$d/SHA256SUMS-server.sig" "$sums" >/dev/null \
+            || { echo "::error::INSTALL_SIGNING_KEY is not the release key install.sh pins (SUMS_KEY)"; exit 1; }
+          echo "ok: SHA256SUMS-server signed with the release key install.sh pins"
+          echo "sig=$(base64 < "$d/SHA256SUMS-server.sig" | tr -d '\n')" >> "$GITHUB_OUTPUT"
       - name: Signing keychain
         if: env.DESKTOP == 'true'
         env:
@@ -1049,8 +1085,12 @@ jobs:
         id: pack
         env:
           GH_TOKEN: ${{ github.token }}
+          INSTALL_SIG: ${{ needs.release.outputs.install_sig }}
         run: |
           set -euo pipefail
+          # The release job's signature, which publish-release.sh checks
+          # against install.sh's release key (and requires once it pins one).
+          [ -z "$INSTALL_SIG" ] || printf '%s' "$INSTALL_SIG" | base64 --decode > "$RUNNER_TEMP/a/staged/release/SHA256SUMS-server.sig"
           mkdir -p "$RUNNER_TEMP/out/checked"
           args=("$VERSION" --server "$RUNNER_TEMP/a/staged/release" --dry-run --sums-out "$RUNNER_TEMP/out/checked/SHA256SUMS")
           [ "$DESKTOP" != true ] || args+=(--desktop "$RUNNER_TEMP/desktop")
@@ -1134,6 +1174,8 @@ jobs:
             cp "$RUNNER_TEMP/a/checked/checked/latest.json" "$RUNNER_TEMP/desktop/updater/"
           fi
       - name: The files to attest
+        env:
+          INSTALL_SIG: ${{ needs.release.outputs.install_sig }}
         run: |
           set -euo pipefail
           attest=$RUNNER_TEMP/attest
@@ -1141,6 +1183,13 @@ jobs:
           mkdir -p "$attest"
           cp "$RUNNER_TEMP/a/checked/checked/SHA256SUMS" "$attest/"
           ln "$rel"/*.tar.gz "$rel/LICENSE" "$rel/THIRD_PARTY_NOTICES" "$rel/web-manifest.json" "$rel/install.sh" "$rel"/INSTALL-*.txt "$attest/"
+          # The installer's signed checksums (publish-release.sh checks the
+          # signature again and publishes both).
+          if [ -n "$INSTALL_SIG" ]; then
+            printf '%s' "$INSTALL_SIG" | base64 --decode > "$rel/SHA256SUMS-server.sig"
+            cp "$rel/SHA256SUMS" "$attest/SHA256SUMS-server"
+            ln "$rel/SHA256SUMS-server.sig" "$attest/"
+          fi
           if [ "$DESKTOP" = true ]; then
             d=$RUNNER_TEMP/desktop
             ln "$d/Droppen-$PLAIN.dmg" "$d/updater/Droppen.app.tar.gz" "$d/updater/Droppen.app.tar.gz.sig" "$d/updater/latest.json" "$attest/"

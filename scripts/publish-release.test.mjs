@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -735,6 +735,54 @@ describe("publishing in the source repository", () => {
     const stray = await run(["v0.2.126", "--server", server, "--dry-run"]);
     assert.notEqual(stray.code, 0);
     assert.match(stray.stderr, /holds files release-public\.sh does not make: INSTALL-windows\.txt/);
+  });
+});
+
+describe("the installer's signed checksums", () => {
+  const keyPair = () => generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const pinning = (publicKey) => `#!/bin/sh\nSUMS_KEY='${publicKey.export({ type: "spki", format: "pem" }).trimEnd()}'\n`;
+
+  test("once install.sh pins a release key, SHA256SUMS-server and its signature go up with the release", async () => {
+    const { publicKey, privateKey } = keyPair();
+    const server = serverDir("v0.2.126");
+    writeFileSync(join(server, "install.sh"), pinning(publicKey));
+    writeFileSync(join(server, "SHA256SUMS-server.sig"), sign("sha256", readFileSync(join(server, "SHA256SUMS")), privateKey));
+    const r = await run(["v0.2.126", "--server", server, "--desktop", desktopDir("0.2.126")]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /SHA256SUMS-server\.sig checks out with the release key install\.sh pins/);
+    const names = state().releases.find((x) => x.tag_name === "v0.2.126").assets.map((a) => a.name);
+    assert.ok(names.includes("SHA256SUMS-server") && names.includes("SHA256SUMS-server.sig"), names.join(" "));
+    assert.equal(readFileSync(join(filesDir, "v0.2.126", "SHA256SUMS-server"), "utf8"), readFileSync(join(server, "SHA256SUMS"), "utf8"));
+    assert.doesNotMatch(readFileSync(join(filesDir, "v0.2.126", "SHA256SUMS"), "utf8"), /SHA256SUMS-server/);
+  });
+
+  test("a pinned key and no signature, or a signature that does not check out, stop before anything is written", async () => {
+    const { publicKey, privateKey } = keyPair();
+    const server = serverDir("v0.2.126");
+    writeFileSync(join(server, "install.sh"), pinning(publicKey));
+    const missing = await run(["v0.2.126", "--server", server, "--desktop", desktopDir("0.2.126")]);
+    assert.notEqual(missing.code, 0);
+    assert.match(missing.stderr, /has no SHA256SUMS-server\.sig/);
+
+    writeFileSync(join(server, "SHA256SUMS-server.sig"), sign("sha256", Buffer.from("something else\n"), privateKey));
+    const wrong = await run(["v0.2.126", "--server", server, "--dry-run", "--local-only"]);
+    assert.notEqual(wrong.code, 0);
+    assert.match(wrong.stderr, /is not a signature over .*SHA256SUMS by the release key install\.sh pins/);
+
+    writeFileSync(join(server, "SHA256SUMS-server.sig"), sign("sha256", readFileSync(join(server, "SHA256SUMS")), keyPair().privateKey));
+    const other = await run(["v0.2.126", "--server", server, "--dry-run", "--local-only"]);
+    assert.notEqual(other.code, 0);
+    assert.match(other.stderr, /by the release key install\.sh pins/);
+    assert.deepEqual(writes(), []);
+  });
+
+  test("a signature with no key pinned to check it is refused", async () => {
+    const server = serverDir("v0.2.126");
+    writeFileSync(join(server, "install.sh"), "#!/bin/sh\nSUMS_KEY=''\n");
+    writeFileSync(join(server, "SHA256SUMS-server.sig"), "sig");
+    const r = await run(["v0.2.126", "--server", server, "--dry-run", "--local-only"]);
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /no install\.sh beside it that pins a release key/);
   });
 });
 

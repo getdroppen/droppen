@@ -23,6 +23,9 @@
 #      and without --desktop, the app's DMG for the download page: the one on
 #      the release the manifest comes from (or the latest release), carried
 #      forward too;
+#      and, when the release's install.sh pins a release key (SUMS_KEY,
+#      scripts/install-key.sh), that SHA256SUMS-server.sig in the server's
+#      directory is a good signature over its SHA256SUMS with that key;
 #   3. creates <version> as a DRAFT with the server's files (a draft is
 #      invisible, and GitHub's "latest" never points at one), uploads the
 #      desktop files (or the carried DMG), then latest.json LAST;
@@ -285,7 +288,7 @@ for name in install.sh INSTALL-macos.txt INSTALL-linux.txt web-manifest.sigstore
 done
 STRAY=$(cd "$SERVER" && ls | grep -v -x -e NOTES.md -e SHA256SUMS -e LICENSE -e THIRD_PARTY_NOTICES -e web-manifest.json \
   -e install.sh -e INSTALL-macos.txt -e INSTALL-linux.txt -e web-manifest.sigstore.json -e "droppen-$VERSION\.sigstore\.json" \
-  -e "droppen-$VERSION-.*\.tar\.gz" -e "remote-hand-$VERSION-.*\.tar\.gz" || true)
+  -e 'SHA256SUMS-server\.sig' -e "droppen-$VERSION-.*\.tar\.gz" -e "remote-hand-$VERSION-.*\.tar\.gz" || true)
 [ -z "$STRAY" ] || die "$SERVER holds files release-public.sh does not make: $(echo "$STRAY" | tr '\n' ' ')"
 # SHA256SUMS lists exactly the tarballs, and they match.
 LISTED=$(awk '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); print n }' "$SERVER/SHA256SUMS" | LC_ALL=C sort)
@@ -293,6 +296,30 @@ LISTED=$(awk '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); print n }' "$SER
   || die "$SERVER/SHA256SUMS does not list exactly the tarballs beside it"
 (cd "$SERVER" && shasum -a 256 -c SHA256SUMS >/dev/null) || die "$SERVER: a tarball does not match SHA256SUMS"
 echo "ok: ${#SERVER_ASSETS[@]} tarballs match SHA256SUMS; NOTES.md, LICENSE, THIRD_PARTY_NOTICES, web-manifest.json"
+
+# The installer's checksums: when the release's install.sh pins a release key
+# (SUMS_KEY), it downloads SHA256SUMS-server — the server's SHA256SUMS above —
+# and SHA256SUMS-server.sig, the signature release.yml's `release` job made
+# over it, and installs nothing unless that checks out with the key. Both go
+# up with the release, and the signature must check out here first.
+SUMS_SIG=$SERVER/SHA256SUMS-server.sig
+PINNED=""
+if [ -f "$SERVER/install.sh" ]; then
+  PINNED=$("$ROOT/scripts/install-key.sh" "$SERVER/install.sh") || die "cannot read the release key $SERVER/install.sh pins"
+fi
+if [ -n "$PINNED" ]; then
+  [ -s "$SUMS_SIG" ] \
+    || die "$SERVER/install.sh checks a signature over SHA256SUMS-server, and $SERVER has no SHA256SUMS-server.sig (release.yml's release job makes it; docs/releasing.md, \"The release key\")"
+  command -v openssl >/dev/null || die "missing openssl, to check SHA256SUMS-server.sig"
+  printf '%s\n' "$PINNED" >"$WORK/install-key.pem"
+  cp "$SERVER/SHA256SUMS" "$WORK/SHA256SUMS-server"
+  openssl dgst -sha256 -verify "$WORK/install-key.pem" -signature "$SUMS_SIG" "$WORK/SHA256SUMS-server" >/dev/null 2>&1 \
+    || die "$SUMS_SIG is not a signature over $SERVER/SHA256SUMS by the release key install.sh pins"
+  EXTRAS+=("$WORK/SHA256SUMS-server" "$SUMS_SIG")
+  echo "ok: SHA256SUMS-server.sig checks out with the release key install.sh pins"
+elif [ -e "$SUMS_SIG" ]; then
+  die "$SERVER has SHA256SUMS-server.sig, but no install.sh beside it that pins a release key to check it with"
+fi
 
 DESKTOP_ASSETS=()
 if [ -n "$DESKTOP" ]; then

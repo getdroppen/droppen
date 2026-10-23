@@ -40,7 +40,9 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
   `gh attestation verify <file> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z`.
   On top of that the desktop app is signed with the Developer ID and
   notarised by Apple, and installed apps take only an update whose minisign
-  signature the updater key made for that version.
+  signature the updater key made for that version; and once `install.sh`
+  pins the release key, it installs only from checksums that key signed
+  ([The release key](#the-release-key)).
 
 ## Cutting a release
 
@@ -127,7 +129,7 @@ the fallback whenever GitHub Actions cannot be used.
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
 | `desktop-arch` | macOS ×2 | nothing | `desktop/build.sh --arch aarch64` and `--arch x86_64`, each with that architecture's server from `server-macos` and the app's notices from `notices`, beside `stage` (unsigned, no DMG) |
 | `desktop` | macOS | nothing | `desktop/build.sh --from-apps`: the two apps' main programs fused with `lipo`, the staged universal server put in, sealed ad hoc and checked as a build (unsigned; nothing compiled) |
-| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature) |
+| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature); once `install.sh` pins the release key, the signature over the server's `SHA256SUMS` ([The release key](#the-release-key)) |
 | `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key); `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
 | `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected`: the release of the tag, made once |
 
@@ -254,6 +256,68 @@ so for them the attestation is what ties a file to its source.
 the latest release's installer, an attested file that never changes once
 published, not whatever main holds at the moment.
 
+## The release key
+
+What `install.sh` checks before it trusts a checksum, so that the files it
+downloads are the ones the approved `release` job saw, wherever they were
+downloaded from:
+
+- **What is signed.** The server's `SHA256SUMS` as `stage` made it (the
+  server's tarballs, nothing else), published as `SHA256SUMS-server`, and
+  `SHA256SUMS-server.sig`: an ECDSA P-256 signature over it with SHA-256, in
+  the DER form `openssl dgst -sha256 -sign` writes. The release's own
+  `SHA256SUMS` also lists the desktop app's files and `latest.json`, which
+  `verify` writes after the approval; its attestation covers it.
+- **Who signs.** The `release` job alone, after the approval, with the
+  environment secret `INSTALL_SIGNING_KEY`; it checks the signature against
+  the key `install.sh` pins before handing it on. `verify` and `publish`
+  check it again (`scripts/publish-release.sh`), which refuses a release
+  whose `install.sh` pins a key and that has no good signature. Every file is
+  attested as before, these two included.
+- **What checks it.** `install.sh` pins the public key (`SUMS_KEY`;
+  `scripts/install-key.sh scripts/install.sh` prints it) and checks with
+  `openssl dgst -sha256 -verify`, which macOS's own `/usr/bin/openssl`
+  (LibreSSL) and every Linux openssl can do; nothing else to install. Not the
+  attestation: checking a Sigstore bundle takes `gh` or `cosign`, which a
+  `curl … | sh` does not have. Not the updater's minisign key either:
+  minisign is Ed25519, which macOS's openssl cannot verify, and a key has
+  one job. Without `openssl` (a minimal Linux), or for a release from before
+  the key, `DROPPEN_ALLOW_UNSIGNED=1` installs by `SHA256SUMS` alone; a
+  signature that does not check out is never overridden. `install.sh` also
+  downloads over https only (or plain http from this device, for a test
+  server).
+- **Until the key is set**, `SUMS_KEY=''`: nothing is signed and `install.sh`
+  goes by `SHA256SUMS`, as before.
+
+**Setting it up, once** (the owner, on the release Mac):
+
+```sh
+umask 077
+openssl ecparam -name prime256v1 -genkey -noout -out ~/.config/droppen/install-signing.pem
+gh secret set INSTALL_SIGNING_KEY --env release --repo getdroppen/droppen < ~/.config/droppen/install-signing.pem
+openssl ec -in ~/.config/droppen/install-signing.pem -pubout
+```
+
+and put the public key the last command prints into `scripts/install.sh`,
+in place of `SUMS_KEY=''`, exactly so:
+
+```sh
+SUMS_KEY='-----BEGIN PUBLIC KEY-----
+<the two lines of base64>
+-----END PUBLIC KEY-----'
+```
+
+`scripts/install-key.sh scripts/install.sh` must print it back. From the
+first run on a commit with the key pinned, `release` refuses to run without
+the secret, and a key that is not the pinned one. Keep a copy of the private
+key offline; it is not needed anywhere else.
+
+**Rotating it**: a new key pair, the secret replaced, the new public key in
+`install.sh`, then a release. Each release's `install.sh` checks that
+release's signature, so an older release is installed with its own
+installer:
+`curl -fsSL https://github.com/getdroppen/droppen/releases/download/<tag>/install.sh | DROPPEN_VERSION=<tag> sh`.
+
 ## Once: the release environment
 
 What the owner sets up once (*Settings* of getdroppen/droppen), before the
@@ -282,6 +346,7 @@ first tag:
    | `TAURI_SIGNING_PRIVATE_KEY` | `< ~/.config/droppen/tauri-updater.key` |
    | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `< ~/.config/droppen/tauri-updater.key.password` |
    | `RELEASE_FORBIDDEN_ENV` | `< ~/.config/droppen/release-forbidden.env` (the whole file; its names must hash to `RELEASE_TEXT_NAMES_SHA256` in `scripts/release-text-check.sh`) |
+   | `INSTALL_SIGNING_KEY` | `< ~/.config/droppen/install-signing.pem` ([The release key](#the-release-key); needed once `install.sh` pins it) |
 
    Then **delete the repository's own copies** of the Apple and Tauri
    secrets (*Settings → Secrets and variables → Actions → Repository

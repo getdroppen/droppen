@@ -13,7 +13,10 @@
 #
 # What it does, for the user who runs it:
 #   1. downloads the latest release (or $DROPPEN_VERSION) for this OS and CPU from
-#      github.com/getdroppen/droppen/releases and checks it against the release's SHA256SUMS;
+#      github.com/getdroppen/droppen/releases over https, and checks it against
+#      the release's checksums: SHA256SUMS-server, whose signature it checks
+#      with the release key written below (SUMS_KEY) and openssl, once that
+#      key is set; until then, SHA256SUMS;
 #   2. creates the first account for the server's local page (you choose the
 #      password; without a terminal one is generated and shown once, or saved
 #      to a file only you can read when nobody is watching the output);
@@ -53,7 +56,13 @@
 #   DROPPEN_SERVICE_PATH=...   the PATH the server runs with (default: your
 #                              current PATH, then common tool directories)
 #   DROPPEN_RELEASE_BASE=...   where releases come from
-#                              (default https://github.com/getdroppen/droppen/releases)
+#                              (default https://github.com/getdroppen/droppen/releases;
+#                              https only, or http on this device for a test server:
+#                              http://127.0.0.1, http://localhost or http://[::1])
+#   DROPPEN_ALLOW_UNSIGNED=1   install a release whose checksums carry no
+#                              signature (one published before they were
+#                              signed), or without openssl: checked against its
+#                              SHA256SUMS only
 #   DROPPEN_LABEL=...          the launchd label or systemd unit name
 #                              (default app.droppen.server / droppen)
 #
@@ -78,6 +87,13 @@ BIN_NAME=remote-hand-server
 CMD_NAME=droppen
 # The oldest glibc the Linux builds run on.
 GLIBC_MIN=2.28
+# The public key (ECDSA P-256) the release's SHA256SUMS-server is signed with:
+# its private half is held by the release workflow's approved `release` job
+# alone (docs/releasing.md, "The release key"), never by the place the files
+# are downloaded from. The installer checks SHA256SUMS-server's signature
+# (SHA256SUMS-server.sig) with it before it trusts a checksum. Empty: no key
+# yet, and the release's SHA256SUMS is used unsigned.
+SUMS_KEY=''
 # Where my.droppen.app shows a one-time code.
 WHERE_CODES="my devices → add a device that runs AI → show a one-time code"
 
@@ -114,7 +130,8 @@ Settings (environment):
   DROPPEN_USER=name         the first local account's name
   DROPPEN_NO_OPEN=1         do not open the browser
   DROPPEN_SERVICE_PATH=...  the PATH the server runs with
-  DROPPEN_RELEASE_BASE=...  where releases come from
+  DROPPEN_RELEASE_BASE=...  where releases come from (https)
+  DROPPEN_ALLOW_UNSIGNED=1  accept checksums without a signature
   DROPPEN_LABEL=...         the launchd label or systemd unit name
 
 More: https://github.com/getdroppen/droppen#readme
@@ -185,8 +202,16 @@ has_display() {
   [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]
 }
 
+# DROPPEN_RELEASE_BASE: https, or plain http to this device only (a test
+# server on 127.0.0.1, localhost or [::1]); nothing else is downloaded from.
+check_base() {
+  printf '%s\n' "$BASE" | grep -Eq '^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$' && return 0
+  printf '%s\n' "$BASE" | grep -Eq '^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[^?#@[:space:]]*)?$' && return 0
+  die "DROPPEN_RELEASE_BASE must be an https:// address (or http:// on this device, for a test server): not $BASE. Nothing was installed."
+}
+
 # curl for the release files: https only, TLS 1.2 or newer, unless
-# DROPPEN_RELEASE_BASE points at a plain-http test server on purpose.
+# DROPPEN_RELEASE_BASE is a test server on this device (check_base).
 fetch() {
   case "$BASE" in
     https://*) curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$@" ;;
@@ -222,6 +247,10 @@ check_platform() {
       check_glibc ;;
     *) die "this installer supports macOS and Linux (found $(uname -s))" ;;
   esac
+  if [ -n "$SUMS_KEY" ] && [ "${DROPPEN_ALLOW_UNSIGNED:-}" != 1 ]; then
+    command -v openssl >/dev/null 2>&1 \
+      || die "missing openssl, which checks the signature over the release's checksums (install it, e.g. apt install openssl; or set DROPPEN_ALLOW_UNSIGNED=1 to go by SHA256SUMS alone)"
+  fi
   [ "$(id -u)" -ne 0 ] || die "run this as the user Droppen should run as, not as root: it runs AI agents and shells as that user (for a boot-time service, use --system, which asks sudo for the service file only)"
 }
 
@@ -341,6 +370,7 @@ refuse_conflict() {
 # ---------------------------------------------------------------- download
 
 resolve_version() {
+  check_base
   if [ -n "${DROPPEN_VERSION:-}" ]; then
     VERSION=$DROPPEN_VERSION
     case "$VERSION" in v*) ;; *) VERSION=v$VERSION ;; esac
@@ -355,20 +385,43 @@ resolve_version() {
     || die "not a release version: $VERSION"
 }
 
-# The SHA-256 SHA256SUMS lists for a file, or nothing. Lines are
-# `<sha256>  ./<file>` (or without the ./, or with a * for binary mode).
+# The SHA-256 the checksums ($TMP/SHA256SUMS) list for a file, or nothing.
+# Lines are `<sha256>  ./<file>` (or without the ./, or with a * for binary mode).
 listed_sha256() { # file
   awk -v f="$1" '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); if (n == f) { print $1; exit } }' "$TMP/SHA256SUMS"
 }
 
+# Whether $TMP/SHA256SUMS carries a good signature, $TMP/SHA256SUMS.sig, by SUMS_KEY.
+sums_signed() {
+  printf '%s\n' "$SUMS_KEY" >"$TMP/sums-key.pem"
+  openssl dgst -sha256 -verify "$TMP/sums-key.pem" -signature "$TMP/SHA256SUMS.sig" "$TMP/SHA256SUMS" >/dev/null 2>&1
+}
+
+# The checksums to go by, as $TMP/SHA256SUMS: the release's SHA256SUMS-server
+# (the server's tarballs) once its signature checks out with SUMS_KEY. Without
+# a key, or with DROPPEN_ALLOW_UNSIGNED=1 for a release that has no signature,
+# its SHA256SUMS. A signature that does not check out is never overridden.
+fetch_sums() {
+  at=$BASE/download/$VERSION
+  if [ -n "$SUMS_KEY" ]; then
+    if [ "${DROPPEN_ALLOW_UNSIGNED:-}" = 1 ] && ! command -v openssl >/dev/null 2>&1; then
+      warn "no openssl: the checksums' signature is not checked (DROPPEN_ALLOW_UNSIGNED=1)"
+    elif fetch -o "$TMP/SHA256SUMS" "$at/SHA256SUMS-server" && fetch -o "$TMP/SHA256SUMS.sig" "$at/SHA256SUMS-server.sig"; then
+      sums_signed || die "the signature over SHA256SUMS-server of $VERSION does not check out with the release key: these files are not the release's. Nothing was installed."
+      say "Signature verified: SHA256SUMS-server of $VERSION, signed with the release key"
+      return 0
+    elif [ "${DROPPEN_ALLOW_UNSIGNED:-}" = 1 ]; then
+      warn "$VERSION has no signed checksums (SHA256SUMS-server.sig): going by its SHA256SUMS alone (DROPPEN_ALLOW_UNSIGNED=1)"
+    else
+      die "could not download the signed checksums of $VERSION ($at/SHA256SUMS-server and .sig). A release published before they were signed has none: to install it anyway, checked against its SHA256SUMS alone, run this again with DROPPEN_ALLOW_UNSIGNED=1. Nothing was installed."
+    fi
+  fi
+  fetch -o "$TMP/SHA256SUMS" "$at/SHA256SUMS" || die "could not download $at/SHA256SUMS"
+}
+
 download_and_verify() {
-  case "$BASE" in
-    https://*) ;;
-    *) warn "downloading over plain HTTP from $BASE (DROPPEN_RELEASE_BASE)" ;;
-  esac
   step "Downloading Droppen $VERSION for $OS $ARCH"
-  fetch -o "$TMP/SHA256SUMS" "$BASE/download/$VERSION/SHA256SUMS" \
-    || die "could not download $BASE/download/$VERSION/SHA256SUMS"
+  fetch_sums
 
   # The release's tarball under its new name, holding `droppen` (and the same
   # file as `remote-hand-server`); else, for a release from before it had one
@@ -389,7 +442,7 @@ download_and_verify() {
     fi
     warn "could not download $BASE/download/$VERSION/$file"
   done
-  [ -n "$ASSET" ] || die "SHA256SUMS of $VERSION lists no $tried that could be downloaded; nothing was installed"
+  [ -n "$ASSET" ] || die "the checksums of $VERSION list no $tried that could be downloaded; nothing was installed"
   actual=$(sha256_of "$TMP/$ASSET")
   [ "$actual" = "$expected" ] || die "checksum mismatch for $ASSET (expected $expected, got $actual); nothing was installed"
   say "SHA-256 verified: $actual ($ASSET)"
