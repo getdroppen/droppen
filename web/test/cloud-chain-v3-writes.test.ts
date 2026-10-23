@@ -286,6 +286,36 @@ test("a device that does not manage the account moves raw machine keys from befo
   }
 });
 
+test("a raw machine key from before the keyring stays while another page is moving them, or while its sealed copy does not open to it", async () => {
+  const { hub, a } = await account();
+  const b = await pairAs(hub, a, { admin: false });
+  await admit(a, "m-1", b.deviceId);
+  hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
+  await b.sync();
+  const store = b.store as RecordingKeyStore;
+  const mk = (await a.machineKeyBytes("m-1", 0))!;
+  await store.put(legacyMachineKeyName("m-1", 0), hex(mk));
+  type Locks = { request<T>(name: string, options: { mode: "exclusive"; ifAvailable?: boolean }, callback: (lock?: unknown) => T | Promise<T>): Promise<T> };
+  const page = b as unknown as { locks: Locks | null };
+  // Another page holds the migration's lock: this one skips it (no waiting on that page), and leaves it to the next settle.
+  const asked: { name: string; ifAvailable?: boolean }[] = [];
+  page.locks = {
+    request: async (name, options, callback) => {
+      asked.push({ name, ifAvailable: options.ifAvailable });
+      return callback(options.ifAvailable ? null : {});
+    },
+  };
+  assert.equal(await b.migrate(), 0);
+  assert.deepEqual(asked, [{ name: "rh-legacy-machine-keys", ifAvailable: true }]);
+  assert.equal(await store.get(legacyMachineKeyName("m-1", 0)), hex(mk), "left for the next settle");
+  // The lock is free, but another page replaced the device-local key this page sealed under: the sealed copy would not open — the raw one stays.
+  page.locks = { request: async (_name, _options, callback) => callback({}) };
+  await b.hostKeys.key("m-1", 99).catch(() => undefined);
+  await store.put("local-wrap/v1", await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt", "unwrapKey"]));
+  assert.equal(await b.migrate(), 0);
+  assert.equal(await store.get(legacyMachineKeyName("m-1", 0)), hex(mk), "kept: its sealed copy does not open to it");
+});
+
 test("enrollment on a v3 chain: [addDevice3{host}, keyEpochs] in one append — only while the hub takes v3 entries; a host never manages the account (D1)", async () => {
   const { hub, a } = await account();
   const before = a.chain!.seq + 1;

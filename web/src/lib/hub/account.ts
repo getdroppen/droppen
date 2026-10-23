@@ -150,7 +150,6 @@ import {
   signHubLogin,
   type SlotRecord,
   type UnreadableReason,
-  underKeyStoreLock,
   userKeyCommit,
   utf8,
   verifyEnrollProof,
@@ -2978,23 +2977,25 @@ export class CloudAccount {
 
   /**
    * M1/M2a kept machine keys as raw hex in the key store: move them out, on
-   * every device, one page of the browser at a time (Web Locks). A full
-   * device wraps them into the keyring under the newest user key and deletes
-   * them once the hub holds that ({@link migrateLegacyMachineKeys}); one that
-   * does not manage the account — no user key, and no keyring writes — seals
-   * each that is the key the chain committed into its host-key vault, and
-   * deletes the raw copy once the vault holds it
+   * every device, one page of the browser at a time (Web Locks) — a page that
+   * finds another at it skips it: it is done again on the next settle, and
+   * nothing waits on a page that may be stalled at the hub. A full device
+   * wraps them into the keyring under the newest user key and deletes them
+   * once the hub holds that ({@link migrateLegacyMachineKeys}); one that does
+   * not manage the account — no user key, and no keyring writes — seals each
+   * that is the key the chain committed into its host-key vault, and deletes
+   * the raw copy once the sealed one opens to it
    * ({@link moveLegacyMachineKeysToVault}).
    */
   async migrate(): Promise<number> {
     const chain = this.state;
     if (!chain) return 0;
     const machines = chain.hosts().map((m) => m.info.id);
-    const moved = await underKeyStoreLock(LEGACY_MIGRATION_LOCK, () =>
+    const run = () =>
       this.isAdmin
         ? migrateLegacyMachineKeys(this.store, this.vault, this.keyring, this.account, machines, () => this.ensureUserKey())
-        : moveLegacyMachineKeysToVault(this.store, this.hostKeys, machines, (machine, epoch, key) => chain.checkMachineKey(machine, epoch, key)),
-    );
+        : moveLegacyMachineKeysToVault(this.store, this.hostKeys, machines, (machine, epoch, key) => chain.checkMachineKey(machine, epoch, key));
+    const moved = this.locks ? await this.locks.request(LEGACY_MIGRATION_LOCK, { mode: "exclusive", ifAvailable: true }, (lock) => (lock === null ? 0 : run())) : await run();
     if (moved) this.emit();
     return moved;
   }

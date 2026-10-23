@@ -374,6 +374,28 @@ export class HostKeyVault {
     return key;
   }
 
+  /**
+   * Whether host `host`'s epoch `epoch` is kept here and opens to exactly
+   * `raw` — with the device-local key the store holds now, read afresh (not
+   * one this page holds on to: another page may have replaced it, or the
+   * browser handed it back as nothing). What a raw copy is deleted on.
+   */
+  async holds(host: string, epoch: number, raw: Uint8Array): Promise<boolean> {
+    if (!(await this.has(host, epoch))) return false;
+    const local = await this.store.get(LOCAL_WRAP);
+    const record = await this.store.get(hkRecord(this.account, host, epoch));
+    if (!isAesKey(local) || !isStoredUserKey(record)) return false;
+    let back: Bytes | null = null;
+    try {
+      back = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: record.iv, additionalData: hkAad(this.account, host, epoch) }, local, record.ct));
+      return equal(back, raw);
+    } catch {
+      return false;
+    } finally {
+      back?.fill(0);
+    }
+  }
+
   /** Forget every host key of this account (a removed device's wipe). */
   wipe(): Promise<void> {
     return this.serial.run(() =>
@@ -1032,7 +1054,8 @@ async function legacyEpochs(store: KeyStore, machine: string, maxEpochs: number)
  * from full devices — so M1/M2a's raw `mk/<machine>/<epoch>` entries of
  * `machines` go into its host-key vault instead, sealed under the
  * device-local key, as an admin's mail would put them there; the raw copy is
- * deleted only once the vault holds the epoch. Each is taken only if it is
+ * deleted only once the vault holds the epoch and it opens, read back afresh,
+ * to exactly the raw key (`HostKeyVault.holds`). Each is taken only if it is
  * exactly the key the chain committed for its machine and epoch (`check`
  * throws otherwise): one that is not — another account's (the key store is
  * the browser's), or garbage — is left where it is. Every committed one is
@@ -1059,7 +1082,7 @@ export async function moveLegacyMachineKeysToVault(
         if (raw.length !== 32) continue;
         await check(machine, epoch, raw);
         await hostKeys.put(machine, epoch, raw);
-        if (!(await hostKeys.has(machine, epoch))) continue;
+        if (!(await hostKeys.holds(machine, epoch, raw))) continue;
       } catch {
         // not the committed key, or the vault would not take it: the raw copy stays
         continue;
