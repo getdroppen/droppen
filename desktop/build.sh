@@ -554,6 +554,8 @@ for arch in $(lipo -archs "$APP/Contents/MacOS/Droppen"); do
   fi
   SLICES+=("$WORK/slices/Droppen-$arch")
 done
+# No slice at all would make every "in each slice" check below pass.
+[ "${#SLICES[@]}" -gt 0 ] || die "lipo lists no architecture in $APP/Contents/MacOS/Droppen"
 in_every_slice() { # needle
   local slice
   for slice in "${SLICES[@]}"; do LC_ALL=C grep -aqF -- "$1" "$slice" || return 1; done
