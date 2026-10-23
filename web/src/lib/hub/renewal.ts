@@ -74,6 +74,18 @@ export const ABANDONED_MS = 10 * 60 * 1000;
 /** How long clone evidence (`not_acked`, `conflict`) keeps a host on renewals confirmed on the device (§3.3). */
 export const EVIDENCE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * When (by the hub's clock) `row` is an attempt nobody will finish — an
+ * `attempt` past its expiry, or a staging {@link ABANDONED_MS} past its window
+ * ({@link RenewalRunner.abandoned}) — as it stands; `null`: never.
+ */
+export function abandonsAt(row: HostRotationView): number | null {
+  if (row.state === "attempt") return row.attemptExpiresMs;
+  if (row.state !== "staged") return null;
+  const ready = row.readyMs ?? row.stagedMs;
+  return ready === null ? null : ready + ABANDONED_MS;
+}
+
 /** What the runner needs of the page's hub link. */
 export type RenewalLink = Pick<HubLink, "presence" | "onPresence" | "onControl" | "onState">;
 
@@ -96,10 +108,10 @@ export type RenewalStatus =
    * and, for those that will not on their own now, why (`stuck`).
    */
   | { kind: "queued"; after: string[]; stuck: { host: string; why: QueuedWhy }[] }
-  /** The last try failed; the next one is due at `atMs`. */
-  | { kind: "retrying"; atMs: number; error: string }
-  /** Tried and failed as often as it is tried on its own: the person is asked. */
-  | { kind: "stuck"; error: string }
+  /** The last try failed; the next one is due at `atMs`. `cause`: the failure itself, to be said in the reader's language. */
+  | { kind: "retrying"; atMs: number; error: string; cause?: unknown }
+  /** Tried and failed as often as it is tried on its own (or in a way no try of its own mends): the person is asked. */
+  | { kind: "stuck"; error: string; cause?: unknown }
   /**
    * It lets these exposed devices that cannot renew their identity key control
    * it (§4.1 case 3): renewing it would not help — narrow its list, or add
@@ -133,6 +145,8 @@ interface HostRun {
   attempts: number;
   nextMs: number | null;
   error: string | null;
+  /** The failure {@link error} is the message of. */
+  cause?: unknown;
   outcome: "tooOld" | "stuck" | "waiting" | "needsCode" | null;
   waiting: string[];
   /** For `waiting`: the `/v1/me` read when the hub said so — only a newer one may say the hosts it waits for updated. */
@@ -678,9 +692,9 @@ export class RenewalRunner {
       }
       const code = this.needsCode(host);
       if (code) return { kind: "needsCode", why: code };
-      if (run?.outcome === "stuck") return { kind: "stuck", error: run.error ?? "" };
+      if (run?.outcome === "stuck") return { kind: "stuck", error: run.error ?? "", cause: run.cause };
       if (run?.outcome === "waiting") return { kind: "waiting", hosts: run.waiting };
-      if (run?.nextMs !== null && run?.nextMs !== undefined && run.nextMs > this.now()) return { kind: "retrying", atMs: run.nextMs, error: run.error ?? "" };
+      if (run?.nextMs !== null && run?.nextMs !== undefined && run.nextMs > this.now()) return { kind: "retrying", atMs: run.nextMs, error: run.error ?? "", cause: run.cause };
       if (this.opts.link.presence.get(host)?.state !== "online") return { kind: "offline" };
       return { kind: "renewing", elsewhere: false };
     }
@@ -866,16 +880,30 @@ export class RenewalRunner {
     }
   }
 
-  /** Wake for the earliest retry that is due later. */
+  /**
+   * Wake for the earliest retry that is due later — and for when another
+   * page's attempt or staging is to be taken for abandoned ({@link abandoned}):
+   * a staging is committed only by the page that asked for it, and once that
+   * page is gone nothing else need wake a quiet page to withdraw it and start
+   * again, while the host waits with its device role suspended.
+   */
   private schedule(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    const next = Math.min(...[...this.runs.values()].map((r) => (r.outcome === null && r.nextMs !== null ? r.nextMs : Infinity)));
+    const now = this.now();
+    const retries = [...this.runs.values()].map((r) => (r.outcome === null && r.nextMs !== null ? r.nextMs : Infinity));
+    // By the hub's clock, as `abandoned` reads it: on this page's, a moment past.
+    const skew = this.hubNow() - now;
+    const abandons = (this.view?.hosts ?? []).flatMap((row) => {
+      const at = this.running === row.host ? null : abandonsAt(row);
+      return at === null || at - skew + 1000 <= now ? [] : [at - skew + 1000];
+    });
+    const next = Math.min(...retries, ...abandons);
     if (!Number.isFinite(next) || this.stopped) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.poke();
-    }, Math.max(0, next - this.now()));
+    }, Math.max(0, next - now));
     (this.timer as { unref?: () => void }).unref?.();
   }
 
@@ -916,6 +944,7 @@ export class RenewalRunner {
   private failed(host: string, run: HostRun, error: unknown): void {
     const why = error instanceof RenewalError ? error : null;
     run.error = error instanceof Error ? error.message : String(error);
+    run.cause = error;
     switch (why?.kind) {
       case "tooOld":
         run.outcome = "tooOld";
@@ -951,6 +980,11 @@ export class RenewalRunner {
       case "inProgress":
         // Not a failure of its own — presence, or the other page, says when — but not at once either.
         run.nextMs = this.now() + (this.opts.retryMs ?? RENEW_RETRY_MS)[0]!;
+        return;
+      case "fork":
+        // The host's view of the account conflicts with an admin's word: no try of its own mends that — the person is asked.
+        run.outcome = "stuck";
+        run.nextMs = null;
         return;
       case "refused":
         // A v2 account renews nothing: the re-enroll path (no retry).

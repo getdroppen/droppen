@@ -3,11 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance } from "@/lib/e2e";
 import { formatAsOf } from "@/lib/format";
-import type { CloudAccount, PauseEnding } from "@/lib/hub/account";
+import { type CloudAccount, type PauseEnding, RenewalError } from "@/lib/hub/account";
 import { type QueuedWhy, renewalRunner, type RenewalRunner, type RenewalStatus } from "@/lib/hub/renewal";
 import { cn } from "@/lib/cn";
 import { enablePush, pushRenewalNeeded } from "@/lib/push";
-import { danger, ErrorLine, errorText, field, primary, quiet, secondary } from "./ui";
+import { danger, ErrorLine, errorText, field, primary, quiet, renewalErrorText, secondary } from "./ui";
 
 /*
  * Renewing the identity key of a device that runs AI, as 「我的设备」 shows
@@ -47,6 +47,12 @@ function queuedWhyText(why: QueuedWhy, id: string, t: (key: string, opts?: Recor
     case "waiting":
       return t("{{id}} waits for Droppen to be updated on other devices", { id });
   }
+}
+
+/** Why the last try failed, in the reader's language when the failure itself is at hand (else its message, as it was). */
+function failureText(status: { error: string; cause?: unknown }, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  if (status.cause instanceof RenewalError) return renewalErrorText(status.cause, t);
+  return status.cause === undefined || status.cause === null ? status.error : errorText(status.cause);
 }
 
 /** A host row's renewal (§4.4): where it stands, and what the person may do about it. */
@@ -112,13 +118,13 @@ export function RenewalLine({
     case "retrying":
       return (
         <span data-testid={`renewal-${id}`} data-renewal="retrying" data-signal="warn" className="text-2xs leading-4 text-warn-fg">
-          {t("could not renew its identity key: {{why}} · trying again at {{time}}", { why: status.error, time: formatAsOf(status.atMs) })}
+          {t("could not renew its identity key: {{why}} · trying again at {{time}}", { why: failureText(status, t), time: formatAsOf(status.atMs) })}
         </span>
       );
     case "stuck":
       return (
         <span data-testid={`renewal-${id}`} data-renewal="stuck" data-signal="warn" className="flex flex-wrap items-baseline gap-x-2 text-2xs leading-4 text-warn-fg">
-          <span>{t("could not renew its identity key: {{why}}", { why: status.error })}</span>
+          <span>{t("could not renew its identity key: {{why}}", { why: failureText(status, t) })}</span>
           {viewerAdmin && onRetry && (
             <button type="button" data-testid={`renewal-retry-${id}`} className={link} onClick={onRetry}>
               {t("try again")}

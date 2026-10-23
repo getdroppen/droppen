@@ -15,13 +15,14 @@
 // The re-enroll warning stays only for hosts that cannot renew.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type ChainState, encodeEntry, fromHex, hex, MAX_PAUSE_ENTRY_LEN, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
+import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Attestation, type ChainState, encodeEntry, fromHex, hex, MANAGE_FRESHNESS_MS, MAX_PAUSE_ENTRY_LEN, signHubLogin, signRotateDispute } from "../src/lib/e2e/index.js";
 import { AccountError, CloudAccount, type CrossTab, hostsExposedBy, hostsToRotate, RenewalError, renewalHelps, renewalRefusal, splitPauseRemovals } from "../src/lib/hub/account.js";
 import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush } from "../src/lib/hub/api.js";
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
 import { enablePush, followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
+import type { RotateRequest } from "../src/lib/hub/deliver.js";
 
 const rotated = (a: CloudAccount): string[] =>
   a.chain!.allEntries().flatMap((e) => (e.draft.action.type === "rotateHostKey" ? [e.draft.action.rotation.host] : []));
@@ -2314,4 +2315,218 @@ test("M6: a cycle too large for one RenewalPause is paused by several, each with
   for (const e of starts) assert.ok(encodeEntry(e).length <= MAX_PAUSE_ENTRY_LEN, `${encodeEntry(e).length} bytes`);
   const edges = new Set(starts.flatMap((e) => (e.draft.action.type === "renewalPause" ? e.draft.action.removals.flatMap((r) => r.ids.map((id) => `${r.host}<${id}`)) : [])));
   assert.equal(edges.size, 56, "every edge of the cycle paused");
+});
+
+// ------------------------------------------------------------ the host's 412 `stale` (no admin's recent word on its head)
+
+/**
+ * The host as its agent judges a management request (`agent/link.rs`
+ * `standing_with`, `agent/bridge.rs`): its view is the hub's chain, it keeps
+ * each admin's newest word on it (`agent/state.rs` `attest`), and it refuses
+ * `/rh/rotate` 412 `stale` — `reason` as `ChainState.freshness` says — until
+ * a word on exactly its head counts for the requester: another admin's, or
+ * the requester's own only while it is the sole admin. `attest` is
+ * `linkCourier`'s: the asking page signs the head it holds.
+ */
+class VouchingHost extends FakeAgents {
+  readonly words = new Map<string, Attestation>();
+  /** Every refusal's `reason`, in order. */
+  readonly refusals: string[] = [];
+  /** Run as each request arrives, before it is judged (an entry written elsewhere meanwhile). */
+  beforeAsk: ((n: number) => Promise<void>) | null = null;
+  private asked = 0;
+  /** Run at each refusal, before it is answered (another page vouching meanwhile). */
+  onRefusal: ((n: number) => Promise<void>) | null = null;
+  /** The page's link is not signed in: no word leaves it. */
+  linkDown = false;
+
+  constructor(
+    private readonly at: FakeKeysHub,
+    private readonly page: CloudAccount,
+    from: FakeAgents,
+  ) {
+    super(at, () => page.chain);
+    for (const [id, who] of from.identities) this.hold(id, who);
+  }
+
+  /** A word relayed by the hub: kept as its device's newest. */
+  take(att: Attestation): void {
+    const held = this.words.get(att.device);
+    if (!held || held.timeMs <= att.timeMs) this.words.set(att.device, att);
+  }
+
+  override async attest(): Promise<void> {
+    await super.attest();
+    const att = await this.page.attestation();
+    if (this.linkDown) throw new Error("not connected to Droppen's hub: the word on the chain head did not go out");
+    this.take(att);
+  }
+
+  override async rotate(machine: string, body: RotateRequest): Promise<{ status: number; body: unknown }> {
+    await this.beforeAsk?.(++this.asked);
+    const view = await this.at.state!.freshness(this.page.deviceId, [...this.words.values()], Date.now(), MANAGE_FRESHNESS_MS);
+    if (view.type !== "fresh") {
+      this.refusals.push(view.type);
+      await this.onRefusal?.(this.refusals.length);
+      return { status: 412, body: { error: "stale", reason: view.type, message: "no admin device vouched for the account as the device you reach sees it in the last 12 hours: attest and retry" } };
+    }
+    return super.rotate(machine, body);
+  }
+}
+
+/** A clock that moves only when slept on: the stale grace (15 s) without waiting it out. */
+function steppedClock(): { now: () => number; sleep: (ms: number) => Promise<void> } {
+  let t = Date.now();
+  return {
+    now: () => t,
+    sleep: async (ms: number) => {
+      t += ms;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  };
+}
+
+test("412 stale (the reported 「found no recent word on its chain head」): asked right after this page changed the account, a renewal waits for another full device's word on the new head — its own does not count — and says whose", async () => {
+  const { hub, a, agents, x } = await account({ chain: false, policy: false });
+  const b = await pairAs(hub, a, { admin: true });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const host = new VouchingHost(hub, a, agents);
+  // Both full devices' pages vouched for the account as it stood.
+  await b.sync();
+  host.take(await b.attestation());
+  host.take(await a.attestation());
+  // The renewal policy chosen here: the head moves to an entry of this page's own (the incident's seq 20), and the
+  // runner asks for the renewal at once — the hub has the entry, and so has the host.
+  await a.setRenewalPolicy(false);
+  const head = a.chain!.seq;
+  assert.equal(hub.state!.seq, head);
+  await assert.rejects(a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick, ...steppedClock() }), (e: unknown) => {
+    renewal("unconfirmed", "stale")(e);
+    assert.deepEqual((e as RenewalError).hosts, [b.deviceId], "it names the full device whose word counts");
+    return true;
+  });
+  assert.equal(host.words.get(a.deviceId)?.seq, head, "this page vouched for the new head (which does not count for its own request)");
+  assert.ok(host.refusals.length >= 7 && host.refusals.every((r) => r === "stale"), `asked again through the grace: ${host.refusals.join(", ")}`);
+  assert.deepEqual(rotated(a), []);
+  assert.ok(hub.rotationDeletes.includes("m-1"), "the attempt withdrawn");
+  // The other full device's page opens: it takes the entry and vouches for it. Now the renewal goes.
+  await b.sync();
+  host.take(await b.attestation());
+  await a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(rotated(a), ["m-1"]);
+});
+
+test("412 stale: the word on the new head that counts, arriving within the grace, lets it go — and a page that lags the host takes the entry before it vouches (the sole full device)", async () => {
+  // Another full device's page vouches a moment later (it saw the entry by the hub's push).
+  {
+    const { hub, a, agents, x } = await account({ chain: false, policy: false });
+    const b = await pairAs(hub, a, { admin: true });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const host = new VouchingHost(hub, a, agents);
+    await a.setRenewalPolicy(false);
+    host.onRefusal = async (n) => {
+      if (n !== 2) return;
+      await b.sync();
+      host.take(await b.attestation());
+    };
+    await a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick, ...steppedClock() });
+    assert.deepEqual(host.refusals, ["stale", "stale"]);
+    assert.deepEqual(rotated(a), ["m-1"]);
+  }
+  // The sole full device: its own word counts — on the host's head. Another page of this browser writes an entry
+  // while the request is out; the host has it, this page does not yet: it takes it, then vouches for that head.
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    assert.equal(a.chain!.admins().length, 1);
+    const tab = await hub.reload(a);
+    const host = new VouchingHost(hub, a, agents);
+    host.beforeAsk = async (n) => {
+      if (n === 1) await tab.setAccept("m-3", { type: "devices", ids: ["m-2"] });
+    };
+    await a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick, ...steppedClock() });
+    assert.deepEqual(host.refusals, ["stale"], "once: the entry written meanwhile; then its word on the new head");
+    assert.deepEqual(rotated(a), ["m-1"]);
+  }
+});
+
+test("412 stale as the sole full device: a word that never left (the link down) is said, not swallowed; behind waits, fork and lapsed are not waited out", async () => {
+  {
+    const { hub, a, agents, x } = await account({ chain: false });
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    const host = new VouchingHost(hub, a, agents);
+    host.linkDown = true;
+    await assert.rejects(a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick, ...steppedClock() }), (e: unknown) => {
+      renewal("unconfirmed")(e);
+      assert.deepEqual((e as RenewalError).hosts, [], "nobody else to open");
+      assert.match((e as RenewalError).message, /not connected to Droppen's hub/);
+      return true;
+    });
+  }
+  const { a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  for (const [reason, kind, again] of [
+    ["behind", "behind", true],
+    ["fork", "fork", false],
+    ["lapsed", "lapsed", false],
+  ] as const) {
+    let rotates = 0;
+    const host = Object.assign(Object.create(agents) as FakeAgents, {
+      rotate: async () => (rotates++, { status: 412, body: { error: "stale", reason, message: "refused" } }),
+    });
+    await assert.rejects(a.renewIdentity("m-1", host, { assurance: ASSURANCE_AUTO, ...quick, ...steppedClock() }), renewal(kind, reason), reason);
+    assert.ok(again ? rotates > 5 : rotates === 1, `${reason}: asked ${rotates} times`);
+    assert.equal(a.forked, null, `${reason}: this page's own view did not fork`);
+  }
+  assert.deepEqual(rotated(a), []);
+});
+
+test("the runner: an automatic renewal the host refuses as `unconfirmed` is tried again, saying whose word it waits for; a fork asks the person at once", async () => {
+  const { hub, a, agents, x } = await account({ chain: false, policy: false });
+  const b = await pairAs(hub, a, { admin: true });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const host = new VouchingHost(hub, a, agents);
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => host, me: meOf({ "m-1": true }), renewOptions: { ...quick, ...steppedClock() }, retryMs: [60_000, 60_000, 60_000] });
+  runner.start();
+  await runner.idle();
+  assert.equal(runner.status("m-1").kind, "policyUnset");
+  // Choosing the policy here starts the renewals: the first try is on this page's own new entry.
+  await runner.setAlwaysAssured(false);
+  await until(() => runner.status("m-1").kind === "retrying");
+  const status = runner.status("m-1");
+  assert.ok(status.kind === "retrying" && status.cause instanceof RenewalError && status.cause.kind === "unconfirmed");
+  assert.deepEqual(status.cause.hosts, [b.deviceId]);
+  assert.equal(host.words.get(a.deviceId)?.seq, a.chain!.seq, "vouched for before it asked");
+  runner.stop();
+  // A host whose view forks from an admin's word: not tried again on its own.
+  const other = await account({ chain: false });
+  await other.a.removeDevice(other.x.deviceId, new FakeCourier());
+  other.agents.rotateStatus = { status: 412, error: "stale", reason: "fork" };
+  const forks = new RenewalRunner({ account: other.a, link: link as never, courier: () => other.agents, me: meOf({ "m-1": true }), renewOptions: { ...quick, ...steppedClock() }, retryMs: [5, 5, 5] });
+  forks.start();
+  await until(() => forks.status("m-1").kind === "stuck");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await forks.idle();
+  assert.equal(other.agents.rotateCalls.length, 1, "asked once");
+  forks.stop();
+});
+
+test("the runner wakes when another page's staging is to be taken for abandoned, and withdraws it — nothing else need wake a quiet page", async () => {
+  const { hub, a, agents, x } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  // Another page asked, the host staged, and that page went away before writing it: abandoned in a moment.
+  hub.rotationRows.set("m-1", leftBehind("m-1", "staged", ABANDONED_MS - 800));
+  const link = new FakeLink();
+  link.set("m-1", "online");
+  const runner = new RenewalRunner({ account: a, link: link as never, courier: () => agents, me: meOf({ "m-1": true }), renewOptions: quick });
+  runner.start();
+  await runner.idle();
+  assert.deepEqual(runner.status("m-1"), { kind: "renewing", elsewhere: true });
+  assert.deepEqual(hub.rotationDeletes, []);
+  // Nothing pokes the runner from here: only its own timer can.
+  await until(() => hub.rotationDeletes.includes("m-1"), 5_000);
+  await until(() => rotated(a).includes("m-1"), 5_000);
+  runner.stop();
 });

@@ -549,9 +549,27 @@ class MovingCheckpoint extends AccountError {
  * - `voided`: the hub voided the staging (`detail`: `not_acked`, `conflict` —
  *   another holder of its old key showed up — or `expired`).
  * - `rate`: the hub's rate for renewals of this host.
+ * - The host's own 412 `stale` (`agent/bridge.rs`: no admin's recent word on
+ *   the account as it sees it), by its `reason`:
+ *   - `unconfirmed` (`stale`): no other admin device vouched for its head
+ *     (`hosts`: the account's other admins). This device's own word counts
+ *     only while it is the sole admin (`ChainState.freshness`), so right after
+ *     it changed the account — its renewal policy, say — another admin device
+ *     has to see the change first; as the sole admin, its word did not reach
+ *     the host (`detail`: why);
+ *   - `behind`: an admin vouched for more of the chain than the host has: it
+ *     catches up first;
+ *   - `fork`: the host's view conflicts with what an admin vouched for — not
+ *     tried again;
+ *   - `lapsed`: the host takes no control from this device now (no admin's
+ *     word in seven days, or this device may no longer control it).
  * - `failed`: anything else (`detail`).
  */
 export type RenewalFailure =
+  | "unconfirmed"
+  | "behind"
+  | "fork"
+  | "lapsed"
   | "tooOld"
   | "disabled"
   | "needsAssurance"
@@ -576,7 +594,7 @@ export class RenewalError extends Error {
     message: string,
     /** The hub's or the agent's own reason, when it gave one. */
     readonly detail?: string,
-    /** `waiting`: the hosts the hub waits for. */
+    /** `waiting`: the hosts the hub waits for; `renewFirst`: the hosts to renew first; `unconfirmed`: the other admin devices, one of which has to vouch. */
     readonly hosts?: string[],
   ) {
     super(message);
@@ -4307,7 +4325,10 @@ export class CloudAccount {
       } catch (error) {
         console.warn("cloud account: sync before renewing:", error);
       }
-      const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now);
+      // The head the request is about, vouched for before it goes: a page that just changed the account (its renewal
+      // policy, which starts the renewals) would otherwise ask on a head it never vouched for.
+      const vouched = await this.vouch(courier);
+      const { view, answer } = await this.askRotate(host, courier, { nonce, eph: ephPublic, assurance }, sleep, now, vouched);
       recheck();
       const chain = this.state!;
       const old = chain.machine(host)?.info;
@@ -4421,10 +4442,18 @@ export class CloudAccount {
   }
 
   /**
-   * `POST /rh/rotate` to `host` with this device's chain view: again after
-   * vouching for the head while the host finds no fresh word on it (412
-   * `stale`, for {@link STALE_GRACE_MS}), and once more after a sync when
-   * the view is not on its chain (409 `not_on_chain`).
+   * `POST /rh/rotate` to `host` with this device's chain view: once more
+   * after a sync when the view is not on its chain (409 `not_on_chain`); and
+   * again for {@link STALE_GRACE_MS} while the host finds no admin's recent
+   * word on the account as it sees it (412 `stale`), by its `reason`:
+   * `stale` — the newest entries taken first (this page may lag the host: an
+   * entry another device wrote, or another tab), then that head vouched for;
+   * `behind` — the host catches up on its own, and this page takes what the
+   * hub has too. A `fork` or a `lapsed` is not waited out. Only another admin
+   * device's word counts for this device's request unless it is the sole
+   * admin (`ChainState.freshness`), so what outlasts the grace says who it
+   * waits for ({@link staleRefusal}). `problem`: why the word before the first
+   * ask did not go out, if it did not.
    */
   private async askRotate(
     host: string,
@@ -4432,6 +4461,7 @@ export class CloudAccount {
     req: { nonce: Uint8Array; eph: Uint8Array; assurance: Assurance },
     sleep: (ms: number) => Promise<void>,
     now: () => number,
+    problem: unknown = null,
   ): Promise<{ view: { seq: number; head: Bytes }; answer: RotateAnswer }> {
     const deadline = now() + STALE_GRACE_MS;
     let resynced = false;
@@ -4453,11 +4483,24 @@ export class CloudAccount {
       const said = typeof answer?.message === "string" ? answer.message : `${res.status}`;
       if (res.status === 200) return { view, answer: parseRotateAnswer(res.body) };
       if (res.status === 404) throw new RenewalError("tooOld", `${host}'s Droppen does not renew its identity key`);
-      if (res.status === 412 && now() < deadline) {
-        // No fresh word on its head from an admin yet (Posture): vouch for it, and ask again.
-        await courier.attest().catch(() => undefined);
-        await sleep(2000);
-        continue;
+      if (res.status === 412) {
+        const reason = typeof answer?.reason === "string" ? answer.reason : "stale";
+        if (reason === "fork") {
+          // Not waited out. Whether this page's own view forked from the hub's, its sync says (and latches the alarm);
+          // the host raised its own.
+          await this.syncForRenewal();
+          throw new RenewalError("fork", `${host}'s view of the account's device list conflicts with what an admin device vouched for`, reason);
+        }
+        if (reason === "lapsed") throw new RenewalError("lapsed", `${host} takes no control from this device now: ${said}`, reason);
+        if (now() < deadline) {
+          // The newest entries first, then a word on that head — never on one this page has not caught up to. What
+          // went wrong in this round (if anything) is what the refusal says, should it stay.
+          const synced = await this.syncForRenewal();
+          problem = (reason === "behind" ? null : await this.vouch(courier)) ?? synced;
+          await sleep(2000);
+          continue;
+        }
+        throw this.staleRefusal(host, reason, problem);
       }
       if (res.status === 409 && code === "not_on_chain" && !resynced) {
         resynced = true;
@@ -4471,9 +4514,49 @@ export class CloudAccount {
         if (reason === "disabled") throw new RenewalError("disabled", "the hub takes no identity key renewal now", reason);
         throw new RenewalError("refused", `the hub would not stage ${host}'s renewal: ${reason}`, reason);
       }
-      if (res.status === 412) throw new RenewalError("failed", `${host} found no recent word on its chain head`, "stale");
       throw new RenewalError("refused", `${host} refused: ${said}`, code || String(res.status));
     }
+  }
+
+  /** Take the hub's newest entries for a renewal: `null`, or why not (the fork alarm is thrown, as ever). */
+  private async syncForRenewal(): Promise<unknown> {
+    try {
+      await this.sync();
+      return null;
+    } catch (error) {
+      if (error instanceof AccountError && error.kind === "fork") throw error;
+      console.warn("cloud account: sync for a renewal:", error);
+      return error;
+    }
+  }
+
+  /** Vouch for the head this page holds now (`courier.attest`): `null` once it went out, or why not (the fork alarm is thrown). */
+  private async vouch(courier: RenewalCourier): Promise<unknown> {
+    try {
+      await courier.attest();
+      return null;
+    } catch (error) {
+      if (error instanceof AccountError && error.kind === "fork") throw error;
+      console.warn("cloud account: vouching for the chain head for a renewal:", error);
+      return error;
+    }
+  }
+
+  /**
+   * A 412 `stale` (`reason`) that outlasted the grace, as a
+   * {@link RenewalError}: `behind`, or `unconfirmed` — naming the account's
+   * other admin devices, one of which has to vouch for the head (this
+   * device's own word does not count while there are others), or, as the
+   * sole admin, why its own word did not go (`problem`, the last one seen).
+   */
+  private staleRefusal(host: string, reason: string, problem: unknown): RenewalError {
+    if (reason === "behind") return new RenewalError("behind", `${host} has not caught up with the account's latest changes yet`, reason);
+    const others = (this.state?.admins() ?? []).map((d) => d.info.id).filter((id) => id !== this.deviceId);
+    if (others.length) {
+      return new RenewalError("unconfirmed", `${host} waits for another admin device (${others.join(", ")}) to vouch for the account's latest change: this device's own word does not count for its own request`, reason, others);
+    }
+    const why = problem === null || problem === undefined ? null : problem instanceof Error ? problem.message : String(problem);
+    return new RenewalError("unconfirmed", `${host} found no recent word from this device on the account's latest change${why ? `: ${why}` : ""}`, why ?? reason, []);
   }
 
   /**

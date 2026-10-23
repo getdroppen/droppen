@@ -72,7 +72,11 @@ export interface RotateRequest {
 export interface RenewalCourier extends MachineKeyCourier {
   /** `POST /rh/rotate` over the channel to `machine` (never by mailbox): its status and JSON answer. `ChannelUnavailable` when it cannot be reached. */
   rotate(machine: string, body: RotateRequest): Promise<{ status: number; body: unknown }>;
-  /** Vouch for the head this device sees now (an agent's admin routes want a recent word on it). */
+  /**
+   * Vouch for the head this device sees now (an agent's admin routes want a
+   * recent word on it — another admin device's, unless this one is the sole
+   * admin). Rejects when the word did not go out.
+   */
   attest(): Promise<void>;
 }
 
@@ -486,7 +490,9 @@ export function linkCourier(
       return inChannel(machine, (opener) => postRotate(opener, body));
     },
     async attest() {
-      if (account.isAdmin) link.attest(await account.attestation());
+      if (!account.isAdmin) return;
+      // Said, not dropped: a word that never left (the link is not signed in) is why a host may go on refusing.
+      if (!link.attest(await account.attestation())) throw new Error("not connected to Droppen's hub: the word on the chain head did not go out");
     },
     async mail(machine, epoch, mk) {
       const info = account.machine(machine);

@@ -393,12 +393,28 @@ test("a host that must renew first is let control no other host: Save is off and
 test("a refusal of a renewal reads in words, in the reader's language", () => {
   void i18n.changeLanguage("zh-CN");
   const t = i18n.t.bind(i18n) as (key: string, opts?: Record<string, unknown>) => string;
-  const kinds: RenewalFailure[] = ["tooOld", "disabled", "needsAssurance", "inProgress", "offline", "hubNotReady", "waiting", "renewFirst", "superseded", "policyUnset", "refused", "badAnswer", "wrongCode", "cancelled", "voided", "rate", "failed"];
+  const kinds: RenewalFailure[] = ["unconfirmed", "behind", "fork", "lapsed", "tooOld", "disabled", "needsAssurance", "inProgress", "offline", "hubNotReady", "waiting", "renewFirst", "superseded", "policyUnset", "refused", "badAnswer", "wrongCode", "cancelled", "voided", "rate", "failed"];
   for (const kind of kinds) {
     const said = renewalErrorText(new RenewalError(kind, "x", kind === "voided" ? "not_acked" : "why", ["m-9"]), t);
     assert.match(said, /[一-鿿]/, `${kind}: ${said}`);
   }
+  // The host's 412 `stale` in words (the reported 「found no recent word on its chain head」): who it waits for, in every language.
+  const waits = new RenewalError("unconfirmed", "m-1 waits for another admin device (d-2) to vouch for the account's latest change", "stale", ["d-2"]);
+  assert.ok(renewalErrorText(waits, t).includes("请在 d-2 上打开 Droppen"), renewalErrorText(waits, t));
+  for (const [lng, words] of [
+    ["en", "open Droppen on d-2, then try again"],
+    ["zh-TW", "請在 d-2 上打開 Droppen"],
+    ["ja", "d-2 で Droppen を開いてから"],
+  ] as const) {
+    void i18n.changeLanguage(lng);
+    assert.ok(renewalErrorText(waits, i18n.t.bind(i18n) as typeof t).includes(words), lng);
+  }
   void i18n.changeLanguage("en");
+  assert.doesNotMatch(renewalErrorText(new RenewalError("unconfirmed", "x", "stale", []), t), /\{\{ids\}\}|open Droppen on/, "the sole admin: no one else to open");
+  // The row says the failure itself in the reader's language, not its message.
+  const row = draw(<RenewalLine id="m-1" status={{ kind: "retrying", atMs: Date.now() + 60_000, error: waits.message, cause: waits }} viewerAdmin />, "zh-CN");
+  assert.ok(row.includes("没能更换身份密钥：它在等你的另一台完整设备确认账户的最新变更"), row);
+  assert.doesNotMatch(row, /vouch/);
 });
 
 test("R6: a host that lets an isolated one control it says to remove that one first; notifications stopped by a renewal come back with one tap", async () => {

@@ -173,6 +173,18 @@ export function renewalErrorText(error: RenewalError, t: (key: string, opts?: Re
       return t("it renewed its identity key too often lately: try again later");
     case "refused":
       return t("it refused to renew its identity key ({{why}})", { why: error.detail ?? "" });
+    case "unconfirmed":
+      // Its own 412 `stale`: only another full device's word on the account's newest change counts for this device's request.
+      if (error.hosts?.length) {
+        return t("it waits for another of your full devices to confirm the account's latest change: open Droppen on {{ids}}, then try again", { ids: error.hosts.join(", ") });
+      }
+      return t("this device's word on the account's latest change did not reach it: check the connection, then try again");
+    case "behind":
+      return t("it is still catching up with the account's latest changes: try again in a moment");
+    case "fork":
+      return t("it sees the account's devices differently from what your full devices confirmed, so nothing was changed: look at Droppen on that device itself");
+    case "lapsed":
+      return t("it takes no control from this device now: open Droppen on another of your full devices, then try again");
     case "failed":
       return t("could not reach it: {{why}}", { why: errorText(new Error(error.message)) });
   }
