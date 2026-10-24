@@ -32,14 +32,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The languages the repository used to scan with default setup.
+          # The languages the repository used to scan with default setup,
+          # less Python: its one file is a test's fake CLI, which the config
+          # leaves out, and CodeQL fails a language it finds no code of.
           # Every one of them is analyzed without a build: Rust supports no
           # other build mode, and the rest have nothing to compile.
           - language: actions
             build-mode: none
           - language: javascript-typescript
-            build-mode: none
-          - language: python
             build-mode: none
           - language: rust
             build-mode: none
