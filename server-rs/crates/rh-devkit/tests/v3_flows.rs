@@ -52,6 +52,10 @@ struct Hub {
     enrollments: BTreeMap<String, Option<Value>>,
     pairings: BTreeMap<String, (String, Vec<(String, String)>)>,
     pairing_seq: u32,
+    /// What came in, in order: `put <name>`, `mail <purpose> <recipient>`.
+    log: Vec<String>,
+    /// Mail for a recipient refused once, with this message (400 `bad_request`).
+    refuse_mail: BTreeMap<String, String>,
 }
 
 type Shared = Arc<Mutex<Hub>>;
@@ -134,8 +138,13 @@ async fn read_chain(State(hub): State<Shared>, Query(q): Query<BTreeMap<String, 
     Json(json!({"entries": entries}))
 }
 
-async fn send_mail(State(hub): State<Shared>, Json(b): Json<Value>) -> Json<Value> {
+async fn send_mail(State(hub): State<Shared>, Json(b): Json<Value>) -> Response {
     let mut h = hub.lock().unwrap();
+    let recipient = b["recipient"].as_str().unwrap_or_default().to_string();
+    if let Some(message) = h.refuse_mail.remove(&recipient) {
+        return fail(StatusCode::BAD_REQUEST, "bad_request", message);
+    }
+    h.log.push(format!("mail {} {recipient}", b["purpose"]));
     h.mail_seq += 1;
     let mail = Mail {
         id: h.mail_seq,
@@ -146,7 +155,7 @@ async fn send_mail(State(hub): State<Shared>, Json(b): Json<Value>) -> Json<Valu
         sealed: b["sealed"].as_str().unwrap_or_default().into(),
     };
     h.mail.push(mail.clone());
-    Json(json!({"id": mail.id}))
+    Json(json!({"id": mail.id})).into_response()
 }
 
 async fn my_mail(State(hub): State<Shared>, headers: HeaderMap, Query(q): Query<BTreeMap<String, String>>) -> Json<Value> {
@@ -173,6 +182,7 @@ async fn put_key(State(hub): State<Shared>, Path(name): Path<String>, Json(b): J
     if h.keys.contains_key(&name) {
         return fail(StatusCode::CONFLICT, "exists", "written once");
     }
+    h.log.push(format!("put {name}"));
     h.keys.insert(name, b["blob"].as_str().unwrap_or_default().into());
     Json(json!({"stored": true})).into_response()
 }
@@ -529,10 +539,23 @@ async fn pair(url: &HubUrl, a: &mut Device, admin: bool) -> Device {
 }
 
 /// Enroll host `id` as the web does, with its first key `mk`.
-async fn enroll(hub: &Shared, a: &mut Device, id: &str, seed: u8, mk: &[u8; 32]) {
+async fn enroll(hub: &Shared, a: &mut Device, id: &str, seed: u8, mk: &[u8; 32]) -> rh_devkit::keys::Enrolled3 {
     let code = a.new_enrollment().await.unwrap();
     prove(hub, &code, &a.account, id, &MachineIdentity::from_seed(&[seed; 32]));
-    a.enroll_host3(&code, mk, SECS).await.unwrap();
+    let enrolled = a.enroll_host3(&code, mk, SECS).await.unwrap();
+    assert!(enrolled.failed.is_empty(), "{:?}", enrolled.failed);
+    assert_eq!((enrolled.machine.id.as_str(), enrolled.mk_epoch), (id, 0));
+    enrolled
+}
+
+/// Where in the hub's log `event` came last, after `from`.
+fn last_at(hub: &Shared, from: usize, pred: impl Fn(&str) -> bool) -> Option<usize> {
+    let h = hub.lock().unwrap();
+    h.log.iter().enumerate().skip(from).filter(|(_, e)| pred(e)).map(|(i, _)| i).last()
+}
+
+fn log_len(hub: &Shared) -> usize {
+    hub.lock().unwrap().log.len()
 }
 
 #[tokio::test]
@@ -569,10 +592,16 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
     assert_eq!((r.uk_epoch, r.machines.iter().map(|(h, e, _)| (h.as_str(), *e)).collect::<Vec<_>>()), (None, vec![("m-1", 2)]));
 
-    // An admin: the user key too, mailed to the other admin.
+    // An admin: the user key too, mailed to the other admin — after the
+    // keyring holds what goes under it (a device reading the keyring as the
+    // mail lands finds it whole).
+    let from = log_len(&hub);
     let r = a.remove_and_rotate3(&b.id).await.unwrap();
     assert_eq!(last_commits(&hub), (Some(1), vec![("m-1".into(), 3)]));
     assert_eq!(r.uk_epoch, Some(1));
+    let wrapped = last_at(&hub, from, |e| e.starts_with("put mk/m-1/3/1/")).expect("m-1's new key in the keyring");
+    let mailed = last_at(&hub, from, |e| e == format!("mail 1 {}", d.id)).expect("the user key mailed to d");
+    assert!(wrapped < mailed, "the keyring first, then the mail");
     assert_eq!(d.take_user_key_mail().await.unwrap(), 1);
 
     // d demoted: the newest user key is stale (d holds it).
@@ -586,28 +615,64 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     assert_eq!(a.usable_user_key().unwrap(), None);
     // It held the user key: it is not removed with the hosts' keys alone.
     assert!(a.remove3_and_rotate_hosts(&d.id).await.is_err());
-    // A host enrolled now carries a new user key in its batch, its key wrapped under that.
-    enroll(&hub, &mut a, "m-3", 13, &mks[2]).await;
-    assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
-    assert_eq!(last_commits(&hub), (Some(2), vec![("m-3".into(), 0)]));
+    // A limited device removed while the user key is stale: it never held
+    // one, but no machine key goes under a stale one, so a new one comes.
+    let x = pair(&url, &mut a, false).await;
+    let r = a.remove_and_rotate3(&x.id).await.unwrap();
+    assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
+    assert_eq!(last_commits(&hub), (Some(2), vec![("m-1".into(), 4)]));
+    assert_eq!(r.uk_epoch, Some(2));
     assert!(!rh_devkit::keys::user_key_stale(a.chain().unwrap()));
-    assert_eq!(a.usable_user_key().unwrap(), Some(2));
     assert!(mail_for(&hub, &d.id, wrap::MAIL_USER_KEY).is_empty(), "the demoted device gets no new user key");
 
-    // A limited device removed with the hosts' keys: every current host, the user key kept.
+    // Another admin demoted: a host enrolled now carries a new user key in
+    // its own batch, its key wrapped under that.
+    let g = pair(&url, &mut a, true).await;
+    a.append(Action::SetAdmin {
+        id: g.id.clone(),
+        admin: false,
+    })
+    .await
+    .unwrap();
+    let enrolled = enroll(&hub, &mut a, "m-3", 13, &mks[2]).await;
+    assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
+    assert_eq!(last_commits(&hub), (Some(3), vec![("m-3".into(), 0)]));
+    assert_eq!(enrolled.uk_epoch, Some(3));
+    assert!(!rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert_eq!(a.usable_user_key().unwrap(), Some(3));
+
+    // A limited device removed with the hosts' keys: every current host,
+    // the user key kept. A mail the hub refuses after the commit loses
+    // nothing: said in `failed`, the keys still returned and kept; a host's
+    // device role that never signed in is waited for, not a failure.
     let e = pair(&url, &mut a, false).await;
+    {
+        let mut h = hub.lock().unwrap();
+        h.refuse_mail.insert(d.id.clone(), "the mailbox is full".into());
+        h.refuse_mail.insert("m-3".into(), "m-3 gets it once it signs in as a device".into());
+    }
     let r = a.remove3_and_rotate_hosts(&e.id).await.unwrap();
     assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
-    assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 4), ("m-3".into(), 1)]));
+    assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 5), ("m-3".into(), 1)]));
     assert_eq!(r.uk_epoch, None);
-    assert!(r.failed.is_empty(), "{:?}", r.failed);
+    assert_eq!(r.machines.len(), 2);
+    assert_eq!(r.failed.len(), 1, "{:?}", r.failed);
+    assert!(r.failed[0].contains(&d.id) && r.failed[0].contains("the mailbox is full"), "{:?}", r.failed);
+    assert!(!host_mail(&hub, &d.id).contains(&("m-1".to_string(), 5)));
+    hub.lock()
+        .unwrap()
+        .refuse_mail
+        .insert("m-3".into(), "m-3 gets it once it signs in as a device".into());
+    let (_, epoch, mk) = r.machines.iter().find(|(h, ..)| h == "m-1").unwrap();
+    let sent = a.mail_host_key("m-1", *epoch, mk).await.unwrap();
+    assert_eq!((sent.sent, sent.waiting, sent.failed.len()), (vec![d.id.clone(), g.id.clone()], vec!["m-3".to_string()], 0));
 
     // Every key committed is in the keyring, as the chain committed it.
     let chain = verify_from_genesis(&hub);
     assert!(kinds(&chain).iter().all(|(v, _)| *v == VERSION_3));
     a.sync_chain().await.unwrap();
     let m1 = a.machine_keys("m-1").await.unwrap();
-    assert_eq!(m1.keys().copied().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    assert_eq!(m1.keys().copied().collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);
     assert_eq!(m1.get(&0).map(|k| **k), Some(mks[0]));
     let m3 = a.machine_keys("m-3").await.unwrap();
     assert_eq!(m3.keys().copied().collect::<Vec<_>>(), [0, 1]);

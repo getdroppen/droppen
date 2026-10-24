@@ -148,10 +148,13 @@ impl Session {
                 // and to the agent's mailbox, as the web's "add a computer"
                 // hands it over when the agent is not reachable in a channel yet.
                 let mk = rh_devkit::random_key();
-                let machine = self.enroll_v3(&code, &mk).await?;
-                self.device.mail_machine_key(&machine.id, 0, &mk).await?;
+                let enrolled = self.enroll_v3(&code, &mk).await?;
+                let (id, epoch) = (enrolled.machine.id.clone(), enrolled.mk_epoch);
+                self.device.mail_machine_key(&id, epoch, &mk).await?;
                 self.reset_link();
-                Ok(format!("enrolled machine {} (chain v3); MK epoch 0 by mail", machine.id))
+                let uk = enrolled.uk_epoch.map_or_else(String::new, |e| format!("; a new user key epoch {e} with it (the newest was stale)"));
+                let failed = if enrolled.failed.is_empty() { String::new() } else { format!("; not sent: {}", enrolled.failed.join("; ")) };
+                Ok(format!("enrolled machine {id} (chain v3); MK epoch {epoch} by mail{uk}{failed}"))
             }
             ["approve", device] => {
                 let seq = self.device.approve(device).await?;
@@ -309,12 +312,12 @@ impl Session {
     /// [`Device::enroll_host3`], tried again for a minute when the hub
     /// answers 409 `chain_v3_not_ready` (the agent that just proved the code
     /// has not declared `chain/3` on its link yet), as the web does.
-    async fn enroll_v3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_proto::chain::MachineInfo> {
+    async fn enroll_v3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_devkit::keys::Enrolled3> {
         let mut deadline = None;
         let mut timeout = Duration::from_secs(600);
         loop {
             match self.device.enroll_host3(code, mk, timeout).await {
-                Ok(machine) => return Ok(machine),
+                Ok(enrolled) => return Ok(enrolled),
                 Err(e) if e.contains("chain_v3_not_ready") && *deadline.get_or_insert_with(|| tokio::time::Instant::now() + Duration::from_secs(60)) > tokio::time::Instant::now() => {
                     timeout = Duration::from_secs(10);
                     tokio::time::sleep(Duration::from_secs(2)).await;

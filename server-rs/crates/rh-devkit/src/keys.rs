@@ -733,10 +733,11 @@ impl Device {
         Ok(Some(latest))
     }
 
-    /// Keep a user key epoch just committed (as the web's `keepUserKey`,
-    /// then its `mailUserKey`): held here, the recovery package of every
-    /// epoch held, and mailed to the other admins. What did not go is said
-    /// in `failed`, never undoing the commit.
+    /// Keep a user key epoch just committed (as the web's `keepUserKey`):
+    /// held here, and the recovery package of every epoch held. Not mailed
+    /// yet ([`Device::share_user_key`], once the keyring holds what goes
+    /// under it). What did not go is said in `failed`, never undoing the
+    /// commit.
     async fn keep_user_key(&mut self, epoch: u32, uk: [u8; 32], failed: &mut Vec<String>) {
         self.user_keys.insert(epoch, uk);
         for e in self.user_keys.keys().copied().collect::<Vec<_>>() {
@@ -744,6 +745,12 @@ impl Device {
                 failed.push(format!("recovery package of user key epoch {e}: {why}"));
             }
         }
+    }
+
+    /// Mail user key `epoch` to the other admins (as the web's
+    /// `mailUserKey`) — after the keyring copies that go under it, so a
+    /// device that reads the keyring when the mail lands finds them all.
+    async fn share_user_key(&self, epoch: u32, failed: &mut Vec<String>) {
         match self.mail_user_key(epoch).await {
             Ok(missed) => failed.extend(missed.into_iter().map(|(to, why)| format!("user key epoch {epoch} to {to}: {why}"))),
             Err(why) => failed.push(format!("user key epoch {epoch}: {why}")),
@@ -756,9 +763,10 @@ impl Device {
     /// stale. Machine keys alone go under the newest user key, which this
     /// device must hold ([`Device::usable_user_key`]: checked before anything
     /// is committed). Then, in this order, the new user key kept (recovery
-    /// packages, mailed to the other admins), each machine key wrapped into
-    /// the keyring, and each sealed to the devices that are not admins and
-    /// that its host accepts (purpose 5). Nothing after the commit undoes it:
+    /// packages), each machine key wrapped into the keyring, the new user key
+    /// mailed to the other admins, and each machine key sealed to the devices
+    /// that are not admins and that its host accepts (purpose 5). Nothing
+    /// after the commit undoes it:
     /// what did not go is logged and said in [`Rotation3::failed`].
     async fn rotate3(&mut self, prefix: Vec<Action>, user_key: bool) -> Result<Rotation3> {
         use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit};
@@ -818,6 +826,9 @@ impl Device {
                 failed.push(format!("keyring copy of {host}'s key epoch {epoch}: {why}"));
             }
         }
+        if fresh.is_some() {
+            self.share_user_key(uk_epoch, &mut failed).await;
+        }
         for (host, epoch, mk) in &machines {
             let mail = self.mail_host_key(host, *epoch, mk).await?;
             failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{host}'s key epoch {epoch} to {to}: {why}")));
@@ -853,12 +864,15 @@ impl Device {
     /// (`[AddDevice3{host}, KeyEpochs]`; never an admin, review D1). Before
     /// anything is asked of the hub, this device must hold a usable user key
     /// ([`Device::usable_user_key`]); while the newest is stale the batch
-    /// carries a new one, which is kept as a rotation keeps it. Then `mk` is
-    /// wrapped into the keyring and sealed to the devices that are not admins
-    /// and that the host accepts (none until an admin lets one). The caller
-    /// hands `mk` to the agent ([`Device::mail_machine_key`], or a channel).
+    /// carries a new one, which is kept as a rotation keeps it. Then, in the
+    /// web's order, `mk` is wrapped into the keyring, a new user key mailed
+    /// to the other admins, and `mk` sealed to the devices that are not
+    /// admins and that the host accepts (none until an admin lets one). What
+    /// did not go after the commit is in [`Enrolled3::failed`] (and logged):
+    /// the host is in the chain either way. The caller hands `mk` to the
+    /// agent ([`Device::mail_machine_key`], or a channel).
     /// [`Device::complete_enrollment_v3`] is the bare batch.
-    pub async fn enroll_host3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32], timeout: Duration) -> Result<rh_proto::chain::MachineInfo> {
+    pub async fn enroll_host3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32], timeout: Duration) -> Result<Enrolled3> {
         use rh_proto::chain::{machine_key_commit, user_key_commit, DeviceV3, Flags, KeyCommit};
         self.sync_chain().await?;
         if !self.chain.as_ref().ok_or("no chain")?.is_v3() {
@@ -893,12 +907,23 @@ impl Device {
             self.keep_user_key(uk_epoch, uk, &mut failed).await;
         }
         let wrap_under = if fresh.is_some() { uk_epoch } else { wrap_epoch.expect("checked") };
-        self.wrap_machine_key_under(&machine.id, mk_epoch, wrap_under, mk).await?;
-        self.mail_host_key(&machine.id, mk_epoch, mk).await?;
+        if let Err(why) = self.wrap_machine_key_under(&machine.id, mk_epoch, wrap_under, mk).await {
+            failed.push(format!("keyring copy of {}'s key epoch {mk_epoch}: {why}", machine.id));
+        }
+        if fresh.is_some() {
+            self.share_user_key(uk_epoch, &mut failed).await;
+        }
+        let mail = self.mail_host_key(&machine.id, mk_epoch, mk).await?;
+        failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{}'s key epoch {mk_epoch} to {to}: {why}", machine.id)));
         for why in &failed {
             eprintln!("rh-devkit: after adding {}: {why}", machine.id);
         }
-        Ok(machine)
+        Ok(Enrolled3 {
+            machine,
+            mk_epoch,
+            uk_epoch: fresh.map(|_| uk_epoch),
+            failed,
+        })
     }
 
     /// Chain v3, S1-4 (as the web's `mailHostKey`): seal host `host`'s key
@@ -1045,6 +1070,19 @@ pub struct Rotation3 {
     pub machines: Vec<(String, u32, [u8; 32])>,
     /// What did not go after the commit (a mail, a keyring copy, a recovery
     /// package), in words: none of it undoes the rotation.
+    pub failed: Vec<String>,
+}
+
+/// What [`Device::enroll_host3`] committed.
+#[derive(Debug, Clone)]
+pub struct Enrolled3 {
+    /// The host, with exactly the keys its proof covers.
+    pub machine: rh_proto::chain::MachineInfo,
+    /// The epoch its first machine key was committed as.
+    pub mk_epoch: u32,
+    /// A new user key epoch the batch carried (the newest was stale).
+    pub uk_epoch: Option<u32>,
+    /// What did not go after the commit, in words (see [`Rotation3::failed`]).
     pub failed: Vec<String>,
 }
 
