@@ -2,14 +2,16 @@
 # NOTES.md, the text of a release (its page on GitHub, the install command
 # included): what the files are, then what changed for people
 # (docs/releases/<version>.md). scripts/release-public.sh stages it;
-# .github/workflows/release.yml's verify job writes it again from the source
+# .github/workflows/release.yml's release job writes it again from the source
 # and refuses a staged NOTES.md that differs by a byte (the stage job runs
 # npm install scripts).
 #
 #   scripts/release-notes.sh <version> <commit> <rev> <server version> <linux: 0|1> [<release notes file>]
 #
 # Prints it. On GitHub Actions (GITHUB_ACTIONS=true) the files' table names
-# the attestation bundles too.
+# the attestation bundles too. DROPPEN_RELEASE_INSTALL_SH: the install.sh the
+# release publishes, whose release key decides whether the table names the
+# signed checksums (default: the one beside this script).
 set -euo pipefail
 
 VERSION=${1:?usage: release-notes.sh <version> <commit> <rev> <server version> <linux: 0|1> [<notes>]}
@@ -40,9 +42,11 @@ fi
 ROWS="$ROWS
 | $OLD_ROWS | the same server under its old name only, for older copies of the installer (on every release until at least $OLD_ASSETS_UNTIL) |"
 # The installer's signed checksums: publish-release.sh publishes them exactly
-# when the release's install.sh pins a release key (SUMS_KEY), and that
-# install.sh is this source's (release.yml's verify job checks it byte for byte).
-KEY=$("$HERE/install-key.sh" "$HERE/install.sh") || { echo "release-notes: cannot read the release key $HERE/install.sh pins" >&2; exit 2; }
+# when the release's install.sh pins a release key (SUMS_KEY).
+# release-public.sh names the install.sh it staged; release.yml's release job
+# reads this source's, which it checks is the staged one byte for byte.
+INSTALL_SH=${DROPPEN_RELEASE_INSTALL_SH:-$HERE/install.sh}
+KEY=$("$HERE/install-key.sh" "$INSTALL_SH") || { echo "release-notes: cannot read the release key $INSTALL_SH pins" >&2; exit 2; }
 SIGNED=""
 if [ -n "$KEY" ]; then
   SIGNED="| \`SHA256SUMS-server\`, \`SHA256SUMS-server.sig\` | the tarballs' checksums and their signature by the release key \`install.sh\` pins, which it checks before it installs anything |

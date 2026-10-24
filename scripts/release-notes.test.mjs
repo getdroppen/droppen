@@ -1,8 +1,9 @@
 // Tests for scripts/release-notes.sh: `node --test scripts/release-notes.test.mjs`.
 //
 // The files' table of a release's page. release-notes.sh reads
-// release-public.sh and install.sh beside it, so each test runs it in a
-// scratch copy of those scripts, with an install.sh of its own.
+// release-public.sh and install.sh beside it (or the install.sh
+// DROPPEN_RELEASE_INSTALL_SH names), so each test runs it in a scratch copy of
+// those scripts, with an install.sh of its own.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -36,8 +37,8 @@ function scripts(install) {
 }
 
 /** What release-notes.sh in `dir` prints; never as on GitHub Actions. */
-function notes(dir) {
-  return spawnSync("bash", [join(dir, "release-notes.sh"), ...ARGS], { encoding: "utf8", env: { PATH: process.env.PATH } });
+function notes(dir, env = {}) {
+  return spawnSync("bash", [join(dir, "release-notes.sh"), ...ARGS], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
 }
 
 const pinning = () => {
@@ -62,6 +63,20 @@ test("while install.sh pins none, the table has no signed checksums and is other
   assert.equal(unpinned.status, 0, unpinned.stderr);
   assert.doesNotMatch(unpinned.stdout, /SHA256SUMS-server/);
   assert.equal(unpinned.stdout, pinned.stdout.replace(`${SIGNED_ROW}\n`, ""));
+});
+
+test("the install.sh it is given, not the one beside it, decides the row", () => {
+  const dir = scripts(pinning());
+  const unpinned = join(dir, "staged-install.sh");
+  writeFileSync(unpinned, "#!/bin/sh\nSUMS_KEY=''\n");
+  const r = notes(dir, { DROPPEN_RELEASE_INSTALL_SH: unpinned });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /SHA256SUMS-server/);
+  const pinned = join(dir, "pinned-install.sh");
+  writeFileSync(pinned, pinning());
+  const other = notes(scripts("#!/bin/sh\nSUMS_KEY=''\n"), { DROPPEN_RELEASE_INSTALL_SH: pinned });
+  assert.equal(other.status, 0, other.stderr);
+  assert.ok(table(other.stdout).includes(SIGNED_ROW), other.stdout);
 });
 
 test("this source's install.sh is read as it is: its key decides the row", () => {

@@ -635,12 +635,13 @@ if [ "$LINUX" = 1 ]; then
   sed -e "s/@ARCH@/x86_64 and aarch64/" -e "s/@CONTENTS@/${CONTENTS_NEW}/" "$REPO/.github/scripts/INSTALL-linux.txt.in" > "$STAGE/INSTALL-linux.txt"
 fi
 
-# The release's text (scripts/release-notes.sh, which release.yml's verify
+# The release's text (scripts/release-notes.sh, which release.yml's release
 # job runs again to compare), with the notes from the exported ref, like
-# everything built here.
+# everything built here, and the install.sh staged above: whether it pins a
+# release key decides whether the table names the signed checksums.
 NOTES_ARGS=("$VERSION" "$SHA" "$REV" "$CRATE_VERSION" "$LINUX")
 [ -z "$RELEASE_NOTES" ] || NOTES_ARGS+=("$SRC/$RELEASE_NOTES")
-"$REPO/scripts/release-notes.sh" "${NOTES_ARGS[@]}" >"$STAGE/NOTES.md"
+DROPPEN_RELEASE_INSTALL_SH="$STAGE/install.sh" "$REPO/scripts/release-notes.sh" "${NOTES_ARGS[@]}" >"$STAGE/NOTES.md"
 
 say "text checks"
 # Fail closed on personal names in what the release ships as text. The
