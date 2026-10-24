@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use gotcha::axum::extract::ws::{Message, WebSocket};
 use gotcha::axum::response::Response;
 use gotcha::{State, WebSocketUpgrade};
@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use super::watch;
 use crate::api::extract::ApiQuery;
-use crate::api::{ApiRouter, AppState};
+use crate::api::{close_within, send_within, ApiRouter, AppState};
 use crate::drive::Drive;
 use crate::openapi_ext::ExtraResponses;
 use crate::sessions::{self, Paths, SessionSummary, Source};
@@ -507,17 +507,22 @@ pub struct EventsQuery {
 }
 
 /// `login`: the account and its login's digest, when a login opened it.
+///
+/// Every send is bounded ([`send_within`]), and so is the close: a client that
+/// stops reading would otherwise park this task for good, with the list feed
+/// and every subscription it holds.
 async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, login: Option<(String, String)>) {
     let (mut sender, mut receiver) = socket.split();
+    let (limit, shutdown) = (state.send_limit, &state.cancel);
     let compress = options.compress;
-    if options.enabled && sender.send(Message::Text(hello_frame(options).into())).await.is_err() {
+    if options.enabled && !send_within(&mut sender, Message::Text(hello_frame(options).into()), limit, shutdown).await {
         return;
     }
     let plugins = state.plugins.status_async().await;
     let attached = attach(&state.global, &state.drive, state.instance.name(), state.started_at.as_ref(), &plugins).await;
     let mut attachment = attached.attachment;
     for frame in attached.opening {
-        if sender.send(encode(frame, compress)).await.is_err() {
+        if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
             return;
         }
     }
@@ -541,7 +546,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
             }
             frame = attachment.next_frame() => match frame {
                 Some(frame) => {
-                    if sender.send(encode(frame, compress)).await.is_err() {
+                    if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
                         break;
                     }
                 }
@@ -550,7 +555,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
             // The subscriptions' frames, already tagged. The queue never
             // closes while `subscriptions` holds its sender.
             Some(frame) = session_frames.recv() => {
-                if sender.send(encode(frame, compress)).await.is_err() {
+                if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
                     break;
                 }
             }
@@ -566,7 +571,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
                         let replies = parse_client_message(text.as_str()).map(|message| subscriptions.handle(message)).unwrap_or_default();
                         let mut gone = false;
                         for reply in replies {
-                            if sender.send(Message::Text(reply.into())).await.is_err() {
+                            if !send_within(&mut sender, Message::Text(reply.into()), limit, shutdown).await {
                                 gone = true;
                                 break;
                             }
@@ -579,7 +584,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
                 }
             }
             alive = heartbeat.tick() => {
-                if !alive || sender.send(Message::Ping(Default::default())).await.is_err() {
+                if !alive || !send_within(&mut sender, Message::Ping(Default::default()), limit, shutdown).await {
                     break;
                 }
             }
@@ -593,9 +598,9 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
             code: 4401,
             reason: "signed out".into(),
         };
-        let _ = sender.send(Message::Close(Some(close))).await;
+        let _ = send_within(&mut sender, Message::Close(Some(close)), limit, shutdown).await;
     }
-    let _ = sender.close().await;
+    close_within(&mut sender, limit, shutdown).await;
 }
 
 /// Register this subsystem's routes.
@@ -609,6 +614,8 @@ pub fn describe(_reg: &mut ExtraResponses) {}
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+
+    use futures_util::SinkExt;
 
     use super::*;
     use crate::openapi_ext::Nullable;
@@ -903,5 +910,79 @@ mod tests {
         .await
         .expect("closed in time");
         assert_eq!(closed, Some(4401));
+    }
+
+    /// The list socket of `state`'s server at `addr`, opened by its owner and
+    /// then never read from; once the socket has attached to the list feed.
+    async fn never_reading_list(
+        state: &AppState,
+        addr: std::net::SocketAddr,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+        let ticket = crate::api::test_support::owner_ticket(state).await;
+        let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/events?ticket={ticket}"))
+            .await
+            .expect("let in");
+        let attached = tokio::time::timeout(Duration::from_secs(30), async {
+            while !state.global.is_running() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        attached.await.expect("the socket attaches to the list feed");
+        client
+    }
+
+    /// A frame of a quarter of a megabyte, for a client that takes none.
+    fn wide_frame() -> String {
+        format!(r#"{{"type":"screens:list","pad":"{}"}}"#, "x".repeat(256 * 1024))
+    }
+
+    /// A client that stops reading cannot hold the list socket's task for
+    /// good: a frame it makes no room for gives up at the server's limit, the
+    /// close behind it does too, and the task lets the list feed go.
+    ///
+    /// Real sockets, and a client that never reads after connecting. Frames
+    /// are published until the kernel's buffers are full and a send has to
+    /// wait; the broadcast keeps at most [`CHANNEL_CAPACITY`] of them.
+    #[tokio::test]
+    async fn a_list_client_that_never_reads_is_given_up_on() {
+        let home = tempfile::tempdir().unwrap();
+        let (state, addr) = crate::api::test_support::served_with(home.path(), |state| state.send_limit = Duration::from_secs(1)).await;
+        let _client = never_reading_list(&state, addr).await;
+        let frame = wide_frame();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while state.global.is_running() {
+            assert!(
+                Instant::now() < deadline,
+                "a client that takes no frame is given up on, and so is its close"
+            );
+            state.global.publish(frame.clone());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// A server shutting down does not wait on a list client that has stopped
+    /// reading: the send it is stuck on gives way at once, well inside the
+    /// real limit, and so does the close.
+    #[tokio::test]
+    async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
+        let home = tempfile::tempdir().unwrap();
+        let (state, addr) = crate::api::test_support::served(home.path()).await;
+        assert_eq!(state.send_limit, crate::api::SEND_LIMIT);
+        let _client = never_reading_list(&state, addr).await;
+        // As many as the broadcast holds, so the socket is handed every one:
+        // megabytes more than the kernel's buffers take.
+        let frame = wide_frame();
+        for _ in 0..CHANNEL_CAPACITY {
+            state.global.publish(frame.clone());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        state.cancel.cancel();
+        let released = tokio::time::timeout(Duration::from_secs(10), async {
+            while state.global.is_running() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        released.await.expect("a shutdown lets the stuck socket go at once");
     }
 }

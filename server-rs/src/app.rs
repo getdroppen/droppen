@@ -138,6 +138,7 @@ impl GotchaApp for RemoteHandApp {
                 cancel: CancellationToken::new(),
                 lock: Arc::new(std::sync::OnceLock::new()),
                 desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
+                send_limit: crate::api::SEND_LIMIT,
             })
         }
     }

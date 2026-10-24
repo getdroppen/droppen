@@ -137,6 +137,10 @@ pub struct AppState {
     pub desktop_app: bool,
     /// The first-run guide: tool detection and the children's `PATH`.
     pub setup: Arc<crate::setup::Setup>,
+    /// How long a frame on any of this server's websockets may wait for a
+    /// client that takes none before the socket is given up on: [`SEND_LIMIT`],
+    /// except in a test that cannot wait that long.
+    pub send_limit: std::time::Duration,
 }
 
 /// Query for `GET /api/sessions`.
@@ -355,6 +359,54 @@ impl Heartbeat {
     }
 }
 
+/// How long one frame may take to leave before its client is given up on.
+///
+/// The heartbeat's idle limit, for the same reason: a client that has not
+/// taken a frame in that long is as gone as one that has not sent one. Without
+/// a bound, a client that stopped reading altogether parked its socket task on
+/// a full TCP window for good, with its queue, and the heartbeat could not
+/// fire while the send was waiting. Every socket reads it from
+/// [`AppState::send_limit`].
+pub(crate) const SEND_LIMIT: std::time::Duration = IDLE_LIMIT;
+
+/// A websocket's write half.
+pub(crate) type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
+
+/// Send one frame, and say whether it went: `false` for a closed socket, a
+/// client that took no frame for `limit`, or a server shutting down.
+///
+/// Biased toward the send, so a frame that can go at once still goes during
+/// a shutdown; only one that would have to wait gives way to it.
+pub(crate) async fn send_within(sender: &mut WsSender, message: Message, limit: std::time::Duration, shutdown: &CancellationToken) -> bool {
+    tokio::select! {
+        biased;
+        sent = tokio::time::timeout(limit, sender.send(message)) => match sent {
+            Ok(sent) => sent.is_ok(),
+            Err(_) => {
+                tracing::info!("websocket: a frame waited {limit:?} for a client that takes none; giving the socket up");
+                false
+            }
+        },
+        () = shutdown.cancelled() => false,
+    }
+}
+
+/// Close a websocket's write half: its close frame, unless one went already,
+/// and whatever was still queued ahead of it.
+///
+/// Within `limit`, and not at all on a server shutting down, for the reason
+/// [`send_within`] is: a client that has stopped reading leaves no room for
+/// the close frame either. Biased toward the close, so on shutdown one that
+/// can go at once still goes. Nothing waits for the client's answer; the
+/// socket is dropped right after.
+pub(crate) async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shutdown: &CancellationToken) {
+    tokio::select! {
+        biased;
+        _ = tokio::time::timeout(limit, sender.close()) => {}
+        () = shutdown.cancelled() => {}
+    }
+}
+
 async fn run_session_socket(
     socket: WebSocket,
     state: AppState,
@@ -366,15 +418,18 @@ async fn run_session_socket(
     let (mut sender, mut receiver) = socket.split();
     let ended = crate::auth::login_ended(state.drive.auth.clone(), login);
     tokio::pin!(ended);
+    // Every send below is bounded ([`send_within`]): a client that stops
+    // reading would otherwise park this task, and the feed it holds, for good.
+    let (limit, shutdown) = (state.send_limit, &state.cancel);
 
     let Some(attached) = feed::attach_session_feed(&state.feeds, &state.drive, source, &id, resume.as_ref()).await else {
-        let _ = sender.send(Message::Text(CLOSED_FRAME.into())).await;
-        let _ = sender.close().await;
+        let _ = send_within(&mut sender, Message::Text(CLOSED_FRAME.into()), limit, shutdown).await;
+        close_within(&mut sender, limit, shutdown).await;
         return;
     };
     let mut attachment = attached.attachment;
     for frame in attached.opening {
-        if sender.send(Message::Text(frame.into())).await.is_err() {
+        if !send_within(&mut sender, Message::Text(frame.into()), limit, shutdown).await {
             return;
         }
     }
@@ -383,17 +438,17 @@ async fn run_session_socket(
     loop {
         tokio::select! {
             () = &mut ended => {
-                let _ = sender.send(Message::Close(Some(crate::auth::signed_out_frame()))).await;
+                let _ = send_within(&mut sender, Message::Close(Some(crate::auth::signed_out_frame())), limit, shutdown).await;
                 break;
             }
             frame = attachment.next_frame() => match frame {
                 Some(frame) => {
-                    if sender.send(Message::Text(frame.into())).await.is_err() {
+                    if !send_within(&mut sender, Message::Text(frame.into()), limit, shutdown).await {
                         break;
                     }
                 }
                 None => {
-                    let _ = sender.send(Message::Text(CLOSED_FRAME.into())).await;
+                    let _ = send_within(&mut sender, Message::Text(CLOSED_FRAME.into()), limit, shutdown).await;
                     break;
                 }
             },
@@ -407,7 +462,7 @@ async fn run_session_socket(
                     None | Some(Ok(Message::Close(_))) | Some(Err(_)) => break,
                     Some(Ok(Message::Text(text))) => {
                         if let Some(frame) = attachment.client_frame(text.as_str()) {
-                            if sender.send(Message::Text(frame.into())).await.is_err() {
+                            if !send_within(&mut sender, Message::Text(frame.into()), limit, shutdown).await {
                                 break;
                             }
                         }
@@ -416,17 +471,17 @@ async fn run_session_socket(
                 }
             }
             alive = heartbeat.tick() => {
-                if !alive || sender.send(Message::Ping(Default::default())).await.is_err() {
+                if !alive || !send_within(&mut sender, Message::Ping(Default::default()), limit, shutdown).await {
                     break;
                 }
             }
             _ = state.cancel.cancelled() => {
-                let _ = sender.send(Message::Text(CLOSED_FRAME.into())).await;
+                let _ = send_within(&mut sender, Message::Text(CLOSED_FRAME.into()), limit, shutdown).await;
                 break;
             }
         }
     }
-    let _ = sender.close().await;
+    close_within(&mut sender, limit, shutdown).await;
 }
 
 /// Everything gotcha cannot express about this module's own routes.
@@ -645,6 +700,18 @@ pub(crate) mod test_support {
         (state, addr)
     }
 
+    /// A websocket ticket for the device's owner, whom a server with no
+    /// account yet lets in.
+    pub(crate) async fn owner_ticket(state: &super::AppState) -> String {
+        let auth = &state.drive.auth;
+        let token = auth.sessions.issue(crate::auth::LOCAL_OWNER, None).await.expect("an owner login").token;
+        let digest = crate::auth::sessions::digest_of(&token);
+        auth.tickets
+            .issue(crate::auth::LOCAL_OWNER, &digest, crate::auth::tickets::TicketScope::Ws)
+            .expect("a ticket")
+            .0
+    }
+
     /// Every route the server registers, as `(METHOD, path template)`, read
     /// off the router the server serves: its OpenAPI document lists every
     /// documented operation.
@@ -715,5 +782,106 @@ mod tests {
             "90s in, 60s since the frame — a clock from connect would give up here"
         );
         assert!(!heartbeat.tick().await, "120s in, 90s since the frame");
+    }
+
+    const WIDE_ID: &str = "44444444-4444-4444-8444-444444444444";
+
+    /// `turns` claude turns from turn `from` on, each a question and an answer
+    /// of `width` characters.
+    fn wide_turns(from: usize, turns: usize, width: usize) -> String {
+        let mut out = String::new();
+        for turn in from..from + turns {
+            let stamp = format!("2026-09-29T00:{:02}:{:02}.000Z", (turn / 60) % 60, turn % 60);
+            for (kind, letter) in [("user", "q"), ("assistant", "a")] {
+                let content = serde_json::json!([{ "type": "text", "text": letter.repeat(width) }]);
+                let line = serde_json::json!({
+                    "type": kind,
+                    "message": { "role": kind, "content": content },
+                    "timestamp": stamp,
+                    "cwd": "/tmp",
+                    "sessionId": WIDE_ID,
+                    "uuid": format!("{letter}{turn}"),
+                });
+                out.push_str(&line.to_string());
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// The session [`WIDE_ID`] in `state`'s home, holding `turns` turns of
+    /// `width`; its transcript's path.
+    fn wide_session(state: &AppState, turns: usize, width: usize) -> std::path::PathBuf {
+        let project = state.paths.claude_projects().join("-w-wide");
+        std::fs::create_dir_all(&project).expect("project");
+        let file = project.join(format!("{WIDE_ID}.jsonl"));
+        std::fs::write(&file, wide_turns(0, turns, width)).expect("transcript");
+        file
+    }
+
+    /// The session feed socket of [`WIDE_ID`], opened and then never read from.
+    async fn never_reading_feed(
+        state: &AppState,
+        addr: std::net::SocketAddr,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+        let ticket = test_support::owner_ticket(state).await;
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/sessions/claude/{WIDE_ID}/ws?ticket={ticket}"))
+            .await
+            .expect("let in")
+            .0
+    }
+
+    /// Wait for `done`, and fail with `what` if it takes longer than `within`.
+    async fn until(what: &str, within: Duration, done: impl Fn() -> bool) {
+        let deadline = tokio::time::Instant::now() + within;
+        while !done() {
+            assert!(tokio::time::Instant::now() < deadline, "{what}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// A client that stops reading cannot hold its session feed for good: a
+    /// frame it makes no room for gives up at the server's limit, the close
+    /// behind it does too, and the socket task lets the feed go.
+    ///
+    /// Real sockets, and a client that never reads after connecting. Its
+    /// opening snapshot is small and goes out; then the transcript grows by a
+    /// page of wide turns, a frame of megabytes that the kernel's buffers do
+    /// not hold, and every byte the server sends after that has to wait.
+    #[tokio::test]
+    async fn a_session_feed_client_that_never_reads_is_given_up_on() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, addr) = test_support::served_with(home.path(), |state| state.send_limit = Duration::from_secs(1)).await;
+        let file = wide_session(&state, 1, 10);
+        let _client = never_reading_feed(&state, addr).await;
+        until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
+
+        let page = wide_turns(1, crate::feed::SESSION_PAGE_SIZE / 2, crate::sessions::util::TEXT_LIMIT);
+        let mut transcript = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
+        std::io::Write::write_all(&mut transcript, page.as_bytes()).expect("append");
+        until(
+            "a client that takes no frame is given up on, and so is its close",
+            Duration::from_secs(60),
+            || state.feeds.is_empty(),
+        )
+        .await;
+    }
+
+    /// A server shutting down does not wait on a session feed client that has
+    /// stopped reading: the send it is stuck on gives way at once, well inside
+    /// the real limit, and so does the close.
+    #[tokio::test]
+    async fn a_shutdown_does_not_wait_for_a_session_feed_client_that_never_reads() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, addr) = test_support::served(home.path()).await;
+        assert_eq!(state.send_limit, SEND_LIMIT);
+        // An opening snapshot of megabytes, more than the kernel's buffers hold.
+        wide_session(&state, crate::feed::SESSION_PAGE_SIZE / 2, crate::sessions::util::TEXT_LIMIT);
+        let _client = never_reading_feed(&state, addr).await;
+        until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        state.cancel.cancel();
+        until("a shutdown lets the stuck socket go at once", Duration::from_secs(10), || state.feeds.is_empty()).await;
     }
 }

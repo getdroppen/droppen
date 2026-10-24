@@ -32,7 +32,7 @@ use serde::Deserialize;
 
 use crate::api::error::ApiError;
 use crate::api::extract::{ApiJson, ApiPath};
-use crate::api::{ApiRouter, AppState, SendResult};
+use crate::api::{send_within, ApiRouter, AppState, SendResult, WsSender as Sender};
 use crate::openapi_ext::ExtraResponses;
 
 use super::{Chunk, TerminalCreate, TerminalError, TerminalInfo, TerminalList, TerminalRename, SLOW_NOTE};
@@ -131,7 +131,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     tokio::pin!(ended);
 
     let Some(mut attachment) = state.terminals.attach(&id) else {
-        let _ = send_within(&mut sender, Message::Text(NOT_FOUND_NOTE.into()), SEND_LIMIT, &state.cancel).await;
+        let _ = send_within(&mut sender, Message::Text(NOT_FOUND_NOTE.into()), state.send_limit, &state.cancel).await;
         close_gracefully(sender, receiver, CLOSE_GRACE, &state.cancel).await;
         return;
     };
@@ -142,7 +142,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     // keystroke minutes later produced the first frame and wiped the screen the
     // user was looking at. One frame on every attach makes the reset fire when
     // the attach happens, which is the only moment it means anything.
-    if !send_within(&mut sender, Message::Text(attachment.replay.clone().into()), SEND_LIMIT, &state.cancel).await {
+    if !send_within(&mut sender, Message::Text(attachment.replay.clone().into()), state.send_limit, &state.cancel).await {
         return;
     }
     // A terminal whose link is down still lists, still attaches and still hands
@@ -157,7 +157,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     // that is already over, with no change left to wake it.
     let mut link_changes = attachment.link_changes();
     let mut told_unreachable = !attachment.is_linked();
-    if told_unreachable && !send_within(&mut sender, Message::Text(UNREACHABLE_NOTE.into()), SEND_LIMIT, &state.cancel).await {
+    if told_unreachable && !send_within(&mut sender, Message::Text(UNREACHABLE_NOTE.into()), state.send_limit, &state.cancel).await {
         return;
     }
 
@@ -170,12 +170,12 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     loop {
         tokio::select! {
             () = &mut ended => {
-                let _ = send_within(&mut sender, Message::Close(Some(crate::auth::signed_out_frame())), SEND_LIMIT, &state.cancel).await;
+                let _ = send_within(&mut sender, Message::Close(Some(crate::auth::signed_out_frame())), state.send_limit, &state.cancel).await;
                 break;
             }
             chunk = attachment.next_chunk(), if live => match chunk {
                 Some(Chunk::Data(chunk)) => {
-                    if !send_within(&mut sender, Message::Text(chunk.as_ref().into()), SEND_LIMIT, &state.cancel).await {
+                    if !send_within(&mut sender, Message::Text(chunk.as_ref().into()), state.send_limit, &state.cancel).await {
                         break;
                     }
                 }
@@ -183,7 +183,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
                 // pty reader must not be held up by one browser tab, and the
                 // fan-out cannot drop chunks without corrupting the stream.
                 Some(Chunk::TooSlow) => {
-                    let _ = send_within(&mut sender, Message::Text(SLOW_NOTE.into()), SEND_LIMIT, &state.cancel).await;
+                    let _ = send_within(&mut sender, Message::Text(SLOW_NOTE.into()), state.send_limit, &state.cancel).await;
                     break;
                 }
                 None => live = false,
@@ -204,7 +204,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
                 // cannot hear them is owed an explanation, not thirty of them.
                 if unreachable && !told_unreachable {
                     told_unreachable = true;
-                    if !send_within(&mut sender, Message::Text(UNREACHABLE_NOTE.into()), SEND_LIMIT, &state.cancel).await {
+                    if !send_within(&mut sender, Message::Text(UNREACHABLE_NOTE.into()), state.send_limit, &state.cancel).await {
                         break;
                     }
                 }
@@ -217,13 +217,13 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
                 // down on the way into its backoff too.
                 if attachment.is_linked() {
                     told_unreachable = false;
-                    if !send_within(&mut sender, Message::Text(RELINKED_NOTE.into()), SEND_LIMIT, &state.cancel).await {
+                    if !send_within(&mut sender, Message::Text(RELINKED_NOTE.into()), state.send_limit, &state.cancel).await {
                         break;
                     }
                 }
             }
             alive = heartbeat.tick() => {
-                if !alive || !send_within(&mut sender, Message::Ping(Default::default()), SEND_LIMIT, &state.cancel).await {
+                if !alive || !send_within(&mut sender, Message::Ping(Default::default()), state.send_limit, &state.cancel).await {
                     break;
                 }
             }
@@ -234,31 +234,6 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     // rather than for as long as the goodbye takes.
     drop(attachment);
     close_gracefully(sender, receiver, CLOSE_GRACE, &state.cancel).await;
-}
-
-/// How long one frame may take to leave before its client is given up on.
-///
-/// The heartbeat's idle limit, for the same reason: a client that has not
-/// taken a frame in that long is as gone as one that has not sent one. Without
-/// a bound, a client that stopped reading altogether parked its socket task on
-/// a full TCP window for good, with its queue, and the heartbeat could not
-/// fire while the send was waiting.
-const SEND_LIMIT: std::time::Duration = crate::api::IDLE_LIMIT;
-
-/// The terminal socket's write half.
-type Sender = futures_util::stream::SplitSink<WebSocket, Message>;
-
-/// Send one frame, and say whether it went: `false` for a closed socket, a
-/// client that took no frame for `limit`, or a server shutting down.
-///
-/// Biased toward the send, so a frame that can go at once still goes during
-/// a shutdown; only one that would have to wait gives way to it.
-async fn send_within(sender: &mut Sender, message: Message, limit: std::time::Duration, shutdown: &tokio_util::sync::CancellationToken) -> bool {
-    tokio::select! {
-        biased;
-        sent = tokio::time::timeout(limit, sender.send(message)) => matches!(sent, Ok(Ok(()))),
-        () = shutdown.cancelled() => false,
-    }
 }
 
 /// How long a closing socket waits for the client to answer its close.
