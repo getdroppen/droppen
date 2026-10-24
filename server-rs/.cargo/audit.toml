@@ -35,4 +35,24 @@ ignore = [
     # rkyv 0.7.46: in the lock through rust_decimal's optional `rkyv` feature,
     # which nothing turns on. Not built.
     "RUSTSEC-2026-0235",
+    # crypto-bigint 0.5.5, through elliptic-curve 0.13 (p256, p384, ecdsa and
+    # primeorder; used by Web Push in `crate::push` and by str0m's DTLS in
+    # `rh-proto/rtc`): branches on secret values in operations meant to be
+    # constant-time, fixed in 0.7.6. None of the fixed code runs on a secret
+    # here. `borrowing_sub`'s branch came with crypto-bigint#1029 (December
+    # 2025; 0.5.5's `sbb` subtracts in a double-width word, branch-free), and
+    # `UintRef` and `BoxedMontyForm` exist only from 0.6/0.7. Zero counting,
+    # `div_rem` and crypto-bigint's own Montgomery multiplication are in 0.5.5,
+    # but the 0.13 curves do not call them on a secret: p256 and p384 bring
+    # their own field arithmetic, and their scalars use only adc/sbb/mac,
+    # add/sub/neg_mod, mul_wide, conditional_select and the ct_* comparisons.
+    # The secrets that reach them: the VAPID signing key (the one long-lived
+    # key: a JWT the server composes, for a subscription only a signed-in user
+    # can add), and keys that sign or agree once, so a timing channel has a
+    # single sample of each: Web Push's ephemeral ECDH key (one per message),
+    # DTLS's ECDHE key (one per handshake) and its certificate key (str0m
+    # makes one for every direct-path attempt). Fixed only in elliptic-curve
+    # 0.14, which str0m's `rust-crypto` backend (str0m-rust-crypto 0.6,
+    # dimpl 0.8) does not accept yet; tracked in #105.
+    "RUSTSEC-2026-0387",
 ]
