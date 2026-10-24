@@ -4,7 +4,7 @@
 //! invite, register its keys, create the account's genesis on chain v3
 //! (generating `AK` and dropping it: [`Device::create_genesis3`]), issue an
 //! enrollment code, check the agent's proof before adding the host with its
-//! first machine key epoch ([`Device::complete_enrollment_v3`]), mail it that
+//! first machine key epoch ([`Device::enroll_host3`]), mail it that
 //! key, vouch for its chain head, and open end-to-end channels to the machine
 //! over the hub's `/v1/client` socket — rpc, mux and term streams through the
 //! agent's loopback bridge ([`rh_proto::bridge`]).
@@ -319,7 +319,8 @@ impl Device {
 
     /// [`Device::complete_enrollment`] for chain v3: add the host as a device
     /// that runs AI (and manages the account if `admin`), with its first
-    /// machine key epoch in the same batch.
+    /// machine key epoch in the same batch — the bare batch, nothing checked
+    /// or done around it ([`Device::enroll_host3`] is what the web does).
     pub async fn complete_enrollment_v3(&mut self, code: &EnrollCode, admin: bool, mk: &[u8; 32], timeout: Duration) -> Result<MachineInfo> {
         let machine = self.await_proof(code, timeout).await?;
         let device = rh_proto::chain::DeviceV3 {

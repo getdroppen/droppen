@@ -223,8 +223,14 @@ impl Device {
     /// the current user key.
     pub async fn wrap_machine_key(&self, machine: &str, mk_epoch: u32, mk: &[u8; 32]) -> Result<()> {
         let uk_epoch = self.current_user_epoch().ok_or("no user key")?;
+        self.wrap_machine_key_under(machine, mk_epoch, uk_epoch, mk).await
+    }
+
+    /// [`Device::wrap_machine_key`] under user key epoch `uk_epoch`.
+    pub async fn wrap_machine_key_under(&self, machine: &str, mk_epoch: u32, uk_epoch: u32, mk: &[u8; 32]) -> Result<()> {
+        let uk = self.user_keys.get(&uk_epoch).ok_or("no such user key")?;
         let ctx = context::machine_key_under_user_key(&self.account, machine, mk_epoch, uk_epoch);
-        let wrapped = wrap::wrap_under(&self.user_keys[&uk_epoch], &ctx, mk, &mut OsRng).map_err(err("wrap"))?;
+        let wrapped = wrap::wrap_under(uk, &ctx, mk, &mut OsRng).map_err(err("wrap"))?;
         // Names end with their writer, and the hub takes them only for committed epochs.
         self.put_key(&format!("mk/{machine}/{mk_epoch}/{uk_epoch}/{}", self.id), &wrapped.encode())
             .await?;
@@ -453,8 +459,12 @@ impl Device {
         )
         .map_err(err("delivery"))?;
         self.mail(device, MAIL_PAIRING, 0, &delivery.encode()).await?;
+        // The pairing stands whatever happens to the host keys (as the web's
+        // `pairDevice`): the device asks for what it lacks (purpose 4).
         if !admin {
-            self.send_host_keys(device).await?;
+            if let Err(e) = self.send_host_keys(device).await {
+                eprintln!("rh-devkit: could not send {device} the hosts' keys (it asks again): {e}");
+            }
         }
         Ok(())
     }
@@ -665,14 +675,18 @@ impl Device {
             self.wrap_machine_key(machine, *epoch, mk).await?;
             rotated.push((machine.clone(), *epoch, *mk));
         }
-        self.mail_user_key(uk_epoch).await?;
+        if let Some((to, why)) = self.mail_user_key(uk_epoch).await?.into_iter().next() {
+            return Err(format!("the new user key did not go to {to}: {why}"));
+        }
         Ok((uk_epoch, rotated))
     }
 
-    /// Seal user key `epoch` to every other current admin and mail it.
-    async fn mail_user_key(&self, epoch: u32) -> Result<()> {
+    /// Seal user key `epoch` to every other current admin and mail it; the
+    /// ones it did not reach, `(device, why)`.
+    async fn mail_user_key(&self, epoch: u32) -> Result<Vec<(String, String)>> {
         let chain = self.chain.as_ref().ok_or("no chain")?;
         let uk = self.user_keys.get(&epoch).ok_or("no such user key")?;
+        let mut failed = Vec::new();
         for d in chain.admins().filter(|d| d.info.id != self.id) {
             let ctx = SealContext {
                 purpose: Purpose::UserKey,
@@ -681,44 +695,104 @@ impl Device {
                 recipient: d.info.id.clone(),
                 epoch,
             };
-            let sealed = wrap::seal_to(&self.dh, &d.info.dh_key, &ctx, uk, &mut OsRng).map_err(err("seal"))?;
-            self.mail(&d.info.id, MAIL_USER_KEY, epoch, &sealed.encode()).await?;
+            let sent = match wrap::seal_to(&self.dh, &d.info.dh_key, &ctx, uk, &mut OsRng) {
+                Ok(sealed) => self.mail(&d.info.id, MAIL_USER_KEY, epoch, &sealed.encode()).await,
+                Err(e) => Err(format!("seal: {e}")),
+            };
+            if let Err(why) = sent {
+                failed.push((d.info.id.clone(), why));
+            }
         }
-        Ok(())
+        Ok(failed)
     }
 
-    /// Chain v3 (as the web's `removeDevice` for a device that held the user
-    /// key, and its `rotate`): remove `device` and, in the same batch, commit
-    /// a new user key epoch and a new machine key epoch for every remaining
-    /// current host (`[RemoveDevice3, KeyEpochs…]`). Then, in
-    /// [`Device::rotate`]'s order, the recovery package of every user key
-    /// epoch this device holds, each new machine key wrapped into the keyring
-    /// under the new user key, the new user key mailed to the other admins,
-    /// and each new machine key sealed to the devices that are not admins and
-    /// that its host accepts (purpose 5). The user key turns over whatever
-    /// `device` was (as v2's [`Device::remove_and_rotate`]; for a device
-    /// that never held it the web turns only the hosts' keys over:
-    /// [`Device::remove3_and_rotate_hosts`]). Returns the new `(uk_epoch,
-    /// [(host, mk_epoch, mk)])` for the caller to hand to the agents (in a
-    /// channel, or [`Device::mail_machine_key`]). Only on a chain that holds a
-    /// v3 entry.
-    pub async fn remove_and_rotate3(&mut self, device: &str) -> Result<(u32, Vec<(String, u32, [u8; 32])>)> {
-        use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit, KeyCommits, MAX_KEY_COMMITS};
+    /// Whether a batch that issues machine keys may wrap them under the
+    /// newest user key, as the web's `commitHostKey` and `rotate` decide
+    /// before anything is committed: `Some(epoch)`, the newest epoch, which
+    /// this device holds as the chain committed it; `None`, the newest is
+    /// stale ([`user_key_stale`]: a device that held it no longer manages the
+    /// account), so a new one must come in the same batch. An error when this
+    /// device is not an admin, or lacks the newest user key (take it from
+    /// the mail first). On this device's view of the chain: sync it first.
+    pub fn usable_user_key(&self) -> Result<Option<u32>> {
+        let chain = self.chain.as_ref().ok_or("no chain")?;
+        if chain.admin(&self.id).is_none() {
+            return Err("only a device that manages the account issues keys".into());
+        }
+        if user_key_stale(chain) {
+            return Ok(None);
+        }
+        let latest = chain.latest_user_epoch().ok_or("the account has no user key yet")?;
+        let uk = self
+            .user_keys
+            .get(&latest)
+            .ok_or_else(|| format!("this device does not hold user key epoch {latest}, the newest (take it from the mail first)"))?;
+        chain
+            .check_user_key(latest, uk)
+            .map_err(|e| format!("user key epoch {latest}: {e}"))?;
+        Ok(Some(latest))
+    }
+
+    /// Keep a user key epoch just committed (as the web's `keepUserKey`,
+    /// then its `mailUserKey`): held here, the recovery package of every
+    /// epoch held, and mailed to the other admins. What did not go is said
+    /// in `failed`, never undoing the commit.
+    async fn keep_user_key(&mut self, epoch: u32, uk: [u8; 32], failed: &mut Vec<String>) {
+        self.user_keys.insert(epoch, uk);
+        for e in self.user_keys.keys().copied().collect::<Vec<_>>() {
+            if let Err(why) = self.seal_recovery_package(e).await {
+                failed.push(format!("recovery package of user key epoch {e}: {why}"));
+            }
+        }
+        match self.mail_user_key(epoch).await {
+            Ok(missed) => failed.extend(missed.into_iter().map(|(to, why)| format!("user key epoch {epoch} to {to}: {why}"))),
+            Err(why) => failed.push(format!("user key epoch {epoch}: {why}")),
+        }
+    }
+
+    /// Chain v3, as the web's `rotate`: `prefix` (a removal) and, in the same
+    /// batch, a new machine key epoch for every current host the batch keeps,
+    /// with a new user key epoch when `user_key`, or when the newest is
+    /// stale. Machine keys alone go under the newest user key, which this
+    /// device must hold ([`Device::usable_user_key`]: checked before anything
+    /// is committed). Then, in this order, the new user key kept (recovery
+    /// packages, mailed to the other admins), each machine key wrapped into
+    /// the keyring, and each sealed to the devices that are not admins and
+    /// that its host accepts (purpose 5). Nothing after the commit undoes it:
+    /// what did not go is logged and said in [`Rotation3::failed`].
+    async fn rotate3(&mut self, prefix: Vec<Action>, user_key: bool) -> Result<Rotation3> {
+        use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit};
         self.sync_chain().await?;
         let chain = self.chain.clone().ok_or("no chain")?;
         if !chain.is_v3() {
-            return Err("the chain holds no v3 entry: RemoveDevice3 goes only on an account on chain v3".into());
+            return Err("the chain holds no v3 entry: this rotation goes only on an account on chain v3".into());
         }
-        let mut uk = [0u8; 32];
-        OsRng.fill_bytes(&mut uk);
+        if chain.admin(&self.id).is_none() {
+            return Err("only a device that manages the account rotates the keys".into());
+        }
+        // Machine keys never go under a stale user key: a new one comes with them then.
+        let with_user_key = user_key || user_key_stale(&chain);
+        let wrap_epoch = if with_user_key { None } else { self.usable_user_key()? };
+        // The hosts the batch takes out get no new key.
+        let gone: Vec<&str> = prefix
+            .iter()
+            .filter_map(|a| match a {
+                Action::RemoveDevice3(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let fresh = with_user_key.then(crate::random_key);
         let uk_epoch = chain.user_key_epochs();
-        // The hosts the batch leaves (not `device`, if it is one) get a new key each.
-        let rotated: Vec<(String, u32, [u8; 32])> = chain
+        let machines: Vec<(String, u32, [u8; 32])> = chain
             .hosts()
-            .filter(|h| h.is_current_host() && h.info.id != device)
+            .filter(|h| h.is_current_host() && !gone.contains(&h.info.id.as_str()))
             .map(|h| (h.info.id.clone(), chain.machine_key_epochs(&h.info.id), crate::random_key()))
             .collect();
-        let commits: Vec<(String, KeyCommit)> = rotated
+        let user = fresh.map(|uk| KeyCommit {
+            epoch: uk_epoch,
+            hash: user_key_commit(&self.account, uk_epoch, &uk),
+        });
+        let commits = machines
             .iter()
             .map(|(id, epoch, mk)| {
                 (
@@ -730,59 +804,129 @@ impl Device {
                 )
             })
             .collect();
-        let mut chunks = commits.chunks(MAX_KEY_COMMITS);
-        let mut actions = vec![
-            Action::RemoveDevice3(device.into()),
-            Action::KeyEpochs(KeyCommits {
-                user: Some(KeyCommit {
-                    epoch: uk_epoch,
-                    hash: user_key_commit(&self.account, uk_epoch, &uk),
-                }),
-                machines: chunks.next().map(<[_]>::to_vec).unwrap_or_default(),
-            }),
-        ];
-        actions.extend(chunks.map(|c| {
-            Action::KeyEpochs(KeyCommits {
-                user: None,
-                machines: c.to_vec(),
-            })
-        }));
+        let mut actions = prefix;
+        actions.extend(key_epochs(user, commits));
         self.append_batch(actions).await?;
-        self.user_keys.insert(uk_epoch, uk);
-        for epoch in self.user_keys.keys().copied().collect::<Vec<_>>() {
-            self.seal_recovery_package(epoch).await?;
+        // Committed: now the keys may be used.
+        let mut failed = Vec::new();
+        if let Some(uk) = fresh {
+            self.keep_user_key(uk_epoch, uk, &mut failed).await;
         }
-        for (host, epoch, mk) in &rotated {
-            self.wrap_machine_key(host, *epoch, mk).await?;
+        let wrap_under = if fresh.is_some() { uk_epoch } else { wrap_epoch.expect("checked") };
+        for (host, epoch, mk) in &machines {
+            if let Err(why) = self.wrap_machine_key_under(host, *epoch, wrap_under, mk).await {
+                failed.push(format!("keyring copy of {host}'s key epoch {epoch}: {why}"));
+            }
         }
-        self.mail_user_key(uk_epoch).await?;
-        for (host, epoch, mk) in &rotated {
-            self.mail_host_key(host, *epoch, mk).await?;
+        for (host, epoch, mk) in &machines {
+            let mail = self.mail_host_key(host, *epoch, mk).await?;
+            failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{host}'s key epoch {epoch} to {to}: {why}")));
         }
-        Ok((uk_epoch, rotated))
+        for why in &failed {
+            eprintln!("rh-devkit: after the rotation: {why}");
+        }
+        Ok(Rotation3 {
+            uk_epoch: fresh.map(|_| uk_epoch),
+            machines,
+            failed,
+        })
+    }
+
+    /// Chain v3, as the web's `removeDevice`: remove `device` and, in the same
+    /// batch, turn the keys over (`[RemoveDevice3, KeyEpochs…]`, as the web's
+    /// `rotate`): a new machine key epoch for every host the
+    /// account keeps, and a new user key epoch when `device` ever held the
+    /// user key ([`held_user_key`], by the chain's history, not its flags
+    /// now) or the newest is stale — never for a limited device or a host
+    /// that never held it. The machine keys are in the report, for the caller
+    /// to hand to the agents (in a channel, or [`Device::mail_machine_key`]).
+    /// Only on a chain that holds a v3 entry.
+    pub async fn remove_and_rotate3(&mut self, device: &str) -> Result<Rotation3> {
+        self.sync_chain().await?;
+        let held = held_user_key(self.chain.as_ref().ok_or("no chain")?, device);
+        self.rotate3(vec![Action::RemoveDevice3(device.into())], held).await
+    }
+
+    /// Chain v3, as the web's `completeEnrollment`: wait for the agent's
+    /// proof of `code`, check it, and add the host with exactly the keys it
+    /// covers, its first machine key epoch `mk` in the same batch
+    /// (`[AddDevice3{host}, KeyEpochs]`; never an admin, review D1). Before
+    /// anything is asked of the hub, this device must hold a usable user key
+    /// ([`Device::usable_user_key`]); while the newest is stale the batch
+    /// carries a new one, which is kept as a rotation keeps it. Then `mk` is
+    /// wrapped into the keyring and sealed to the devices that are not admins
+    /// and that the host accepts (none until an admin lets one). The caller
+    /// hands `mk` to the agent ([`Device::mail_machine_key`], or a channel).
+    /// [`Device::complete_enrollment_v3`] is the bare batch.
+    pub async fn enroll_host3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32], timeout: Duration) -> Result<rh_proto::chain::MachineInfo> {
+        use rh_proto::chain::{machine_key_commit, user_key_commit, DeviceV3, Flags, KeyCommit};
+        self.sync_chain().await?;
+        if !self.chain.as_ref().ok_or("no chain")?.is_v3() {
+            return Err("the chain holds no v3 entry: a host joins this way only on an account on chain v3".into());
+        }
+        let wrap_epoch = self.usable_user_key()?;
+        let machine = self.await_proof(code, timeout).await?;
+        self.sync_chain().await?;
+        let chain = self.chain.clone().ok_or("no chain")?;
+        // On the chain as it stands now: a new user key when its newest is stale, or is not the one checked above.
+        let fresh = (user_key_stale(&chain) || wrap_epoch.is_none() || chain.latest_user_epoch() != wrap_epoch).then(crate::random_key);
+        let uk_epoch = chain.user_key_epochs();
+        let mk_epoch = chain.machine_key_epochs(&machine.id);
+        let user = fresh.map(|uk| KeyCommit {
+            epoch: uk_epoch,
+            hash: user_key_commit(&self.account, uk_epoch, &uk),
+        });
+        let commit = KeyCommit {
+            epoch: mk_epoch,
+            hash: machine_key_commit(&self.account, &machine.id, mk_epoch, mk),
+        };
+        let mut actions = vec![Action::AddDevice3(DeviceV3 {
+            id: machine.id.clone(),
+            sign_key: machine.sign_key,
+            dh_key: machine.dh_key,
+            flags: Flags { host: true, admin: false },
+        })];
+        actions.extend(key_epochs(user, vec![(machine.id.clone(), commit)]));
+        self.append_batch(actions).await?;
+        let mut failed = Vec::new();
+        if let Some(uk) = fresh {
+            self.keep_user_key(uk_epoch, uk, &mut failed).await;
+        }
+        let wrap_under = if fresh.is_some() { uk_epoch } else { wrap_epoch.expect("checked") };
+        self.wrap_machine_key_under(&machine.id, mk_epoch, wrap_under, mk).await?;
+        self.mail_host_key(&machine.id, mk_epoch, mk).await?;
+        for why in &failed {
+            eprintln!("rh-devkit: after adding {}: {why}", machine.id);
+        }
+        Ok(machine)
     }
 
     /// Chain v3, S1-4 (as the web's `mailHostKey`): seal host `host`'s key
     /// epoch `epoch` to every current device that is not an admin and that
     /// the host accepts control from, and mail it (purpose 5). A host's
-    /// device role that has not signed in at the hub yet is skipped (it asks
-    /// for its keys once it does). Who got it.
-    pub async fn mail_host_key(&self, host: &str, epoch: u32, mk: &[u8; 32]) -> Result<Vec<String>> {
+    /// device role that has not signed in at the hub yet is `waiting` (it
+    /// asks for its keys once it does). A mail that does not go is said in
+    /// `failed` (and logged), the others still sent: the device asks for it
+    /// again (purpose 4).
+    pub async fn mail_host_key(&self, host: &str, epoch: u32, mk: &[u8; 32]) -> Result<HostKeyMail> {
         let chain = self.chain.as_ref().ok_or("no chain")?;
-        let mut sent = Vec::new();
+        let mut out = HostKeyMail::default();
         for d in chain.devices() {
             let id = &d.info.id;
             if !d.is_active() || d.admin || *id == self.id || chain.may_control(id, host).is_err() {
                 continue;
             }
             match self.seal_host_key_to(id, &d.info.dh_key, host, epoch, mk).await {
-                Ok(()) => sent.push(id.clone()),
+                Ok(()) => out.sent.push(id.clone()),
                 // The hub's refusal for a host's device role that never signed in (docs/hub-api/http.md, `POST /v1/mailbox`).
-                Err(e) if d.host && e.contains("gets it once it signs in as a device") => {}
-                Err(e) => return Err(e),
+                Err(e) if d.host && e.contains("gets it once it signs in as a device") => out.waiting.push(id.clone()),
+                Err(e) => {
+                    eprintln!("rh-devkit: could not mail {host}'s key epoch {epoch} to {id}: {e}");
+                    out.failed.push((id.clone(), e));
+                }
             }
         }
-        Ok(sent)
+        Ok(out)
     }
 
     async fn seal_host_key_to(&self, to: &str, to_dh: &[u8; 32], host: &str, epoch: u32, mk: &[u8; 32]) -> Result<()> {
@@ -798,48 +942,19 @@ impl Device {
             .await
     }
 
-    /// Chain v3, S1-4: remove `device` and, in the same batch, turn every
-    /// remaining current host's machine key over (`[RemoveDevice3,
-    /// KeyEpochs]` — what the web writes for a device that held no user key
-    /// but could control hosts: their keys, never the user key), each new key
-    /// wrapped into the keyring. `(host, epoch, key)` for the caller to hand
-    /// to the agents.
-    pub async fn remove3_and_rotate_hosts(&mut self, device: &str) -> Result<Vec<(String, u32, [u8; 32])>> {
-        use rh_proto::chain::{machine_key_commit, KeyCommit, KeyCommits};
+    /// Chain v3, S1-4: remove `device`, which never held the user key (a
+    /// limited device, or a host's device role), and in the same batch turn
+    /// every remaining host's machine key over — as the web's `rotate` with
+    /// `userKey: false`: the user key stays, unless the
+    /// newest is stale, when a new one comes with them. A device that ever
+    /// held the user key is refused here: [`Device::remove_and_rotate3`]
+    /// turns that over too.
+    pub async fn remove3_and_rotate_hosts(&mut self, device: &str) -> Result<Rotation3> {
         self.sync_chain().await?;
-        let chain = self.chain.clone().ok_or("no chain")?;
-        let hosts: Vec<(String, [u8; 32])> = chain
-            .hosts()
-            .filter(|m| m.is_current_host() && m.info.id != device)
-            .map(|m| (m.info.id.clone(), crate::random_key()))
-            .collect();
-        let commits = KeyCommits {
-            user: None,
-            machines: hosts
-                .iter()
-                .map(|(id, mk)| {
-                    let epoch = chain.machine_key_epochs(id);
-                    (
-                        id.clone(),
-                        KeyCommit {
-                            epoch,
-                            hash: machine_key_commit(&self.account, id, epoch, mk),
-                        },
-                    )
-                })
-                .collect(),
-        };
-        let epochs: Vec<u32> = commits.machines.iter().map(|(_, c)| c.epoch).collect();
-        self.append_batch(vec![Action::RemoveDevice3(device.into()), Action::KeyEpochs(commits)])
-            .await?;
-        let mut rotated = Vec::new();
-        for ((id, mk), epoch) in hosts.into_iter().zip(epochs) {
-            if self.current_user_epoch().is_some() {
-                self.wrap_machine_key(&id, epoch, &mk).await?;
-            }
-            rotated.push((id, epoch, mk));
+        if held_user_key(self.chain.as_ref().ok_or("no chain")?, device) {
+            return Err(format!("{device} held the user key: remove it with remove_and_rotate3, which turns that over too"));
         }
-        Ok(rotated)
+        self.rotate3(vec![Action::RemoveDevice3(device.into())], false).await
     }
 
     /// Chain v3, S1-4 (as the web's `sendHostKeys`): seal every committed
@@ -917,6 +1032,85 @@ impl Device {
     pub fn account_fingerprint(&self) -> Option<[u8; 16]> {
         self.chain.as_ref().map(|c| fingerprint(&c.account_key()))
     }
+}
+
+/// What a chain v3 rotation committed ([`Device::remove_and_rotate3`],
+/// [`Device::remove3_and_rotate_hosts`]).
+#[derive(Debug, Clone, Default)]
+pub struct Rotation3 {
+    /// The new user key epoch, if one was committed.
+    pub uk_epoch: Option<u32>,
+    /// `(host, epoch, key)`: each host's new machine key, for the caller to
+    /// hand to its agent.
+    pub machines: Vec<(String, u32, [u8; 32])>,
+    /// What did not go after the commit (a mail, a keyring copy, a recovery
+    /// package), in words: none of it undoes the rotation.
+    pub failed: Vec<String>,
+}
+
+/// Where one host key epoch went ([`Device::mail_host_key`]).
+#[derive(Debug, Clone, Default)]
+pub struct HostKeyMail {
+    pub sent: Vec<String>,
+    /// `(device, why)`.
+    pub failed: Vec<(String, String)>,
+    /// Hosts' device roles that have not signed in at the hub yet.
+    pub waiting: Vec<String>,
+}
+
+/// `KeyEpochs` entries for `user` and `machines` (as the web's `rotate`):
+/// the user key with the first [`rh_proto::chain::MAX_KEY_COMMITS`] machine
+/// keys, the rest in entries of their own; none when there is nothing.
+pub(crate) fn key_epochs(user: Option<rh_proto::chain::KeyCommit>, machines: Vec<(String, rh_proto::chain::KeyCommit)>) -> Vec<Action> {
+    use rh_proto::chain::{KeyCommits, MAX_KEY_COMMITS};
+    if user.is_none() && machines.is_empty() {
+        return Vec::new();
+    }
+    let mut chunks = machines.chunks(MAX_KEY_COMMITS);
+    let mut out = vec![Action::KeyEpochs(KeyCommits {
+        user,
+        machines: chunks.next().map(<[_]>::to_vec).unwrap_or_default(),
+    })];
+    out.extend(chunks.map(|c| {
+        Action::KeyEpochs(KeyCommits {
+            user: None,
+            machines: c.to_vec(),
+        })
+    }));
+    out
+}
+
+/// Whether device `id` ever held the user key, by `chain`'s entries (as the
+/// web's `heldUserKey`, review 1) — not by its flags now: it was ever an
+/// admin (a v2 full device, a v3 admin, made one by `SetAdmin`) or came
+/// back with the recovery words.
+pub fn held_user_key(chain: &ChainState, id: &str) -> bool {
+    chain.entries().iter().any(|e| match &e.draft.action {
+        Action::Genesis { device, .. } | Action::AddDevice(device) => device.id == id && device.full,
+        Action::Genesis3 { device, .. } | Action::AddDevice3(device) => device.id == id && device.flags.admin,
+        Action::RecoveryJoin(device) => device.id == id,
+        Action::RecoveryJoin3(device) => device.id == id,
+        Action::SetAdmin { id: who, admin } => who == id && *admin,
+        _ => false,
+    })
+}
+
+/// Whether the newest user key is still one a device that no longer manages
+/// the account held (as the web's `userKeyStale`): no `KeyEpochs` with a
+/// user key since the chain's last removal of a device that ever held it
+/// ([`held_user_key`]) or its last `SetAdmin false`. Nothing new is wrapped
+/// under it: a batch that issues machine keys then carries a new user key.
+pub fn user_key_stale(chain: &ChainState) -> bool {
+    let entries = chain.entries();
+    let lost = entries.iter().rposition(|e| match &e.draft.action {
+        Action::RemoveDevice(id) | Action::RemoveDevice3(id) => held_user_key(chain, id),
+        Action::SetAdmin { admin, .. } => !*admin,
+        _ => false,
+    });
+    let Some(lost) = lost.filter(|&seq| seq > 0) else { return false };
+    !entries[lost + 1..]
+        .iter()
+        .any(|e| matches!(&e.draft.action, Action::KeyEpochs(k) if k.user.is_some()))
 }
 
 /// The machine key epochs of `machine` that `entries` (the keyring, `(name,
@@ -1141,6 +1335,87 @@ mod tests {
         );
         let only_bad = vec![("mk/m-1/0/0/d-2".to_string(), mk_copy(&[0x66; 32]))];
         assert!(open_machine_copies(&f.chain, &user_keys, "m-1", &only_bad).is_empty());
+    }
+
+    #[test]
+    fn who_held_the_user_key_and_when_it_is_stale_follow_the_chains_history() {
+        let mut f = fixture(true);
+        assert!(held_user_key(&f.chain, "d-1") && held_user_key(&f.chain, "d-2"));
+        assert!(!held_user_key(&f.chain, "m-1") && !held_user_key(&f.chain, "d-9"));
+        assert!(!user_key_stale(&f.chain));
+        // A demotion leaves the user key stale; it still held it.
+        apply(
+            &mut f.chain,
+            &f.d1,
+            "d-1",
+            Action::SetAdmin {
+                id: "d-2".into(),
+                admin: false,
+            },
+        );
+        assert!(user_key_stale(&f.chain) && held_user_key(&f.chain, "d-2"));
+        // A machine key alone does not freshen it; a new user key does.
+        let commit = |user: bool| KeyCommits {
+            user: user.then(|| KeyCommit {
+                epoch: 1,
+                hash: user_key_commit(ACCOUNT, 1, &[0x11; 32]),
+            }),
+            machines: vec![(
+                "m-1".into(),
+                KeyCommit {
+                    epoch: 1,
+                    hash: machine_key_commit(ACCOUNT, "m-1", 1, &[0x21; 32]),
+                },
+            )],
+        };
+        apply(&mut f.chain, &f.d1, "d-1", Action::KeyEpochs(commit(false)));
+        assert!(user_key_stale(&f.chain));
+        let mut fresh = commit(true);
+        fresh.machines.clear();
+        apply(&mut f.chain, &f.d1, "d-1", Action::KeyEpochs(fresh));
+        assert!(!user_key_stale(&f.chain));
+        // Removing a device that held it leaves it stale again; a host's removal does not.
+        let mut g = fixture(true);
+        apply(&mut g.chain, &g.d1, "d-1", Action::RemoveDevice3("m-1".into()));
+        assert!(!user_key_stale(&g.chain));
+        apply(&mut g.chain, &g.d1, "d-1", Action::RemoveDevice3("d-2".into()));
+        assert!(user_key_stale(&g.chain));
+    }
+
+    #[test]
+    fn key_epochs_split_past_the_entrys_limit_as_the_web_does() {
+        use rh_proto::chain::MAX_KEY_COMMITS;
+        let user = || {
+            Some(KeyCommit {
+                epoch: 3,
+                hash: [1; 32],
+            })
+        };
+        let machines = |n: usize| -> Vec<(String, KeyCommit)> {
+            (0..n)
+                .map(|i| (format!("m-{i}"), KeyCommit { epoch: 0, hash: [2; 32] }))
+                .collect()
+        };
+        assert!(key_epochs(None, Vec::new()).is_empty());
+        let shape = |actions: Vec<Action>| -> Vec<(bool, usize)> {
+            actions
+                .into_iter()
+                .map(|a| match a {
+                    Action::KeyEpochs(k) => (k.user.is_some(), k.machines.len()),
+                    _ => panic!("only KeyEpochs"),
+                })
+                .collect()
+        };
+        assert_eq!(shape(key_epochs(user(), Vec::new())), [(true, 0)]);
+        assert_eq!(shape(key_epochs(None, machines(3))), [(false, 3)]);
+        assert_eq!(
+            shape(key_epochs(user(), machines(MAX_KEY_COMMITS + 44))),
+            [(true, MAX_KEY_COMMITS), (false, 44)]
+        );
+        assert_eq!(
+            shape(key_epochs(None, machines(2 * MAX_KEY_COMMITS + 1))),
+            [(false, MAX_KEY_COMMITS), (false, MAX_KEY_COMMITS), (false, 1)]
+        );
     }
 
     #[test]

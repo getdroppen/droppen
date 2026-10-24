@@ -1409,8 +1409,11 @@ async fn remove(args: &[String]) -> R<()> {
     } else {
         for id in &ids {
             let turned = d.remove3_and_rotate_hosts(id).await?;
-            log!("removed {} (the remaining hosts' machine keys turned over: {:?})", st.label(id), turned.iter().map(|(h, e, _)| (st.label(h), *e)).collect::<Vec<_>>());
-            for (h, e, k) in turned {
+            log!("removed {} (the remaining hosts' machine keys turned over: {:?})", st.label(id), turned.machines.iter().map(|(h, e, _)| (st.label(h), *e)).collect::<Vec<_>>());
+            if let Some(e) = turned.uk_epoch {
+                st.user_keys.insert(e, hex(&d.user_keys[&e]));
+            }
+            for (h, e, k) in turned.machines {
                 st.mks.entry(h).or_default().insert(e, hex(&k));
             }
         }

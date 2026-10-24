@@ -127,6 +127,13 @@ impl Session {
             }
             ["enroll"] => {
                 let v3 = self.v3().await?;
+                // Chain v3: the first machine key goes under a user key this
+                // device holds (or a new one, while the newest is stale) —
+                // known before a code is issued, as the web checks it before
+                // it commits the host.
+                if v3 {
+                    self.device.usable_user_key()?;
+                }
                 let code = self.device.new_enrollment().await?;
                 println!("CODE {code}");
                 if !v3 {
@@ -137,12 +144,11 @@ impl Session {
                 }
                 // Chain v3: the host joins with its first machine key epoch in
                 // the same batch (`[AddDevice3{host}, KeyEpochs]`), never an
-                // admin (review D1); the key goes into the keyring and to the
-                // agent's mailbox, as the web's "add a computer" hands it over
-                // when the agent is not reachable in a channel yet.
+                // admin (review D1); the key goes into the keyring (`enroll_host3`)
+                // and to the agent's mailbox, as the web's "add a computer"
+                // hands it over when the agent is not reachable in a channel yet.
                 let mk = rh_devkit::random_key();
                 let machine = self.enroll_v3(&code, &mk).await?;
-                self.device.wrap_machine_key(&machine.id, 0, &mk).await?;
                 self.device.mail_machine_key(&machine.id, 0, &mk).await?;
                 self.reset_link();
                 Ok(format!("enrolled machine {} (chain v3); MK epoch 0 by mail", machine.id))
@@ -153,11 +159,14 @@ impl Session {
                 Ok(format!("approved {device} at seq {seq}"))
             }
             ["remove", device] => {
-                let (uk, rotated) = if self.v3().await? {
-                    self.device.remove_and_rotate3(device).await?
+                // Chain v3: the user key turns over only if the device ever held it.
+                let (uk, rotated, failed) = if self.v3().await? {
+                    let r = self.device.remove_and_rotate3(device).await?;
+                    (r.uk_epoch, r.machines, r.failed)
                 } else {
                     #[allow(deprecated)]
-                    self.device.remove_and_rotate(device).await?
+                    let (uk, rotated) = self.device.remove_and_rotate(device).await?;
+                    (Some(uk), rotated, Vec::new())
                 };
                 self.attest_now().await?;
                 let mut delivered = Vec::new();
@@ -180,7 +189,9 @@ impl Session {
                         }
                     }
                 }
-                Ok(format!("removed {device}; user key epoch {uk}; {}", delivered.join("; ")))
+                let uk = uk.map_or_else(|| "user key kept".to_string(), |e| format!("user key epoch {e}"));
+                let failed = if failed.is_empty() { String::new() } else { format!("; not sent: {}", failed.join("; ")) };
+                Ok(format!("removed {device}; {uk}; {}{failed}", delivered.join("; ")))
             }
             ["keys"] => {
                 let got = self.device.take_user_key_mail().await?;
@@ -295,16 +306,16 @@ impl Session {
         }
     }
 
-    /// [`Device::complete_enrollment_v3`], tried again for a while when the
-    /// hub answers 409 `chain_v3_not_ready` (the agent that just proved the
-    /// code has not declared `chain/3` on its link yet), as the web does.
+    /// [`Device::enroll_host3`], tried again for a minute when the hub
+    /// answers 409 `chain_v3_not_ready` (the agent that just proved the code
+    /// has not declared `chain/3` on its link yet), as the web does.
     async fn enroll_v3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_proto::chain::MachineInfo> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let mut deadline = None;
         let mut timeout = Duration::from_secs(600);
         loop {
-            match self.device.complete_enrollment_v3(code, false, mk, timeout).await {
+            match self.device.enroll_host3(code, mk, timeout).await {
                 Ok(machine) => return Ok(machine),
-                Err(e) if e.contains("chain_v3_not_ready") && tokio::time::Instant::now() < deadline => {
+                Err(e) if e.contains("chain_v3_not_ready") && *deadline.get_or_insert_with(|| tokio::time::Instant::now() + Duration::from_secs(60)) > tokio::time::Instant::now() => {
                     timeout = Duration::from_secs(10);
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     self.device.sync_chain().await?;

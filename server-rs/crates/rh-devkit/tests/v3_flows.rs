@@ -42,6 +42,8 @@ struct Hub {
     account: String,
     devices: u32,
     entries: Vec<Entry>,
+    /// Each `POST /v1/chain` taken: its entries' kinds, in order.
+    batches: Vec<Vec<&'static str>>,
     chain: Option<ChainState>,
     mail: Vec<Mail>,
     mail_seq: i64,
@@ -119,6 +121,7 @@ async fn push_chain(State(hub): State<Shared>, Json(body): Json<Value>) -> Respo
     if let Some(host) = chain.host_key_due() {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_entry", format!("{host} is owed its machine key epoch"));
     }
+    h.batches.push(entries.iter().map(|e| kind(&e.draft.action)).collect());
     h.entries.extend(entries);
     h.chain = Some(chain);
     Json(json!({"seq": h.entries.len() - 1})).into_response()
@@ -300,25 +303,43 @@ fn verify_from_genesis(hub: &Shared) -> ChainState {
     ChainState::verify(&entries, None, &mut ChainClock::history()).unwrap()
 }
 
+fn kind(action: &Action) -> &'static str {
+    match action {
+        Action::Genesis3 { .. } => "Genesis3",
+        Action::KeyEpochs(_) => "KeyEpochs",
+        Action::AddDevice3(_) => "AddDevice3",
+        Action::RemoveDevice3(_) => "RemoveDevice3",
+        Action::SetAccept { .. } => "SetAccept",
+        Action::SetAdmin { .. } => "SetAdmin",
+        Action::RecoveryJoin3(_) => "RecoveryJoin3",
+        Action::Genesis { .. } => "Genesis",
+        Action::AddDevice(_) => "AddDevice",
+        _ => "other",
+    }
+}
+
 fn kinds(chain: &ChainState) -> Vec<(u8, &'static str)> {
-    chain
-        .entries()
-        .iter()
-        .map(|e| {
-            let kind = match &e.draft.action {
-                Action::Genesis3 { .. } => "Genesis3",
-                Action::KeyEpochs(_) => "KeyEpochs",
-                Action::AddDevice3(_) => "AddDevice3",
-                Action::RemoveDevice3(_) => "RemoveDevice3",
-                Action::SetAccept { .. } => "SetAccept",
-                Action::RecoveryJoin3(_) => "RecoveryJoin3",
-                Action::Genesis { .. } => "Genesis",
-                Action::AddDevice(_) => "AddDevice",
-                _ => "other",
-            };
-            (e.draft.version, kind)
-        })
-        .collect()
+    chain.entries().iter().map(|e| (e.draft.version, kind(&e.draft.action))).collect()
+}
+
+/// The last `POST /v1/chain` the hub took, by kind.
+fn last_batch(hub: &Shared) -> Vec<&'static str> {
+    hub.lock().unwrap().batches.last().cloned().unwrap_or_default()
+}
+
+/// The key epochs the hub's chain committed last (`KeyEpochs` of the last batch): `(user epoch, [(host, epoch)])`.
+fn last_commits(hub: &Shared) -> (Option<u32>, Vec<(String, u32)>) {
+    let h = hub.lock().unwrap();
+    let n = h.batches.last().map_or(0, Vec::len);
+    let mut user = None;
+    let mut machines = Vec::new();
+    for e in &h.entries[h.entries.len() - n..] {
+        if let Action::KeyEpochs(k) = &e.draft.action {
+            user = user.or(k.user.as_ref().map(|u| u.epoch));
+            machines.extend(k.machines.iter().map(|(m, c)| (m.clone(), c.epoch)));
+        }
+    }
+    (user, machines)
 }
 
 #[tokio::test]
@@ -369,10 +390,12 @@ async fn a_v3_account_pairs_enrolls_and_removes_as_the_web_does() {
     assert_eq!(paired.unwrap(), 1);
 
     // Removing b: one batch `[RemoveDevice3, KeyEpochs{UK 1, m-1 MK 1}]`.
-    let (uk1, rotated) = a.remove_and_rotate3(&b.id).await.unwrap();
-    assert_eq!(uk1, 1);
-    assert_eq!(rotated.len(), 1);
-    let (host, mk_epoch, mk1) = rotated[0].clone();
+    let rotation = a.remove_and_rotate3(&b.id).await.unwrap();
+    assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"], "one POST");
+    assert_eq!(rotation.uk_epoch, Some(1));
+    assert!(rotation.failed.is_empty(), "{:?}", rotation.failed);
+    assert_eq!(rotation.machines.len(), 1);
+    let (host, mk_epoch, mk1) = rotation.machines[0].clone();
     assert_eq!((host.as_str(), mk_epoch), ("m-1", 1));
 
     let chain = verify_from_genesis(&hub);
@@ -482,4 +505,111 @@ async fn an_account_made_before_chain_v3_still_writes_v2() {
     let chain = verify_from_genesis(&hub);
     assert!(!chain.is_v3());
     assert_eq!(kinds(&chain), vec![(VERSION, "Genesis"), (VERSION, "KeyEpochs"), (VERSION, "AddDevice")]);
+}
+
+/// The host key mails (purpose 5) `to` holds, as `(host, epoch)`.
+fn host_mail(hub: &Shared, to: &str) -> Vec<(String, u32)> {
+    let mut out: Vec<(String, u32)> = mail_for(hub, to, wrap::MAIL_HOST_KEY)
+        .into_iter()
+        .map(|m| (wrap::decode_host_key_mail(&unhex(&m.sealed).unwrap()).unwrap().0, m.epoch))
+        .collect();
+    out.sort();
+    out
+}
+
+/// Pair a fresh device by offer, an admin or a limited one.
+async fn pair(url: &HubUrl, a: &mut Device, admin: bool) -> Device {
+    let mut d = Device::log_in(url, EMAIL, PASSWORD).await.unwrap();
+    let offer = d.offer();
+    a.add_and_deliver3(&offer.device, offer.sign_key, offer.dh_key, &offer.secret, admin)
+        .await
+        .unwrap();
+    d.await_delivery(&offer.secret, SECS).await.unwrap();
+    d
+}
+
+/// Enroll host `id` as the web does, with its first key `mk`.
+async fn enroll(hub: &Shared, a: &mut Device, id: &str, seed: u8, mk: &[u8; 32]) {
+    let code = a.new_enrollment().await.unwrap();
+    prove(hub, &code, &a.account, id, &MachineIdentity::from_seed(&[seed; 32]));
+    a.enroll_host3(&code, mk, SECS).await.unwrap();
+}
+
+#[tokio::test]
+async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
+    let (url, hub) = start_hub("a-turns").await;
+    let mut a = Device::sign_up(&url, "invite", EMAIL, PASSWORD).await.unwrap();
+    a.create_genesis3(false).await.unwrap();
+    let mks: Vec<[u8; 32]> = (0..3).map(|_| rh_devkit::random_key()).collect();
+    enroll(&hub, &mut a, "m-1", 11, &mks[0]).await;
+    assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
+    assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 0)]));
+    enroll(&hub, &mut a, "m-2", 12, &mks[1]).await;
+
+    // m-1 accepts every device: a limited device paired now is handed m-1's
+    // key at once (and m-2's never: it accepts only admins).
+    assert_eq!(a.set_accept("m-1", Accept::All).await.unwrap(), None);
+    let c = pair(&url, &mut a, false).await;
+    assert_eq!(host_mail(&hub, &c.id), [("m-1".to_string(), 0)]);
+    let b = pair(&url, &mut a, true).await;
+    let mut d = pair(&url, &mut a, true).await;
+
+    // A limited device never held the user key: only the hosts' keys turn over.
+    let r = a.remove_and_rotate3(&c.id).await.unwrap();
+    assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"], "one POST");
+    assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 1), ("m-2".into(), 1)]));
+    assert_eq!(r.uk_epoch, None);
+    assert!(r.failed.is_empty(), "{:?}", r.failed);
+    assert_eq!(host_mail(&hub, &c.id), [("m-1".to_string(), 0)], "nothing new for the removed device");
+    // m-1's new key went to the other device m-1 accepts: m-2's device role.
+    assert!(host_mail(&hub, "m-2").contains(&("m-1".to_string(), 1)));
+
+    // A host: the others' keys turn over, it gets none, the user key stays.
+    let r = a.remove_and_rotate3("m-2").await.unwrap();
+    assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
+    assert_eq!((r.uk_epoch, r.machines.iter().map(|(h, e, _)| (h.as_str(), *e)).collect::<Vec<_>>()), (None, vec![("m-1", 2)]));
+
+    // An admin: the user key too, mailed to the other admin.
+    let r = a.remove_and_rotate3(&b.id).await.unwrap();
+    assert_eq!(last_commits(&hub), (Some(1), vec![("m-1".into(), 3)]));
+    assert_eq!(r.uk_epoch, Some(1));
+    assert_eq!(d.take_user_key_mail().await.unwrap(), 1);
+
+    // d demoted: the newest user key is stale (d holds it).
+    a.append(Action::SetAdmin {
+        id: d.id.clone(),
+        admin: false,
+    })
+    .await
+    .unwrap();
+    assert!(rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert_eq!(a.usable_user_key().unwrap(), None);
+    // It held the user key: it is not removed with the hosts' keys alone.
+    assert!(a.remove3_and_rotate_hosts(&d.id).await.is_err());
+    // A host enrolled now carries a new user key in its batch, its key wrapped under that.
+    enroll(&hub, &mut a, "m-3", 13, &mks[2]).await;
+    assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
+    assert_eq!(last_commits(&hub), (Some(2), vec![("m-3".into(), 0)]));
+    assert!(!rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert_eq!(a.usable_user_key().unwrap(), Some(2));
+    assert!(mail_for(&hub, &d.id, wrap::MAIL_USER_KEY).is_empty(), "the demoted device gets no new user key");
+
+    // A limited device removed with the hosts' keys: every current host, the user key kept.
+    let e = pair(&url, &mut a, false).await;
+    let r = a.remove3_and_rotate_hosts(&e.id).await.unwrap();
+    assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
+    assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 4), ("m-3".into(), 1)]));
+    assert_eq!(r.uk_epoch, None);
+    assert!(r.failed.is_empty(), "{:?}", r.failed);
+
+    // Every key committed is in the keyring, as the chain committed it.
+    let chain = verify_from_genesis(&hub);
+    assert!(kinds(&chain).iter().all(|(v, _)| *v == VERSION_3));
+    a.sync_chain().await.unwrap();
+    let m1 = a.machine_keys("m-1").await.unwrap();
+    assert_eq!(m1.keys().copied().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    assert_eq!(m1.get(&0).map(|k| **k), Some(mks[0]));
+    let m3 = a.machine_keys("m-3").await.unwrap();
+    assert_eq!(m3.keys().copied().collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(m3.get(&0).map(|k| **k), Some(mks[2]));
 }
