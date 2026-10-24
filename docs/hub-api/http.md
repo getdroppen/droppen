@@ -532,8 +532,15 @@ again on one is gated: it needs `write`, and that host must have declared
 them itself. Everything else — removal, demotion, key rotation, recovery,
 pairing a device, a policy — is taken in every mode, whatever other hosts
 lag: a rollback to `read` or `off` stops new v3 accounts and new hosts, and
-never freezes an account that is already v3. `403 email_unverified`
-(a v2 or a v3 genesis, here and as a `CHAIN` frame over `/v1/client`).
+never freezes an account that is already v3. `422 chain_v2_genesis`: a
+v2 genesis (`Genesis`). New accounts start on chain v3 (`Genesis3`) in
+every mode, so in `read` and `off` no new account is founded at all. The
+check comes before the e-mail check, so an app from before chain v3 is
+told why. It applies here and to a `CHAIN` frame over `/v1/client`, whose
+`chain_result` error starts with the code. An account founded on v2
+before is unaffected: it takes v2 entries and upgrades with its first v3
+entry. `403 email_unverified` (a v3 genesis, here and as a `CHAIN` frame
+over `/v1/client`).
 `409 rotation_not_ready` (`{error, reason, message, waiting?, ready_ms?}`)
 for a batch that renews a host's identity key (`RotateHostKey`, kind 20),
 sets the account's renewal policy (`SetRenewalPolicy`, kind 21) or pauses

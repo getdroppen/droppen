@@ -304,7 +304,7 @@ DeviceV3   = id str16 | sign_key [32] | dh_key [32] | flags u8      // bit0 = ho
 - 只在 Hub 收 v3 条目时建：`/v1/me` 的 `chain_v3.writable`（建账户前没有 host，门槛只看 `DROPPEN_HUB_CHAIN_V3=write`，2026-10-21 起这是 Hub 的默认值，`read`、`off` 只作显式拨下的总闸）。不收时注册停在创世这一步，页面说明是 Hub 这边的原因、请稍后再试；追加时 Hub 才回 409 `chain_v3_not_ready` 的，也一样。**不退回 v2**：新账户只有 v3 一种设计。
 - 之后的一切（注册可运行 AI 的设备、配对、恢复词、移除与轮换）都写 v3，只读 v2 的 agent 一开始就加不进来（门槛按名字拒绝它）。
 - 开发工具也一样：无头设备 `rh-devkit` 建账户用 `Device::create_genesis3`，`rh-device --sign-up` 与 `web/scripts/cloud-smoke.ts` 都从创世起建在 v3 上；之后的配对（`add_and_deliver3`，口令配对按链的版本写）、注册可运行 AI 的设备（`enroll_host3`，第一轮机器钥同批）、移除与轮换（`remove_and_rotate3`：`[RemoveDevice3, KeyEpochs]` 一批；用户钥只在被移除的设备曾持有它、或最新一轮已过时时才换，同网页）都写 v3。`rh-devkit` 的 v2 流程（`create_genesis`、`create_genesis_with_recovery`、`add_and_deliver`、`complete_enrollment`、`remove_and_rotate`）标为弃用，只留给代表此前账户的测试。
-- Hub 仍收 v2 创世（此前建的账户与测试里代表它们的账户用它），本节其余部分只关乎那些账户。
+- **Hub 不再收新的 v2 创世**（每种 `DROPPEN_HUB_CHAIN_V3` 模式都一样，所以 `read`、`off` 下不建任何新账户）：`POST /v1/chain` 回 422 `chain_v2_genesis`，`CHAIN` 帧的 `chain_result` 也带这个码；它先于邮箱验证判断，v3 之前的旧页面因此能说清原因。此前用 v2 创世建的账户照旧：签入、追加 v2 条目、升级到 v3 都不受影响，本节其余部分只关乎那些账户。
 
 **已有的账户**
 

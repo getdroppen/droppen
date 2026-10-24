@@ -190,7 +190,7 @@ The codes, by status (http.md lists them per route):
 | 408 | `slow_request` (a route that needs no sign-in got its body too slowly: within 10 s, or not at all; the connection is closed) |
 | 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey`, `recently_deleted` (with `until_ms`) |
 | 410 | `expired` (e-mail link), `host_removed` (a dispute statement for a device that left its account), `account_deleted` (`POST /v1/session`, signed by a device of an account being deleted, or deleted within the hold) |
-| 422 | `invalid_entry` (a chain entry the hub's verification refused), `invalid_dispute` |
+| 422 | `invalid_entry` (a chain entry the hub's verification refused), `chain_v2_genesis` (new accounts are v3 only: a v2 genesis is refused), `invalid_dispute` |
 | 429 | `rate` (with `retry_after_ms`), `mail_rate`, `device_rate`, `too_many_pending_devices`, `too_many_enrollments`, `too_many_pairings`, `pairing_full` |
 | 500 | `internal` |
 | 503 | `unavailable` (database, page store), `turnstile_unavailable`, `release_unavailable` (`GET /v1/releases/latest` before the hub has read a release) |
