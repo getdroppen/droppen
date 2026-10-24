@@ -249,7 +249,44 @@ async fn the_spec_is_served_and_names_the_ported_routes() {
     assert!(detail["responses"]["404"].is_object(), "the extra-response registry did not apply");
     assert_eq!(detail["responses"]["default"], Value::Null, "the derived `default` should be replaced");
 
+    // The committed contract is this document (`export-openapi` writes the
+    // same one). A route or doc-comment change that skipped `pnpm gen:api`
+    // leaves `openapi/openapi.json` behind, and `web/src/api/schema.d.ts`,
+    // generated from it, with it.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../openapi/openapi.json");
+    let text = std::fs::read_to_string(path).expect("read openapi/openapi.json");
+    let committed: Value = serde_json::from_str(&text).expect("openapi/openapi.json is JSON");
+    assert!(
+        spec == committed,
+        "openapi/openapi.json is not the spec this server serves (first difference at `{}`): \
+         run `pnpm gen:api` and commit openapi/openapi.json and web/src/api/schema.d.ts",
+        first_difference(&committed, &spec, String::new())
+    );
+
     probe.stop().await;
+}
+
+/// Where two JSON documents first differ, as a JSON pointer.
+fn first_difference(a: &Value, b: &Value, at: String) -> String {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            for key in x.keys().chain(y.keys()) {
+                match (x.get(key), y.get(key)) {
+                    (Some(p), Some(q)) if p == q => {}
+                    (Some(p), Some(q)) => return first_difference(p, q, format!("{at}/{key}")),
+                    _ => return format!("{at}/{key}"),
+                }
+            }
+            at
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+            match x.iter().zip(y).position(|(p, q)| p != q) {
+                Some(i) => first_difference(&x[i], &y[i], format!("{at}/{i}")),
+                None => at,
+            }
+        }
+        _ => at,
+    }
 }
 
 #[tokio::test]

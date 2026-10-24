@@ -31,6 +31,10 @@ jobs:
       # Every hub route and control message the open clients use is in
       # docs/hub-api/index.json, which agrees with the schemas.
       - run: pnpm check:hub-api
+      # web/src/api/schema.d.ts is generated from openapi/openapi.json, the
+      # second half of `pnpm gen:api` (the server's tests check the first:
+      # that the committed openapi.json is the spec the server serves).
+      - run: pnpm --filter @remote-hand/web gen:api && git diff --exit-code -- web/src/api/schema.d.ts
       # The open-source boundary check's own tests (the check itself runs in
       # the server job, which has cargo).
       - run: pnpm test:boundary

@@ -112,7 +112,7 @@
         "description": "`POST /api/accounts` body.",
         "properties": {
           "env": {
-            "description": "The `KEY=VALUE` block, for `kind: env`. Never returned.",
+            "description": "The `KEY=VALUE` block, for `kind: env`. Returned only by\n`GET /api/accounts/{id}/env`.",
             "type": "string"
           },
           "kind": {

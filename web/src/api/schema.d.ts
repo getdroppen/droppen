@@ -2564,7 +2564,10 @@ export interface components {
         };
         /** @description `POST /api/accounts` body. */
         AccountCreate: {
-            /** @description The `KEY=VALUE` block, for `kind: env`. Returned only by `GET /api/accounts/{id}/env`. */
+            /**
+             * @description The `KEY=VALUE` block, for `kind: env`. Returned only by
+             *     `GET /api/accounts/{id}/env`.
+             */
             env?: string;
             /** @description How it authenticates. */
             kind: components["schemas"]["AccountKind"];
