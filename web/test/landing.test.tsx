@@ -23,7 +23,7 @@ import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/d
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
 import { JOURNEY_STEPS, journeyLayout, journeyWires, stepAt } from "../src/features/landing/journey.js";
 import LandingPage from "../src/features/landing/landing.js";
-import { cipherOf, corners, pointAt, type Pt, seal } from "../src/features/landing/motion.js";
+import { cipherOf, corners, pointAt, type Pt, seal, wide } from "../src/features/landing/motion.js";
 import { APP_PATH, bootRoute, isAuthPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
 import type { SignupMode } from "../src/lib/hub/api.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -290,6 +290,16 @@ test("a line seals into ciphertext of the same shape, and opens back", () => {
     assert.equal(seal(line, 1, 7), cipher);
     assert.equal(seal(line, 0.5, 7, 3), seal(line, 0.5, 7, 3), "deterministic");
   }
+});
+
+test("a wide character is one a monospace box gives two columns", () => {
+  const at = (code: number) => String.fromCharCode(code);
+  // Each range's two ends, the CJK punctuation and the ideographic space among them.
+  for (const code of [0x1100, 0x115f, 0x2e80, 0x3000, 0x3001, 0x303f, 0x4e2d, 0xa4cf, 0xac00, 0xd7a3, 0xf900, 0xfaff, 0xfe30, 0xfe4f, 0xff00, 0xff60, 0xffe0, 0xffe6])
+    assert.ok(wide(at(code)), `U+${code.toString(16)} is wide`);
+  for (const code of [0x20, 0x41, 0xe9, 0x10ff, 0x1160, 0x2e7f, 0xa4d0, 0xabff, 0xd7a4, 0xfb00, 0xfe2f, 0xfe50, 0xff61, 0xffdf, 0xffe7])
+    assert.ok(!wide(at(code)), `U+${code.toString(16)} is narrow`);
+  assert.deepEqual([..."测试、テスト。한글　ok"].map(wide), [true, true, true, true, true, true, true, true, true, true, false, false]);
 });
 
 test("the journey's steps follow the loop, and packets follow their wires", () => {

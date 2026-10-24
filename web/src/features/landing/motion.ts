@@ -87,7 +87,13 @@ function hash(a: number, b: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-export const wide = (ch: string) => /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦　-〿]/.test(ch);
+/**
+ * Whether `ch` takes two columns in a monospace box: Hangul Jamo, the CJK
+ * block from the radicals to Yi (U+2E80–U+A4CF, CJK punctuation and the
+ * ideographic space included), Hangul syllables, CJK compatibility ideographs
+ * and forms, and the fullwidth forms.
+ */
+export const wide = (ch: string) => /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/.test(ch);
 
 /**
  * Ciphertext the width of `text`: hex, two digits under each wide (CJK)

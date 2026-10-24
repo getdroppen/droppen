@@ -143,7 +143,9 @@
     this.url = proto + "//" + location.host + "/v1/probe/rooms/" + roomId + "?role=page";
     this.sid = sid;
     this.probes = 0;
-    this.handlers = {};
+    // By message type. A Map: a type is only ever a key, never a property of
+    // an object (an Object.prototype method included).
+    this.handlers = new Map();
     this.onPeers = function () {};
     var peersSeen;
     this.peersSeen = new Promise(function (r) {
@@ -174,6 +176,7 @@
           } catch (e) {
             return;
           }
+          if (!m || typeof m !== "object") return;
           if (m.hub === "peers") {
             self.probes = m.probes || 0;
             self.onPeers(m);
@@ -181,8 +184,8 @@
             return;
           }
           if (m.s !== self.sid) return;
-          var h = self.handlers[m.t];
-          if (h) h(m, t1);
+          var h = self.handlers.get(m.t);
+          if (typeof h === "function") h(m, t1);
         };
       });
     };
@@ -195,12 +198,13 @@
     this.waitFor = function (type, ms) {
       return withTimeout(
         new Promise(function (resolve) {
-          var prev = self.handlers[type];
-          self.handlers[type] = function (m, t1) {
-            self.handlers[type] = prev;
+          var prev = self.handlers.get(type);
+          self.handlers.set(type, function (m, t1) {
+            if (prev) self.handlers.set(type, prev);
+            else self.handlers.delete(type);
             if (prev) prev(m, t1);
             resolve(m);
-          };
+          });
         }),
         ms,
         null,
@@ -374,9 +378,9 @@
     var hubPinger = new Pinger(function (seq) {
       if (!room.send({ t: "ping", seq: seq })) throw new Error("room closed");
     }, HUB_PING_TIMEOUT_MS);
-    room.handlers.pong = function (m, t1) {
+    room.handlers.set("pong", function (m, t1) {
       hubPinger.pong(m.seq, t1);
-    };
+    });
     room.onPeers = function (m) {
       set("v-probe", m.probes ? "在线" : "不在线");
     };
@@ -448,7 +452,7 @@
     pc.onicecandidateerror = function (ev) {
       iceErrors.push({ url: ev.url || null, code: ev.errorCode, text: ev.errorText || null });
     };
-    room.handlers.answer = function (m) {
+    room.handlers.set("answer", function (m) {
       pc.setRemoteDescription({ type: "answer", sdp: m.sdp })
         .then(function () {
           remoteSet = true;
@@ -459,20 +463,20 @@
         .catch(function (e) {
           timeline.push(["answer-error:" + e.message, since()]);
         });
-    };
+    });
     function addRemote(line) {
       pc.addIceCandidate({ candidate: line, sdpMLineIndex: 0 }).catch(function (e) {
         timeline.push(["cand-error:" + e.message, since()]);
       });
     }
-    room.handlers.cand = function (m) {
+    room.handlers.set("cand", function (m) {
       if (!m.c) return;
       if (remoteSet) addRemote(m.c);
       else remoteCands.push(m.c);
-    };
-    room.handlers.busy = function () {
+    });
+    room.handlers.set("busy", function () {
       timeline.push(["probe-busy", since()]);
-    };
+    });
 
     var t0 = now();
     var offer = await pc.createOffer();
