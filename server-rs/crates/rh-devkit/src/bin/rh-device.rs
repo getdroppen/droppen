@@ -7,20 +7,26 @@
 //!
 //! With `--sign-up`, it makes the account first (with an invite from the
 //! hub's operator: `cloud-dev.sh invite` for a local one) and becomes its
-//! first device, creating the chain:
-//! a full device that can enroll machines, with no browser anywhere. That
-//! chain is v2, as accounts were made before chain v3 (the web app makes
-//! every new one on v3): the commands below write v2's entries.
+//! first device, creating the chain as the web app does: on chain v3 from
+//! its genesis (`Genesis3` and user key epoch 0, no recovery words), this
+//! device its first admin — one that can enroll machines, with no browser
+//! anywhere.
+//!
+//! The commands write what the account's chain takes: v3 entries on a v3
+//! chain (`AddDevice3`, `[AddDevice3, KeyEpochs]` for a new host,
+//! `[RemoveDevice3, KeyEpochs]`), and chain v2's on an account made before
+//! chain v3 that it signs in to and that was never upgraded.
 //!
 //! Commands (one per line; each prints `ok ...` or `error ...`):
 //!
 //!   offer                 print this device's QR offer text and wait for the pairing delivery
 //!   code                  show a fresh 8-digit code (new-device side) and wait for a run and the delivery
-//!   accept <RHP1-...>     add the device behind a pasted offer and deliver the user keys (existing device)
+//!   accept <RHP1-...>     add the device behind a pasted offer as an admin and deliver the user keys (existing device)
 //!   enter <device> <code> run CPace for the code a new device shows, add it and deliver (existing device)
 //!   approve <device>      approve a pending recovered device
 //!   enroll                issue a machine enrollment code (prints `CODE RH1-...`), then wait for
 //!                         the machine's proof and add it, as the web app's "add a computer" does
+//!                         (chain v3: with its first machine key, put into the keyring and mailed to it)
 //!   remove <device>       remove a device, rotate the user and machine keys, give each agent its new key in a channel (re-encrypt)
 //!   keys                  take mailed user keys; list user key and machine key epochs
 //!   read <machine>        read the machine's status stream with the keys held; print its name and size
@@ -70,6 +76,12 @@ impl Session {
         Ok(chain.machine(machine).ok_or("no such machine in the chain")?.info.sign_key)
     }
 
+    /// Whether the account's chain holds a v3 entry (and so takes v3 entries only).
+    async fn v3(&mut self) -> Result<bool> {
+        self.device.sync_chain().await?;
+        Ok(self.device.chain().ok_or("no chain")?.is_v3())
+    }
+
     async fn run(&mut self, line: &str) -> Result<String> {
         let words: Vec<&str> = line.split_whitespace().collect();
         match words.as_slice() {
@@ -95,9 +107,16 @@ impl Session {
                 if offer.account != self.device_account() {
                     return Err("the offer is for another account".into());
                 }
-                self.device
-                    .add_and_deliver(&offer.device, offer.sign_key, offer.dh_key, &offer.secret)
-                    .await?;
+                if self.v3().await? {
+                    self.device
+                        .add_and_deliver3(&offer.device, offer.sign_key, offer.dh_key, &offer.secret, true)
+                        .await?;
+                } else {
+                    #[allow(deprecated)]
+                    self.device
+                        .add_and_deliver(&offer.device, offer.sign_key, offer.dh_key, &offer.secret)
+                        .await?;
+                }
                 self.attest_now().await?;
                 Ok(format!("added {} and delivered the user keys", offer.device))
             }
@@ -107,11 +126,26 @@ impl Session {
                 Ok(format!("added {device} by code and delivered the user keys"))
             }
             ["enroll"] => {
+                let v3 = self.v3().await?;
                 let code = self.device.new_enrollment().await?;
                 println!("CODE {code}");
-                let machine = self.device.complete_enrollment(&code, Duration::from_secs(600)).await?;
+                if !v3 {
+                    #[allow(deprecated)]
+                    let machine = self.device.complete_enrollment(&code, Duration::from_secs(600)).await?;
+                    self.reset_link();
+                    return Ok(format!("enrolled machine {}", machine.id));
+                }
+                // Chain v3: the host joins with its first machine key epoch in
+                // the same batch (`[AddDevice3{host}, KeyEpochs]`), never an
+                // admin (review D1); the key goes into the keyring and to the
+                // agent's mailbox, as the web's "add a computer" hands it over
+                // when the agent is not reachable in a channel yet.
+                let mk = rh_devkit::random_key();
+                let machine = self.enroll_v3(&code, &mk).await?;
+                self.device.wrap_machine_key(&machine.id, 0, &mk).await?;
+                self.device.mail_machine_key(&machine.id, 0, &mk).await?;
                 self.reset_link();
-                Ok(format!("enrolled machine {}", machine.id))
+                Ok(format!("enrolled machine {} (chain v3); MK epoch 0 by mail", machine.id))
             }
             ["approve", device] => {
                 let seq = self.device.approve(device).await?;
@@ -119,7 +153,12 @@ impl Session {
                 Ok(format!("approved {device} at seq {seq}"))
             }
             ["remove", device] => {
-                let (uk, rotated) = self.device.remove_and_rotate(device).await?;
+                let (uk, rotated) = if self.v3().await? {
+                    self.device.remove_and_rotate3(device).await?
+                } else {
+                    #[allow(deprecated)]
+                    self.device.remove_and_rotate(device).await?
+                };
                 self.attest_now().await?;
                 let mut delivered = Vec::new();
                 for (machine, epoch, mk) in rotated {
@@ -196,24 +235,42 @@ impl Session {
                 // `GET /v1/chain` returns, for a test proxy to serve.
                 self.device.sync_chain().await?;
                 let chain = self.device.chain().ok_or("no chain")?;
-                let rh_proto::chain::Action::Genesis { recovery_key, .. } = &chain.entries()[0].draft.action else {
-                    return Err("no genesis".into());
-                };
                 let hub_ak = ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key());
-                let hub_device = rh_proto::chain::DeviceInfo {
-                    id: "d-hubforged0000000".into(),
-                    sign_key: ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key()).verifying_key().to_bytes(),
-                    dh_key: rh_proto::keys::DhKeypair::from_secret(rh_devkit::random_key()).public(),
-                    full: true,
+                let (id, sign_key, dh_key) = (
+                    "d-hubforged0000000".to_string(),
+                    ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key()).verifying_key().to_bytes(),
+                    rh_proto::keys::DhKeypair::from_secret(rh_devkit::random_key()).public(),
+                );
+                // The genesis in the account's own version: a v3 one names the
+                // hub's device the first admin, a v2 one a full device.
+                let draft = match &chain.entries()[0].draft.action {
+                    rh_proto::chain::Action::Genesis3 { recovery_key, .. } => rh_proto::chain::genesis3_draft(
+                        chain.account(),
+                        hub_ak.verifying_key().to_bytes(),
+                        rh_proto::chain::DeviceV3 {
+                            id,
+                            sign_key,
+                            dh_key,
+                            flags: rh_proto::chain::Flags { host: false, admin: true },
+                        },
+                        *recovery_key,
+                        rh_devkit::now_ms(),
+                    ),
+                    rh_proto::chain::Action::Genesis { recovery_key, .. } => rh_proto::chain::genesis_draft(
+                        chain.account(),
+                        hub_ak.verifying_key().to_bytes(),
+                        rh_proto::chain::DeviceInfo {
+                            id,
+                            sign_key,
+                            dh_key,
+                            full: true,
+                        },
+                        *recovery_key,
+                        rh_devkit::now_ms(),
+                    ),
+                    _ => return Err("no genesis".into()),
                 };
-                let genesis = rh_proto::chain::genesis_draft(
-                    chain.account(),
-                    hub_ak.verifying_key().to_bytes(),
-                    hub_device,
-                    *recovery_key,
-                    rh_devkit::now_ms(),
-                )
-                .sign(&hub_ak);
+                let genesis = draft.sign(&hub_ak);
                 println!("FORGED {}", json!({"entries": [rh_devkit::hex(&genesis.encode())], "seq": 0}));
                 Ok("a forged chain (it does not verify: the copied proof is over the real root)".into())
             }
@@ -222,11 +279,12 @@ impl Session {
                 let chain = self.device.chain().ok_or("no chain")?;
                 let me = chain
                     .device(&self.device.id)
-                    .map(|d| format!("active, full={}, host={}", d.admin, d.host))
+                    .map(|d| format!("active, admin={}, host={}", d.admin, d.host))
                     .unwrap_or_else(|| "not an active device".into());
                 let pending: Vec<String> = chain.pending_recoveries().iter().map(|(d, s)| format!("{d}@{s}")).collect();
+                let version = chain.v3_from().map_or_else(|| "v2".to_string(), |s| format!("v3 from seq {s}"));
                 Ok(format!(
-                    "device {} is {me}; chain seq {}; pending recoveries {:?}",
+                    "device {} is {me}; chain seq {} ({version}); pending recoveries {:?}",
                     self.device.id,
                     chain.seq(),
                     pending
@@ -234,6 +292,25 @@ impl Session {
             }
             [] => Ok(String::new()),
             _ => Err(format!("unknown command {line:?}")),
+        }
+    }
+
+    /// [`Device::complete_enrollment_v3`], tried again for a while when the
+    /// hub answers 409 `chain_v3_not_ready` (the agent that just proved the
+    /// code has not declared `chain/3` on its link yet), as the web does.
+    async fn enroll_v3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_proto::chain::MachineInfo> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let mut timeout = Duration::from_secs(600);
+        loop {
+            match self.device.complete_enrollment_v3(code, false, mk, timeout).await {
+                Ok(machine) => return Ok(machine),
+                Err(e) if e.contains("chain_v3_not_ready") && tokio::time::Instant::now() < deadline => {
+                    timeout = Duration::from_secs(10);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    self.device.sync_chain().await?;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -291,12 +368,12 @@ async fn main() {
         Some(invite) => {
             let made = async {
                 let mut device = Device::sign_up(&hub, &invite, &email, &password).await?;
-                device.create_genesis().await?;
+                device.create_genesis3(false).await?;
                 Ok::<_, String>(device)
             };
             match made.await {
                 Ok(d) => {
-                    println!("ok signed up; first device {} (the account's chain starts here)", d.id);
+                    println!("ok signed up; first device {} (the account's chain starts here, on chain v3)", d.id);
                     d
                 }
                 Err(e) => {
