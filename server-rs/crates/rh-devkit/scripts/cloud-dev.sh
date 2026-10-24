@@ -22,7 +22,8 @@
 #                                address as a relying party)
 #   cloud-dev.sh remote <url>    no local hub: only the throwaway agent, for a deployed hub
 #   cloud-dev.sh invite          print another invite
-#   cloud-dev.sh enroll <code>   run `agent enroll` for the throwaway instance
+#   cloud-dev.sh enroll <code>   run `agent enroll` for the throwaway instance (the first time with
+#                                a throwaway local account, `dev`, which the agent needs)
 #   cloud-dev.sh agent           start the instance's server (`agent run`)
 #   cloud-dev.sh stop-agent      stop it (the machine goes offline; its encrypted copy stays readable)
 #   cloud-dev.sh restart-hub     rebuild a source hub, then SIGTERM the hub (it closes sockets with 1012) and start it again
@@ -319,6 +320,12 @@ ENV
   ;;
 enroll)
   load
+  # `agent enroll` wants a local account on the instance first (a linked
+  # device's page reaches the others): a throwaway one, made once.
+  if [ ! -f "$state/local-account" ]; then
+    printf '%s\n' "cloud-dev throwaway" | agent_env "$root/target/debug/remote-hand-server" user add dev --instance cloudtest >/dev/null &&
+      echo "local account: dev / cloud-dev throwaway" >"$state/local-account"
+  fi
   agent_env "$root/target/debug/remote-hand-server" agent enroll "$2" --hub "${HUB_URL:-http://$(hub_host):$HUB_PORT}"
   ;;
 agent)
