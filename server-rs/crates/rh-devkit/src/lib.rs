@@ -1,12 +1,19 @@
 //! A headless remote-hand device, for tests and the local end-to-end harness.
 //!
-//! It does what the browser will do in part 2 of M1, with the same protocol:
-//! sign up with an invite, register its keys, create the account's genesis
-//! (generating `AK` and dropping it), issue an enrollment code, check the
-//! agent's proof before signing "add machine", mail it a machine key, vouch
-//! for its chain head, and open end-to-end channels to the machine over the
-//! hub's `/v1/client` socket — rpc, mux and term streams through the agent's
-//! loopback bridge ([`rh_proto::bridge`]).
+//! It does what the browser does, with the same protocol: sign up with an
+//! invite, register its keys, create the account's genesis on chain v3
+//! (generating `AK` and dropping it: [`Device::create_genesis3`]), issue an
+//! enrollment code, check the agent's proof before adding the host with its
+//! first machine key epoch ([`Device::complete_enrollment_v3`]), mail it that
+//! key, vouch for its chain head, and open end-to-end channels to the machine
+//! over the hub's `/v1/client` socket — rpc, mux and term streams through the
+//! agent's loopback bridge ([`rh_proto::bridge`]).
+//!
+//! The chain v2 flows ([`Device::create_genesis`], [`Device::complete_enrollment`],
+//! [`Device::add_and_deliver`], [`Device::remove_and_rotate`] and
+//! [`Device::create_genesis_with_recovery`]) are deprecated: they stand for
+//! an account made before chain v3, in tests about such accounts. Every new
+//! account is v3 from its genesis (`docs/local-aggregator.md` §3.5).
 
 use std::time::Duration;
 
@@ -190,6 +197,7 @@ impl Device {
     /// fresh `AK` signs a v2 genesis naming this device, and is dropped.
     /// Returns the account-key fingerprint machines pin. (The web app makes
     /// every new account on v3: [`Device::create_genesis3`].)
+    #[deprecated(note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(false); this stands only for an account made before chain v3")]
     pub async fn create_genesis(&mut self) -> Result<[u8; 16]> {
         let ak = SigningKey::generate(&mut OsRng);
         let entry = genesis_draft(&self.account, ak.verifying_key().to_bytes(), self.info(), None, now_ms()).sign(&ak);
@@ -272,8 +280,19 @@ impl Device {
     }
 
     /// Wait for the agent's proof, check it, and add the machine to the chain
-    /// with exactly the keys the proof covers.
+    /// with exactly the keys the proof covers — as chain v2's `AddMachine`,
+    /// which a v3 chain refuses ([`Device::complete_enrollment_v3`] is what
+    /// the web writes there).
+    #[deprecated(note = "chain v2's AddMachine: on a chain v3 account use Device::complete_enrollment_v3 (the host joins with its first machine key epoch in the same batch); this stands only for an account made before chain v3")]
     pub async fn complete_enrollment(&mut self, code: &EnrollCode, timeout: Duration) -> Result<MachineInfo> {
+        let machine = self.await_proof(code, timeout).await?;
+        self.append(Action::AddMachine(machine.clone())).await?;
+        Ok(machine)
+    }
+
+    /// Wait for the agent's proof of `code` and check it: the machine with
+    /// exactly the keys the proof covers.
+    async fn await_proof(&self, code: &EnrollCode, timeout: Duration) -> Result<MachineInfo> {
         let deadline = tokio::time::Instant::now() + timeout;
         let url = format!("{}/v1/enrollments/{}", self.hub.http, hex(&code.token()));
         let v = loop {
@@ -295,7 +314,6 @@ impl Device {
         if !code.verify_proof(&self.account, &machine.id, &machine.sign_key, &machine.dh_key, &proof) {
             return Err("the agent's enrollment proof does not verify: refusing to add the machine".into());
         }
-        self.append(Action::AddMachine(machine.clone())).await?;
         Ok(machine)
     }
 
@@ -303,27 +321,7 @@ impl Device {
     /// that runs AI (and manages the account if `admin`), with its first
     /// machine key epoch in the same batch.
     pub async fn complete_enrollment_v3(&mut self, code: &EnrollCode, admin: bool, mk: &[u8; 32], timeout: Duration) -> Result<MachineInfo> {
-        let deadline = tokio::time::Instant::now() + timeout;
-        let url = format!("{}/v1/enrollments/{}", self.hub.http, hex(&code.token()));
-        let v = loop {
-            let v: Value = get(&self.http, &url, &self.token).await?;
-            if v["state"] == "proved" {
-                break v;
-            }
-            if v["state"] == "expired" || tokio::time::Instant::now() > deadline {
-                return Err(format!("enrollment not proved: {}", v["state"]));
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        };
-        let machine = MachineInfo {
-            id: v["machine"].as_str().ok_or("no machine")?.to_string(),
-            sign_key: key32(v["sign_key"].as_str().ok_or("no sign key")?)?,
-            dh_key: key32(v["dh_key"].as_str().ok_or("no dh key")?)?,
-        };
-        let proof = key32(v["proof"].as_str().ok_or("no proof")?)?;
-        if !code.verify_proof(&self.account, &machine.id, &machine.sign_key, &machine.dh_key, &proof) {
-            return Err("the agent's enrollment proof does not verify: refusing to add the machine".into());
-        }
+        let machine = self.await_proof(code, timeout).await?;
         let device = rh_proto::chain::DeviceV3 {
             id: machine.id.clone(),
             sign_key: machine.sign_key,

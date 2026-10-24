@@ -257,6 +257,7 @@ impl Device {
     /// Create the account with a recovery key, as accounts were made before
     /// chain v3: a v2 genesis naming its RSK, user key 0 and its recovery
     /// package. Returns `RK` (what the words encode).
+    #[deprecated(note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(true); this stands only for an account made before chain v3")]
     pub async fn create_genesis_with_recovery(&mut self) -> Result<[u8; 16]> {
         let mut rk = [0u8; 16];
         OsRng.fill_bytes(&mut rk);
@@ -385,7 +386,9 @@ impl Device {
     }
 
     /// An existing full device adds the device behind `offer` and mails it
-    /// every user key epoch, MAC'd with `secret`.
+    /// every user key epoch, MAC'd with `secret` — as chain v2's `AddDevice`,
+    /// which a v3 chain refuses ([`Device::add_and_deliver3`]).
+    #[deprecated(note = "chain v2's AddDevice: on a chain v3 account use Device::add_and_deliver3; this stands only for an account made before chain v3")]
     pub async fn add_and_deliver(&mut self, device: &str, sign_key: [u8; 32], dh_key: [u8; 32], secret: &[u8; 32]) -> Result<()> {
         self.sync_chain().await?;
         self.append(Action::AddDevice(rh_proto::chain::DeviceInfo {
@@ -410,6 +413,50 @@ impl Device {
         )
         .map_err(err("delivery"))?;
         self.mail(device, MAIL_PAIRING, 0, &delivery.encode()).await
+    }
+
+    /// Chain v3 (as the web's `pairDevice`): an admin adds the device behind
+    /// `offer` — `AddDevice3`, a device that runs no AI, managing the account
+    /// when `admin` — and mails it its pairing delivery, MAC'd with `secret`:
+    /// every user key epoch for an admin, none for a device that is not one
+    /// (it holds no user key, §3.3), which is mailed the machine keys of the
+    /// hosts that accept it instead ([`Device::send_host_keys`], purpose 5).
+    /// Only on a chain that holds a v3 entry.
+    pub async fn add_and_deliver3(&mut self, device: &str, sign_key: [u8; 32], dh_key: [u8; 32], secret: &[u8; 32], admin: bool) -> Result<()> {
+        self.sync_chain().await?;
+        if !self.chain.as_ref().ok_or("no chain")?.is_v3() {
+            return Err("the chain holds no v3 entry: a v3 device is added only to an account on chain v3".into());
+        }
+        self.append(Action::AddDevice3(rh_proto::chain::DeviceV3 {
+            id: device.into(),
+            sign_key,
+            dh_key,
+            flags: rh_proto::chain::Flags { host: false, admin },
+        }))
+        .await?;
+        let chain = self.chain.as_ref().ok_or("no chain")?;
+        let uks: Vec<(u32, &[u8])> = if admin {
+            self.user_keys.iter().map(|(e, k)| (*e, &k[..])).collect()
+        } else {
+            Vec::new()
+        };
+        let delivery = Delivery::create(
+            chain,
+            &self.id,
+            self.sign.verifying_key().to_bytes(),
+            &self.dh,
+            device,
+            &dh_key,
+            &uks,
+            secret,
+            &mut OsRng,
+        )
+        .map_err(err("delivery"))?;
+        self.mail(device, MAIL_PAIRING, 0, &delivery.encode()).await?;
+        if !admin {
+            self.send_host_keys(device).await?;
+        }
+        Ok(())
     }
 
     /// The new device waits for its pairing delivery and opens it against the
@@ -532,7 +579,15 @@ impl Device {
             return Err("the answer names another device".into());
         }
         let secret = *keys.pair_secret;
-        self.add_and_deliver(new_device, answer.sign_key, answer.dh_key, &secret).await
+        // The chain's own version: a v3 admin on a v3 chain, v2's full device
+        // on an account made before chain v3.
+        self.sync_chain().await?;
+        if self.chain.as_ref().ok_or("no chain")?.is_v3() {
+            self.add_and_deliver3(new_device, answer.sign_key, answer.dh_key, &secret, true).await
+        } else {
+            #[allow(deprecated)]
+            self.add_and_deliver(new_device, answer.sign_key, answer.dh_key, &secret).await
+        }
     }
 
     // ------------------------------------------------------------ recovery
@@ -575,7 +630,10 @@ impl Device {
     /// remaining full device (mail) and to the recovery key, and a new machine
     /// key for every active machine, wrapped into the keyring. Returns the
     /// new `(uk_epoch, [(machine, mk_epoch, mk)])` for the caller to deliver
-    /// to the agents (in a channel, or [`Device::mail_machine_key`]).
+    /// to the agents (in a channel, or [`Device::mail_machine_key`]). Chain
+    /// v2's `RemoveDevice`, which a v3 chain refuses
+    /// ([`Device::remove_and_rotate3`]).
+    #[deprecated(note = "chain v2's RemoveDevice: on a chain v3 account use Device::remove_and_rotate3 (or remove3_and_rotate_hosts); this stands only for an account made before chain v3")]
     pub async fn remove_and_rotate(&mut self, device: &str) -> Result<(u32, Vec<(String, u32, [u8; 32])>)> {
         self.sync_chain().await?;
         self.append(Action::RemoveDevice(device.into())).await?;
@@ -607,19 +665,137 @@ impl Device {
             self.wrap_machine_key(machine, *epoch, mk).await?;
             rotated.push((machine.clone(), *epoch, *mk));
         }
-        let chain = self.chain.clone().ok_or("no chain")?;
+        self.mail_user_key(uk_epoch).await?;
+        Ok((uk_epoch, rotated))
+    }
+
+    /// Seal user key `epoch` to every other current admin and mail it.
+    async fn mail_user_key(&self, epoch: u32) -> Result<()> {
+        let chain = self.chain.as_ref().ok_or("no chain")?;
+        let uk = self.user_keys.get(&epoch).ok_or("no such user key")?;
         for d in chain.admins().filter(|d| d.info.id != self.id) {
             let ctx = SealContext {
                 purpose: Purpose::UserKey,
                 account: self.account.clone(),
                 sender: self.id.clone(),
                 recipient: d.info.id.clone(),
-                epoch: uk_epoch,
+                epoch,
             };
-            let sealed = wrap::seal_to(&self.dh, &d.info.dh_key, &ctx, &self.user_keys[&uk_epoch], &mut OsRng).map_err(err("seal"))?;
-            self.mail(&d.info.id, MAIL_USER_KEY, uk_epoch, &sealed.encode()).await?;
+            let sealed = wrap::seal_to(&self.dh, &d.info.dh_key, &ctx, uk, &mut OsRng).map_err(err("seal"))?;
+            self.mail(&d.info.id, MAIL_USER_KEY, epoch, &sealed.encode()).await?;
+        }
+        Ok(())
+    }
+
+    /// Chain v3 (as the web's `removeDevice` for a device that held the user
+    /// key, and its `rotate`): remove `device` and, in the same batch, commit
+    /// a new user key epoch and a new machine key epoch for every remaining
+    /// current host (`[RemoveDevice3, KeyEpochs…]`). Then, in
+    /// [`Device::rotate`]'s order, the recovery package of every user key
+    /// epoch this device holds, each new machine key wrapped into the keyring
+    /// under the new user key, the new user key mailed to the other admins,
+    /// and each new machine key sealed to the devices that are not admins and
+    /// that its host accepts (purpose 5). The user key turns over whatever
+    /// `device` was (as v2's [`Device::remove_and_rotate`]; for a device
+    /// that never held it the web turns only the hosts' keys over:
+    /// [`Device::remove3_and_rotate_hosts`]). Returns the new `(uk_epoch,
+    /// [(host, mk_epoch, mk)])` for the caller to hand to the agents (in a
+    /// channel, or [`Device::mail_machine_key`]). Only on a chain that holds a
+    /// v3 entry.
+    pub async fn remove_and_rotate3(&mut self, device: &str) -> Result<(u32, Vec<(String, u32, [u8; 32])>)> {
+        use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit, KeyCommits, MAX_KEY_COMMITS};
+        self.sync_chain().await?;
+        let chain = self.chain.clone().ok_or("no chain")?;
+        if !chain.is_v3() {
+            return Err("the chain holds no v3 entry: RemoveDevice3 goes only on an account on chain v3".into());
+        }
+        let mut uk = [0u8; 32];
+        OsRng.fill_bytes(&mut uk);
+        let uk_epoch = chain.user_key_epochs();
+        // The hosts the batch leaves (not `device`, if it is one) get a new key each.
+        let rotated: Vec<(String, u32, [u8; 32])> = chain
+            .hosts()
+            .filter(|h| h.is_current_host() && h.info.id != device)
+            .map(|h| (h.info.id.clone(), chain.machine_key_epochs(&h.info.id), crate::random_key()))
+            .collect();
+        let commits: Vec<(String, KeyCommit)> = rotated
+            .iter()
+            .map(|(id, epoch, mk)| {
+                (
+                    id.clone(),
+                    KeyCommit {
+                        epoch: *epoch,
+                        hash: machine_key_commit(&self.account, id, *epoch, mk),
+                    },
+                )
+            })
+            .collect();
+        let mut chunks = commits.chunks(MAX_KEY_COMMITS);
+        let mut actions = vec![
+            Action::RemoveDevice3(device.into()),
+            Action::KeyEpochs(KeyCommits {
+                user: Some(KeyCommit {
+                    epoch: uk_epoch,
+                    hash: user_key_commit(&self.account, uk_epoch, &uk),
+                }),
+                machines: chunks.next().map(<[_]>::to_vec).unwrap_or_default(),
+            }),
+        ];
+        actions.extend(chunks.map(|c| {
+            Action::KeyEpochs(KeyCommits {
+                user: None,
+                machines: c.to_vec(),
+            })
+        }));
+        self.append_batch(actions).await?;
+        self.user_keys.insert(uk_epoch, uk);
+        for epoch in self.user_keys.keys().copied().collect::<Vec<_>>() {
+            self.seal_recovery_package(epoch).await?;
+        }
+        for (host, epoch, mk) in &rotated {
+            self.wrap_machine_key(host, *epoch, mk).await?;
+        }
+        self.mail_user_key(uk_epoch).await?;
+        for (host, epoch, mk) in &rotated {
+            self.mail_host_key(host, *epoch, mk).await?;
         }
         Ok((uk_epoch, rotated))
+    }
+
+    /// Chain v3, S1-4 (as the web's `mailHostKey`): seal host `host`'s key
+    /// epoch `epoch` to every current device that is not an admin and that
+    /// the host accepts control from, and mail it (purpose 5). A host's
+    /// device role that has not signed in at the hub yet is skipped (it asks
+    /// for its keys once it does). Who got it.
+    pub async fn mail_host_key(&self, host: &str, epoch: u32, mk: &[u8; 32]) -> Result<Vec<String>> {
+        let chain = self.chain.as_ref().ok_or("no chain")?;
+        let mut sent = Vec::new();
+        for d in chain.devices() {
+            let id = &d.info.id;
+            if !d.is_active() || d.admin || *id == self.id || chain.may_control(id, host).is_err() {
+                continue;
+            }
+            match self.seal_host_key_to(id, &d.info.dh_key, host, epoch, mk).await {
+                Ok(()) => sent.push(id.clone()),
+                // The hub's refusal for a host's device role that never signed in (docs/hub-api/http.md, `POST /v1/mailbox`).
+                Err(e) if d.host && e.contains("gets it once it signs in as a device") => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(sent)
+    }
+
+    async fn seal_host_key_to(&self, to: &str, to_dh: &[u8; 32], host: &str, epoch: u32, mk: &[u8; 32]) -> Result<()> {
+        let ctx = wrap::HostKeyContext {
+            account: self.account.clone(),
+            sender: self.id.clone(),
+            recipient: to.into(),
+            host: host.into(),
+            epoch,
+        };
+        let sealed = wrap::seal_host_key(&self.dh, to_dh, &ctx, mk, &mut OsRng).map_err(err("seal"))?;
+        self.mail(to, wrap::MAIL_HOST_KEY, epoch, &wrap::encode_host_key_mail(host, &sealed))
+            .await
     }
 
     /// Chain v3, S1-4: remove `device` and, in the same batch, turn every
@@ -682,16 +858,7 @@ impl Device {
         let mut sent = 0;
         for host in hosts {
             for (epoch, mk) in self.machine_keys(&host).await? {
-                let ctx = wrap::HostKeyContext {
-                    account: self.account.clone(),
-                    sender: self.id.clone(),
-                    recipient: to.into(),
-                    host: host.clone(),
-                    epoch,
-                };
-                let sealed = wrap::seal_host_key(&self.dh, &dh, &ctx, &*mk, &mut OsRng).map_err(err("seal"))?;
-                self.mail(to, wrap::MAIL_HOST_KEY, epoch, &wrap::encode_host_key_mail(&host, &sealed))
-                    .await?;
+                self.seal_host_key_to(to, &dh, &host, epoch, &mk).await?;
                 sent += 1;
             }
         }
