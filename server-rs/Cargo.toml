@@ -1,6 +1,6 @@
 [package]
 name = "remote-hand-server"
-version = "0.2.130"
+version = "0.2.131"
 edition = "2021"
 publish = false
 description = "Phase-1 feasibility probe: remote-hand's server on the gotcha framework"
