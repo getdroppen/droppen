@@ -89,9 +89,10 @@ jobs:
           node-version-file: first/.nvmrc
       # The verifier's own tests: a fake hub and GitHub on 127.0.0.1.
       - run: node --test first/scripts/verify-web.test.mjs
-      # The installer's download checks (a fake release on 127.0.0.1) and the
-      # release publisher's checks (a stand-in gh; nothing reaches GitHub).
-      - run: node --test first/scripts/install.test.mjs first/scripts/publish-release.test.mjs
+      # The installer's download checks (a fake release on 127.0.0.1), the
+      # release publisher's checks (a stand-in gh; nothing reaches GitHub) and
+      # the release page's files table.
+      - run: node --test first/scripts/install.test.mjs first/scripts/publish-release.test.mjs first/scripts/release-notes.test.mjs
       - name: Build in the first checkout
         working-directory: first
         env:

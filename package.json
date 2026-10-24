@@ -22,6 +22,7 @@
     "test:boundary": "node --test scripts/check-open-boundary.test.mjs",
     "test:verify-web": "node --test scripts/verify-web.test.mjs",
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
+    "test:release-notes": "node --test scripts/release-notes.test.mjs",
     "test:ai-attribution": "node --test scripts/check-ai-attribution.test.mjs",
     "test:sdk": "pnpm --filter @droppen/plugin-sdk test"
   },

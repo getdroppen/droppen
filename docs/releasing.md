@@ -28,9 +28,11 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
   fixed forward with a new version (`desktop/SIGNING.md`, "Rollback").
 - **What is attested.** Every file the release publishes: the server
   tarballs, `SHA256SUMS`, `install.sh`, `INSTALL-macos.txt`,
-  `INSTALL-linux.txt`, `LICENSE`, `THIRD_PARTY_NOTICES`, `web-manifest.json`,
-  and with the desktop app `Droppen-X.Y.Z.dmg`, `Droppen.app.tar.gz`, its
-  `.sig` and `latest.json`. An attestation is a statement signed through
+  `INSTALL-linux.txt`, `LICENSE`, `THIRD_PARTY_NOTICES`, `web-manifest.json`;
+  once `install.sh` pins the release key, `SHA256SUMS-server` and
+  `SHA256SUMS-server.sig` ([The release key](#the-release-key)); and with the
+  desktop app `Droppen-X.Y.Z.dmg`, `Droppen.app.tar.gz`, its `.sig` and
+  `latest.json`. An attestation is a statement signed through
   Sigstore and recorded by GitHub: this repository's release workflow, run
   for `refs/tags/vX.Y.Z` at commit C, made a file with exactly this sha256.
   The bundles are on the release too (`droppen-vX.Y.Z.sigstore.json` for

@@ -39,6 +39,15 @@ if [ "$LINUX" = 1 ]; then
 fi
 ROWS="$ROWS
 | $OLD_ROWS | the same server under its old name only, for older copies of the installer (on every release until at least $OLD_ASSETS_UNTIL) |"
+# The installer's signed checksums: publish-release.sh publishes them exactly
+# when the release's install.sh pins a release key (SUMS_KEY), and that
+# install.sh is this source's (release.yml's verify job checks it byte for byte).
+KEY=$("$HERE/install-key.sh" "$HERE/install.sh") || { echo "release-notes: cannot read the release key $HERE/install.sh pins" >&2; exit 2; }
+SIGNED=""
+if [ -n "$KEY" ]; then
+  SIGNED="| \`SHA256SUMS-server\`, \`SHA256SUMS-server.sig\` | the tarballs' checksums and their signature by the release key \`install.sh\` pins, which it checks before it installs anything |
+"
+fi
 # Built by .github/workflows/release.yml, every file gets an attestation.
 ATTESTED=""
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
@@ -65,7 +74,7 @@ same program under its old name, which the installed service keeps.
 |---|---|
 ${ROWS}
 | \`install.sh\` | the installer above (https://droppen.app/install.sh serves this file once Droppen Hub is built from this release) |
-| \`INSTALL-macos.txt\`, \`INSTALL-linux.txt\` | installing by hand (each tarball has its own \`INSTALL.txt\`) |
+${SIGNED}| \`INSTALL-macos.txt\`, \`INSTALL-linux.txt\` | installing by hand (each tarball has its own \`INSTALL.txt\`) |
 | \`LICENSE\` | Droppen's licence: AGPL-3.0-only |
 | \`THIRD_PARTY_NOTICES\` | the third-party software in the server, with its licences |
 | \`web-manifest.json\` | the embedded web app's files and digest |
