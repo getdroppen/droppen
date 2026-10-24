@@ -210,9 +210,9 @@ hub   → welcome …                                as above: this is also its 
 
 `sig` is the `HubLogin {role: Agent}` signature under the new `sign_key` with
 the assigned ids (proof the agent holds it); `proof` is the enrollment proof
-the device checks (`GET /v1/enrollments/{token}`) before it signs
-`AddMachine`. Until the machine is in the chain its stream writes are
-dropped.
+the device checks (`GET /v1/enrollments/{token}`) before it adds the host
+(`[AddDevice3{host}, KeyEpochs]`; v2: `AddMachine`). Until the machine is in
+the chain its stream writes are dropped.
 
 **A removed machine** (its account's chain has a `RemoveMachine` naming it)
 is cut off and stays out: its live connection gets the `CHAIN` frame with

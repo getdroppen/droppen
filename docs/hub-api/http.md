@@ -583,7 +583,8 @@ Errors: `400 bad_request`, `403 not_a_full_device | email_unverified`,
 ### `GET /v1/enrollments/{token}`
 → `{state: "waiting"|"expired", expires_ms}`, or once the agent proved
 `{state: "proved", machine, device, sign_key, dh_key, proof}`. The device
-checks `proof` against the code before it signs `AddMachine`.
+checks `proof` against the code before it adds the host (`[AddDevice3{host},
+KeyEpochs]`; v2: `AddMachine`).
 Errors: `400 bad_request`, `404 not_found` (another account's, or none).
 
 ### `POST /v1/mailbox` — requires a current admin device (but see purpose 4)
