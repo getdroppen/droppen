@@ -22,7 +22,8 @@ That is why the review is one.
 CodeQL is not in that table: it is a scheduled workflow on main
 (`.github/workflows/codeql.yml`, once a day) and runs on neither a pull request
 nor a push. A pull request therefore never waits on it, and approving a fork's
-runs approves only `ci` and `pr-guard`.
+runs approves only `ci` and `pr-guard`. It scans the code that ships, not the
+tests (`.github/codeql/codeql-config.yml`).
 
 ## The gate, step by step
 

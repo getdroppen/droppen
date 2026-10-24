@@ -23,6 +23,11 @@ jobs:
       actions: read
       packages: read
       security-events: write
+    env:
+      # Rust: extract the code as a release builds it, without `cfg(test)`
+      # (the extractor turns `test` on by default), so the unit tests inside
+      # source files are not scanned. Only the Rust extractor reads this.
+      CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test"
     strategy:
       fail-fast: false
       matrix:
@@ -46,6 +51,8 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          # The paths it leaves out: the tests (see the file).
+          config-file: ./.github/codeql/codeql-config.yml
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: "/language:${{ matrix.language }}"

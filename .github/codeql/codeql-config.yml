@@ -1,0 +1,36 @@
+# What the daily CodeQL scan (workflows/codeql.yml) reads: the code that is
+# built and shipped, not the tests. Test code holds fixed keys, nonces and
+# accounts on purpose (known-answer vectors, attack regressions), strips
+# markup from rendered HTML to assert on it, logs the accounts it makes up,
+# and talks to local fake servers: a scan of it reports those as findings by
+# the hundred, and none of it runs anywhere but in a test.
+#
+# Rust tests inside a source file (`#[cfg(test)] mod tests { … }`) are left
+# out by the extractor itself: codeql.yml turns the `test` cfg off, so they
+# are not extracted. The files below are the tests that live in files of
+# their own.
+name: droppen
+
+paths-ignore:
+  # Web: the unit tests, the browser end-to-end harness, the plugin SDK's tests.
+  # (`web/src/lib/e2e` is the end-to-end encryption, not a test: it is scanned.)
+  - web/test
+  - web/e2e
+  - packages/*/test
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.test.mjs"
+  # Rust: integration tests (`tests/` of each package).
+  - server-rs/tests
+  - server-rs/crates/*/tests
+  # Rust: test modules in files of their own, each declared `#[cfg(test)] mod …;`.
+  - "**/tests.rs"
+  - "**/*_tests.rs"
+  - "**/*_test.rs"
+  - server-rs/crates/rh-proto/src/attack_regressions.rs
+  - server-rs/crates/rh-proto/src/testing.rs
+  - server-rs/crates/rh-proto/src/v3_regressions.rs
+  - server-rs/crates/rh-proto/src/vectors.rs
+  # The identity-renewal end-to-end run, by hand against a throwaway account
+  # (never built for a release, never run by CI).
+  - server-rs/crates/rh-devkit/examples
