@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use super::watch;
 use crate::api::extract::ApiQuery;
-use crate::api::{close_within, send_within, ApiRouter, AppState};
+use crate::api::{close_within, send_within, ApiRouter, AppState, CLOSE_LIMIT};
 use crate::drive::Drive;
 use crate::openapi_ext::ExtraResponses;
 use crate::sessions::{self, Paths, SessionSummary, Source};
@@ -508,9 +508,9 @@ pub struct EventsQuery {
 
 /// `login`: the account and its login's digest, when a login opened it.
 ///
-/// Every send is bounded ([`send_within`]), and so is the close: a client that
-/// stops reading would otherwise park this task for good, with the list feed
-/// and every subscription it holds.
+/// Every send is bounded ([`send_within`]), and so is the close
+/// ([`CLOSE_LIMIT`]): a client that stops reading would otherwise park this
+/// task for good, with the list feed and every subscription it holds.
 async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, login: Option<(String, String)>) {
     let (mut sender, mut receiver) = socket.split();
     let (limit, shutdown) = (state.send_limit, &state.cancel);
@@ -591,7 +591,10 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
             _ = state.cancel.cancelled() => break,
         }
     }
+    // Nothing more is sent from the feeds, so they are let go now rather than
+    // for as long as the goodbye takes: the subscriptions first, as above.
     drop(subscriptions);
+    drop(attachment);
     if signed_out {
         tracing::info!("feed socket: its login was signed out; closing it");
         let close = gotcha::axum::extract::ws::CloseFrame {
@@ -600,7 +603,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
         };
         let _ = send_within(&mut sender, Message::Close(Some(close)), limit, shutdown).await;
     }
-    close_within(&mut sender, limit, shutdown).await;
+    close_within(&mut sender, CLOSE_LIMIT, shutdown).await;
 }
 
 /// Register this subsystem's routes.
@@ -937,8 +940,8 @@ mod tests {
     }
 
     /// A client that stops reading cannot hold the list socket's task for
-    /// good: a frame it makes no room for gives up at the server's limit, the
-    /// close behind it does too, and the task lets the list feed go.
+    /// good: a frame it makes no room for gives up at the server's limit, and
+    /// the task lets the list feed go before its short close.
     ///
     /// Real sockets, and a client that never reads after connecting. Frames
     /// are published until the kernel's buffers are full and a send has to
@@ -953,7 +956,7 @@ mod tests {
         while state.global.is_running() {
             assert!(
                 Instant::now() < deadline,
-                "a client that takes no frame is given up on, and so is its close"
+                "a frame that cannot leave gives up at the limit, and the list feed is let go"
             );
             state.global.publish(frame.clone());
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -962,7 +965,7 @@ mod tests {
 
     /// A server shutting down does not wait on a list client that has stopped
     /// reading: the send it is stuck on gives way at once, well inside the
-    /// real limit, and so does the close.
+    /// real limit.
     #[tokio::test]
     async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
         let home = tempfile::tempdir().unwrap();

@@ -25,7 +25,7 @@
 //! at once and [`SUB_PER_SECOND`] after (`busy`); an outbox of [`OUTBOX`]
 //! frames and [`OUTBOX_BYTES`] (a subscription that does not fit is
 //! `overrun`); a frame that takes over [`SEND_WITHIN`] to go out ends the
-//! connection. A device bridged from Droppen
+//! connection, and a shutdown does not wait for one. A device bridged from Droppen
 //! (`cloud:*`) never gets here (the bridge refuses `/api/agg/*`, and so does
 //! the rule).
 //!
@@ -36,7 +36,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use gotcha::axum::extract::ws::{CloseFrame, Message, WebSocket};
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::{State, WebSocketUpgrade};
@@ -199,9 +199,10 @@ impl Bucket {
 
 type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
 
-/// Send one frame, within [`SEND_WITHIN`]: `false` when it could not go.
-async fn send(sink: &mut Sink, message: Message) -> bool {
-    matches!(tokio::time::timeout(SEND_WITHIN, sink.send(message)).await, Ok(Ok(())))
+/// Send one frame, within [`SEND_WITHIN`] and not past a shutdown
+/// ([`crate::api::send_within`]): `false` when it could not go.
+async fn send(sink: &mut Sink, message: Message, shutdown: &tokio_util::sync::CancellationToken) -> bool {
+    crate::api::send_within(sink, message, SEND_WITHIN, shutdown).await
 }
 
 /// Serve one page until it leaves, the server stops, or it may no longer see
@@ -228,12 +229,12 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
             let now = dir.borrow_and_update().clone();
             dir_frame(&now)
         };
-        if send(&mut sink, Message::Text(first.into())).await {
+        if send(&mut sink, Message::Text(first.into()), &state.cancel).await {
             loop {
                 tokio::select! {
                     Some(text) = queued.recv() => {
                         out.taken(text.len());
-                        if !send(&mut sink, Message::Text(text.into())).await {
+                        if !send(&mut sink, Message::Text(text.into()), &state.cancel).await {
                             break;
                         }
                     }
@@ -245,7 +246,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
                         let mut gone = false;
                         for s in out.take_overrun() {
                             subs.remove(&s);
-                            if !send(&mut sink, Message::Text(error_frame(s, "overrun", bad_message("overrun")).into())).await {
+                            if !send(&mut sink, Message::Text(error_frame(s, "overrun", bad_message("overrun")).into()), &state.cancel).await {
                                 gone = true;
                                 break;
                             }
@@ -263,7 +264,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
                         // registry holds while it sends a new list (a deadlock otherwise).
                         let now = dir.borrow_and_update().clone();
                         subs.retain(|_, sub| now.iter().any(|h| h.id == sub.key().host));
-                        if !send(&mut sink, Message::Text(dir_frame(&now).into())).await {
+                        if !send(&mut sink, Message::Text(dir_frame(&now).into()), &state.cancel).await {
                             break;
                         }
                     }
@@ -290,13 +291,13 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
                             Some(Ok(_)) => continue,
                         };
                         if let Some(reply) = handle(parse(text.as_str()), &live, &out, &mut subs, &mut bucket) {
-                            if !send(&mut sink, Message::Text(reply.into())).await {
+                            if !send(&mut sink, Message::Text(reply.into()), &state.cancel).await {
                                 break;
                             }
                         }
                     }
                     alive = heartbeat.tick() => {
-                        if !alive || !send(&mut sink, Message::Ping(Default::default())).await {
+                        if !alive || !send(&mut sink, Message::Ping(Default::default()), &state.cancel).await {
                             break;
                         }
                     }
@@ -312,11 +313,12 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
         let _ = send(
             &mut sink,
             Message::Text(json!({"t": "bye", "code": error, "message": message}).to_string().into()),
+            &state.cancel,
         )
         .await;
-        let _ = send(&mut sink, Message::Close(Some(CloseFrame { code, reason: error.into() }))).await;
+        let _ = send(&mut sink, Message::Close(Some(CloseFrame { code, reason: error.into() })), &state.cancel).await;
     }
-    let _ = tokio::time::timeout(SEND_WITHIN, sink.close()).await;
+    crate::api::close_within(&mut sink, SEND_WITHIN, &state.cancel).await;
     tracing::info!(%user, held, "gateway: a page left");
 }
 
@@ -386,6 +388,8 @@ fn ended_message(ended: super::live::Ended) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use futures_util::SinkExt;
+
     use super::*;
 
     #[test]

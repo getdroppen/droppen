@@ -137,9 +137,9 @@ pub struct AppState {
     pub desktop_app: bool,
     /// The first-run guide: tool detection and the children's `PATH`.
     pub setup: Arc<crate::setup::Setup>,
-    /// How long a frame on any of this server's websockets may wait for a
-    /// client that takes none before the socket is given up on: [`SEND_LIMIT`],
-    /// except in a test that cannot wait that long.
+    /// How long one frame on any of this server's websockets may take to
+    /// leave before its socket is given up on: [`SEND_LIMIT`], except in a test
+    /// that cannot wait that long.
     pub send_limit: std::time::Duration,
 }
 
@@ -359,21 +359,32 @@ impl Heartbeat {
     }
 }
 
-/// How long one frame may take to leave before its client is given up on.
+/// How long one frame may take to leave before its socket is given up on.
 ///
-/// The heartbeat's idle limit, for the same reason: a client that has not
-/// taken a frame in that long is as gone as one that has not sent one. Without
-/// a bound, a client that stopped reading altogether parked its socket task on
+/// The bound is per frame: a frame that has not left within it ends the
+/// socket, however recently the frame before it went. It is the heartbeat's
+/// idle limit, for the same reason: a client that cannot take one frame in
+/// that long is as gone as one that has sent nothing for that long. Without a
+/// bound, a client that stopped reading altogether parked its socket task on
 /// a full TCP window for good, with its queue, and the heartbeat could not
 /// fire while the send was waiting. Every socket reads it from
 /// [`AppState::send_limit`].
 pub(crate) const SEND_LIMIT: std::time::Duration = IDLE_LIMIT;
 
+/// How long a feed socket's close may take, after its last frame.
+///
+/// Short, and not [`SEND_LIMIT`]: every send waits until its frame has left,
+/// so nothing is queued ahead of the close frame, and a client that is still
+/// reading takes it at once. Only one that has stopped reading keeps it
+/// waiting, and after a send that already waited out the limit for it, a
+/// second full limit would only hold the socket task for nothing.
+pub(crate) const CLOSE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A websocket's write half.
 pub(crate) type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 
 /// Send one frame, and say whether it went: `false` for a closed socket, a
-/// client that took no frame for `limit`, or a server shutting down.
+/// frame that did not leave within `limit`, or a server shutting down.
 ///
 /// Biased toward the send, so a frame that can go at once still goes during
 /// a shutdown; only one that would have to wait gives way to it.
@@ -383,7 +394,7 @@ pub(crate) async fn send_within(sender: &mut WsSender, message: Message, limit: 
         sent = tokio::time::timeout(limit, sender.send(message)) => match sent {
             Ok(sent) => sent.is_ok(),
             Err(_) => {
-                tracing::info!("websocket: a frame waited {limit:?} for a client that takes none; giving the socket up");
+                tracing::info!("websocket: a frame did not leave within {limit:?}; giving the socket up");
                 false
             }
         },
@@ -394,11 +405,11 @@ pub(crate) async fn send_within(sender: &mut WsSender, message: Message, limit: 
 /// Close a websocket's write half: its close frame, unless one went already,
 /// and whatever was still queued ahead of it.
 ///
-/// Within `limit`, and not at all on a server shutting down, for the reason
-/// [`send_within`] is: a client that has stopped reading leaves no room for
-/// the close frame either. Biased toward the close, so on shutdown one that
-/// can go at once still goes. Nothing waits for the client's answer; the
-/// socket is dropped right after.
+/// Within `limit` ([`CLOSE_LIMIT`] for the feed sockets), and not at all on a
+/// server shutting down, for the reason [`send_within`] is: a client that has
+/// stopped reading leaves no room for the close frame either. Biased toward
+/// the close, so on shutdown one that can go at once still goes. Nothing
+/// waits for the client's answer; the socket is dropped right after.
 pub(crate) async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shutdown: &CancellationToken) {
     tokio::select! {
         biased;
@@ -424,7 +435,7 @@ async fn run_session_socket(
 
     let Some(attached) = feed::attach_session_feed(&state.feeds, &state.drive, source, &id, resume.as_ref()).await else {
         let _ = send_within(&mut sender, Message::Text(CLOSED_FRAME.into()), limit, shutdown).await;
-        close_within(&mut sender, limit, shutdown).await;
+        close_within(&mut sender, CLOSE_LIMIT, shutdown).await;
         return;
     };
     let mut attachment = attached.attachment;
@@ -481,7 +492,10 @@ async fn run_session_socket(
             }
         }
     }
-    close_within(&mut sender, limit, shutdown).await;
+    // Nothing more is sent from the feed, so it is let go now rather than
+    // for as long as the close takes.
+    drop(attachment);
+    close_within(&mut sender, CLOSE_LIMIT, shutdown).await;
 }
 
 /// Everything gotcha cannot express about this module's own routes.
@@ -841,8 +855,8 @@ mod tests {
     }
 
     /// A client that stops reading cannot hold its session feed for good: a
-    /// frame it makes no room for gives up at the server's limit, the close
-    /// behind it does too, and the socket task lets the feed go.
+    /// frame it makes no room for gives up at the server's limit, and the
+    /// socket task lets the feed go before its short close.
     ///
     /// Real sockets, and a client that never reads after connecting. Its
     /// opening snapshot is small and goes out; then the transcript grows by a
@@ -860,7 +874,7 @@ mod tests {
         let mut transcript = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
         std::io::Write::write_all(&mut transcript, page.as_bytes()).expect("append");
         until(
-            "a client that takes no frame is given up on, and so is its close",
+            "a frame that cannot leave gives up at the limit, and the feed is let go",
             Duration::from_secs(60),
             || state.feeds.is_empty(),
         )
@@ -869,7 +883,7 @@ mod tests {
 
     /// A server shutting down does not wait on a session feed client that has
     /// stopped reading: the send it is stuck on gives way at once, well inside
-    /// the real limit, and so does the close.
+    /// the real limit.
     #[tokio::test]
     async fn a_shutdown_does_not_wait_for_a_session_feed_client_that_never_reads() {
         let home = tempfile::tempdir().expect("tempdir");
