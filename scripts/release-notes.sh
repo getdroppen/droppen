@@ -64,7 +64,7 @@ same program under its old name, which the installed service keeps.
 | file | for |
 |---|---|
 ${ROWS}
-| \`install.sh\` | the installer above (https://droppen.app/install.sh redirects to the latest release's) |
+| \`install.sh\` | the installer above (https://droppen.app/install.sh serves this file once Droppen Hub is built from this release) |
 | \`INSTALL-macos.txt\`, \`INSTALL-linux.txt\` | installing by hand (each tarball has its own \`INSTALL.txt\`) |
 | \`LICENSE\` | Droppen's licence: AGPL-3.0-only |
 | \`THIRD_PARTY_NOTICES\` | the third-party software in the server, with its licences |

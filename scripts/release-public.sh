@@ -73,7 +73,8 @@
 #      plus `INSTALL.txt`, `LICENSE` (AGPL-3.0) and `THIRD_PARTY_NOTICES`, listed
 #      by name, with COPYFILE_DISABLE=1 — and `SHA256SUMS` over every tarball,
 #      and LICENSE, THIRD_PARTY_NOTICES, the ref's scripts/install.sh (the
-#      installer https://droppen.app/install.sh redirects to) and
+#      installer https://droppen.app/install.sh serves, once Droppen Hub is
+#      built from this release) and
 #      INSTALL-macos.txt / INSTALL-linux.txt as release files of their own;
 #   8. unpacks every tarball and checks it again: exactly its members, each
 #      program the very binary checked and smoke-tested above, the step-4
@@ -117,7 +118,8 @@
 #
 # The install script itself (scripts/install.sh, published with every release
 # as its file install.sh: https://github.com/getdroppen/droppen/releases/latest/download/install.sh,
-# where https://droppen.app/install.sh redirects) downloads `SHA256SUMS` and then
+# which https://droppen.app/install.sh serves once Droppen Hub is built from
+# the release) downloads `SHA256SUMS` and then
 # `droppen-<version>-<macos|linux>-<arch>.tar.gz`, or, when that is missing,
 # `remote-hand-<version>-<macos|linux>-<arch>.tar.gz` — which every older copy
 # of it (and README's by-hand steps) asks for: keep publishing both names until
@@ -678,8 +680,10 @@ cat <<EOF
 
 Nothing has been published.
 
-The installer people run is the latest release's install.sh, staged above
-from the ref (https://droppen.app/install.sh redirects to
+The installer people run is this release's install.sh, staged above from
+the ref, once Droppen Hub is built from this release
+(https://droppen.app/install.sh serves the install.sh of the release the hub
+was built from, not a redirect to
 https://github.com/${PUBLIC_REPO}/releases/latest/download/install.sh).
 
 To publish, review the files above. If this release has the desktop app,

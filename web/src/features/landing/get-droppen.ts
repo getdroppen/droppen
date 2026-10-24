@@ -21,7 +21,8 @@
  *   background install;
  * - **the install command**, for headless and background installs (a Mac
  *   running Droppen in the background, Linux servers): droppen.app answers
- *   `/install.sh` with a redirect to the script in that repository. A fresh
+ *   `/install.sh` with the script of the release Droppen Hub was built from
+ *   (that repository's `scripts/install.sh`, the release's file). A fresh
  *   install starts the local server at login, creates the first local login
  *   (printed or asked for) and opens the local page;
  * - **Linux servers** enrol without a browser, with a one-time code

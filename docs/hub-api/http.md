@@ -19,18 +19,25 @@ Liveness: `200 ok` (text). Also served on the Turnstile host. Limits: the
 static routes' 600 per 10 s and 3,000 a minute per address (README).
 
 ### `GET /install.sh` — tooling
+`200`, `text/plain; charset=utf-8`: the server installer for macOS and Linux,
+the `scripts/install.sh` of the release of `getdroppen/droppen` the hub was
+built from, compiled into the hub — byte for byte that release's `install.sh`
+file (attested, and never changed once published: docs/releasing.md). This is
+what `curl -fsSL https://droppen.app/install.sh | sh` runs. The hub serves it
+rather than redirect to the latest release's file, so that whoever could
+replace a release's files could not replace the installer, nor the release
+key it pins (docs/releasing.md, "The release key"); `/.well-known/droppen-build`
+says its sha256 (`install_sh`). `Cache-Control: no-cache` with
+`ETag: "sha256-<hex>"` (`304` to a matching `If-None-Match`) and
+`X-Content-Type-Options: nosniff`; `HEAD` the same without the body; other
+methods `405`. The installer downloads a release from that repository and
+checks it against the release's signed checksums before installing anything.
+The hub serves no binary. A hub built without an installer on purpose answers
 `302 Found` to
-`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`,
-with `Cache-Control: no-store` and no body (`HEAD` the same; other methods
-`405`). This is what `curl -fsSL https://droppen.app/install.sh | sh` fetches:
-the server installer for macOS and Linux, a file of the latest release of
-`getdroppen/droppen` (attested, and never changed once published:
-docs/releasing.md). The installer downloads a release from that repository
-and checks it against the release's `SHA256SUMS` before installing anything.
-The hub never serves the script or a binary itself, only this address, so what
-a computer runs is what anyone can read there. Limited like `/healthz` (the
-static routes' share per address); a 404 on the Turnstile host, and a
-redirected host name gets its `308` to the origin first.
+`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`
+instead, with `Cache-Control: no-store` and no body. Limited like `/healthz`
+(the static routes' share per address); served on every host of the hub but
+the Turnstile host (a 404 there), never redirected.
 
 ### `GET /turnstile?action=signup|login|resend[&theme=dark]` — Turnstile host only
 An HTML page that renders Cloudflare's widget and hands its result to the app
@@ -47,7 +54,7 @@ The page, and the 404 for anything else on that host, count against the
 static routes' share per address, as does a redirected host's `308`.
 
 ### `GET /.well-known/droppen-build` — only when the hub serves the web app
-→ `{commit: null | "<hex>", repo?: "getdroppen/droppen", web: {digest: "sha256:<hex>", files}}`, with
+→ `{commit: null | "<hex>", repo?: "getdroppen/droppen", web: {digest: "sha256:<hex>", files}, install_sh?: {digest: "sha256:<hex>"}}`, with
 `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. Which build of
 the web app this hub serves: the commit of this repository its web app was
 built from (`null` when the hub does not know it; `repo` names the repository
@@ -58,7 +65,10 @@ before the hub adds its `rh-hub` marker. A release's `web-manifest.json` has
 the same `digest`; `scripts/verify-web.mjs` compares it with the latest
 release's manifest (naming the earlier release that has it, if one does) and
 then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
-A claim like everything else here, not a proof. It, the web app's own files
+`install_sh`, when there, is the sha256 of the installer `GET /install.sh`
+serves (a release's `install.sh`, which the release's `SHA256SUMS` does not
+list but its attestation covers). A claim like everything else here, not a
+proof. It, the web app's own files
 and any path nothing else serves share the static routes' limit per address.
 Served the same on every host of the hub that serves the web app (the origin,
 the app host, the site host), as is `/.well-known/security.txt`.

@@ -75,11 +75,12 @@ creates the first local account, installs the program to
 (`app.droppen.server`) on macOS, or a systemd user service (`droppen.service`)
 on Linux (x86_64 and aarch64, glibc 2.28 or later). Run it again to upgrade;
 `curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall` removes it
-and keeps your data. `droppen.app/install.sh` redirects to the latest
-release's `install.sh`
-(`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`);
-the source is [`scripts/install.sh`](scripts/install.sh), which lists every
-option in its header.
+and keeps your data. `droppen.app/install.sh` serves the `install.sh` of the
+release Droppen Hub was built from, byte for byte that release's file
+(`https://github.com/getdroppen/droppen/releases/download/<tag>/install.sh`;
+its sha256 is `install_sh` in `https://droppen.app/.well-known/droppen-build`),
+never a redirect; the source is [`scripts/install.sh`](scripts/install.sh),
+which lists every option in its header.
 
 To join the computer to your Droppen account in the same step, pass the
 one-time code droppen.app shows under

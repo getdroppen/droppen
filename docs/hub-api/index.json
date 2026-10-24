@@ -3,7 +3,7 @@
   "version": "v1",
   "routes": [
     { "server": "hub", "method": "GET", "path": "/healthz", "auth": "none", "response": "text" },
-    { "server": "hub", "method": "GET", "path": "/install.sh", "auth": "none", "response": "none", "audience": "tooling", "redirect": "https://github.com/getdroppen/droppen/releases/latest/download/install.sh" },
+    { "server": "hub", "method": "GET", "path": "/install.sh", "auth": "none", "response": "text", "audience": "tooling" },
     { "server": "hub", "method": "GET", "path": "/turnstile", "auth": "none", "response": "html", "host": "turnstile" },
     { "server": "hub", "method": "GET", "path": "/.well-known/droppen-build", "auth": "none", "audience": "tooling", "optional": "DROPPEN_HUB_WEB_DIR" },
     { "server": "hub", "method": "GET", "path": "/.well-known/droppen-hub", "auth": "none" },

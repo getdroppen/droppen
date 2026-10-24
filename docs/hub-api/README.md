@@ -51,7 +51,7 @@ abuse control, not security.
 
 | host | serves |
 |---|---|
-| the hub's origin (e.g. `https://droppen.app`, sockets on `wss://droppen.app`) | `/v1/*` (never redirected: sockets and agents do not follow redirects), `/healthz`, `/install.sh` (a redirect to the public installer), `/.well-known/*`, and — unless an app host takes it — the web app for every other `GET` |
+| the hub's origin (e.g. `https://droppen.app`, sockets on `wss://droppen.app`) | `/v1/*` (never redirected: sockets and agents do not follow redirects), `/healthz`, `/install.sh` (the installer of the release the hub was built from), `/.well-known/*`, and — unless an app host takes it — the web app for every other `GET` |
 | the app host (optional, e.g. `https://my.droppen.app`) | the web app (`/` is the app), `/v1/*` for the page's own requests, `/.well-known/*`, `/healthz`; the public pages are redirected to the site host |
 | the site host (optional, e.g. `https://www.droppen.app`) | the web app's public pages (`/`, `/pricing`, `/download`, `/security`, `/privacy`, `/terms`), the `/v1/*` they call, `/.well-known/*`, `/healthz`; every other page is redirected to the app host |
 | the Turnstile host (optional, e.g. `https://verify.droppen.app`) | `GET /turnstile` only, and `/healthz`; everything else is 404 |

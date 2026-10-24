@@ -394,9 +394,10 @@ ticket 只活 60 秒。
 curl -fsSL https://droppen.app/install.sh | sh
 ```
 
-`droppen.app/install.sh` 只是 302 到本仓库最新发版里的 `install.sh`
-（`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`，源码是
-[`scripts/install.sh`](scripts/install.sh)），二进制也只从本仓库的
+`droppen.app/install.sh` 直接给出 Droppen Hub 构建时所用那次发版的 `install.sh`，与那次发版里的文件逐字节相同
+（`https://github.com/getdroppen/droppen/releases/download/<tag>/install.sh`；它的 sha256 见
+`https://droppen.app/.well-known/droppen-build` 的 `install_sh`），不再跳转；源码是
+[`scripts/install.sh`](scripts/install.sh)。二进制只从本仓库的
 [Releases](https://github.com/getdroppen/droppen/releases) 下载，hub 不分发任何二进制（v0.2.126 及以前的发版在
 [getdroppen/releases](https://github.com/getdroppen/releases)）。公开发布包由 GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）
 从本仓库的源码构建（公开发行版；macOS aarch64 + x86_64 + universal、Linux、桌面 App），每个文件都附

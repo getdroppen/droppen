@@ -251,10 +251,15 @@ app's build can be rebuilt byte for byte from the source
 ([web-integrity.md](web-integrity.md)); the binaries are not reproducible yet,
 so for them the attestation is what ties a file to its source.
 
-`https://droppen.app/install.sh` redirects to
-`https://github.com/getdroppen/droppen/releases/latest/download/install.sh`:
-the latest release's installer, an attested file that never changes once
-published, not whatever main holds at the moment.
+`https://droppen.app/install.sh` serves the installer of the release Droppen
+Hub was built from: that release's `install.sh`, byte for byte (an attested
+file that never changes once published, not whatever main holds at the
+moment), compiled into the hub and named by its sha256 in
+`/.well-known/droppen-build` (`install_sh`). Not a redirect to the latest
+release's file: whoever could replace a release's files could otherwise
+replace the installer, and the release key it pins with it. So the hub
+follows releases: one that changes `install.sh` reaches `curl … | sh` once
+the hub is built from it (below, "Rotating it").
 
 ## The release key
 
@@ -319,6 +324,13 @@ key offline as well. A release made by hand
 release's signature, so an older release is installed with its own
 installer:
 `curl -fsSL https://github.com/getdroppen/droppen/releases/download/<tag>/install.sh | DROPPEN_VERSION=<tag> sh`.
+`https://droppen.app/install.sh` is the installer of the release Droppen Hub
+was built from (above), so **the release that rotates the key is followed at
+once by building and deploying the hub from it**: until then droppen.app
+hands out the previous installer, which pins the old key and so refuses the
+new release's checksums (it installs nothing). That window is accepted; the
+hub's deploy refuses to go out with an installer that is not the newest
+release's.
 
 ## Once: the release environment
 

@@ -1041,6 +1041,19 @@
                   "$ref": "#/$defs/count"
                 }
               }
+            },
+            "install_sh": {
+              "type": "object",
+              "required": [
+                "digest"
+              ],
+              "properties": {
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "description": "sha256 of the installer GET /install.sh serves (a release's install.sh); absent when the hub has none of its own"
+                }
+              }
             }
           }
         }
