@@ -32,7 +32,14 @@ test("only `DROPPEN_WEB_MODE=cloud` turns the cloud output on, with droppen.app'
     appOrigin: "https://my.droppen.app",
     siteOrigin: "https://www.droppen.app",
     turnstileOrigin: "https://verify.droppen.app",
-    relays: ["https://*.relay.droppen.app", "wss://*.relay.droppen.app"],
+    relays: [
+      "https://*.relay.droppen.app",
+      "wss://*.relay.droppen.app",
+      "https://sin-1-production.up.railway.app",
+      "wss://sin-1-production.up.railway.app",
+      "https://sin-2-production.up.railway.app",
+      "wss://sin-2-production.up.railway.app",
+    ],
     role: "app",
   });
   assert.equal(cloudConfig({ DROPPEN_WEB_MODE: "cloud", DROPPEN_WEB_ROLE: "site" })?.role, "site");
@@ -78,7 +85,7 @@ test("the hosts document is the hub's own answer, naming the API, app and site o
 test("the CSP is the hub's policy with the cross-origin API and relays, and the shell's inline scripts by hash", () => {
   const csp = contentSecurityPolicy(SHELL, config!);
   assert.ok(csp.startsWith(`default-src 'self'; script-src 'self' ${HASH}; `));
-  assert.ok(csp.includes("connect-src 'self' https://api.droppen.app wss://api.droppen.app https://*.relay.droppen.app wss://*.relay.droppen.app;"));
+  assert.ok(csp.includes("connect-src 'self' https://api.droppen.app wss://api.droppen.app https://*.relay.droppen.app wss://*.relay.droppen.app https://sin-1-production.up.railway.app wss://sin-1-production.up.railway.app https://sin-2-production.up.railway.app wss://sin-2-production.up.railway.app;"));
   assert.ok(csp.includes("frame-src https://verify.droppen.app;"));
   assert.ok(csp.includes("frame-ancestors 'none';"));
   assert.ok(csp.includes("object-src 'none'"));

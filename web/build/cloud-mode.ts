@@ -63,7 +63,18 @@ const DEFAULTS: CloudConfig = {
   appOrigin: "https://my.droppen.app",
   siteOrigin: "https://www.droppen.app",
   turnstileOrigin: "https://verify.droppen.app",
-  relays: ["https://*.relay.droppen.app", "wss://*.relay.droppen.app"],
+  // The relays as droppen.app runs them today (Railway hosts), and the
+  // relay.droppen.app names they are moving to. Drop the Railway hosts once
+  // every relay's DROPPEN_RELAY_ORIGIN is a relay.droppen.app name: until then
+  // a page without them cannot dial a relay at all.
+  relays: [
+    "https://*.relay.droppen.app",
+    "wss://*.relay.droppen.app",
+    "https://sin-1-production.up.railway.app",
+    "wss://sin-1-production.up.railway.app",
+    "https://sin-2-production.up.railway.app",
+    "wss://sin-2-production.up.railway.app",
+  ],
   role: "app",
 };
 
