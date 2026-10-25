@@ -415,7 +415,7 @@ const PROBE_READ: &str = r#"(function () {
       movedNotice: !!document.getElementById("droppen-desktop-moved-notice"),
       iframes: document.querySelectorAll("iframe").length,
       securityDesktopApp: !!document.querySelector('[data-testid="security-desktop-app"]'),
-      droppenTab: Array.prototype.some.call(document.querySelectorAll('button,[role="tab"]'), function (b) { return b.textContent.trim() === "Droppen"; }),
+      droppenSection: !!document.querySelector('[data-testid="droppen-section"]'),
       firstRunCard: !!document.querySelector('[data-testid="droppen-first-run"]'),
       guide: (function (g) { return g && g.getAttribute("data-screen"); })(document.querySelector('[data-testid="guide"]')),
       setupBar: document.querySelector('[data-testid="setup-resume-bar"]') ? "resume" : document.querySelector('[data-testid="setup-no-tool-bar"]') ? "noTool" : null,

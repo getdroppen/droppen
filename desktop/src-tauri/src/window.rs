@@ -148,6 +148,10 @@ fn allow_navigation<R: Runtime>(app: &AppHandle<R>, label: &str, url: &Url) -> b
             crate::updater::restart_asked_by_page(app, &token);
             false
         }
+        Route::CheckForUpdates(token) => {
+            crate::updater::check_asked_by_page(app, &token);
+            false
+        }
     }
 }
 

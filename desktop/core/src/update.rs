@@ -24,8 +24,9 @@
 //! ([`ENDPOINT`]). The manifest is not signed; the archive is, and its
 //! signature names the version it was made for, which the app requires to be
 //! the version the manifest announces (`requireSignedVersion`). `notes` is the
-//! address of the release notes: the app links to it and shows no text from
-//! the manifest.
+//! address of the release notes: the app links to it. The text the app's
+//! update page shows comes from the release body instead — GitHub's API for
+//! the tag [`notes_api_url`], the same notes the release page carries.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -99,6 +100,70 @@ fn allowed_notes(notes: &str) -> Option<String> {
         _ => false,
     };
     allowed.then(|| url.to_string())
+}
+
+/// Where the release body of `version` is read (GitHub's API, the same text
+/// its release page shows): `None` for anything that is not a plain version.
+pub fn notes_api_url(version: &str) -> Option<String> {
+    is_version(version).then(|| format!("https://api.github.com/repos/{RELEASES_REPO}/releases/tags/v{version}"))
+}
+
+/// A release's notes, as the update page reads them: the two "what's new"
+/// sections of its body, one per language, without their headings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notes {
+    /// The release they belong to.
+    pub version: String,
+    /// `## What's new in v<version>` and what follows, in markdown.
+    pub english: String,
+    /// `## v<version> 更新内容` and what follows, in markdown.
+    pub chinese: String,
+}
+
+/// The notes in a GitHub release's JSON (`GET /repos/…/releases/tags/v<version>`).
+pub fn notes_from_json(json: &str, version: &str) -> Option<Notes> {
+    #[derive(Deserialize)]
+    struct Release {
+        body: Option<String>,
+    }
+    let release: Release = serde_json::from_str(json).ok()?;
+    whats_new(release.body.as_deref()?, version)
+}
+
+/// The two "what's new" sections of a release body (`docs/releases/<version>.md`,
+/// which the release workflow puts in the body): each runs from its `##`
+/// heading to the next one. `None` when the body has neither, as a snapshot
+/// release's does not.
+pub fn whats_new(body: &str, version: &str) -> Option<Notes> {
+    let english = section(body, |heading| heading.starts_with("## What's new")).unwrap_or_default();
+    let chinese = section(body, |heading| heading.starts_with("## v") && heading.ends_with("更新内容")).unwrap_or_default();
+    (!english.is_empty() || !chinese.is_empty()).then(|| Notes {
+        version: version.to_string(),
+        english,
+        chinese,
+    })
+}
+
+/// The lines under the first `##` heading `matches`, up to the next `##` one.
+fn section(body: &str, matches: impl Fn(&str) -> bool) -> Option<String> {
+    let mut found = false;
+    let mut lines: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        if !found {
+            found = matches(line.trim());
+            continue;
+        }
+        if line.trim_start().starts_with("## ") {
+            break;
+        }
+        lines.push(line);
+    }
+    if !found {
+        return None;
+    }
+    let text = lines.join("\n").trim().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 /// Whether `version` is a plain semantic version: `1.2.3`, or `1.2.3-pre.1`
@@ -183,8 +248,9 @@ pub struct Release {
 
 /// Where the update is. Nothing here ever asks anything: the app checks,
 /// downloads and verifies on its own, installs at the next quit, and only
-/// says so — in its menu, with a dot on the menu-bar icon, and in a quiet
-/// entry in the web app's rail.
+/// says so — in its menu, with a dot on the menu-bar icon, and on the web
+/// app's update page (`web/src/features/updates/updates-view.tsx`), whose
+/// rail entry always opens that page and never restarts by itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum State {
@@ -312,8 +378,8 @@ impl Menu {
 }
 
 /// A snapshot for whoever shows the update besides the menu: the web app's
-/// rail entry, through the app's bridge (`init.js`), and later the control
-/// channel.
+/// update page and rail entry, through the app's bridge (`init.js`), and
+/// later the control channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -328,6 +394,9 @@ pub struct Status {
     pub last_checked: Option<String>,
     /// The last failure worth saying, until something succeeds.
     pub problem: Option<Problem>,
+    /// The notes of the release in hand (or the running one, when there is
+    /// nothing newer), for the update page. `None` until they have been read.
+    pub notes: Option<Notes>,
 }
 
 /// How long the answer to an asked-for check stays in the menu.
@@ -357,6 +426,8 @@ pub struct Updates {
     /// When an asked-for answer leaves the menu.
     outcome_until: Option<SystemTime>,
     last_checked: Option<SystemTime>,
+    /// The notes read for the release in hand (or this one), for the update page.
+    notes: Option<Notes>,
 }
 
 impl Updates {
@@ -371,6 +442,7 @@ impl Updates {
             outcome: None,
             outcome_until: None,
             last_checked: None,
+            notes: None,
         }
     }
 
@@ -408,7 +480,19 @@ impl Updates {
                 Some(Outcome::Failed(problem)) => Some(problem),
                 _ => None,
             },
+            notes: self.notes.clone(),
         }
+    }
+
+    /// The notes already read, if any (so a check does not read the same
+    /// release's body again).
+    pub fn cached_notes(&self) -> Option<&Notes> {
+        self.notes.as_ref()
+    }
+
+    /// Keep the notes the update page shows; `None` forgets them.
+    pub fn set_notes(&mut self, notes: Option<Notes>) {
+        self.notes = notes;
     }
 
     /// The release notes to link to: the release under way, else this version's.
@@ -1073,6 +1157,7 @@ mod tests {
                 "place": "updatable",
                 "lastChecked": "2026-10-19T08:00:00Z",
                 "problem": null,
+                "notes": null,
             })
         );
         let mut failed = updatable("0.2.124");
@@ -1083,6 +1168,52 @@ mod tests {
             serde_json::to_value(Updates::new("1.0.0", Place::Symlinked).status()).expect("json")["place"],
             "symlinked"
         );
+    }
+
+    #[test]
+    fn the_release_body_gives_the_update_page_its_two_languages() {
+        let body = "Droppen v0.2.131: the server.\n\n## What's new in v0.2.131\n\n### Your account\n\n- **One.** Two.\n\n### Coming next\n\n- Later.\n\n## v0.2.131 更新内容\n\n### 你的账户\n\n- **一。** 二。\n";
+        let notes = whats_new(body, "0.2.131").expect("notes");
+        assert_eq!(notes.version, "0.2.131");
+        assert!(notes.english.starts_with("### Your account"), "{}", notes.english);
+        assert!(notes.english.contains("### Coming next"));
+        assert!(!notes.english.contains("更新内容"), "the next ## ends it");
+        assert!(notes.chinese.starts_with("### 你的账户"));
+        assert!(notes.chinese.contains("二。"));
+        // The body as GitHub's release JSON carries it.
+        let json = serde_json::json!({ "tag_name": "v0.2.131", "body": body }).to_string();
+        assert_eq!(notes_from_json(&json, "0.2.131"), Some(notes));
+        assert!(notes_from_json("{}", "0.2.131").is_none(), "no body");
+        assert!(notes_from_json("not json", "0.2.131").is_none());
+        assert!(whats_new("## Droppen App for macOS\n\nnothing here", "0.2.131").is_none(), "a snapshot release");
+    }
+
+    #[test]
+    fn notes_are_read_from_the_release_of_that_version_only() {
+        assert_eq!(
+            notes_api_url("0.2.131").as_deref(),
+            Some("https://api.github.com/repos/getdroppen/droppen/releases/tags/v0.2.131")
+        );
+        assert!(notes_api_url("0.3.0-rc.1").is_some());
+        for wrong in ["", "v0.2.131", "0.2", "0.2.131/../../x", "0.2.131?x=1"] {
+            assert_eq!(notes_api_url(wrong), None, "{wrong}");
+        }
+    }
+
+    #[test]
+    fn the_status_carries_the_notes_it_has_read() {
+        let mut updates = updatable("0.2.124");
+        updates.set_notes(Some(Notes {
+            version: "0.2.124".into(),
+            english: "## a".into(),
+            chinese: "## 甲".into(),
+        }));
+        let json = serde_json::to_value(updates.status()).expect("json");
+        assert_eq!(json["notes"]["version"], "0.2.124");
+        assert_eq!(json["notes"]["english"], "## a");
+        assert_eq!(json["notes"]["chinese"], "## 甲");
+        updates.set_notes(None);
+        assert_eq!(serde_json::to_value(updates.status()).expect("json")["notes"], serde_json::Value::Null);
     }
 
     #[test]

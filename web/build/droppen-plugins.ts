@@ -59,7 +59,7 @@ const PERMISSIONS = new Set(["storage", "sessions:read", "notify"]);
  */
 export const RESERVED_PATHS = new Set([
   "p", "m", "api", "embed", "assets", "plugins", "splash",
-  "login", "setup", "welcome", "sessions", "chat", "files", "terminals", "settings", "stats", "apps", "screens",
+  "login", "setup", "welcome", "sessions", "chat", "files", "terminals", "settings", "stats", "updates", "apps", "screens",
   "hub", "signin", "signup", "verify", "link",
 ]);
 

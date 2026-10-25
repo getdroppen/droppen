@@ -1,53 +1,83 @@
-// The desktop app's quiet "update ready" entry at the bottom of the rail
-// (`app/desktop-update.tsx`): shown only for a version the app says is ready,
-// until that version is put away; a newer one shows again.
-//
-// `import * as React` because the test directory is outside the tsconfig's
-// `include`, so tsx compiles JSX here with the classic runtime.
-import * as React from "react";
+// The update status the app's bridge hands the page (`app/desktop-update.tsx`):
+// read defensively, and the rail's mark is only what it should be — ready
+// until that version is put away, downloading, or a failure worth saying.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { DesktopUpdateEntry, readyVersion } from "../src/app/desktop-update.js";
-import { ja } from "../src/i18n/ja.js";
-import { zhCN } from "../src/i18n/zh-CN.js";
-import { zhTW } from "../src/i18n/zh-TW.js";
+import {
+  parseUpdateStatus,
+  updateBadge,
+  updateVersion,
+  type UpdateStatus,
+} from "../src/app/desktop-update.js";
 
-const ready = (version: unknown) => ({ current: "0.2.124", state: "ready", release: { version, notes: "https://github.com/getdroppen/droppen/releases/tag/v0.2.125" } });
+const base: UpdateStatus = {
+  current: "0.2.130",
+  state: "idle",
+  release: null,
+  percent: null,
+  place: "updatable",
+  lastChecked: null,
+  problem: null,
+  notes: null,
+};
 
-test("only a ready update shows, and only until its version is put away", () => {
-  assert.equal(readyVersion(ready("0.2.125"), null), "0.2.125");
-  assert.equal(readyVersion(ready("0.2.125"), "0.2.125"), null, "put away");
-  assert.equal(readyVersion(ready("0.2.126"), "0.2.125"), "0.2.126", "a newer one shows again");
-  for (const state of ["idle", "checking", "downloading", "installing", "restarting"]) {
-    assert.equal(readyVersion({ ...ready("0.2.125"), state }, null), null, state);
+const release = (version = "0.2.131") => ({ version, notes: "https://github.com/getdroppen/droppen/releases/tag/v0.2.131" });
+
+test("a status is read down to the shapes the page draws", () => {
+  const ready = parseUpdateStatus({
+    current: "0.2.130",
+    state: "ready",
+    release: release(),
+    place: "updatable",
+    lastChecked: "2026-10-25T01:00:00Z",
+    problem: null,
+    notes: { version: "0.2.131", english: "## a", chinese: "## 甲" },
+  });
+  assert.deepEqual(ready, {
+    current: "0.2.130",
+    state: "ready",
+    release: release(),
+    percent: null,
+    place: "updatable",
+    lastChecked: "2026-10-25T01:00:00Z",
+    problem: null,
+    notes: { version: "0.2.131", english: "## a", chinese: "## 甲" },
+  });
+  const downloading = parseUpdateStatus({ current: "0.2.130", state: "downloading", release: release(), percent: 42.6 });
+  assert.equal(downloading?.percent, 43);
+  // Whatever else the bridge might hold: nothing to draw.
+  for (const odd of [undefined, null, "ready", 42, {}, { state: "ready" }, { current: "v0.2.130" }, { current: "<b>" }]) {
+    assert.equal(parseUpdateStatus(odd), null, JSON.stringify(odd));
   }
-  // Whatever else the bridge might hold: nothing.
-  for (const odd of [undefined, null, "ready", 42, {}, { state: "ready" }, ready(125), ready("<img src=x>"), ready("v0.2.125")]) {
-    assert.equal(readyVersion(odd, null), null, JSON.stringify(odd));
-  }
+  const odd = parseUpdateStatus({ current: "0.2.130", state: "what", release: { version: "v0.2.131" }, percent: -3, place: "x", problem: "nope" });
+  assert.equal(odd?.state, "idle");
+  assert.equal(odd?.release, null);
+  assert.equal(odd?.percent, null);
+  assert.equal(odd?.place, "notABundle");
+  assert.equal(odd?.problem, null);
 });
 
-async function draw(lng: string, resources: Record<string, string>): Promise<string> {
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng, resources: { [lng]: { translation: resources } }, interpolation: { escapeValue: false } });
-  return renderToStaticMarkup(
-    <I18nextProvider i18n={i18n}>
-      <DesktopUpdateEntry version="0.2.125" onRestart={() => {}} onDismiss={() => {}} />
-    </I18nextProvider>,
-  );
-}
+test("the page is about the release under way, else this version", () => {
+  assert.equal(updateVersion({ ...base, state: "ready", release: release() }), "0.2.131");
+  assert.equal(updateVersion({ ...base, state: "downloading", release: release() }), "0.2.131");
+  assert.equal(updateVersion({ ...base, state: "idle", release: release() }), "0.2.130");
+  assert.equal(updateVersion({ ...base, state: "checking" }), "0.2.130");
+});
 
-test("the entry says the version and restart, in each language", async () => {
-  const en = await draw("en", {});
-  assert.match(en, /title="Droppen 0\.2\.125 is ready · restart to update"/);
-  assert.match(en, />restart</);
-  assert.match(en, /title="dismiss"/);
-  assert.match(await draw("zh-CN", zhCN), /新版本 Droppen 0\.2\.125 已就绪 · 重启以更新/);
-  assert.match(await draw("zh-TW", zhTW), /新版本 Droppen 0\.2\.125 已就緒/);
-  assert.match(await draw("ja", ja), /再起動/);
-  // Square corners and no state colour: it is news, not a state.
-  assert.doesNotMatch(en, /rounded|text-ok|bg-ok|text-warn|bg-warn|danger/);
+test("the rail marks a ready update until it is put away, a download, and a failure worth saying", () => {
+  assert.equal(updateBadge({ ...base, state: "ready", release: release() }, null), "ready");
+  assert.equal(updateBadge({ ...base, state: "ready", release: release() }, "0.2.131"), null, "put away");
+  assert.equal(updateBadge({ ...base, state: "ready", release: release("0.2.132") }, "0.2.131"), "ready", "a newer one shows again");
+  assert.equal(updateBadge({ ...base, state: "downloading", release: release() }, null), "downloading");
+  for (const state of ["idle", "checking", "installing", "restarting"] as const) {
+    assert.equal(updateBadge({ ...base, state, release: release() }, null), null, state);
+  }
+  // A network or service hiccup is retried silently; these three are said.
+  for (const problem of ["offline", "service", "other"] as const) {
+    assert.equal(updateBadge({ ...base, problem }, null), null, problem);
+  }
+  for (const problem of ["signature", "location", "install"] as const) {
+    assert.equal(updateBadge({ ...base, problem }, null), "problem", problem);
+  }
+  assert.equal(updateBadge(null, null), null);
 });

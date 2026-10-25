@@ -14,8 +14,9 @@
 //!   thrown away, and the menu says so. A verified one waits on disk, in the
 //!   app's support directory (`update/`).
 //! * **Ready.** Said passively: the menu item becomes *Restart to Update to
-//!   0.2.125*, the menu-bar icon gets a dot, and the web app shows a small
-//!   entry at the bottom of its rail. *Release Notes* opens the release page.
+//!   0.2.125*, the menu-bar icon gets a dot, and the web app's rail entry gets
+//!   a mark opening the update page, which shows the release's notes and the
+//!   restart. *Release Notes* opens the release page.
 //! * **Install.** At the next quit — the ordinary one: the login revoked and
 //!   the server stopped with `SIGTERM` (`Shell::shutdown`), so terminals and
 //!   running sessions carry on under their shims — the archive is verified
@@ -40,12 +41,19 @@
 //! after every change and every page load the app calls
 //! `__droppenDesktop.update(bridge, status, restart)` — in a window showing
 //! the app's server only ([`web::is_server`], checked again in the page) —
-//! and the page asks for the restart with a
-//! `droppen-desktop://update/restart?token=<restart>` navigation the window
-//! cancels ([`restart_asked_by_page`]). `bridge` and `restart` are this
-//! launch's own random values, never the login nonce that guards the login
-//! `init.js` keeps: a page that learnt either can at most ask for the restart,
-//! which the menu offers anyway.
+//! and the page asks for a check or a restart with a
+//! `droppen-desktop://update/check` or `…/restart` navigation carrying that
+//! token, which the window cancels ([`check_asked_by_page`],
+//! [`restart_asked_by_page`]). `bridge` and `restart` are this launch's own
+//! random values, never the login nonce that guards the login `init.js`
+//! keeps: a page that learnt either can at most ask for a check or the
+//! restart, which the menu offers anyway.
+//!
+//! Every check that succeeds also reads the notes of the release it names
+//! (the release body from GitHub's API, `update::notes_from_json`), so the
+//! update page can show what changed instead of only linking to it. The
+//! read is best effort and never blocks the update: it is a second request,
+//! and a failure only leaves the page with the link.
 //!
 //! TODO(control channel): once the app has a channel to the server, carry
 //! [`status`] / [`watch`] and [`check`] / [`restart_now`] over it instead of
@@ -91,6 +99,8 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a connection may take, and a download may stall.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the release notes may take to read (the update itself never waits).
+const NOTES_TIMEOUT: Duration = Duration::from_secs(15);
 /// How often the schedule looks at the clock.
 const TICK: Duration = Duration::from_secs(5);
 /// The downloaded archive, in the support directory's `update/`.
@@ -386,6 +396,14 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
             }
         };
         let Some(me) = app.try_state::<Updater<R>>() else { return };
+        // The update page's notes: the release in hand, or this version's when
+        // there is nothing newer. Started here so the page has them by the
+        // time anyone opens it; the read never delays the download.
+        match &checked {
+            Checked::Found(release) => fetch_notes(app.clone(), release.version.clone()),
+            Checked::UpToDate => fetch_notes(app.clone(), lock(&me.updates).current().to_string()),
+            Checked::Failed(_) => {}
+        }
         if matches!(checked, Checked::Failed(_)) {
             lock(&me.schedule).failed();
         }
@@ -408,6 +426,70 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
         }
         changed(&app);
     });
+}
+
+/// Read the notes of Droppen `version` (its GitHub release body) and keep them
+/// for the update page. Best effort: a failure leaves the page its link.
+fn fetch_notes<R: Runtime>(app: AppHandle<R>, version: String) {
+    #[cfg(feature = "e2e")]
+    {
+        // A test build never asks GitHub: its manifest comes from the loopback
+        // server `desktop/e2e-updater-macos.sh` serves.
+        let _ = (app, version);
+        return;
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        if app
+            .try_state::<Updater<R>>()
+            .is_some_and(|me| lock(&me.updates).cached_notes().is_some_and(|notes| notes.version == version))
+        {
+            return;
+        }
+        let Some(url) = update::notes_api_url(&version) else {
+            return;
+        };
+        tauri::async_runtime::spawn(async move {
+            let client = match reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .timeout(NOTES_TIMEOUT)
+                .user_agent(droppen_desktop_core::server::USER_AGENT)
+                .build()
+            {
+                Ok(client) => client,
+                Err(error) => {
+                    log::info!("updates: cannot read the notes of Droppen {version}: {error}");
+                    return;
+                }
+            };
+            let response = match client.get(&url).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    log::info!("updates: cannot read the notes of Droppen {version}: {error}");
+                    return;
+                }
+            };
+            if !response.status().is_success() {
+                log::info!("updates: no notes for Droppen {version}: HTTP {}", response.status());
+                return;
+            }
+            let Ok(json) = response.text().await else {
+                return;
+            };
+            if json.len() > 256 * 1024 {
+                log::info!("updates: Droppen {version}'s release body is too large to read");
+                return;
+            }
+            let Some(notes) = update::notes_from_json(&json, &version) else {
+                log::info!("updates: Droppen {version}'s release body names no notes");
+                return;
+            };
+            let Some(me) = app.try_state::<Updater<R>>() else { return };
+            log::info!("updates: read the notes of Droppen {version}");
+            lock(&me.updates).set_notes(Some(notes));
+            changed(&app);
+        });
+    }
 }
 
 /// Download `release` in the background, verify it, and put it aside.
@@ -491,6 +573,17 @@ pub fn restart_now<R: Runtime>(app: &AppHandle<R>) {
     me.restart.store(true, Ordering::SeqCst);
     log::info!("updates: restarting to update");
     app.exit(0);
+}
+
+/// The web app's update page asked for a check (`init.js`): honoured only
+/// with the token this launch handed the app's pages.
+pub fn check_asked_by_page<R: Runtime>(app: &AppHandle<R>, token: &str) {
+    let ours = app.try_state::<Updater<R>>().is_some_and(|me| !token.is_empty() && me.restart_token == token);
+    if ours {
+        check(app, true);
+    } else {
+        log::warn!("updates: a check request without this launch's token was ignored");
+    }
 }
 
 /// The web app's entry asked for the restart (`init.js`): honoured only with

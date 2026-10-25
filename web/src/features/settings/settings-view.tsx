@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Content, Panel, PanelHeader } from "@/components/panel";
 import { useShowHiddenFiles } from "@/features/files/use-files-prefs";
 import { AccessSection } from "@/features/settings/access-section";
+import { SettingsUpdatesRow } from "@/features/updates/updates-row";
 import { AccountsSection } from "@/features/settings/accounts-section";
 import { ScheduleSection } from "@/features/settings/schedule-section";
 import { ALL_SECTIONS, askedSection, type SectionId } from "@/features/settings/sections";
@@ -612,6 +613,7 @@ function GeneralSettings() {
       <PhoneNotificationsSection />
       <InstallSection />
       <ChatProviderSection />
+      <SettingsUpdatesRow />
       <section className="p-3">
         <h2 data-label="" className="label-caps -mx-3 -mt-3 mb-3 flex h-9 items-center border-b border-border px-3 text-2xs text-fg">
           {t("server info")}

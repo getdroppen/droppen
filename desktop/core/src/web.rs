@@ -356,6 +356,9 @@ pub enum Route {
     /// the one the updater handed that page (never the login nonce), or it is
     /// ignored.
     RestartToUpdate(String),
+    /// Do not load it: a page asks the app to check for updates now (`init.js`,
+    /// `checkForUpdates`), with the same token.
+    CheckForUpdates(String),
 }
 
 /// The scheme of what the app's own pages ask the app (`init.js`): never loaded.
@@ -371,14 +374,18 @@ pub fn route(url: &Url, port: Option<u16>) -> Route {
             None => Route::Here,
         },
         "mailto" => Route::System,
-        APP_SCHEME if url.host_str() == Some("update") && url.path() == "/restart" => Route::RestartToUpdate(
-            url.query_pairs()
-                .find(|(name, _)| name == "token")
-                .map(|(_, token)| token.into_owned())
-                .unwrap_or_default(),
-        ),
+        APP_SCHEME if url.host_str() == Some("update") && url.path() == "/restart" => Route::RestartToUpdate(token(url)),
+        APP_SCHEME if url.host_str() == Some("update") && url.path() == "/check" => Route::CheckForUpdates(token(url)),
         _ => Route::Refuse,
     }
+}
+
+/// The `token` of a `droppen-desktop://` request (`init.js`), or nothing.
+fn token(url: &Url) -> String {
+    url.query_pairs()
+        .find(|(name, _)| name == "token")
+        .map(|(_, token)| token.into_owned())
+        .unwrap_or_default()
 }
 
 /// Whether a *page* load (never a frame) at `url` would take the window out of
@@ -754,6 +761,14 @@ mod tests {
         assert_eq!(
             route(&url("droppen-desktop://update/restart?token=abc123"), port),
             Route::RestartToUpdate("abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://update/check?token=abc123"), port),
+            Route::CheckForUpdates("abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://update/check"), port),
+            Route::CheckForUpdates(String::new())
         );
         // The login nonce's name carries nothing here.
         assert_eq!(

@@ -229,6 +229,13 @@ const statsRoute = createRoute({
   component: lazyRouteComponent(() => import("@/features/stats/stats-view"), "StatsView"),
 });
 
+/** The app's own update, its notes and the restart (`features/updates/`). */
+const updatesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "updates",
+  component: lazyRouteComponent(() => import("@/features/updates/updates-view"), "UpdatesView"),
+});
+
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "apps/$id",
@@ -354,6 +361,7 @@ const routeTree = rootRoute.addChildren([
   filesRoute,
   settingsRoute,
   statsRoute,
+  updatesRoute,
   pluginRoute,
   appRoute,
   screenRoute,

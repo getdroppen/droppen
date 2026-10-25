@@ -410,7 +410,7 @@ reload_and_probe 'location.assign("/settings?section=security")'
 sleep 1
 command "snapshot $SHOTS/03-settings-security.png"
 echo "probe: $(last_probe)"
-check "Security: no password change, no sign-out; a Droppen section" '[ "$(probe_field securityDesktopApp)" = True ] && [ "$(probe_field loginForm)" = False ] && [ "$(probe_field droppenTab)" = True ]'
+check "Access: no password change, no sign-out; a Droppen section" '[ "$(probe_field securityDesktopApp)" = True ] && [ "$(probe_field loginForm)" = False ] && [ "$(probe_field droppenSection)" = True ]'
 # (`?e2e`: this look is not counted as the server's below.)
 check "the test hub answers its discovery document" 'curl -fsS "$HUB/.well-known/droppen-hub?e2e" | grep -qF "\"app\":\"$HUB_APP\""'
 reload_and_probe 'location.assign("/settings?section=Droppen")'

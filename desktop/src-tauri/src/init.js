@@ -17,8 +17,8 @@
 //   3. shows one small notice when macOS runs the app from a temporary copy.
 //      Whether Claude Code or Codex is ready is said by the web app's
 //      first-run guide (web/src/features/setup), not here;
-//   4. carries the app's update status to the web app's quiet "ready" entry,
-//      and its "restart" back to the app;
+//   4. carries the app's update status to the web app's update page, and its
+//      "check" and "restart" back to the app;
 //   5. lists the system's preferred languages, all of them, in
 //      navigator.languages: WebKit lists only the first, so a page's "auto"
 //      (web/src/i18n/index.ts) would show English to a reader whose first
@@ -303,11 +303,11 @@
   // app calls update(bridge, status, restart) in the server's pages after
   // every change and every page load; only a call with the bridge's token —
   // the update's own, never the login nonce — is kept. The web app reads
-  // updateState() whenever a `droppen:update` event says it changed, and
-  // restartToUpdate() is a navigation the app cancels and answers — by
-  // restarting into the new version only if one is downloaded and verified.
-  // It carries the restart token the app handed over, which asks for nothing
-  // but that restart, so a page that sees the navigation learns nothing else.
+  // updateState() whenever a `droppen:update` event says it changed;
+  // checkForUpdates() and restartToUpdate() are navigations the app cancels
+  // and answers — the first by checking now, the second by restarting into
+  // the new version only if one is downloaded and verified. Both carry the
+  // token the app handed over, which asks for nothing but that.
   var BRIDGE = "__DROPPEN_BRIDGE__";
   var updateStatus = null;
   var restartToken = null;
@@ -322,6 +322,10 @@
         },
         updateState: function () {
           return updateStatus ? JSON.parse(updateStatus) : null;
+        },
+        checkForUpdates: function () {
+          if (!restartToken) return;
+          location.assign("droppen-desktop://update/check?token=" + encodeURIComponent(restartToken));
         },
         restartToUpdate: function () {
           if (!restartToken) return;

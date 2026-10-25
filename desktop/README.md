@@ -185,8 +185,19 @@ The app updates itself without asking anything and without a window
   `~/Library/Application Support/app.droppen.desktop/update/` (0700/0600).
 - **Says it is ready** passively: the update item becomes *Restart to Update
   to 0.2.125* / 「重启以更新到 0.2.125」, the menu-bar icon gets a dot, and the
-  web app shows a small entry at the bottom of its rail (`web/src/app/desktop-update.tsx`),
-  which can be put away.
+  web app's rail has an **Updates** entry (`web/src/app/desktop-update.tsx`).
+  The entry is always there in the app and only opens the update page
+  (`/updates`, `web/src/features/updates/updates-view.tsx`) — it never
+  restarts anything itself. The page says which version is in hand, what
+  changed in it, and offers the one *Restart to update*; *Later* puts the rail
+  mark away for that version, and the update still installs at the next quit.
+- **Reads the release notes** for the page: every successful check also asks
+  GitHub's API for the body of the `v<version>` release
+  (`update::notes_api_url`, `notes_from_json`) and keeps the two “what's new”
+  sections, English and Chinese, in the status the page reads. The read is
+  best effort and never delays a download; without it the page links to the
+  release on GitHub. In a browser (no app bridge) the page just says updates
+  are handled by the app.
 - **Installs at the next quit**: the ordinary quit (the server stopped with
   `SIGTERM`, so terminals and running sessions carry on under their shims),
   then the archive is verified again and swapped in for the bundle in one step;
@@ -203,7 +214,9 @@ The app updates itself without asking anything and without a window
 - ***Check for Updates…*** answers in the menu item itself: *Checking…*,
   *Downloading Update… 42%*, *Up to Date (0.2.124)*, or one honest line — only
   a network failure says "network"; a bad signature, a location that cannot be
-  updated, a failed install each say so.
+  updated, a failed install each say so. The update page's *Check now* asks for
+  the same check through the bridge (`droppen-desktop://update/check`, with
+  the launch's token, like the restart).
 - **Not updatable where it runs** — App Translocation, a disk image, a path
   through a symbolic link — the item says *Move Droppen to Applications to
   Update*. A development build (not in a bundle) never updates.

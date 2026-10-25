@@ -52,6 +52,7 @@ import { ScreensProvider, useScreens } from "./screens";
 import { PaneLeafContent } from "./secondary-pane";
 import { VersionBanner } from "./version-banner";
 import { DesktopUpdate } from "./desktop-update";
+import { NAV_ITEM_CLASS } from "./rail-item";
 import { PluginRegistryProvider } from "@/plugins/registry";
 import { PluginNav } from "@/plugins/plugin-nav";
 import { NewSessionHotkey, useNewSessionShortcut, useOpenNewSession } from "@/features/sessions/new-session-view";
@@ -66,10 +67,6 @@ const NAV = [
   { to: "/terminals", label: "Terminals", icon: SquareTerminal },
   { to: "/files", label: "Files", icon: FolderTree },
 ] as const;
-
-/** One rail/bottom-bar entry; plugins' entries use the same class. */
-export const NAV_ITEM_CLASS =
-  "flex items-center justify-center text-muted hover:bg-hover hover:text-fg max-[480px]:size-[36px] max-[480px]:shrink-0 min-[480px]:max-md:size-9 md:size-8";
 
 const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
   auto: Monitor,

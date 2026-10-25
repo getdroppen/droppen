@@ -9,6 +9,7 @@ import { moveJa, moveZhCN, moveZhTW } from "./move";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "./onboarding";
 import { setupJa, setupZhCN, setupZhTW } from "./setup";
 import { signOutJa, signOutZhCN, signOutZhTW } from "./sign-out";
+import { updatesJa, updatesZhCN, updatesZhTW } from "./updates";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "./welcome";
 import { zhCN } from "./zh-CN";
 import { zhTW } from "./zh-TW";
@@ -85,9 +86,9 @@ const initial = resolveLanguage(storedLanguagePref());
 
 void i18n.use(initReactI18next).init({
   resources: {
-    "zh-CN": { translation: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...moveZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN } },
-    "zh-TW": { translation: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...moveZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW } },
-    ja: { translation: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...hostsJa, ...moveJa, ...setupJa, ...welcomeJa, ...ja } },
+    "zh-CN": { translation: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...updatesZhCN, ...hostsZhCN, ...moveZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN } },
+    "zh-TW": { translation: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...updatesZhTW, ...hostsZhTW, ...moveZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW } },
+    ja: { translation: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...updatesJa, ...hostsJa, ...moveJa, ...setupJa, ...welcomeJa, ...ja } },
   },
   lng: initial,
   fallbackLng: false,
