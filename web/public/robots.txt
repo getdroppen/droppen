@@ -1,0 +1,4 @@
+# The download buttons' /dl/ links count downloads (one per platform and
+# day): they are for people, not for crawlers.
+User-agent: *
+Disallow: /dl/

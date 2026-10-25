@@ -158,12 +158,14 @@ answer that names an older version than its last good one. The route is
 limited like `/healthz` (the static routes' share per address).
 
 `download_path`, on a hub that counts downloads, is `/dl/<platform>` for
-the file's own platform: the hub's `GET /dl/{platform}` below, on the
-hub's origin. Hubs before it name none.
+the file's own platform: the hub's `GET /dl/{platform}` below. It is a path,
+relative to the host the page is on: the hub serves `/dl/*` on every host
+it serves pages on, so a page links it on its own host. Hubs before it name
+none.
 
 A client links the files: a plain `<a href>`, which downloads in place —
-`download_path` when the hub names exactly `/dl/<platform>` for that file,
-else `url`. It checks the names and addresses as strictly. On any failure
+`download_path` when the hub names exactly `/dl/<platform>` for that file
+(with `rel="nofollow"`: crawlers should not count), else `url`. It checks the names and addresses as strictly. On any failure
 it links `https://github.com/getdroppen/droppen/releases/latest` instead.
 Errors: `503 release_unavailable` (with `Cache-Control: no-store` and
 `Retry-After`) until the hub has read a release that checks out. A hub
@@ -182,7 +184,8 @@ same and nothing is counted as a download); `HEAD` and a browser's prefetch
 are not counted. `GET /install.sh` is counted the same way. Errors: `404
 not_found` for any other platform. Limited like `/healthz` (the static
 routes' share per address); served on every host of the hub but the
-Turnstile host, never redirected. A hub before this route serves its web app
+Turnstile host, never redirected. The web app's `/robots.txt` disallows
+`/dl/`. A hub before this route serves its web app
 there (or `404`): a client links it only when `GET /v1/releases/latest`
 names it as `download_path`.
 

@@ -151,6 +151,23 @@ export const pricingZhCN: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求删除为止，最长不超过你最后一次加入后的 12 个月：超过的记录会自动删除。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "想退出，用那个邮箱写信到 {{email}}，我们会删除它。",
+  // Downloads (privacy notice)
+  "Downloads":
+    "下载",
+  "If you download Droppen":
+    "如果你下载了 Droppen",
+  "What we count":
+    "我们计数什么",
+  "When you download Droppen from droppen.app, or run its install command, our servers add one to that day's count for that download: the macOS app, a Linux build or the install script.":
+    "你从 droppen.app 下载 Droppen，或运行它的安装命令时，我们的服务器会给这项下载当天的计数加一：macOS App、Linux 版本或安装脚本。",
+  "That number is all we keep: one count per download per day, which says nothing about who downloaded.":
+    "我们只保存这个数字：每项下载每天一个计数，看不出是谁下载的。",
+  "What we don't keep":
+    "我们不保存什么",
+  "Not your IP address, nor anything else about your browser, and no cookie. To keep one source from inflating the counts, our servers hold the address and the network a download came from in memory, for an hour at most, and write them nowhere.":
+    "不保存你的 IP 地址，也不保存浏览器的任何其他信息，不用 Cookie。为防止有人刷高计数，服务器会把下载来自的地址和网络只留在内存里，最多一小时，不写到任何地方。",
+  "Our hosting provider's edge logs do record the IP address and User-Agent of every request, downloads included (see below).":
+    "不过托管服务商的边缘日志会记录每个请求（包括下载）的 IP 地址和 User-Agent（见下文）。",
   "Your account": "你的账号",
   "If you use Droppen": "如果你在用 Droppen",
   "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys. Our servers pass and keep what they cannot read.":
@@ -336,6 +353,23 @@ export const pricingZhTW: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求刪除為止，最長不超過你最後一次加入後的 12 個月：超過的紀錄會自動刪除。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "想退出，用那個信箱寫信到 {{email}}，我們會刪除它。",
+  // Downloads (privacy notice)
+  "Downloads":
+    "下載",
+  "If you download Droppen":
+    "如果你下載了 Droppen",
+  "What we count":
+    "我們計數什麼",
+  "When you download Droppen from droppen.app, or run its install command, our servers add one to that day's count for that download: the macOS app, a Linux build or the install script.":
+    "你從 droppen.app 下載 Droppen，或執行它的安裝指令時，我們的伺服器會把這項下載當天的計數加一：macOS App、Linux 版本或安裝腳本。",
+  "That number is all we keep: one count per download per day, which says nothing about who downloaded.":
+    "我們只保存這個數字：每項下載每天一個計數，看不出是誰下載的。",
+  "What we don't keep":
+    "我們不保存什麼",
+  "Not your IP address, nor anything else about your browser, and no cookie. To keep one source from inflating the counts, our servers hold the address and the network a download came from in memory, for an hour at most, and write them nowhere.":
+    "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊，不使用 Cookie。為防止有人灌高計數，伺服器會把下載來自的位址和網路只留在記憶體裡，最多一小時，不寫到任何地方。",
+  "Our hosting provider's edge logs do record the IP address and User-Agent of every request, downloads included (see below).":
+    "不過託管服務商的邊緣日誌會記錄每個請求（包括下載）的 IP 位址和 User-Agent（見下文）。",
   "Your account": "你的帳號",
   "If you use Droppen": "如果你在用 Droppen",
   "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys. Our servers pass and keep what they cannot read.":
@@ -521,6 +555,23 @@ export const pricingJa: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "削除のご依頼をいただくまで保管しますが、最後に登録してから 12 か月を超えることはありません。それより古い記録は自動で削除されます。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "削除をご希望の場合は、登録したアドレスから {{email}} までご連絡ください。削除いたします。",
+  // Downloads (privacy notice)
+  "Downloads":
+    "ダウンロード",
+  "If you download Droppen":
+    "Droppen をダウンロードした方へ",
+  "What we count":
+    "数えるもの",
+  "When you download Droppen from droppen.app, or run its install command, our servers add one to that day's count for that download: the macOS app, a Linux build or the install script.":
+    "droppen.app から Droppen をダウンロードしたとき、またはインストールコマンドを実行したとき、サーバーはそのダウンロードのその日の件数に 1 を足します。対象は macOS アプリ、Linux 版、インストールスクリプトです。",
+  "That number is all we keep: one count per download per day, which says nothing about who downloaded.":
+    "保管するのはこの数だけです。ダウンロードごと、1 日ごとの件数で、誰がダウンロードしたかはわかりません。",
+  "What we don't keep":
+    "保管しないもの",
+  "Not your IP address, nor anything else about your browser, and no cookie. To keep one source from inflating the counts, our servers hold the address and the network a download came from in memory, for an hour at most, and write them nowhere.":
+    "IP アドレスやブラウザに関する情報は保管せず、Cookie も使いません。件数を水増しされないよう、サーバーはダウンロード元のアドレスとネットワークをメモリ上でだけ最長 1 時間保持し、どこにも書き込みません。",
+  "Our hosting provider's edge logs do record the IP address and User-Agent of every request, downloads included (see below).":
+    "ただし、ホスティング事業者のエッジのログには、ダウンロードを含むすべてのリクエストの IP アドレスと User-Agent が記録されます（下記参照）。",
   "Your account": "アカウント",
   "If you use Droppen": "Droppen をお使いの方へ",
   "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys. Our servers pass and keep what they cannot read.":

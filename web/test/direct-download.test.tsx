@@ -269,13 +269,14 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   ].map((m) => m[0]);
   assert.equal(mac.length, 3);
   for (const a of mac) {
-    assert.match(a, /^<a href="\/dl\/macos" /, a);
-    assert.doesNotMatch(a, /target=|rel=|download=/, a);
+    assert.match(a, /^<a href="\/dl\/macos" rel="nofollow" /, a);
+    assert.doesNotMatch(a, /target=|download=/, a);
   }
   assert.ok(text(hero(landing("en", { hints: HINTS.mac, release: COUNTED }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   assert.ok(text(download("en", { os: "macos-app", release: COUNTED })).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
   const linuxHero = hero(landing("en", { hints: HINTS.linux, cpu: "x86_64", release: COUNTED }));
   assert.deepEqual([...linuxHero.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]), [["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"]]);
+  assert.match(linuxHero, /<a href="\/dl\/linux-x86_64" data-testid="hero-tarballs-file" class="[^"]*" rel="nofollow">/, "crawlers leave the count alone");
   assert.ok(text(linuxHero).includes("Or download it: droppen-v0.2.129-linux-x86_64.tar.gz (12 MB)"));
   const linuxTab = download("en", { os: "linux", hints: HINTS.linux, release: COUNTED });
   assert.deepEqual(
@@ -287,8 +288,14 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   );
   // The release page beside it is still GitHub's, for the checksums and the other files.
   assert.match(download("en", { os: "macos-app", release: COUNTED }), /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
-  // A hub without it: the files on GitHub, as before.
-  assert.doesNotMatch(hero(landing("en", { hints: HINTS.mac })) + download("en", { os: "linux", hints: HINTS.linux }), /href="\/dl\//);
+  // A hub without it: the files on GitHub, as before, and no nofollow on them.
+  const direct = hero(landing("en", { hints: HINTS.mac })) + download("en", { os: "linux", hints: HINTS.linux });
+  assert.doesNotMatch(direct, /href="\/dl\//);
+  assert.doesNotMatch(direct, /nofollow/);
+  // And crawlers are asked to leave /dl/ alone: the web app's robots.txt, served on every host of the hub.
+  const robots = readFileSync(new URL("../public/robots.txt", import.meta.url), "utf8");
+  assert.match(robots, /^User-agent: \*\nDisallow: \/dl\/\n/m);
+  assert.doesNotMatch(robots.replace(/^#.*\n/gm, ""), /Disallow: \/(?!dl\/)/, "nothing else is disallowed");
 });
 
 test("without it (no route, a 503, a failure, or not yet), every download button links the release page, in a new tab", () => {

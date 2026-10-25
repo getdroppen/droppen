@@ -474,17 +474,23 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     "Your address also leaves the waitlist, if it was on it.",
     "A keyed hash of your e-mail address, never the address itself, for 7 days, so the same inbox cannot sign up again straight away. How long is a setting of Droppen Hub: 7 days on droppen.app.",
     "For the same 7 days, your account's and your devices' random ids and your devices' public keys, which open nothing",
+    // A download: a count per download per day, and nothing about who.
+    "If you download Droppen",
+    "When you download Droppen from droppen.app, or run its install command, our servers add one to that day's count for that download: the macOS app, a Linux build or the install script.",
+    "That number is all we keep: one count per download per day, which says nothing about who downloaded.",
+    "Not your IP address, nor anything else about your browser, and no cookie. To keep one source from inflating the counts, our servers hold the address and the network a download came from in memory, for an hour at most, and write them nowhere.",
+    "Our hosting provider's edge logs do record the IP address and User-Agent of every request, downloads included (see below).",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /in padded sizes/);
   assert.doesNotMatch(words, /a matter of minutes/, "the ids are kept as long as the address's hash, not minutes");
-  assert.equal(PRIVACY_UPDATED, "2026-10-24");
+  assert.equal(PRIVACY_UPDATED, "2026-10-25");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));
-  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
-  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash|Our providers|How long we keep it/, lng);
+  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天", "如果你下载了 Droppen", "每项下载每天一个计数", "最多一小时，不写到任何地方"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
+  for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash|Our providers|How long we keep it|If you download Droppen|What we count|What we don't keep|for an hour at most/, lng);
 });
 
 test("the privacy notice names the providers that run parts of the service, where, and how long each kind of data stays", () => {

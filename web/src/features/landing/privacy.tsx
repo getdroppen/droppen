@@ -10,7 +10,8 @@ import { PRIVACY_EMAIL } from "./waitlist";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
- * for how long and how to be taken off it, what Droppen's servers can and
+ * for how long and how to be taken off it, what a download keeps (a count per
+ * download per day: docs/hub-api/http.md `GET /dl/{platform}`), what Droppen's servers can and
  * cannot see of an account (docs/cross-machine-architecture.md §2, the
  * landing page's security section; the security design at `/security` says
  * how), what deleting an account erases and keeps (docs/hub-api/http.md
@@ -24,7 +25,7 @@ import { PRIVACY_EMAIL } from "./waitlist";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-24";
+export const PRIVACY_UPDATED = "2026-10-25";
 
 /** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = 7;
@@ -120,6 +121,27 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                   items={[
                     t("Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically."),
                     t("To be taken off, write to {{email}} from that address and we will delete it.", { email: PRIVACY_EMAIL }),
+                  ]}
+                />
+              </div>
+            </div>
+          </Section>
+          <Section id="downloads">
+            <SectionHead label={t("Downloads")} title={t("If you download Droppen")} />
+            <div className="grid border-t border-border md:grid-cols-2">
+              <Block
+                title={t("What we count")}
+                items={[
+                  t("When you download Droppen from droppen.app, or run its install command, our servers add one to that day's count for that download: the macOS app, a Linux build or the install script."),
+                  t("That number is all we keep: one count per download per day, which says nothing about who downloaded."),
+                ]}
+              />
+              <div className="max-md:border-t max-md:border-border md:border-l md:border-border">
+                <Block
+                  title={t("What we don't keep")}
+                  items={[
+                    t("Not your IP address, nor anything else about your browser, and no cookie. To keep one source from inflating the counts, our servers hold the address and the network a download came from in memory, for an hour at most, and write them nowhere."),
+                    t("Our hosting provider's edge logs do record the IP address and User-Agent of every request, downloads included (see below)."),
                   ]}
                 />
               </div>
