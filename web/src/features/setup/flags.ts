@@ -7,6 +7,6 @@
  *
  * On since the app that has the hand-off (0.2.125). The download page's
  * `APP_SIGN_IN_AVAILABLE` (`features/landing/get-droppen.ts`) is the same
- * fact for droppen.app's own copy, on since the first App published (0.2.128).
+ * fact for droppen.app's own copy, on since the first App published (0.2.127).
  */
 export const DESKTOP_SIGN_IN_READY = true;

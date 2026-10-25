@@ -23,6 +23,7 @@ import {
   osOfSearch,
   RELEASES_URL,
   UNINSTALL_COMMAND,
+  WSL_SYSTEMD_URL,
 } from "./get-droppen";
 import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
@@ -282,11 +283,24 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
       <Soon testId="windows-soon" label={t("not yet")} body={t("What works on Windows today:")}>
         <ul className="flex flex-col gap-2">
           {[
-            t("Control your other devices from this browser: sign in at {{app}}.", { app: appHost() }),
-            availability.app ? t("Run the AI on a Mac, with the Droppen App.") : t("Run the AI on a Mac: in the background today, with the Droppen App soon."),
-            availability.linux ? t("Run the AI on a Linux server, or in WSL.") : t("Once Linux is supported: a Linux server, or WSL."),
-          ].map((line) => (
-            <li key={line} className="flex gap-2.5 text-xs leading-5 text-fg">
+            { key: "browser", line: t("Control your other devices from this browser: sign in at {{app}}.", { app: appHost() }) },
+            { key: "mac", line: availability.app ? t("Run the AI on a Mac, with the Droppen App.") : t("Run the AI on a Mac: in the background today, with the Droppen App soon.") },
+            availability.linux
+              ? {
+                  key: "linux",
+                  // The installer runs Droppen as a systemd user service: WSL has one only once systemd is turned on.
+                  line: (
+                    <>
+                      {t("Run the AI on a Linux server, or in WSL with systemd turned on.")}{" "}
+                      <a href={WSL_SYSTEMD_URL} target="_blank" rel="noopener noreferrer" data-testid="wsl-systemd" className="underline underline-offset-4 hover:no-underline">
+                        {t("how to turn on systemd in WSL")}
+                      </a>
+                    </>
+                  ),
+                }
+              : { key: "linux", line: t("Once Linux is supported: a Linux server, or WSL.") },
+          ].map(({ key, line }) => (
+            <li key={key} className="flex gap-2.5 text-xs leading-5 text-fg">
               <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
               <span>{line}</span>
             </li>

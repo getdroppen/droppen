@@ -253,7 +253,11 @@ test("the switches degrade: no App yet is 「App 即将推出」 and the command
   assert.ok(withLinux.includes("my devices → add a device that runs AI → show a one-time code"));
   // Windows says what works either way.
   assert.ok(text(draw("en", { os: "windows" })).includes("Once Linux is supported"));
-  assert.ok(text(draw("en", { os: "windows", linux: true })).includes("Run the AI on a Linux server, or in WSL."));
+  // WSL only with systemd on: the installer runs Droppen as a systemd user service, and stops where there is none.
+  const windows = draw("en", { os: "windows", linux: true });
+  assert.ok(text(windows).includes("Run the AI on a Linux server, or in WSL with systemd turned on."));
+  assert.match(windows, /<a href="https:\/\/learn\.microsoft\.com\/windows\/wsl\/systemd" target="_blank" rel="noopener noreferrer" data-testid="wsl-systemd"[^>]*>how to turn on systemd in WSL<\/a>/);
+  assert.ok(text(draw("zh-CN", { os: "windows", linux: true })).includes("或者开启了 systemd 的 WSL 里。"));
 });
 
 /** The App tab's panel alone (the page around it says 「登录 Droppen」 for the other ways in). */
@@ -265,7 +269,7 @@ const appPanel = (html: string) => {
 const appSteps = (html: string) => (appPanel(html).match(/data-testid="app-steps"[^]*?<\/ol>/)?.[0].match(/<li/g) ?? []).length;
 
 test("signing in from the App: its last step is 「登录 Droppen」 inside it, and nothing says it is coming — in every language", () => {
-  assert.equal(APP_SIGN_IN_AVAILABLE, true, "every App published signs itself in (the hand-off came in 0.2.125; the first public .dmg is 0.2.128)");
+  assert.equal(APP_SIGN_IN_AVAILABLE, true, "every App published signs itself in (the hand-off came in 0.2.125; the first public .dmg is 0.2.127)");
   assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
   const said = {
     en: {

@@ -175,9 +175,10 @@ test("on a Mac: the App's .dmg itself, the one primary action, then install it, 
     "Install it",
     "Open the .dmg and drag Droppen to Applications.",
     "Open Droppen",
-    "It starts by itself. Nothing to set up.",
+    "It opens a short setup guide, four steps.",
     "Sign in to Droppen in the App",
-    "A droppen.app window opens: sign in, then click add this device.",
+    // Where the App's guide has it: its step 02, the card the App names so — and where it is after the guide.
+    "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A droppen.app window opens: sign in, then click add this device.",
     "Keep this page open: it notices the new device by itself.",
     "Is that window's browser new to your account?",
   ])
@@ -227,6 +228,13 @@ test("on Linux: the install command, its copy the one primary, then its page's �
   assert.equal(coded, 1);
   // With no way to the code (none given), no link to it.
   assert.doesNotMatch(card("en", HINTS.linux, { onCode: undefined }), /first-host-code/);
+  // A Chromebook: the same, once its Linux is turned on — said first; on Linux itself, nothing of the kind.
+  const chromebook = card("en", HINTS.chromebook);
+  assert.match(chromebook, /data-testid="first-host-chromebook"[^>]*>On a Chromebook, turn on Linux first: in Settings, search for “Linux development environment”\.</);
+  assert.ok(chromebook.indexOf("first-host-chromebook") < chromebook.indexOf("first-host-command"));
+  assert.doesNotMatch(html, /first-host-chromebook/);
+  assert.doesNotMatch(click(HINTS.mac, [press("first-host-way-linux")]), /first-host-chromebook/, "a Mac choosing Linux is no Chromebook");
+  assert.ok(text(card("zh-CN", HINTS.chromebook)).includes("Chromebook 上要先开启 Linux：在「设置」里搜索「Linux 开发环境」。"));
 });
 
 test("on Windows: no app yet, said plainly, and what works — droppen.app in this browser once a Mac or Linux device (WSL too) is connected", () => {
@@ -234,7 +242,9 @@ test("on Windows: no app yet, said plainly, and what works — droppen.app in th
   const words = text(html);
   assert.match(html, /data-testid="first-host-windows"/);
   assert.ok(words.includes("There is no Windows app yet."));
-  assert.ok(words.includes("Your AI needs a Mac or a Linux device with Droppen on it (WSL works too). Once one is connected, use droppen.app right here in this browser to watch and answer it."));
+  // WSL only with systemd on: the installer runs Droppen as a systemd user service, and stops where there is none.
+  assert.ok(words.includes("Your AI needs a Mac or a Linux device with Droppen on it (WSL works too, with systemd turned on). Once one is connected, use droppen.app right here in this browser to watch and answer it."));
+  assert.match(html, /<a href="https:\/\/learn\.microsoft\.com\/windows\/wsl\/systemd" target="_blank" rel="noopener noreferrer" data-testid="first-host-wsl-systemd"[^>]*>how to turn on systemd in WSL<\/a>/);
   assert.equal(primaries(html), 0, "nothing to download here");
   assert.doesNotMatch(html, /first-host-download|first-host-command|\.dmg|first-host-waiting/, "no file, no command, nothing to wait for");
   // Its two ways on: the Mac's and Linux's.
@@ -250,7 +260,10 @@ test("on a phone or tablet: set it up on the device the AI runs on — the link 
     const words = text(html);
     assert.match(html, /data-testid="first-host-phone"/);
     assert.ok(words.includes("Set it up on the device your AI runs on."));
-    assert.ok(words.includes("Droppen goes on the Mac or Linux device where your AI runs, not on this phone. Open this link there:"));
+    // The same words for a phone and a tablet: "this one", "from here".
+    assert.ok(words.includes("Droppen goes on the Mac or Linux device where your AI runs, not on this one. Open this link there:"));
+    assert.ok(words.includes("Once it is connected, you can watch and answer your AI from here too."));
+    assert.doesNotMatch(words, /this phone|this tablet/);
     assert.match(html, /data-testid="first-host-link"[^>]*>https:\/\/droppen\.app\/download</);
     // The share sheet where there is one, the primary; the copy beside it.
     assert.match(html, /data-variant="primary" data-testid="first-host-share"[^>]*>.*share link</);
@@ -284,21 +297,30 @@ test("another kind of device is a click away, and the full guide behind it", () 
 test("the card reads in zh-CN, zh-TW and ja, on every kind of device, and says 设备 / 裝置 / デバイス", () => {
   const said: Record<string, Record<string, string[]>> = {
     "zh-CN": {
-      mac: ["连接跑 AI 的那台设备", "那台设备上已安装并登录 Claude Code 或 Codex。", "下载 Mac 版 Droppen", "在 App 里点「登录 Droppen」", "会弹出 droppen.app 窗口：登录后点「加入这台设备」。"],
+      mac: [
+        "连接跑 AI 的那台设备",
+        "那台设备上已安装并登录 Claude Code 或 Codex。",
+        "下载 Mac 版 Droppen",
+        "在 App 里点「登录 Droppen」",
+        "它会打开一个四步的设置向导。",
+        // The App's own words for its step 02 and its card (i18n/welcome.ts).
+        "在向导第 02 步「在哪里用」选「在手机和其它设备上也能用」，再点「登录 Droppen」",
+        "会弹出 droppen.app 窗口：登录后点「加入这台设备」。",
+      ],
       linux: ["在那台设备的终端里运行：", "复制命令", "再点「登录 Droppen」", "那台设备没有浏览器（比如服务器）？", "用一次性注册码"],
-      windows: ["Windows 版 App 还没有。", "WSL 也可以", "在 Mac 上安装", "在 Linux 或 WSL 上安装"],
-      phone: ["装在跑 AI 的那台设备上。", "而不是这台手机", "复制链接", "那台设备上的 Droppen 会弹出登录窗口"],
+      windows: ["暂时还没有 Windows 版 App。", "开启了 systemd 的 WSL 也可以", "如何在 WSL 里开启 systemd", "在 Mac 上安装", "在 Linux 或 WSL 上安装"],
+      phone: ["装在跑 AI 的那台设备上。", "不是这台。", "在这里也能看 AI 干活", "复制链接", "那台设备上的 Droppen 会弹出登录窗口"],
     },
     "zh-TW": {
       mac: ["連接執行 AI 的那台裝置", "那台裝置上已安裝並登入 Claude Code 或 Codex。", "下載 Mac 版 Droppen", "在 App 裡點「登入 Droppen」"],
       linux: ["在那台裝置的終端機裡執行：", "複製指令", "用一次性註冊碼"],
-      windows: ["Windows 版 App 還沒有。", "WSL 也可以"],
+      windows: ["暫時還沒有 Windows 版 App。", "開啟了 systemd 的 WSL 也可以"],
       phone: ["裝在執行 AI 的那台裝置上。", "複製連結"],
     },
     ja: {
-      mac: ["AI を動かすデバイスをつなぐ", "そのデバイスに Claude Code か Codex がインストール済みで、サインインしていること。", "Mac 版 Droppen をダウンロード", "アプリで「Droppen にサインイン」"],
+      mac: ["AI を動かすデバイスをつなぐ", "そのデバイスに Claude Code か Codex がインストール済みで、サインインしていること。", "Mac 版 Droppen をダウンロード", "アプリで「Droppen にサインイン」", "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び", "ここやスマートフォンから"],
       linux: ["そのデバイスのターミナルで実行します：", "コマンドをコピー", "ワンタイムコードを使う"],
-      windows: ["Windows 版アプリはまだありません。", "WSL でも可"],
+      windows: ["Windows 版アプリはまだありません。", "systemd を有効にした WSL でも可"],
       phone: ["AI を動かすデバイスに入れましょう。", "リンクをコピー"],
     },
   };
@@ -309,6 +331,8 @@ test("the card reads in zh-CN, zh-TW and ja, on every kind of device, and says �
       for (const line of lines) assert.ok(words.includes(line), `${lng} ${way}: ${line}`);
       assert.doesNotMatch(words, /Connect the device|You need:|Download Droppen for Mac|There is no Windows app|Open this link there|Another kind of device/, `${lng} ${way}: English left`);
       assert.doesNotMatch(words, /机器|电脑|本机|機器|電腦|本機|マシン|コンピュータ|端末/, `${lng} ${way}`);
+      // Japanese says スマートフォン, as the app does.
+      assert.doesNotMatch(words, /スマホ/, `${lng} ${way}`);
     }
   }
   // English never says "computer" or "machine" on screen either (test/ui-wording.test.ts checks the source too).

@@ -18,11 +18,12 @@ import { abandonCandidate, type Candidate, candidateFromOffer, runCodeInitiator 
 import type { StatusState } from "@/lib/hub/streams";
 import { uaLabel, uaLabelOf } from "@/lib/hub/ua-label";
 import { useHomeMachine } from "@/lib/machines/context";
+import type { MachineInfo } from "@/lib/machines/runtime";
 import { useStore } from "@/lib/machines/store";
 import { cn } from "@/lib/cn";
 import { setHubOnly } from "@/lib/transport/p2p";
 import { atLimit, copyWarning, DEVICES_KEY, type LimitHit, limitOf, offlineSince, retentionOf } from "@/lib/hub/plan";
-import { AddComputer, V3Pending, v3Blocker, type V3Blocker } from "./add-computer";
+import { AddComputer, NewDeviceReady, V3Pending, v3Blocker, type V3Blocker } from "./add-computer";
 import { useAgentKeyState, useHubOnly, usePresenceVersion, useShellCopies } from "./context";
 import { DeviceRow, type DeviceRowView, shortDeviceId } from "./device-row";
 import { askedPlace } from "./devices-route";
@@ -299,6 +300,17 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
     addAsked.set(false);
     if (account.isAdmin) setSection({ kind: "addComputer" });
   }, [asked, account]);
+  // Just signed up — the chain read, this a full device, no device that runs AI in it: the first-run card, and 「更多设置」 folded.
+  const noHostYet = chain != null && viewerAdmin && hostIds.length === 0;
+  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer";
+  const cardNow = noHostYet && !adding;
+  // The card goes once a device that runs AI joins: said, once, as the guide says it (the guide, open, says it itself).
+  const [cardUp, setCardUp] = useState(cardNow);
+  const [joined, setJoined] = useState<string | null>(null);
+  if (cardNow !== cardUp) {
+    setCardUp(cardNow);
+    if (cardUp && chain != null && hostIds.length > 0) setJoined(hostIds[0]!);
+  }
 
   if (section.kind === "words") {
     // A page of its own, over 「我的设备」 until they are written down.
@@ -401,6 +413,10 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
   const hostsNow = hostIds.length;
   // No device that runs AI yet (just signed up): adding one is what comes next.
   const firstHost = hostsNow === 0;
+  // The device that joined while the first-run card was up, as the page follows it (its name, whether it is up).
+  const joinedInfo: MachineInfo | null = joined
+    ? (machines.find((m) => m.key === joined) ?? { key: joined, name: shownName(joined, statuses.get(joined) ?? null) ?? joined, state: "unknown", since: 0, canManage: true, live: "copy" })
+    : null;
   const selfRecord = devices.find((d) => d.info.id === account.deviceId);
   const selfName = selfRecord ? view(selfRecord).name : ownLabel();
 
@@ -564,9 +580,10 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
     );
   };
 
-  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer";
   // Just signed up: the card that says what comes next, until the first device that runs AI joins (or another way to add one is open).
-  const firstRun = firstHost && viewerAdmin && !adding;
+  const firstRun = cardNow;
+  // The word that it joined, in the card's place, until put away.
+  const justJoined = joinedInfo !== null && section.kind === "list";
   const pairWith = (done: () => void) => <AddDevice account={account} link={link} onDone={done} />;
   // This device's own settings and the keys': folded under 「更多设置」 while there is no device that runs AI to use them with.
   const thisDevice = (
@@ -598,9 +615,9 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
           // One primary action a view: while a rotation is due, that is it; while the first-run card shows, the card's.
           <button
             type="button"
-            data-variant={account.rotationDue || firstRun ? "secondary" : "primary"}
+            data-variant={account.rotationDue || firstRun || justJoined ? "secondary" : "primary"}
             data-testid="add-device"
-            className={cn(account.rotationDue || firstRun ? secondary : primary, "max-md:w-full")}
+            className={cn(account.rotationDue || firstRun || justJoined ? secondary : primary, "max-md:w-full")}
             onClick={() => setSection(firstHost ? { kind: "addComputer" } : { kind: "add" })}
           >
             <Plus className="size-3.5" />
@@ -632,8 +649,13 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         </section>
       )}
       {firstRun && <FirstHostCard onGuide={() => setSection({ kind: "addComputer" })} onCode={() => setSection({ kind: "addComputer", code: true })} pairWith={pairWith} />}
+      {justJoined && (
+        <section data-testid="first-host-joined" className="border-b border-border">
+          <NewDeviceReady account={account} added={joinedInfo} machines={machines} onDone={() => setJoined(null)} />
+        </section>
+      )}
       <UsageSummary account={account} link={link} />
-      {!firstHost && thisDevice}
+      {!noHostYet && thisDevice}
       <section data-testid="devices-section" className="max-md:pb-2">
         <div className="flex h-10 items-center gap-2 border-b border-border px-6 max-md:border-b-0 max-md:px-4">
           <CapsLabel className="text-fg">{t("devices")}</CapsLabel>
@@ -643,7 +665,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
           {current.map(row)}
         </ul>
       </section>
-      {!firstHost && alwaysConfirm}
+      {!noHostYet && alwaysConfirm}
       {section.kind === "list" && done && (
         <div data-testid="change-report" data-signal="ok" className="mx-6 my-4 flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:mx-4">
           <span className="font-mono text-xs text-ok">{done.title}</span>
@@ -670,7 +692,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         />
       )}
       <div className="flex max-w-xl flex-col gap-3 px-6 py-6 max-md:px-4">
-        {!firstHost && rotateKeys}
+        {!noHostYet && rotateKeys}
         {viewerAdmin && chain && !chain.currentRecoveryKey && section.kind === "list" && (
           <Note tone="warn">
             <span data-signal="warn" className="flex items-center gap-1.5 font-mono text-xs text-warn-fg">
@@ -688,7 +710,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
         )}
         <ErrorLine message={error} />
       </div>
-      {firstHost && (
+      {noHostYet && (
         <MoreSettings>
           {thisDevice}
           {alwaysConfirm}

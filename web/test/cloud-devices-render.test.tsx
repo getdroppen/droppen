@@ -51,7 +51,7 @@ import {
   UpgradeConfirm,
   V3Note,
 } from "../src/features/cloud/devices.js";
-import { AddComputer, V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
+import { AddComputer, NewDeviceReady, V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
 import { FirstHostCard } from "../src/features/cloud/first-host.js";
 import { type AccountView, chainV3View, HubApiError } from "../src/lib/hub/api.js";
 import { joinAction, type ReEnrollLine } from "../src/lib/hub/account.js";
@@ -1273,6 +1273,78 @@ test("just signed up, with no device that runs AI: the first-run card leads, 「
   assert.match(after.html, /data-variant="primary"[^>]*data-testid="add-device"/);
   assert.ok(after.html.indexOf('data-testid="direct-connections"') < after.html.indexOf('data-testid="device-list"'));
   assert.match(after.html, /data-testid="rotate-keys"/);
+});
+
+test("the first-run card goes with a word that the device joined, as the guide's last step says it; and it waits for the chain and a full device", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  const link = new Proxy({ presence: new Map() } as Record<string, unknown>, { get: (t, k) => (k in t ? t[k as string] : () => () => undefined) }) as unknown as HubLink;
+  // The chain as the page first read it (no device that runs AI), and once one joined.
+  const before = a.chain!;
+  await hub.enroll(a, "m-1");
+  const after = a.chain!;
+  assert.notEqual(before, after);
+  const at = (chain: unknown) =>
+    new Proxy(a, {
+      get: (t, k) => {
+        if (k === "chain") return chain;
+        const v = Reflect.get(t, k, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    }) as CloudAccount;
+  const [empty, joined] = [at(before), at(after)];
+  // One page across the join: drawn with the card up, then again with the chain that has the new device (a render-phase update, as React makes it).
+  function Page({ then }: { then?: (tree: El[]) => void }) {
+    const [round, setRound] = React.useState(0);
+    const out = DevicesPanel({ account: round === 0 ? empty : joined, link });
+    const tree = elements(out);
+    if (round === 0) {
+      assert.ok(tree.some((e) => e.type === FirstHostCard), "the card is up first");
+      setRound(1);
+    } else if (round === 1 && then && tree.some((e) => e.type === NewDeviceReady)) {
+      then(tree);
+      setRound(2);
+    }
+    return out;
+  }
+  const html = draw(<Page />);
+  assert.doesNotMatch(html, /data-testid="first-host"[^-]/, "the card has gone");
+  assert.match(html, /data-testid="first-host-joined"/);
+  assert.match(html, /data-testid="add-ready" data-device="m-1"/);
+  assert.ok(html.includes("m-1 is in your account"), html.slice(html.indexOf("first-host-joined"), html.indexOf("first-host-joined") + 600));
+  assert.match(html, /data-variant="primary" data-testid="open-new-device"/, "open it: the one primary");
+  assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1);
+  assert.match(html, /data-variant="secondary" data-testid="add-device"/);
+  assert.doesNotMatch(html, /data-testid="more-settings"/, "nothing folded any more");
+  // Put away ("done"): the page as it is with a device that runs AI.
+  const done = draw(<Page then={(t) => (t.find((e) => e.type === NewDeviceReady)!.props.onDone as () => void)()} />);
+  assert.doesNotMatch(done, /first-host-joined/);
+  assert.match(done, /data-variant="primary"[^>]*data-testid="add-device"/);
+
+  // Opened the guide instead: it says so itself (its own last step), so the page adds nothing when the device joins.
+  function ViaGuide() {
+    const [round, setRound] = React.useState(0);
+    const out = DevicesPanel({ account: round < 2 ? empty : joined, link });
+    const t = elements(out);
+    if (round === 0) {
+      (t.find((e) => e.type === FirstHostCard)!.props.onGuide as () => void)();
+      setRound(1);
+    } else if (round === 1) setRound(2);
+    return out;
+  }
+  const guided = draw(<ViaGuide />);
+  assert.match(guided, /data-testid="add-computer-section"/);
+  assert.doesNotMatch(guided, /first-host-joined/);
+
+  // Not before the chain is read, nor for a limited device: no card, nothing folded.
+  const unread = new Proxy(a, { get: (t, k) => (k === "chain" ? null : k === "isAdmin" ? true : typeof Reflect.get(t, k, t) === "function" ? (Reflect.get(t, k, t) as (...x: unknown[]) => unknown).bind(t) : Reflect.get(t, k, t)) }) as CloudAccount;
+  const limited = new Proxy(a, { get: (t, k) => (k === "chain" ? before : k === "isAdmin" ? false : typeof Reflect.get(t, k, t) === "function" ? (Reflect.get(t, k, t) as (...x: unknown[]) => unknown).bind(t) : Reflect.get(t, k, t)) }) as CloudAccount;
+  for (const account of [unread, limited]) {
+    const page = drive(DevicesPanel, { account, link }, []);
+    assert.doesNotMatch(page.html, /data-testid="first-host"|data-testid="more-settings"/);
+    assert.match(page.html, /data-testid="this-device"/, "this device's settings in their place");
+  }
 });
 
 // ------------------------------------------------------------ 「备用中继」: the account's standby relay

@@ -41,7 +41,7 @@ export const APP_AVAILABLE = true;
  * Whether the Droppen App can sign itself in to Droppen (「登录 Droppen」 in
  * the App, through the system browser: docs/local-aggregator.md §4.9). On:
  * every App published has it (the hand-off came in 0.2.125, the first public
- * `.dmg` is 0.2.128; the App's own first-run guide reads the same fact as
+ * `.dmg` is 0.2.127; the App's own first-run guide reads the same fact as
  * `DESKTOP_SIGN_IN_READY`, `features/setup/flags.ts`). The download page then
  * has the App's 「登录 Droppen」 as its last step, and the 「添加可运行 AI 的设备」
  * guide and 「我的设备」's first-run card add a Mac through the App. Off (a
@@ -123,6 +123,14 @@ export const SERVER_BIN_PATH = "~/.local/share/remote-hand/bin/remote-hand-serve
 export function stdinEnrollCommand(code: string, hub: string): string {
   return `printf '%s\\n' '${code}' | ${SERVER_BIN_PATH} agent enroll - --hub ${hub}`;
 }
+
+/**
+ * How to turn systemd on in WSL (Microsoft's documentation). The install
+ * command runs Droppen as a systemd user service and stops where there is no
+ * systemd user manager (`scripts/install.sh`), as in WSL until systemd is
+ * turned on.
+ */
+export const WSL_SYSTEMD_URL = "https://learn.microsoft.com/windows/wsl/systemd";
 
 /** The same script, removing what it installed. */
 export const UNINSTALL_COMMAND = "curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall";

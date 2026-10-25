@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Download, Loader2, Share2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { browserHints, type DeviceKind, detectKind, type EnvironmentHints } from "@/features/landing/detect";
-import { type Availability, AVAILABILITY, DOWNLOAD_PATH, DROPPEN_ORIGIN, INSTALL_COMMAND } from "@/features/landing/get-droppen";
+import { type Availability, AVAILABILITY, DOWNLOAD_PATH, DROPPEN_ORIGIN, INSTALL_COMMAND, WSL_SYSTEMD_URL } from "@/features/landing/get-droppen";
 import { fileFacts, fileLink, useLatestRelease } from "@/features/landing/release-files";
 import { publicHref } from "@/features/landing/route";
 import { cn } from "@/lib/cn";
@@ -23,8 +23,10 @@ import { CopyButton, primary, quiet, secondary } from "./ui";
  *   background install's command instead);
  * - **Linux**: the one-line install command, its page's 「登录 Droppen」 —
  *   and, for a server with no browser, the one-time code;
+ * - **Linux** on a Chromebook: the same, once its Linux is turned on;
  * - **Windows**: no app yet, said plainly, and what works: droppen.app in
- *   this browser once a Mac or Linux device (WSL too) is connected;
+ *   this browser once a Mac or Linux device is connected — WSL too, with
+ *   systemd turned on (the installer runs Droppen as a systemd user service);
  * - **a phone or tablet**: Droppen goes on the device the AI runs on, so the
  *   link to open there (the download page, which opens on that device's way),
  *   shared or copied.
@@ -139,18 +141,29 @@ function MacWay({ availability, release }: { availability: Availability; release
         testId="first-host-steps"
         items={[
           { title: t("Install it"), body: t("Open the .dmg and drag Droppen to Applications.") },
-          { title: t("Open Droppen"), body: t("It starts by itself. Nothing to set up.") },
-          { title: t("Sign in to Droppen in the App"), body: t("A {{app}} window opens: sign in, then click add this device.", { app }) },
+          { title: t("Open Droppen"), body: t("It opens a short setup guide, four steps.") },
+          {
+            title: t("Sign in to Droppen in the App"),
+            body: t(
+              "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.",
+              { app },
+            ),
+          },
         ]}
       />
     </div>
   );
 }
 
-function LinuxWay({ onCode }: { onCode?: () => void }) {
+function LinuxWay({ onCode, chromebook }: { onCode?: () => void; chromebook: boolean }) {
   const { t } = useTranslation();
   return (
     <div data-testid="first-host-linux" className="flex flex-col gap-4">
+      {chromebook && (
+        <p data-testid="first-host-chromebook" className="text-xs leading-5 text-fg">
+          {t("On a Chromebook, turn on Linux first: in Settings, search for “Linux development environment”.")}
+        </p>
+      )}
       <p className="text-xs leading-5 text-muted">{t("Run this in a terminal on that device:")}</p>
       <Command command={INSTALL_COMMAND} />
       <Steps
@@ -179,7 +192,10 @@ function WindowsWay({ onWay }: { onWay: (way: FirstHostWay) => void }) {
     <div data-testid="first-host-windows" className="flex flex-col gap-3">
       <p className="text-xs leading-5 font-medium text-fg">{t("There is no Windows app yet.")}</p>
       <p className="text-xs leading-5 text-muted">
-        {t("Your AI needs a Mac or a Linux device with Droppen on it (WSL works too). Once one is connected, use {{app}} right here in this browser to watch and answer it.", { app: appHost() })}
+        {t("Your AI needs a Mac or a Linux device with Droppen on it (WSL works too, with systemd turned on). Once one is connected, use {{app}} right here in this browser to watch and answer it.", { app: appHost() })}{" "}
+        <a href={WSL_SYSTEMD_URL} target="_blank" rel="noopener noreferrer" data-testid="first-host-wsl-systemd" className="text-fg underline underline-offset-2 hover:no-underline">
+          {t("how to turn on systemd in WSL")}
+        </a>
       </p>
       <div className="flex flex-wrap gap-2">
         <button type="button" data-testid="first-host-to-mac" className={secondary} onClick={() => onWay("mac")}>
@@ -205,7 +221,7 @@ function PhoneWay({ link, share }: { link: string; share: boolean }) {
   return (
     <div data-testid="first-host-phone" className="flex flex-col gap-3">
       <p className="text-xs leading-5 font-medium text-fg">{t("Set it up on the device your AI runs on.")}</p>
-      <p className="text-xs leading-5 text-muted">{t("Droppen goes on the Mac or Linux device where your AI runs, not on this phone. Open this link there:")}</p>
+      <p className="text-xs leading-5 text-muted">{t("Droppen goes on the Mac or Linux device where your AI runs, not on this one. Open this link there:")}</p>
       <code data-testid="first-host-link" className="border border-border bg-raised px-2.5 py-2 font-mono text-2xs break-all text-fg select-all">
         {link}
       </code>
@@ -218,7 +234,7 @@ function PhoneWay({ link, share }: { link: string; share: boolean }) {
         )}
         <CopyButton text={link} label={t("copy link")} primary={!share || shareFailed} testId="first-host-copy-link" />
       </div>
-      <p className="text-xs leading-5 text-muted">{t("Once it is connected, this phone can watch and answer your AI.")}</p>
+      <p className="text-xs leading-5 text-muted">{t("Once it is connected, you can watch and answer your AI from here too.")}</p>
     </div>
   );
 }
@@ -248,13 +264,14 @@ export function FirstHostCard({
   availability?: Availability;
 }) {
   const { t } = useTranslation();
-  const [detected] = useState<FirstHostWay>(() => firstHostWay(detectKind(hints ?? browserHints() ?? { userAgent: "" })));
+  const [kind] = useState<DeviceKind>(() => detectKind(hints ?? browserHints() ?? { userAgent: "" }));
+  const detected = firstHostWay(kind);
   const [way, setWay] = useState<FirstHostWay>(detected);
   const [pairing, setPairing] = useState(false);
   // The App's file, as the hub names it: asked only while the card offers it.
   const latest = useLatestRelease(way === "mac" && availability.app && availability.appSignIn ? release : null);
   const [shareable] = useState(() => share ?? canShareHere());
-  const label = (w: FirstHostWay) => (w === "mac" ? t("Mac") : w === "linux" ? t("Linux") : w === "windows" ? t("Windows") : t("phone"));
+  const label = (w: FirstHostWay) => (w === "mac" ? t("Mac") : w === "linux" ? t("Linux") : w === "windows" ? t("Windows") : t("phone or tablet"));
   return (
     <section data-testid="first-host" data-way={way} data-detected={detected} className="border-b border-border">
       <div className="flex max-w-[60rem] flex-col gap-4 px-6 py-6 max-md:px-4 max-md:py-5">
@@ -267,7 +284,7 @@ export function FirstHostCard({
           </p>
         </div>
         {way === "mac" && <MacWay availability={availability} release={latest} />}
-        {way === "linux" && <LinuxWay onCode={onCode} />}
+        {way === "linux" && <LinuxWay onCode={onCode} chromebook={kind === "chromeos"} />}
         {way === "windows" && <WindowsWay onWay={setWay} />}
         {way === "phone" && <PhoneWay link={setupLink()} share={shareable} />}
         {(way === "mac" || way === "linux" || way === "phone") && (
