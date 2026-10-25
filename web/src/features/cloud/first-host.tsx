@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Download, Loader2, Share2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { browserHints, type DeviceKind, detectKind, type EnvironmentHints } from "@/features/landing/detect";
-import { type Availability, AVAILABILITY, DOWNLOAD_PATH, DROPPEN_ORIGIN, INSTALL_COMMAND, WSL_SYSTEMD_URL } from "@/features/landing/get-droppen";
+import { type Availability, AVAILABILITY, DOWNLOAD_PATH, DROPPEN_SITE_ORIGIN, INSTALL_COMMAND, WSL_SYSTEMD_URL } from "@/features/landing/get-droppen";
 import { fileFacts, fileLink, useLatestRelease } from "@/features/landing/release-files";
 import { publicHref } from "@/features/landing/route";
 import { cn } from "@/lib/cn";
@@ -62,7 +62,7 @@ export function firstHostWay(kind: DeviceKind): FirstHostWay {
 }
 
 /** The link a phone sends to the device the AI runs on: the download page, absolute (on the site host where the hub keeps one). */
-export function setupLink(origin: string = globalThis.location?.origin ?? DROPPEN_ORIGIN): string {
+export function setupLink(origin: string = globalThis.location?.origin ?? DROPPEN_SITE_ORIGIN): string {
   const href = publicHref(DOWNLOAD_PATH);
   return /^https?:\/\//.test(href) ? href : `${origin.replace(/\/+$/, "")}${href}`;
 }

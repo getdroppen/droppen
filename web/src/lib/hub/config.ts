@@ -13,6 +13,17 @@ export function hubOrigin(doc: Pick<Document, "querySelector"> | undefined = glo
   return content && /^wss?:\/\/[^/]+$/.test(content) ? content : null;
 }
 
+/**
+ * The hub's HTTP API origin: the `https://` form of the marker
+ * (`wss://api.droppen.app` → `https://api.droppen.app`, `ws://…` → `http://…`),
+ * or `null` on a page no hub serves. The marker stays the one source of truth
+ * for cloud mode; nothing else says where the page sends its requests.
+ */
+export function hubHttpOrigin(doc: Pick<Document, "querySelector"> | undefined = globalThis.document): string | null {
+  const origin = hubOrigin(doc);
+  return origin && origin.replace(/^ws(s?):\/\//, "http$1://");
+}
+
 export function isCloud(): boolean {
   return hubOrigin() !== null;
 }

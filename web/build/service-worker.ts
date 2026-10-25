@@ -13,7 +13,11 @@ import { join } from "node:path";
  *   its `rh-hub` marker into it;
  * - `SHELL_SCRIPTS`: the CSP sources (`'sha256-…'`) of the shell's inline
  *   scripts, found as a hub finds them, for the policy the worker serves the
- *   offline shell with.
+ *   offline shell with;
+ * - `HUB_ORIGIN`: in a cloud build (`DROPPEN_WEB_MODE=cloud`), the canonical
+ *   machine origin its shell's marker names (`wss://api.droppen.app`), which
+ *   the worker accepts in place of this origin's own; empty otherwise, so a
+ *   normal build accepts the marker only from the host it was served by.
  *
  * The worker serves and caches an asset only when its bytes have the sha256
  * listed here, and keeps an offline shell only when it is this one, so
@@ -23,7 +27,7 @@ import { join } from "node:path";
  * disagrees with its files, and `scripts/verify-web.mjs` checks it against
  * the attested manifest (docs/web-integrity.md).
  */
-export function fillServiceWorker(dir: string, boot: readonly string[]): void {
+export function fillServiceWorker(dir: string, boot: readonly string[], opts: { hubOrigin?: string } = {}): void {
   const file = join(dir, "sw.js");
   let text = readFileSync(file, "utf8");
   const integrity: Record<string, string> = {};
@@ -34,6 +38,7 @@ export function fillServiceWorker(dir: string, boot: readonly string[]): void {
     ["const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(integrity)};`],
     ['const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(sha256(shell))};`],
     ["const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(inlineScriptSources(shell.toString("utf8")))};`],
+    ['const HUB_ORIGIN = "";', `const HUB_ORIGIN = ${JSON.stringify(opts.hubOrigin ?? "")};`],
   ];
   for (const [marker, value] of fills) {
     if (!text.includes(marker)) throw new Error(`${file} has no \`${marker}\` to fill in`);

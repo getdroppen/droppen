@@ -18,7 +18,7 @@ import {
   DOWNLOAD_OSES,
   DOWNLOAD_PATH,
   type DownloadOs,
-  DROPPEN_ORIGIN,
+  DROPPEN_SITE_ORIGIN,
   INSTALL_COMMAND,
   osOfSearch,
   RELEASES_URL,
@@ -337,7 +337,7 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
 function MobilePanel({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   const into = signedIn ? APP_PATH : SIGN_IN_PATH;
-  const here = `${typeof location === "undefined" ? DROPPEN_ORIGIN : location.origin}${DOWNLOAD_PATH}`;
+  const here = `${typeof location === "undefined" ? DROPPEN_SITE_ORIGIN : location.origin}${DOWNLOAD_PATH}`;
   return (
     <>
       <PanelHead

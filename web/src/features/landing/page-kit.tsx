@@ -164,7 +164,7 @@ export function FooterLine() {
     <Section>
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-5 max-md:px-4">
         <span className="flex items-center gap-2 font-mono text-2xs text-faint">
-          <BrandMark size={12} />© 2026 Droppen · droppen.app
+          <BrandMark size={12} />© 2026 Droppen · www.droppen.app
           {/* The app, where the hub keeps it on a host of its own (my.droppen.app): a link there from these pages. */}
           {appOrigin() && (
             <>

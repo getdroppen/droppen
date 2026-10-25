@@ -1318,7 +1318,7 @@ test("a relay connection that cannot be signed in to counts as one failure, not 
 });
 
 test("cloud mode is the hub's marker in the shell, and nothing else", async () => {
-  const { hubOrigin } = await import("../src/lib/hub/config.js");
+  const { hubHttpOrigin, hubOrigin } = await import("../src/lib/hub/config.js");
   const doc = (content: string | null) => ({
     querySelector: () => (content === null ? null : { getAttribute: () => content }),
   }) as unknown as Pick<Document, "querySelector">;
@@ -1327,6 +1327,32 @@ test("cloud mode is the hub's marker in the shell, and nothing else", async () =
   assert.equal(hubOrigin(doc(null)), null, "a server's shell: local mode, as always");
   assert.equal(hubOrigin(doc("javascript:alert(1)")), null);
   assert.equal(hubOrigin(undefined), null);
+  // The HTTP API is the same origin in its https form, whether that is the
+  // canonical machine hub or a self-hosted one's own name.
+  assert.equal(hubHttpOrigin(doc("wss://api.droppen.app")), "https://api.droppen.app");
+  assert.equal(hubHttpOrigin(doc("ws://127.0.0.1:9000")), "http://127.0.0.1:9000");
+  assert.equal(hubHttpOrigin(doc(null)), null);
+  assert.equal(hubHttpOrigin(undefined), null);
+});
+
+test("HubApi's default base is the marker's https form: the browser calls the API cross-origin", async () => {
+  const { HubApi } = await import("../src/lib/hub/api.js");
+  const asked: string[] = [];
+  const fetchImpl = (async (input: string) => {
+    asked.push(input);
+    return new Response(JSON.stringify({ signup: "open", invite_required: false, turnstile: null, verification: "off", passkeys: null, deletion: { email_hold_days: 30 } }), {
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+  const document = { querySelector: () => ({ getAttribute: () => "wss://api.droppen.app" }) } as unknown as Document;
+  const previous = globalThis.document;
+  Object.defineProperty(globalThis, "document", { value: document, configurable: true });
+  try {
+    await new HubApi(undefined, fetchImpl).signupConfig();
+  } finally {
+    Object.defineProperty(globalThis, "document", { value: previous, configurable: true });
+  }
+  assert.deepEqual(asked, ["https://api.droppen.app/v1/signup/config"]);
 });
 
 test("the local sign-in's enrollment adds only the computer whose keys the request showed", async () => {

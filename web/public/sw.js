@@ -20,7 +20,8 @@
  *   this build does not list (a newer release's, while this worker is the
  *   older one) passes through from the network and is never cached. The
  *   offline shell is kept and served only when it is this build's with no
- *   `rh-hub` marker, or with this origin's own hub's alone (as
+ *   `rh-hub` marker, or with this origin's own hub's alone — or, in a cloud
+ *   build, the canonical machine origin its marker names (as
  *   scripts/verify-web.mjs accepts it) — a shell pointed at another hub would
  *   sign in there and send it everything — and it is served with headers this
  *   worker sets, never the cached ones (a page can write those too);
@@ -49,6 +50,10 @@ const INTEGRITY = {};
 const SHELL_SHA256 = "";
 /* The CSP sources of the shell's inline scripts ('sha256-…'), as a hub allows them. */
 const SHELL_SCRIPTS = [];
+/* Filled in by a cloud build (`DROPPEN_WEB_MODE=cloud`): the canonical
+ * machine origin its shell's marker names. Empty in a normal build, whose
+ * shell marker is this origin's own. */
+const HUB_ORIGIN = "";
 
 /* Where the offline shell is kept: every SPA route is served the same index.html. */
 const SHELL = "/";
@@ -89,6 +94,12 @@ function hubHere() {
   return `${self.location.protocol === "https:" ? "wss" : "ws"}://${self.location.host}`;
 }
 
+/* The marker's origin: the cloud build's canonical machine origin when it
+ * named one, else this origin's own. */
+function shellHub() {
+  return HUB_ORIGIN || hubHere();
+}
+
 /* `bytes` as one character per byte, so the string's indices are the bytes'. */
 function latin1(bytes) {
   let text = "";
@@ -103,7 +114,7 @@ function latin1(bytes) {
  * then are not the shell's. */
 async function shellCheck(bytes) {
   if (!SHELL_SHA256) return null;
-  const marker = `<meta name="rh-hub" content="${hubHere()}" />`;
+  const marker = `<meta name="rh-hub" content="${shellHub()}" />`;
   const head = latin1(bytes).indexOf("<head>");
   const at = head + "<head>".length;
   let built = bytes;

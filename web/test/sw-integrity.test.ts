@@ -59,13 +59,14 @@ type Listener = (event: any) => void;
  * headers] or a status), `clients` that record what they were asked.
  */
 function worker(
-  opts: { network?: Record<string, [string, Record<string, string>] | number>; precache?: string[]; table?: Record<string, string>; shell?: string; scripts?: string[]; httpCache?: Record<string, string> } = {},
+  opts: { network?: Record<string, [string, Record<string, string>] | number>; precache?: string[]; table?: Record<string, string>; shell?: string; scripts?: string[]; httpCache?: Record<string, string>; hub?: string } = {},
 ) {
   const table = opts.table ?? { "/assets/app-1.js": sha(APP), "/assets/vendor-1.js": sha(VENDOR) };
   const text = SOURCE.replace("const PRECACHE = [];", `const PRECACHE = ${JSON.stringify(opts.precache ?? [])};`)
     .replace("const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(table)};`)
     .replace('const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(opts.shell ?? sha(SHELL))};`)
-    .replace("const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(opts.scripts ?? [])};`);
+    .replace("const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(opts.scripts ?? [])};`)
+    .replace('const HUB_ORIGIN = "";', `const HUB_ORIGIN = ${JSON.stringify(opts.hub ?? "")};`);
   assert.notEqual(text, SOURCE, "the markers are there to fill in");
   const stores = new Map<string, FakeCache>();
   const caches = {
@@ -270,6 +271,21 @@ test("a shell pointed at any hub but this origin's own is never kept, served or 
   }
 });
 
+test("a cloud build keeps the shell its own marker names — the canonical API origin — and not another", async () => {
+  const api = "wss://api.droppen.app";
+  const sw = worker({ hub: api, network: { "/sessions": [marked(api), HTML] } });
+  assert.equal(await (await sw.navigate("/sessions"))!.text(), marked(api));
+  assert.equal(await (await sw.cache()).text("/"), marked(api), "the API origin its build names: kept");
+  // The same build's shell marked with the page's own host is not the shell it wrote.
+  const own = worker({ hub: api, network: { "/sessions": [marked(), HTML] } });
+  await own.navigate("/sessions");
+  assert.equal(await (await own.cache()).match("/"), undefined);
+  // Another hub is still another hub.
+  const foreign = worker({ hub: api, network: { "/sessions": [marked("wss://evil.example"), HTML] } });
+  await foreign.navigate("/sessions");
+  assert.equal(await (await foreign.cache()).match("/"), undefined);
+});
+
 test("the offline shell is served with the worker's own headers, never the cached ones", async () => {
   const scripts = ["'sha256-boot'"];
   const sw = worker({ scripts });
@@ -333,7 +349,8 @@ test("the build writes every asset's sha256 and the shell's into sw.js, sorted, 
     writeFileSync(join(dir, "assets", "fonts", "a.woff2"), "font$&$'");
     writeFileSync(join(dir, "sw.js"), SOURCE);
     fillServiceWorker(dir, ["/assets/app-1.js"]);
-    const text = readFileSync(join(dir, "sw.js"), "utf8");
+    let text = readFileSync(join(dir, "sw.js"), "utf8");
+    assert.match(text, /^const HUB_ORIGIN = "";$/m, "a normal build: only this origin's own marker is accepted");
     assert.match(text, /^const PRECACHE = \["\/assets\/app-1\.js"\];$/m);
     const table = JSON.parse(/^const INTEGRITY = (\{.*\});$/m.exec(text)![1]!);
     assert.deepEqual(Object.keys(table), ["/assets/app-1.js", "/assets/fonts/a.woff2", "/assets/vendor-1.js"]);
@@ -345,6 +362,19 @@ test("the build writes every asset's sha256 and the shell's into sw.js, sorted, 
     assert.deepEqual(inlineScriptSources(BUILT), sources);
     // Filled once: a second run finds no marker.
     assert.throws(() => fillServiceWorker(dir, []), /has no `const PRECACHE = \[\];` to fill in/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a cloud build writes the marker origin into the worker, so its shell is the one kept offline", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sw-integrity-"));
+  try {
+    mkdirSync(join(dir, "assets"), { recursive: true });
+    writeFileSync(join(dir, "index.html"), BUILT);
+    writeFileSync(join(dir, "sw.js"), SOURCE);
+    fillServiceWorker(dir, [], { hubOrigin: "wss://api.droppen.app" });
+    assert.match(readFileSync(join(dir, "sw.js"), "utf8"), /^const HUB_ORIGIN = "wss:\/\/api\.droppen\.app";$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

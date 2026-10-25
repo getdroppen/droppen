@@ -75,10 +75,13 @@ the app host, the site host), as is `/.well-known/security.txt`.
 
 ### `GET /.well-known/droppen-hub` — which hosts this hub serves
 → `{origin: "wss://<host>", app: "https://<host>", site?: "https://<host>" | null, apex_mode?: "app" | "move" | "redirect"}`.
-`origin` is the hub as agents, relays and the agent's own sign-in dial it
-(`wss://droppen.app`); it does not move. `app` is where a browser signs in,
-pairs and uses the account (`https://my.droppen.app`), `site` where the
-landing, download and policy pages are (`https://www.droppen.app`). A hub that
+`origin` is the canonical machine hub as agents, relays and the pages' own
+sign-in dial it (`wss://api.droppen.app`; on a hub that serves everything on
+one host, that host: `wss://droppen.app`), and its `https://` form
+(`https://api.droppen.app`) is the HTTP API's base. It does not move. `app` is
+where a browser signs in, pairs and uses the account
+(`https://my.droppen.app`), `site` where the landing, download and policy
+pages are (`https://www.droppen.app`). A hub that
 serves everything on one host may have no such document (a 404, or the web
 app's shell as for any path); a client then uses the hub's own origin for
 everything. `apex_mode` says what the hub's own origin does with the web
@@ -92,14 +95,20 @@ same answer on every host the hub serves.
 The web app reads it before anything else of a hub's page starts
 (`web/src/lib/hub/hosts.ts`, README "Hosts"): on `app` it is the app (`/`
 included), on `site` only the public pages (no key store, no service worker;
-every way into the app a link to `app`), on the hub's origin as `apex_mode`
-says. The answer is not part of the attested build, so the page holds it to
-the hub's names: `origin` a `wss://` name of two labels or more with no port,
-the page on it or under it, and `app` and `site` `https://` names under it at
-a label boundary (or `origin`'s own host), with no port — `ws://`, `http://`
-and ports only for a hub on the loopback, with a loopback page. Any other
-answer — none, a 404, the shell, a body that is not this, a name outside the
-apex, no answer within 8 seconds — leaves it on one host, exactly as before.
+every way into the app a link to `app`), on the hub's own name (the apex) as
+`apex_mode` says. The answer is not part of the attested build, so the page
+holds it to the hub's names: `origin` a `wss://` name of two labels or more
+with no port, whose root is itself at two labels and its parent when it is one
+label under a domain with a longer TLD (`api.droppen.app` → `droppen.app`); a
+two-letter TLD's names (`evil.co.uk`) are registrable domains themselves, so
+`co.uk` is never a root. The page must be on that root or under it, and `app`
+and `site` `https://` names under the same root at a label boundary (or
+`origin`'s own host), with no port — `ws://`, `http://` and ports only for a
+hub on the loopback, with a loopback page. The conservative cost: a hub API on
+`api.example.io`/`api.example.co.uk` cannot name `my.*` siblings; put the
+origin on the registrable domain (`example.io`) instead. Any other answer — none, a 404, the shell, a
+body that is not this, a name outside the root, no answer within 8 seconds —
+leaves it on one host, exactly as before.
 
 The local server reads it to know where the sign-in popup and the browser
 hand-off open ([link](link.md#which-host-the-popup-and-the-hand-off-open)): it

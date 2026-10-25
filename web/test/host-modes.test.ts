@@ -21,6 +21,8 @@ import { bootRoute, isFrontPath, onPublicLink, publicHref, publicLink, publicPag
 import { callbackTier } from "../src/features/link/handoff.js";
 
 const SPLIT = { origin: "wss://droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apex_mode: "move" };
+/** The canonical shape: the machine hub on a name of its own, the pages siblings under the same parent. */
+const CANONICAL = { origin: "wss://api.droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apex_mode: "redirect" };
 const MY = "https://my.droppen.app";
 const hosts = parseHubHosts(SPLIT, MY)!;
 
@@ -34,6 +36,23 @@ test("the hub's answer is read strictly: origins only, its mode or `app`, unknow
   assert.equal(parseHubHosts({ ...SPLIT, apex_mode: "redirect" }, MY)?.apexMode, "redirect");
   assert.equal(parseHubHosts({ origin: "ws://127.0.0.1:8787", app: "http://127.0.0.1:8788" }, "http://127.0.0.1:8788")?.app, "http://127.0.0.1:8788");
   assert.equal(parseHubHosts({ ...SPLIT, app: "https://My.Droppen.app" }, MY)?.app, "https://my.droppen.app", "a host name in any case, as the URL parser writes it");
+  // The canonical machine origin (`api.`) sits under its parent (`droppen.app`),
+  // and the pages must be under that same root.
+  assert.deepEqual(parseHubHosts(CANONICAL, MY), { origin: "wss://api.droppen.app", app: "https://my.droppen.app", site: "https://www.droppen.app", apexMode: "redirect" });
+  assert.ok(parseHubHosts(CANONICAL, "https://www.droppen.app"), "the site host, a sibling of the API host");
+  assert.ok(parseHubHosts(CANONICAL, "https://droppen.app"), "the apex, above the API host and the pages");
+  assert.equal(parseHubHosts({ ...CANONICAL, app: "https://my.droppen.app.evil.com" }, MY), null, "still no lookalike");
+  assert.equal(parseHubHosts({ ...CANONICAL, site: "https://www.evil.example" }, MY), null, "still no other domain");
+  assert.equal(parseHubHosts(CANONICAL, "https://other.example"), null, "a page sharing no name with the hub");
+  // A two-letter TLD's names are registrable domains themselves: `co.uk` is
+  // never a root, and a hub under one may name nothing of another.
+  assert.equal(parseHubHosts({ origin: "wss://api.evil.co.uk", app: "https://my.victim.co.uk", site: null }, "https://my.victim.co.uk"), null, "co.uk is no root");
+  assert.equal(parseHubHosts({ origin: "wss://evil.co.uk", app: "https://victim.co.uk", site: null }, "https://victim.co.uk"), null, "another registrable name");
+  assert.equal(parseHubHosts({ origin: "wss://api.evil.co.uk", app: "https://my.victim.co.uk", site: null }, "https://my.evil.co.uk"), null, "nor an app on another registrable name");
+  assert.equal(parseHubHosts({ origin: "wss://api.evil.co.uk", app: "https://my.evil.co.uk", site: null }, "https://my.evil.co.uk"), null, "a two-letter TLD's name is its own root, not a parent");
+  // A longer TLD's parent is the root, as the clients lane reads it.
+  const deeper = { origin: "wss://api.droppen.example", app: "https://my.droppen.example", site: "https://www.droppen.example" };
+  assert.equal(parseHubHosts(deeper, "https://my.droppen.example")?.app, "https://my.droppen.example");
   for (const bad of [
     null,
     "wss://droppen.app",
@@ -77,9 +96,10 @@ test("the hub's names are pinned to the apex the page came from: `https://` name
   ] as const) {
     assert.equal(with_(over), null, what);
   }
-  // A parent domain of the apex is not under it.
-  assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://droppen.app" }, "https://my.hub.droppen.app"), null, "a parent domain");
+  // A three-label origin sits under its parent: names under that parent are its own.
+  assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://droppen.app" }, "https://my.hub.droppen.app")?.app, "https://droppen.app");
   assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://my.hub.droppen.app" }, "https://my.hub.droppen.app")?.app, "https://my.hub.droppen.app");
+  assert.equal(parseHubHosts({ origin: "wss://hub.droppen.app", app: "https://my.evil.co.uk" }, "https://my.hub.droppen.app"), null, "but not another registrable name");
   // The page must be on the apex or under it: a hub answering for another name is not this page's.
   assert.equal(with_({}, "https://evil.example"), null);
   assert.equal(with_({}, "https://evildroppen.app"), null);
@@ -96,6 +116,14 @@ test("each host gets its mode; a hub with no app host, or its origin still servi
   assert.equal(hostModeFor(hosts, "https://my.droppen.app"), "app");
   assert.equal(hostModeFor(hosts, "https://www.droppen.app"), "site");
   assert.equal(hostModeFor(hosts, "https://droppen.app"), "legacy");
+  // The canonical shape: the pages keep their modes, and the apex is still
+  // the hub's name (what `apex_mode` decides), not the API host's.
+  const api = parseHubHosts(CANONICAL, MY)!;
+  assert.equal(hostModeFor(api, "https://my.droppen.app"), "app");
+  assert.equal(hostModeFor(api, "https://www.droppen.app"), "site");
+  assert.equal(hostModeFor(api, "https://droppen.app"), "legacy", "apex_mode redirect");
+  assert.equal(hostModeFor({ ...api, apexMode: "app" }, "https://droppen.app"), "single");
+  assert.equal(hostModeFor(api, "https://api.droppen.app"), "single", "the API host serves no pages of its own");
   assert.equal(hostModeFor({ ...hosts, apexMode: "redirect" }, "https://droppen.app"), "legacy");
   assert.equal(hostModeFor({ ...hosts, apexMode: "app" }, "https://droppen.app"), "single", "the dark launch: the origin still serves the app");
   assert.equal(hostModeFor({ ...hosts, apexMode: "app" }, "https://my.droppen.app"), "app");
@@ -209,7 +237,8 @@ test("the app's host name for the page's words, and the hub address a device tha
   assert.equal(appHost(), "hub.example");
   setHostMode(null);
   // droppen.app's other names are droppen.app: no DROPPEN_HUB in the command.
-  for (const name of ["https://droppen.app", "https://my.droppen.app", "https://www.droppen.app", "https://my.droppen.app/"]) assert.equal(otherHub(name), false, name);
+  for (const name of ["https://droppen.app", "https://api.droppen.app", "https://my.droppen.app", "https://www.droppen.app", "https://my.droppen.app/"]) assert.equal(otherHub(name), false, name);
+  assert.equal(codeInstallCommand("RH1-X", "https://api.droppen.app"), codeInstallCommand("RH1-X"), "the machine hub needs no DROPPEN_HUB");
   for (const name of ["https://hub.example", "http://127.0.0.1:61135", "https://evil.droppen.app.example", "https://relay.droppen.app"]) assert.equal(otherHub(name), true, name);
   assert.equal(codeInstallCommand("RH1-X", "https://my.droppen.app"), codeInstallCommand("RH1-X"));
 });

@@ -18,6 +18,7 @@
  * device's sessions are refused.
  */
 import { type Bytes, fromHex, hex, sha256, utf8 } from "@/lib/e2e";
+import { hubHttpOrigin } from "./config";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
 import type { RelayDirectory } from "./relays";
 
@@ -681,7 +682,12 @@ export function touchScreenMac(env: TouchEnv = globalThis as unknown as TouchEnv
   }
 }
 
-/** The hub's HTTP API, at `base` (the page's own origin by default). */
+/**
+ * The hub's HTTP API, at `base` — the page's own origin by default, or the
+ * marker's `https://` form when the shell names another hub
+ * (`hubHttpOrigin()`: the browser calls `https://api.droppen.app`
+ * cross-origin from `my.droppen.app`).
+ */
 export class HubApi {
   /** Set by the account: re-establish the device session once on a 401. */
   renew: SessionRenewer | null = null;
@@ -690,7 +696,7 @@ export class HubApi {
   private readonly migrated: Promise<unknown>;
 
   constructor(
-    private readonly base = "",
+    private readonly base = hubHttpOrigin() ?? "",
     private readonly fetchImpl: Fetch = (input, init) => globalThis.fetch(input, init),
     private readonly storage: KnownClientStorage | undefined = pageStorage(),
   ) {

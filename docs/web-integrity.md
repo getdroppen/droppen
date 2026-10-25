@@ -17,7 +17,7 @@ droppen.app 的网页由闭源的 Hub 下发。端到端加密防得住 Hub 读�
 
 **高保障的做法**是不从 Hub 加载代码：用 Droppen 桌面应用（macOS，目前是 v0.2.128；用 Apple 的 Developer ID 签名并经 Apple 公证，安装后只接受更新密钥为那个版本签名的更新，见 [`docs/releasing.md`](releasing.md)「Verifying a download」），或本机 `droppen` 二进制自带的界面。桌面应用带着本机的 `droppen` 服务器，窗口里显示的是这个服务器内嵌的网页，不从 Hub 加载；`droppen` 二进制内嵌的网页，发版时 CI 核对过与发版清单逐字节相同（§3）。网页版适合方便，不适合对抗一个有针对性的 Hub。
 
-**检查 droppen.app** 的三个主机——应用所在的 `my.droppen.app`、站点 `www.droppen.app` 和 `droppen.app` 本身，三者由同一个 Hub 下发同一份构建——用的是每次发版（v0.2.127 起）附带、经 GitHub Actions 证明的网页清单（`web-manifest.json` 和它的 Sigstore bundle `web-manifest.sigstore.json`），加上验证脚本 `scripts/verify-web.mjs`，步骤见下一节。droppen.app/security 的 7.1 和 8.5 节链接到这里。
+**检查 droppen.app** 的三个主机——应用所在的 `my.droppen.app`、站点 `www.droppen.app` 和 `droppen.app` 本身，三者由同一个 Hub 下发同一份构建；页面的 `rh-hub` 标记指向规范的服务源 `wss://api.droppen.app`，浏览器跨源调用 `https://api.droppen.app/v1/*`——用的是每次发版（v0.2.127 起）附带、经 GitHub Actions 证明的网页清单（`web-manifest.json` 和它的 Sigstore bundle `web-manifest.sigstore.json`），加上验证脚本 `scripts/verify-web.mjs`，步骤见下一节。droppen.app/security 的 7.1 和 8.5 节链接到这里。
 
 ## 2. 怎么验证
 
@@ -38,7 +38,7 @@ node scripts/verify-web.mjs --site https://a.example --site https://b.example   
 2. 取**最新发版**（`--repo` 在 GitHub 上标为 latest 的那次发版，也就是 `install.sh` 安装的那次）的 `web-manifest.json`，站点报告的摘要必须与它相同。每次发版的构建都留着证明，一个停在较早发版的站点（没部署、或者故意给旧构建）照样能逐字节对上那次发版、证明也对得上，却没有之后的修改；所以只对得上较早发版时判**失败**，并说出是哪次发版、最新的是哪次。确实要对照较早的发版，加 `--allow-older`（在最近 `--releases` 次发版里找，默认 30；结果里注明不是最新发版），或用 `--release` 指明。站点报告的提交与清单的不同不算失败：比对的是摘要（字节），提交只是 Hub 自己说的标签，Hub 也可能从发版标签以外、网页相同的提交部署（§3）。对这份清单用随发版附上的 Sigstore bundle 执行 `gh attestation verify`（有 bundle 时不用登录）。发版在 getdroppen/droppen（`--repo`）：从 v0.2.127 起，`release.yml` 构建、签名并发布每一次发版，清单和它的 bundle（`web-manifest.sigstore.json`）就在同一个发版上。v0.2.126 及以前的发版在 getdroppen/releases（`--repo getdroppen/releases`），清单由 `scripts/release-public.sh` 在本机生成，文件和摘要与 CI 签名的那份相同，字节却不同（CI 的还写了仓库名），而 bundle 签的是字节。所以发版没附 bundle 时，改从签名仓库（`--signer-repo`，默认 getdroppen/droppen）同一标签的发版上取 `release.yml` 挂的清单和它的 bundle：这份清单的摘要必须与发版的相同，站点的文件按它核对，证明也对它验。签名仓库那边没有（或取不到）算没验到证明；有、却是另一个构建的清单，或证明对不上，都算失败，`--allow-unattested` 也不放过。能匿名取到发版，说明仓库是公开的，而公开仓库的每次发版都有证明，所以**默认没验到证明就算失败**：没装 `gh`、或发版没附 bundle，都失败。确实要接受未证明的清单，加 `--allow-unattested`。用自己重建的清单（`--manifest`）时不要求证明，除非给了 `--bundle` 或 `--require-attestation`。
 3. 下载清单里的每个文件，再取各主机会给出页面外壳的路由——应用的 `/`、`/link`、`/signin`、`/sessions`、`/move`，站点的 `/security`、`/download`——逐个比较 sha256。外壳先去掉 Hub 加的唯一一处改动：`<head>` 紧后面的 `<meta name="rh-hub" content="<origin>" />`。只去掉这个确切的标签，别的差异照样算不同。
    脚本不跟随重定向，查的是这个主机自己给出的东西。一个回答若是重定向，只有它把浏览器送到**这次也在检查的另一个主机上的同一路径**（查询串也相同）才算通过，那边的内容在检查那个主机时核对；送去别处、或换了路径，都算失败。三个主机分工后正是这样：droppen.app 的 `/` 去 `www`，`www` 的 `/link` 去 `my`，`my` 的 `/download` 去 `www`。整个主机都重定向到另一个主机时（如分工之前的 `www.droppen.app`），连 `/.well-known/droppen-build` 也按那个主机的回答对照。
-4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是**这个主机自己的**（`https://my.droppen.app` 对应 `wss://my.droppen.app`，`https://droppen.app` 对应 `wss://droppen.app`），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出（对每个主机都有效）。字节相同、却指向别的 Hub 的页面，不算同一个页面。
+4. 这个标签的 origin 决定页面去哪里登录、所有 Hub 请求发往哪里，所以它必须是**这个主机自己的**（`https://my.droppen.app` 对应 `wss://my.droppen.app`，`https://droppen.app` 对应 `wss://droppen.app`）**或站点的规范 API 源**（droppen.app 的三个主机都对应 `wss://api.droppen.app`，静态下发的云构建写的就是它），否则失败；别的 Hub 要用 `--hub-origin wss://…` 明确给出（对每个主机都有效）。字节相同、却指向别的 Hub 的页面，不算同一个页面。
 5. 检查每个主机上每个页面（各路由的外壳和清单里的每个 `.html`）响应头里的 CSP。没有 CSP 响应头的页面算失败。`script-src`、`script-src-elem`、`script-src-attr`（以及兜底的 `default-src`）只许 `'self'`、`'none'` 和这些页面自己内联脚本的哈希；`frame-ancestors` 必须有，且只许 `'none'` 或 `'self'`（别的网站不能把页面框进去）；`object-src`（没有时看 `default-src`）只许 `'none'` 或 `'self'`。一个响应头里有几条策略时，每条都生效，所以每一项有一条策略够严就行。各主机的 CSP 各不相同（`connect-src` 写的是自己的主机），所以每个主机单独检查。
 6. 读清单里那份 `sw.js` 的完整性表（[下文](#service-worker-的缓存)），它必须与清单逐项一致：`assets/` 下的每个文件和它的 sha256，不多不少，外壳是 `index.html` 的 sha256，离线外壳允许的内联脚本正是 `index.html` 自己的。没有这张表的 `sw.js`（早于这项检查的构建）也算失败：它的缓存不经核对就交给页面。`/sw.js` 还按浏览器检查更新时的样子（带 `Service-Worker: script`）再取一次。不放应用的主机（应用搬到 `my.` 之后的 droppen.app，以及 `www`）在 `/sw.js` 给的是「退役 Worker」：清空这个源的缓存、注销自己，别的什么都不碰（[下文](#service-worker-的缓存)）。脚本只接受与它内置的那段代码逐字节相同的退役 Worker，别的都算失败。
 
@@ -68,6 +68,8 @@ cd web/dist && find . -type f | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum
 
 **可复现构建。** Node 钉在 `.nvmrc`（22.23.3），Hub 的镜像构建网页时用同一版本；pnpm 是 `packageManager` 里的 10.6.3；依赖由 `pnpm-lock.yaml` 钉死。公开发行版不设 `DROPPEN_DISTRIBUTION`，只用仓库里的 `distribution.json`（不含插件）。构建产物里没有时间戳和本机路径；发版和 CI 仍设 `SOURCE_DATE_EPOCH`（提交时间），留给以后读时间的工具。
 
+**云构建（静态下发）。** 默认的 `pnpm --filter @remote-hand/web build` 不设任何变量，产物就是证过的这一份：没有标记，没有云文件。要交给静态托管（Cloudflare Pages 一类）时设 `DROPPEN_WEB_MODE=cloud`，它在同一个产物上再加三样东西：`index.html` 的 `<head>` 后面写上指向规范服务源的 `rh-hub` 标记（默认 `wss://api.droppen.app`），`dist/.well-known/droppen-hub`（`{origin, app, site}`，与 Hub 的回答同形），以及 `dist/_headers`（CSP、`Permissions-Policy`、`Referrer-Policy`、HSTS）。CSP 里内联脚本的哈希用的就是 Service Worker 表里那套例程；标记在 `sw.js` 的完整性表写好之后才写进外壳，所以外壳的 sha256 仍是加标记之前的那一份。`DROPPEN_WEB_ROLE=app|site`（默认 `app`）说明这份 dist 部署在哪一类主机上：`app`（`my.`）允许本站 WebAuthn、可框 Turnstile、跨源调用 API 与中继；`site`（`www.`、apex）一律 `=()`、`frame-src 'none'`、`connect-src 'self'`。两种角色只有 `_headers` 不同，其余文件逐字节相同。云构建不写 `/.well-known/droppen-build`（那是 Hub 的回答），所以在静态主机上验证脚本按发版清单核对，标记剥掉、清单外的文件不看。主机、应用与站点、Turnstile、中继的 origin 都能用 `DROPPEN_WEB_*` 变量改，默认即 droppen.app 的值；不设 `DROPPEN_WEB_MODE=cloud` 时它们一概不参与，自建服务器与公开分发不受影响。
+
 CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同目录、不同时区分别构建，`web/dist` 必须逐字节相同。Hub 的镜像用同样的命令构建同一份网页，构建出的字节要与发版清单相同（这项检查在 Hub 的仓库里）。`web-reproducible-macos` 再在 macOS 上构建一次，必须与 Linux 的清单相同。发版时 `stage` 任务还核对：写清单的那次构建（macOS 上）与二进制内嵌的那份网页（`web` 任务在 Linux 上构建）逐字节相同。验证脚本自己的测试（`node --test scripts/verify-web.test.mjs`）也在这个任务里跑。
 
 **清单。** 每次发版，`release.yml` 的 `web` 任务按 Hub 镜像构建网页时同样的命令构建，作为构建产物交给构建二进制的任务；`stage` 任务里的 `scripts/release-public.sh` 用同样的命令再构建一次，用 `scripts/web-manifest.mjs` 写出 `web-manifest.json`（[`docs/releasing.md`](releasing.md)）：
@@ -78,7 +80,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 签名与构建分开。构建任务要跑依赖代码（安装、vite、cargo），所以没有签名权限（没有 `id-token`），也拿不到任何密钥。签名的 `attest` 任务只在真正发版时运行（试运行不生成证明），不装依赖、不编译，也不运行任何构建出来的程序，构建产物都先按产出它的任务给的 sha256 核对：它用 GitHub 自己的 `actions/attest-build-provenance` 为发版的每个文件（清单也在内）生成 SLSA 构建来源证明，再为清单单独生成一份；`publish` 任务把清单和这份 bundle（`web-manifest.sigstore.json`）连同发版的其他文件一起发布到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
 
-**Hub 报告自己跑的构建。** Hub 启动时对它加载的文件（外壳取加标记之前的原样）算同一个摘要，在 `GET /.well-known/droppen-build` 返回 `{commit, web: {digest, files}}`（`docs/hub-api/http.md`）。提交是构建这个 Hub 时记下的那个。发版提交通常只改 Cargo 版本号，所以 Hub 部署的提交与发版标签不同也没关系：验证按摘要找清单，不按提交。
+**Hub 报告自己跑的构建。** Hub 启动时对它加载的文件（外壳取加标记之前的原样）算同一个摘要，在 `GET /.well-known/droppen-build` 返回 `{commit, web: {digest, files}}`（`docs/hub-api/http.md`）。这里的身份是**网页构建**的身份：提交是网页从 `getdroppen/droppen` 的哪个提交构建的，不是 Hub 自己那个私有仓库的提交。发版提交通常只改 Cargo 版本号，所以 Hub 部署的提交与发版标签不同也没关系：验证按摘要找清单，不按提交。
 
 ### Service Worker 的缓存
 
@@ -88,7 +90,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 - 资源的字节与表里的 sha256 相同才写进缓存；每次从缓存取出都重新算一遍，不同就删掉，改从网络取。
 - 从网络取到的对不上，就绕过浏览器的 HTTP 缓存（`/assets/` 在那里一年不过期）再取一次；还对不上就拒绝（`502`），不交给页面，也不缓存。表里没有的资源（Worker 还是旧版、页面已是新发版时）直接走网络，不缓存。
-- 激活时删掉 `CACHE` 以外的所有缓存，再删掉表里没有、或字节对不上的每一项。离线外壳也一样：它要么没有 Hub 的标记，要么只有本站自己的那一个（`https` 上是 `wss://<本站主机>`，`http` 上是 `ws://`，紧跟在 `<head>` 后面，与验证脚本的规则相同），去掉后是这次构建的 `index.html`，才保存，才在离线时使用。标记指向别的 Hub 的外壳会去那里登录、把一切发过去，所以不算。
+- 激活时删掉 `CACHE` 以外的所有缓存，再删掉表里没有、或字节对不上的每一项。离线外壳也一样：它要么没有 Hub 的标记，要么只有本站自己的那一个（`https` 上是 `wss://<本站主机>`，`http` 上是 `ws://`），或云构建在 `sw.js` 里写下的规范服务源（`wss://api.droppen.app`），紧跟在 `<head>` 后面，与验证脚本的规则相同；去掉后是这次构建的 `index.html`，才保存，才在离线时使用。标记指向别的 Hub 的外壳会去那里登录、把一切发过去，所以不算。
 - 离线时交给页面的外壳用 Worker 自己设的响应头，不用缓存里的（页面能连头一起写进缓存）：`Content-Security-Policy` 与 Hub 给外壳的相同——脚本只许本站文件和外壳自己的内联脚本（按 `SHELL_SCRIPTS` 的哈希）——只有一处不同：中继的 origin 由 Hub 在每个响应里列出，离线的 Worker 不知道，所以 `connect-src` 用 `https:` 和 `wss:` 代替，好让离线打开、之后恢复联网的页面还连得上中继；能运行什么（`script-src`）与 Hub 的完全相同。另有 `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer` 和 Hub 的 `Permissions-Policy`。没有标记的外壳（本机服务器的）用同一策略，`connect-src` 只有本站，允许本站框住它。
 - 每次发版这张表都变，`sw.js` 的字节随之改变，浏览器就会装上新的 Worker：`sw-register.ts` 每次回到前台都调用 `update()`，浏览器自己也至少每 24 小时检查一次 `sw.js`（取它时不经 HTTP 缓存）。
 
@@ -108,7 +110,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 - **Hub 可能跑着没发过版的网页。** Hub 由运营者手动从选定的提交部署，`/.well-known/droppen-build` 报告的就是这个提交；它不一定是发版标签。如果这个提交里 `web/` 有还没发版的改动，站点的摘要就不在任何发版里，验证会失败。这时按站点报告的提交自己重建。只从发版标签部署 Hub 能彻底避免这种情况。
 - **只核对列出的文件。** Hub 可以多放别的路径，但开源代码不会去加载它们，除非外壳或已核对的 JS 引用。外壳只抽查了七个路由；Hub 理论上能在别的路由上给出不同的外壳。
 - **只核对检查的主机。** 不给 `--site` 时是 droppen.app 的三个主机。别的主机（如中继）不下发这份网页，不在检查之内。
-- **CSP 只检查脚本来源、`frame-ancestors` 和 `object-src`。** 其它指令（`connect-src`、`style-src` 等）和别的响应头不在证明范围内。CSP 是 Hub 在响应头里给的，不在构建产物里：验证脚本只能说明它拿到的那几次响应带着这样的 CSP。浏览器第一次打开、Service Worker 还没接管页面时，页面的 CSP 就是 Hub 当时给的那一个；之后离线外壳的 CSP 由 Worker 自己设（§3）。
+- **CSP 只检查脚本来源、`frame-ancestors` 和 `object-src`。** 其它指令（`connect-src`、`style-src` 等）和别的响应头不在证明范围内。普通构建的 CSP 是 Hub 在响应头里给的，不在构建产物里（静态下发的云构建把同一份策略写进 `_headers`，但静态托管是否照发、发成什么样，只有站点当场给的响应头能说明）：验证脚本只能说明它拿到的那几次响应带着这样的 CSP。浏览器第一次打开、Service Worker 还没接管页面时，页面的 CSP 就是 Hub 当时给的那一个；之后离线外壳的 CSP 由 Worker 自己设（§3）。
 - **刚发版、Hub 还没重新部署时，默认检查会失败。** 发版之后到 Hub 换上新构建之前，站点给的是上一次发版的构建，不是最新发版的，默认检查判失败。这时用 `--allow-older`，或 `--release <上一个标签>` 检查它确实是那次发版的构建。
 - **信任链的其余部分：** GitHub Actions、npm 注册表（锁文件带完整性哈希）、Node 镜像。可复现构建让人可以不信 CI，自己重建来比。
 

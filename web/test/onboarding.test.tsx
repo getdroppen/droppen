@@ -110,7 +110,7 @@ test("the agreed way onto a computer: the install line, the release page, and th
   assert.equal(RELEASES_URL, "https://github.com/getdroppen/droppen/releases/latest");
   assert.equal(UNINSTALL_COMMAND, "curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall");
   assert.equal(DOWNLOAD_PATH, "/download");
-  assert.ok(!otherHub("https://droppen.app") && !otherHub("https://droppen.app/"));
+  assert.ok(!otherHub("https://droppen.app") && !otherHub("https://droppen.app/") && !otherHub("https://api.droppen.app"));
   assert.ok(otherHub("http://127.0.0.1:61135"));
 });
 

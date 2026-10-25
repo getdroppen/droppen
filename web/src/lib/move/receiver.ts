@@ -23,6 +23,7 @@ import { hex } from "@/lib/e2e/bytes";
 import { DEVICE_KEYS_PREFIX, KEY_STORE_DB, KEY_STORE_STORE, readDeviceKeys } from "@/lib/e2e/keystore";
 import { signHubLogin } from "@/lib/e2e/sig";
 import { HubApi, type HubSession, saveSession } from "@/lib/hub/api";
+import { hubHttpOrigin } from "@/lib/hub/config";
 import { PUSH_MOVED_KEY } from "@/lib/push";
 import { DEVICE_KEY_NOTE_PREFIX, DEVICE_NOTE_PREFIX, movedDatabase, movesLocal } from "./allowlist";
 import { digestOf, Unmovable } from "./digest";
@@ -145,8 +146,8 @@ async function sameDeviceKeys(env: MoveEnv, bundle: MoveBundle): Promise<boolean
 class VerifyError extends Error {}
 
 /** How the hub lists `device` in the account (`GET /v1/me`): its key (hex), `true` (listed, no key said), `false` (not listed), `null` (no list). */
-async function listedKey(env: MoveEnv, token: string, device: string): Promise<string | boolean | null> {
-  const res = await env.fetch("/v1/me", { headers: { authorization: `Bearer ${token}` } });
+async function listedKey(env: MoveEnv, base: string, token: string, device: string): Promise<string | boolean | null> {
+  const res = await env.fetch(`${base}/v1/me`, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) throw new VerifyError(`the hub would not list the account's devices (${res.status})`);
   const me = (await res.json()) as { devices?: unknown };
   if (!Array.isArray(me.devices)) return null;
@@ -163,7 +164,10 @@ async function verify(env: MoveEnv, bundle: MoveBundle, written: { db: string; s
   const noted = env.storage.getItem(`${DEVICE_KEY_NOTE_PREFIX}${bundle.account}`);
   if (noted !== null && noted.toLowerCase() !== signKey) throw new VerifyError("the moved device keys are not the ones the device was registered with");
   if (!env.hub) throw new VerifyError("this page names no hub to sign in at");
-  const api = new HubApi("", env.fetch);
+  // The marker's HTTP origin (the cloud build's canonical machine origin), or
+  // this page's own when it names none: the same base the session and `/v1/me` go to.
+  const base = hubHttpOrigin() ?? "";
+  const api = new HubApi(base, env.fetch);
   let session: HubSession;
   try {
     const nonce = await api.sessionChallenge(bundle.account, bundle.device);
@@ -174,7 +178,7 @@ async function verify(env: MoveEnv, bundle: MoveBundle, written: { db: string; s
     throw new VerifyError(`the hub did not sign this device in with the moved key: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
-    const listed = await listedKey(env, session.token, bundle.device);
+    const listed = await listedKey(env, base, session.token, bundle.device);
     if (listed === false) throw new VerifyError("the account does not list this device");
     if (typeof listed === "string" && listed !== signKey) throw new VerifyError("the account lists this device with another key");
     if (full) {

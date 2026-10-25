@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import { cloudBuild, cloudConfig } from "./build/cloud-mode";
 import { devTools } from "./build/dev-tools";
 import { droppenPlugins, isPluginModule } from "./build/droppen-plugins";
 import { fillServiceWorker } from "./build/service-worker";
@@ -22,6 +23,14 @@ const proxyTarget = process.env.RH_DEV_PROXY ?? "http://127.0.0.1:8700";
  * its `/v1/probe/rooms/…` is proxied there. Unset, the page has no room.
  */
 const probeHub = process.env.RH_DEV_HUB;
+
+/**
+ * `DROPPEN_WEB_MODE=cloud`: also write the static-hosting output (the shell's
+ * `rh-hub` marker, `/.well-known/droppen-hub` and `_headers`) into `dist`,
+ * after the normal build (`build/cloud-mode.ts`). `null` leaves the build
+ * exactly as it always is — the one a release attests and a server embeds.
+ */
+const cloud = cloudConfig();
 
 /**
  * Third-party code in a chunk of its own.
@@ -91,9 +100,11 @@ function precacheBootSet(): Plugin {
       boot = [...files].sort().map((file) => `/${file}`);
     },
     // After every file is written and the public directory copied, so `sw.js`
-    // is there to edit and the hashes are of the bytes as served.
+    // is there to edit and the hashes are of the bytes as served. In a cloud
+    // build the worker is told the marker origin too; the marker itself goes
+    // in later (`cloudBuild`), so the shell it hashes is the build's own.
     writeBundle(options) {
-      fillServiceWorker(options.dir ?? "dist", boot);
+      fillServiceWorker(options.dir ?? "dist", boot, { hubOrigin: cloud?.hubOrigin });
     },
   };
 }
@@ -109,6 +120,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     precacheBootSet(),
+    // Static-hosting output, only with `DROPPEN_WEB_MODE=cloud` (a no-op otherwise).
+    cloudBuild(cloud),
     // `THIRD_PARTY_NOTICES.txt`: the licences of the npm packages in this build.
     thirdPartyNotices(),
     // Developer pages for `vite dev` only (the direct-path probe): never in a build.

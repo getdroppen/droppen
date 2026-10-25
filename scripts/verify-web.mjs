@@ -19,7 +19,8 @@
 //                            the manifest (default getdroppen/droppen, the source)
 //   --bundle FILE            the Sigstore bundle for --manifest FILE
 //   --hub-origin ORIGIN      another hub origin the page may be pointed at
-//                            (default: only the site's own, wss://<its host>)
+//                            (default: the site's own, wss://<its host>, and
+//                            wss://api.droppen.app for droppen.app's hosts)
 //   --require-attestation    fail unless `gh attestation verify` checked the manifest
 //                            (the default for a release manifest, or with --bundle)
 //   --allow-unattested       accept a release manifest whose attestation was not
@@ -54,7 +55,9 @@
 //      `/link` to my). The shell is compared after removing the one
 //      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
 //      after `<head>`, whose origin — where the page signs in and sends all
-//      hub traffic — must be that host's own (or a --hub-origin). Every page,
+//      hub traffic — must be that host's own or the site's canonical API
+//      origin (`wss://api.droppen.app` for droppen.app's hosts; this is what
+//      a cloud build writes), or a --hub-origin. Every page,
 //      on every host, must come with a Content-Security-Policy header that lets
 //      scripts (elements and attributes) run only from the host itself and the
 //      pages' own inline scripts, lets no other site frame the page
@@ -395,6 +398,20 @@ export function siteHubOrigin(site) {
   return `${url.protocol === "https:" ? "wss" : "ws"}://${url.host}`.toLowerCase();
 }
 
+/** droppen.app's canonical machine (API) origin, which every page there dials. */
+export const CANONICAL_HUB = "wss://api.droppen.app";
+
+/**
+ * The API origin a site's pages may name besides their own: droppen.app's
+ * hosts call `wss://api.droppen.app` (its `https://` form is the HTTP API),
+ * cross-origin (`docs/hub-api/README.md`, "Hosts"). `null` for any other hub,
+ * which is held to its own origin and whatever --hub-origin names.
+ */
+export function siteApiOrigin(site) {
+  const host = new URL(site).hostname.toLowerCase();
+  return host === "droppen.app" || host.endsWith(".droppen.app") ? CANONICAL_HUB : null;
+}
+
 /**
  * Why the marker's origin is not acceptable, or `null`. The marker decides
  * where the page signs in and sends every hub request, so a byte-identical
@@ -730,7 +747,7 @@ async function checkSite(opts, site, memo) {
     ...(swFile ? [{ url: "/sw.js", want: swFile, isShell: false, asWorker: true }] : []),
     ...SHELL_ROUTES.map((route) => ({ url: route, want: shell, isShell: true, route: true })),
   ];
-  const accepted = [siteHubOrigin(site), ...opts.hubOrigins];
+  const accepted = [siteHubOrigin(site), siteApiOrigin(site), ...opts.hubOrigins].filter(Boolean);
   const retiring = sha256(RETIRING_WORKER);
   const policies = [];
   const attestedPages = [];

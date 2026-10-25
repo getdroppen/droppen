@@ -138,15 +138,24 @@ export const UNINSTALL_COMMAND = "curl -fsSL https://droppen.app/install.sh | sh
 /** How to check a downloaded file against the checksum the release lists. */
 export const CHECKSUM_COMMAND = "shasum -a 256 <file>";
 
-/** The hub droppen.app is: a computer signed in elsewhere needs the hub address set under 「高级」. */
-export const DROPPEN_ORIGIN = "https://droppen.app";
-
 /**
- * droppen.app's other names: the app at `my.droppen.app` and the site at
- * `www.droppen.app` are the same hub, whose address devices dial stays
- * {@link DROPPEN_ORIGIN} (docs/hub-api/README.md, "Hosts").
+ * The machine hub droppen.app's pages and devices dial (the `rh-hub` marker's
+ * `https://` form): a computer signed in elsewhere needs this address set
+ * under 「高级」. The site and the app are on hosts of their own
+ * ({@link DROPPEN_SITE_ORIGIN}, {@link DROPPEN_APP_ORIGIN}); `droppen.app`
+ * itself stays a temporary alias during the move (docs/hub-api/README.md,
+ * "Hosts").
  */
-const DROPPEN_NAMES = new Set([DROPPEN_ORIGIN, "https://my.droppen.app", "https://www.droppen.app"]);
+export const DROPPEN_ORIGIN = "https://api.droppen.app";
+
+/** The public pages' origin, where this build's landing, download and policy pages live. */
+export const DROPPEN_SITE_ORIGIN = "https://www.droppen.app";
+
+/** The app's origin, where a browser signs in, pairs and uses the account. */
+export const DROPPEN_APP_ORIGIN = "https://my.droppen.app";
+
+/** Every name of droppen.app's hub: the machine hub, the app, the site, and the apex it is moving off. */
+const DROPPEN_NAMES = new Set([DROPPEN_ORIGIN, DROPPEN_APP_ORIGIN, DROPPEN_SITE_ORIGIN, "https://droppen.app"]);
 
 /** Whether the page is on a hub other than droppen.app (a self-hosted or a development one): droppen.app's own names are droppen.app. */
 export function otherHub(origin: string): boolean {

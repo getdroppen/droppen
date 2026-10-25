@@ -348,7 +348,7 @@ test("a shared link shows the hero: the share image is committed at 2400×1260 a
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [2400, 1260]);
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  const v = /<meta property="og:image" content="https:\/\/droppen\.app\/og\.png\?v=([a-f0-9]{12})"/.exec(html)?.[1];
+  const v = /<meta property="og:image" content="https:\/\/www\.droppen\.app\/og\.png\?v=([a-f0-9]{12})"/.exec(html)?.[1];
   assert.equal(v, createHash("sha256").update(png).digest("hex").slice(0, 12));
   assert.match(html, /<meta property="og:image:width" content="2400" \/>/);
   assert.match(html, /<meta name="description" content="[^"]+" \/>/);

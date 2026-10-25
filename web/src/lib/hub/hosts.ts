@@ -84,6 +84,38 @@ function underApex(host: string, apex: string): boolean {
 }
 
 /**
+ * The parent domain a hub host one label under it may name
+ * (`api.droppen.app` → `droppen.app`): where a hub keeps its API on `api.`
+ * and its pages on `my.`/`www.` of the same domain. `null` when that would
+ * leave fewer than two labels (`droppen.app`, `localhost`), so a bare name
+ * never becomes an apex.
+ *
+ * A two-letter TLD is where registries put names one label deeper (`co.uk`,
+ * `com.au`): a hub at `evil.co.uk` is the registrable domain itself, and its
+ * parent (`co.uk`) is a public suffix that must never become one. Only a
+ * longer TLD's parent is taken as the hub's domain — the rule the local
+ * server applies to this answer too (`server-rs/src/api/hub_web.rs`).
+ *
+ * The conservative cost: a hub API on `api.example.io` or `api.example.co.uk`
+ * cannot name `my.*` siblings (its parent is `example.io`/`example.co.uk`,
+ * whose last label is short, so no parent is taken). Put the origin on the
+ * registrable domain (`example.io`) and name the app host from there instead.
+ */
+function parentDomain(host: string): string | null {
+  const dot = host.indexOf(".");
+  if (dot < 0) return null;
+  const parent = host.slice(dot + 1);
+  const lastDot = parent.lastIndexOf(".");
+  if (lastDot < 0) return null;
+  return parent.slice(lastDot + 1).length > 2 ? parent : null;
+}
+
+/** The name root the page, `app` and `site` must live under: the origin's parent when it has one, else itself. */
+function rootOf(host: string): string {
+  return parentDomain(host) ?? host;
+}
+
+/**
  * The answer of `GET /.well-known/droppen-hub`, for a page on `pageOrigin`,
  * or `null` when it is not one to act on — then the page runs on one host,
  * exactly as before. Fields it does not know are ignored.
@@ -91,15 +123,20 @@ function underApex(host: string, apex: string): boolean {
  * The answer is not part of the attested build, and it decides where the
  * page sends this browser's keys (the move) and its deep links (with their
  * fragments: a verification token, a browser hand-off), so it is held to the
- * names of the hub this page came from. The apex is the hub's origin
- * (`wss://droppen.app`): a name, not an address, of two labels or more, no
- * port. The page itself must be on the apex or under it. `app` and `site` are
- * `https://` names under the apex at a label boundary (`my.droppen.app`; or
- * the apex itself, the hub's own), with no port. Only a hub on this
- * computer's loopback, for tests, may answer `ws://` and `http://` loopback
- * origins with ports. Anything else — a parent domain, a lookalike
- * (`droppen.app.evil.com`, `evildroppen.app`), plain http, a port, an
- * address, user info — and the whole answer is ignored.
+ * names of the hub this page came from. The origin is the machine hub named
+ * in the page's marker (`wss://api.droppen.app`; `wss://droppen.app` when the
+ * hub serves everything on one host): a name, not an address, of two labels
+ * or more, no port. Its root is itself at two labels (`droppen.app`), and its
+ * parent when it is one label under a domain with a longer TLD
+ * (`api.droppen.app` → `droppen.app`); a two-letter TLD's names (`evil.co.uk`)
+ * are registrable domains themselves, so `co.uk` is never a root. The page
+ * itself, `app` and `site` must be on that root or under it, at a label
+ * boundary (`my.droppen.app`; or the origin itself, the hub's own), with no
+ * port. Only a hub on this computer's loopback, for tests, may answer
+ * `ws://` and `http://` loopback origins with ports. Anything else — a
+ * parent domain, a lookalike (`droppen.app.evil.com`, `evildroppen.app`),
+ * plain http, a port, an address, user info — and the whole answer is
+ * ignored.
  */
 export function parseHubHosts(raw: unknown, pageOrigin: string): HubHosts | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -114,17 +151,23 @@ export function parseHubHosts(raw: unknown, pageOrigin: string): HubHosts | null
   if (!originUrl) return null;
   const apex = originUrl.hostname;
   const loopback = loopbackHost(apex);
+  // The name root `app`, `site` and the page must live under: the origin's own
+  // host when it is the hub's name (`droppen.app`), its parent when the origin
+  // is the canonical machine name (`api.droppen.app` → `droppen.app`).
+  let root = apex;
   if (loopback) {
     if (!loopbackHost(page.hostname)) return null;
   } else {
-    if (originUrl.protocol !== "wss:" || originUrl.port || ipHost(apex) || !apex.includes(".") || page.protocol !== "https:" || !underApex(page.hostname, apex)) return null;
+    if (originUrl.protocol !== "wss:" || originUrl.port || ipHost(apex) || !apex.includes(".") || page.protocol !== "https:") return null;
+    root = rootOf(apex);
+    if (!underApex(page.hostname, root)) return null;
   }
   const name = (value: unknown): string | null | undefined => {
     if (value === null || value === undefined) return null;
     const url = originOf(value, WEB_ORIGIN);
     if (!url) return undefined;
     if (loopback) return loopbackHost(url.hostname) ? url.origin : undefined;
-    return url.protocol === "https:" && !url.port && !ipHost(url.hostname) && underApex(url.hostname, apex) ? url.origin : undefined;
+    return url.protocol === "https:" && !url.port && !ipHost(url.hostname) && underApex(url.hostname, root) ? url.origin : undefined;
   };
   const app = name(r.app);
   const site = name(r.site);
@@ -139,16 +182,29 @@ export function webOf(origin: string): string {
   return origin.replace(/^ws(s?):/, "http$1:");
 }
 
+/**
+ * The hub's name root: the root of its machine origin (`droppen.app` whether
+ * the origin is `droppen.app` or `api.droppen.app`).
+ */
+function hubRoot(hosts: HubHosts): string {
+  return rootOf(new URL(webOf(hosts.origin)).hostname);
+}
+
 /** Which mode a page on `pageOrigin` runs in ({@link HostMode}). */
 export function hostModeFor(hosts: HubHosts | null, pageOrigin: string): HostMode {
   if (!hosts) return "single";
   const page = pageOrigin.toLowerCase();
-  const apex = webOf(hosts.origin);
-  const app = hosts.app ?? apex;
+  const api = webOf(hosts.origin);
+  const app = hosts.app ?? api;
   if (hosts.site && hosts.site !== app && page === hosts.site) return "site";
-  if (app === apex) return "single";
+  // One host: a hub that serves everything itself, or its origin still
+  // serving the app. Its name is where the app is, and `apex_mode` has not
+  // started to matter.
+  if (app === api) return "single";
   if (page === app) return "app";
-  if (page === apex) return hosts.apexMode === "app" ? "single" : "legacy";
+  // The hub's own name (`droppen.app`) once the app lives on another host:
+  // what `apex_mode` says happens there.
+  if (page === webOf(`wss://${hubRoot(hosts)}`)) return hosts.apexMode === "app" ? "single" : "legacy";
   // A name the hub did not list (a proxy in front of it, a development
   // server): everything on this one host, as before.
   return "single";

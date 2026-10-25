@@ -264,7 +264,7 @@ test("on a phone or tablet: set it up on the device the AI runs on — the link 
     assert.ok(words.includes("Droppen goes on the Mac or Linux device where your AI runs, not on this one. Open this link there:"));
     assert.ok(words.includes("Once it is connected, you can watch and answer your AI from here too."));
     assert.doesNotMatch(words, /this phone|this tablet/);
-    assert.match(html, /data-testid="first-host-link"[^>]*>https:\/\/droppen\.app\/download</);
+    assert.match(html, /data-testid="first-host-link"[^>]*>https:\/\/www\.droppen\.app\/download</, "the site host: the device opens the download page there");
     // The share sheet where there is one, the primary; the copy beside it.
     assert.match(html, /data-variant="primary" data-testid="first-host-share"[^>]*>.*share link</);
     assert.match(html, /<button type="button" data-testid="first-host-copy-link"[^>]*>.*copy link</);

@@ -51,33 +51,56 @@ abuse control, not security.
 
 | host | serves |
 |---|---|
-| the hub's origin (e.g. `https://droppen.app`, sockets on `wss://droppen.app`) | `/v1/*` (never redirected: sockets and agents do not follow redirects), `/healthz`, `/install.sh` (the installer of the release the hub was built from), `/dl/*` (the download buttons' redirects), `/.well-known/*`, and — unless an app host takes it — the web app for every other `GET` |
-| the app host (optional, e.g. `https://my.droppen.app`) | the web app (`/` is the app), `/v1/*` for the page's own requests, `/dl/*`, `/.well-known/*`, `/healthz`; the public pages are redirected to the site host |
-| the site host (optional, e.g. `https://www.droppen.app`) | the web app's public pages (`/`, `/pricing`, `/download`, `/security`, `/privacy`, `/terms`), the `/v1/*` they call, the `/dl/*` they link, `/.well-known/*`, `/healthz`; every other page is redirected to the app host |
+| the canonical machine origin, e.g. `https://api.droppen.app` (sockets on `wss://api.droppen.app`) | `/v1/*` (never redirected: sockets and agents do not follow redirects), `/healthz`, `/install.sh` (the installer of the release the hub was built from), `/dl/*` (the download buttons' redirects), `/.well-known/*`; the pages call it cross-origin rather than being served here |
+| `https://droppen.app` (a **temporary alias** of the machine origin during the compatibility window) | the same machine routes as the canonical origin, and the web app's public pages and legacy app redirects while browsers move off it; sockets on `wss://droppen.app` are accepted as an alias of the origin the client dialled |
+| the app host (optional, e.g. `https://my.droppen.app`) | the web app (`/` is the app), the `/v1/*` it calls cross-origin on the machine origin, `/dl/*`, `/.well-known/*`, `/healthz`; the public pages are redirected to the site host |
+| the site host (optional, e.g. `https://www.droppen.app`) | the web app's public pages (`/`, `/pricing`, `/download`, `/security`, `/privacy`, `/terms`), the `/v1/*` they call cross-origin on the machine origin, the `/dl/*` they link, `/.well-known/*`, `/healthz`; every other page is redirected to the app host |
 | the Turnstile host (optional, e.g. `https://verify.droppen.app`) | `GET /turnstile` only, and `/healthz`; everything else is 404 |
 | other host names the hub is configured with | `308` to the same path on the origin |
 | a relay's origin (open, `droppen-relay`) | `/healthz`, `/v1/ping`, `/v1/relay-id`, `/v1/connect` |
+
+The machine origin and the page hosts may be different names of the same hub
+(`api.`, `my.`, `www.` under one domain): the web app is served on the app and
+site hosts, and its shell's `rh-hub` marker names the machine origin whose
+cross-origin HTTP API the page calls (`wss://api.droppen.app` →
+`https://api.droppen.app`). A hub that serves everything on one host answers
+with that host as its origin, as it always has.
+
+**Cross-origin (CORS).** A page on the app or site host calls the API on
+another origin: `https://my.droppen.app` → `https://api.droppen.app/v1/*`, and
+the sockets on `wss://api.droppen.app/v1/{client,agent,relay}`. Sessions are
+`Authorization: Bearer` tokens kept in `localStorage`; **there are no
+cookies**, and no request sends credentials. Every `/v1/*` response — a
+success, an error, and a refused WebSocket upgrade — carries
+`Access-Control-Allow-Origin: <the page's origin>` for the hub's configured
+page origins (its app host, site host and apex) and never `*`; a preflight
+`OPTIONS` is answered with the methods the API uses (`GET`, `POST`, `PUT`,
+`DELETE`), the headers `authorization` and `content-type`, and no
+`Access-Control-Allow-Credentials`. A request from any other origin gets no
+CORS headers and the browser refuses the answer.
 
 A hub with an app host says which of its names does what at
 `GET /.well-known/droppen-hub` (http.md), the same answer on every host:
 `{origin, app, site?, apex_mode?}`. The web app reads it before anything else
 and runs as the app on the app host, as the public pages alone (no key store,
-no service worker) on the site host, and, on the origin, as before
-(`apex_mode: app`), as the move notice (`move`: a browser that keeps a device
-there is offered to move it to the app host, remove it, or go on without it;
-any other is sent on to the app host with its path, query and fragment), or
-not at all (`redirect`: the hub sends the origin's pages to the app host).
+no service worker) on the site host, and, on the hub's own name (the apex),
+as before (`apex_mode: app`), as the move notice (`move`: a browser that keeps
+a device there is offered to move it to the app host, remove it, or go on
+without it; any other is sent on to the app host with its path, query and
+fragment), or not at all (`redirect`: the hub sends the origin's pages to the
+app host).
 A hub that does not answer it serves everything on one host, as before, and
 the web app behaves as it always has. Devices that run AI, relays, the
 installer and every relay ticket keep the origin: only pages move.
 
 The origin a client signs (`HubLogin.hub`) is the one **it dialled**
 (`wss://host[:port]`), never the one the hub announces in its `challenge`.
-A browser on the app host dials the app host (its shell's marker names the
-host it was served on, `wss://my.droppen.app`), and the hub takes a browser
-device's sign-in (`device` on `/v1/client`, `deviceSession` on
-`/v1/session`) bound to any of its origin and app host; every other role is
-bound to the origin.
+A page signs in to the hub its shell's marker names, and dials that: the
+canonical machine origin (`wss://api.droppen.app`) where the hub has one, or
+the host it was served on. The hub takes a browser device's sign-in (`device`
+on `/v1/client`, `deviceSession` on `/v1/session`) bound to any of its origin,
+app host and site host; every other role is bound to the origin (or its
+temporary apex alias).
 
 **WebAuthn only on the app's host** (`docs/passkeys.md` §3.8). Every
 response for the host the app is on (the app host, or the hub's own host
