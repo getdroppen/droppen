@@ -85,6 +85,28 @@ test("the status fold carries the key epoch the agent seals under, and nothing t
   assert.equal(s.mkEpoch, null);
 });
 
+test("the status fold carries the machine's system and its agent's version (S1-5, #108), defensively: an older agent says neither", () => {
+  const fold = (body: Record<string, unknown>) => statusFold.apply(statusFold.empty(), { asOf: 1, ...body });
+  const s = fold({ os: { name: "linux", version: "24.04", distro: "ubuntu", arch: "x86_64", more: 1 }, agentVersion: " 0.2.131 " });
+  assert.deepEqual(s.os, { name: "linux", version: "24.04", distro: "ubuntu", arch: "x86_64" }, "known fields only");
+  assert.equal(s.agentVersion, "0.2.131");
+  assert.deepEqual(fold({ os: { name: "macos", version: "15.3.1", arch: "aarch64" } }).os, { name: "macos", version: "15.3.1", distro: null, arch: "aarch64" });
+  assert.deepEqual(fold({ os: { name: "windows", version: null, arch: 64 } }).os, { name: "windows", version: null, distro: null, arch: null }, "what is not text is not known");
+  assert.equal(fold({ os: { name: "x".repeat(500) } }).os?.name.length, 64, "cut to size");
+  // An agent from before them: neither field, so the settings stand in.
+  const old = fold({ settings: { platform: "darwin", serverVersion: "0.2.120" } });
+  assert.ok(!("os" in old) && !("agentVersion" in old));
+  for (const bad of [null, "macos", [], {}, { name: "" }, { name: "  " }, { name: 3 }, { version: "15.1", arch: "arm64" }]) {
+    assert.ok(!("os" in fold({ os: bad })), JSON.stringify(bad));
+  }
+  for (const bad of [null, "", "   ", 131, {}, ["0.2.131"]]) {
+    assert.ok(!("agentVersion" in fold({ agentVersion: bad })), JSON.stringify(bad));
+  }
+  // Each body replaces the last: one without them forgets them.
+  const later = statusFold.apply(s, { asOf: 2 });
+  assert.ok(!("os" in later) && !("agentVersion" in later));
+});
+
 test("the status fold carries who opened a channel to the machine (review D3), strictly: anything malformed is no record", () => {
   const record = { from: 2, fromMs: 1_000, seq: 7, devices: [{ id: "d-1", firstMs: 1_500 }, { id: "d-2", firstMs: 1_200 }] };
   const fold = (controllers: unknown) => statusFold.apply(statusFold.empty(), { asOf: 1, controllers }).controllers;

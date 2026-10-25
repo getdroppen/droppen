@@ -11,7 +11,8 @@
  *   the agent's daily write that keeps a quiet machine's index on the hub
  *   (relay-and-plans §3.4), which only moves the time;
  * - the status (`rh.status`): each body the whole status — settings, accounts,
- *   quota, CLI versions — replacing the last;
+ *   quota, CLI versions, the system and the agent's version — replacing the
+ *   last;
  * - one per session: `{fromIndex, items, endIndex, fp, prefixFp}`, the session
  *   feed's replace-from semantics, folded into the whole transcript. A copy
  *   the account's retention window trimmed starts with a window-start page,
@@ -165,6 +166,48 @@ export interface StatusState {
    * as one: then nobody knows.
    */
   controllers?: ControllersRecord;
+  /**
+   * The machine's system as its agent read it at start (S1-5; read it with
+   * `systemLabel`). Absent from an agent from before it said, and from a
+   * field that does not parse as one: then `settings.platform` stands in.
+   */
+  os?: StatusOs;
+  /**
+   * The agent's own version (S1-5). Absent from an agent from before it said:
+   * then `settings.serverVersion` stands in.
+   */
+  agentVersion?: string;
+}
+
+/**
+ * A machine's system as its status says it: `name` is the agent's name for
+ * it (`macos`, `linux`, `windows`, …), `version` the system's (`15.3.1`,
+ * `24.04`), `distro` the `os-release` ID of a Linux (`ubuntu`), `arch` the
+ * processor's (`aarch64`, `x86_64`). Each but the name may be unknown.
+ */
+export interface StatusOs {
+  name: string;
+  version: string | null;
+  distro: string | null;
+  arch: string | null;
+}
+
+/** The longest field of the status's `os` or `agentVersion` the page keeps, in characters. */
+const SYSTEM_FIELD_MAX = 64;
+
+/** A short text field, trimmed and cut; `null` for anything else, or nothing. */
+function shortText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim().slice(0, SYSTEM_FIELD_MAX).trim();
+  return v || null;
+}
+
+/** A status's `os`, defensively: one without a name is no system at all. */
+export function parseStatusOs(value: unknown): StatusOs | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = shortText(value.name);
+  if (!name) return undefined;
+  return { name, version: shortText(value.version), distro: shortText(value.distro), arch: shortText(value.arch) };
 }
 
 /**
@@ -255,6 +298,9 @@ export const statusFold: StreamFold<StatusState> = {
       ...(typeof body.displayName === "string" && body.displayName.trim() ? { displayName: body.displayName.slice(0, 4 * DISPLAY_NAME_MAX) } : {}),
       ...(alarmsOf(body.alarms).length ? { alarms: alarmsOf(body.alarms) } : {}),
       ...(parseControllers(body.controllers) ? { controllers: parseControllers(body.controllers) } : {}),
+      // An older agent says neither: its settings' platform and version stand in (`systemLabel`, `agentVersionOf`).
+      ...(parseStatusOs(body.os) ? { os: parseStatusOs(body.os) } : {}),
+      ...(shortText(body.agentVersion) ? { agentVersion: shortText(body.agentVersion)! } : {}),
     };
   },
 };

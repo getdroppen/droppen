@@ -35,7 +35,8 @@ import { totalUnread, UNREAD_CAP } from "../src/features/sessions/session-attent
 import { copySessions } from "../src/features/machines/copy-sessions.js";
 import { constantStore } from "../src/lib/machines/store.js";
 import { useDeviceSessions } from "../src/features/machines/device-sessions.js";
-import { osLabel, versionLabel } from "../src/features/machines/device-facts.js";
+import { agentVersionOf, osLabel, systemLabel, versionLabel } from "../src/features/machines/device-facts.js";
+import { type StatusState, statusFold } from "../src/lib/hub/streams.js";
 import { DeviceRow, type DeviceRowView, rowMenuItems } from "../src/features/cloud/device-row.js";
 import { type DeviceSessions, ledgerKind, needsYou, recentSessions, unreadAcross } from "../src/features/machines/needs-you.js";
 import { NeedsYouLedger } from "../src/features/machines/needs-you-ledger.js";
@@ -281,6 +282,34 @@ test("a device that runs AI says on its row what it is and how many of its sessi
   assert.equal(osLabel("darwin"), "macOS");
   assert.equal(versionLabel("0.2.112+g930dd8f"), "v0.2.112");
   assert.equal(versionLabel(undefined), null);
+  // The system with its version and architecture, as the status stream gives it (#108).
+  const full = drawRow(view("online", { facts: { os: osLabel("macOS 15.3.1 aarch64"), agent: versionLabel("0.2.131"), agentFull: "0.2.131", hostname: null, keyEpoch: null } }));
+  assert.ok(full.includes("m-7 · macOS 15.3.1 aarch64") && full.includes(">macOS 15.3.1 aarch64<") && full.includes(">v0.2.131<"), "on the id line and in the details");
+});
+
+test("a device's system and agent version read off its status as the local page's directory reads them, an older agent's settings standing in", () => {
+  const status = (body: Record<string, unknown>): StatusState => statusFold.apply(statusFold.empty(), { asOf: 1, ...body });
+  const settings = { platform: "darwin", serverVersion: "0.2.120" };
+  // The same cases as the local server's directory (`server-rs/src/aggregator/live.rs`, `os_of`).
+  assert.equal(systemLabel(status({ os: { name: "macos", version: "15.3.1", arch: "aarch64" }, settings })), "macOS 15.3.1 aarch64");
+  assert.equal(systemLabel(status({ os: { name: "linux", version: "24.04", distro: "ubuntu", arch: "x86_64" } })), "ubuntu 24.04 x86_64", "a Linux by its distribution");
+  assert.equal(systemLabel(status({ os: { name: "linux", version: null, arch: "aarch64" } })), "Linux aarch64", "no os-release: Linux, and what is known");
+  assert.equal(systemLabel(status({ os: { name: "windows", version: null, arch: "x86_64" } })), "Windows x86_64");
+  assert.equal(systemLabel(status({ os: { name: "freebsd", version: "", arch: "x86_64" } })), "freebsd x86_64", "another system by the agent's name for it");
+  // An agent from before S1-5, or an `os` that is not one: the settings' platform.
+  assert.equal(systemLabel(status({ settings })), "darwin");
+  assert.equal(osLabel(systemLabel(status({ settings }))), "macOS", "named on the row as before");
+  assert.equal(systemLabel(status({ os: { version: "15.1" }, settings })), "darwin");
+  assert.equal(systemLabel(status({ os: "macos", settings: { platform: "linux" } })), "linux");
+  assert.equal(systemLabel(status({})), null, "nothing said: no line");
+  assert.equal(systemLabel(null), null);
+  assert.equal(agentVersionOf(status({ agentVersion: "0.2.131", settings })), "0.2.131");
+  assert.equal(agentVersionOf(status({ agentVersion: " ", settings })), "0.2.120", "blank is not a version");
+  assert.equal(agentVersionOf(status({ agentVersion: 131, settings })), "0.2.120");
+  assert.equal(agentVersionOf(status({ settings })), "0.2.120", "an agent from before");
+  assert.equal(agentVersionOf(status({})), null);
+  // A copy saved before the page kept the fields reads as an older agent's.
+  assert.equal(systemLabel({ asOf: 1, settings, accounts: null, quota: null, cli: null, mkEpoch: null }), "darwin");
 });
 
 test("the app badge shows the unread count and clears at none", () => {
@@ -581,4 +610,33 @@ test("a question on a machine out of view tops the ledger, read off its copy —
   assert.deepEqual(replaced[2], { url: "/sessions/claude/one-unread", focus: "m-2" });
   assert.equal(shell.focus.get(), "m-1");
   assert.equal(homeMachine(), "m-1");
+});
+
+test("on droppen.app a device's system and agent version come off its status: the agent's own words, else an older agent's settings (#108)", async (t) => {
+  const { shell, link, writers } = await world();
+  shell.start();
+  setHubShell(shell);
+  t.after(() => {
+    setHubShell(null);
+    shell.stop();
+  });
+  const w1 = writers.get("m-1")!;
+  const w2 = writers.get("m-2")!;
+  await w2.status.append({
+    asOf: 2,
+    settings: { hostname: "m-2.local", platform: "darwin", serverVersion: "0.2.112" },
+    accounts: null,
+    quota: null,
+    cli: null,
+    displayName: "m-2",
+    mkEpoch: 0,
+    os: { name: "macos", version: "15.3.1", arch: "aarch64" },
+    agentVersion: "0.2.131",
+  });
+  for (const w of [w1, w2]) await push(link, w.status, w.sent);
+  const info = (id: string) => shell.runtime(id).info().get();
+  await until(() => info("m-2").os === "macOS 15.3.1 aarch64");
+  assert.equal(info("m-2").agentVersion, "0.2.131", "the agent's own version, not its settings'");
+  await until(() => info("m-1").agentVersion !== undefined);
+  assert.deepEqual([info("m-1").os, info("m-1").agentVersion], ["darwin", "0.2.112"], "an agent from before: its settings' platform and version");
 });

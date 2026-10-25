@@ -68,6 +68,7 @@ import { onPageResume } from "@/lib/page-resume";
 import { type Pipe, type PipeMessage, type PipeOpener, tunnelTransport } from "@/lib/transport/tunnel";
 import { feedHubFor } from "@/app/global-feed";
 import { copySessions, type SessionsStore } from "@/features/machines/copy-sessions";
+import { agentVersionOf, systemLabel } from "@/features/machines/device-facts";
 import { ModeController, SwitchingTransport } from "./cloud-transport";
 import { DEVICES_PATH, isShellPagePath } from "./devices-route";
 import { shownName } from "./machine-name";
@@ -171,8 +172,6 @@ function sameInfo(a: MachineInfo, b: MachineInfo): boolean {
     a.path?.rttMs === b.path?.rttMs
   );
 }
-
-const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 
 /**
  * One machine of the account on droppen.app: its copy, its channel, the
@@ -334,7 +333,8 @@ export class HubMachine implements MachineDriver {
     const path = this.pathNow();
     this.path = { info: path, at: now() };
     const status = this.mirror.status?.state ?? null;
-    const settings = status?.settings ?? null;
+    const agentVersion = agentVersionOf(status);
+    const os = systemLabel(status);
     const channel = this.channel.status;
     const live: MachineInfo["live"] =
       this.transport.current === "live"
@@ -353,8 +353,8 @@ export class HubMachine implements MachineDriver {
       since: this.presenceSince.since,
       ...(path ? { path } : {}),
       ...(this.mirror.freshestMs !== null ? { copyAsOf: this.mirror.freshestMs } : {}),
-      ...(text(settings?.serverVersion) ? { agentVersion: text(settings?.serverVersion) } : {}),
-      ...(text(settings?.platform) ? { os: text(settings?.platform) } : {}),
+      ...(agentVersion ? { agentVersion } : {}),
+      ...(os ? { os } : {}),
       canManage: this.opts.account.isAdmin !== false,
       live,
     };
