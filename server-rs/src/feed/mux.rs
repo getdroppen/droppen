@@ -643,41 +643,74 @@ mod tests {
     /// The queue the socket drains is bounded, so a client that stops reading
     /// holds its subscriptions back rather than growing memory; when it reads
     /// again each feed catches it up from its latest read.
+    ///
+    /// Each step waits for the state it needs, not for a guess at how long
+    /// that takes: on a starved runner the 32 attaches (each parses the
+    /// transcript) outlasted every append and the whole wait after them, so
+    /// nothing was ever queued, and with a little less load the subscriptions
+    /// opened on the newest turn and nothing was held back at all.
     #[tokio::test]
     async fn a_client_that_stops_reading_is_caught_up_rather_than_buffered_without_bound() {
+        // Long enough for a runner that has a fraction of a CPU; a step that
+        // never comes still fails, in minutes rather than hanging.
+        const PATIENCE: Duration = Duration::from_secs(120);
         let dir = tempfile::tempdir().expect("tempdir");
         let (drive, file) = session(dir.path());
         let (mut subs, mut rx) = Subscriptions::new(FeedRegistry::new(), drive);
         for n in 1..=MAX_SUBSCRIPTIONS as u64 {
             assert!(subs.handle(sub(n, Value::Null)).is_empty());
         }
-        // Nothing is read while the session moves on, turn after turn: every
-        // subscription has a frame for each, far more than the queue holds.
-        for turn in 250..262 {
-            tokio::time::sleep(Duration::from_millis(250)).await;
+        // Every subscription is open before the client stops reading: what
+        // is held back is the session moving on, not the attaches.
+        let mut open = std::collections::HashSet::new();
+        while open.len() < MAX_SUBSCRIPTIONS {
+            let frame = tokio::time::timeout(PATIENCE, rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("{} of {MAX_SUBSCRIPTIONS} subscriptions opened", open.len()))
+                .expect("open");
+            let frame: Value = serde_json::from_str(&frame).expect("json");
+            if frame["type"] == "snapshot" {
+                open.insert(frame["sub"].as_u64().expect("tagged"));
+            }
+        }
+        // Nothing is read from here on while the session moves on, turn after
+        // turn: until the queue is full, and then a few turns more.
+        let mut turns = 250;
+        let append = |turn: usize| {
             let mut handle = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
             std::io::Write::write_all(&mut handle, claude_turns(ID, turn, 1).as_bytes()).expect("append");
+        };
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        while rx.len() < OUT_CAPACITY {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the queue never filled: {} of {OUT_CAPACITY} after {} turns",
+                rx.len(),
+                turns - 250
+            );
+            append(turns);
+            turns += 1;
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        // A subscription whose newest frame is already queued is caught up: on
-        // a slow runner the watcher folds appends together, fewer frames are
-        // made, and some feeds never meet a full queue.
-        let newest = |frame: &Value| (frame["endIndex"] == 1048).then(|| frame["sub"].as_u64().expect("tagged"));
-        let mut caught_up = std::collections::HashSet::new();
-        let mut queued = 0;
-        while let Ok(frame) = rx.try_recv() {
-            queued += 1;
-            caught_up.extend(newest(&serde_json::from_str(&frame).expect("json")));
+        for _ in 0..4 {
+            append(turns);
+            turns += 1;
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        assert!(queued <= OUT_CAPACITY, "{queued} frames queued");
+        assert_eq!(rx.len(), OUT_CAPACITY, "held back at the queue's bound, and no further");
         // Once the client reads again, the held-back subscriptions catch up to
         // the newest turn rather than replaying every one they missed.
+        let newest = (turns * 4) as u64;
+        let mut caught_up = std::collections::HashSet::new();
         while caught_up.len() < MAX_SUBSCRIPTIONS {
-            let frame = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            let frame = tokio::time::timeout(PATIENCE, rx.recv())
                 .await
-                .unwrap_or_else(|_| panic!("{} of {MAX_SUBSCRIPTIONS} caught up, {queued} were queued", caught_up.len()))
+                .unwrap_or_else(|_| panic!("{} of {MAX_SUBSCRIPTIONS} caught up to item {newest}", caught_up.len()))
                 .expect("open");
-            caught_up.extend(newest(&serde_json::from_str(&frame).expect("json")));
+            let frame: Value = serde_json::from_str(&frame).expect("json");
+            if frame["endIndex"] == newest {
+                caught_up.insert(frame["sub"].as_u64().expect("tagged"));
+            }
         }
     }
 
