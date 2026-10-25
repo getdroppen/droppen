@@ -2653,7 +2653,7 @@ export function VetoChoice({
 
 /** The list a veto's wider choice is made on: the ids shown, in order. */
 export function trustedShown(plan: VetoPlan | null): string {
-  return plan ? plan.trusted.map((d) => d.id).join(" ") : "";
+  return plan?.trusted.length ? JSON.stringify(plan.trusted.map((d) => d.id)) : "";
 }
 
 /** Whether the wider choice stands for `plan`: ticked on this very list. One that changed since (the plan read again) is unticked. */
@@ -2705,7 +2705,8 @@ function VetoConfirm({ account, link, onCancel }: { account: CloudAccount; link:
     setBusy(true);
     setError(null);
     try {
-      await account.removeDevice(plan.device, shellCourier(link, account), false, alsoTrusted ? { alsoTrusted: plan.trusted.map((d) => d.id) } : {});
+      // Always as the veto confirmed: even if the hold ended just before the click, it takes out what the device brought in.
+      await account.removeDevice(plan.device, shellCourier(link, account), false, { veto: plan, ...(alsoTrusted ? { alsoTrusted: plan.trusted.map((d) => d.id) } : {}) });
     } catch (err) {
       setError(errorText(err));
     } finally {

@@ -942,6 +942,10 @@ export interface VetoTarget {
 export interface VetoPlan {
   /** The device whose activation is held back. */
   device: string;
+  /** Where the hold starts: the activation's seq. */
+  seq: number;
+  /** The devices this view trusted when the plan was read: what the veto never removes (handed back to `removeDevice`'s `veto`). */
+  view: string[];
   /** The held device first, then what it, the recovery words or a passkey slot brought in (`vetoScope`). */
   scope: VetoTarget[];
   /**
@@ -4086,9 +4090,27 @@ export class CloudAccount {
    * and only if `opts.rotateMachineKeys` (the default). Chain v2 removes a
    * machine (`removeMachine`) with no rotation: it held its own key only.
    */
-  async removeDevice(id: string, courier: MachineKeyCourier, reencrypt = false, opts: { rotateMachineKeys?: boolean; alsoTrusted?: readonly string[] } = {}): Promise<RotationReport> {
+  async removeDevice(
+    id: string,
+    courier: MachineKeyCourier,
+    reencrypt = false,
+    opts: {
+      rotateMachineKeys?: boolean;
+      /**
+       * The veto the person confirmed (`vetoPlan`): it stays a veto — what the
+       * device brought in goes with it — even if this device's day has passed
+       * and the activation was taken in before the call.
+       */
+      veto?: Pick<VetoPlan, "device" | "seq" | "view">;
+      /** With `veto`: the trusted additions the person was shown and chose to take out too (issue #17). */
+      alsoTrusted?: readonly string[];
+    } = {},
+  ): Promise<RotationReport> {
     if (id === this.deviceId) throw new AccountError("self", "remove this device from another device");
-    const held = this.held;
+    const veto = opts.veto?.device === id ? opts.veto : undefined;
+    // The hold the veto is over: this view's, or — taken in since the person
+    // confirmed — the one the plan was read on, from its activation on.
+    const held: HeldBack | null = this.held ?? (veto ? { seq: veto.seq, device: id, readyMs: 0, entries: [] } : null);
     if (!held) {
       const record = this.state?.deviceRecord(id);
       const v3 = this.state?.isV3 === true;
@@ -4132,27 +4154,52 @@ export class CloudAccount {
     // The devices this view trusted, as it stands now: the syncs ahead (rotate's,
     // and appendBatch's on a 409) may take the activation in once its day has
     // passed here, and the veto must still take out what it is for — not find
-    // the held device trusted by then and remove nothing.
-    const view = this.trustedView();
-    return this.rotate(
-      courier,
-      reencrypt,
-      (chain) => {
-        // The hold as it stands now, if it is still this device's (its entries
-        // may have grown); else the one the person vetoed.
-        const now = this.held?.device === held.device ? this.held : held;
-        const scope = this.vetoScope(now, chain, { view, ...(alsoTrusted ? { trusted: alsoTrusted } : {}) });
-        // A veto that removes nothing is never published: it would be a bare
-        // rotation, its new keys mailed to everyone still in.
-        if (!scope.devices.length && !scope.machines.length) {
-          throw new AccountError("nothingToRemove", "{{id}} and what it brought in are out of the account already: nothing was signed", undefined, undefined, { id: held.device ?? id });
-        }
-        // A v3 chain takes v3 removals only (no v2 entry after the first v3 one).
-        if (chain.isV3) return [...scope.devices, ...scope.machines].map((d): Action => ({ type: "removeDevice3", id: d }));
-        return [...scope.devices.map((d): Action => ({ type: "removeDevice", id: d })), ...scope.machines.map((m): Action => ({ type: "removeMachine", id: m }))];
-      },
-      { overHeld: true },
-    );
+    // the held device trusted by then and remove nothing. Taken in already
+    // before the call: as the plan the person confirmed read them.
+    const view = this.held || !veto ? this.trustedView() : new Set([...veto.view, this.deviceId]);
+    try {
+      return await this.rotate(
+        courier,
+        reencrypt,
+        (chain) => {
+          const live = this.held;
+          // Another device's activation held back meanwhile: the veto is not signed on top of it (that would take it in).
+          if (live && live.device !== held.device) throw new AccountError("heldBack", `${heldWho(live)}: approve or remove it first`, live.readyMs);
+          // The hold as it stands now (its entries may have grown); taken in on
+          // the way, everything the chain the veto is signed on has from the
+          // activation on — what the held device added since the plan included.
+          const now: HeldBack = live ?? { ...held, entries: chain.allEntries().filter((e) => e.draft.seq >= held.seq) };
+          const scope = this.vetoScope(now, chain, { view, ...(alsoTrusted ? { trusted: alsoTrusted } : {}) });
+          // A veto that removes nothing is never published: it would be a bare
+          // rotation, its new keys mailed to everyone still in.
+          if (!scope.devices.length && !scope.machines.length) {
+            throw new AccountError(
+              "nothingToRemove",
+              "{{id}} and what it brought in are out of the account already, so nothing was signed. Approving it is safe now: it takes in the account's chain as it stands.",
+              undefined,
+              undefined,
+              { id: held.device ?? id },
+            );
+          }
+          // A v3 chain takes v3 removals only (no v2 entry after the first v3 one).
+          if (chain.isV3) return [...scope.devices, ...scope.machines].map((d): Action => ({ type: "removeDevice3", id: d }));
+          return [...scope.devices.map((d): Action => ({ type: "removeDevice", id: d })), ...scope.machines.map((m): Action => ({ type: "removeMachine", id: m }))];
+        },
+        { overHeld: true },
+      );
+    } catch (error) {
+      // A veto is one append (it cannot be split): with the wider choice on, the way out is to leave it off.
+      if (alsoTrusted && error instanceof AccountError && error.kind === "tooManyEntries") {
+        throw new AccountError(
+          "tooManyEntries",
+          "this veto would write {{n}} entries to the account's chain at once, and the hub takes at most {{max}}: untick “Also remove what your other devices added”, then remove those devices one by one afterwards",
+          undefined,
+          undefined,
+          error.vars,
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -5643,6 +5690,8 @@ export class CloudAccount {
     const slots = slotsOf(inScope);
     return {
       device: held.device,
+      seq: held.seq,
+      view: [...view],
       scope: [...scope.devices, ...scope.machines].map(target),
       trusted: trusted.map(target),
       voidsWords,

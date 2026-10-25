@@ -51,6 +51,7 @@ import {
   UpgradeConfirm,
   V3Note,
   alsoTrustedFor,
+  trustedShown,
   VetoChoice,
 } from "../src/features/cloud/devices.js";
 import { V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
@@ -180,6 +181,8 @@ test("a veto lists what it takes out before it is signed; what the devices this 
     trustedVoidsWords: false,
     voidsPasskeys: false,
     trustedVoidsPasskeys: false,
+    seq: 5,
+    view: ["d-1", "d-b"],
   };
   const choice = (over: Partial<typeof plan> = {}, alsoTrusted = false, lng = "en") =>
     draw(<VetoChoice plan={{ ...plan, ...over }} alsoTrusted={alsoTrusted} onAlsoTrusted={() => undefined} busy={false} onConfirm={() => undefined} onCancel={() => undefined} />, lng);
@@ -207,8 +210,8 @@ test("a veto lists what it takes out before it is signed; what the devices this 
   // The choice holds only for the very list it was made on: one that grew is unticked.
   const listed = { ...plan, trusted: [{ id: "d-c", host: false, by: "d-b" }] };
   const grown = { ...plan, trusted: [...listed.trusted, { id: "d-late", host: false, by: "d-b" }] };
-  assert.equal(alsoTrustedFor("d-c", listed), true);
-  assert.equal(alsoTrustedFor("d-c", grown), false, "d-late was never shown when it was ticked");
+  assert.equal(alsoTrustedFor(trustedShown(listed), listed), true);
+  assert.equal(alsoTrustedFor(trustedShown(listed), grown), false, "d-late was never shown when it was ticked");
   assert.equal(alsoTrustedFor(null, listed), false);
   assert.equal(alsoTrustedFor("", { ...plan, trusted: [] }), false);
   // Nothing trusted was added: no choice to make.

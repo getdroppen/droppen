@@ -650,6 +650,93 @@ test("N1 (#17 review): with the wider choice too, a hold that ends on the way st
   assert.deepEqual(keyMail.filter((m) => m.recipient === z.deviceId || m.recipient === c.deviceId), []);
 });
 
+/** a (genesis, the words), and z, which came back with them and activated itself a day later by the hub's clock; a, closed meanwhile, holds it back. */
+async function heldOverZ(t: { mock: { timers: { enable(o: { apis: string[]; now: number }): void; setTime(n: number): void } } }) {
+  const t0 = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: t0 });
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  const words = (await createV2Genesis(a, true))!.join(" ");
+  await a.sync();
+  const z = await hub.device("tok", new RecordingKeyStore());
+  await z.recover(words);
+  t.mock.timers.setTime(t0 + DAY + 60_000);
+  await z.activateRecovered(words);
+  return { hub, a, z, words };
+}
+
+test("N1 (#17 review 2): a hold that ends on the way still takes out what the held device added after the page last looked", async (t) => {
+  const { hub, a, z } = await heldOverZ(t);
+  const back = await hub.reload(a);
+  assert.equal(back.heldBack?.device, z.deviceId);
+  const plan = (await back.vetoPlan())!;
+  assert.deepEqual(plan.scope.map((d) => d.id), [z.deviceId]);
+  // The thief adds z3 after the page last looked; then the day passes here, before removeDevice's sync.
+  const z3 = await hub.device("tok", new RecordingKeyStore());
+  await z.sync();
+  await z.append({ type: "addDevice", device: (z3 as unknown as { info(): DeviceInfo }).info() });
+  t.mock.timers.setTime(back.heldBack!.readyMs + 1);
+  const before = hub.mailLog.length;
+  const report = await back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan });
+  assert.equal(hub.state!.deviceRecord(z.deviceId)?.status.type, "removed");
+  assert.equal(hub.state!.deviceRecord(z3.deviceId)?.status.type, "removed", "what z added is out too");
+  assert.deepEqual(report.vetoed?.devices, [z3.deviceId]);
+  const toThem = hub.mailLog.slice(before).filter((m) => m.purpose === MAIL_USER_KEY && (m.recipient === z.deviceId || m.recipient === z3.deviceId));
+  assert.deepEqual(toThem, [], "no new user key to either");
+});
+
+test("N1 (#17 review 2): control — with the hold still on, what the held device added after the page last looked goes too", async (t) => {
+  const { hub, a, z } = await heldOverZ(t);
+  const back = await hub.reload(a);
+  const plan = (await back.vetoPlan())!;
+  const z3 = await hub.device("tok", new RecordingKeyStore());
+  await z.sync();
+  await z.append({ type: "addDevice", device: (z3 as unknown as { info(): DeviceInfo }).info() });
+  await back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan });
+  assert.equal(hub.state!.deviceRecord(z3.deviceId)?.status.type, "removed");
+  assert.equal(back.heldBack, null);
+});
+
+test("N1 (#17 review 2): a veto confirmed after the hold ended is still a veto — it takes out what the device brought in, not the device alone", async (t) => {
+  const { hub, a, z } = await heldOverZ(t);
+  const z2 = await hub.device("tok", new RecordingKeyStore());
+  await z.sync();
+  await z.append({ type: "addDevice", device: (z2 as unknown as { info(): DeviceInfo }).info() });
+  const back = await hub.reload(a);
+  const plan = (await back.vetoPlan())!;
+  assert.deepEqual(plan.scope.map((d) => d.id), [z.deviceId, z2.deviceId]);
+  // The day passes here and the page syncs before the click: the activation is taken in.
+  t.mock.timers.setTime(back.heldBack!.readyMs + 1);
+  await back.sync();
+  assert.equal(back.heldBack, null);
+  assert.equal(back.chain!.device(z.deviceId)?.status.type, "active");
+  const before = hub.mailLog.length;
+  const report = await back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan });
+  for (const x of [z, z2]) assert.equal(hub.state!.deviceRecord(x.deviceId)?.status.type, "removed", `${x.deviceId} is out`);
+  assert.deepEqual(report.vetoed?.devices, [z2.deviceId]);
+  assert.deepEqual(hub.mailLog.slice(before).filter((m) => m.purpose === MAIL_USER_KEY && (m.recipient === z.deviceId || m.recipient === z2.deviceId)), []);
+  assert.equal(hub.state!.device(a.deviceId)?.status.type, "active");
+});
+
+test("N1 (#17 review 2): another device's activation held back on the way is not taken in by signing the veto on top of it", async (t) => {
+  const { hub, a, z, words } = await heldOverZ(t);
+  const back = await hub.reload(a);
+  const plan = (await back.vetoPlan())!;
+  // y comes back with the words too and activates itself at once by the hub's clock; then z's day passes here.
+  const y = await hub.device("tok", new RecordingKeyStore());
+  await y.recover(words);
+  hub.chainNow = () => Date.now() + DAY + 60_000;
+  await y.activateRecovered(words, Date.now() + DAY + 60_000);
+  hub.chainNow = () => Date.now();
+  t.mock.timers.setTime(back.heldBack!.readyMs + 1);
+  const posts = hub.chainPosts;
+  const mails = hub.mailLog.length;
+  await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan }), (e: unknown) => e instanceof AccountError && e.kind === "heldBack");
+  assert.equal(back.heldBack?.device, y.deviceId, "y's activation is held back now");
+  assert.equal(hub.chainPosts, posts, "nothing posted");
+  assert.equal(hub.mailLog.length, mails, "nothing mailed");
+});
+
 test("N1 (#17 review): a veto that would remove nothing — what it was for is out already — is never published", async (t) => {
   const t0 = Date.now();
   t.mock.timers.enable({ apis: ["Date"], now: t0 });
@@ -708,6 +795,7 @@ test("N1 (#17 review): a veto bigger than the hub takes in one append is refused
   await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { alsoTrusted: plan.trusted.map((d) => d.id) }), (e: unknown) => {
     assert.ok(e instanceof AccountError && e.kind === "tooManyEntries", String(e));
     assert.deepEqual(e.vars, { n: String(MAX_APPEND_ENTRIES + 1), max: String(MAX_APPEND_ENTRIES) }, "z, the 63, and the new keys");
+    assert.ok(e.message.includes("untick"), "a veto cannot be split: the way out is the wider choice off");
     return true;
   });
   assert.equal(hub.chainPosts, posts, "nothing posted");
