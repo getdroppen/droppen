@@ -1,0 +1,21 @@
+# The portable multi-host resolver: every harness name points at the one
+# container that runs both the HTTPS listener and the browsers. No browser
+# resolver flags (Chromium-only) and no `/etc/hosts` edits on the runner.
+services:
+  e2e:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    image: droppen-e2e:local
+    extra_hosts:
+      - "api.droppen.test:127.0.0.1"
+      - "my.droppen.test:127.0.0.1"
+      - "www.droppen.test:127.0.0.1"
+      - "droppen.test:127.0.0.1"
+      - "evil.test:127.0.0.1"
+    environment:
+      E2E_MUTATION: ${E2E_MUTATION:-}
+      CI: "1"
+    # Chromium's default /dev/shm in Docker is too small for three engines.
+    shm_size: "1gb"
+    command: ["bash", "-lc", "pnpm exec playwright test"]

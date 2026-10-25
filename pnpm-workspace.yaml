@@ -1,3 +1,4 @@
 packages:
   - web
+  - e2e
   - packages/*

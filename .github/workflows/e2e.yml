@@ -1,0 +1,60 @@
+name: e2e
+
+# Deployment checks are manual and nightly while this suite is new: they are
+# not a required check on pull requests. The cluster runner (arc-hub) has
+# Docker, which is what the harness needs for its multi-host resolver.
+on:
+  workflow_dispatch:
+    inputs:
+      mutation:
+        description: "Deliberately break one property to prove the suite catches it: marker, cors, site-policy or api-base (empty: none)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Read-only checks against the real hosts: DNS/TLS, health, CORS, the
+  # WebSocket upgrade, static-host headers/marker/worker, /install.sh.
+  deploy-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The checker's own self-test
+        run: node scripts/e2e-deploy.mjs --self-test
+      - name: Deployed hosts (may fail while step 0, the DNS move, is pending)
+        run: node scripts/e2e-deploy.mjs --json > e2e-deploy.json
+        continue-on-error: true
+      - name: Keep the result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-deploy
+          path: e2e-deploy.json
+          if-no-files-found: ignore
+
+  # The browser harness: one container is the HTTPS listener and all three
+  # engines; docker compose `extra_hosts` resolves api./my./www./apex/evil.
+  playwright:
+    runs-on: arc-hub
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run chromium, firefox and webkit
+        env:
+          E2E_MUTATION: ${{ inputs.mutation }}
+        run: docker compose -f e2e/docker-compose.yml up --build --abort-on-container-exit --exit-code-from e2e
+      - name: Tear down
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down --volumes --remove-orphans
