@@ -35,6 +35,10 @@ jobs:
       # second half of `pnpm gen:api` (the server's tests check the first:
       # that the committed openapi.json is the spec the server serves).
       - run: pnpm --filter @remote-hand/web gen:api && git diff --exit-code -- web/src/api/schema.d.ts
+      # web/src/api/hub-schema.d.ts is generated from openapi/hub.json, the
+      # hub's deployed public API (refresh it with gen:hub-api after a hub
+      # release; this check makes the generated types follow the spec).
+      - run: pnpm --filter @remote-hand/web gen:api:hub && git diff --exit-code -- web/src/api/hub-schema.d.ts
       # The open-source boundary check's own tests (the check itself runs in
       # the server job, which has cargo).
       - run: pnpm test:boundary

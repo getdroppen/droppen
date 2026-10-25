@@ -17,6 +17,8 @@
  * before it expires and once on a 401 (`HubApi.renew`), and a removed
  * device's sessions are refused.
  */
+import { createHubClient, type HubClient } from "@/api/hub";
+import type { components } from "@/api/hub-schema";
 import { type Bytes, fromHex, hex, sha256, utf8 } from "@/lib/e2e";
 import { hubHttpOrigin } from "./config";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
@@ -692,6 +694,9 @@ export class HubApi {
   /** Set by the account: re-establish the device session once on a 401. */
   renew: SessionRenewer | null = null;
 
+  /** The typed client (`openapi/hub.json`): the migrated calls go through it. */
+  private readonly client: HubClient;
+
   /** The move of the tokens kept under their e-mails, started as the page's API is made. */
   private readonly migrated: Promise<unknown>;
 
@@ -701,6 +706,7 @@ export class HubApi {
     private readonly storage: KnownClientStorage | undefined = pageStorage(),
   ) {
     this.migrated = migrateKnownClients(storage);
+    this.client = createHubClient(this.base, this.fetchImpl);
   }
 
   /** The known-client token a sign-in to the account with `email` gave this browser, if any (one kept under the e-mail moves to its hash). */
@@ -755,12 +761,31 @@ export class HubApi {
   }
 
   private static async fail(res: Response): Promise<never> {
-    let d: { error?: string; message?: string; retry_after_ms?: unknown; key?: unknown; limit?: unknown; used?: unknown; hosts?: unknown; grant?: unknown; reason?: unknown; ready_ms?: unknown; waiting?: unknown; until_ms?: unknown } = {};
+    let d: unknown = {};
     try {
-      d = ((await res.json()) ?? {}) as typeof d;
+      d = (await res.json()) ?? {};
     } catch {
       // an empty or non-JSON body
     }
+    return HubApi.failBody(res, d);
+  }
+
+  /** The error from a body the caller already read (openapi-fetch parses it). */
+  private static failBody(res: Response, body: unknown): never {
+    const d = (body !== null && typeof body === "object" ? body : {}) as {
+      error?: string;
+      message?: string;
+      retry_after_ms?: unknown;
+      key?: unknown;
+      limit?: unknown;
+      used?: unknown;
+      hosts?: unknown;
+      grant?: unknown;
+      reason?: unknown;
+      ready_ms?: unknown;
+      waiting?: unknown;
+      until_ms?: unknown;
+    };
     let retryAfterMs: number | undefined;
     if (typeof d.retry_after_ms === "number" && Number.isFinite(d.retry_after_ms) && d.retry_after_ms >= 0) retryAfterMs = d.retry_after_ms;
     else {
@@ -795,6 +820,32 @@ export class HubApi {
     } catch {
       return null as T;
     }
+  }
+
+  /**
+   * One call through the typed client, with `send`'s 401 behaviour: once,
+   * with a renewed device session.
+   */
+  private async typed<T>(
+    call: (headers: Record<string, string>) => Promise<{ data?: T; error?: unknown; response: Response }>,
+    opts: { token?: string; noRenew?: boolean } = {},
+  ): Promise<T> {
+    const send = (token: string | undefined) => call(token ? { authorization: `Bearer ${token}` } : {});
+    const out = await send(opts.token);
+    if (out.response.status !== 401 || !opts.token || opts.noRenew || !this.renew) return HubApi.done(out);
+    let fresh: string | null = null;
+    try {
+      fresh = await this.renew(opts.token);
+    } catch {
+      // the 401 stands
+    }
+    return HubApi.done(fresh ? await send(fresh) : out);
+  }
+
+  private static done<T>(out: { data?: T; error?: unknown; response: Response }): T {
+    if (out.response.status === 204) return undefined as T;
+    if (!out.response.ok) return HubApi.failBody(out.response, out.error);
+    return (out.data ?? null) as T;
   }
 
   /** Who may sign up, the Turnstile widget's page, whether e-mail must be verified, and passkeys (public). */
@@ -1096,43 +1147,57 @@ export class HubApi {
    * after.
    */
   async setRelayStandby(token: string, on: boolean): Promise<boolean> {
-    const r = await this.call<{ standby?: unknown } | null>("PATCH", "/v1/relays/prefs", { token, body: { standby: on } });
-    return r?.standby === true;
+    const r = await this.typed<components["schemas"]["RelayPrefs"]>(
+      (headers) => this.client.PATCH("/v1/relays/prefs", { body: { standby: on }, headers }),
+      { token },
+    );
+    return r.standby === true;
   }
 
   /** Register this browser's keys as a new device; `replaces`: the device of the account whose keys this browser lost (metadata). */
   async registerDevice(token: string, signKey: Uint8Array, dhKey: Uint8Array, opts: { replaces?: string | null } = {}): Promise<string> {
-    const body: Record<string, string> = { sign_key: hex(signKey), dh_key: hex(dhKey) };
+    const body: components["schemas"]["NewDevice"] = { sign_key: hex(signKey), dh_key: hex(dhKey) };
     if (opts.replaces) body.replaces = opts.replaces;
-    const r = await this.call<{ device: string }>("POST", "/v1/devices", { token, body });
+    const r = await this.typed<components["schemas"]["Registered"]>(
+      (headers) => this.client.POST("/v1/devices", { body, headers }),
+      { token },
+    );
     return r.device;
   }
 
   /** The chain from `from` (a device session, or read-only with a login token). */
   async chain(token: string, from: number, opts: { noRenew?: boolean } = {}): Promise<{ entries: Uint8Array[]; seq: number | null }> {
-    const r = await this.call<{ entries: string[]; seq: number | null }>("GET", `/v1/chain?from=${from}`, { token, noRenew: opts.noRenew });
-    return { entries: r.entries.map((e) => fromHex(e)), seq: r.seq };
+    const r = await this.typed<components["schemas"]["ChainHead"]>(
+      (headers) => this.client.GET("/v1/chain", { params: { query: { from } }, headers }),
+      { token, noRenew: opts.noRenew },
+    );
+    return { entries: (r.entries ?? []).map((e) => fromHex(e)), seq: r.seq ?? null };
   }
 
   async appendChain(token: string, entries: Uint8Array[]): Promise<number> {
-    const r = await this.call<{ seq: number }>("POST", "/v1/chain", { token, body: { entries: entries.map((e) => hex(e)) } });
+    const r = await this.typed<components["schemas"]["Appended"]>(
+      (headers) => this.client.POST("/v1/chain", { body: { entries: entries.map((e) => hex(e)) }, headers }),
+      { token },
+    );
     return r.seq;
   }
 
   async createEnrollment(token: string, device: string, enrollToken: Uint8Array): Promise<number> {
-    const r = await this.call<{ expires_ms: number }>("POST", "/v1/enrollments", { token, body: { device, token: hex(enrollToken) } });
+    const r = await this.typed<components["schemas"]["EnrollmentMade"]>(
+      (headers) => this.client.POST("/v1/enrollments", { body: { device, token: hex(enrollToken) }, headers }),
+      { token },
+    );
     return r.expires_ms;
   }
 
   async enrollment(token: string, enrollToken: Uint8Array): Promise<EnrollmentStatus> {
-    const r = await this.call<{ state: EnrollmentStatus["state"]; machine?: string; sign_key?: string; dh_key?: string; proof?: string }>(
-      "GET",
-      `/v1/enrollments/${hex(enrollToken)}`,
+    const r = await this.typed<components["schemas"]["EnrollmentState"]>(
+      (headers) => this.client.GET("/v1/enrollments/{token}", { params: { path: { token: hex(enrollToken) } }, headers }),
       { token },
     );
     return {
-      state: r.state,
-      machine: r.machine,
+      state: r.state as EnrollmentStatus["state"],
+      machine: r.machine ?? undefined,
       signKey: r.sign_key ? fromHex(r.sign_key) : undefined,
       dhKey: r.dh_key ? fromHex(r.dh_key) : undefined,
       proof: r.proof ? fromHex(r.proof) : undefined,

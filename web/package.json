@@ -11,7 +11,8 @@
     "gen:pwa": "node scripts/gen-pwa-assets.mjs",
     "test": "tsx --test test/*.test.ts test/*.test.tsx",
     "test:shard": "tsx --test --test-shard=\"${TEST_SHARD:?set TEST_SHARD=<index>/<total>, e.g. 1/3}\" test/*.test.ts test/*.test.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen:api:hub": "openapi-typescript ../openapi/hub.json -o src/api/hub-schema.d.ts"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-beta.1",
