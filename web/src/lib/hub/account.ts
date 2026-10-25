@@ -558,6 +558,8 @@ export type AccountErrorKind =
   | "tooManyEntries"
   /** A veto would remove nothing: what it was for is out of the account already. Nothing is signed. */
   | "nothingToRemove"
+  /** A veto confirmed on a hold this device has since taken in, with the chain moved on after that: the person looks again. Nothing is signed. */
+  | "vetoStale"
   /**
    * A host that may have had its identity key copied (`hostsToRotate`) or is
    * isolated would be let control another one: renew its identity key first
@@ -1271,6 +1273,13 @@ export class CloudAccount {
   /** {@link hostsToRotate} for the chain as it was last asked, by its head (and the narrowed groups it read). */
   private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure> } | null = null;
   private held: HeldBack | null = null;
+  /**
+   * The last hold a sync took in on this device's own clock (its day passed
+   * here): its activation, and how far this view went with it. A veto the
+   * person confirmed on that hold's plan is still a veto, but only while
+   * nothing newer has been taken in since (`removeDevice`'s `veto`).
+   */
+  private taken: { seq: number; device: string; takenThroughSeq: number } | null = null;
   /** Set (for good, in this page) once this view conflicted with the chain this browser verified: why. */
   private forkedWhy: string | null = null;
   private unwatchSeen: (() => void) | null = null;
@@ -2251,6 +2260,11 @@ export class CloudAccount {
 
   private setHeld(held: HeldBack | null): void {
     const was = this.held;
+    // A hold taken in by the clock (not by the person's approve or veto, `adopt`): kept, so a veto confirmed on it a moment ago still is one.
+    if (was?.device && was.seq !== held?.seq && this.state && this.state.seq >= was.seq) {
+      const at = this.state.entryAt(was.seq)?.draft.action;
+      if ((at?.type === "activateRecovered" || at?.type === "passkeyActivate") && at.id === was.device) this.taken = { seq: was.seq, device: was.device, takenThroughSeq: this.state.seq };
+    }
     this.held = held;
     this.scheduleHeld();
     if ((was?.seq ?? -1) !== (held?.seq ?? -1) || (was?.entries.length ?? 0) !== (held?.entries.length ?? 0)) this.emit();
@@ -2344,6 +2358,8 @@ export class CloudAccount {
     for (let seq = this.state!.seq + 1; seq <= chain.seq; seq++) clock.observe(seq);
     await this.install(chain, clock);
     this.held = null;
+    // Settled by the person: no earlier plan is a veto any more.
+    this.taken = null;
     this.scheduleHeld();
     this.emit();
   }
@@ -4108,9 +4124,21 @@ export class CloudAccount {
   ): Promise<RotationReport> {
     if (id === this.deviceId) throw new AccountError("self", "remove this device from another device");
     const veto = opts.veto?.device === id ? opts.veto : undefined;
-    // The hold the veto is over: this view's, or — taken in since the person
-    // confirmed — the one the plan was read on, from its activation on.
-    const held: HeldBack | null = this.held ?? (veto ? { seq: veto.seq, device: id, readyMs: 0, entries: [] } : null);
+    // The hold the veto is over: this view's, or — taken in by this device's
+    // clock since the person read the plan — that one, but only while it is
+    // the last one taken in and the chain here has not moved since: a stale
+    // plan could take out a device trusted after it (the person looks again).
+    let held: HeldBack | null = this.held;
+    let sweepTo: number | null = null;
+    if (!held && veto) {
+      const taken = this.taken;
+      if (!taken || taken.seq !== veto.seq || taken.device !== id || this.state?.seq !== taken.takenThroughSeq) {
+        throw new AccountError("vetoStale", "{{id}}'s activation was taken in here, and the account's chain has moved on since: look at your devices again, and remove what is not yours there", undefined, undefined, { id });
+      }
+      held = { seq: veto.seq, device: id, readyMs: 0, entries: [] };
+      // What the plan could stand for: up to where this view took the hold in.
+      sweepTo = taken.takenThroughSeq;
+    }
     if (!held) {
       const record = this.state?.deviceRecord(id);
       const v3 = this.state?.isV3 === true;
@@ -4156,9 +4184,9 @@ export class CloudAccount {
     // passed here, and the veto must still take out what it is for — not find
     // the held device trusted by then and remove nothing. Taken in already
     // before the call: as the plan the person confirmed read them.
-    const view = this.held || !veto ? this.trustedView() : new Set([...veto.view, this.deviceId]);
+    const view = sweepTo === null || !veto ? this.trustedView() : new Set([...veto.view, this.deviceId]);
     try {
-      return await this.rotate(
+      const report = await this.rotate(
         courier,
         reencrypt,
         (chain) => {
@@ -4167,8 +4195,9 @@ export class CloudAccount {
           if (live && live.device !== held.device) throw new AccountError("heldBack", `${heldWho(live)}: approve or remove it first`, live.readyMs);
           // The hold as it stands now (its entries may have grown); taken in on
           // the way, everything the chain the veto is signed on has from the
-          // activation on — what the held device added since the plan included.
-          const now: HeldBack = live ?? { ...held, entries: chain.allEntries().filter((e) => e.draft.seq >= held.seq) };
+          // activation on — what the held device added since the plan included;
+          // taken in before the call, up to where this view took it in.
+          const now: HeldBack = live ?? { ...held, entries: chain.allEntries().filter((e) => e.draft.seq >= held.seq && (sweepTo === null || e.draft.seq <= sweepTo)) };
           const scope = this.vetoScope(now, chain, { view, ...(alsoTrusted ? { trusted: alsoTrusted } : {}) });
           // A veto that removes nothing is never published: it would be a bare
           // rotation, its new keys mailed to everyone still in.
@@ -4187,6 +4216,9 @@ export class CloudAccount {
         },
         { overHeld: true },
       );
+      // Done: the plan it was read on is no veto any more.
+      if (this.taken?.seq === held.seq) this.taken = null;
+      return report;
     } catch (error) {
       // A veto is one append (it cannot be split): with the wider choice on, the way out is to leave it off.
       if (alsoTrusted && error instanceof AccountError && error.kind === "tooManyEntries") {

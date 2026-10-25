@@ -716,6 +716,47 @@ test("N1 (#17 review 2): a veto confirmed after the hold ended is still a veto �
   assert.deepEqual(report.vetoed?.devices, [z2.deviceId]);
   assert.deepEqual(hub.mailLog.slice(before).filter((m) => m.purpose === MAIL_USER_KEY && (m.recipient === z.deviceId || m.recipient === z2.deviceId)), []);
   assert.equal(hub.state!.device(a.deviceId)?.status.type, "active");
+  // Once made, the plan is no veto any more.
+  await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan }), (e: unknown) => e instanceof AccountError && e.kind === "vetoStale");
+});
+
+test("N1 (#17 review 3): a stale veto plan, used after the hold was taken in and the chain moved on, is refused — it never takes a device trusted since", async (t) => {
+  const { hub, a, z, words } = await heldOverZ(t);
+  const back = await hub.reload(a);
+  const plan = (await back.vetoPlan())!;
+  // The hold ends; days later the owner comes back on a new browser r with the words, and approves it here.
+  t.mock.timers.setTime(back.heldBack!.readyMs + 1);
+  await back.sync();
+  assert.equal(back.heldBack, null);
+  t.mock.timers.setTime(Date.now() + 5 * DAY);
+  const r = await hub.device("tok", new RecordingKeyStore());
+  await r.recover(words);
+  await back.sync();
+  await back.approveDevice(r.deviceId);
+  assert.equal(back.chain!.device(r.deviceId)?.status.type, "active", "r approved here");
+  const posts = hub.chainPosts;
+  await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: plan }), (e: unknown) => e instanceof AccountError && e.kind === "vetoStale");
+  assert.equal(hub.state!.device(r.deviceId)?.status.type, "active", "a device this page approved after the plan is never taken by it");
+  assert.equal(hub.state!.device(z.deviceId)?.status.type, "active", "nothing signed: the person looks again");
+  assert.equal(hub.chainPosts, posts);
+});
+
+test("N1 (#17 review 3): a plan is a veto only for the hold it was read on, and only once — a veto it already made, or a chain moved on by anyone, refuses it", async (t) => {
+  const { hub, a, z } = await heldOverZ(t);
+  const back = await hub.reload(a);
+  const plan = (await back.vetoPlan())!;
+  t.mock.timers.setTime(back.heldBack!.readyMs + 1);
+  await back.sync();
+  // Another device's change lands after the hold was taken in: the plan is stale too.
+  const b = await hub.device("tok", new RecordingKeyStore());
+  await back.append({ type: "addDevice", device: (b as unknown as { info(): DeviceInfo }).info() });
+  await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: { ...plan } }), (e: unknown) => e instanceof AccountError && e.kind === "vetoStale");
+  // A plan for another hold (another seq) is no veto of this one either.
+  await assert.rejects(back.removeDevice(z.deviceId, new FakeCourier(), false, { veto: { ...plan, seq: plan.seq + 1 } }), (e: unknown) => e instanceof AccountError && e.kind === "vetoStale");
+  assert.equal(hub.state!.device(z.deviceId)?.status.type, "active");
+  // Without the plan, removing z is an ordinary removal (z alone), as for any device.
+  await back.removeDevice(z.deviceId, new FakeCourier());
+  assert.equal(hub.state!.deviceRecord(z.deviceId)?.status.type, "removed");
 });
 
 test("N1 (#17 review 2): another device's activation held back on the way is not taken in by signing the veto on top of it", async (t) => {
