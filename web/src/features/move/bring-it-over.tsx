@@ -7,7 +7,8 @@ import { onlyUnfinishedHere } from "@/lib/move/receiver";
 import { type MoveOutcome, startPull } from "./index";
 
 /*
- * The app host's sign-in screen, in a browser that holds no device here
+ * The app host's sign-in screen (its sign-in tab: a new account has nothing
+ * to bring over), in a browser that holds no device here
  * (plan §12, user steps 4–5): "Used Droppen at droppen.app in this browser?
  * Bring it over" — the pull (`startPull`): a droppen.app window opens, the
  * person confirms there, and this browser opens here as the same device,

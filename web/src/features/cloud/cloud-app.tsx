@@ -880,7 +880,11 @@ export function AuthScreen({
   api: HubApi;
   onSignedIn: (session: HubSession) => void;
   initialMode?: "signin" | "signup";
-  /** Shown above the form: on the app host, the offer to bring this browser's device over from the hub's origin. */
+  /**
+   * Shown above the sign-in form (not sign-up's: a new account has nothing to
+   * bring over): on the app host, the offer to bring this browser's device over
+   * from the hub's origin.
+   */
   above?: ReactNode;
 }) {
   const { t, i18n } = useTranslation();
@@ -1156,7 +1160,11 @@ export function AuthScreen({
               </Note>
             </div>
           )}
-          {above && <div className="mb-6">{above}</div>}
+          {above && mode === "signin" && (
+            <div data-testid="auth-above" className="mb-6">
+              {above}
+            </div>
+          )}
           <form onSubmit={submit} className="flex flex-col gap-3">
             <Tabs
               value={mode}

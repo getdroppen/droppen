@@ -1,6 +1,6 @@
 // The app host's way in to the key move (`features/move/bring-it-over.tsx`):
 // the sign-in screen's "Used Droppen at droppen.app in this browser? Bring it
-// over" — shown while this origin holds no device, the pull started from its
+// over" — on its sign-in tab only, shown while this origin holds no device, the pull started from its
 // click, how each outcome leaves it — and the other tabs of the origin, which
 // reload when a device arrives (and only on another page's word).
 //
@@ -78,6 +78,44 @@ test("the sign-in screen offers to bring the device over, and a pull from its cl
     await until(() => moved === 1);
   } finally {
     root.unmount();
+  }
+});
+
+test("the offer is on the sign-in tab only: sign-up makes a new account, which has nothing to bring over", async () => {
+  await i18n.changeLanguage("en");
+  const api = { signupConfig: async () => ({ signup: "open", inviteRequired: false, turnstile: null, verification: "off", passkeys: null }) };
+  const pull = async () => ({ kind: "cancelled" }) as MoveOutcome;
+  // A deep link's sign-in form (the tabs do not move the address there: this stand-in has no history).
+  const place = globalThis.location as { pathname: string };
+  const was = place.pathname;
+  place.pathname = "/devices";
+  const root = createRoot(container as never);
+  root.render(
+    <I18nextProvider i18n={i18n}>
+      <AuthScreen api={api as never} onSignedIn={() => undefined} initialMode="signup" above={<BringItOver legacy="https://droppen.test" pull={pull as never} />} />
+    </I18nextProvider>,
+  );
+  const tab = (label: string) => find(container, (n) => n.getAttribute?.("role") === "tab" && n.textContent === label);
+  const press = (node: FakeNode | null) => {
+    assert.ok(node);
+    const handlers = Object.entries(node as unknown as Record<string, unknown>).find(([k]) => k.startsWith("__reactProps$"))?.[1] as Record<string, (e: unknown) => void>;
+    handlers.onClick({});
+  };
+  try {
+    await until(() => byTestId("auth-email") !== null);
+    await flush(50);
+    assert.equal(byTestId("bring-it-over"), null, "not on sign-up");
+    assert.doesNotMatch((container as FakeNode).textContent, /Used Droppen at/);
+    // Over to sign-in: there it is.
+    press(tab("sign in"));
+    await until(() => byTestId("bring-it-over") !== null);
+    assert.match((container as FakeNode).textContent, /Used Droppen at droppen\.test in this browser\?/);
+    // And back to sign-up: gone again.
+    press(tab("sign up"));
+    await until(() => byTestId("bring-it-over") === null);
+  } finally {
+    root.unmount();
+    place.pathname = was;
   }
 });
 
