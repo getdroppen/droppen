@@ -182,7 +182,7 @@ test("the guide once the App is out but cannot sign itself in yet: the backgroun
   }
 });
 
-test("the guide once the App is out and signs itself in: step 1 is the App's download, step 2 「在 App 里点「登录 Droppen」」; the server way stays second", () => {
+test("the guide once the App is out and signs itself in — as every published App does: step 1 is the App's download, step 2 「在 App 里点「登录 Droppen」」; the server way stays second", () => {
   const { shell: s } = shell([info("m-1")]);
   setHubShell(s as never);
   try {
@@ -192,6 +192,12 @@ test("the guide once the App is out and signs itself in: step 1 is the App's dow
     assert.match(html, /<a href="\/download\?os=macos-app"[^>]*data-testid="add-download-link"/);
     for (const line of ["01 · 在那台设备上安装 Droppen App", "下载 Droppen App（macOS）", "02 · 在 App 里点「登录 Droppen」", "不需要登录页", "服务器或后台运行？", "显示一次性注册码"]) assert.ok(words.includes(line), `missing: ${line}`);
     assert.doesNotMatch(html, /data-testid="install-command"/, "the command is the server way's, behind its link");
+    // The build's own switches: the App, which signs itself in (since 0.2.125; every published .dmg has it).
+    const built = draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} />);
+    assert.match(built, /data-testid="add-step-install" data-app="true"/);
+    assert.match(built, /data-testid="add-app-download"/);
+    assert.doesNotMatch(built, /data-testid="add-app-soon"|coming in an update/);
+    assert.ok(text(built).includes("02 · in the App, click Sign in to Droppen"));
   } finally {
     setHubShell(null);
   }

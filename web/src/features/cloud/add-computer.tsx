@@ -215,11 +215,11 @@ type GuideMode = "guide" | "code";
  * 「添加可运行 AI 的设备」 (docs/local-aggregator.md §3.7, §4): a guide that
  * needs nobody to walk the person through it, live from start to end.
  *
- * 1. Install Droppen on that device: the install line (`get-droppen.ts`),
- *    copied in a click, and the download page for the rest — the Droppen
- *    App instead only once it is out and signs itself in
- *    (`APP_AVAILABLE`, `APP_SIGN_IN_AVAILABLE`).
- * 2. On the page it opens, 「登录 Droppen」 (S1-3's `/link`): a droppen.app
+ * 1. Install Droppen on that device: the Droppen App, which signs itself in
+ *    (`APP_AVAILABLE`, `APP_SIGN_IN_AVAILABLE`) — else the install line
+ *    (`get-droppen.ts`), copied in a click, and the download page for the
+ *    rest.
+ * 2. In the App, or on the page the install opens, 「登录 Droppen」 (S1-3's `/link`): a droppen.app
  *    window opens on that device, signs in to this account — a browser new
  *    to the account is paired first, from here (`pairWith`) — shows the
  *    fingerprint that page shows, and adds the device.
@@ -267,7 +267,7 @@ export function AddComputer({
   if (watch.kind === "ready") return <NewDeviceReady account={account} added={watch.info} machines={machines} onDone={onDone} />;
   const hub = otherHub(agentHub(origin)) ? agentHub(origin) : null;
   const pad = "flex min-w-0 flex-col gap-3 px-6 py-5 max-md:px-4";
-  // The App only once it can sign itself in (`APP_SIGN_IN_AVAILABLE`): this guide is how a device joins the account.
+  // The App, as it signs itself in (`APP_SIGN_IN_AVAILABLE`; off, in a preview, the background install): this guide is how a device joins the account.
   const viaApp = availability.app && availability.appSignIn;
   return (
     <div data-testid="add-computer" data-step={watch.kind}>

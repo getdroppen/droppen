@@ -40,11 +40,12 @@ import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from 
  *   universal: the latest release's `.dmg` itself, downloaded in place, with
  *   its version and size, as the hub names it (`release-files.tsx`; the
  *   release page until it does, or if it cannot), the release page beside it
- *   for its other files and checksums; open it and Droppen starts, 「登录 Droppen」 inside it once the
- *   App can (`APP_SIGN_IN_AVAILABLE`; until then, a note that it is coming in
- *   an update, never a step for a button the App does not have). Until the
- *   first one is out (`APP_AVAILABLE`), "coming soon", and the background
- *   install as the way in today — never a link to a file that is not there;
+ *   for its other files and checksums; open it and Droppen starts, then
+ *   「登录 Droppen」 inside it (`APP_SIGN_IN_AVAILABLE`; off, in a preview, a
+ *   note that it is coming in an update, never a step for a button the App
+ *   does not have). Until the first one is out (`APP_AVAILABLE`), "coming
+ *   soon", and the background install as the way in today — never a link to a
+ *   file that is not there;
  * - **Mac · background**: the install command, for a Mac that runs Droppen in
  *   the background or as a server;
  * - **Linux server**: the command and headless enrolment with a one-time code
@@ -182,7 +183,7 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
             : []),
         ]}
       />
-      {/* Not built yet (`APP_SIGN_IN_AVAILABLE`): no step for a button the App does not have, and said plainly. */}
+      {/* Off (`APP_SIGN_IN_AVAILABLE`, a preview): no step for a button the App does not have, and said plainly. */}
       {!availability.appSignIn && (
         <div className="border-t border-border px-6 py-5 max-md:px-4">
           <Soon

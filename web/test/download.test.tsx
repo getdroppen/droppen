@@ -6,8 +6,8 @@
 // its tab, marked; every way is one tab of an ARIA tablist, named in the
 // address (`?os=`) — the address wins, then the session's choice, then the
 // detected one; the App and Linux degrade to "coming" behind their switches
-// and never link a file that is not there, and signing in from the App is
-// "coming in an update" until it is built; each tab renders its way in, with
+// and never link a file that is not there, and the App's last step is
+// signing it in from inside it; each tab renders its way in, with
 // one primary action; the page reads in zh-CN, en, zh-TW and ja; `/download`
 // is public signed in or not, and the landing page links it from its footer.
 import * as React from "react";
@@ -264,38 +264,42 @@ const appPanel = (html: string) => {
 };
 const appSteps = (html: string) => (appPanel(html).match(/data-testid="app-steps"[^]*?<\/ol>/)?.[0].match(/<li/g) ?? []).length;
 
-test("signing in from the App is not built yet: no 「登录 Droppen」 step, and a note that it is coming in an update — in every language", () => {
-  assert.equal(APP_SIGN_IN_AVAILABLE, false, "the App hides its Droppen section: signing in from it (system browser, docs/local-aggregator.md §4.9) is not built yet");
+test("signing in from the App: its last step is 「登录 Droppen」 inside it, and nothing says it is coming — in every language", () => {
+  assert.equal(APP_SIGN_IN_AVAILABLE, true, "every App published signs itself in (the hand-off came in 0.2.125; the first public .dmg is 0.2.128)");
   assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
   const said = {
     en: {
-      note: "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.",
-      gone: ["Click Sign in to Droppen in the app", "Then sign it in to Droppen from inside the app.", "A droppen.app window opens"],
+      step: "Click Sign in to Droppen in the app",
+      lead: "Then sign it in to Droppen from inside the app.",
+      end: "Install it, then sign it in to Droppen.",
+      note: "signing in to Droppen from the app is coming in an update",
     },
-    "zh-CN": { note: "想在手机上用？在 App 里登录 Droppen 的功能会在后续更新中推出。", gone: ["在 App 里点「登录 Droppen」", "然后在 App 里登录 Droppen 就行", "「登录 Droppen」"] },
-    "zh-TW": { note: "想在手機上用？在 App 裡登入 Droppen 的功能會在後續更新中推出。", gone: ["在 App 裡點「登入 Droppen」", "接著在 App 裡登入 Droppen 就好", "「登入 Droppen」"] },
-    ja: { note: "スマホから使う場合：アプリからの Droppen へのサインインは、今後のアップデートで対応します。", gone: ["アプリで「Droppen にサインイン」を押す", "あとはアプリから Droppen にサインインするだけ", "「Droppen にサインイン」"] },
+    "zh-CN": { step: "在 App 里点「登录 Droppen」", lead: "然后在 App 里登录 Droppen 就行", end: "装好，再登录 Droppen。", note: "在 App 里登录 Droppen 的功能会在后续更新中推出" },
+    "zh-TW": { step: "在 App 裡點「登入 Droppen」", lead: "接著在 App 裡登入 Droppen 就好", end: "裝好，再登入 Droppen。", note: "在 App 裡登入 Droppen 的功能會在後續更新中推出" },
+    ja: { step: "アプリで「Droppen にサインイン」を押す", lead: "あとはアプリから Droppen にサインインするだけ", end: "インストールして、Droppen にサインイン。", note: "アプリからの Droppen へのサインインは、今後のアップデートで対応します" },
   };
-  for (const [lng, { note, gone }] of Object.entries(said)) {
+  for (const [lng, { step, lead, end, note }] of Object.entries(said)) {
     // The build's own switches, and the same spelled out.
-    for (const html of [draw(lng, { os: "macos-app", availability: { ...AVAILABILITY, app: true } }), draw(lng, { os: "macos-app", app: true, appSignIn: false })]) {
-      const panel = appPanel(html);
-      assert.match(panel, /data-testid="app-download"/, `${lng}: the App is still offered`);
-      assert.match(panel, /data-testid="app-sign-in-soon"/, `${lng}: the note`);
-      assert.ok(text(panel).includes(note), `${lng}: ${note}`);
-      for (const line of gone) assert.ok(!text(panel).includes(line), `${lng} still says: ${line}`);
-      assert.equal(appSteps(html), 3, `${lng}: open the .dmg, drag it to Applications, open it — and no fourth step`);
+    for (const html of [draw(lng, { os: "macos-app", availability: AVAILABILITY }), draw(lng, { os: "macos-app", app: true, appSignIn: true })]) {
+      const panel = text(appPanel(html));
+      assert.match(appPanel(html), /data-testid="app-download"/, `${lng}: the App is offered`);
+      assert.ok(panel.includes(step), `${lng}: ${step}`);
+      assert.ok(panel.includes(lead), `${lng}: ${lead}`);
+      assert.equal(appSteps(html), 4, `${lng}: open the .dmg, drag it to Applications, open it, sign it in`);
+      assert.doesNotMatch(html, /data-testid="app-sign-in-soon"/, `${lng}: no "coming" note`);
+      // The page says one thing: install it, then sign it in — and nowhere that signing in is still to come.
+      assert.ok(text(html).includes(end), `${lng}: ${end}`);
+      assert.ok(!text(html).includes(note), `${lng} still says: ${note}`);
       assert.equal(primaries(html), 1, `${lng}: one primary action, the download`);
     }
   }
-  // Once the App signs itself in (an explicit switch, as a preview would pass): today's four steps, and no note.
-  const signsIn = draw("zh-CN", { os: "macos-app", app: true, appSignIn: true });
-  assert.ok(text(appPanel(signsIn)).includes("在 App 里点「登录 Droppen」"));
-  assert.ok(text(appPanel(signsIn)).includes("然后在 App 里登录 Droppen 就行。"));
-  assert.doesNotMatch(signsIn, /data-testid="app-sign-in-soon"/);
-  assert.equal(appSteps(signsIn), 4);
-  const signsInEn = text(appPanel(draw("en", { os: "macos-app", app: true, appSignIn: true })));
-  assert.ok(signsInEn.includes("Click Sign in to Droppen in the app") && signsInEn.includes("Then sign it in to Droppen from inside the app."));
+  // Off (an explicit switch, as a preview would pass): no step for a button the App does not have, and a note that it is coming.
+  const off = draw("en", { os: "macos-app", app: true, appSignIn: false });
+  assert.match(appPanel(off), /data-testid="app-sign-in-soon"/);
+  assert.ok(text(appPanel(off)).includes("Using it from your phone: signing in to Droppen from the app is coming in an update."));
+  assert.ok(!text(appPanel(off)).includes("Click Sign in to Droppen in the app"));
+  assert.equal(appSteps(off), 3);
+  assert.ok(text(appPanel(draw("zh-CN", { os: "macos-app", app: true, appSignIn: false }))).includes("想在手机上用？在 App 里登录 Droppen 的功能会在后续更新中推出。"));
 });
 
 test("what it runs on, the manual download with its checksums, and the uninstall", () => {

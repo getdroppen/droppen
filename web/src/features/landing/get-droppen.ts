@@ -14,11 +14,10 @@
  *   Droppen with no login page.
  *   Until the first one is published ({@link APP_AVAILABLE}), every place that
  *   offers it says it is coming and offers the background install instead.
- *   Signing it in to an account from inside it (「登录 Droppen」, through the
- *   system browser: docs/local-aggregator.md §4.9) is not built yet
- *   ({@link APP_SIGN_IN_AVAILABLE}): until it is, the download page says it is
- *   coming, and the 「添加可运行 AI 的设备」 guide adds a Mac through the
- *   background install;
+ *   It signs itself in to an account from inside it (「登录 Droppen」, through
+ *   the system browser: docs/local-aggregator.md §4.9;
+ *   {@link APP_SIGN_IN_AVAILABLE}), so the download page and the
+ *   「添加可运行 AI 的设备」 guide add a Mac through the App;
  * - **the install command**, for headless and background installs (a Mac
  *   running Droppen in the background, Linux servers): droppen.app answers
  *   `/install.sh` with the script of the release Droppen Hub was built from
@@ -40,13 +39,17 @@ export const APP_AVAILABLE = true;
 
 /**
  * Whether the Droppen App can sign itself in to Droppen (「登录 Droppen」 in
- * the App, through the system browser: docs/local-aggregator.md §4.9). Off —
- * the App hides its Droppen section today — nothing tells anyone to click a
- * button the App does not have: the download page says signing in from the
- * App is coming in an update, and the 「添加可运行 AI 的设备」 guide adds a
- * Mac through the background install, which signs in from its own page.
+ * the App, through the system browser: docs/local-aggregator.md §4.9). On:
+ * every App published has it (the hand-off came in 0.2.125, the first public
+ * `.dmg` is 0.2.128; the App's own first-run guide reads the same fact as
+ * `DESKTOP_SIGN_IN_READY`, `features/setup/flags.ts`). The download page then
+ * has the App's 「登录 Droppen」 as its last step, and the 「添加可运行 AI 的设备」
+ * guide and 「我的设备」's first-run card add a Mac through the App. Off (a
+ * preview), nothing tells anyone to click a button the App does not have: the
+ * download page says signing in from the App is coming in an update, and a Mac
+ * is added through the background install, which signs in from its own page.
  */
-export const APP_SIGN_IN_AVAILABLE = false;
+export const APP_SIGN_IN_AVAILABLE = true;
 
 /** Whether the install script runs on Linux and takes `DROPPEN_CODE`: off, Linux is "coming". */
 export const LINUX_AVAILABLE = true;

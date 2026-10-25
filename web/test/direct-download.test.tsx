@@ -227,6 +227,9 @@ test("with the hub's answer, every download button is a plain link to the file i
   assert.ok(text(hero(landing("en", { hints: HINTS.mac }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   const page = download("en", { os: "macos-app" });
   assert.ok(text(page).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
+  // Downloaded, opened, then signed in from inside the App (`APP_SIGN_IN_AVAILABLE`): never "coming in an update".
+  assert.ok(text(page).includes("Click Sign in to Droppen in the app"));
+  assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
   // The release page beside it, for the checksums and the other files: that release's.
   assert.match(page, /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
   // The add-device guide's button too (its source: the guide needs an account to render).

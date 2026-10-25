@@ -6,8 +6,7 @@
  * "coming soon" line and "Only on this Mac" is the choice.
  *
  * On since the app that has the hand-off (0.2.125). The download page's
- * `APP_SIGN_IN_AVAILABLE` (`features/landing/get-droppen.ts`) is
- * the same fact for droppen.app's own copy: it turns on once that app is
- * published, since droppen.app serves people who may not have it yet.
+ * `APP_SIGN_IN_AVAILABLE` (`features/landing/get-droppen.ts`) is the same
+ * fact for droppen.app's own copy, on since the first App published (0.2.128).
  */
 export const DESKTOP_SIGN_IN_READY = true;
