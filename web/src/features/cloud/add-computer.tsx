@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Columns2, Download, ExternalLink, Loader2 } from "lucide-react";
+import { Check, Columns2, Download, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { type EnrollCode, formatEnrollCode } from "@/lib/e2e";
@@ -38,18 +38,47 @@ type AddState =
   | { kind: "starting" }
   /** The plan's devices that run AI are all in use (or being added): nothing was started. */
   | { kind: "limit"; hit: LimitHit }
-  | { kind: "waiting"; code: EnrollCode }
+  /** `deadline`: when the code runs out, by this page's clock (`Date.now()` as the hub answered, plus {@link ENROLL_CODE_MS}). */
+  | { kind: "waiting"; code: EnrollCode; deadline: number }
   | { kind: "adding"; code: EnrollCode }
   | { kind: "key"; code: EnrollCode }
   | { kind: "done"; machine: string; via: DeliveryResult; first: boolean }
+  /** The hub says the code ran out before a device proved it. */
+  | { kind: "expired" }
   | { kind: "error"; message: string };
+
+/**
+ * How long a one-time code is good for (the hub's `POST /v1/enrollments`:
+ * 10 minutes). Counted from when the hub answered, by this page's clock — so
+ * a clock set wrong does not shorten it, and the count runs out just after
+ * the hub's own.
+ */
+export const ENROLL_CODE_MS = 10 * 60_000;
+
+/** The time left until `deadline`, never below 0. */
+export function codeTimeLeft(deadline: number, now: number): number {
+  return Math.max(0, deadline - now);
+}
+
+/** `ms` as the countdown shows it: minutes and seconds, `9:05`, rounded up so it reads `0:00` only once it is over. */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
 
 /**
  * The enrollment-code way: a code for `agent enroll`, the agent's proof
  * checked, the computer added (v2's `addMachine` — or, on a chain upgraded to
- * v3, `addDevice3{host}`), and its first key handed over.
+ * v3, `addDevice3{host}`), and its first key handed over. The code is good
+ * for {@link ENROLL_CODE_MS}, counted down on screen; once it runs out, a new
+ * one is a click away (a new round: everything starts again).
  */
-export function AddMachine({ account, link, origin, onDone }: { account: CloudAccount; link: HubLink; origin: string; onDone: () => void }) {
+export function AddMachine(props: { account: CloudAccount; link: HubLink; origin: string; onDone: () => void }) {
+  const [round, setRound] = useState(0);
+  return <AddMachineRound key={round} {...props} onNewCode={() => setRound((n) => n + 1)} />;
+}
+
+function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account: CloudAccount; link: HubLink; origin: string; onDone: () => void; onNewCode: () => void }) {
   const { t } = useTranslation();
   const [state, setState] = useState<AddState>({ kind: "starting" });
   const started = useRef(false);
@@ -78,7 +107,7 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
         // On a v3 chain the hub must take v3 entries (it gates a new host): said before a code is issued.
         if (account.chain?.isV3 && !chainV3Writable(store?.view)) throw new AccountError("notWritable", t("Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI."));
         const code = await account.startEnrollment();
-        setState({ kind: "waiting", code });
+        setState({ kind: "waiting", code, deadline: Date.now() + ENROLL_CODE_MS });
         // Read again as it is signed: on a v3 chain the hub must take v3 entries (it gates a new host).
         const machine = await account.completeEnrollment(code, abort.signal, undefined, undefined, { writable: chainV3Writable(store?.view) });
         setState({ kind: "key", code });
@@ -94,6 +123,7 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
       } catch (err) {
         const hit = limitOf(err);
         if (hit) return setState({ kind: "limit", hit });
+        if (err instanceof AccountError && err.kind === "expired") return setState({ kind: "expired" });
         setState({ kind: "error", message: errorText(err) });
       }
     })();
@@ -134,6 +164,69 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
       </div>
     );
   }
+  return <CodeRoundView state={state} hubUrl={hubUrl} onNewCode={onNewCode} onCancel={onDone} />;
+}
+
+/** This page's clock, read again every second while `on`. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [on]);
+  return now;
+}
+
+/**
+ * A round of the one-time code, once it is issued: the command to run there
+ * with the time it has left, counted down, and that this page has to stay
+ * open (it is what adds the device); the progress once the device proved it;
+ * and, once it ran out — by this page's count, or the hub's word — a new
+ * code. `now` stands in for the clock (tests).
+ */
+export function CodeRoundView({
+  state,
+  hubUrl,
+  onNewCode,
+  onCancel,
+  now: fixedNow,
+}: {
+  state: Extract<AddState, { kind: "waiting" | "adding" | "key" | "expired" }>;
+  hubUrl: string;
+  onNewCode: () => void;
+  onCancel: () => void;
+  now?: number;
+}) {
+  const { t } = useTranslation();
+  const ticking = state.kind === "waiting" && fixedNow === undefined;
+  const clock = useNow(ticking);
+  const now = fixedNow ?? clock;
+  const pad = "px-6 py-5 max-md:px-4";
+  const left = state.kind === "waiting" ? codeTimeLeft(state.deadline, now) : null;
+  // Run out: the hub said so, or this page's count did (the hub's ran out a moment before). A device that proved it in time is still added.
+  if (state.kind === "expired" || left === 0) {
+    return (
+      <div data-testid="enroll-expired" className={pad}>
+        <Note tone="warn" className="max-w-xl">
+          <span data-signal="warn" className="font-mono text-xs text-warn-fg">
+            {t("This code has expired.")}
+          </span>
+          <p className="text-xs leading-5 text-muted">{t("No device used it in time. Get a new code, and run the new command on that device.")}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" data-variant="primary" data-testid="enroll-new-code" className={primary} onClick={onNewCode}>
+              <RefreshCw className="size-3.5" />
+              {t("new code")}
+            </button>
+            <button type="button" className={quiet} onClick={onCancel}>
+              {t("cancel")}
+            </button>
+          </div>
+        </Note>
+      </div>
+    );
+  }
   const code = formatEnrollCode(state.code);
   // The code in the installer's environment, never on a command line another
   // user of that device could read (`ps`); the installer hands it to the
@@ -141,8 +234,9 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
   const command = codeInstallCommand(code, hubUrl);
   const stdinCommand = stdinEnrollCommand(code, hubUrl);
   return (
-    <div className="grid md:grid-cols-2">
+    <div data-testid="enroll-code" data-state={state.kind} className="grid md:grid-cols-2">
       <div className={cn(pad, "flex flex-col gap-3 md:border-r md:border-border")}>
+        <p className="text-xs leading-5 text-muted">{t("For a Linux server, or any device with no browser: it joins your account from its command line.")}</p>
         <CapsLabel>{t("01 · on that device, run")}</CapsLabel>
         <code data-testid="enroll-command" className="border border-border bg-raised px-2.5 py-2 font-mono text-2xs break-all text-fg select-all">
           {command}
@@ -165,6 +259,14 @@ export function AddMachine({ account, link, origin, onDone }: { account: CloudAc
             : state.kind === "adding"
               ? t("proof checked; adding the device…")
               : t("waiting for the device to prove it holds this code (valid for 10 minutes)…")}
+        </p>
+        {left !== null && (
+          <p data-testid="enroll-countdown" className="font-mono text-xs text-fg tabular-nums" aria-live="off">
+            {t("The code expires in {{time}}.", { time: formatCountdown(left) })}
+          </p>
+        )}
+        <p data-testid="enroll-keep-open" className="text-xs leading-5 font-medium text-fg">
+          {t("Keep this page open: it is what adds the device once the command runs there.")}
         </p>
       </div>
     </div>
@@ -369,7 +471,7 @@ export function AddComputer({
           <a href={publicHref(downloadHref("linux"))} target="_blank" rel="noopener" data-testid="add-server-linux" className="text-fg underline underline-offset-2 hover:no-underline">
             {t("Linux server")}
           </a>
-          <span>{t("— or add it from its command line with a one-time code:")}</span>
+          <span data-testid="add-code-for">{t("— a Linux server, or a device with no browser? Add it with a one-time code:")}</span>
         </p>
         <button type="button" className={quiet} disabled={blocked} onClick={() => setMode("code")} data-testid="add-computer-code">
           {t("show a one-time code")}

@@ -26,7 +26,7 @@ export const onboardingZhCN: Record<string, string> = {
   "Install it with one line:": "一行命令安装：",
   "Mac in the background": "Mac 后台运行",
   "Linux server": "Linux 服务器",
-  "— or add it from its command line with a one-time code:": "也可以用一次性注册码从命令行添加：",
+  "— a Linux server, or a device with no browser? Add it with a one-time code:": "Linux 服务器，或没有浏览器的设备？用一次性注册码添加：",
   // The guide
   "01 · install Droppen on that device": "01 · 在那台设备上安装 Droppen",
   "On the device your AI runs on (a Mac, for now), open Terminal and run:": "在跑 AI 的那台设备上（目前支持 Mac），打开「终端」运行：",
@@ -70,6 +70,14 @@ export const onboardingZhCN: Record<string, string> = {
 
   // droppen.app/link opened by hand
   "Droppen is not on that device yet?": "那台设备上还没装 Droppen？",
+
+  // The one-time code
+  "For a Linux server, or any device with no browser: it joins your account from its command line.": "适用于 Linux 服务器，或任何没有浏览器的设备：它从命令行加入你的账户。",
+  "The code expires in {{time}}.": "注册码 {{time}} 后失效。",
+  "Keep this page open: it is what adds the device once the command runs there.": "请保持这个页面打开：命令在那台设备上运行后，由这个页面完成添加。",
+  "This code has expired.": "这个注册码已过期。",
+  "No device used it in time. Get a new code, and run the new command on that device.": "没有设备及时用上它。换一个新注册码，再在那台设备上运行新的命令。",
+  "new code": "换个新注册码",
 };
 
 export const onboardingZhTW: Record<string, string> = {
@@ -86,7 +94,7 @@ export const onboardingZhTW: Record<string, string> = {
   "Install it with one line:": "一行指令安裝：",
   "Mac in the background": "Mac 背景執行",
   "Linux server": "Linux 伺服器",
-  "— or add it from its command line with a one-time code:": "也可以用一次性註冊碼從命令列新增：",
+  "— a Linux server, or a device with no browser? Add it with a one-time code:": "Linux 伺服器，或沒有瀏覽器的裝置？用一次性註冊碼新增：",
   "01 · install Droppen on that device": "01 · 在那台裝置上安裝 Droppen",
   "On the device your AI runs on (a Mac, for now), open Terminal and run:": "在執行 AI 的那台裝置上（目前支援 Mac），打開「終端機」執行：",
   "download page": "下載頁",
@@ -125,6 +133,14 @@ export const onboardingZhTW: Record<string, string> = {
   "not now": "以後再說",
 
   "Droppen is not on that device yet?": "那台裝置上還沒裝 Droppen？",
+
+  // The one-time code
+  "For a Linux server, or any device with no browser: it joins your account from its command line.": "適用於 Linux 伺服器，或任何沒有瀏覽器的裝置：它從命令列加入你的帳戶。",
+  "The code expires in {{time}}.": "註冊碼 {{time}} 後失效。",
+  "Keep this page open: it is what adds the device once the command runs there.": "請保持這個頁面開著：命令在那台裝置上執行後，由這個頁面完成新增。",
+  "This code has expired.": "這個註冊碼已過期。",
+  "No device used it in time. Get a new code, and run the new command on that device.": "沒有裝置及時用上它。換一個新註冊碼，再在那台裝置上執行新的命令。",
+  "new code": "換個新註冊碼",
 };
 
 export const onboardingJa: Record<string, string> = {
@@ -141,7 +157,7 @@ export const onboardingJa: Record<string, string> = {
   "Install it with one line:": "コマンド 1 行でインストール：",
   "Mac in the background": "Mac のバックグラウンド",
   "Linux server": "Linux サーバー",
-  "— or add it from its command line with a one-time code:": "またはワンタイムコードでコマンドラインから追加：",
+  "— a Linux server, or a device with no browser? Add it with a one-time code:": "Linux サーバーや、ブラウザのないデバイスなら、ワンタイムコードで追加：",
   "01 · install Droppen on that device": "01 · そのデバイスに Droppen をインストール",
   "On the device your AI runs on (a Mac, for now), open Terminal and run:": "AI を動かすデバイス（現在は Mac）で「ターミナル」を開き、次を実行します：",
   "download page": "ダウンロードページ",
@@ -180,4 +196,12 @@ export const onboardingJa: Record<string, string> = {
   "not now": "あとで",
 
   "Droppen is not on that device yet?": "そのデバイスにまだ Droppen が入っていない場合は",
+
+  // The one-time code
+  "For a Linux server, or any device with no browser: it joins your account from its command line.": "Linux サーバーなど、ブラウザのないデバイス向けです。コマンドラインからアカウントに加わります。",
+  "The code expires in {{time}}.": "コードの有効期限まであと {{time}}。",
+  "Keep this page open: it is what adds the device once the command runs there.": "このページは開いたままにしてください。そのデバイスでコマンドを実行すると、このページが追加を完了します。",
+  "This code has expired.": "このコードは有効期限が切れました。",
+  "No device used it in time. Get a new code, and run the new command on that device.": "時間内に使ったデバイスはありませんでした。新しいコードを取得し、そのデバイスで新しいコマンドを実行してください。",
+  "new code": "新しいコード",
 };

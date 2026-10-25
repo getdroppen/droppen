@@ -17,7 +17,7 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AddComputer, NewDeviceReady } from "../src/features/cloud/add-computer.js";
+import { AddComputer, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
 import { setHubShell } from "../src/features/cloud/hub-shell.js";
 import { addAsked, dismissHint, hintDismissed, openAddDevice, partnerFor, watchNewHost } from "../src/features/cloud/onboarding.js";
 import { AddDeviceHint, SideBySideTip } from "../src/features/cloud/onboarding-hints.js";
@@ -195,6 +195,74 @@ test("the guide once the App is out and signs itself in: step 1 is the App's dow
   } finally {
     setHubShell(null);
   }
+});
+
+test("the one-time code is the way for a Linux server or a device with no browser, said where it is offered and on it", () => {
+  const { shell: s } = shell([info("m-1")]);
+  setHubShell(s as never);
+  try {
+    for (const availability of [{ app: true, appSignIn: true, linux: true }, { app: false, appSignIn: false, linux: false }]) {
+      const html = draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} availability={availability} />);
+      assert.match(html, /data-testid="add-code-for"[^>]*>— a Linux server, or a device with no browser\? Add it with a one-time code:</);
+      assert.match(html, /data-testid="add-computer-code"[^>]*>show a one-time code</);
+    }
+    const zh = text(draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} />, "zh-CN"));
+    assert.ok(zh.includes("Linux 服务器，或没有浏览器的设备？用一次性注册码添加："));
+  } finally {
+    setHubShell(null);
+  }
+});
+
+test("the one-time code counts down, says to keep this page open, and offers a new code once it runs out", () => {
+  // The countdown's arithmetic: minutes and seconds, rounded up, never below zero.
+  assert.equal(ENROLL_CODE_MS, 600_000, "the hub's 10 minutes");
+  assert.deepEqual([600_000, 599_001, 545_000, 61_000, 60_000, 1, 0, -5].map(formatCountdown), ["10:00", "10:00", "9:05", "1:01", "1:00", "0:01", "0:00", "0:00"]);
+  assert.equal(codeTimeLeft(10_000, 4_000), 6_000);
+  assert.equal(codeTimeLeft(10_000, 12_000), 0);
+
+  const code = { accountFingerprint: new Uint8Array(16), secret: new Uint8Array(16).fill(7) };
+  const at = 1_800_000_000_000;
+  const asked: string[] = [];
+  const view = (state: React.ComponentProps<typeof CodeRoundView>["state"], now: number, lng = "en") =>
+    draw(<CodeRoundView state={state} hubUrl="https://droppen.app" now={now} onNewCode={() => asked.push("new")} onCancel={() => asked.push("cancel")} />, lng);
+  const waiting = { kind: "waiting" as const, code, deadline: at + ENROLL_CODE_MS };
+
+  // Just issued: the command, the full ten minutes, keep this page open — and what it is for.
+  const fresh = view(waiting, at);
+  assert.match(fresh, /data-testid="enroll-code" data-state="waiting"/);
+  assert.match(fresh, /data-testid="enroll-command"[^>]*>curl -fsSL https:\/\/droppen\.app\/install\.sh \| DROPPEN_CODE=RH1-/);
+  assert.match(fresh, /data-testid="enroll-countdown"[^>]*>The code expires in 10:00\.</);
+  assert.match(fresh, /data-testid="enroll-keep-open"[^>]*>Keep this page open: it is what adds the device once the command runs there\.</);
+  assert.ok(text(fresh).includes("For a Linux server, or any device with no browser: it joins your account from its command line."));
+  assert.doesNotMatch(fresh, /enroll-new-code|enroll-expired/);
+  // Later on: less time.
+  assert.match(view(waiting, at + 4 * 60_000 + 55_000), /The code expires in 5:05\./);
+  assert.match(view(waiting, at + ENROLL_CODE_MS - 400), /The code expires in 0:01\./);
+
+  // Run out by this page's count, or by the hub's word: no command to copy, a new code (the one primary) or cancel.
+  for (const html of [view(waiting, at + ENROLL_CODE_MS), view(waiting, at + ENROLL_CODE_MS + 30_000), view({ kind: "expired" }, at)]) {
+    assert.match(html, /data-testid="enroll-expired"/);
+    assert.ok(text(html).includes("This code has expired."));
+    assert.ok(text(html).includes("No device used it in time. Get a new code, and run the new command on that device."));
+    assert.match(html, /data-variant="primary" data-testid="enroll-new-code"[^>]*>.*new code</);
+    assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1);
+    assert.doesNotMatch(html, /data-testid="enroll-command"|enroll-countdown/);
+  }
+
+  // The device proved it in time: no countdown (it is being added), the page still to keep open.
+  for (const kind of ["adding", "key"] as const) {
+    const html = view({ kind, code }, at + ENROLL_CODE_MS + 5_000);
+    assert.match(html, new RegExp(`data-testid="enroll-code" data-state="${kind}"`));
+    assert.doesNotMatch(html, /enroll-countdown|enroll-expired/);
+    assert.match(html, /data-testid="enroll-keep-open"/);
+  }
+
+  // zh-CN reads as the app does.
+  const zh = text(view(waiting, at + 9 * 60_000 + 18_000, "zh-CN"));
+  for (const line of ["注册码 0:42 后失效。", "请保持这个页面打开", "适用于 Linux 服务器，或任何没有浏览器的设备"]) assert.ok(zh.includes(line), `zh-CN missing: ${line}`);
+  const zhOut = text(view({ kind: "expired" }, at, "zh-CN"));
+  for (const line of ["这个注册码已过期。", "换个新注册码"]) assert.ok(zhOut.includes(line), `zh-CN missing: ${line}`);
+  assert.deepEqual(asked, [], "drawing asks for nothing");
 });
 
 test("the last step watches the shell's list: a device the account did not have, then it online — or, past patience, as it is", () => {
