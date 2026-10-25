@@ -24,8 +24,10 @@ import { inlineScriptSources } from "./service-worker";
  *   the build already uses for the service worker. `DROPPEN_WEB_ROLE` picks
  *   the host's role: `app` (the default, `my.`) allows WebAuthn on itself,
  *   frames Turnstile and calls the API cross-origin; `site` (`www.`/apex)
- *   allows no WebAuthn, frames nothing and calls only itself. That one file
- *   is the only difference between the two roles' dists.
+ *   allows no WebAuthn, frames nothing and calls only itself. The site role
+ *   also replaces `dist/sw.js` with the retiring worker, so a site host never
+ *   installs the app's worker; `_headers` and `sw.js` are the only differences
+ *   between the two roles' dists.
  *
  * Every value is configuration: the defaults are droppen.app's, and an
  * operator may point a cloud build at another set of hosts. Nothing here is
@@ -183,7 +185,15 @@ export function headersFile(html: string, config: CloudConfig): string {
   ].join("\n");
 }
 
-/** Write the marker and the two cloud files into a finished `dist`. */
+/**
+ * The worker a site host serves in place of the app's: it deletes every cache
+ * and unregisters itself. Must be byte-identical to `RETIRING_WORKER` in
+ * `scripts/verify-web.mjs` (the verifier checks the site's `/sw.js` against it).
+ */
+export const RETIRING_WORKER =
+  'self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",e=>e.waitUntil((async()=>{for(const k of await caches.keys())await caches.delete(k);await self.registration.unregister();})()));\n';
+
+/** Write the marker and the cloud files into a finished `dist`. */
 export function writeCloudBuild(dir: string, config: CloudConfig): void {
   const shellPath = join(dir, "index.html");
   const shell = markShell(readFileSync(shellPath, "utf8"), config.hubOrigin);
@@ -192,6 +202,9 @@ export function writeCloudBuild(dir: string, config: CloudConfig): void {
   mkdirSync(wellKnown, { recursive: true });
   writeFileSync(join(wellKnown, "droppen-hub"), hubDocument(config));
   writeFileSync(join(dir, "_headers"), headersFile(shell, config));
+  // A site host never installs the app's worker (docs/web-integrity.md): any
+  // registration left there from before is retired instead.
+  if (config.role === "site") writeFileSync(join(dir, "sw.js"), RETIRING_WORKER);
 }
 
 /**

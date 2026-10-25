@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { cloudConfig, contentSecurityPolicy, headersFile, hubDocument, markShell, writeCloudBuild } from "../build/cloud-mode.js";
+import { RETIRING_WORKER, cloudConfig, contentSecurityPolicy, headersFile, hubDocument, markShell, writeCloudBuild } from "../build/cloud-mode.js";
 
 const SHELL = '<!doctype html><html><head><meta charset="UTF-8" /><script>boot()</script></head><body><div id="root"></div></body></html>';
 const HASH = `'sha256-${createHash("sha256").update("boot()").digest("base64")}'`;
@@ -16,9 +16,11 @@ const HASH = `'sha256-${createHash("sha256").update("boot()").digest("base64")}'
 const HOSTS_PATH = "/.well-known/droppen-hub";
 const config = cloudConfig({ DROPPEN_WEB_MODE: "cloud" });
 
-/** A finished build, as vite leaves it: the shell and the assets directory. */
+/** A finished build, as vite leaves it: the shell, the real worker and the assets directory. */
+const REAL_WORKER = "/* Droppen service worker */\nconst INTEGRITY = {};\n";
 function writeDir(dir: string): void {
   writeFileSync(join(dir, "index.html"), SHELL);
+  writeFileSync(join(dir, "sw.js"), REAL_WORKER);
   mkdirSync(join(dir, "assets"), { recursive: true });
 }
 
@@ -124,7 +126,7 @@ test("a cloud build writes the marker, the hosts document and `_headers` — and
   }
 });
 
-test("the app and site roles are the same dist but for `_headers`", () => {
+test("the app and site roles differ only in `_headers` and the site's retiring worker", () => {
   const app = mkdtempSync(join(tmpdir(), "cloud-app-"));
   const site = mkdtempSync(join(tmpdir(), "cloud-site-"));
   try {
@@ -133,9 +135,11 @@ test("the app and site roles are the same dist but for `_headers`", () => {
     writeCloudBuild(site, cloudConfig({ DROPPEN_WEB_MODE: "cloud", DROPPEN_WEB_ROLE: "site" })!);
     assert.equal(readFileSync(join(app, "index.html"), "utf8"), readFileSync(join(site, "index.html"), "utf8"), "the marked shell");
     assert.equal(readFileSync(join(app, HOSTS_PATH), "utf8"), readFileSync(join(site, HOSTS_PATH), "utf8"), "the hosts document");
-    assert.notEqual(readFileSync(join(app, "_headers"), "utf8"), readFileSync(join(site, "_headers"), "utf8"), "only the headers");
-    assert.deepEqual(readdirSync(app).sort(), [".well-known", "_headers", "assets", "index.html"]);
-    assert.deepEqual(readdirSync(site).sort(), [".well-known", "_headers", "assets", "index.html"]);
+    assert.notEqual(readFileSync(join(app, "_headers"), "utf8"), readFileSync(join(site, "_headers"), "utf8"), "the headers differ");
+    assert.equal(readFileSync(join(app, "sw.js"), "utf8"), REAL_WORKER, "the app keeps its own worker");
+    assert.equal(readFileSync(join(site, "sw.js"), "utf8"), RETIRING_WORKER, "the site retires any worker left there");
+    assert.deepEqual(readdirSync(app).sort(), [".well-known", "_headers", "assets", "index.html", "sw.js"]);
+    assert.deepEqual(readdirSync(site).sort(), [".well-known", "_headers", "assets", "index.html", "sw.js"]);
   } finally {
     rmSync(app, { recursive: true, force: true });
     rmSync(site, { recursive: true, force: true });

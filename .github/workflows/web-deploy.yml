@@ -1,0 +1,63 @@
+name: web-deploy
+
+# Publish the static web app (`my.droppen.app`) and the site (`www.droppen.app`)
+# to Cloudflare Workers from main — independent of a release tag and of the hub
+# image (docs/web-integrity.md). Both Workers are deployed from the same source;
+# `DROPPEN_WEB_ROLE` selects the app or site output.
+#
+# Off until the owner turns it on: set the repository variable `WEB_DEPLOY` to
+# `true` and the secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit) and
+# `CLOUDFLARE_ACCOUNT_ID`. The custom domains are attached once, after the DNS
+# records that still point at Railway are removed; after that add `routes` to
+# web/wrangler.my.jsonc and web/wrangler.www.jsonc so a deploy keeps them.
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/**
+      - scripts/web-manifest.mjs
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .nvmrc
+      - .github/workflows/web-deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Paused until the owner sets WEB_DEPLOY=true (and the two secrets).
+    if: vars.WEB_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build and deploy the app (my.)
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app pnpm --filter @remote-hand/web build
+          npx --yes wrangler@4.152.0 deploy -c web/wrangler.my.jsonc
+
+      - name: Build and deploy the site (www.)
+        run: |
+          set -euo pipefail
+          rm -rf web/dist
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=site pnpm --filter @remote-hand/web build
+          npx --yes wrangler@4.152.0 deploy -c web/wrangler.www.jsonc
