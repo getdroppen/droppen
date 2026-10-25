@@ -6,7 +6,7 @@
   "$defs": {
     "releaseFile": {
       "type": "object",
-      "description": "One file of the latest release (GET /v1/releases/latest): its exact name, its address on GitHub (https://github.com/getdroppen/droppen/releases/download/<tag>/<name>) and its size in bytes.",
+      "description": "One file of the latest release (GET /v1/releases/latest): its exact name, its address on GitHub (https://github.com/getdroppen/droppen/releases/download/<tag>/<name>) and its size in bytes; on a hub that counts downloads, download_path: /dl/<platform>, the hub's own 302 to url (GET /dl/{platform}), which a download button links instead (absent on hubs before it).",
       "required": [
         "name",
         "url",
@@ -23,6 +23,11 @@
         "size": {
           "type": "integer",
           "minimum": 1
+        },
+        "download_path": {
+          "type": "string",
+          "pattern": "^/dl/(macos|linux-x86_64|linux-aarch64)$",
+          "description": "/dl/<platform> of this file's own platform, on the hub's origin."
         }
       }
     },

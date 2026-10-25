@@ -131,7 +131,7 @@ say before an account is deleted; absent from hubs before account deletion.
 
 ### `GET /v1/releases/latest`
 → `{version, tag, published_at, releases_page, platforms: {macos?, "linux-x86_64"?, "linux-aarch64"?}, fetched_ms}`,
-each platform `{name, url, size}`. This is the latest public release of
+each platform `{name, url, size, download_path?}`. This is the latest public release of
 `getdroppen/droppen`, for the download buttons. The hub reads it from
 GitHub's API itself, once at start and then every 15 minutes, so the page
 asks GitHub for nothing: its CSP's `connect-src` stays the hub and the
@@ -157,12 +157,34 @@ answer carries `Cache-Control: public, max-age=300`. The hub never takes an
 answer that names an older version than its last good one. The route is
 limited like `/healthz` (the static routes' share per address).
 
-A client links the files: a plain `<a href>`, which downloads in place. It
-checks the names and addresses as strictly. On any failure it links
-`https://github.com/getdroppen/droppen/releases/latest` instead.
+`download_path`, on a hub that counts downloads, is `/dl/<platform>` for
+the file's own platform: the hub's `GET /dl/{platform}` below, on the
+hub's origin. Hubs before it name none.
+
+A client links the files: a plain `<a href>`, which downloads in place —
+`download_path` when the hub names exactly `/dl/<platform>` for that file,
+else `url`. It checks the names and addresses as strictly. On any failure
+it links `https://github.com/getdroppen/droppen/releases/latest` instead.
 Errors: `503 release_unavailable` (with `Cache-Control: no-store` and
 `Retry-After`) until the hub has read a release that checks out. A hub
 before this route answers `404`.
+
+### `GET /dl/{platform}`
+`platform`: `macos`, `linux-x86_64` or `linux-aarch64`. `302 Found` to that
+platform's file of the latest release (its `url` above), with
+`Cache-Control: no-store` and no body; before the hub has read a release, or
+when the release lacks the file, `302` to
+`https://github.com/getdroppen/droppen/releases/latest`. The hub counts one
+download of the platform for the day: a number per platform and day, and
+nothing about who asked — no address, cookie or user agent is kept. The
+count is capped per address and per minute (past it, the redirect is the
+same and nothing is counted as a download); `HEAD` and a browser's prefetch
+are not counted. `GET /install.sh` is counted the same way. Errors: `404
+not_found` for any other platform. Limited like `/healthz` (the static
+routes' share per address); served on every host of the hub but the
+Turnstile host, never redirected. A hub before this route serves its web app
+there (or `404`): a client links it only when `GET /v1/releases/latest`
+names it as `download_path`.
 
 ### `POST /v1/signup`
 `{email, password, invite?, turnstile?, lang?}` → a login session

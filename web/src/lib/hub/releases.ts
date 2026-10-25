@@ -4,8 +4,12 @@
  * API itself and checks what it says, and the page asks the hub, on its own
  * origin. So the page asks GitHub for nothing (its CSP's `connect-src` stays
  * the hub and the relays), and its download buttons go straight to the files
- * themselves, which are links: a plain `<a href>` to GitHub, where nothing is
- * fetched by the page.
+ * themselves, which are links: a plain `<a href>`, where nothing is fetched
+ * by the page. A hub that counts downloads names, for each file, its own
+ * `download_path`, `/dl/<platform>`: a `302` to the file on GitHub that counts
+ * one download of that platform for the day, and nothing about who asked.
+ * Then the button links that, on this page's origin (the hub it asked);
+ * without it (a hub before it, a self-hosted one), the file on GitHub.
  *
  * What the hub says is checked again here, as strictly: a tag `vX.Y.Z`, and
  * each file under its exact name at exactly
@@ -27,9 +31,15 @@ export const RELEASE_PAGE_PREFIX = "https://github.com/getdroppen/droppen/releas
 /** One file of the release. */
 export interface ReleaseFile {
   name: string;
+  /** Its address on GitHub. */
   url: string;
   /** Bytes. */
   size: number;
+  /**
+   * What a download button links: this hub's {@link downloadPath} when the
+   * hub names it (a `302` to `url`, counted), else `url` itself.
+   */
+  href: string;
 }
 
 /** The files offered, by platform: the desktop app (universal) and the Linux server's tarballs. */
@@ -60,6 +70,15 @@ export function releaseFileName(platform: ReleasePlatform, tag: string): string 
   }
 }
 
+/**
+ * Where a hub that counts downloads sends a platform's on to its file:
+ * `/dl/<platform>`, on the hub's own origin (docs/hub-api/http.md
+ * `GET /dl/{platform}`). Taken only when the hub's answer names exactly this.
+ */
+export function downloadPath(platform: ReleasePlatform): string {
+  return `/dl/${platform}`;
+}
+
 const PLATFORMS: ReleasePlatform[] = ["macos", "linux-x86_64", "linux-aarch64"];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -78,7 +97,9 @@ export function parseLatestRelease(body: unknown): LatestRelease | null {
     const { url, size } = file;
     if (file.name !== name || url !== `${RELEASE_DOWNLOAD_PREFIX}${tag}/${name}`) continue;
     if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) continue;
-    files[platform] = { name, url, size };
+    // The hub's counted link, only as this page would make it: never an address taken on trust.
+    const counted = file.download_path === downloadPath(platform);
+    files[platform] = { name, url, size, href: counted ? downloadPath(platform) : url };
   }
   if (Object.keys(files).length === 0) return null;
   // Made from the tag, as the hub makes it: never an address taken on trust.

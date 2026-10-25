@@ -15,6 +15,10 @@
 // offers what fits it — the download on a Mac, the install command on Linux,
 // droppen.app in the browser on Windows and on a phone, every way on a device
 // it cannot tell — with one primary action, in en, zh-CN, zh-TW and ja.
+// A hub that counts downloads names each file's `download_path`
+// (`/dl/<platform>`, its own `302` to the file, counted per platform and
+// day); then the buttons link that, on this page's origin, with the same
+// name, version and size, and a hub without it keeps the direct links.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -41,7 +45,7 @@ import {
 import DownloadPage from "../src/features/landing/download.js";
 import { APP_DOWNLOAD_URL, type Availability, AVAILABILITY, INSTALL_COMMAND, RELEASES_URL } from "../src/features/landing/get-droppen.js";
 import LandingPage from "../src/features/landing/landing.js";
-import { fetchLatestRelease, formatSize, LATEST_RELEASE_PATH, type LatestRelease, parseLatestRelease } from "../src/lib/hub/releases.js";
+import { downloadPath, fetchLatestRelease, formatSize, LATEST_RELEASE_PATH, type LatestRelease, parseLatestRelease } from "../src/lib/hub/releases.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -110,6 +114,16 @@ const ANSWER = {
   fetched_ms: 1_793_000_000_000,
 };
 const RELEASE = parseLatestRelease(ANSWER)!;
+/** The same, from a hub that counts downloads: each file names its `/dl/<platform>`. */
+const COUNTED_ANSWER = {
+  ...ANSWER,
+  platforms: {
+    macos: { ...ANSWER.platforms.macos, download_path: "/dl/macos" },
+    "linux-x86_64": { ...ANSWER.platforms["linux-x86_64"], download_path: "/dl/linux-x86_64" },
+    "linux-aarch64": { ...ANSWER.platforms["linux-aarch64"], download_path: "/dl/linux-aarch64" },
+  },
+};
+const COUNTED = parseLatestRelease(COUNTED_ANSWER)!;
 
 function landing(lng: string, opts: { hints?: EnvironmentHints; signedIn?: boolean; availability?: Availability; release?: LatestRelease | null; cpu?: string | null } = {}): string {
   void i18n.changeLanguage(lng);
@@ -232,6 +246,49 @@ test("with the hub's answer, every download button is a plain link to the file i
   // The add-device guide's button too (its source: the guide needs an account to render).
   const guide = readFileSync(new URL("../src/features/cloud/add-computer.tsx", import.meta.url), "utf8");
   assert.match(guide, /<a \{\.\.\.fileLink\(latest\?\.files\.macos\)\} data-testid="add-app-download"/);
+});
+
+test("a hub that counts downloads: each button links its /dl/<platform> on this page's origin, with the same name, version and size; without it, the file on GitHub", () => {
+  // Taken only as this page would make it.
+  assert.equal(COUNTED.files.macos?.href, "/dl/macos");
+  assert.equal(COUNTED.files["linux-x86_64"]?.href, "/dl/linux-x86_64");
+  assert.equal(COUNTED.files["linux-aarch64"]?.href, "/dl/linux-aarch64");
+  assert.equal(downloadPath("macos"), "/dl/macos");
+  assert.equal(COUNTED.files.macos?.url, `${DL}Droppen-0.2.129.dmg`, "the file it goes on to is still checked");
+  assert.equal(RELEASE.files.macos?.href, RELEASE.files.macos?.url, "a hub before it: the file itself");
+  const at = (path: unknown) =>
+    parseLatestRelease({ ...COUNTED_ANSWER, platforms: { ...COUNTED_ANSWER.platforms, macos: { ...COUNTED_ANSWER.platforms.macos, download_path: path } } })?.files.macos?.href;
+  for (const odd of ["/dl/linux-x86_64", "/dl/macos/", "/dl/macos?x=1", "//evil.example/dl/macos", "https://evil.example/dl/macos", "https://droppen.app/dl/macos", "dl/macos", "/DL/macos", "javascript:alert(1)", 7, null]) {
+    assert.equal(at(odd), `${DL}Droppen-0.2.129.dmg`, `${String(odd)}: the file itself`);
+  }
+  // Every button: the Mac's (hero, download page), the Linux tarballs (hero, download page).
+  const mac = [
+    ...hero(landing("en", { hints: HINTS.mac, release: COUNTED })).matchAll(/<a [^>]*data-testid="hero-download"[^>]*>/g),
+    ...hero(landing("en", { hints: HINTS.unknown, release: COUNTED })).matchAll(/<a [^>]*data-testid="hero-download"[^>]*>/g),
+    ...download("en", { os: "macos-app", release: COUNTED }).matchAll(/<a [^>]*data-testid="app-download"[^>]*>/g),
+  ].map((m) => m[0]);
+  assert.equal(mac.length, 3);
+  for (const a of mac) {
+    assert.match(a, /^<a href="\/dl\/macos" /, a);
+    assert.doesNotMatch(a, /target=|rel=|download=/, a);
+  }
+  assert.ok(text(hero(landing("en", { hints: HINTS.mac, release: COUNTED }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
+  assert.ok(text(download("en", { os: "macos-app", release: COUNTED })).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
+  const linuxHero = hero(landing("en", { hints: HINTS.linux, cpu: "x86_64", release: COUNTED }));
+  assert.deepEqual([...linuxHero.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]), [["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"]]);
+  assert.ok(text(linuxHero).includes("Or download it: droppen-v0.2.129-linux-x86_64.tar.gz (12 MB)"));
+  const linuxTab = download("en", { os: "linux", hints: HINTS.linux, release: COUNTED });
+  assert.deepEqual(
+    [...linuxTab.matchAll(/<a href="([^"]+)" data-testid="linux-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]),
+    [
+      ["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"],
+      ["/dl/linux-aarch64", "droppen-v0.2.129-linux-aarch64.tar.gz"],
+    ],
+  );
+  // The release page beside it is still GitHub's, for the checksums and the other files.
+  assert.match(download("en", { os: "macos-app", release: COUNTED }), /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
+  // A hub without it: the files on GitHub, as before.
+  assert.doesNotMatch(hero(landing("en", { hints: HINTS.mac })) + download("en", { os: "linux", hints: HINTS.linux }), /href="\/dl\//);
 });
 
 test("without it (no route, a 503, a failure, or not yet), every download button links the release page, in a new tab", () => {
