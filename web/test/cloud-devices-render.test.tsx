@@ -51,7 +51,8 @@ import {
   UpgradeConfirm,
   V3Note,
 } from "../src/features/cloud/devices.js";
-import { V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
+import { AddComputer, V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
+import { FirstHostCard } from "../src/features/cloud/first-host.js";
 import { type AccountView, chainV3View, HubApiError } from "../src/lib/hub/api.js";
 import { joinAction, type ReEnrollLine } from "../src/lib/hub/account.js";
 import { meStore } from "../src/lib/hub/me.js";
@@ -1233,6 +1234,45 @@ test("removed devices are folded at the bottom, out of the list; 「添加设备
   assert.ok(draw(<AddChooser onPick={() => undefined} onCancel={() => undefined} />, "zh-CN").includes("浏览器或手机"));
   assert.match(drive(DevicesPanel, props, [press("add-device"), pick("addBrowser")]).html, /data-testid="add-browser-section"/);
   assert.match(drive(DevicesPanel, props, [press("add-device"), pick("addComputer")]).html, /data-testid="add-computer-section"/);
+});
+
+test("just signed up, with no device that runs AI: the first-run card leads, 「添加设备」 steps back, and the advanced settings wait folded", async () => {
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  const link = new Proxy({ presence: new Map() } as Record<string, unknown>, { get: (t, k) => (k in t ? t[k as string] : () => () => undefined) }) as unknown as HubLink;
+  const props = { account: a, link };
+  const page = drive(DevicesPanel, props, []);
+  assert.match(page.html, /data-testid="first-host"/);
+  assert.doesNotMatch(page.html, /Next: install Droppen/, "the one line it replaces");
+  // One primary action a view: the card's; 「添加设备」 is there, as a secondary.
+  assert.match(page.html, /data-variant="secondary" data-testid="add-device"/);
+  assert.equal((page.html.match(/data-variant="primary"/g) ?? []).length, 1);
+  assert.ok(page.html.indexOf('data-testid="first-host"') < page.html.indexOf('data-testid="device-list"'), "the card above the list");
+  // This device's settings and the keys' rotation: folded under 「更多设置」, below the list — nothing above it.
+  assert.match(page.html, /<details data-testid="more-settings"/);
+  assert.doesNotMatch(page.html, /<details data-testid="more-settings"[^>]*open/, "folded");
+  assert.ok(page.html.includes("more settings"));
+  const folded = page.html.slice(page.html.indexOf('data-testid="more-settings"'));
+  for (const id of ["this-device", "direct-connections", "rotate-keys"]) assert.ok(folded.includes(`data-testid="${id}"`), `${id} in 「更多设置」`);
+  const above = page.html.slice(0, page.html.indexOf('data-testid="device-list"'));
+  assert.doesNotMatch(above, /data-testid="(this-device|direct-connections|rotate-keys)"/);
+  // The card's ways in: the full guide, or the guide on its one-time code — and while adding, the card steps aside.
+  const cardOf = (tree: El[]) => tree.find((e) => e.type === FirstHostCard)!;
+  const guide = drive(DevicesPanel, props, [(tree) => (cardOf(tree).props.onGuide as () => void)()]);
+  assert.match(guide.html, /data-testid="add-computer-section"/);
+  assert.doesNotMatch(guide.html, /data-testid="first-host"/);
+  assert.equal(guide.tree.find((e) => e.type === AddComputer)?.props.initialMode, "guide");
+  const code = drive(DevicesPanel, props, [(tree) => (cardOf(tree).props.onCode as () => void)()]);
+  assert.equal(code.tree.find((e) => e.type === AddComputer)?.props.initialMode, "code");
+  assert.equal(typeof cardOf(page.tree).props.pairWith, "function", "a sign-in window's browser new to the account is paired from the card");
+  // Once a device runs AI: no card, nothing folded, this device's settings above the list, 「添加设备」 the primary again.
+  await hub.enroll(a, "m-1");
+  const after = drive(DevicesPanel, props, []);
+  assert.doesNotMatch(after.html, /data-testid="first-host"|data-testid="more-settings"/);
+  assert.match(after.html, /data-variant="primary"[^>]*data-testid="add-device"/);
+  assert.ok(after.html.indexOf('data-testid="direct-connections"') < after.html.indexOf('data-testid="device-list"'));
+  assert.match(after.html, /data-testid="rotate-keys"/);
 });
 
 // ------------------------------------------------------------ 「备用中继」: the account's standby relay

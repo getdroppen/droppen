@@ -209,7 +209,7 @@ export function V3Pending({ waiting, blocker = "computers" }: { waiting: string[
 }
 
 /** Where the guide is: its three steps, or the one-time code instead. */
-type GuideMode = "guide" | "code";
+export type GuideMode = "guide" | "code";
 
 /**
  * 「添加可运行 AI 的设备」 (docs/local-aggregator.md §3.7, §4): a guide that
@@ -241,6 +241,7 @@ export function AddComputer({
   onDone,
   pairWith,
   availability = AVAILABILITY,
+  initialMode = "guide",
 }: {
   account: CloudAccount;
   link: HubLink;
@@ -250,11 +251,13 @@ export function AddComputer({
   pairWith?: (onDone: () => void) => ReactNode;
   /** Whether the Droppen App is out, and whether it signs in to Droppen (`get-droppen.ts`; tests pass others). */
   availability?: Availability;
+  /** Open on the steps, or on the one-time code (the first-run card's way for a device with no browser). */
+  initialMode?: GuideMode;
 }) {
   const { t } = useTranslation();
   const me = useMe(account, link);
   const blocked = account.chain?.isV3 === true && !chainV3Writable(me?.view);
-  const [mode, setMode] = useState<GuideMode>("guide");
+  const [mode, setMode] = useState<GuideMode>(initialMode);
   const [pairing, setPairing] = useState(false);
   const machines = useShellMachines();
   // The devices that run AI as the guide opened: a new one is any other.

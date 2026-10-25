@@ -352,13 +352,16 @@ export function ErrorLine({ message }: { message: string | null | undefined }) {
   );
 }
 
-export function CopyButton({ text, label }: { text: string; label: string }) {
+/** A button that copies `text`; `primary` when it is the view's one primary action. */
+export function CopyButton({ text, label, primary: main = false, testId }: { text: string; label: string; primary?: boolean; testId?: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className={secondary}
+      data-variant={main ? "primary" : undefined}
+      data-testid={testId}
+      className={main ? primary : secondary}
       onClick={() => {
         void navigator.clipboard?.writeText(text).then(() => {
           setCopied(true);
