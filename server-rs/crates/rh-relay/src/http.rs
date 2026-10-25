@@ -8,7 +8,11 @@
 //! | `GET /v1/connect` | the websocket devices and agents sign in on ([`crate::client`]); 60 upgrades a minute per address, bursts of 20 |
 //!
 //! A client's address is the socket's, or the one the proxy in front says
-//! (`DROPPEN_RELAY_TRUST_PROXY`); the per-address tables hold at most 50,000.
+//! (`DROPPEN_RELAY_TRUST_PROXY`); the per-address tables hold at most 50,000,
+//! in memory only, and forget an address once its windows have refilled — a
+//! minute after its last request, swept every minute ([`UnauthLimits::forget_old`],
+//! `crate::run`), a day at the latest whatever the windows
+//! ([`crate::limit::FORGET_AFTER`]).
 //!
 //! Every response says `Permissions-Policy: publickey-credentials-get=(),
 //! publickey-credentials-create=()` (`docs/passkeys.md` §3.8 rule 3): a
@@ -45,6 +49,14 @@ impl Default for UnauthLimits {
             ping: Keyed::new(&[(120, minute)]),
             upgrades: Keyed::new(&[(60, minute), (20, Duration::from_secs(20))]),
         }
+    }
+}
+
+impl UnauthLimits {
+    /// Forget the addresses there is nothing more to count against
+    /// ([`Keyed::forget_old`]): how many went.
+    pub fn forget_old(&self, now: Instant) -> usize {
+        self.ping.forget_old(now) + self.upgrades.forget_old(now)
     }
 }
 
@@ -178,6 +190,24 @@ mod tests {
                 "{status}"
             );
         }
+    }
+
+    /// droppen.app/privacy: requests are counted per address in memory for a
+    /// day at most. Here an address goes once its windows refilled — a
+    /// minute after its last request at most — and not while it still counts.
+    #[test]
+    fn an_address_is_forgotten_once_it_is_done_counting() {
+        let limits = UnauthLimits::default();
+        let ip: IpAddr = "198.51.100.7".parse().unwrap();
+        let t = Instant::now();
+        while limits.ping.allow(&ip, t).is_ok() {}
+        while limits.upgrades.allow(&ip, t).is_ok() {}
+        assert_eq!(limits.forget_old(t + Duration::from_secs(10)), 0, "both still counting");
+        assert_eq!((limits.ping.len(), limits.upgrades.len()), (1, 1));
+        assert_eq!(limits.forget_old(t + Duration::from_secs(30)), 1, "the upgrades' windows refilled");
+        assert_eq!(limits.ping.len(), 1);
+        assert_eq!(limits.forget_old(t + Duration::from_secs(61)), 1, "then the pings'");
+        assert!(limits.ping.is_empty() && limits.upgrades.is_empty());
     }
 
     #[test]

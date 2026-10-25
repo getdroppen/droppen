@@ -458,6 +458,8 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
     "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.",
     "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens.",
     "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below).",
+    // In memory only, per address and per network, for a day at most (the hub's and the relays' limits forget every key by then).
+    "To stop abuse, our servers count requests per address and per network in memory, for a day at most.",
     "never more than 12 months after you last joined: older entries are deleted automatically.",
     `To be taken off, write to ${PRIVACY_EMAIL} from that address and we will delete it.`,
     "Your sessions and terminals are encrypted on your devices, and only your devices hold the keys.",
@@ -489,7 +491,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));
-  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天", "如果你下载了 Droppen", "每项下载每天一个计数", "最多一小时，不写到任何地方"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
+  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天", "如果你下载了 Droppen", "每项下载每天一个计数", "最多一小时，不写到任何地方", "按地址和网络计数请求，最多保留一天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
   for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash|Our providers|How long we keep it|If you download Droppen|What we count|What we don't keep|for an hour at most/, lng);
 });
 

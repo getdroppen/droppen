@@ -145,8 +145,8 @@ export const pricingZhCN: Bundle = {
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的邮箱地址、你在等的方案（免费版或 Pro）、页面语言，以及加入的时间。",
   "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用来给你发邀请，或在开放注册、Pro 开放时通知你。不会发别的邮件，你的邮箱也绝不出售、不用于营销。",
-  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "不保存你的 IP 地址，也不保存浏览器的任何其他信息；不过托管服务商的边缘日志会记录你的 IP 地址和 User-Agent（见下文）。为防止滥用，服务器会在内存里按网络计数请求，最多保留一天。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per address and per network in memory, for a day at most.":
+    "不保存你的 IP 地址，也不保存浏览器的任何其他信息；不过托管服务商的边缘日志会记录你的 IP 地址和 User-Agent（见下文）。为防止滥用，服务器会在内存里按地址和网络计数请求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎么退出",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求删除为止，最长不超过你最后一次加入后的 12 个月：超过的记录会自动删除。",
@@ -347,8 +347,8 @@ export const pricingZhTW: Bundle = {
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "你的電子郵件地址、你在等的方案（免費版或 Pro）、頁面語言，以及加入的時間。",
   "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "只用來寄邀請給你，或在開放註冊、Pro 開放時通知你。不會寄別的信，你的信箱也絕不出售、不用於行銷。",
-  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊；不過託管服務商的邊緣日誌會記錄你的 IP 位址和 User-Agent（見下文）。為防止濫用，伺服器會在記憶體裡按網路計數請求，最多保留一天。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per address and per network in memory, for a day at most.":
+    "不保存你的 IP 位址，也不保存瀏覽器的任何其他資訊；不過託管服務商的邊緣日誌會記錄你的 IP 位址和 User-Agent（見下文）。為防止濫用，伺服器會在記憶體裡按位址和網路計數請求，最多保留一天。",
   "How long, and how to be taken off": "保存多久、怎麼退出",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求刪除為止，最長不超過你最後一次加入後的 12 個月：超過的紀錄會自動刪除。",
@@ -549,8 +549,8 @@ export const pricingJa: Bundle = {
   "Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined.": "メールアドレス、お待ちのプラン（無料または Pro）、ページの言語、登録した日時。",
   "We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing.":
     "用途は招待のお送りと、新規登録の受付再開や Pro 開始のお知らせだけです。それ以外のメールは送らず、アドレスを販売したりマーケティングに使ったりすることもありません。",
-  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most.":
-    "IP アドレスやブラウザに関する情報は保管しません。ただし、ホスティング事業者のエッジのログには IP アドレスと User-Agent が記録されます（下記参照）。不正利用を防ぐため、サーバーはネットワークごとのリクエスト数をメモリ上で数えますが、保持は最長 1 日です。",
+  "Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per address and per network in memory, for a day at most.":
+    "IP アドレスやブラウザに関する情報は保管しません。ただし、ホスティング事業者のエッジのログには IP アドレスと User-Agent が記録されます（下記参照）。不正利用を防ぐため、サーバーはアドレスごと・ネットワークごとのリクエスト数をメモリ上で数えますが、保持は最長 1 日です。",
   "How long, and how to be taken off": "保管期間と削除の方法",
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "削除のご依頼をいただくまで保管しますが、最後に登録してから 12 か月を超えることはありません。それより古い記録は自動で削除されます。",

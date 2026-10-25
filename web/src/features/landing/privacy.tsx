@@ -112,7 +112,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 items={[
                   t("Your e-mail address, the plan you are waiting for (Free or Pro), the language of the page and when you joined."),
                   t("We use them only to e-mail you an invite, or to tell you when sign-up or Pro opens. Nothing else is sent, and your address is never sold or used for marketing."),
-                  t("Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per network in memory, for a day at most."),
+                  t("Not your IP address, nor anything else about your browser; our hosting provider's edge logs do record your IP address and User-Agent (see below). To stop abuse, our servers count requests per address and per network in memory, for a day at most."),
                 ]}
               />
               <div className="max-md:border-t max-md:border-border md:border-l md:border-border">

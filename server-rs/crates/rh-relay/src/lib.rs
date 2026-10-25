@@ -62,6 +62,21 @@ pub async fn run(server: Arc<Server>, listener: tokio::net::TcpListener, stop: i
             }
         }
     });
+    // The per-address limits forget each address once it is done counting,
+    // a day after its last request at the latest (droppen.app/privacy).
+    let forgetter = server.clone();
+    server.tasks.spawn(async move {
+        let mut tick = tokio::time::interval(limit::SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    forgetter.unauth.forget_old(Instant::now());
+                }
+                () = forgetter.shutdown.cancelled() => break,
+            }
+        }
+    });
     let fatal = async {
         if server.config.hub.is_some() {
             uplink::run(server.clone()).await
