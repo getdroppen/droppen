@@ -110,6 +110,7 @@ test("the site role allows no WebAuthn, frames nothing and calls only itself", (
   assert.ok(csp.includes("object-src 'none'"));
   assert.ok(!csp.includes("api.droppen.app"), "the site calls no API");
   assert.ok(!csp.includes("relay.droppen.app"), "nor a relay");
+  assert.ok(!csp.includes("railway.app"), "nor a relay's current host");
   assert.ok(!csp.includes("verify.droppen.app"), "and frames no Turnstile page");
   const headers = headersFile(SHELL, site);
   assert.ok(headers.includes("  Permissions-Policy: publickey-credentials-get=(), publickey-credentials-create=()\n"));
