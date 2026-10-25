@@ -59,10 +59,10 @@ export const downloadZhCN: Bundle = {
   "Drag Droppen to Applications": "把 Droppen 拖进「应用程序」",
   "Like any other Mac app.": "和装其他 Mac App 一样。",
   "Open Droppen": "打开 Droppen",
-  "It starts by itself and opens its own window. Nothing to type.": "它会自己启动、打开自己的窗口，不用输入任何东西。",
+  "It opens a short setup guide, four steps.": "它会打开一个四步的设置向导。",
   "Click Sign in to Droppen in the app": "在 App 里点「登录 Droppen」",
-  "A {{app}} window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.":
-    "会弹出 {{app}} 的窗口：登录，核对两边的指纹一致，再把这台设备加进来。几秒钟后它就出现在「我的设备」里。",
+  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
+    "在向导第 02 步「在哪里用」选「在手机和其它设备上也能用」，再点「登录 Droppen」（之后也可以在「设置 → 访问 → Droppen」里找到）。会弹出 {{app}} 窗口：登录后点「加入这台设备」。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
     "想在手机上用？在 App 里登录 Droppen 的功能会在后续更新中推出。在那之前，App 先在这台 Mac 上运行 Droppen。",
 
@@ -227,10 +227,10 @@ export const downloadZhTW: Bundle = {
   "Drag Droppen to Applications": "把 Droppen 拖進「應用程式」",
   "Like any other Mac app.": "和安裝其他 Mac App 一樣。",
   "Open Droppen": "打開 Droppen",
-  "It starts by itself and opens its own window. Nothing to type.": "它會自己啟動、打開自己的視窗，不用輸入任何東西。",
+  "It opens a short setup guide, four steps.": "它會打開一個四步的設定引導。",
   "Click Sign in to Droppen in the app": "在 App 裡點「登入 Droppen」",
-  "A {{app}} window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.":
-    "會彈出 {{app}} 的視窗：登入，核對兩邊的指紋一致，再把這台裝置加進來。幾秒鐘後它就出現在「我的裝置」裡。",
+  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
+    "在引導第 02 步「在哪裡用」選「在手機和其他裝置上也能用」，再點「登入 Droppen」（之後也可以在「設定 → 存取 → Droppen」裡找到）。會彈出 {{app}} 視窗：登入後點「加入這台裝置」。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
     "想在手機上用？在 App 裡登入 Droppen 的功能會在後續更新中推出。在那之前，App 先在這台 Mac 上執行 Droppen。",
 
@@ -387,10 +387,10 @@ export const downloadJa: Bundle = {
   "Drag Droppen to Applications": "Droppen を「アプリケーション」にドラッグ",
   "Like any other Mac app.": "ほかの Mac アプリと同じです。",
   "Open Droppen": "Droppen を開く",
-  "It starts by itself and opens its own window. Nothing to type.": "自動で起動し、自分のウィンドウを開きます。入力するものはありません。",
+  "It opens a short setup guide, four steps.": "4 ステップの短いセットアップガイドが開きます。",
   "Click Sign in to Droppen in the app": "アプリで「Droppen にサインイン」を押す",
-  "A {{app}} window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.":
-    "{{app}} のウィンドウが開きます。サインインし、フィンガープリントが一致することを確かめて、デバイスを追加します。数秒で「マイデバイス」に現れます。",
+  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
+    "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します（あとからは「設定 → アクセス → Droppen」）。{{app}} のウィンドウが開くので、サインインして「このデバイスを追加」を押します。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
     "スマホから使う場合：アプリからの Droppen へのサインインは、今後のアップデートで対応します。それまでは、アプリはこの Mac で Droppen を動かします。",
 

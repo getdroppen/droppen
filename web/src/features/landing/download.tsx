@@ -41,8 +41,9 @@ import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from 
  *   universal: the latest release's `.dmg` itself, downloaded in place, with
  *   its version and size, as the hub names it (`release-files.tsx`; the
  *   release page until it does, or if it cannot), the release page beside it
- *   for its other files and checksums; open it and Droppen starts, then
- *   「登录 Droppen」 inside it (`APP_SIGN_IN_AVAILABLE`; off, in a preview, a
+ *   for its other files and checksums; open it and its setup guide opens,
+ *   then 「登录 Droppen」 inside it — in that guide's step 02, later under
+ *   Settings → Access → Droppen (`APP_SIGN_IN_AVAILABLE`; off, in a preview, a
  *   note that it is coming in an update, never a step for a button the App
  *   does not have). Until the first one is out (`APP_AVAILABLE`), "coming
  *   soon", and the background install as the way in today — never a link to a
@@ -178,9 +179,18 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
         items={[
           { title: t("Open the .dmg"), body: t("The file you just downloaded, from Downloads.") },
           { title: t("Drag Droppen to Applications"), body: t("Like any other Mac app.") },
-          { title: t("Open Droppen"), body: t("It starts by itself and opens its own window. Nothing to type.") },
+          // Where the App's sign-in is: its setup guide's step 02, then Settings — as 「我的设备」's first-run card says it (`first-host.tsx`).
+          { title: t("Open Droppen"), body: t("It opens a short setup guide, four steps.") },
           ...(availability.appSignIn
-            ? [{ title: t("Click Sign in to Droppen in the app"), body: t("A {{app}} window opens: sign in, check the fingerprint matches, and add the device. It is in my devices within seconds.", { app: appHost() }) }]
+            ? [
+                {
+                  title: t("Click Sign in to Droppen in the app"),
+                  body: t(
+                    "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.",
+                    { app: appHost() },
+                  ),
+                },
+              ]
             : []),
         ]}
       />

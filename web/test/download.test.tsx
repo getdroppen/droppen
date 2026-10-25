@@ -18,6 +18,8 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
+import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/download-copy.js";
+import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { detectKind, type EnvironmentHints, initialOs, osForKind } from "../src/features/landing/detect.js";
 import DownloadPage from "../src/features/landing/download.js";
 import {
@@ -271,23 +273,55 @@ const appSteps = (html: string) => (appPanel(html).match(/data-testid="app-steps
 test("signing in from the App: its last step is 「登录 Droppen」 inside it, and nothing says it is coming — in every language", () => {
   assert.equal(APP_SIGN_IN_AVAILABLE, true, "every App published signs itself in (the hand-off came in 0.2.125; the first public .dmg is 0.2.127)");
   assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
+  // Where the sign-in is in the App: its setup guide's step 02, by the App's own names (i18n/welcome.ts), then Settings — as the first-run card says it.
   const said = {
     en: {
       step: "Click Sign in to Droppen in the app",
+      opens: "It opens a short setup guide, four steps.",
+      where: "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A droppen.app window opens: sign in, then click add this device.",
       lead: "Then sign it in to Droppen from inside the app.",
       end: "Install it, then sign it in to Droppen.",
       note: "signing in to Droppen from the app is coming in an update",
+      gone: "Nothing to type.",
     },
-    "zh-CN": { step: "在 App 里点「登录 Droppen」", lead: "然后在 App 里登录 Droppen 就行", end: "装好，再登录 Droppen。", note: "在 App 里登录 Droppen 的功能会在后续更新中推出" },
-    "zh-TW": { step: "在 App 裡點「登入 Droppen」", lead: "接著在 App 裡登入 Droppen 就好", end: "裝好，再登入 Droppen。", note: "在 App 裡登入 Droppen 的功能會在後續更新中推出" },
-    ja: { step: "アプリで「Droppen にサインイン」を押す", lead: "あとはアプリから Droppen にサインインするだけ", end: "インストールして、Droppen にサインイン。", note: "アプリからの Droppen へのサインインは、今後のアップデートで対応します" },
+    "zh-CN": {
+      step: "在 App 里点「登录 Droppen」",
+      opens: "它会打开一个四步的设置向导。",
+      where: "在向导第 02 步「在哪里用」选「在手机和其它设备上也能用」，再点「登录 Droppen」（之后也可以在「设置 → 访问 → Droppen」里找到）。会弹出 droppen.app 窗口：登录后点「加入这台设备」。",
+      lead: "然后在 App 里登录 Droppen 就行",
+      end: "装好，再登录 Droppen。",
+      note: "在 App 里登录 Droppen 的功能会在后续更新中推出",
+      gone: "不用输入任何东西",
+    },
+    "zh-TW": {
+      step: "在 App 裡點「登入 Droppen」",
+      opens: "它會打開一個四步的設定引導。",
+      where: "在引導第 02 步「在哪裡用」選「在手機和其他裝置上也能用」，再點「登入 Droppen」（之後也可以在「設定 → 存取 → Droppen」裡找到）。",
+      lead: "接著在 App 裡登入 Droppen 就好",
+      end: "裝好，再登入 Droppen。",
+      note: "在 App 裡登入 Droppen 的功能會在後續更新中推出",
+      gone: "不用輸入任何東西",
+    },
+    ja: {
+      step: "アプリで「Droppen にサインイン」を押す",
+      opens: "4 ステップの短いセットアップガイドが開きます。",
+      where: "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します（あとからは「設定 → アクセス → Droppen」）。",
+      lead: "あとはアプリから Droppen にサインインするだけ",
+      end: "インストールして、Droppen にサインイン。",
+      note: "アプリからの Droppen へのサインインは、今後のアップデートで対応します",
+      gone: "入力するものはありません",
+    },
   };
-  for (const [lng, { step, lead, end, note }] of Object.entries(said)) {
+  for (const [lng, { step, opens, where, lead, end, note, gone }] of Object.entries(said)) {
     // The build's own switches, and the same spelled out.
     for (const html of [draw(lng, { os: "macos-app", availability: AVAILABILITY }), draw(lng, { os: "macos-app", app: true, appSignIn: true })]) {
       const panel = text(appPanel(html));
       assert.match(appPanel(html), /data-testid="app-download"/, `${lng}: the App is offered`);
       assert.ok(panel.includes(step), `${lng}: ${step}`);
+      assert.ok(panel.includes(opens), `${lng}: ${opens}`);
+      assert.ok(panel.includes(where), `${lng}: ${where}`);
+      assert.ok(panel.indexOf(opens) < panel.indexOf(where), `${lng}: open it, then sign it in`);
+      assert.ok(!panel.includes(gone), `${lng} still says: ${gone}`);
       assert.ok(panel.includes(lead), `${lng}: ${lead}`);
       assert.equal(appSteps(html), 4, `${lng}: open the .dmg, drag it to Applications, open it, sign it in`);
       assert.doesNotMatch(html, /data-testid="app-sign-in-soon"/, `${lng}: no "coming" note`);
@@ -295,6 +329,16 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
       assert.ok(text(html).includes(end), `${lng}: ${end}`);
       assert.ok(!text(html).includes(note), `${lng} still says: ${note}`);
       assert.equal(primaries(html), 1, `${lng}: one primary action, the download`);
+    }
+  }
+  // The download page and 「我的设备」's first-run card say it in the same words, in every language.
+  for (const key of [
+    "It opens a short setup guide, four steps.",
+    "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.",
+  ]) {
+    for (const [lng, page, card] of [["zh-CN", downloadZhCN, onboardingZhCN], ["zh-TW", downloadZhTW, onboardingZhTW], ["ja", downloadJa, onboardingJa]] as const) {
+      assert.ok(page[key], `${lng}: the page has ${key}`);
+      assert.equal(page[key], card[key], `${lng}: as the card says it`);
     }
   }
   // Off (an explicit switch, as a preview would pass): no step for a button the App does not have, and a note that it is coming.
