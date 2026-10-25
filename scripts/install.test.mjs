@@ -284,3 +284,22 @@ function libraryOfRepo() {
   writeFileSync(file, `${lines.slice(0, -1).join("\n")}\n`);
   return file;
 }
+
+describe("install.sh's summary", () => {
+  // The aligned "  Label:     text" lines it ends with, as written in the script.
+  const summary = () =>
+    readFileSync(INSTALL, "utf8")
+      .split("\n")
+      .filter((line) => /^\s*say "  [A-Z][A-Za-z ]*:\s{2,}/.test(line));
+
+  test("is in English, naming the buttons as the English interface names them", () => {
+    const lines = summary();
+    assert.ok(lines.length >= 10, "the summary lines are found");
+    for (const line of lines) assert.doesNotMatch(line, /[　-鿿＀-￯]/, `a CJK word in an English line: ${line.trim()}`);
+    const next = lines.filter((line) => line.includes("Next:"));
+    assert.equal(next.length, 1);
+    // As the shell prints it.
+    const printed = execFileSync("sh", ["-c", `say() { printf '%s\\n' "$*"; }; ${next[0].trim()}`]).toString();
+    assert.equal(printed, '  Next:       choose "Sign in to Droppen" on that page to add this device to your Droppen account\n');
+  });
+});

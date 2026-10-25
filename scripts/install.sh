@@ -1214,7 +1214,7 @@ do_install() {
   elif has_display; then
     say "  Local page: $URL"
     say "  Sign in:    $ACCOUNT_NOTE"
-    say "  Next:       choose 「登录 Droppen」 on that page to add this device to your Droppen account"
+    say "  Next:       choose \"Sign in to Droppen\" on that page to add this device to your Droppen account"
   else
     say "  Join:       on my.droppen.app, $WHERE_CODES; then run the installer again with DROPPEN_CODE=<code>"
     say "  Local page: on this device only; from elsewhere, an SSH tunnel to port $PORT, signing in as $ACCOUNT_NOTE"
