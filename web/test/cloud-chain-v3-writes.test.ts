@@ -1557,8 +1557,56 @@ test("write gate: vetoing a held passkey activation takes out what came in throu
   assert.equal(b.chain!.deviceRecord(q.deviceId)?.status.type, "pending");
   const scope = b.vetoScope(b.heldBack!, await ChainState.verify([...b.chain!.allEntries(), ...b.heldBack!.entries], undefined, ChainClock.history()));
   assert.deepEqual(scope.devices, [p.deviceId, q.deviceId, p2.deviceId], "p, and what a passkey slot activated or brought in after it");
+  // The page's list (#17): a's addition is offered apart, by whom; nothing here knows the recovery words.
+  const plan = (await b.vetoPlan())!;
+  assert.deepEqual(plan.scope.map((x) => [x.id, x.by]), [[p.deviceId, null], [q.deviceId, other.slot], [p2.deviceId, slot.slot]]);
+  assert.deepEqual(plan.trusted, [{ id: d.deviceId, host: false, by: a.deviceId }]);
+  assert.deepEqual([plan.voidsWords, plan.trustedVoidsWords], [false, false]);
   const report = await b.removeDevice(p.deviceId, new FakeCourier());
   assert.deepEqual(report.vetoed, { devices: [q.deviceId, p2.deviceId], machines: [] });
   for (const x of [p, q, p2]) assert.equal(hub.state!.deviceRecord(x.deviceId)?.status.type, "removed", `${x.deviceId} is out`);
   assert.equal(hub.state!.device(d.deviceId)?.status.type, "active", "a's addition stands");
+});
+
+test("N1 (#17) on a v3 chain: asked, the veto takes out a device that runs AI a trusted admin enrolled meanwhile, and the recovery words a device it added set — and says so first", async (t) => {
+  const t0 = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: t0 });
+  const { hub, a, words } = await account();
+  const b = await pairAs(hub, a, { admin: true });
+  await b.receiveMail();
+  await a.sync();
+  // z comes back with the words; b, open all along, sees the join and takes the activation a day later.
+  const z = await hub.device("tok", new RecordingKeyStore());
+  await z.recover(words.join(" "));
+  await b.sync();
+  t.mock.timers.setTime(t0 + RECOVERY_DELAY_MS + 60_000);
+  await z.activateRecovered(words.join(" "));
+  await b.sync();
+  assert.equal(b.heldBack, null);
+  // Meanwhile b adds c, an admin, which makes new recovery words; and b enrolls m-9.
+  const c = await pairAs(hub, b, { admin: true });
+  await c.receiveMail();
+  await c.setRecoveryWords();
+  await b.sync();
+  await hub.enroll(b, "m-9", { writable: true });
+  // a opens only now: z's activation, and all after it, are held back here.
+  const back = await hub.reload(a);
+  assert.equal(back.heldBack?.device, z.deviceId);
+  const plan = (await back.vetoPlan())!;
+  assert.deepEqual(plan.scope, [{ id: z.deviceId, host: false, by: null }]);
+  assert.deepEqual(plan.trusted, [
+    { id: c.deviceId, host: false, by: b.deviceId },
+    { id: "m-9", host: true, by: b.deviceId },
+  ]);
+  assert.equal(plan.voidsWords, false, "z knows only the words c has replaced");
+  assert.equal(plan.trustedVoidsWords, true, "c set the current ones");
+  const report = await back.removeDevice(z.deviceId, new FakeCourier(), false, { alsoTrusted: plan.trusted.map((x) => x.id) });
+  for (const id of [z.deviceId, c.deviceId, "m-9"]) assert.equal(hub.state!.deviceRecord(id)?.status.type, "removed", `${id} is out`);
+  assert.ok(hub.state!.admin(a.deviceId) && hub.state!.admin(b.deviceId), "a and b still manage the account");
+  assert.ok(hub.state!.machine("m-1"), "m-1, which a already trusted, stays");
+  assert.deepEqual(report.vetoed, { devices: [c.deviceId], machines: ["m-9"] });
+  assert.ok(!report.machines.some((m) => m.machine === "m-9") && report.machines.some((m) => m.machine === "m-1"), "new keys for m-1 only");
+  const removals = hub.state!.allEntries().filter((e) => e.draft.action.type === "removeDevice3");
+  assert.ok(removals.length === 3 && removals.every((e) => e.draft.version === 3 && e.draft.signer.type === "device" && e.draft.signer.id === a.deviceId));
+  assert.equal(back.chain!.currentRecoveryKey, null, "the words c set stop counting");
 });

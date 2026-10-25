@@ -514,10 +514,84 @@ test("N1: a veto takes out what the thief brought in, but stands what a device t
   const back = await hub.reload(a);
   const scope = back.vetoScope(back.heldBack!, await ChainState.verify([...back.chain!.allEntries(), ...back.heldBack!.entries], undefined, ChainClock.history()));
   assert.deepEqual(scope.devices, [z.deviceId, z2.deviceId]);
+  // What the page lists before the person confirms (#17): b's addition is offered apart, and kept unless asked.
+  const plan = (await back.vetoPlan())!;
+  assert.deepEqual(plan.scope, [
+    { id: z.deviceId, host: false, by: null },
+    { id: z2.deviceId, host: false, by: z.deviceId },
+  ]);
+  assert.deepEqual(plan.trusted, [{ id: c.deviceId, host: false, by: b.deviceId }]);
+  assert.equal(plan.voidsWords, true, "z came back with the words");
+  assert.equal(plan.trustedVoidsWords, false);
   const report = await back.removeDevice(z.deviceId, new FakeCourier());
   assert.equal(back.chain!.device(c.deviceId)?.status.type, "active", "b's addition stands");
   assert.ok(report.sealedTo.includes(c.deviceId) && report.sealedTo.includes(b.deviceId));
   assert.equal(back.chain!.deviceRecord(z2.deviceId)?.status.type, "removed");
+  assert.equal(await back.vetoPlan(), null, "nothing held back any more");
+});
+
+test("N1 (#17): asked, the veto also takes out what the devices this view trusted added meanwhile — what the person was shown, and what those added — never this device nor a device it trusted", async (t) => {
+  const t0 = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: t0 });
+  const hub = new FakeKeysHub();
+  const a = await hub.device("tok");
+  const words = (await createV2Genesis(a, true))!.join(" ");
+  await a.sync();
+  const b = await hub.device("tok", new RecordingKeyStore());
+  await a.append({ type: "addDevice", device: (b as unknown as { info(): DeviceInfo }).info() });
+  await b.sync();
+  const z = await hub.device("tok", new RecordingKeyStore());
+  await z.recover(words);
+  // b was open all along: it saw the join then, and takes the activation a day later.
+  await b.sync();
+  t.mock.timers.setTime(t0 + DAY + 60_000);
+  await z.activateRecovered(words);
+  await b.sync();
+  assert.equal(b.heldBack, null);
+  // Meanwhile b (which a trusts) adds c, and c adds c2; the thief adds z2.
+  const info = (x: CloudAccount) => (x as unknown as { info(): DeviceInfo }).info();
+  const c = await hub.device("tok", new RecordingKeyStore());
+  await b.append({ type: "addDevice", device: info(c) });
+  await c.sync();
+  const c2 = await hub.device("tok", new RecordingKeyStore());
+  await c.append({ type: "addDevice", device: info(c2) });
+  const z2 = await hub.device("tok", new RecordingKeyStore());
+  await z.sync();
+  await z.append({ type: "addDevice", device: info(z2) });
+  const back = await hub.reload(a);
+  assert.equal(back.heldBack?.device, z.deviceId);
+  const plan = (await back.vetoPlan())!;
+  assert.deepEqual(plan.scope.map((d) => d.id), [z.deviceId, z2.deviceId]);
+  assert.deepEqual(plan.trusted, [
+    { id: c.deviceId, host: false, by: b.deviceId },
+    { id: c2.deviceId, host: false, by: c.deviceId },
+  ]);
+  // After the page read the plan: b adds c3 (not shown: it stands), c adds c4 (what a device the person chose to take out brought in: it goes).
+  const c3 = await hub.device("tok", new RecordingKeyStore());
+  await b.sync();
+  await b.append({ type: "addDevice", device: info(c3) });
+  const c4 = await hub.device("tok", new RecordingKeyStore());
+  await c.sync();
+  await c.append({ type: "addDevice", device: info(c4) });
+  const before = hub.mailLog.length;
+  // Ids beyond what was shown — a device this view trusted, this device itself — are never taken out.
+  const report = await back.removeDevice(z.deviceId, new FakeCourier(), false, { alsoTrusted: [...plan.trusted.map((d) => d.id), b.deviceId, a.deviceId] });
+  assert.equal(back.heldBack, null);
+  for (const x of [z, z2, c, c2, c4]) {
+    assert.equal(back.chain!.deviceRecord(x.deviceId)?.status.type, "removed", `${x.deviceId} is out`);
+    assert.equal(hub.state!.deviceRecord(x.deviceId)?.status.type, "removed", `${x.deviceId} is out on the hub's chain`);
+  }
+  for (const x of [a, b, c3]) assert.equal(back.chain!.device(x.deviceId)?.status.type, "active", `${x.deviceId} stays`);
+  assert.deepEqual(new Set(report.vetoed?.devices), new Set([z2.deviceId, c.deviceId, c2.deviceId, c4.deviceId]));
+  // Every removal is this device's own entry, on the hub's head; one admin at least stays (this one).
+  const mine = hub.state!.allEntries().filter((e) => e.draft.action.type === "removeDevice");
+  assert.ok(mine.length === 5 && mine.every((e) => e.draft.signer.type === "device" && e.draft.signer.id === a.deviceId));
+  assert.ok(hub.state!.admin(a.deviceId) && hub.state!.admin(b.deviceId));
+  // The new user key goes to those that stay, and to none of those taken out.
+  const keyMail = hub.mailLog.slice(before).filter((m) => m.purpose === MAIL_USER_KEY);
+  assert.deepEqual(keyMail.filter((m) => [z, z2, c, c2, c4].some((x) => x.deviceId === m.recipient)), []);
+  assert.ok(report.sealedTo.includes(b.deviceId) && report.sealedTo.includes(c3.deviceId));
+  assert.equal(back.chain!.currentRecoveryKey, null, "the words z came back with stop counting");
 });
 
 test("N2: a rotation whose keyring write is refused (full) still hands the new machine key over, and says so loudly", async () => {

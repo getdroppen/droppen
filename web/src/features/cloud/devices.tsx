@@ -9,7 +9,19 @@ import { needsYou, recentSessions } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";
 import { type Accept, type ChainState, type DeviceRecord, hex, offerFromText } from "@/lib/e2e";
 import { formatAsOf, formatExactTime, formatRelative } from "@/lib/format";
-import { type ChainAlert, type CloudAccount, deviceFingerprint, hasRunAi, type HeldChange, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
+import {
+  type ChainAlert,
+  type CloudAccount,
+  deviceFingerprint,
+  hasRunAi,
+  type HeldChange,
+  hostsExposedBy,
+  limitedDevice,
+  type ReEnrollLine,
+  type RotationReport,
+  type VetoPlan,
+  type VetoTarget,
+} from "@/lib/hub/account";
 import { hostRefusalText } from "@/api/errors";
 import { chainV3Writable, type PairingSummary, type RegisteredDevice } from "@/lib/hub/api";
 import { hubOrigin } from "@/lib/hub/config";
@@ -2543,16 +2555,159 @@ function HeldChanges({ account }: { account: CloudAccount }) {
   );
 }
 
+/** One device of a veto's list: its id, who brought it in, and whether it runs AI. */
+function VetoTargetLine({ target, held }: { target: VetoTarget; held: string }) {
+  const { t } = useTranslation();
+  const how = target.id === held ? null : target.by ? t("brought in by {{by}}", { by: target.by }) : t("came in with the recovery words");
+  return (
+    <li data-testid={`veto-target-${target.id}`}>
+      <span className="font-mono text-fg">{target.id}</span>
+      {how && <span className="text-muted"> · {how}</span>}
+      {target.host && <span className="text-muted"> · {t("can run AI")}</span>}
+    </li>
+  );
+}
+
+/**
+ * The veto's confirmation, drawn from its plan (`CloudAccount.vetoPlan`): what
+ * it takes out, what that does to the recovery words, and — when the devices
+ * this browser trusted added any while it held the activation back — the
+ * person's choice to take those out too (issue #17; off by default).
+ */
+export function VetoChoice({
+  plan,
+  alsoTrusted,
+  onAlsoTrusted,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  plan: VetoPlan;
+  alsoTrusted: boolean;
+  onAlsoTrusted: (on: boolean) => void;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const trustedHosts = plan.trusted.some((d) => d.host);
+  return (
+    <div data-testid="veto-confirm" className="flex w-full flex-col gap-1.5 border border-border bg-bg p-2.5 text-xs">
+      <span className="font-mono text-danger">{t("remove {{id}}?", { id: plan.device })}</span>
+      <span className="text-muted">{t("This removes:")}</span>
+      <ul data-testid="veto-scope" className="flex flex-col gap-0.5 pl-3">
+        {plan.scope.map((d) => (
+          <VetoTargetLine key={d.id} target={d} held={plan.device} />
+        ))}
+      </ul>
+      {plan.voidsWords && (
+        <p data-testid="veto-voids-words" className="text-fg">
+          {t("The account's recovery words stop working with this: a device it removes set them, or came back with them. Make new recovery words afterwards.")}
+        </p>
+      )}
+      {plan.trusted.length > 0 && (
+        <div className="flex flex-col gap-1 border-t border-border pt-1.5">
+          <label className="flex items-start gap-2 text-fg">
+            <input type="checkbox" data-testid="veto-also-trusted" checked={alsoTrusted} disabled={busy} onChange={(e) => onAlsoTrusted(e.target.checked)} className="mt-0.5" />
+            {t("Also remove what your other devices added while this browser held it back, and what those added:")}
+          </label>
+          <ul data-testid="veto-trusted" className="flex flex-col gap-0.5 pl-8">
+            {plan.trusted.map((d) => (
+              <VetoTargetLine key={d.id} target={d} held={plan.device} />
+            ))}
+          </ul>
+          <p className="pl-6 text-2xs leading-4 text-muted">
+            {trustedHosts
+              ? t("Leave this off if you added them yourself. Turn it on if you think one of your other devices was misused too: they lose access at once, and one that runs AI has to be added again.")
+              : t("Leave this off if you added them yourself. Turn it on if you think one of your other devices was misused too: they lose access at once.")}
+          </p>
+          {plan.trustedVoidsWords && (
+            <p data-testid="veto-trusted-voids-words" className="pl-6 text-2xs leading-4 text-fg">
+              {t("Removing them also voids the account's recovery words: one of them set the current ones. Make new recovery words afterwards.")}
+            </p>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" data-testid="veto-go" className={cn(danger, "h-7 px-3 text-xs")} disabled={busy} onClick={onConfirm}>
+          {busy && <Loader2 className="size-3 animate-spin" />}
+          {alsoTrusted && plan.trusted.length > 0 ? t("remove all of them") : t("remove it and what it brought in")}
+        </button>
+        <button type="button" className={cn(quiet, "h-7 px-2 text-xs")} disabled={busy} onClick={onCancel}>
+          {t("cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The veto of a held-back activation, once its plan is read off the hub's chain; then what the person chose is what is signed. */
+function VetoConfirm({ account, link, onCancel }: { account: CloudAccount; link: HubLink; onCancel: () => void }) {
+  const { t } = useTranslation();
+  const version = useAccountVersion(account);
+  const [plan, setPlan] = useState<VetoPlan | null>(null);
+  const [alsoTrusted, setAlsoTrusted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Read again as the hub's chain moves: the list shown is the list signed. (None once the hold is over: the banner goes then.)
+  useEffect(() => {
+    let live = true;
+    account.vetoPlan().then(
+      (p) => {
+        if (live && p) setPlan(p);
+      },
+      (err: unknown) => {
+        if (live) setError(errorText(err));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [account, version]);
+  if (!plan) {
+    return (
+      <div data-testid="veto-confirm" className="flex w-full flex-col gap-1 text-xs text-muted">
+        {!error && (
+          <span className="flex items-center gap-1.5">
+            <Loader2 className="size-3 animate-spin" />
+            {t("reading what it takes out…")}
+          </span>
+        )}
+        <ErrorLine message={error} />
+      </div>
+    );
+  }
+  const confirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await account.removeDevice(plan.device, shellCourier(link, account), false, alsoTrusted ? { alsoTrusted: plan.trusted.map((d) => d.id) } : {});
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex w-full flex-col gap-1">
+      <VetoChoice plan={plan} alsoTrusted={alsoTrusted} onAlsoTrusted={setAlsoTrusted} busy={busy} onConfirm={() => void confirm()} onCancel={onCancel} />
+      <ErrorLine message={error} />
+    </div>
+  );
+}
+
 /**
  * While someone is coming back with the recovery words, every full device
  * says so — with the means to approve it, or veto it (remove it, which also
- * retires the keys it opened).
+ * retires the keys it opened). A veto of an activation held back here lists
+ * what it takes out before it is signed (`VetoConfirm`).
  */
 export function PendingRecoveryBanner({ account, link }: { account: CloudAccount; link: HubLink }) {
   const { t } = useTranslation();
   useAccountVersion(account);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [vetoing, setVetoing] = useState<string | null>(null);
   const pending = account.standing === "active" ? (account.chain?.pendingRecoveries() ?? []) : [];
   if (!pending.length) return null;
   return (
@@ -2569,6 +2724,10 @@ export function PendingRecoveryBanner({ account, link }: { account: CloudAccount
               : t("If that was not you, remove it now; otherwise approve it (or it activates itself after 24 hours).")}
             {account.heldBack?.device === p.id && <HeldChanges account={account} />}
           </span>
+          {vetoing === p.id && account.heldBack?.device === p.id ? (
+            <VetoConfirm account={account} link={link} onCancel={() => setVetoing(null)} />
+          ) : (
+            <>
           <button
             type="button"
             className={cn(primary, "h-7 px-3 text-xs")}
@@ -2593,6 +2752,12 @@ export function PendingRecoveryBanner({ account, link }: { account: CloudAccount
             disabled={busy !== null || blockedByHold(account, p.id)}
             title={blockedByHold(account, p.id) ? t("approve or remove the device whose activation is held back first") : undefined}
             onClick={async () => {
+              // The veto of a held activation lists what it takes out first (issue #17).
+              if (account.heldBack?.device === p.id) {
+                setError(null);
+                setVetoing(p.id);
+                return;
+              }
               setBusy(p.id);
               setError(null);
               try {
@@ -2607,6 +2772,8 @@ export function PendingRecoveryBanner({ account, link }: { account: CloudAccount
             {busy === p.id && <Loader2 className="size-3 animate-spin" />}
             {account.heldBack?.device === p.id ? t("remove it and what it brought in") : t("remove")}
           </button>
+            </>
+          )}
         </div>
       ))}
       <ErrorLine message={error} />

@@ -50,6 +50,7 @@ import {
   UpgradeAccount,
   UpgradeConfirm,
   V3Note,
+  VetoChoice,
 } from "../src/features/cloud/devices.js";
 import { V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
 import { type AccountView, chainV3View, HubApiError } from "../src/lib/hub/api.js";
@@ -161,6 +162,45 @@ test("a self-activation this browser holds back says so, still with approve and 
   assert.ok(html.includes(">approve<") && html.includes(">remove it and what it brought in<"));
   assert.equal(blockedByHold(account, "d-other"), true, "other removals wait");
   assert.equal(blockedByHold(account, "d-xyz"), false);
+});
+
+test("a veto lists what it takes out before it is signed; what the devices this browser trusted added meanwhile is a choice apart, off by default (#17)", () => {
+  const plan = {
+    device: "d-xyz",
+    scope: [
+      { id: "d-xyz", host: false, by: null },
+      { id: "d-z2", host: false, by: "d-xyz" },
+    ],
+    trusted: [
+      { id: "d-c", host: false, by: "d-b" },
+      { id: "m-9", host: true, by: "d-b" },
+    ],
+    voidsWords: true,
+    trustedVoidsWords: false,
+  };
+  const choice = (over: Partial<typeof plan> = {}, alsoTrusted = false, lng = "en") =>
+    draw(<VetoChoice plan={{ ...plan, ...over }} alsoTrusted={alsoTrusted} onAlsoTrusted={() => undefined} busy={false} onConfirm={() => undefined} onCancel={() => undefined} />, lng);
+  const html = choice();
+  assert.ok(html.includes("remove d-xyz?") && html.includes("This removes:"));
+  assert.match(html, /data-testid="veto-target-d-z2"[^]*brought in by d-xyz/);
+  assert.match(html, /data-testid="veto-voids-words"/, "the recovery words go with it: said before it is signed");
+  // The choice: the list, by whom, which runs AI, and what taking them out costs.
+  assert.match(html, /data-testid="veto-also-trusted"(?![^>]*checked)/, "off by default");
+  assert.ok(html.includes("Also remove what your other devices added while this browser held it back, and what those added:"));
+  assert.match(html, /data-testid="veto-target-d-c"[^]*brought in by d-b/);
+  assert.match(html, /data-testid="veto-target-m-9"[^]*can run AI/);
+  assert.ok(html.includes("one that runs AI has to be added again"));
+  assert.ok(!html.includes("veto-trusted-voids-words"));
+  assert.ok(html.includes(">remove it and what it brought in<"), "unchecked: the default scope");
+  assert.ok(choice({}, true).includes(">remove all of them<"), "checked: all of them");
+  const words = choice({ voidsWords: false, trustedVoidsWords: true, trusted: [{ id: "d-c", host: false, by: "d-b" }] }, true);
+  assert.ok(!words.includes('data-testid="veto-voids-words"') && words.includes('data-testid="veto-trusted-voids-words"'), "the words go only with the wider choice");
+  assert.ok(!words.includes("has to be added again"), "nothing that runs AI among them");
+  // Nothing trusted was added: no choice to make.
+  const none = choice({ trusted: [] }, true);
+  assert.ok(!none.includes("veto-also-trusted") && none.includes(">remove it and what it brought in<"));
+  assert.ok(choice({}, false, "zh-CN").includes("同时移除你的其他设备在本浏览器暂缓它期间添加的设备"));
+  assert.ok(choice({}, false, "ja").includes("すべて削除") === false && choice({}, true, "ja").includes("すべて削除"));
 });
 
 test("a device missing the newest user key says so, and can ask again or rotate", () => {
