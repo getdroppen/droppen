@@ -3038,9 +3038,17 @@ export class CloudAccount {
 
   /** A fresh enrollment code, its token announced to the hub (the secret never is). */
   async startEnrollment(): Promise<EnrollCode> {
+    return (await this.startTimedEnrollment()).code;
+  }
+
+  /**
+   * {@link startEnrollment}, with when the hub says the code runs out
+   * (`expires_ms`, by the hub's clock; `null` when its answer has none).
+   */
+  async startTimedEnrollment(): Promise<{ code: EnrollCode; expiresMs: number | null }> {
     const code = generateEnrollCode(await this.fingerprint());
-    await this.api.createEnrollment(this.session.token, this.deviceId, await enrollToken(code));
-    return code;
+    const expiresMs = await this.api.createEnrollment(this.session.token, this.deviceId, await enrollToken(code));
+    return { code, expiresMs: typeof expiresMs === "number" && Number.isFinite(expiresMs) ? expiresMs : null };
   }
 
   /**

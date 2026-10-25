@@ -38,7 +38,7 @@ type AddState =
   | { kind: "starting" }
   /** The plan's devices that run AI are all in use (or being added): nothing was started. */
   | { kind: "limit"; hit: LimitHit }
-  /** `deadline`: when the code runs out, by this page's clock (`Date.now()` as the hub answered, plus {@link ENROLL_CODE_MS}). */
+  /** `deadline`: when the code runs out, by this page's clock ({@link codeDeadline}). */
   | { kind: "waiting"; code: EnrollCode; deadline: number }
   | { kind: "adding"; code: EnrollCode }
   | { kind: "key"; code: EnrollCode }
@@ -48,12 +48,22 @@ type AddState =
   | { kind: "error"; message: string };
 
 /**
- * How long a one-time code is good for (the hub's `POST /v1/enrollments`:
- * 10 minutes). Counted from when the hub answered, by this page's clock — so
- * a clock set wrong does not shorten it, and the count runs out just after
- * the hub's own.
+ * How long a one-time code is good for at most: the hub's `ENROLLMENT_TTL_MS`,
+ * 10 minutes (`POST /v1/enrollments`, docs/hub-api/http.md).
  */
 export const ENROLL_CODE_MS = 10 * 60_000;
+
+/**
+ * When a code issued at `now` (this page's clock, as the hub answered) runs
+ * out, by this page's clock: what the hub's `expires_ms` leaves of it, never
+ * more than {@link ENROLL_CODE_MS} — a page clock behind the hub's does not
+ * lengthen it. With no word from the hub, or one no clock could square with
+ * (already past: a page clock far ahead), the full {@link ENROLL_CODE_MS}.
+ */
+export function codeDeadline(now: number, expiresMs: number | null | undefined): number {
+  const hubLeft = typeof expiresMs === "number" && Number.isFinite(expiresMs) ? expiresMs - now : Number.NaN;
+  return now + (hubLeft > 0 ? Math.min(ENROLL_CODE_MS, hubLeft) : ENROLL_CODE_MS);
+}
 
 /** The time left until `deadline`, never below 0. */
 export function codeTimeLeft(deadline: number, now: number): number {
@@ -106,8 +116,8 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
         const before = (account.chain?.hosts() ?? []).filter((m) => m.status.type === "active").length;
         // On a v3 chain the hub must take v3 entries (it gates a new host): said before a code is issued.
         if (account.chain?.isV3 && !chainV3Writable(store?.view)) throw new AccountError("notWritable", t("Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI."));
-        const code = await account.startEnrollment();
-        setState({ kind: "waiting", code, deadline: Date.now() + ENROLL_CODE_MS });
+        const { code, expiresMs } = await account.startTimedEnrollment();
+        setState({ kind: "waiting", code, deadline: codeDeadline(Date.now(), expiresMs) });
         // Read again as it is signed: on a v3 chain the hub must take v3 entries (it gates a new host).
         const machine = await account.completeEnrollment(code, abort.signal, undefined, undefined, { writable: chainV3Writable(store?.view) });
         setState({ kind: "key", code });
@@ -471,7 +481,7 @@ export function AddComputer({
           <a href={publicHref(downloadHref("linux"))} target="_blank" rel="noopener" data-testid="add-server-linux" className="text-fg underline underline-offset-2 hover:no-underline">
             {t("Linux server")}
           </a>
-          <span data-testid="add-code-for">{t("— a Linux server, or a device with no browser? Add it with a one-time code:")}</span>
+          <span data-testid="add-code-for">{t("— no browser on it? Add it with a one-time code:")}</span>
         </p>
         <button type="button" className={quiet} disabled={blocked} onClick={() => setMode("code")} data-testid="add-computer-code">
           {t("show a one-time code")}

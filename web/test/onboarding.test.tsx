@@ -17,7 +17,7 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AddComputer, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
+import { AddComputer, codeDeadline, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
 import { setHubShell } from "../src/features/cloud/hub-shell.js";
 import { addAsked, dismissHint, hintDismissed, openAddDevice, partnerFor, watchNewHost } from "../src/features/cloud/onboarding.js";
 import { AddDeviceHint, SideBySideTip } from "../src/features/cloud/onboarding-hints.js";
@@ -203,11 +203,13 @@ test("the one-time code is the way for a Linux server or a device with no browse
   try {
     for (const availability of [{ app: true, appSignIn: true, linux: true }, { app: false, appSignIn: false, linux: false }]) {
       const html = draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} availability={availability} />);
-      assert.match(html, /data-testid="add-code-for"[^>]*>— a Linux server, or a device with no browser\? Add it with a one-time code:</);
+      assert.match(html, /data-testid="add-code-for"[^>]*>— no browser on it\? Add it with a one-time code:</);
+      // Said once: the line before it names the Linux server already.
+      assert.equal((text(html).match(/Linux server/g) ?? []).length, 1, text(html));
       assert.match(html, /data-testid="add-computer-code"[^>]*>show a one-time code</);
     }
     const zh = text(draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} />, "zh-CN"));
-    assert.ok(zh.includes("Linux 服务器，或没有浏览器的设备？用一次性注册码添加："));
+    assert.ok(zh.includes("没有浏览器？用一次性注册码添加："));
   } finally {
     setHubShell(null);
   }
@@ -219,6 +221,12 @@ test("the one-time code counts down, says to keep this page open, and offers a n
   assert.deepEqual([600_000, 599_001, 545_000, 61_000, 60_000, 1, 0, -5].map(formatCountdown), ["10:00", "10:00", "9:05", "1:01", "1:00", "0:01", "0:00", "0:00"]);
   assert.equal(codeTimeLeft(10_000, 4_000), 6_000);
   assert.equal(codeTimeLeft(10_000, 12_000), 0);
+  // The deadline: what the hub's expires_ms leaves, by this page's clock, never past ten minutes.
+  const t0 = 1_800_000_000_000;
+  assert.equal(codeDeadline(t0, t0 + ENROLL_CODE_MS), t0 + ENROLL_CODE_MS, "clocks that agree");
+  assert.equal(codeDeadline(t0, t0 + ENROLL_CODE_MS - 90_000), t0 + ENROLL_CODE_MS - 90_000, "the page's clock 90 s ahead: the hub's word, shorter");
+  assert.equal(codeDeadline(t0, t0 + ENROLL_CODE_MS + 5 * 60_000), t0 + ENROLL_CODE_MS, "the page's clock behind: never more than ten minutes");
+  for (const odd of [null, undefined, Number.NaN, t0 - 1, t0]) assert.equal(codeDeadline(t0, odd), t0 + ENROLL_CODE_MS, `no usable word (${odd}): the full ten minutes`);
 
   const code = { accountFingerprint: new Uint8Array(16), secret: new Uint8Array(16).fill(7) };
   const at = 1_800_000_000_000;
@@ -259,7 +267,7 @@ test("the one-time code counts down, says to keep this page open, and offers a n
 
   // zh-CN reads as the app does.
   const zh = text(view(waiting, at + 9 * 60_000 + 18_000, "zh-CN"));
-  for (const line of ["注册码 0:42 后失效。", "请保持这个页面打开", "适用于 Linux 服务器，或任何没有浏览器的设备"]) assert.ok(zh.includes(line), `zh-CN missing: ${line}`);
+  for (const line of ["注册码有效期还剩 0:42。", "请保持这个页面打开", "适用于 Linux 服务器，或任何没有浏览器的设备"]) assert.ok(zh.includes(line), `zh-CN missing: ${line}`);
   const zhOut = text(view({ kind: "expired" }, at, "zh-CN"));
   for (const line of ["这个注册码已过期。", "换个新注册码"]) assert.ok(zhOut.includes(line), `zh-CN missing: ${line}`);
   assert.deepEqual(asked, [], "drawing asks for nothing");
