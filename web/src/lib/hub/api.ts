@@ -1088,30 +1088,14 @@ export class HubApi {
    * iPad, not a Mac.
    */
   async me(token: string, opts: { noRenew?: boolean; env?: TouchEnv } = {}): Promise<AccountView> {
-    const r = await this.call<{
-      account: string;
-      email: unknown;
-      plan?: unknown;
-      chain_seq: number | null;
-      machines?: {
-        id: string;
-        sign_key: string;
-        dh_key: string;
-        in_chain: boolean;
-        created_ms?: unknown;
-        last_seen_ms: number | null;
-        presence: MachineSummary["presence"];
-        copy?: unknown;
-        reads_v3?: unknown;
-        rotates?: unknown;
-      }[];
-      devices?: unknown;
-      chain_v3?: unknown;
-      rotations?: unknown;
-      known_client?: unknown;
-      relay_prefs?: { standby?: unknown } | null;
-      sign_in_changes?: unknown;
-    }>("GET", touchScreenMac(opts.env) ? "/v1/me?touch=1" : "/v1/me", { token, noRenew: opts.noRenew });
+    const r = await this.typed<components["schemas"]["Me"]>(
+      (headers) =>
+        this.client.GET("/v1/me", {
+          params: touchScreenMac(opts.env) ? { query: { touch: "1" } } : undefined,
+          headers,
+        }),
+      { token, noRenew: opts.noRenew },
+    );
     const email = emailStanding(r.email);
     // A device in use is a known client: keep each fresh token the hub gives,
     // so this browser's next password login is never held back for others'.
@@ -1128,7 +1112,7 @@ export class HubApi {
         dhKey: fromHex(m.dh_key),
         inChain: m.in_chain,
         createdMs: num(m.created_ms),
-        lastSeenMs: m.last_seen_ms,
+        lastSeenMs: m.last_seen_ms ?? null,
         presence: m.presence,
         copy: machineCopy(m.copy),
         readsV3: m.reads_v3 === true,

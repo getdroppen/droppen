@@ -881,6 +881,39 @@ export interface components {
             credential: Record<string, never>;
             label?: string | null;
         };
+        /** @description The error body every handler can send: `{error, message}` (some codes add
+         *     `retry_after_ms`, `key`/`limit`/`used`). `ApiError` has no `Deserialize`
+         *     and is never a success body; this is only how `ApiResult<T>` documents
+         *     its `default` response.
+         *     The error body's shape, derived: `ApiError` itself has no `Serialize` (it
+         *     is never a success body), so its `Schematic` delegates here and the
+         *     document gets the properties, required/optional as the fields are. */
+        ApiErrorBody: {
+            /** @description The stable code, e.g. `rate`, `limit`, `in_chain`. */
+            error: string;
+            /** @description A 409 `unlock_on`: the grant the proof gave. */
+            grant?: string | null;
+            /** @description A 409 `chain_v3_not_ready`: the hosts it waits for. */
+            hosts?: string[] | null;
+            /** @description A 409 `limit`: which entitlement. */
+            key?: string | null;
+            /** @description A 409 `limit`: its value (`null`: unlimited). */
+            limit?: number | null;
+            /** @description The server's sentence for the user. */
+            message: string;
+            /** @description A 409 `rotation_not_ready` (`window`): when it opens. */
+            ready_ms?: number | null;
+            /** @description A 409 `rotation_not_ready`/`rotation_in_progress`: why. */
+            reason?: string | null;
+            /** @description A 429's wait. */
+            retry_after_ms?: number | null;
+            /** @description A 409 `recently_deleted`: when the address may sign up again. */
+            until_ms?: number | null;
+            /** @description A 409 `limit`: what is used. */
+            used?: number | null;
+            /** @description A 409 `rotation_not_ready`: the hosts it waits for. */
+            waiting?: string[] | null;
+        };
         Append: {
             entries: string[];
         };
@@ -1055,21 +1088,32 @@ export interface components {
         Me: {
             account: string;
             chain_seq?: number | null;
-            /** @description Chain v3: mode, whether it is writable now, the hosts holding it back. */
-            chain_v3: unknown;
-            /** @description `{password, passkeys}`. */
-            credentials: unknown;
+            chain_v3: components["schemas"]["MeChainV3"];
+            credentials: components["schemas"]["MeCredentials"];
             devices: components["schemas"]["MeDevice"][];
-            /** @description `{address, verified, verification, due_ms, delivery, delivery_error}`. */
-            email: unknown;
+            email: components["schemas"]["MeEmail"];
             known_client?: string | null;
             machines: components["schemas"]["MeMachine"][];
-            /** @description The plan and its usage. */
-            plan: unknown;
-            relay_prefs: unknown;
+            /** @description The plan and its usage; `null` when it could not be read. */
+            plan?: components["schemas"]["PlanView"];
+            relay_prefs: components["schemas"]["MeRelayPrefs"];
             /** @description Identity key renewals: policy and each host's state. */
-            rotations: unknown;
-            sign_in_changes: unknown[];
+            rotations: components["schemas"]["MeRotations"];
+            sign_in_changes: components["schemas"]["SignInChange"][];
+        };
+        /** @description `/v1/me`'s `chain_v3`. */
+        MeChainV3: {
+            in_use: boolean;
+            /** @description `off`, `read` or `write`. */
+            mode: string;
+            /** @description Hosts whose agents do not speak chain v3 yet. */
+            waiting: string[];
+            writable: boolean;
+        };
+        /** @description `/v1/me`'s `credentials`: whether there is a password, and how many passkeys. */
+        MeCredentials: {
+            passkeys: number;
+            password: boolean;
         };
         /** @description One device of the account, as `GET /v1/me` lists it. */
         MeDevice: {
@@ -1089,6 +1133,17 @@ export interface components {
             sign_key: string;
             ua_label?: string | null;
         };
+        /** @description `/v1/me`'s `email`. */
+        MeEmail: {
+            address: string;
+            /** @description `pending`, `sent` or `failed`. */
+            delivery?: string | null;
+            delivery_error?: string | null;
+            due_ms?: number | null;
+            /** @description `required` or `off`. */
+            verification: string;
+            verified: boolean;
+        };
         /** @description One machine, as `GET /v1/me` lists it. */
         MeMachine: {
             copy: components["schemas"]["MachineCopy"];
@@ -1103,6 +1158,24 @@ export interface components {
             rotates: boolean;
             /** @description Hex. */
             sign_key: string;
+        };
+        /** @description `/v1/me`'s `relay_prefs`. */
+        MeRelayPrefs: {
+            standby: boolean;
+        };
+        /** @description One host's renewal state in `/v1/me`. */
+        MeRotationActive: {
+            host: string;
+            /** @description `pending`, `attempt`, `staged`, `committed` or `expired`. */
+            state: string;
+        };
+        /** @description `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
+         *     (The account's policy is its chain's: `SetRenewalPolicy`.)
+         *     `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state. */
+        MeRotations: {
+            active: components["schemas"]["MeRotationActive"][];
+            enabled: boolean;
+            window_ms: number;
         };
         NewDevice: {
             dh_key: string;
@@ -1252,6 +1325,48 @@ export interface components {
         PasswordState: {
             password: boolean;
         };
+        /** @description What went through the relays in the period (what went straight between two
+         *     devices is not counted). */
+        PlanTransfer: {
+            bytes: number;
+            /** @description The plan's share; `null` is unlimited. */
+            included?: number | null;
+            overage_bytes: number;
+            period_end_ms: number;
+            period_start_ms: number;
+            throttled: boolean;
+        };
+        /** @description What the account uses against the plan. */
+        PlanUsage: {
+            chain_entries: number;
+            devices: number;
+            hosts: number;
+            /** @description `hosts`' old name, for clients from before chain v3 (one version). */
+            machines: number;
+            relays: number;
+            storage_bytes: number;
+            transfer: components["schemas"]["PlanTransfer"];
+        };
+        /** @description `/v1/me`'s `plan`: the plan, its dates, the effective entitlements and the
+         *     usage — and `warnings`, the keys the account is near (80%) where nearing
+         *     one matters before it is met: `chain.entries` (a full chain takes only
+         *     removals and the way out: [`crate::hub::chain_caps`]).
+         *     `/v1/me`'s `plan`: the plan, its dates, the effective entitlements, the
+         *     usage and the keys it is nearing. */
+        PlanView: {
+            /** @description Entitlement key → value; `null` is unlimited. */
+            entitlements: unknown;
+            grace_plan?: string | null;
+            grace_until_ms?: number | null;
+            id: string;
+            period_end_ms?: number | null;
+            period_start_ms?: number | null;
+            source: string;
+            status: string;
+            usage: components["schemas"]["PlanUsage"];
+            /** @description Keys the account is near (80%) where nearing one matters. */
+            warnings: string[];
+        };
         PostDispute: {
             entry_hash: string;
             seq: number;
@@ -1333,6 +1448,18 @@ export interface components {
         SetMain: {
             if_unset?: boolean;
             machine: string;
+        };
+        /** @description `GET /v1/me`'s `sign_in_changes`: the account's changes of the last
+         *     [`CHANGES_KEPT_MS`] up to `now`, oldest first, at most [`CHANGES_LISTED`]
+         *     (the newest), each `{id, kind, device, label, at_ms}` as
+         *     `sign_in_changed` says it.
+         *     One recent change to the account's ways to sign in, as `/v1/me` lists it. */
+        SignInChange: {
+            at_ms: number;
+            device?: string | null;
+            id: number;
+            kind: string;
+            label?: string | null;
         };
         SignUp: {
             email: string;
@@ -1460,13 +1587,13 @@ export interface operations {
                     "application/json": components["schemas"]["AccountDeleted"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1491,13 +1618,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChainHead"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1524,13 +1651,13 @@ export interface operations {
                     "application/json": components["schemas"]["Appended"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1557,13 +1684,13 @@ export interface operations {
                     "application/json": components["schemas"]["Registered"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1586,13 +1713,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1619,13 +1746,13 @@ export interface operations {
                     "application/json": components["schemas"]["Queued"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1652,13 +1779,13 @@ export interface operations {
                     "application/json": components["schemas"]["Verified"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1685,13 +1812,13 @@ export interface operations {
                     "application/json": components["schemas"]["EnrollmentMade"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1716,13 +1843,13 @@ export interface operations {
                     "application/json": components["schemas"]["EnrollmentState"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1745,13 +1872,13 @@ export interface operations {
                     "application/json": components["schemas"]["Keyring"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1780,13 +1907,13 @@ export interface operations {
                     "application/json": components["schemas"]["KeyPut"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1813,13 +1940,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignedIn"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1846,13 +1973,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignedIn"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1873,13 +2000,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1905,13 +2032,13 @@ export interface operations {
                     "application/json": components["schemas"]["Mailbox"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1938,13 +2065,13 @@ export interface operations {
                     "application/json": components["schemas"]["MailQueued"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1967,13 +2094,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -1996,13 +2123,13 @@ export interface operations {
                     "application/json": components["schemas"]["MainDevice"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2029,20 +2156,23 @@ export interface operations {
                     "application/json": components["schemas"]["MainDevice"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
     };
     me: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `1` when the page has a touch screen (a Mac that is an iPad). */
+                touch?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2058,13 +2188,13 @@ export interface operations {
                     "application/json": components["schemas"]["Me"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2087,13 +2217,13 @@ export interface operations {
                     "application/json": components["schemas"]["Pairings"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2120,13 +2250,13 @@ export interface operations {
                     "application/json": components["schemas"]["PairingOpened"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2149,13 +2279,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2182,13 +2312,13 @@ export interface operations {
                     "application/json": components["schemas"]["PairingMessages"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2217,13 +2347,13 @@ export interface operations {
                     "application/json": components["schemas"]["PairingPosted"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2246,13 +2376,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasskeyList"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2279,13 +2409,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasskeyView"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2315,13 +2445,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChallengeOptions"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2344,13 +2474,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChallengeOptions"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2377,13 +2507,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChallengeOptions"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2406,13 +2536,13 @@ export interface operations {
                     "application/json": components["schemas"]["ChallengeOptions"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2444,13 +2574,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasskeyRemoved"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2479,13 +2609,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasskeyView"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2512,13 +2642,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasswordState"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2548,13 +2678,13 @@ export interface operations {
                     "application/json": components["schemas"]["PasswordState"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2577,13 +2707,13 @@ export interface operations {
                     "application/json": components["schemas"]["RelayList"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2610,13 +2740,13 @@ export interface operations {
                     "application/json": components["schemas"]["RelayPrefs"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2643,13 +2773,13 @@ export interface operations {
                     "application/json": components["schemas"]["Tickets"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2672,13 +2802,13 @@ export interface operations {
                     "application/json": components["schemas"]["RotationsView"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2707,13 +2837,13 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2738,13 +2868,13 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2773,13 +2903,13 @@ export interface operations {
                     "application/json": components["schemas"]["Disputed"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2806,13 +2936,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignedInDevice"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2839,13 +2969,13 @@ export interface operations {
                     "application/json": components["schemas"]["Challenge"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2872,13 +3002,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignedIn"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2925,13 +3055,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignedIn"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
@@ -2958,13 +3088,13 @@ export interface operations {
                     "application/json": components["schemas"]["Waitlisted"];
                 };
             };
-            /** @description `error` is the code, `message` a sentence; some codes add `retry_after_ms`, `key`/`limit`/`used` or `hosts`. */
+            /** @description `error` is the code, `message` a sentence; some codes add fields below. */
             default: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
         };
