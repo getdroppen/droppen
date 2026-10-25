@@ -196,7 +196,7 @@ async function verify(env: MoveEnv, bundle: MoveBundle, written: { db: string; s
     return session;
   } catch (error) {
     // The session goes with the keys it was for.
-    await env.fetch("/v1/logout", { method: "POST", headers: { authorization: `Bearer ${session.token}` } }).catch(() => undefined);
+    await env.fetch(`${base}/v1/logout`, { method: "POST", headers: { authorization: `Bearer ${session.token}` } }).catch(() => undefined);
     throw error instanceof VerifyError ? error : new VerifyError(error instanceof Error ? error.message : String(error));
   }
 }

@@ -101,14 +101,15 @@ test("`_headers` carries CSP, Permissions-Policy, Referrer-Policy and HSTS for e
   assert.ok(headers.includes("/.well-known/droppen-hub\n  Content-Type: application/json"));
 });
 
-test("the site role allows no WebAuthn, frames nothing and calls only itself", () => {
+test("the site role allows no WebAuthn, frames nothing and calls only itself and the HTTP API", () => {
   const site = cloudConfig({ DROPPEN_WEB_MODE: "cloud", DROPPEN_WEB_ROLE: "site" })!;
   const csp = contentSecurityPolicy(SHELL, site);
-  assert.ok(csp.includes("connect-src 'self';"));
+  // Its pages ask the hub for the latest release, join the waitlist and, on the apex, run the move notice.
+  assert.ok(csp.includes("connect-src 'self' https://api.droppen.app;"));
   assert.ok(csp.includes("frame-src 'none';"));
   assert.ok(csp.includes("frame-ancestors 'none';"));
   assert.ok(csp.includes("object-src 'none'"));
-  assert.ok(!csp.includes("api.droppen.app"), "the site calls no API");
+  assert.ok(!csp.includes("wss://api.droppen.app"), "the site opens no socket");
   assert.ok(!csp.includes("relay.droppen.app"), "nor a relay");
   assert.ok(!csp.includes("railway.app"), "nor a relay's current host");
   assert.ok(!csp.includes("verify.droppen.app"), "and frames no Turnstile page");
