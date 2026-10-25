@@ -259,8 +259,10 @@ const list = (values) => values.length ? values.join(", ") : "none";
  */
 export async function checkDeployment(env) {
   const { app, site, apex, api, token, timeoutMs = 10_000 } = env;
+  const phase = env.phase === "static" ? "static" : "hub-served";
   const apiHost = new URL(api).hostname;
   const expectedWss = wssOf(api);
+  const appWss = wssOf(app);
   const apexWss = wssOf(apex);
   const results = [];
   const add = (name, ok, expected, actual, note = "") => {
@@ -405,32 +407,45 @@ export async function checkDeployment(env) {
   );
 
   // ---- Static hosts --------------------------------------------------------
+  // The app host's marker and CSP are the only phase-dependent expectations:
+  // while the hub still serves `my.`, they are the hub's own (`wss://my.`);
+  // after the Cloudflare cutover they name `api.`. Everything else (DNS, TLS,
+  // CORS, the WebSocket, the site/apex policies, `/install.sh`) is the same in
+  // both phases.
   const staticChecks = [
     {
       label: "app",
       base: app,
-      markers: [expectedWss],
+      markers: phase === "static" ? [expectedWss] : [appWss],
       webauthn: "self",
-      connectHasApi: true,
+      connect: phase === "static" ? "api" : "app",
       sw: "app",
+      note:
+        phase === "static"
+          ? "the target: the static app names the API host"
+          : "transition-only: the hub still serves my. itself, so its own socket origin is expected",
     },
     {
       label: "site",
       base: site,
-      // Until step 4 the hub may still serve `www` itself, with its own marker.
-      markers: [null, wssOf(site)],
+      // Hub-served: `www` may be the hub's own page (its marker). Static: the
+      // site-role build writes the hub's marker too (`wss://api…`).
+      markers: phase === "static" ? [expectedWss] : [null, wssOf(site)],
       webauthn: "none",
-      connectHasApi: false,
-      sw: "retiring",
+      connect: "no-api",
+      // A static site build ships the app's worker but never registers it;
+      // the hub-served site today serves the retiring one.
+      sw: phase === "static" ? "any" : "retiring",
     },
     {
       label: "apex",
       base: apex,
-      // Until step 5 the apex is the hub; a static apex has no marker.
-      markers: [null, apexWss],
+      // Hub-served: the apex is the hub. Static: the site-role build, or a
+      // plain move/redirect page with no marker.
+      markers: phase === "static" ? [expectedWss, null] : [null, apexWss],
       webauthn: "none",
-      connectHasApi: false,
-      sw: "retiring",
+      connect: "no-api",
+      sw: phase === "static" ? "any" : "retiring",
     },
   ];
   for (const host of staticChecks) {
@@ -447,6 +462,7 @@ export async function checkDeployment(env) {
       host.markers.includes(marker),
       host.markers.map((m) => (m === null ? "no marker" : m)).join(" or "),
       marker === null ? "no rh-hub marker" : `marker ${marker}`,
+      host.note ?? "",
     );
 
     const pp = headerValue(res.headers, "permissions-policy");
@@ -462,11 +478,20 @@ export async function checkDeployment(env) {
     const csp = headerValue(res.headers, "content-security-policy");
     const connect = cspSources(csp, "connect-src");
     const namesApi = connect.some((source) => source === `https://${apiHost}` || source === `wss://${apiHost}` || source.includes(apiHost));
+    const connectOk =
+      host.connect === "api" ? connect.includes(`https://${apiHost}`) && connect.includes(`wss://${apiHost}`) : host.connect === "app" ? connect.includes(appWss) : !namesApi;
+    const connectExpected =
+      host.connect === "api"
+        ? `connect-src names https://${apiHost} and wss://${apiHost}`
+        : host.connect === "app"
+          ? `connect-src names ${appWss} (the hub-served app's own socket)`
+          : "connect-src does not name the API";
     add(
       `static.${host.label}.csp-connect`,
-      host.connectHasApi ? connect.includes(`https://${apiHost}`) && connect.includes(`wss://${apiHost}`) : !namesApi,
-      host.connectHasApi ? `connect-src names https://${apiHost} and wss://${apiHost}` : "connect-src does not name the API",
+      connectOk,
+      connectExpected,
       csp === null ? "no Content-Security-Policy header" : `connect-src ${list(connect)}`,
+      host.note ?? "",
     );
 
     try {
@@ -477,6 +502,16 @@ export async function checkDeployment(env) {
           sw.status === 200 && /self\.addEventListener\s*\(\s*["']install["']/.test(sw.body),
           "200, a real service worker",
           sw.status === 200 ? (swIsRetiring(sw.body) ? "a retiring worker (wrong on the app)" : "service worker") : `${sw.status}`,
+        );
+      } else if (host.sw === "any") {
+        // A static site build carries the app's worker but never registers it
+        // (the Playwright suite proves the registration side); a 404 is fine too.
+        add(
+          `static.${host.label}.sw`,
+          sw.status === 200 || sw.status === 404,
+          "200 (never registered) or 404",
+          sw.status === 404 ? "404" : sw.status === 200 ? "served, not registered (site role)" : `${sw.status}`,
+          "the site role ships the worker but does not register it",
         );
       } else {
         const ok = sw.status === 404 || (sw.status === 200 && swIsRetiring(sw.body));
@@ -592,17 +627,19 @@ function selfTestFakeHub(origins) {
   return server;
 }
 
-function selfTestFakeStatic({ marker, policy, origins, connectApi = true, swRetiring = false }) {
+function selfTestFakeStatic({ marker, policy, origins, connect = "api", swRetiring = false, appOrigin = () => origins.app }) {
   return createServer((req, res) => {
     if (req.url === "/") {
       const apiHost = new URL(origins.hub.replace(/^wss:/, "https:")).host;
-      const connect = connectApi ? `'self' https://${apiHost} wss://${apiHost}` : "'self'";
+      const connectSrc =
+        connect === "api" ? `'self' https://${apiHost} wss://${apiHost}` : connect === "app" ? `'self' wss://${new URL(appOrigin()).host}` : "'self'";
+      const markerText = typeof marker === "function" ? marker() : marker;
       res.writeHead(200, {
         "content-type": "text/html",
         "permissions-policy": policy,
-        "content-security-policy": `default-src 'self'; connect-src ${connect}`,
+        "content-security-policy": `default-src 'self'; connect-src ${connectSrc}`,
       });
-      return res.end(`<!doctype html><html><head>${marker ? `<meta name="rh-hub" content="${marker}" />` : ""}</head><body>x</body></html>`);
+      return res.end(`<!doctype html><html><head>${markerText ? `<meta name="rh-hub" content="${markerText}" />` : ""}</head><body>x</body></html>`);
     }
     if (req.url === "/sw.js") {
       res.writeHead(200, { "content-type": "text/javascript" });
@@ -640,22 +677,42 @@ export async function runSelfTest() {
   expect("active worker is not retiring", !swIsRetiring('self.addEventListener("install", (e) => self.skipWaiting())'));
   expect("install.sh default", installHub('# DROPPEN_HUB=wss://old.example\nHUB=${DROPPEN_HUB:-wss://api.droppen.app}') === "wss://api.droppen.app");
   expect("install.sh plain", installHub('export HUB="wss://api.droppen.app"') === "wss://api.droppen.app");
+  expect("phase defaults to hub-served", parseArgs([]).phase === "hub-served");
+  expect("phase static parses", parseArgs(["--phase", "static"]).phase === "static");
+  let badPhase = false;
+  try {
+    parseArgs(["--phase", "cutover"]);
+  } catch {
+    badPhase = true;
+  }
+  expect("unknown phase is refused", badPhase);
 
   const origins = { hub: null, app: null, site: null };
   const hub = selfTestFakeHub(origins);
   const hubUrl = await listen(hub);
   origins.hub = `wss://${new URL(hubUrl).host}`;
-  const app = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(self), publickey-credentials-create=(self)", origins });
+  const app = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(self), publickey-credentials-create=(self)", origins, connect: "api" });
   const appUrl = await listen(app);
   origins.app = appUrl;
-  const site = selfTestFakeStatic({ marker: null, policy: "publickey-credentials-get=(), publickey-credentials-create=()", origins, connectApi: false, swRetiring: true });
+  const site = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(), publickey-credentials-create=()", origins, connect: "none", swRetiring: true });
   const siteUrl = await listen(site);
   origins.site = siteUrl;
+  // The hub-served shape of the app: the hub's own marker and socket origin.
+  let appHubUrl;
+  const appHub = selfTestFakeStatic({
+    marker: () => `wss://${new URL(appHubUrl).host}`,
+    policy: "publickey-credentials-get=(self), publickey-credentials-create=(self)",
+    origins,
+    connect: "app",
+    appOrigin: () => appHubUrl,
+  });
+  appHubUrl = await listen(appHub);
   hub.allowed.add(appUrl);
   hub.allowed.add(siteUrl);
+  hub.allowed.add(appHubUrl);
   // These fakes are plain HTTP (the TLS and DNS checks are skipped): the
   // network checks only care about the host, and they are the ones under test.
-  const env = { app: appUrl, site: siteUrl, apex: appUrl, api: hubUrl, timeoutMs: 5_000, skip: new Set(["dns", "tls"]) };
+  const env = { app: appUrl, site: siteUrl, apex: appUrl, api: hubUrl, phase: "static", timeoutMs: 5_000, skip: new Set(["dns", "tls"]) };
   try {
     const results = await checkDeployment(env);
     const byName = Object.fromEntries(results.map((r) => [r.name, r]));
@@ -672,15 +729,26 @@ export async function runSelfTest() {
     expect("self-test site webauthn", byName["static.site.webauthn"]?.ok);
     expect("self-test site csp", byName["static.site.csp-connect"]?.ok);
     expect("self-test site sw", byName["static.site.sw"]?.ok);
+
+    // The transition phase: the hub's own marker and socket origin pass.
+    const hubServed = await checkDeployment({ ...env, app: appHubUrl, phase: "hub-served" });
+    const hubByName = Object.fromEntries(hubServed.map((r) => [r.name, r]));
+    expect("self-test hub-served app marker", hubByName["static.app.marker"]?.ok);
+    expect("self-test hub-served app csp", hubByName["static.app.csp-connect"]?.ok);
+    // The same page must not pass as the target (the phase is not a free pass).
+    const mismatch = await checkDeployment({ ...env, app: appHubUrl, phase: "static" });
+    const mismatchByName = Object.fromEntries(mismatch.map((r) => [r.name, r]));
+    expect("self-test phase mismatch marker", mismatchByName["static.app.marker"]?.ok === false);
+    expect("self-test phase mismatch csp", mismatchByName["static.app.csp-connect"]?.ok === false);
+
     // Deliberate breaks: the checker must see them.
     const broken = await checkDeployment({ ...env, app: siteUrl });
     const brokenByName = Object.fromEntries(broken.map((r) => [r.name, r]));
-    expect("self-test sees a wrong marker", brokenByName["static.app.marker"]?.ok === false);
     expect("self-test sees a site policy on the app", brokenByName["static.app.webauthn"]?.ok === false);
     const evil = await fetchText(`${hubUrl}/v1/me`, { method: "OPTIONS", headers: { origin: "https://evil.test", "access-control-request-method": "GET" } }, 5_000);
     expect("self-test sees no CORS for evil", headerValue(evil.headers, "access-control-allow-origin") === null);
   } finally {
-    for (const server of [hub, app, site]) server.close();
+    for (const server of [hub, app, site, appHub]) server.close();
   }
   const failed = checks.filter((c) => !c.ok);
   for (const check of checks) console.log(`${check.ok ? "PASS" : "FAIL"} self-test.${check.name}${check.detail ? ` — ${check.detail}` : ""}`);
@@ -691,8 +759,16 @@ export async function runSelfTest() {
 // --------------------------------------------------------------------- cli
 
 function parseArgs(argv) {
-  const opts = { ...DEFAULTS, tokenFile: null, json: false, selfTest: false, help: false, timeoutMs: 10_000 };
-  const valued = { "--app": "app", "--site": "site", "--apex": "apex", "--api": "api", "--token-file": "tokenFile", "--timeout": "timeoutMs" };
+  const opts = { ...DEFAULTS, phase: "hub-served", tokenFile: null, json: false, selfTest: false, help: false, timeoutMs: 10_000 };
+  const valued = {
+    "--app": "app",
+    "--site": "site",
+    "--apex": "apex",
+    "--api": "api",
+    "--phase": "phase",
+    "--token-file": "tokenFile",
+    "--timeout": "timeoutMs",
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg in valued) {
@@ -713,6 +789,7 @@ function parseArgs(argv) {
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(`--${name} must be http(s), not ${opts[name]}`);
     opts[name] = stripSlash(opts[name]);
   }
+  if (opts.phase !== "hub-served" && opts.phase !== "static") throw new Error(`--phase must be hub-served or static, not ${opts.phase}`);
   opts.timeoutMs = Number(opts.timeoutMs);
   if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs < 500) throw new Error("--timeout must be milliseconds");
   return opts;
@@ -726,6 +803,9 @@ const HELP = `Read-only deployment checks for Droppen.
   --site URL          the public site (default ${DEFAULTS.site})
   --apex URL          the apex, and the temporary machine alias (default ${DEFAULTS.apex})
   --api URL           the machine + API host (default ${DEFAULTS.api})
+  --phase PHASE       hub-served (default: my. is still the hub; its own marker and
+                      socket origin are expected) or static (after the Cloudflare
+                      cutover: my. must name api. in its marker and connect-src)
   --token-file FILE   a device session token for read-only /v1/me (default: skipped)
   --json              one JSON object instead of lines
   --timeout MS        per request (default 10000)
@@ -757,13 +837,30 @@ async function main() {
     return;
   }
   const results = await checkDeployment({ ...opts, token });
+  const phaseLine =
+    opts.phase === "static"
+      ? "phase static (target): my. must carry the api. marker and name https://api. and wss://api. in connect-src; DNS/TLS/CORS/WS/headers/install.sh are phase-independent"
+      : "phase hub-served (transition): my. may still carry the hub's own marker and socket origin (wss://my.); the api. marker/CSP are expected only with --phase static; DNS/TLS/CORS/WS/headers/install.sh are phase-independent";
   if (opts.json) {
-    console.log(JSON.stringify({ hosts: { app: opts.app, site: opts.site, apex: opts.apex, api: opts.api }, results }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          phase: opts.phase,
+          phaseNote: phaseLine,
+          transitionOnly: opts.phase === "hub-served" ? ["static.app.marker", "static.app.csp-connect"] : [],
+          hosts: { app: opts.app, site: opts.site, apex: opts.apex, api: opts.api },
+          results,
+        },
+        null,
+        2,
+      ),
+    );
   } else {
     for (const r of results) {
       const mark = r.skipped ? "SKIP" : r.ok ? "PASS" : "FAIL";
       console.log(`${mark} ${r.name} — expected ${r.expected}; got ${r.actual}${r.note ? `; ${r.note}` : ""}`);
     }
+    console.log(phaseLine);
     const failed = results.filter((r) => !r.ok);
     console.log(`${results.length - results.filter((r) => r.skipped).length - failed.length} passed, ${failed.length} failed, ${results.filter((r) => r.skipped).length} skipped`);
   }
