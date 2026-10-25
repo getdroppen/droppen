@@ -1562,6 +1562,7 @@ test("write gate: vetoing a held passkey activation takes out what came in throu
   assert.deepEqual(plan.scope.map((x) => [x.id, x.by]), [[p.deviceId, null], [q.deviceId, other.slot], [p2.deviceId, slot.slot]]);
   assert.deepEqual(plan.trusted, [{ id: d.deviceId, host: false, by: a.deviceId }]);
   assert.deepEqual([plan.voidsWords, plan.trustedVoidsWords], [false, false]);
+  assert.deepEqual([plan.voidsPasskeys, plan.trustedVoidsPasskeys], [true, false], "the slots p, q and p2 came in through go with them");
   const report = await b.removeDevice(p.deviceId, new FakeCourier());
   assert.deepEqual(report.vetoed, { devices: [q.deviceId, p2.deviceId], machines: [] });
   for (const x of [p, q, p2]) assert.equal(hub.state!.deviceRecord(x.deviceId)?.status.type, "removed", `${x.deviceId} is out`);

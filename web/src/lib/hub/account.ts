@@ -345,6 +345,8 @@ export const HOST_KEYS_WAIT = { forMs: 20_000, everyMs: 1_000 };
  * `chain_v3_not_ready` naming only that host is tried again for this long.
  */
 export const CHAIN_V3_WAIT = { forMs: 5000, everyMs: 500 };
+/** The most entries the hub takes in one append (`POST /v1/chain`, docs/hub-api/http.md): a bigger batch is refused here, before anything is signed. */
+export const MAX_APPEND_ENTRIES = 64;
 /** The most first sightings kept per account. */
 const MAX_FIRST_SEEN = 4096;
 /** The most entry hashes the seen record keeps (`SeenRecord.heads`): how far behind a tab can still be checked against it. */
@@ -552,6 +554,10 @@ export type AccountErrorKind =
   | "joinMismatch"
   /** The account has as many passkey slots as it may. */
   | "tooManySlots"
+  /** The batch is more entries than the hub takes in one append ({@link MAX_APPEND_ENTRIES}). */
+  | "tooManyEntries"
+  /** A veto would remove nothing: what it was for is out of the account already. Nothing is signed. */
+  | "nothingToRemove"
   /**
    * A host that may have had its identity key copied (`hostsToRotate`) or is
    * isolated would be let control another one: renew its identity key first
@@ -949,6 +955,10 @@ export interface VetoPlan {
   voidsWords: boolean;
   /** Whether also taking out `trusted` voids them where `scope` alone does not. */
   trustedVoidsWords: boolean;
+  /** Whether the veto turns off passkey slots (one a device it takes out registered, or came in through): joining with them stops. */
+  voidsPasskeys: boolean;
+  /** Whether also taking out `trusted` turns off slots `scope` alone does not. */
+  trustedVoidsPasskeys: boolean;
 }
 
 /** One entry the hub's chain has past a held-back activation, as the page shows it. */
@@ -2389,7 +2399,15 @@ export class CloudAccount {
         );
       }
       const base = held ? await this.provisional(held) : this.state;
-      const entries = await this.signChained(base, await build(base), opts.asV3);
+      const actions = await build(base);
+      // The hub takes 1–64 entries an append: a bigger batch is said here, before anything is signed.
+      if (actions.length > MAX_APPEND_ENTRIES) {
+        throw new AccountError("tooManyEntries", "that would write {{n}} entries to the account's chain at once, and the hub takes at most {{max}}: do it in smaller steps", undefined, undefined, {
+          n: String(actions.length),
+          max: String(MAX_APPEND_ENTRIES),
+        });
+      }
+      const entries = await this.signChained(base, actions, opts.asV3);
       // Refused here, by the chain's own rule, before anything leaves this device (review 13).
       await verifyBatch(base, entries);
       try {
@@ -4111,11 +4129,24 @@ export class CloudAccount {
     // in meanwhile — only the ones the person was shown (`vetoPlan`), and what
     // those brought in, as the chain the veto is signed on has it.
     const alsoTrusted = opts.alsoTrusted?.length ? new Set(opts.alsoTrusted) : undefined;
+    // The devices this view trusted, as it stands now: the syncs ahead (rotate's,
+    // and appendBatch's on a 409) may take the activation in once its day has
+    // passed here, and the veto must still take out what it is for — not find
+    // the held device trusted by then and remove nothing.
+    const view = this.trustedView();
     return this.rotate(
       courier,
       reencrypt,
       (chain) => {
-        const scope = this.vetoScope(this.held ?? held, chain, alsoTrusted ? { trusted: alsoTrusted } : {});
+        // The hold as it stands now, if it is still this device's (its entries
+        // may have grown); else the one the person vetoed.
+        const now = this.held?.device === held.device ? this.held : held;
+        const scope = this.vetoScope(now, chain, { view, ...(alsoTrusted ? { trusted: alsoTrusted } : {}) });
+        // A veto that removes nothing is never published: it would be a bare
+        // rotation, its new keys mailed to everyone still in.
+        if (!scope.devices.length && !scope.machines.length) {
+          throw new AccountError("nothingToRemove", "{{id}} and what it brought in are out of the account already: nothing was signed", undefined, undefined, { id: held.device ?? id });
+        }
         // A v3 chain takes v3 removals only (no v2 entry after the first v3 one).
         if (chain.isV3) return [...scope.devices, ...scope.machines].map((d): Action => ({ type: "removeDevice3", id: d }));
         return [...scope.devices.map((d): Action => ({ type: "removeDevice", id: d })), ...scope.machines.map((m): Action => ({ type: "removeMachine", id: m }))];
@@ -5539,8 +5570,12 @@ export class CloudAccount {
    * never a device this view already trusted: what the veto removes was
    * brought in only while the activation was held back here. (So the last
    * admin is never among them: this device, which signs the veto, is one.)
+   *
+   * `opts.view`: the devices this view trusted, taken before any sync could
+   * take the activation in ({@link trustedView}); without it, this view's
+   * active devices now.
    */
-  vetoScope(held: HeldBack, chain: ChainState, opts: { trusted?: true | ReadonlySet<string> } = {}): { devices: string[]; machines: string[] } {
+  vetoScope(held: HeldBack, chain: ChainState, opts: { trusted?: true | ReadonlySet<string>; view?: ReadonlySet<string> } = {}): { devices: string[]; machines: string[] } {
     const tainted = new Set<string>(held.device ? [held.device] : []);
     const machines = new Set<string>();
     const trust = opts.trusted;
@@ -5559,7 +5594,8 @@ export class CloudAccount {
       else if (action.type === "addMachine") take(action.machine.id, machines);
     }
     // Neither this device nor one this view already trusted: only what came in while the activation was held back.
-    const trustedHere = (id: string) => id === this.deviceId || this.state?.device(id) !== undefined;
+    const view = opts.view ?? this.trustedView();
+    const trustedHere = (id: string) => id === this.deviceId || view.has(id);
     const devices = [...tainted].filter((id) => !trustedHere(id) && chain.deviceRecord(id) && chain.deviceRecord(id)!.status.type !== "removed");
     devices.sort((x, y) => (x === held.device ? -1 : y === held.device ? 1 : 0));
     return { devices, machines: [...machines].filter((m) => !trustedHere(m) && chain.machine(m)) };
@@ -5575,9 +5611,10 @@ export class CloudAccount {
   async vetoPlan(): Promise<VetoPlan | null> {
     const held = this.held;
     if (!held?.device || !this.state) return null;
+    const view = this.trustedView();
     const chain = await this.provisional(held);
-    const scope = this.vetoScope(held, chain);
-    const wide = this.vetoScope(held, chain, { trusted: true });
+    const scope = this.vetoScope(held, chain, { view });
+    const wide = this.vetoScope(held, chain, { view, trusted: true });
     const inScope = new Set([...scope.devices, ...scope.machines]);
     // Who brought each one in: the first held-back entry that did.
     const by = new Map<string, string | null>();
@@ -5597,13 +5634,29 @@ export class CloudAccount {
     const trusted = [...wide.devices, ...wide.machines].filter((id) => !inScope.has(id));
     const voids = (ids: Iterable<string>) => [...ids].some((id) => chain.voidsRecoveryWords(id, "removal"));
     const voidsWords = voids(inScope);
+    // The passkey slots a removal turns off, as the chain rules: those its device registered, and the one it came in through.
+    const slotsOf = (ids: Iterable<string>) => {
+      const gone = new Set(ids);
+      const through = new Set([...gone].flatMap((id) => chain.deviceRecord(id)?.viaPasskey ?? []));
+      return new Set(chain.allSlots().flatMap((s) => (!s.removed && (gone.has(s.setBy) || through.has(s.slot.slot)) ? [s.slot.slot] : [])));
+    };
+    const slots = slotsOf(inScope);
     return {
       device: held.device,
       scope: [...scope.devices, ...scope.machines].map(target),
       trusted: trusted.map(target),
       voidsWords,
       trustedVoidsWords: !voidsWords && voids(trusted),
+      voidsPasskeys: slots.size > 0,
+      trustedVoidsPasskeys: [...slotsOf(trusted)].some((slot) => !slots.has(slot)),
     };
+  }
+
+  /** The devices this view trusts now (active in it), and this device: what a veto never removes. */
+  private trustedView(): Set<string> {
+    const ids = new Set((this.state?.allDevices() ?? []).filter((d) => d.status.type === "active").map((d) => d.info.id));
+    ids.add(this.deviceId);
+    return ids;
   }
 
   /** The entries held back past the activation, as the page lists them ("what approving takes in"). */

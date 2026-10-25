@@ -2605,6 +2605,11 @@ export function VetoChoice({
           {t("The account's recovery words stop working with this: a device it removes set them, or came back with them. Make new recovery words afterwards.")}
         </p>
       )}
+      {plan.voidsPasskeys && (
+        <p data-testid="veto-voids-passkeys" className="text-fg">
+          {t("Joining with the passkeys they set up, or came in with, is turned off too.")}
+        </p>
+      )}
       {plan.trusted.length > 0 && (
         <div className="flex flex-col gap-1 border-t border-border pt-1.5">
           <label className="flex items-start gap-2 text-fg">
@@ -2623,7 +2628,12 @@ export function VetoChoice({
           </p>
           {plan.trustedVoidsWords && (
             <p data-testid="veto-trusted-voids-words" className="pl-6 text-2xs leading-4 text-fg">
-              {t("Removing them also voids the account's recovery words: one of them set the current ones. Make new recovery words afterwards.")}
+              {t("Removing them also voids the account's recovery words: one of them set the current ones, or came back with them. Make new recovery words afterwards.")}
+            </p>
+          )}
+          {plan.trustedVoidsPasskeys && (
+            <p data-testid="veto-trusted-voids-passkeys" className="pl-6 text-2xs leading-4 text-fg">
+              {t("Removing them also turns off joining with the passkeys they set up, or came in with.")}
             </p>
           )}
         </div>
@@ -2641,12 +2651,26 @@ export function VetoChoice({
   );
 }
 
+/** The list a veto's wider choice is made on: the ids shown, in order. */
+export function trustedShown(plan: VetoPlan | null): string {
+  return plan ? plan.trusted.map((d) => d.id).join(" ") : "";
+}
+
+/** Whether the wider choice stands for `plan`: ticked on this very list. One that changed since (the plan read again) is unticked. */
+export function alsoTrustedFor(ticked: string | null, plan: VetoPlan | null): boolean {
+  const shown = trustedShown(plan);
+  return ticked !== null && shown !== "" && ticked === shown;
+}
+
 /** The veto of a held-back activation, once its plan is read off the hub's chain; then what the person chose is what is signed. */
 function VetoConfirm({ account, link, onCancel }: { account: CloudAccount; link: HubLink; onCancel: () => void }) {
   const { t } = useTranslation();
   const version = useAccountVersion(account);
   const [plan, setPlan] = useState<VetoPlan | null>(null);
-  const [alsoTrusted, setAlsoTrusted] = useState(false);
+  // The choice is bound to the very list it was made on: a list that grows (the plan read again) is unticked.
+  const [ticked, setTicked] = useState<string | null>(null);
+  const shown = trustedShown(plan);
+  const alsoTrusted = alsoTrustedFor(ticked, plan);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Read again as the hub's chain moves: the list shown is the list signed. (None once the hold is over: the banner goes then.)
@@ -2690,7 +2714,7 @@ function VetoConfirm({ account, link, onCancel }: { account: CloudAccount; link:
   };
   return (
     <div className="flex w-full flex-col gap-1">
-      <VetoChoice plan={plan} alsoTrusted={alsoTrusted} onAlsoTrusted={setAlsoTrusted} busy={busy} onConfirm={() => void confirm()} onCancel={onCancel} />
+      <VetoChoice plan={plan} alsoTrusted={alsoTrusted} onAlsoTrusted={(on) => setTicked(on ? shown : null)} busy={busy} onConfirm={() => void confirm()} onCancel={onCancel} />
       <ErrorLine message={error} />
     </div>
   );

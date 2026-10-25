@@ -50,6 +50,7 @@ import {
   UpgradeAccount,
   UpgradeConfirm,
   V3Note,
+  alsoTrustedFor,
   VetoChoice,
 } from "../src/features/cloud/devices.js";
 import { V3Pending, v3Blocker } from "../src/features/cloud/add-computer.js";
@@ -177,6 +178,8 @@ test("a veto lists what it takes out before it is signed; what the devices this 
     ],
     voidsWords: true,
     trustedVoidsWords: false,
+    voidsPasskeys: false,
+    trustedVoidsPasskeys: false,
   };
   const choice = (over: Partial<typeof plan> = {}, alsoTrusted = false, lng = "en") =>
     draw(<VetoChoice plan={{ ...plan, ...over }} alsoTrusted={alsoTrusted} onAlsoTrusted={() => undefined} busy={false} onConfirm={() => undefined} onCancel={() => undefined} />, lng);
@@ -190,12 +193,24 @@ test("a veto lists what it takes out before it is signed; what the devices this 
   assert.match(html, /data-testid="veto-target-d-c"[^]*brought in by d-b/);
   assert.match(html, /data-testid="veto-target-m-9"[^]*can run AI/);
   assert.ok(html.includes("one that runs AI has to be added again"));
-  assert.ok(!html.includes("veto-trusted-voids-words"));
+  assert.ok(!html.includes("veto-trusted-voids-words") && !html.includes("veto-voids-passkeys") && !html.includes("veto-trusted-voids-passkeys"));
   assert.ok(html.includes(">remove it and what it brought in<"), "unchecked: the default scope");
   assert.ok(choice({}, true).includes(">remove all of them<"), "checked: all of them");
   const words = choice({ voidsWords: false, trustedVoidsWords: true, trusted: [{ id: "d-c", host: false, by: "d-b" }] }, true);
   assert.ok(!words.includes('data-testid="veto-voids-words"') && words.includes('data-testid="veto-trusted-voids-words"'), "the words go only with the wider choice");
+  assert.ok(words.includes("one of them set the current ones, or came back with them"), "a device a trusted one approved may have come back with them");
   assert.ok(!words.includes("has to be added again"), "nothing that runs AI among them");
+  // Passkey slots the removals turn off are said too.
+  const slots = choice({ voidsPasskeys: true, trustedVoidsPasskeys: true }, true);
+  assert.ok(slots.includes('data-testid="veto-voids-passkeys"') && slots.includes("Joining with the passkeys they set up, or came in with, is turned off too."));
+  assert.ok(slots.includes('data-testid="veto-trusted-voids-passkeys"'));
+  // The choice holds only for the very list it was made on: one that grew is unticked.
+  const listed = { ...plan, trusted: [{ id: "d-c", host: false, by: "d-b" }] };
+  const grown = { ...plan, trusted: [...listed.trusted, { id: "d-late", host: false, by: "d-b" }] };
+  assert.equal(alsoTrustedFor("d-c", listed), true);
+  assert.equal(alsoTrustedFor("d-c", grown), false, "d-late was never shown when it was ticked");
+  assert.equal(alsoTrustedFor(null, listed), false);
+  assert.equal(alsoTrustedFor("", { ...plan, trusted: [] }), false);
   // Nothing trusted was added: no choice to make.
   const none = choice({ trusted: [] }, true);
   assert.ok(!none.includes("veto-also-trusted") && none.includes(">remove it and what it brought in<"));
