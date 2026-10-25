@@ -58,7 +58,13 @@ impl Bucket {
         self.tokens -= cost;
     }
 
+    /// Refill up to `now`. Monotonic: a `now` older than the last refill
+    /// (taken by a caller before another one refilled — a sweep on its way
+    /// through its tables, a request that waited for a lock) adds nothing
+    /// and leaves the clock where it is, so no stretch of time is ever
+    /// refilled twice.
     fn refill(&mut self, now: Instant) {
+        let now = self.last.max(now);
         let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.rate).min(self.burst);
         self.last = now;
@@ -222,6 +228,10 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
         let mut table = self.table.lock().expect("rate table");
         let before = table.len();
         table.retain(|_, (buckets, last)| {
+            // Asked after the sweep's clock: counting, left as it is.
+            if *last > now {
+                return true;
+            }
             let old = now.saturating_duration_since(*last) + SWEEP_EVERY >= FORGET_AFTER;
             !old && !buckets.iter_mut().all(|b| b.full(now))
         });
@@ -292,6 +302,30 @@ mod tests {
         let w = c.try_take(201, t0).unwrap();
         assert!((w.as_secs_f64() - 15.0).abs() < 0.01, "{w:?}");
         assert_eq!(c.try_take(201, t0 + w), None);
+    }
+
+    /// An older `now` never moves a bucket's clock back: the time between it
+    /// and the last refill is refilled once, not again (#121 review).
+    #[test]
+    fn an_older_now_never_refills_twice() {
+        let t = Instant::now();
+        let mut b = Bucket::window(1, Duration::from_secs(20), t);
+        assert_eq!(b.try_take(1, t + Duration::from_secs(10)), None, "spent at 10 s");
+        // A caller with a clock from before (5 s): nothing added, and the
+        // bucket's clock stays at 10 s…
+        assert!(!b.full(t + Duration::from_secs(5)));
+        assert!(b.check(1.0, t + Duration::from_secs(5)).is_some());
+        // …so 15 s after the spend it has 0.75 of a token, not 1.0 (as it
+        // would, refilled from 5 s).
+        let wait = b.check(1.0, t + Duration::from_secs(25)).expect("not yet");
+        assert!((wait.as_secs_f64() - 5.0).abs() < 1e-6, "{wait:?}");
+        assert!(b.check(1.0, t + Duration::from_secs(31)).is_none(), "20 s after the spend");
+        // The same through a table: a sweep with an older clock, then a request.
+        let k: Keyed<u32> = Keyed::new(&[(1, Duration::from_secs(20))]);
+        k.allow(&1, t + Duration::from_secs(10)).unwrap();
+        assert_eq!(k.forget_old(t), 0, "still counting");
+        assert!(k.allow(&1, t + Duration::from_secs(25)).is_err(), "refilled once, from 10 s");
+        assert!(k.allow(&1, t + Duration::from_secs(31)).is_ok());
     }
 
     #[test]
