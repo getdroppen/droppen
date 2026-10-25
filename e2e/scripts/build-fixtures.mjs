@@ -1,21 +1,25 @@
 // Turn the built web app into the three static hosts the harness serves.
 //
-// `my.droppen.test` is the real web build (`web/dist`). When the tree has the
-// cloud build (`web/build/cloud-mode.ts`, the `DROPPEN_WEB_MODE=cloud` output)
-// the build already carries the `rh-hub` marker, `/.well-known/droppen-hub`
-// and `_headers`; otherwise this script adds the same three things, plus a
-// small fetch shim that sends the app's same-origin `/v1/*` calls to
-// `https://api.droppen.test` (the real cloud build derives that origin from
-// the marker itself; the shim is the stand-in until that build is on `main`).
+// On a tree with the cloud build (`web/build/cloud-mode.ts` and its
+// `DROPPEN_WEB_ROLE`), `prepare.mjs` builds the real `app` and `site` outputs
+// and this script serves them as they are:
 //
-// `www.` and the apex are static-fixture pages here: the site role's real
-// build does not exist yet. They carry the target policies
-// (`Permissions-Policy` denying WebAuthn, no `rh-hub` marker, no API in
-// `connect-src`, a retiring service worker) and the app links the site build
-// must have. When the site role lands, `siteFixture` is the function to
-// replace with that build; the policies and the specs stay.
+// - `my.droppen.test`  the app role (WebAuthn, API and socket in `connect-src`)
+// - `www.droppen.test` the site role (public pages, no WebAuthn, `'self'`)
+// - `droppen.test`     the same site role, with the hub's `apex_mode: move`
+//                      answer, so the real move notice runs
+//
+// The only edits are the fixture's: a deliberate break for the mutation run,
+// and `apex_mode` in `/.well-known/droppen-hub` (the build writes the hosts
+// file; a hub adds `apex_mode`, and the legacy page needs it to run the move
+// notice instead of the app).
+//
+// On a tree without the cloud build (or without roles), the fallback is a
+// normal build plus a marker and a small fetch shim on `my.`, and hand-written
+// site/apex pages carrying the target policies. It exists only so the harness
+// can run against older trees.
 import { createHash } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HOSTS } from "./certs.mjs";
@@ -25,6 +29,8 @@ export const E2E_ROOT = resolve(here, "..");
 export const REPO_ROOT = resolve(E2E_ROOT, "..");
 export const OUT = join(E2E_ROOT, ".e2e");
 export const DIST = join(OUT, "dist");
+/** The two role builds, copied out of `web/dist` before the next one overwrites it. */
+export const BUILDS = join(OUT, "builds");
 
 export const ORIGINS = {
   app: `https://${HOSTS.app}`,
@@ -34,8 +40,76 @@ export const ORIGINS = {
   hub: `wss://${HOSTS.api}`,
 };
 
-/** Deterministic marker the app tests look for; step 3 moves it here. */
+/** Deterministic marker both cloud builds write (`DROPPEN_WEB_HUB_ORIGIN`). */
 export const APP_MARKER = ORIGINS.hub;
+
+const HUB_DOC = `${JSON.stringify({ origin: ORIGINS.hub, app: ORIGINS.app, site: ORIGINS.site }, null, 2)}\n`;
+
+/** The hub's answer a real hub serves (`apex_mode`): the site build's file has no field for it. */
+const HUB_DOC_WITH_APEX = `${JSON.stringify({ origin: ORIGINS.hub, app: ORIGINS.app, site: ORIGINS.site, apex_mode: "move" }, null, 2)}\n`;
+
+function replaceOrThrow(file, from, to) {
+  const text = readFileSync(file, "utf8");
+  if (!text.includes(from)) throw new Error(`${file} has no ${JSON.stringify(from)} to rewrite`);
+  writeFileSync(file, text.replaceAll(from, to));
+}
+
+/** Point every static host's hosts document at the hub's full answer. */
+function writeHostsDocument(dir) {
+  const wellKnown = join(dir, ".well-known");
+  mkdirSync(wellKnown, { recursive: true });
+  writeFileSync(join(wellKnown, "droppen-hub"), HUB_DOC_WITH_APEX);
+}
+
+function* jsFiles(dir) {
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    const file = join(dir, name);
+    if (statSync(file).isDirectory()) yield* jsFiles(file);
+    else if (name.endsWith(".js")) yield file;
+  }
+}
+
+// ------------------------------------------------------- real cloud builds
+
+/** `builds/app` → `dist/app`, with only the mutation of the acceptance run. */
+function appFromCloud(dest, mutation) {
+  cpSync(join(BUILDS, "app"), dest, { recursive: true });
+  const index = join(dest, "index.html");
+  const html = readFileSync(index, "utf8");
+  if (!/<meta\b[^>]*\bname\s*=\s*["']rh-hub["']/i.test(html)) {
+    throw new Error(`${index} carries no rh-hub marker: is DROPPEN_WEB_MODE=cloud set for the app build?`);
+  }
+  if (mutation === "marker") {
+    writeFileSync(index, html.replace(/(<meta\b[^>]*\bname\s*=\s*["']rh-hub["'][^>]*\bcontent\s*=\s*["'])[^"']*(["'])/i, "$1wss://api.droppen.invalid$2"));
+  } else if (mutation === "api-base") {
+    // The marker is the API base's one source (`hubHttpOrigin()`); break the
+    // ws→http rewrite in the bundle, so the marker stays right and the calls
+    // go nowhere. (The string survives minification; see the self-check.)
+    let broken = false;
+    for (const file of jsFiles(join(dest, "assets"))) {
+      const text = readFileSync(file, "utf8");
+      if (!text.includes("http$1://")) continue;
+      writeFileSync(file, text.replaceAll("http$1://", "http$1://e2e-broken."));
+      broken = true;
+    }
+    if (!broken) throw new Error("api-base mutation: the built app has no ws→http rewrite to break");
+  }
+  writeHostsDocument(dest);
+}
+
+/** `builds/site` → `dist/site` and `dist/apex`; the site policy is the only mutation. */
+function siteFromCloud(dest, mutation) {
+  cpSync(join(BUILDS, "site"), dest, { recursive: true });
+  if (mutation === "site-policy") {
+    const headers = join(dest, "_headers");
+    replaceOrThrow(headers, "publickey-credentials-get=()", "publickey-credentials-get=(self)");
+    replaceOrThrow(headers, "publickey-credentials-create=()", "publickey-credentials-create=(self)");
+  }
+  writeHostsDocument(dest);
+}
+
+// ------------------------------------------------------------- fallback
 
 function inlineScriptHashes(html) {
   const hashes = [];
@@ -63,14 +137,9 @@ function appHeaders(html) {
   ].join("\n");
 }
 
-function siteHeaders({ webauthn = "none", allowApi = false, allowAlias = false } = {}) {
+function siteHeaders({ webauthn = "none", allowAlias = false } = {}) {
   const policy = webauthn === "self" ? "(self)" : "()";
-  const connect = [
-    "'self'",
-    ...(allowApi ? [ORIGINS.api, ORIGINS.hub] : []),
-    // The apex's own machine alias (`wss://droppen.test`), never the API.
-    ...(allowAlias ? [`wss://${HOSTS.apex}`] : []),
-  ].join(" ");
+  const connect = ["'self'", ...(allowAlias ? [`wss://${HOSTS.apex}`] : [])].join(" ");
   return [
     "/*",
     `  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ${connect}; worker-src 'self'; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`,
@@ -84,8 +153,6 @@ function siteHeaders({ webauthn = "none", allowApi = false, allowAlias = false }
     "",
   ].join("\n");
 }
-
-const HUB_DOC = `${JSON.stringify({ origin: ORIGINS.hub, app: ORIGINS.app, site: ORIGINS.site }, null, 2)}\n`;
 
 const RETIRING_SW = `// The site holds no keys and caches nothing: a worker from the old hub
 // retires itself instead of serving the page.
@@ -103,16 +170,11 @@ self.addEventListener("activate", (event) => {
 });
 `;
 
-function writeCommon(dir) {
-  mkdirSync(join(dir, ".well-known"), { recursive: true });
-  writeFileSync(join(dir, ".well-known", "droppen-hub"), HUB_DOC);
-}
-
 function copyAsset(from, to) {
   if (existsSync(from)) copyFileSync(from, to);
 }
 
-function appFixture(dest, mutation) {
+function appFallback(dest, mutation) {
   const dist = join(REPO_ROOT, "web", "dist");
   if (!existsSync(join(dist, "index.html"))) {
     throw new Error(`no built web app at ${dist}: run \`pnpm --filter @remote-hand/web build\` first (scripts/prepare.mjs does)`);
@@ -121,15 +183,12 @@ function appFixture(dest, mutation) {
   const index = join(dest, "index.html");
   let html = readFileSync(index, "utf8");
   const hasMarker = /<meta\b[^>]*\bname\s*=\s*["']rh-hub["']/i.test(html);
-  // `api-base` breaks the HTTP base: the shim's target below when the build
-  // has no cloud mode, and the marker (its only source of the base) when it has.
   const breaksMarker = mutation === "marker" || (mutation === "api-base" && hasMarker);
   const marker = breaksMarker ? "wss://api.droppen.invalid" : APP_MARKER;
 
   if (!hasMarker) {
-    // The stand-in for web/build/cloud-mode.ts (until that build is on main):
-    // the marker makes the page cloud mode, and the shim gives the page the
-    // cross-origin API base the marker implies.
+    // A normal build: add what the cloud build would (marker + the implied
+    // cross-origin API base) so the page runs in cloud mode.
     const apiBase = mutation === "api-base" ? "https://api.droppen.invalid" : ORIGINS.api;
     const shim = `(() => { const f = window.fetch.bind(window); const api = ${JSON.stringify(apiBase)}; window.fetch = (input, init) => f(typeof input === "string" && input.startsWith("/v1/") ? api + input : input, init); })();`;
     const head = html.indexOf("<head>");
@@ -141,10 +200,11 @@ function appFixture(dest, mutation) {
   }
   writeFileSync(index, html);
   writeFileSync(join(dest, "_headers"), appHeaders(html));
-  writeCommon(dest);
+  mkdirSync(join(dest, ".well-known"), { recursive: true });
+  writeFileSync(join(dest, ".well-known", "droppen-hub"), HUB_DOC);
 }
 
-function siteFixture(dest, mutation) {
+function siteFallback(dest, mutation) {
   mkdirSync(dest, { recursive: true });
   writeFileSync(
     join(dest, "index.html"),
@@ -171,10 +231,11 @@ function siteFixture(dest, mutation) {
   copyAsset(join(REPO_ROOT, "web", "dist", "favicon.svg"), join(dest, "favicon.svg"));
   writeFileSync(join(dest, "sw.js"), RETIRING_SW);
   writeFileSync(join(dest, "_headers"), siteHeaders({ webauthn: mutation === "site-policy" ? "self" : "none" }));
-  writeCommon(dest);
+  mkdirSync(join(dest, ".well-known"), { recursive: true });
+  writeFileSync(join(dest, ".well-known", "droppen-hub"), HUB_DOC);
 }
 
-function apexFixture(dest) {
+function apexFallback(dest) {
   mkdirSync(dest, { recursive: true });
   writeFileSync(
     join(dest, "index.html"),
@@ -199,20 +260,28 @@ function apexFixture(dest) {
   copyAsset(join(REPO_ROOT, "web", "dist", "favicon.svg"), join(dest, "favicon.svg"));
   writeFileSync(join(dest, "sw.js"), RETIRING_SW);
   writeFileSync(join(dest, "_headers"), siteHeaders({ allowAlias: true }));
-  writeCommon(dest);
+  mkdirSync(join(dest, ".well-known"), { recursive: true });
+  writeFileSync(join(dest, ".well-known", "droppen-hub"), HUB_DOC);
 }
 
 /**
- * Write `app`, `site` and `apex` under `.e2e/dist`. `E2E_MUTATION` names a
- * deliberate break the acceptance run needs to catch: `marker`, `cors`,
- * `site-policy` or `api-base`.
+ * Write `app`, `site` and `apex` under `.e2e/dist`. `cloud` picks the real
+ * role builds from `.e2e/builds` (see `prepare.mjs`); `E2E_MUTATION` names a
+ * deliberate break the acceptance run catches: `marker`, `cors`, `site-policy`
+ * or `api-base`.
  */
-export function buildFixtures({ mutation = process.env.E2E_MUTATION ?? "" } = {}) {
+export function buildFixtures({ mutation = process.env.E2E_MUTATION ?? "", cloud = false } = {}) {
   rmSync(DIST, { recursive: true, force: true });
   for (const name of ["app", "site", "apex"]) mkdirSync(join(DIST, name), { recursive: true });
-  appFixture(join(DIST, "app"), mutation);
-  siteFixture(join(DIST, "site"), mutation);
-  apexFixture(join(DIST, "apex"));
+  if (cloud) {
+    appFromCloud(join(DIST, "app"), mutation);
+    siteFromCloud(join(DIST, "site"), mutation);
+    siteFromCloud(join(DIST, "apex"), mutation);
+  } else {
+    appFallback(join(DIST, "app"), mutation);
+    siteFallback(join(DIST, "site"), mutation);
+    apexFallback(join(DIST, "apex"));
+  }
   writeFileSync(join(OUT, "mutation.json"), `${JSON.stringify({ mutation }, null, 2)}\n`);
   return DIST;
 }

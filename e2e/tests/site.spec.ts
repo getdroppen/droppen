@@ -1,16 +1,19 @@
 import { expect, test } from "@playwright/test";
-import { API, APP, HOSTS, SITE, cspSources, indexedDbNames, webauthnPolicy } from "./helpers";
+import { API, APP, HOSTS, HUB_WS, SITE, cspSources, indexedDbNames, webauthnPolicy } from "./helpers";
 
 /**
- * `www.droppen.test`: pages only. No `rh-hub` marker (so the app never enters
- * cloud mode), no device keys, no worker, WebAuthn denied by policy, and the
- * app links absolute to `my.` — the policy a static site build must carry.
+ * `www.droppen.test`: the real site-role build. The hub's marker is in the
+ * shell (it is the same build), but `/.well-known/droppen-hub` puts the page
+ * in site mode: public pages only, no key store, no service worker, WebAuthn
+ * denied by policy, and every way into the app absolute to `my.`.
  */
 test.describe("site on www.", () => {
-  test("is site mode: no marker, no API in connect-src", async ({ page }) => {
+  test("is site mode: the hub marker, but no API in connect-src", async ({ page }) => {
     const response = await page.goto(`${SITE}/`);
     expect(response?.status()).toBe(200);
-    expect(await page.locator('meta[name="rh-hub"]').count()).toBe(0);
+    await expect(page.locator('meta[name="rh-hub"]')).toHaveAttribute("content", HUB_WS);
+    // The site host's own answer settles the host mode to `site`.
+    await expect(page.locator('[data-testid="landing"]')).toBeVisible();
 
     const csp = (await response?.headerValue("content-security-policy")) ?? "";
     const connect = cspSources(csp, "connect-src");
@@ -35,7 +38,7 @@ test.describe("site on www.", () => {
 
   test("keeps no device keys and registers no worker", async ({ page }) => {
     await page.goto(`${SITE}/`);
-    // Give a registration (if any) a moment to happen, then look.
+    await expect(page.locator('[data-testid="landing"]')).toBeVisible();
     await page.waitForTimeout(1_000);
     const state = await page.evaluate(async () => {
       const registrations = "serviceWorker" in navigator ? (await navigator.serviceWorker.getRegistrations()).map((r) => r.scope) : [];
@@ -50,11 +53,12 @@ test.describe("site on www.", () => {
 
   test("app links are absolute to my.", async ({ page }) => {
     await page.goto(`${SITE}/`);
-    const links = await page.locator("a[data-app-link]").evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).href));
-    expect(links.length).toBeGreaterThanOrEqual(2);
-    for (const href of links) {
-      expect(href.startsWith(`${APP}/`), `${href} must point at the app host`).toBe(true);
-      expect(new URL(href).host).toBe(HOSTS.app);
-    }
+    await expect(page.locator('[data-testid="landing"]')).toBeVisible();
+    const links = await page.locator("a[href]").evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).href));
+    const intoApp = links.filter((href) => href.startsWith(`${APP}/`) || href === APP);
+    expect(intoApp.length).toBeGreaterThanOrEqual(2);
+    for (const href of intoApp) expect(new URL(href).host).toBe(HOSTS.app);
+    // Sign-in and the app itself are not pages of this host.
+    expect(links.some((href) => href === `${SITE}/signin` || href === `${SITE}/sessions`)).toBe(false);
   });
 });

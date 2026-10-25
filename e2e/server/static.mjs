@@ -96,11 +96,12 @@ export function createStatic(root) {
       }
     }
     const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
-    const out = {
-      "content-type": type,
-      "cache-control": "no-store",
-      ...headers,
-    };
+    // One header per name: `_headers` keys arrive capitalized (`Content-Type`)
+    // and must replace the extension guess, not sit beside it (a duplicate
+    // content-type makes `res.headers.get("content-type")` useless to the page,
+    // which then ignores `/.well-known/droppen-hub` and runs in single mode).
+    const out = { "content-type": type, "cache-control": "no-store" };
+    for (const [name, value] of Object.entries(headers)) out[name.toLowerCase()] = value;
     let body;
     try {
       body = readFileSync(file);

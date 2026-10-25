@@ -9,7 +9,7 @@ import { API, APP, HOSTS, HUB_WS, cspSources, waitForHub } from "./helpers";
  */
 test.describe("app on my.", () => {
   test("loads the cloud build with the api. marker and calls the API there", async ({ page }) => {
-    const response = await page.goto(`${APP}/`);
+    const response = await page.goto(`${APP}/signin`);
     expect(response?.status()).toBe(200);
 
     // The marker is the one source of truth for cloud mode and the API origin.
@@ -28,7 +28,7 @@ test.describe("app on my.", () => {
   });
 
   test("a device session and /v1/me succeed from my.", async ({ page }) => {
-    await page.goto(`${APP}/`);
+    await page.goto(`${APP}/signin`);
     const result = await page.evaluate(async (api) => {
       const post = (path: string, body: unknown) =>
         fetch(api + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -58,7 +58,7 @@ test.describe("app on my.", () => {
   });
 
   test("the device socket on /v1/client connects", async ({ page }) => {
-    await page.goto(`${APP}/`);
+    await page.goto(`${APP}/signin`);
     const opened = await page.evaluate(
       (url) =>
         new Promise<{ ok: boolean; reason?: string }>((resolve) => {
@@ -81,7 +81,7 @@ test.describe("app on my.", () => {
   });
 
   test("the real service worker registers on my.", async ({ page }) => {
-    await page.goto(`${APP}/`);
+    await page.goto(`${APP}/signin`);
     const worker = await page.evaluate(async () => {
       if (!("serviceWorker" in navigator)) return { supported: false };
       const registration = await Promise.race([

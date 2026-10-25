@@ -14,22 +14,23 @@ against real hosts; see the repository README's scripts or run
 
 | host | served | what the specs prove |
 |---|---|---|
-| `my.droppen.test` | the built web app (`web/dist`) | marker `wss://api.droppen.test`, cross-origin sign-up config, device session, `/v1/me`, `/v1/client` socket, the real service worker |
-| `www.droppen.test` | the site fixture | no marker, no API in `connect-src`, `Permissions-Policy` denies WebAuthn, no keys/worker, app links absolute to `my.` |
-| `droppen.test` | the apex interstitial | moved page, no keys/worker, a machine handshake naming the apex accepted by the hub (the temporary alias) |
+| `my.droppen.test` | the real app-role cloud build | marker `wss://api.droppen.test`, cross-origin sign-up config, device session, `/v1/me`, `/v1/client` socket, the real service worker |
+| `www.droppen.test` | the real site-role cloud build | hub marker but site host mode, no API in `connect-src`, `Permissions-Policy` denies WebAuthn, no keys/worker, app links absolute to `my.` |
+| `droppen.test` | the same site-role build, `apex_mode: move` | no device here: sent on to the app; a device here: the move notice, no keys/worker; a machine handshake naming the apex accepted by the hub (the temporary alias) |
 | `api.droppen.test` | the fake hub | CORS allowlist, `/v1/signup/config`, `/v1/session/challenge`, `/v1/session`, `/v1/me`, `wss://…/v1/client`, `wss://…/v1/agent` |
 | `evil.test` | an unrelated page | an authenticated response is not readable there |
 
-`www.` and the apex are fixtures: the site role's real build does not exist
-yet. They already carry the target headers and links; `siteFixture` in
-`scripts/build-fixtures.mjs` is what a real site build replaces.
+`prepare.mjs` builds the real outputs with `DROPPEN_WEB_MODE=cloud` and
+`DROPPEN_WEB_ROLE=app|site` (the marker, `_headers` and
+`/.well-known/droppen-hub` come from that build) and copies each `web/dist`
+out before the next build overwrites it. `build-fixtures.mjs` only edits the
+fixture: the deliberate mutation, and `apex_mode: "move"` in the hosts
+document — a hub adds that field, and the build's static file has no place
+for it; without it the apex would run the app instead of the move notice.
 
-`my.` is the real build. When the tree has `web/build/cloud-mode.ts`, prepare
-builds it with `DROPPEN_WEB_MODE=cloud` (the marker, `/.well-known/droppen-hub`
-and `_headers` come from that build). Until that lands on `main`,
-`build-fixtures.mjs` adds the same three things and a small fetch shim that
-sends the app's same-origin `/v1/*` calls to `https://api.droppen.test` — the
-cross-origin API base the cloud build derives from the marker.
+On a tree without the role outputs, `build-fixtures.mjs` falls back to a
+normal build with a marker and API-base shim on `my.`, and hand-written
+site/apex pages. That path exists only for older trees.
 
 ## Docker (what CI runs)
 
@@ -79,7 +80,8 @@ node scripts/mutation.mjs --only cors
 - `marker` — the app's marker names `wss://api.droppen.invalid` (`app.spec.ts`).
 - `cors` — the hub's allowlist drops `https://my.droppen.test` (`app.spec.ts`).
 - `site-policy` — `www.` sends `publickey-credentials-get=(self)` (`site.spec.ts`).
-- `api-base` — the app's API base is `https://api.droppen.invalid` (`app.spec.ts`).
+- `api-base` — the app build's ws→http rewrite is broken, so the marker stays
+  right but its API calls go to a name that does not resolve (`app.spec.ts`).
 
 The same environment variable works with the Docker runner:
 `E2E_MUTATION=cors docker compose -f e2e/docker-compose.yml up --build ...`.
