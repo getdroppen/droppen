@@ -2,7 +2,7 @@
 //! feature): how often can a browser reach this machine directly (WebRTC,
 //! ICE hole punching, no TURN), and how much faster is that than the hub?
 //!
-//!   rh-p2p-probe [--hub https://droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]
+//!   rh-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]
 //!
 //! It joins a signaling room on the hub (`/v1/probe/rooms/{room}`, only
 //! there when the hub runs with `DROPPEN_HUB_P2P_PROBE=1`) and prints the page to
@@ -87,7 +87,7 @@ struct Args {
 impl Args {
     fn parse() -> Result<Self, String> {
         let mut args = Args {
-            hub: "https://droppen.app".into(),
+            hub: "https://api.droppen.app".into(),
             page: "http://localhost:5180".into(),
             room: None,
             new_room: false,
@@ -102,7 +102,7 @@ impl Args {
                 "--new-room" => args.new_room = true,
                 "--results" => args.results = Some(it.next().ok_or("--results takes a file")?.into()),
                 "-h" | "--help" => {
-                    println!("rh-p2p-probe [--hub https://droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]");
+                    println!("rh-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]");
                     std::process::exit(0);
                 }
                 other => return Err(format!("unknown argument {other:?}")),

@@ -2,7 +2,7 @@
 //! (`<hubWeb>/link?v=1`) and the browser hand-off (`<hubWeb>/link#droppen-link=…`,
 //! [`super::link_handoff`]).
 //!
-//! This computer signs in to its hub at `wss://<hub>` (droppen.app); the page
+//! This computer signs in to its hub at `wss://<hub>` (api.droppen.app); the page
 //! a person signs in on may be on another host of the same hub (the app at
 //! my.droppen.app). The hub says which in `GET /.well-known/droppen-hub`,
 //! `{origin, app, site}` (docs/hub-api/http.md). Its `app` is taken when:
@@ -10,8 +10,10 @@
 //! - it is a plain origin (scheme, host, port; nothing more), on the hub's own
 //!   scheme (`https` for a `wss://` hub; `http` only for a loopback `ws://`
 //!   one, a test hub);
-//! - its host is the hub's host or a subdomain of it (my.droppen.app for
-//!   droppen.app): a hub can name its own app host, never somebody else's;
+//! - its host is the hub's host, a subdomain of it, or a name on the hub
+//!   host's parent domain (my.droppen.app for api.droppen.app; a hub can keep
+//!   the API on `api.` and its app on another host of the same domain): a hub
+//!   can name its own app host, never somebody else's;
 //! - the document's `origin`, when it gives one, is this hub as dialled.
 //!
 //! Anything else — no such document (a hub from before it answers with the
@@ -238,7 +240,10 @@ pub fn app_origin(doc: &Value, hub: &str) -> Option<String> {
     let host = host_of(&authority);
     let hub_host = host_of(&hub_authority);
     let ip = |h: &str| h.starts_with('[') || h.parse::<std::net::Ipv4Addr>().is_ok();
-    let own = host == hub_host || (!ip(hub_host) && host.ends_with(&format!(".{hub_host}")));
+    let under = |apex: &str| host.ends_with(&format!(".{apex}"));
+    let own = host == hub_host
+        || (!ip(hub_host)
+            && (under(hub_host) || parent_domain(hub_host).is_some_and(|parent| host == parent || under(parent))));
     if !own || host.is_empty() {
         return None;
     }
@@ -296,6 +301,21 @@ fn host_of(authority: &str) -> &str {
     authority.rsplit_once(':').map_or(authority, |(host, _)| host)
 }
 
+/// The parent domain of a hub host that is itself one label under it
+/// (`api.droppen.app` → `droppen.app`): where a hub keeps its app while its
+/// API answers on a separate host. `None` when that would leave fewer than two
+/// labels (`droppen.app`, `localhost`), so a bare name never becomes an apex.
+///
+/// A two-letter TLD is where registries put names one label deeper (`co.uk`,
+/// `com.au`): a hub at `evil.co.uk` is then the registrable domain itself, and
+/// its parent (`co.uk`) is a public suffix that must never become an apex. Only
+/// a longer TLD's parent is taken as a domain of the hub's (`droppen.app`).
+fn parent_domain(hub_host: &str) -> Option<&str> {
+    let (_label, parent) = hub_host.split_once('.')?;
+    let (_sld, tld) = parent.rsplit_once('.')?;
+    (tld.len() > 2).then_some(parent)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -340,6 +360,48 @@ pub(crate) mod tests {
         // Another hub's document — the user typed my.droppen.app as the hub:
         // its own origin as before (that host serves the app too).
         assert_eq!(app_origin(&json!({"origin": hub, "app": "https://my.droppen.app"}), "wss://my.droppen.app"), None);
+    }
+
+    #[test]
+    fn an_api_host_may_name_the_app_on_another_host_of_the_same_domain() {
+        let hub = "wss://api.droppen.app";
+        let app = |doc: Value| app_origin(&doc, hub);
+        assert_eq!(
+            app(json!({"origin": hub, "app": "https://my.droppen.app", "site": "https://www.droppen.app"})).as_deref(),
+            Some("https://my.droppen.app")
+        );
+        // The apex itself, and the hub's own host, are still the hub's to name.
+        assert_eq!(app(json!({"origin": hub, "app": "https://droppen.app"})).as_deref(), Some("https://droppen.app"));
+        assert_eq!(app(json!({"app": "https://api.droppen.app"})).as_deref(), Some("https://api.droppen.app"));
+        // A sibling under *another* domain is not.
+        for refused in [
+            json!({"app": "https://my.other.example"}),
+            json!({"app": "https://evildroppen.app"}),
+            json!({"app": "https://api.droppen.app.evil.example"}),
+            // The document must still be for the hub as dialled: the apex's
+            // document is another hub, during the compatibility window too.
+            json!({"origin": "wss://droppen.app", "app": "https://my.droppen.app"}),
+            json!({"origin": "wss://other.example", "app": "https://my.droppen.app"}),
+        ] {
+            assert_eq!(app(refused.clone()), None, "{refused}");
+        }
+        // A two-letter TLD's registrable domain is itself one label under the
+        // registry's suffix: `evil.co.uk` must not name `victim.co.uk`, and
+        // neither may a host one label under `evil.co.uk` name a host under
+        // another registrable domain of the same suffix.
+        assert_eq!(app_origin(&json!({"app": "https://victim.co.uk"}), "wss://evil.co.uk"), None);
+        assert_eq!(app_origin(&json!({"app": "https://my.victim.co.uk"}), "wss://api.evil.co.uk"), None);
+        // A deeper name still works (`app` on a sibling of its parent).
+        assert_eq!(
+            app_origin(&json!({"app": "https://my.droppen.example"}), "wss://api.droppen.example").as_deref(),
+            Some("https://my.droppen.example")
+        );
+        // A hub with the app under its own host is unchanged.
+        assert_eq!(
+            app_origin(&json!({"app": "https://my.droppen.app"}), "wss://my.droppen.app").as_deref(),
+            Some("https://my.droppen.app")
+        );
+        assert_eq!(app_origin(&json!({"app": "https://evil.example"}), "wss://droppen.app"), None);
     }
 
     #[test]

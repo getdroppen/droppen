@@ -145,8 +145,8 @@ trap cleanup EXIT
 
 # The hub the server signs in to (DROPPEN_DESKTOP_TEST_HUB): a test hub on
 # loopback that only answers its discovery document, `/.well-known/droppen-hub`
-# (docs/hub-api/http.md), naming its app on another host, as droppen.app names
-# my.droppen.app. Signing in to Droppen opens that host; the server stays with
+# (docs/hub-api/http.md), naming its app on another host, as api.droppen.app
+# names my.droppen.app. Signing in to Droppen opens that host; the server stays with
 # the hub (server-rs/src/api/hub_web.rs). Nothing has to listen on the app's
 # host: an end-to-end build logs the address instead of opening it.
 HUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')

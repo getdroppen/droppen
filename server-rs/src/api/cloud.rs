@@ -68,7 +68,7 @@ use crate::sessions::Paths;
 /// How long an attempt waits for its code.
 pub const ATTEMPT_TTL_MS: u64 = 15 * 60 * 1000;
 /// The hub a new sign-in uses unless the request (or `DROPPEN_HUB_DEFAULT`) says otherwise.
-pub const DEFAULT_HUB: &str = "https://droppen.app";
+pub const DEFAULT_HUB: &str = "https://api.droppen.app";
 
 /// The link's local state: the hub link itself, the attempt in flight, and
 /// `cloud.json`. One per server, in [`AppState`].
@@ -386,8 +386,8 @@ pub fn hand_over_from_local_owner(paths: &Paths, accounts: &[(String, String, bo
 
 /// The hub a sign-in uses: the request's, else `DROPPEN_HUB_DEFAULT` (or its
 /// old name, `RH_HUB_DEFAULT`), else
-/// droppen.app; as the agent signs in to it, `wss://…`. Where a browser signs
-/// in to it is the hub's to say ([`super::hub_web`]).
+/// api.droppen.app; as the agent signs in to it, `wss://…`. Where a browser
+/// signs in to it is the hub's to say ([`super::hub_web`]).
 fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
     let configured = crate::env::var("DROPPEN_HUB_DEFAULT");
     let url = requested
@@ -1129,7 +1129,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     let hub = match (&agent.hub, &attempt) {
         (Some(hub), _) => hub.clone(),
         (None, Some(a)) => a.hub.clone(),
-        (None, None) => resolve_hub(None).unwrap_or_else(|_| "wss://droppen.app".into()),
+        (None, None) => resolve_hub(None).unwrap_or_else(|_| "wss://api.droppen.app".into()),
     };
     let hub_web = match &attempt {
         // The attempt's own: the page that opened it follows that one.
@@ -1891,7 +1891,7 @@ mod tests {
             id: "a1".into(),
             nonce: "n1".into(),
             owner: owner.into(),
-            hub: "wss://droppen.app".into(),
+            hub: "wss://api.droppen.app".into(),
             hub_web: DEFAULT_HUB.into(),
             aggregate: true,
             expires_ms,
@@ -2725,6 +2725,10 @@ mod tests {
 
     #[test]
     fn hubs_resolve_to_an_agent_origin_and_a_web_origin() {
+        assert_eq!(DEFAULT_HUB, "https://api.droppen.app");
+        assert_eq!(resolve_hub(Some("https://api.droppen.app")).unwrap(), "wss://api.droppen.app");
+        assert_eq!(web_origin("wss://api.droppen.app"), "https://api.droppen.app");
+        // The apex is a temporary machine alias during the compatibility window.
         assert_eq!(resolve_hub(Some("https://droppen.app")).unwrap(), "wss://droppen.app");
         assert_eq!(web_origin("wss://droppen.app"), "https://droppen.app");
         assert_eq!(resolve_hub(Some("http://127.0.0.1:9000/")).unwrap(), "ws://127.0.0.1:9000");

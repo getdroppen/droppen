@@ -48,7 +48,7 @@
 #
 # Settings, all optional:
 #   DROPPEN_CODE=<code>        join the account the code is from
-#   DROPPEN_HUB=wss://...      the Droppen hub to join (default wss://droppen.app)
+#   DROPPEN_HUB=wss://...      the Droppen hub to join (default wss://api.droppen.app)
 #   DROPPEN_VERSION=v0.2.120   install this release instead of the latest
 #   DROPPEN_PORT=8700          the first port to try on a new install
 #   DROPPEN_USER=name          the first local account's name (default: your user name)
@@ -76,7 +76,7 @@ set -eu
 RELEASES_URL=https://github.com/getdroppen/droppen
 INSTALL_CMD="curl -fsSL https://droppen.app/install.sh | sh"
 BASE=${DROPPEN_RELEASE_BASE:-$RELEASES_URL/releases}
-HUB=${DROPPEN_HUB:-wss://droppen.app}
+HUB=${DROPPEN_HUB:-wss://api.droppen.app}
 # The instance this installer owns: `default`, the name a server takes when
 # nothing says otherwise. Two servers on one device need different instances.
 INSTANCE=default
@@ -127,7 +127,7 @@ Settings (environment):
   DROPPEN_CODE=<code>       join the account the code is from
                             (my.droppen.app: my devices → add a device that runs AI
                             → show a one-time code)
-  DROPPEN_HUB=wss://...     the Droppen hub to join (default wss://droppen.app)
+  DROPPEN_HUB=wss://...     the Droppen hub to join (default wss://api.droppen.app)
   DROPPEN_VERSION=v...      install this release instead of the latest
   DROPPEN_PORT=8700         the first port to try on a new install
   DROPPEN_USER=name         the first local account's name
