@@ -11,7 +11,6 @@ import { LiveDot } from "@/components/live-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { DESKTOP_SIGN_IN_READY } from "./flags";
 import { FootNote, onceClicked } from "./frame";
 import { foundTools, STEP_LABEL, STEPS, TOOL_STATUS_LABEL, toolStatus } from "./model";
 import type { SetupProgress, ToolsReport } from "./types";
@@ -118,11 +117,9 @@ export function WelcomeScreen({ tools, onStart, onSkipAll }: { tools: ToolsRepor
 export type WhereChoice = "droppen" | "local";
 
 /** The choice step 02 shows: the stored one, else the recommended one when it can be had, else this Mac only. */
-export function whereChoice(progress: SetupProgress, online: boolean, signInReady = DESKTOP_SIGN_IN_READY): WhereChoice {
-  const droppen = signInReady && online;
+export function whereChoice(progress: SetupProgress, online: boolean): WhereChoice {
   if (progress.where.choice === "local") return "local";
-  if (progress.where.choice === "droppen") return droppen ? "droppen" : "local";
-  return droppen ? "droppen" : "local";
+  return online ? "droppen" : "local";
 }
 
 /**
@@ -202,16 +199,15 @@ function WhereCard({
 /**
  * Step 02 · Where to use it, minimal: on the phone and other devices
  * too (signing in to Droppen; recommended), or only on this Mac. The first
- * is off without the app's sign-in through the system browser
- * ({@link DESKTOP_SIGN_IN_READY}) and while offline; chosen, the step signs
- * in from its primary and shows how that stands under the choices
- * (`where-sign-in.tsx`). The local-network option ("Also") waits for the
- * local-access change and the app ↔ server channel.
+ * is off while offline; chosen, the step signs in from its primary and shows
+ * how that stands under the choices (`where-sign-in.tsx`). The local-network
+ * option ("Also") waits for the local-access change and the app ↔ server
+ * channel.
  */
-export function WhereStep({ progress, online, onChange, signIn, signInReady = DESKTOP_SIGN_IN_READY }: StepProps & { signInReady?: boolean }) {
+export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
   const { t } = useTranslation();
-  const chosen = whereChoice(progress, online, signInReady);
-  const droppenOff = !signInReady || !online;
+  const chosen = whereChoice(progress, online);
+  const droppenOff = !online;
   const group = useRef<HTMLDivElement>(null);
   const pick = (choice: WhereChoice) => onChange(chooseWhere(progress, choice, signIn));
   const enabled: WhereChoice[] = droppenOff ? ["local"] : ["droppen", "local"];
@@ -234,11 +230,9 @@ export function WhereStep({ progress, online, onChange, signIn, signInReady = DE
           action={t("Sign in to Droppen")}
           body={t("Open droppen.app on your phone or any other device and carry on with this Mac's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.")}
           note={
-            !signInReady
-              ? t("Signing in from the app is coming soon")
-              : !online
-                ? t("droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.")
-                : null
+            !online
+              ? t("droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.")
+              : null
           }
           recommended
           onPick={() => pick("droppen")}
@@ -301,7 +295,7 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
  * notifications row until the app can ask for them, the phone row,
  * and what is set.
  */
-export function WrapStep({ progress, tools, signIn, signInReady = DESKTOP_SIGN_IN_READY }: StepProps & { signInReady?: boolean }) {
+export function WrapStep({ progress, tools, signIn }: StepProps) {
   const { t } = useTranslation();
   const skipped = <span className="font-mono text-2xs text-faint">{t("skipped")}</span>;
   // What this Mac's sign-in came to, when the guide follows it: in the account, under way, or not (yet).
@@ -344,9 +338,7 @@ export function WrapStep({ progress, tools, signIn, signInReady = DESKTOP_SIGN_I
           body={
             linked?.email
               ? t("Open droppen.app and sign in as {{email}}.", { email: linked.email })
-              : signInReady
-                ? t("Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.")
-                : t("Signing in from the app is coming soon")
+              : t("Want it on your phone too? Sign in to Droppen any time in Settings → Access → Droppen.")
           }
         />
       </div>

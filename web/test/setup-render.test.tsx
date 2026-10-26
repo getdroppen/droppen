@@ -153,27 +153,23 @@ test("offline, the top bar says so", () => {
   assert.doesNotMatch(screen("where", started, undefined), /guide-offline/);
 });
 
-test("step 02: two radios, signing in to Droppen shown as coming soon and not choosable, “Only on this Mac” chosen", () => {
-  const html = draw(<WhereStep progress={started} tools={undefined} online onChange={noop} signInReady={false} />);
+test("step 02: two radios, signing in to Droppen recommended and chosen", () => {
+  const html = draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />);
   assert.match(html, /role="radiogroup"/);
   assert.equal((html.match(/role="radio"/g) ?? []).length, 2);
-  assert.match(html, /<button type="button" role="radio" aria-checked="false" disabled="" tabindex="-1" data-choice="droppen"/);
-  assert.match(html, /data-testid="droppen-note"[^>]*>Signing in from the app is coming soon</);
-  assert.match(html, /aria-checked="true" tabindex="0" data-choice="local"/);
+  assert.match(html, /aria-checked="true" tabindex="0" data-choice="droppen"/);
+  assert.doesNotMatch(html, /droppen-note/, "online, with no reason to hold it back");
+  assert.match(html, /aria-checked="false" tabindex="-1" data-choice="local"/);
   assert.match(html, /Recommended/);
   assert.doesNotMatch(html, /Let browsers on my local network in too/, "the local network waits for its own change");
   assert.match(html, /The Droppen app on this Mac never asks for a password\./);
   assert.match(html, /Change it later in Settings → Access\./);
-  // A stored "droppen" while it cannot be had still shows this Mac only.
-  assert.match(draw(<WhereStep progress={{ ...started, where: { choice: "droppen", lan: false } }} tools={undefined} online onChange={noop} signInReady={false} />), /aria-checked="true" tabindex="0" data-choice="local"/);
-  // Once the app can sign in, it is the recommended default — unless offline.
-  const ready = draw(<WhereStep progress={started} tools={undefined} online onChange={noop} signInReady />);
-  assert.match(ready, /aria-checked="true" tabindex="0" data-choice="droppen"/);
-  assert.doesNotMatch(ready, /droppen-note/);
-  const offline = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} signInReady />);
+  // A stored "droppen" is shown as it stands.
+  assert.match(draw(<WhereStep progress={{ ...started, where: { choice: "droppen", lan: false } }} tools={undefined} online onChange={noop} />), /aria-checked="true" tabindex="0" data-choice="droppen"/);
+  // Offline, signing in cannot be had: this Mac only, with why.
+  const offline = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />);
   assert.match(offline, /data-choice="droppen"[\s\S]*droppen.app needs the internet/);
   assert.match(offline, /aria-checked="true" tabindex="0" data-choice="local"/);
-  assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} signInReady={false} />, "zh-CN"), /很快就能在应用里登录/);
 });
 
 const NOW = Date.parse("2026-10-22T09:00:00Z");
@@ -383,14 +379,13 @@ test("step 04 says what the sign-in came to", () => {
 
 test("step 04: start at login points at the menu bar to turn it on or off, no notifications row, Finish — or the first session once step 03 saved one", () => {
   const p = complete(complete({ ...started, where: { choice: "local", lan: false } }, "tools"), "where");
-  const html = draw(<WrapStep progress={p} tools={tools(true, false)} online onChange={noop} signInReady={false} />);
+  const html = draw(<WrapStep progress={p} tools={tools(true, false)} online onChange={noop} />);
   assert.match(html, /Start Droppen at login/);
   assert.match(html, /Turn it on or off any time from the Droppen icon in the menu bar: Start at Login\./);
   assert.doesNotMatch(html, /role="switch"/, "the menu bar switches it, not the guide");
   assert.doesNotMatch(html, /Notifications/);
-  assert.match(html, /data-testid="wrap-phone"[\s\S]*Signing in from the app is coming soon/);
+  assert.match(html, /data-testid="wrap-phone"[\s\S]*Want it on your phone too\?/);
   assert.match(html, /data-testid="wrap-summary"[\s\S]*Claude Code[\s\S]*Max 20x[\s\S]*Codex[\s\S]*not installed[\s\S]*Only on this Mac/);
-  assert.match(draw(<WrapStep progress={p} tools={undefined} online onChange={noop} signInReady />), /Want it on your phone too\?/);
 
   assert.match(screen("wrap", p, tools(true, false)), /data-variant="primary"[^>]*>Finish</);
   const withFolder = { ...complete(p, "first"), first: { cwd: "/Users/demo/app", agent: "claude" as const, prompt: null } };
