@@ -37,7 +37,8 @@ import { LOCAL, type MachineKey } from "@/lib/machines/key";
 import { type MachineDriver, runtimeFor } from "@/lib/machines/registry";
 import type { AppShell, MachineInfo, MachineRuntime } from "@/lib/machines/runtime";
 import { closeGatewayMachine, leaveGatewayShell, openGatewayMachine } from "@/lib/machines/shells/gateway";
-import { constantStore, createStore, type Store, useStore, type WritableStore } from "@/lib/machines/store";
+import { gatewayShell, setGatewayShell } from "@/features/machines/shells";
+import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
 import type { Transport } from "@/lib/transport/types";
 import { copySessions, type SessionsStore } from "@/features/machines/copy-sessions";
 import { offlineTransport, type OfflineOptions } from "@/features/cloud/offline-transport";
@@ -265,39 +266,11 @@ export class GatewayShell implements AppShell {
   }
 }
 
-const current = createStore<GatewayShell | null>(null);
-
-/** The local app's gateway shell, while it shows other devices; `null` otherwise (and on droppen.app). */
-export function gatewayShell(): GatewayShell | null {
-  return current.get();
-}
-
-/** The gateway shell as it comes and goes. */
-export function gatewayShellStore(): Store<GatewayShell | null> {
-  return current;
-}
-
 /** Start the gateway shell over `link` (a running one is stopped first). */
 export function startGatewayShell(link: GatewayLink, opts: GatewayShellOptions): GatewayShell {
-  current.get()?.stop();
+  gatewayShell()?.stop();
   const shell = new GatewayShell(link, opts);
-  current.set(shell);
+  setGatewayShell(shell);
   shell.start();
   return shell;
-}
-
-/** Stop the gateway shell, if one runs. */
-export function stopGatewayShell(): void {
-  const shell = current.get();
-  if (!shell) return;
-  current.set(null);
-  shell.stop();
-}
-
-const NO_DEVICES = constantStore<readonly MachineInfo[]>([]);
-
-/** The devices the local app shows (this one first), as they change; empty without other devices. */
-export function useGatewayMachines(): readonly MachineInfo[] {
-  const shell = useStore(current);
-  return useStore(shell?.machines() ?? NO_DEVICES);
 }

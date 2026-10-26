@@ -4,7 +4,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
-import { useShowingCopy } from "@/features/cloud/context";
+import { useShowingCopy } from "@/features/machines/copy-mode";
 import { isTerminalGoneFrame, RECONNECT_STABLE_MS, reconnectDelay } from "@/features/terminals/reconnect";
 import { useEnsureLive, useMachineRuntime } from "@/lib/machines/context";
 import type { SocketLike } from "@/lib/transport";

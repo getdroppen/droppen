@@ -7,7 +7,7 @@ import { setRenewalRunner } from "@/lib/hub/renewal";
 import { cacheWipe } from "@/lib/local-cache";
 import { disablePushOnSignOut } from "@/lib/push";
 import { SIGN_IN_PATH } from "@/features/landing/route";
-import { hubShell } from "./hub-shell";
+import { hubShell } from "@/features/machines/shells";
 
 /** Where a sign-out that could not clear everything leaves the list of what, for the sign-in screen. */
 export const SIGN_OUT_FAILURES_KEY = "rh.cloud.signout-failures";

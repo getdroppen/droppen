@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import type { CloudAccount, SelfRemoval } from "@/lib/hub/account";
-import { hubShell } from "./hub-shell";
+import { hubShell } from "@/features/machines/shells";
 import { type HeldSession, signOut, type StillListed } from "./sign-out";
 import { danger, Note, quiet, secondary } from "./ui";
 

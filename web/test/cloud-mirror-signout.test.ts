@@ -10,7 +10,8 @@ import test from "node:test";
 import { type KeyStore, MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { deviceMirrorStore, MIRROR_KEY_NAME, mirrorSeal, streamRecordKey } from "../src/lib/hub/mirror.js";
 import { cacheSealed, cacheSet, cacheUnseal, cacheWipe } from "../src/lib/local-cache.js";
-import { type HubShell, setHubShell } from "../src/features/cloud/hub-shell.js";
+import type { HubShell } from "../src/features/cloud/hub-shell.js";
+import { setHubShell } from "../src/features/machines/shells.js";
 import { clearDeviceCopies, SIGN_OUT_FAILURES_KEY, signOut, takeSignOutFailures } from "../src/features/cloud/sign-out.js";
 
 // The default mirror store is memory here: made before IndexedDB is faked.

@@ -18,7 +18,7 @@ import { useSyncExternalStore } from "react";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { createStore } from "@/lib/machines/store";
-import { hubShell } from "./hub-shell";
+import { hubShell } from "@/features/machines/shells";
 
 /** The hints a browser can put away: adding a second device, and the one-time side-by-side tip. */
 export type Hint = "add-device" | "side-by-side";

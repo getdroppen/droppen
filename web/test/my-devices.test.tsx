@@ -14,7 +14,7 @@ import { askedPlace, cleanDevicesAddress, DEVICES_PATH, isDevicesPath } from "..
 import { AccountName, DevicesButton, MyDevicesScreen } from "../src/features/cloud/my-devices.js";
 import { AccountNotices, DevicesPanel, ThisDeviceSection } from "../src/features/cloud/devices.js";
 import { openRelayPicker } from "../src/features/cloud/cloud-bar.js";
-import { setHubShell } from "../src/features/cloud/hub-shell.js";
+import { setHubShell } from "../src/features/machines/shells.js";
 import { RelaySection } from "../src/features/cloud/relays.js";
 import { constantStore } from "../src/lib/machines/store.js";
 import { meStore } from "../src/lib/hub/me.js";

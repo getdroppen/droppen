@@ -63,6 +63,7 @@ function worker(
   opts: {
     network?: Record<string, [string, Record<string, string>] | number>;
     precache?: string[];
+    precacheCloud?: string[];
     languages?: Record<string, { prefix: string; files: string[] }>;
     table?: Record<string, string>;
     shell?: string;
@@ -75,6 +76,7 @@ function worker(
 ) {
   const table = opts.table ?? { "/assets/app-1.js": sha(APP), "/assets/vendor-1.js": sha(VENDOR) };
   const text = SOURCE.replace("const PRECACHE = [];", `const PRECACHE = ${JSON.stringify(opts.precache ?? [])};`)
+    .replace("const PRECACHE_CLOUD = [];", `const PRECACHE_CLOUD = ${JSON.stringify(opts.precacheCloud ?? [])};`)
     .replace("const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(table)};`)
     .replace('const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(opts.shell ?? sha(SHELL))};`)
     .replace("const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(opts.scripts ?? [])};`)
@@ -306,6 +308,35 @@ test("the worker picks the browser's language by the page's own rule (match.ts)"
   }
 });
 
+test("install precaches the cloud app's chunks too, only where a hub serves the shell", async () => {
+  const CLOUD = "export const cloud = 1;";
+  const table = { "/assets/app-1.js": sha(APP), "/assets/cloud-app-1.js": sha(CLOUD) };
+  const network = { "/assets/app-1.js": [APP, JS], "/assets/cloud-app-1.js": [CLOUD, JS] } as Record<string, [string, Record<string, string>]>;
+  const opts = { table, precache: ["/assets/app-1.js"], precacheCloud: ["/assets/cloud-app-1.js"] };
+  // A hub's shell, as the network has it on the first install.
+  const hub = worker({ ...opts, network: { ...network, "/sessions": [marked(), HTML] } });
+  await hub.install();
+  assert.equal(await (await hub.cache()).text("/assets/cloud-app-1.js"), CLOUD);
+  assert.equal(await (await hub.cache()).text("/assets/app-1.js"), APP);
+  // A later install reads the shell kept for offline instead: nothing more is fetched to tell.
+  const later = worker({ ...opts, network });
+  await (await later.cache()).put("/", new Response(marked(), { headers: HTML }));
+  await later.install();
+  assert.equal(await (await later.cache()).text("/assets/cloud-app-1.js"), CLOUD);
+  assert.deepEqual(later.fetched, ["/assets/app-1.js", "/assets/cloud-app-1.js"]);
+  // A local server's shell (no marker): only the local app's boot.
+  const local = worker({ ...opts, network: { ...network, "/sessions": [SHELL, HTML] } });
+  await local.install();
+  assert.equal(await (await local.cache()).text("/assets/app-1.js"), APP);
+  assert.equal(await (await local.cache()).match("/assets/cloud-app-1.js"), undefined);
+  assert.deepEqual(local.fetched, ["/sessions", "/assets/app-1.js"]);
+  // Offline, or no shell to read: the local app's boot, as before.
+  const offline = worker({ ...opts, network });
+  await offline.install();
+  assert.equal(await (await offline.cache()).match("/assets/cloud-app-1.js"), undefined);
+  assert.equal(await (await offline.cache()).text("/assets/app-1.js"), APP);
+});
+
 test("activate drops other caches, unlisted and tampered assets, a foreign shell and anything else", async () => {
   const sw = worker({ network: { "/sessions": [marked(), HTML] } });
   const cache = await sw.cache();
@@ -454,10 +485,11 @@ test("the build writes every asset's sha256 and the shell's into sw.js, sorted, 
     writeFileSync(join(dir, "assets", "app-1.js"), APP);
     writeFileSync(join(dir, "assets", "fonts", "a.woff2"), "font$&$'");
     writeFileSync(join(dir, "sw.js"), SOURCE);
-    fillServiceWorker(dir, ["/assets/app-1.js"]);
+    fillServiceWorker(dir, ["/assets/app-1.js"], { cloudBoot: ["/assets/vendor-1.js"] });
     let text = readFileSync(join(dir, "sw.js"), "utf8");
     assert.match(text, /^const HUB_ORIGIN = "";$/m, "a normal build: only this origin's own marker is accepted");
     assert.match(text, /^const PRECACHE = \["\/assets\/app-1\.js"\];$/m);
+    assert.match(text, /^const PRECACHE_CLOUD = \["\/assets\/vendor-1\.js"\];$/m);
     const table = JSON.parse(/^const INTEGRITY = (\{.*\});$/m.exec(text)![1]!);
     assert.deepEqual(Object.keys(table), ["/assets/app-1.js", "/assets/fonts/a.woff2", "/assets/vendor-1.js"]);
     assert.equal(table["/assets/fonts/a.woff2"], sha("font$&$'"));

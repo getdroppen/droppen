@@ -27,8 +27,9 @@ import { copyWindow } from "@/lib/hub/streams";
 import { Button } from "@/components/ui/button";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { useMachine } from "@/lib/machines/context";
-import { mirrorFor, useShellCopies, useShowingCopy } from "./context";
-import { hubShell } from "./hub-shell";
+import { mirrorFor, useShellCopies } from "./context";
+import { useShowingCopy } from "@/features/machines/copy-mode";
+import { hubShell } from "@/features/machines/shells";
 import { shownName, useMachineStatuses } from "./machine-name";
 
 /*

@@ -40,7 +40,8 @@ import { useAgentKeyState, useHubOnly, usePresenceVersion, useShellCopies } from
 import { DeviceRow, type DeviceRowView, shortDeviceId } from "./device-row";
 import { askedPlace } from "./devices-route";
 import { FirstHostCard } from "./first-host";
-import { hubShell, sessionPath, shellCourier, useFocusedMachine, useShellMachines } from "./hub-shell";
+import { sessionPath, shellCourier } from "./hub-shell";
+import { hubShell, useFocusedMachine, useShellMachines } from "@/features/machines/shells";
 import { MachineNotes, noteRenamed, RenameMachineForm, renameThroughNewChannel, shownName, useMachineStatuses, useRenamed } from "./machine-name";
 import { addAsked } from "./onboarding";
 import { AddDeviceHint } from "./onboarding-hints";

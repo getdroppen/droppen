@@ -38,8 +38,8 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { SessionHeader } from "@/features/sessions/session-header";
-import { useShowingCopy } from "@/features/cloud/context";
-import { CopyWindowNotice } from "@/features/cloud/plan";
+import { useShowingCopy } from "@/features/machines/copy-mode";
+import { cloudParts } from "@/app/cloud-parts";
 import { SessionActionsMenu } from "@/features/sessions/session-actions-menu";
 import {
   ChecklistChip,
@@ -2209,6 +2209,7 @@ export function SessionDetailInner({
   const api = useApi();
   const machine = useMachine();
   const session = useSessionRef(source, id);
+  const CopyWindowNotice = cloudParts()?.CopyWindowNotice;
   // Another device's session in the local app, from its copy (S1-7): read-only here.
   const readOnly = useInfoOf(machine).readOnly === true;
   // A transcript open is the machine itself in use: live, not only its copy.
@@ -2875,7 +2876,7 @@ export function SessionDetailInner({
           }}
         />
         {/* The top of an offline copy the plan's retention trimmed: the rest is on the computer (cloud mode only). */}
-        {!data.hasMoreBefore && <CopyWindowNotice source={summary.source} id={id} />}
+        {!data.hasMoreBefore && CopyWindowNotice && <CopyWindowNotice source={summary.source} id={id} />}
         {data.hasMoreBefore && (
           <>
             <button

@@ -39,7 +39,7 @@ import {
   type SessionListRow,
 } from "@/features/sessions/session-list-model";
 import { copyNote, type DeviceChoice, DeviceFilterBar, deviceLabel, loadDeviceChoice, saveDeviceChoice } from "@/features/sessions/device-filter";
-import { gatewayShell, gatewayShellStore } from "@/features/gateway/gateway-shell";
+import { gatewayShell, gatewayShellStore } from "@/features/machines/shells";
 import { useDeviceSessions, useShellDevices } from "@/features/machines/device-sessions";
 import { type DeviceSessions, needsYou } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";

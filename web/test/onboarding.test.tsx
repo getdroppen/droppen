@@ -18,7 +18,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AddComputer, codeDeadline, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
-import { setHubShell } from "../src/features/cloud/hub-shell.js";
+import { setHubShell } from "../src/features/machines/shells.js";
 import { addAsked, dismissHint, hintDismissed, openAddDevice, partnerFor, watchNewHost } from "../src/features/cloud/onboarding.js";
 import { AddDeviceHint, SideBySideTip } from "../src/features/cloud/onboarding-hints.js";
 import { makeSideBySide, paneFor, type ScreenMaker, SideBySideError, sideBySideLayout, whenLive, whenReady } from "../src/features/cloud/side-by-side.js";

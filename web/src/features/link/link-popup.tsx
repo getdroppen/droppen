@@ -10,7 +10,7 @@ import { linkCourier } from "@/lib/hub/deliver";
 import { addHost, type AddStep } from "./add-host";
 import type { HubLink } from "@/lib/hub/link";
 import { atLimit, HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
-import { hubShell } from "@/features/cloud/hub-shell";
+import { hubShell } from "@/features/machines/shells";
 import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
 import { publicHref } from "@/features/landing/route";
 import { hubHosts } from "@/lib/hub/hosts";

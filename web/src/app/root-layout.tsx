@@ -1,6 +1,4 @@
 import { Menu } from "@base-ui-components/react/menu";
-import { CloudBar } from "@/features/cloud/cloud-bar";
-import { SideBySideTip } from "@/features/cloud/onboarding-hints";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
@@ -46,6 +44,7 @@ import { type DeviceSessions, unreadAcross } from "@/features/machines/needs-you
 import { UnreadSignals } from "@/features/machines/unread-signals";
 import { GatewayBoot } from "@/features/gateway/gateway-boot";
 import { isCloud } from "@/lib/hub/config";
+import { cloudParts } from "./cloud-parts";
 import { GlobalFeedProvider, useGlobalFeedSelector, useMachineFeedSelector, type GlobalFeedState } from "./global-feed";
 import { MachineLink, useRouteMachine, useRouterCaughtUp, useSectionPath } from "./machine-route";
 import { PanesProvider, usePanes } from "./panes";
@@ -274,7 +273,8 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
  */
 function SideBySideTipBar() {
   const { createScreen } = useScreens();
-  return <SideBySideTip onScreen={createScreen} />;
+  const SideBySideTip = cloudParts()?.SideBySideTip;
+  return SideBySideTip ? <SideBySideTip onScreen={createScreen} /> : null;
 }
 
 /** Follows server-side UI prefs (font size, language); boot caches cover first paint. */
@@ -475,6 +475,7 @@ function RootLayoutInner() {
   // button and needs the height, so the bottom nav collapses there.
   // A session about to be started (`/sessions/new`) is one of them.
   const deepView = /^\/(?:sessions\/[^/]+\/[^/]+|sessions\/new\/?$|chat\/(?:claude|codex|api)\/)/.test(pathname);
+  const CloudBar = cloudParts()?.CloudBar;
   return (
     <div className="flex h-full flex-col">
       {!isCloud() && <GatewayBoot />}
@@ -485,7 +486,7 @@ function RootLayoutInner() {
       <NewSessionHotkey here={routeMachine} />
       <UnreadTitle />
       <VersionBanner />
-      <CloudBar />
+      {CloudBar && <CloudBar />}
       <SideBySideTipBar />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
         <nav

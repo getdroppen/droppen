@@ -30,7 +30,8 @@ import { FMT_INDEX_V1, FMT_STATUS_V1, hex, indexStream, MemoryKeyStore, statusSt
 import type { PresenceState } from "../src/lib/hub/link.js";
 import type { MachineStatus } from "../src/lib/hub/machine.js";
 import { homeMachine } from "../src/lib/machines/registry.js";
-import { HubShell, hubShell, sessionPath, setHubShell } from "../src/features/cloud/hub-shell.js";
+import { HubShell, sessionPath } from "../src/features/cloud/hub-shell.js";
+import { hubShell, setHubShell } from "../src/features/machines/shells.js";
 import { totalUnread, UNREAD_CAP } from "../src/features/sessions/session-attention.js";
 import { copySessions } from "../src/features/machines/copy-sessions.js";
 import { constantStore } from "../src/lib/machines/store.js";

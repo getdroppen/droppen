@@ -22,7 +22,7 @@ import { currentUser } from "@/lib/auth";
 import { GatewayLink } from "@/lib/gateway/link";
 import { LOCAL } from "@/lib/machines/key";
 import { apiFor, transportFor } from "@/lib/machines/registry";
-import { startGatewayShell, stopGatewayShell } from "./gateway-shell";
+import { stopGatewayShell } from "@/features/machines/shells";
 
 /** How often the page looks again at whether it should show other devices. */
 export const RECHECK_MS = 60_000;
@@ -66,7 +66,11 @@ export function GatewayBoot() {
         if (!gone) setRound((n) => n + 1);
       });
     });
-    startGatewayShell(link, { user: currentUser() ?? null });
+    // The shell and the copies it reads are a chunk of their own, fetched
+    // only by a page that shows other devices.
+    void import("./gateway-shell").then(({ startGatewayShell }) => {
+      if (!gone) startGatewayShell(link, { user: currentUser() ?? null });
+    });
     return () => {
       gone = true;
       offBye();

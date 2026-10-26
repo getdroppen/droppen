@@ -1,10 +1,11 @@
 /*
  * The hooks the cloud screens read the page's cloud state with: the hub
- * link's state and presence, a machine's channel and paths, whether a view's
- * machine is shown from its copy. What there is to read — the account, the
- * link, every machine's channel and copy — is droppen.app's shell
- * (`hub-shell.ts`, `hubShell()`), `null` in local mode, which is how the
- * cloud components render nothing there.
+ * link's state and presence, a machine's channel, paths and copy (whether a
+ * view shows the copy is `lib/machines/copy-mode.ts`, which every mode
+ * reads). What there is to read — the account, the link, every machine's
+ * channel and copy — is droppen.app's shell (`hub-shell.ts`, `hubShell()`),
+ * `null` in local mode, which is how the cloud components render nothing
+ * there.
  */
 import { useMemo, useSyncExternalStore } from "react";
 import { type AgentKeyState, agentKeyState, onAgentKeyState } from "@/lib/hub/deliver";
@@ -13,13 +14,9 @@ import type { PathStats } from "@/lib/e2e";
 import type { MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { MachineMirror } from "@/lib/hub/mirror";
 import type { RelayPool } from "@/lib/hub/relays";
-import { useMachineRuntime } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
-import { useStore } from "@/lib/machines/store";
-import type { Transport } from "@/lib/transport/types";
 import { hubOnly, onHubOnly } from "@/lib/transport/p2p";
-import type { CloudMode, SwitchingTransport } from "./cloud-transport";
-import { hubShell } from "./hub-shell";
+import { hubShell } from "@/features/machines/shells";
 
 /** `machine`'s offline copy, when droppen.app has it open and this device holds a key for it. */
 export function mirrorFor(machine: MachineKey): MachineMirror | null {
@@ -105,31 +102,6 @@ export function usePaths(channel: MachineChannel | null | undefined): PathStats 
 /** This device's "hub only" setting (no direct paths). */
 export function useHubOnly(): boolean {
   return useSyncExternalStore(onHubOnly, hubOnly, () => false);
-}
-
-/** Whether the page is on the machine (`live`) or its copy (`offline`); `live` outside cloud mode. */
-export function useCloudMode(transport: SwitchingTransport | null | undefined): CloudMode {
-  return useSyncExternalStore(
-    (notify) => (transport ? transport.onMode(notify) : () => undefined),
-    () => transport?.current ?? "live",
-  );
-}
-
-/** A transport that switches between a machine and its offline copy (cloud mode's), or `null`. */
-function switching(transport: Transport): SwitchingTransport | null {
-  return "onMode" in transport ? (transport as SwitchingTransport) : null;
-}
-
-/**
- * Whether this view's machine is being shown from its offline copy right now
- * (any component, cloud mode or not) — also another device the local app
- * only ever shows from its copy, read-only (its gateway, S1-7).
- */
-export function useShowingCopy(): boolean {
-  const runtime = useMachineRuntime();
-  const mode = useCloudMode(switching(runtime.transport));
-  const readOnly = useStore(runtime.info()).readOnly === true;
-  return mode === "offline" || readOnly;
 }
 
 export interface CopyView {

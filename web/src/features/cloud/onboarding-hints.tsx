@@ -17,7 +17,7 @@
 import { useTranslation } from "react-i18next";
 import { Columns2, Plus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { hubShell, useShellMachines } from "./hub-shell";
+import { hubShell, useShellMachines } from "@/features/machines/shells";
 import { dismissHint, type Hint, openAddDevice, useHint } from "./onboarding";
 
 /** The hint `hint` for the page's account: whether it shows, and how to put it away. */

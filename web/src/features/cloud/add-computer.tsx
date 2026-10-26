@@ -16,7 +16,7 @@ import { type Availability, AVAILABILITY, codeInstallCommand, downloadHref, INST
 import { fileLink, useLatestRelease } from "@/features/landing/release-files";
 import { publicHref } from "@/features/landing/route";
 import { agentHub, appHost } from "@/lib/hub/hosts";
-import { hubShell, useShellMachines } from "./hub-shell";
+import { hubShell, useShellMachines } from "@/features/machines/shells";
 import { type NewHost, partnerFor, watchNewHost } from "./onboarding";
 import { FirstMachineNote, LimitNote, useMe } from "./plan";
 import { makeSideBySide, shellScreenMaker, SideBySideError } from "./side-by-side";

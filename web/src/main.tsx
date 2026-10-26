@@ -4,20 +4,17 @@
 import "./lib/local-open-boot";
 // The address as it loaded (the hand-off's fragment still on it), for the
 // move notice on the hub's origin to pass on whole (`lib/hub/boot-url.ts`).
-import "./lib/hub/boot-url";
+// Taken here and handed to the notice: read only by the notice's own chunk,
+// it would be read when that chunk runs, with the fragments gone.
+import { BOOT_URL } from "./lib/hub/boot-url";
 import { takeReturn } from "./features/link/fragment-boot";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { CloudApp } from "./features/cloud/cloud-app";
 import { isReturnPath } from "./features/link/handoff";
-import { LinkReturnPage } from "./features/link/link-return";
 import { isCloud } from "./lib/hub/config";
 import { appUrl, moveOrigins, notInstallable, resolveHostMode, siteOrigin } from "./lib/hub/hosts";
 import { MOVE_PATH } from "./lib/move/types";
-import { MovePage } from "./features/move";
 import { frontPage } from "./features/landing/route";
-import { SiteApp } from "./features/landing/site-app";
-import { startLegacy } from "./features/hosts/legacy";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { router } from "./app/router";
@@ -58,6 +55,13 @@ startBadgeSync();
 // of a hub that does not say) runs the app as above; the site host only the
 // public pages, with no key store and no service worker; the hub's origin,
 // once the app has moved off it, the move notice (`features/hosts/legacy.tsx`).
+//
+// Every page but the local app is fetched by the page that runs it: the local
+// app's boot carries none of cloud mode's code (`build/local-boot.ts` fails
+// the build if it does). What a hub serves is one chunk (`hub-pages.ts`), and
+// the shell asks for it as it loads (`cloudPreloadScript`), so it is on its
+// way while the hub's hosts are read. Until a page's chunk is there, the page
+// stays as blank as it is before any script runs.
 const returning = !isCloud() && isReturnPath(location.pathname);
 if (!isCloud() && !returning) {
   startLocalShell();
@@ -70,10 +74,13 @@ if (!isCloud() && !returning) {
 const root = rootInLanguage(createRoot(document.getElementById("root")!));
 if (returning) {
   registerSw();
-  root.render(
-    <StrictMode>
-      <LinkReturnPage answer={takeReturn()} />
-    </StrictMode>,
+  const answer = takeReturn();
+  void import("./features/link/link-return").then(({ LinkReturnPage }) =>
+    root.render(
+      <StrictMode>
+        <LinkReturnPage answer={answer} />
+      </StrictMode>,
+    ),
   );
 } else if (!isCloud()) {
   registerSw();
@@ -85,12 +92,13 @@ if (returning) {
     </StrictMode>,
   );
 } else {
-  void resolveHostMode().then((mode) => {
+  void resolveHostMode().then(async (mode) => {
     const here = `${location.pathname}${location.search}${location.hash}`;
     if (mode === "site") {
       // Not one of the public pages: the app's, on the app host.
       if (!frontPage(location.pathname)) return location.replace(appUrl(here));
       notInstallable();
+      const { SiteApp } = await import("./hub-pages");
       return root.render(
         <StrictMode>
           <SiteApp />
@@ -102,17 +110,19 @@ if (returning) {
     // The hub's origin serves it for a pull in any of its modes (`moveOrigins`: the pinned pair, on either of them).
     const move = location.pathname === MOVE_PATH ? moveOrigins() : null;
     if (move) {
+      const { MovePage } = await import("./hub-pages");
       return root.render(
         <StrictMode>
           <MovePage origins={move} />
         </StrictMode>,
       );
     }
-    if (mode === "legacy") return startLegacy(root);
+    if (mode === "legacy") return (await import("./hub-pages")).startLegacy(root, BOOT_URL);
     // The app host: the public pages are the site host's.
     const site = siteOrigin();
     if (site && frontPage(location.pathname)) return location.replace(`${site}${here}`);
     registerSw();
+    const { CloudApp } = await import("./hub-pages");
     root.render(
       <StrictMode>
         <QueryClientProvider client={queryClient}>

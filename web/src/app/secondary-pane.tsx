@@ -15,13 +15,13 @@ import { ApiChatViewInner, FilesBrowser, NewSessionView, SessionDetailInner } fr
 import { paneMachine, usesMachine, withMachine, type PaneContent } from "./pane-tree";
 import { MachineView } from "./machine-route";
 import { usePaneTreeMixed } from "./pane-tree-view";
+import { cloudParts } from "./cloud-parts";
 import { basename, formatRelative } from "@/lib/format";
 import { hostLocale } from "@/plugins/host";
 import { readPaneContent, storePaneContent, type PluginPaneContent } from "@/plugins/pane-content";
 import { PluginIcon } from "@/plugins/boundary";
 import { PluginPane, usePluginPaneOptions, usePluginPaneTitle } from "@/plugins/plugin-pane";
 import { DeviceChip, DevicePicker, readOnlyHere } from "@/features/machines/device-picker";
-import { AddDeviceHint } from "@/features/cloud/onboarding-hints";
 import { useApi, useHoldMachine, useHomeMachine, useMachine, useOpenMachines } from "@/lib/machines/context";
 import { isOpen, shellKind } from "@/lib/machines/registry";
 import { sessionKey, type MachineKey } from "@/lib/machines/key";
@@ -271,6 +271,7 @@ function PanePicker({
   const pluginPanes = usePluginPaneOptions();
   const locale = hostLocale();
   const several = useOpenMachines().length > 1;
+  const AddDeviceHint = cloudParts()?.AddDeviceHint;
   // Only devices something can be kept on: a pane never names one shown read-only.
   const devices = <DevicePicker value={machine} onSelect={onMachine} writable />;
 
@@ -346,7 +347,7 @@ function PanePicker({
             </span>
           </button>
           {/* droppen.app with one device that runs AI: a second one could be in a pane too (until put away). */}
-          {!several && <AddDeviceHint variant="line" className="mt-1" />}
+          {!several && AddDeviceHint && <AddDeviceHint variant="line" className="mt-1" />}
         </div>
       )}
       {level !== null && (

@@ -6,6 +6,7 @@ import { defineConfig, type Plugin, type Rollup } from "vite";
 import { cloudBuild, cloudConfig } from "./build/cloud-mode";
 import { devTools } from "./build/dev-tools";
 import { droppenPlugins } from "./build/droppen-plugins";
+import { hubPagesSet, localBoot } from "./build/local-boot";
 import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
@@ -114,14 +115,17 @@ function katexWoff2Only(): Plugin {
  * checks — on returning to the tab, or when the version banner appears — and
  * the install fetches the new chunks in the background, before the reload that
  * needs them. Only the entry chunk, its static imports and their CSS: lazy
- * chunks are fetched when used, not on every install over a weak link. A
- * page also boots from its language's translations, which are a chunk per
- * language: those the worker precaches only for the languages the browser
- * shows ({@link languageChunks}). The hashes are what the worker checks every
- * asset against before it caches or serves it.
+ * chunks are fetched when used, not on every install over a weak link —
+ * but for the cloud app's, which a page a hub serves boots from too
+ * (`PRECACHE_CLOUD`, `build/local-boot.ts`). A page also boots from its
+ * language's translations, which are a chunk per language: those the worker
+ * precaches only for the languages the browser shows ({@link languageChunks}).
+ * The hashes are what the worker checks every asset against before it caches
+ * or serves it.
  */
 function precacheBootSet(): Plugin {
   let boot: string[] = [];
+  let cloudBoot: string[] = [];
   let languages: LanguageFiles = {};
   return {
     name: "rh-precache-boot-set",
@@ -139,6 +143,7 @@ function precacheBootSet(): Plugin {
         if (chunk.type === "chunk" && chunk.isEntry) visit(chunk.fileName);
       }
       boot = [...files].sort().map((file) => `/${file}`);
+      cloudBoot = hubPagesSet(bundle);
       languages = languageChunks(bundle, files);
     },
     // After every file is written and the public directory copied, so `sw.js`
@@ -146,7 +151,7 @@ function precacheBootSet(): Plugin {
     // build the worker is told the marker origin too; the marker itself goes
     // in later (`cloudBuild`), so the shell it hashes is the build's own.
     writeBundle(options) {
-      fillServiceWorker(options.dir ?? "dist", boot, { hubOrigin: cloud?.hubOrigin, languages });
+      fillServiceWorker(options.dir ?? "dist", boot, { hubOrigin: cloud?.hubOrigin, cloudBoot, languages });
     },
   };
 }
@@ -194,6 +199,8 @@ export default defineConfig({
     tailwindcss(),
     katexWoff2Only(),
     guardBootChunks(ON_DEMAND),
+    // No cloud code in the local app's boot; the shell preloads the cloud app's chunks where a hub serves it.
+    localBoot(),
     precacheBootSet(),
     // Static-hosting output, only with `DROPPEN_WEB_MODE=cloud` (a no-op otherwise).
     cloudBuild(cloud),

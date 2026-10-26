@@ -3,7 +3,7 @@ import type { Root } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { HubApi } from "@/lib/hub/api";
-import { BOOT_URL, bootPath } from "@/lib/hub/boot-url";
+import { type BootUrl, bootPath } from "@/lib/hub/boot-url";
 import { hubOrigin } from "@/lib/hub/config";
 import { type DeviceHere, deviceHere } from "@/lib/hub/device-here";
 import { hubHosts, notInstallable } from "@/lib/hub/hosts";
@@ -74,16 +74,20 @@ export function goesStraightOn(c: Pick<LegacyCase, "here" | "popup" | "standalon
   return !c.here.held && !c.popup && !c.standalone;
 }
 
-/** The move notice in `root` — or, for a browser with nothing here, straight on to the app host. */
-export async function startLegacy(root: Root): Promise<void> {
+/**
+ * The move notice in `root` — or, for a browser with nothing here, straight on
+ * to the app host. `boot` is the address the page loaded with
+ * (`lib/hub/boot-url.ts`), as `main.tsx` took it.
+ */
+export async function startLegacy(root: Root, boot: BootUrl | null): Promise<void> {
   const app = hubHosts()?.app;
   if (!app) return;
   notInstallable();
   const c: LegacyCase = {
     app,
-    continueTo: bootPath(BOOT_URL),
+    continueTo: bootPath(boot),
     here: await deviceHere(),
-    popup: isLinkPath(BOOT_URL?.pathname ?? location.pathname) && !!window.opener,
+    popup: isLinkPath(boot?.pathname ?? location.pathname) && !!window.opener,
     standalone: appleHomeScreenApp(),
   };
   if (goesStraightOn(c)) return location.replace(`${c.app}${c.continueTo}`);

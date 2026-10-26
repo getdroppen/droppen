@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
-import { Centered, Note, Panel } from "@/features/cloud/ui";
+import { Centered, Note, Panel } from "@/features/cloud/page";
 
 /*
  * `/link/return` on a device's own page (never droppen.app): where droppen.app

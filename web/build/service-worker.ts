@@ -7,6 +7,9 @@ import { join } from "node:path";
  * (vite.config.ts `precacheBootSet`, after the files are written):
  *
  * - `PRECACHE`: the assets the app boots from, fetched by the worker's install;
+ * - `PRECACHE_CLOUD`: the cloud app's chunks, which a page a hub serves boots
+ *   from too (`build/local-boot.ts`), fetched by the install where a hub
+ *   serves the shell;
  * - `INTEGRITY`: every file under `assets/` → the sha256 (hex) of its bytes on
  *   disk, sorted by path;
  * - `SHELL_SHA256`: the sha256 of `index.html` as built, before a hub writes
@@ -33,7 +36,7 @@ import { join } from "node:path";
  */
 export type LanguageFiles = Record<string, { prefix: string; files: string[] }>;
 
-export function fillServiceWorker(dir: string, boot: readonly string[], opts: { hubOrigin?: string; languages?: LanguageFiles } = {}): void {
+export function fillServiceWorker(dir: string, boot: readonly string[], opts: { hubOrigin?: string; cloudBoot?: readonly string[]; languages?: LanguageFiles } = {}): void {
   const file = join(dir, "sw.js");
   let text = readFileSync(file, "utf8");
   const integrity: Record<string, string> = {};
@@ -41,6 +44,7 @@ export function fillServiceWorker(dir: string, boot: readonly string[], opts: { 
   const shell = readFileSync(join(dir, "index.html"));
   const fills: [marker: string, value: string][] = [
     ["const PRECACHE = [];", `const PRECACHE = ${JSON.stringify(boot)};`],
+    ["const PRECACHE_CLOUD = [];", `const PRECACHE_CLOUD = ${JSON.stringify(opts.cloudBoot ?? [])};`],
     ["const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(integrity)};`],
     ['const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(sha256(shell))};`],
     ["const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(inlineScriptSources(shell.toString("utf8")))};`],

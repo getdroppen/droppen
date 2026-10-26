@@ -38,7 +38,9 @@
  *   yet — the release's new app chunk, in the background, before the reload
  *   that needs it. A page boots from its language's translations too (a
  *   chunk per language but English, LANGUAGES): those of the languages this
- *   browser shows are precached with it, and no other;
+ *   browser shows are precached with it, and no other. A page a hub serves
+ *   boots from the cloud app's chunks as well (PRECACHE_CLOUD): precached
+ *   where a hub serves the shell;
  * - only real assets are kept under /assets/: never the HTML a server answers
  *   for a path it does not have, which cached under a script's name would be
  *   handed to the module loader for good.
@@ -48,6 +50,7 @@ const CACHE = "rh-sw-v1";
 
 /* Filled in by the build; empty under `vite dev`, which never registers this. */
 const PRECACHE = [];
+const PRECACHE_CLOUD = [];
 const INTEGRITY = {};
 const SHELL_SHA256 = "";
 /* The CSP sources of the shell's inline scripts ('sha256-…'), as a hub allows them. */
@@ -258,6 +261,23 @@ function refused(path) {
   });
 }
 
+/* Whether a hub serves this origin's shell (cloud mode), whose page boots from
+ * PRECACHE_CLOUD too: the shell kept for offline says, else the one the
+ * network has now. Only which listed assets the install fetches ahead hangs
+ * on it; each is still checked against INTEGRITY. */
+async function servedByHub(cache) {
+  if (PRECACHE_CLOUD.length === 0) return false;
+  try {
+    const res = (await cache.match(SHELL)) ?? (await fetch("/sessions"));
+    if (!res.ok) return false;
+    const text = await res.text();
+    const head = text.indexOf("<head>");
+    return head >= 0 && text.startsWith('<meta name="rh-hub"', head + "<head>".length);
+  } catch {
+    return false;
+  }
+}
+
 /* The SPA's full route set (app/router.tsx), plus cloud mode's sign-in,
  * sign-up and e-mail verification pages (features/landing/route.ts) and its
  * 「我的设备」 (features/cloud/devices-route.ts), and every other device's pages
@@ -275,7 +295,8 @@ self.addEventListener("install", (e) => {
     (async () => {
       try {
         const cache = await caches.open(CACHE);
-        for (const url of [...PRECACHE, ...(await shownLanguages(cache))]) {
+        const hub = await servedByHub(cache);
+        for (const url of [...PRECACHE, ...(hub ? PRECACHE_CLOUD : []), ...(await shownLanguages(cache))]) {
           const hit = await cache.match(url);
           if (hit !== undefined && (await assetMatches(url, hit))) continue;
           const res = await fetchListed(url, url);

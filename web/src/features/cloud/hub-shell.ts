@@ -63,7 +63,8 @@ import { closeMachine, homeMachine, isOpen, type MachineDriver, runtimeFor, setH
 import { machinePath, splitMachinePath } from "@/lib/machines/routes";
 import type { AppShell, MachineInfo, MachineRuntime } from "@/lib/machines/runtime";
 import { enterHubShell, openHubMachine } from "@/lib/machines/shells/hub";
-import { constantStore, createStore, type Store, useStore, type WritableStore } from "@/lib/machines/store";
+import { hubShell } from "@/features/machines/shells";
+import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
 import { onPageResume } from "@/lib/page-resume";
 import { type Pipe, type PipeMessage, type PipeOpener, tunnelTransport } from "@/lib/transport/tunnel";
 import { feedHubFor } from "@/app/global-feed";
@@ -1114,34 +1115,10 @@ export class HubShell implements AppShell {
   }
 }
 
-let current: HubShell | null = null;
-
-/** droppen.app's shell, once the page is past sign-in and device setup; `null` in local mode. */
-export function hubShell(): HubShell | null {
-  return current;
-}
-
-export function setHubShell(next: HubShell | null): void {
-  current = next;
-}
-
-const NO_FOCUS = constantStore<MachineKey | null>(null);
-
-/** The machine droppen.app has in view (`null`: 「我的设备」, or local mode), as it changes. */
-export function useFocusedMachine(): MachineKey | null {
-  return useStore(current?.focus ?? NO_FOCUS);
-}
-
-/** Every machine droppen.app has, as each changes (empty in local mode). */
-export function useShellMachines(): readonly MachineInfo[] {
-  return useStore(current?.machines() ?? NO_MACHINES);
-}
-const NO_MACHINES = constantStore<readonly MachineInfo[]>([]);
-
 /**
  * A courier for machine keys (`linkCourier`) that hands a key over in the
  * channel the page already has open to that machine, when it has one.
  */
 export function shellCourier(link: HubLink, account: CloudAccount): RenewalCourier {
-  return linkCourier(link, account, (machine) => current?.machine(machine)?.channel, current?.relays);
+  return linkCourier(link, account, (machine) => hubShell()?.machine(machine)?.channel, hubShell()?.relays);
 }

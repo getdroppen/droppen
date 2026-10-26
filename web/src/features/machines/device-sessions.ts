@@ -15,8 +15,7 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { type Store, useStore } from "@/lib/machines/store";
-import { hubShell, useShellMachines } from "@/features/cloud/hub-shell";
-import { gatewayShell, gatewayShellStore, useGatewayMachines } from "@/features/gateway/gateway-shell";
+import { gatewayShell, gatewayShellStore, hubShell, useGatewayMachines, useShellMachines } from "./shells";
 import type { DeviceSessions } from "./needs-you";
 
 /**

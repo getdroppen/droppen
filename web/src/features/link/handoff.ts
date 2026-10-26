@@ -18,7 +18,8 @@
  * Nothing secret ever goes in a URL: the popup opens at `/link?v=1`.
  */
 
-import { fromHex, hex, sha256, utf8 } from "@/lib/e2e";
+import { fromHex, hex, utf8 } from "@/lib/e2e/bytes";
+import { sha256 } from "@/lib/e2e/keys";
 
 export const LINK_VERSION = 1;
 /** The popup's path on the hub. */

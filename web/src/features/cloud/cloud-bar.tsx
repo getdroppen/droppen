@@ -18,13 +18,13 @@ import {
   type CopyView,
   useAgentKeyState,
   useChannelStatus,
-  useCloudMode,
   useCopyView,
   useHubOnly,
   useLinkState,
   useMachinePresence,
   useRelayPool,
 } from "./context";
+import { useCloudMode } from "@/features/machines/copy-mode";
 import { ChainAlerts, PendingRecoveryBanner } from "./devices";
 import { AccountButton, DevicesButton, openAccount, openMyDevices, removePasskeyThere } from "./my-devices";
 import { PendingPasskeyBanner } from "./passkey-join";
@@ -34,7 +34,8 @@ import { RegisteredDeviceAlerts, SignInChangeAlerts, storageFullText, useMe } fr
 import { CompatBadge } from "./browser-support";
 import { storageView } from "@/lib/hub/plan";
 import { SignOutChoice } from "./sign-out-dialog";
-import { addressOn, type HubMachine, type HubShell, hubShell, useFocusedMachine, useShellMachines } from "./hub-shell";
+import { addressOn, type HubMachine, type HubShell } from "./hub-shell";
+import { hubShell, useFocusedMachine, useShellMachines } from "@/features/machines/shells";
 import { openAddDevice } from "./onboarding";
 import { AddDeviceHint, useAddDeviceHint } from "./onboarding-hints";
 import { useRouteMachine } from "@/app/machine-route";

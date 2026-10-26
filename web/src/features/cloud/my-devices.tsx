@@ -33,7 +33,7 @@ import { ACCOUNT_PATH, askedPlace, askRemoval, cleanDevicesAddress, DEVICES_PATH
 import { AccountNotices, ChainAlerts, DevicesPanel, PendingRecoveryBanner, useAccountVersion } from "./devices";
 import { PendingPasskeyBanner } from "./passkey-join";
 import { VerifyEmailBanner } from "./email-verify";
-import { hubShell, useShellMachines } from "./hub-shell";
+import { hubShell, useShellMachines } from "@/features/machines/shells";
 import { PlanBanner, RegisteredDeviceAlerts, SignInChangeAlerts, useMe } from "./plan";
 import { SignOutChoice } from "./sign-out-dialog";
 import { CloudPage, quiet } from "./ui";

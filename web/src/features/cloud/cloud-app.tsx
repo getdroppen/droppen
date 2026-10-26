@@ -26,7 +26,8 @@ import { meStore } from "@/lib/hub/me";
 import { RenewalRunner, setRenewalRunner } from "@/lib/hub/renewal";
 import { followPushRenewals } from "@/lib/push";
 import { useStore } from "@/lib/machines/store";
-import { HubShell, hubShell, setHubShell, shellCourier } from "./hub-shell";
+import { HubShell, shellCourier } from "./hub-shell";
+import { hubShell, setHubShell } from "@/features/machines/shells";
 import { AccountScreen } from "./account-settings";
 import { isAccountPath } from "./devices-route";
 import { MyDevicesScreen } from "./my-devices";
@@ -44,6 +45,14 @@ import { BringItOver, reloadOnArrival } from "@/features/move/bring-it-over";
 import { hostMode, moveOrigins } from "@/lib/hub/hosts";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
 import { FrontPageView } from "@/features/landing/front-pages";
+import { provideCloudParts } from "@/app/cloud-parts";
+import { CloudBar } from "./cloud-bar";
+import { AddDeviceHint, SideBySideTip } from "./onboarding-hints";
+import { CopyWindowNotice } from "./plan";
+
+// What of cloud mode the app's own views draw (`app/cloud-parts.ts`): there
+// before this module's app renders the router.
+provideCloudParts({ CloudBar, SideBySideTip, AddDeviceHint, CopyWindowNotice });
 
 /*
  * The page in cloud mode, before (and around) the app: sign in or sign up at

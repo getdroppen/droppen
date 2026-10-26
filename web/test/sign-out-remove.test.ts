@@ -14,7 +14,7 @@ import test from "node:test";
 import { MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { CloudAccount, userKeyStale, WipeError } from "../src/lib/hub/account.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
-import { setHubShell } from "../src/features/cloud/hub-shell.js";
+import { setHubShell } from "../src/features/machines/shells.js";
 import { SIGN_OUT_FAILURES_KEY, SIGN_OUT_STILL_LISTED_KEY, signOut, takeSignOutFailures, takeStillListed } from "../src/features/cloud/sign-out.js";
 import { browserStorage, createV2Genesis, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
 
