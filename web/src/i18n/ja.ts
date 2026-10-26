@@ -514,6 +514,7 @@ export const ja: Record<string, string> = {
   "connection lost — reconnecting…": "接続が切れました — 再接続中…",
   "showing the copy saved on this device — updating…": "このデバイスに保存されたコピーを表示中 — 更新中…",
   "the terminal could not be loaded": "ターミナルを読み込めませんでした",
+  "the page could not be loaded": "ページを読み込めませんでした",
   "this session is no longer available on the server — what is below is the last copy loaded": "このセッションはサーバー上に見つかりません — 以下は最後に読み込んだ内容です",
   "nothing in this transcript yet": "この記録はまだ空です",
   "send a message below to start the session": "下からメッセージを送ると始まります",

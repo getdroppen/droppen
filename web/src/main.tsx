@@ -7,7 +7,7 @@ import "./lib/local-open-boot";
 // Taken here and handed to the notice: read only by the notice's own chunk,
 // it would be read when that chunk runs, with the fragments gone.
 import { BOOT_URL } from "./lib/hub/boot-url";
-import { takeReturn } from "./features/link/fragment-boot";
+import { browserEnv, restoreReturn, takeReturn } from "./features/link/fragment-boot";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { isReturnPath } from "./features/link/handoff";
@@ -17,6 +17,7 @@ import { MOVE_PATH } from "./lib/move/types";
 import { frontPage } from "./features/landing/route";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { loadPage } from "./app/page-load";
 import { router } from "./app/router";
 import { startBadgeSync } from "./lib/badge";
 // Side-effect import: the module's `beforeinstallprompt` listener has to be in
@@ -61,7 +62,9 @@ startBadgeSync();
 // the build if it does). What a hub serves is one chunk (`hub-pages.ts`), and
 // the shell asks for it as it loads (`cloudPreloadScript`), so it is on its
 // way while the hub's hosts are read. Until a page's chunk is there, the page
-// stays as blank as it is before any script runs.
+// stays as blank as it is before any script runs; when it does not come, the
+// page reloads once, then says so (`app/page-load.tsx`).
+const hubPages = () => import("./hub-pages");
 const returning = !isCloud() && isReturnPath(location.pathname);
 if (!isCloud() && !returning) {
   startLocalShell();
@@ -75,12 +78,23 @@ const root = rootInLanguage(createRoot(document.getElementById("root")!));
 if (returning) {
   registerSw();
   const answer = takeReturn();
-  void import("./features/link/link-return").then(({ LinkReturnPage }) =>
-    root.render(
-      <StrictMode>
-        <LinkReturnPage answer={answer} />
-      </StrictMode>,
-    ),
+  void loadPage(
+    root,
+    () => import("./features/link/link-return"),
+    ({ LinkReturnPage }) =>
+      root.render(
+        <StrictMode>
+          <LinkReturnPage answer={answer} />
+        </StrictMode>,
+      ),
+    {
+      // The answer lives in this page's memory only (`fragment-boot.ts`): back
+      // on the address for the reload, which takes it off again first thing.
+      beforeReload: () => {
+        const env = browserEnv();
+        if (answer && env) restoreReturn(env, answer);
+      },
+    },
   );
 } else if (!isCloud()) {
   registerSw();
@@ -92,17 +106,18 @@ if (returning) {
     </StrictMode>,
   );
 } else {
-  void resolveHostMode().then(async (mode) => {
+  void resolveHostMode().then((mode) => {
     const here = `${location.pathname}${location.search}${location.hash}`;
     if (mode === "site") {
       // Not one of the public pages: the app's, on the app host.
       if (!frontPage(location.pathname)) return location.replace(appUrl(here));
       notInstallable();
-      const { SiteApp } = await import("./hub-pages");
-      return root.render(
-        <StrictMode>
-          <SiteApp />
-        </StrictMode>,
+      return loadPage(root, hubPages, ({ SiteApp }) =>
+        root.render(
+          <StrictMode>
+            <SiteApp />
+          </StrictMode>,
+        ),
       );
     }
     // The browser key move's popup (`features/move`): the pull's sending side on the hub's origin, the push's
@@ -110,27 +125,29 @@ if (returning) {
     // The hub's origin serves it for a pull in any of its modes (`moveOrigins`: the pinned pair, on either of them).
     const move = location.pathname === MOVE_PATH ? moveOrigins() : null;
     if (move) {
-      const { MovePage } = await import("./hub-pages");
-      return root.render(
-        <StrictMode>
-          <MovePage origins={move} />
-        </StrictMode>,
+      return loadPage(root, hubPages, ({ MovePage }) =>
+        root.render(
+          <StrictMode>
+            <MovePage origins={move} />
+          </StrictMode>,
+        ),
       );
     }
-    if (mode === "legacy") return (await import("./hub-pages")).startLegacy(root, BOOT_URL);
+    if (mode === "legacy") return loadPage(root, hubPages, ({ startLegacy }) => void startLegacy(root, BOOT_URL));
     // The app host: the public pages are the site host's.
     const site = siteOrigin();
     if (site && frontPage(location.pathname)) return location.replace(`${site}${here}`);
     registerSw();
-    const { CloudApp } = await import("./hub-pages");
-    root.render(
-      <StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <CloudApp>
-            <RouterProvider router={router} />
-          </CloudApp>
-        </QueryClientProvider>
-      </StrictMode>,
+    return loadPage(root, hubPages, ({ CloudApp }) =>
+      root.render(
+        <StrictMode>
+          <QueryClientProvider client={queryClient}>
+            <CloudApp>
+              <RouterProvider router={router} />
+            </CloudApp>
+          </QueryClientProvider>
+        </StrictMode>,
+      ),
     );
   });
 }

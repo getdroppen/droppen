@@ -1,7 +1,7 @@
 /*
  * The hooks the cloud screens read the page's cloud state with: the hub
  * link's state and presence, a machine's channel, paths and copy (whether a
- * view shows the copy is `lib/machines/copy-mode.ts`, which every mode
+ * view shows the copy is `features/machines/copy-mode.ts`, which every mode
  * reads). What there is to read — the account, the link, every machine's
  * channel and copy — is droppen.app's shell (`hub-shell.ts`, `hubShell()`),
  * `null` in local mode, which is how the cloud components render nothing

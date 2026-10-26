@@ -31,17 +31,29 @@ type OutputBundle = Rollup.OutputBundle;
 export const HUB_PAGES = "/src/hub-pages.ts";
 
 /**
- * What the local app's boot may not hold, and why. The few modules it needs
- * are named: whether the page is in cloud mode at all, which of a hub's hosts
- * it is on and the move popup's path (`config`, `hosts`, `boot-url`,
- * `lib/move/types`, read by `main.tsx` before anything else), and the hex and
- * SHA-256 of the local half of a computer's sign-in to Droppen
- * (`features/link/handoff.ts`).
+ * What the local app's boot may not hold, and why: every module only a page a
+ * hub serves loads, by name. Named rather than worked out from the build,
+ * because a build cannot tell a module that leaked into the boot from one
+ * the two modes share: once a static import pulls it in, the local app
+ * reaches it like any other. The build checks the names are complete instead
+ * ({@link unnamedCloudCode}): a module only cloud mode loads that none of
+ * them covers fails it. The local app's lazy pages may share a module of
+ * these (the gateway shell reads the hub client's copies); its boot may not.
+ *
+ * The few the boot needs are left out by name: whether the page is in cloud
+ * mode at all, which of a hub's hosts it is on, the public pages' paths and
+ * the move popup's (`lib/hub/config`, `hosts`, `boot-url`,
+ * `features/landing/route`, `get-droppen`, `lib/move/types`, read by
+ * `main.tsx` before anything else), and the hex and SHA-256 of the local half
+ * of a computer's sign-in to Droppen (`features/link/handoff.ts`).
  */
 const CLOUD_CODE: [pattern: RegExp, what: string][] = [
-  [/\/src\/features\/cloud\//, "cloud mode's app"],
-  [/\/src\/lib\/hub\/(?!(?:config|hosts|boot-url)\.ts$)/, "the hub client"],
-  [/\/src\/lib\/e2e\/(?!(?:bytes|keys)\.ts$)/, "the end-to-end protocol"],
+  [/\/src\/hub-pages\.ts$/, "what a hub serves"],
+  [/\/src\/(?:features\/cloud\/|lib\/machines\/shells\/hub\.ts$|features\/machines\/device-facts\.ts$|lib\/page-resume\.ts$|components\/prefs-controls\.tsx$)/, "cloud mode's app"],
+  [/\/src\/(?:lib\/hub\/(?!(?:config|hosts|boot-url)\.ts$)|api\/hub\.ts$)/, "the hub client"],
+  [/\/src\/(?:lib\/e2e\/(?!(?:bytes|keys)\.ts$)|lib\/transport\/p2p\.ts$)/, "the end-to-end protocol"],
+  [/\/src\/features\/link\/(?:link-popup\.tsx|add-host\.ts)$/, "droppen.app's half of a computer's sign-in"],
+  [/\/src\/features\/landing\/(?!(?:route|get-droppen)\.ts$)/, "the public pages"],
   [/\/src\/(?:features\/move\/|lib\/move\/(?!types\.ts$))/, "the browser key move"],
   [/\/src\/features\/hosts\//, "the hub origin's move notice"],
 ];
@@ -77,11 +89,46 @@ function entries(bundle: OutputBundle): string[] {
  * besides the local app's boot.
  */
 export function hubPagesSet(bundle: OutputBundle): string[] {
-  // Its chunk need not have it as its facade: nothing imports it but by `import()`.
-  const app = Object.values(bundle).find((c) => c.type === "chunk" && c.moduleIds.some((id) => id.split("?")[0]!.endsWith(HUB_PAGES)));
-  if (!app || app.type !== "chunk" || app.isEntry) fail(`no chunk of its own for ${HUB_PAGES}: main.tsx imports it with import()`);
   const boot = staticSet(bundle, entries(bundle));
-  return [...staticSet(bundle, [app.fileName])].filter((f) => !boot.has(f)).sort().map((f) => `/${f}`);
+  return [...staticSet(bundle, [hubPagesChunk(bundle)])].filter((f) => !boot.has(f)).sort().map((f) => `/${f}`);
+}
+
+/** The chunk `hub-pages.ts` is in (not necessarily as its facade: nothing imports it but by `import()`). */
+function hubPagesChunk(bundle: OutputBundle): string {
+  const chunk = Object.values(bundle).find((c) => c.type === "chunk" && c.moduleIds.some((id) => id.split("?")[0]!.endsWith(HUB_PAGES)));
+  if (!chunk || chunk.type !== "chunk" || chunk.isEntry) fail(`no chunk of its own for ${HUB_PAGES}: main.tsx imports it with import()`);
+  return chunk.fileName;
+}
+
+/** Every chunk `from` can load, now or later (static imports and `import()`), short of `skip`. */
+function reachable(bundle: OutputBundle, from: readonly string[], skip?: string): Set<string> {
+  const files = new Set<string>();
+  const visit = (fileName: string) => {
+    const chunk = bundle[fileName];
+    if (!chunk || chunk.type !== "chunk" || files.has(fileName) || fileName === skip) return;
+    files.add(fileName);
+    for (const imported of [...chunk.imports, ...chunk.dynamicImports]) visit(imported);
+  };
+  for (const fileName of from) visit(fileName);
+  return files;
+}
+
+/**
+ * This app's modules that only a page a hub serves ever loads — in a chunk
+ * `hub-pages.ts` reaches that the local app cannot reach without it — and
+ * {@link CLOUD_CODE} does not name. The boot is checked against the names, so
+ * a module missing from them could slip into it unseen.
+ */
+export function unnamedCloudCode(bundle: OutputBundle): string[] {
+  const hub = hubPagesChunk(bundle);
+  const local = reachable(bundle, entries(bundle), hub);
+  const out = new Set<string>();
+  for (const fileName of reachable(bundle, [hub])) {
+    const chunk = bundle[fileName];
+    if (local.has(fileName) || chunk?.type !== "chunk") continue;
+    for (const id of chunk.moduleIds) if (/\/src\//.test(id) && !id.includes("/node_modules/") && !id.startsWith("\0") && !cloudCode(id)) out.add(id);
+  }
+  return [...out].sort();
 }
 
 /**
@@ -100,6 +147,37 @@ export function cloudPreloadScript(files: readonly string[]): string {
   );
 }
 
+/**
+ * The shortest chain of static imports from an entry to one of `targets`:
+ * the import to cut is its last step.
+ */
+function shortestChain(ctx: Pick<Rollup.PluginContext, "getModuleIds" | "getModuleInfo">, targets: Set<string>): string[] {
+  const from = new Map<string, string | null>();
+  const queue: string[] = [];
+  for (const id of ctx.getModuleIds()) {
+    if (ctx.getModuleInfo(id)?.isEntry) {
+      from.set(id, null);
+      queue.push(id);
+    }
+  }
+  let found: string | null = null;
+  search: while (queue.length) {
+    const id = queue.shift()!;
+    for (const next of ctx.getModuleInfo(id)?.importedIds ?? []) {
+      if (from.has(next)) continue;
+      from.set(next, id);
+      if (targets.has(next)) {
+        found = next;
+        break search;
+      }
+      queue.push(next);
+    }
+  }
+  const chain: string[] = [];
+  for (let at = found ?? [...targets][0]!; at; at = from.get(at) ?? "") chain.unshift(at);
+  return chain;
+}
+
 function fail(message: string): never {
   throw new Error(`[local-boot] ${message}`);
 }
@@ -114,43 +192,24 @@ export function localBoot(): Plugin {
       root = config.root;
     },
     generateBundle(_options, bundle) {
-      const boot = staticSet(bundle, entries(bundle));
       const leaked: string[] = [];
-      for (const fileName of boot) {
+      for (const fileName of staticSet(bundle, entries(bundle))) {
         const chunk = bundle[fileName];
         if (chunk?.type === "chunk") leaked.push(...chunk.moduleIds.filter((id) => cloudCode(id)));
       }
-      if (!leaked.length) return;
-      // The shortest chain of static imports from an entry to one of them:
-      // the import to cut is its last step.
-      const cloud = new Set(leaked);
-      const from = new Map<string, string | null>();
-      const queue: string[] = [];
-      for (const id of this.getModuleIds()) {
-        if (this.getModuleInfo(id)?.isEntry) {
-          from.set(id, null);
-          queue.push(id);
-        }
+      if (leaked.length) {
+        const chain = shortestChain(this, new Set(leaked));
+        fail(
+          `${leaked.length} module(s) of cloud mode are in the local app's boot, through ${cloudCode(chain.at(-1)!)}: ${chain.map((id) => relative(root, id)).join(" → ")}. ` +
+            `Import it with import(), or move what the local app needs out of it (build/local-boot.ts).`,
+        );
       }
-      let found = leaked[0]!;
-      search: while (queue.length) {
-        const id = queue.shift()!;
-        for (const next of this.getModuleInfo(id)?.importedIds ?? []) {
-          if (from.has(next)) continue;
-          from.set(next, id);
-          if (cloud.has(next)) {
-            found = next;
-            break search;
-          }
-          queue.push(next);
-        }
-      }
-      const chain: string[] = [];
-      for (let at: string | null | undefined = found; at; at = from.get(at)) chain.unshift(relative(root, at));
-      fail(
-        `${leaked.length} module(s) of cloud mode are in the local app's boot, through ${cloudCode(found)}: ${chain.join(" → ")}. ` +
-          `Import it with import(), or move what the local app needs out of it (build/local-boot.ts).`,
-      );
+      const unnamed = unnamedCloudCode(bundle);
+      if (unnamed.length)
+        fail(
+          `${unnamed.length} module(s) only a page a hub serves loads are not named in CLOUD_CODE (build/local-boot.ts): ` +
+            `${unnamed.map((id) => relative(root, id)).join(", ")}. Name them there, so that the local app's boot is checked for them.`,
+        );
     },
     transformIndexHtml: {
       order: "post",

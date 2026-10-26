@@ -514,6 +514,7 @@ export const zhTW: Record<string, string> = {
   "connection lost — reconnecting…": "連線已中斷，重新連線中…",
   "showing the copy saved on this device — updating…": "正在顯示這台裝置上保存的副本 — 更新中…",
   "the terminal could not be loaded": "終端載入失敗",
+  "the page could not be loaded": "頁面載入失敗",
   "this session is no longer available on the server — what is below is the last copy loaded": "伺服器上已找不到這個工作階段 — 下面顯示的是最後一次載入到的內容",
   "nothing in this transcript yet": "這個工作階段還沒有任何內容",
   "send a message below to start the session": "在下方發一則訊息就可以開始",

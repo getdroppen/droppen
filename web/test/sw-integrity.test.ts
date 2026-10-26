@@ -308,33 +308,31 @@ test("the worker picks the browser's language by the page's own rule (match.ts)"
   }
 });
 
-test("install precaches the cloud app's chunks too, only where a hub serves the shell", async () => {
+test("install precaches the cloud app's chunks too, only where the shell it kept is a hub's", async () => {
   const CLOUD = "export const cloud = 1;";
   const table = { "/assets/app-1.js": sha(APP), "/assets/cloud-app-1.js": sha(CLOUD) };
   const network = { "/assets/app-1.js": [APP, JS], "/assets/cloud-app-1.js": [CLOUD, JS] } as Record<string, [string, Record<string, string>]>;
   const opts = { table, precache: ["/assets/app-1.js"], precacheCloud: ["/assets/cloud-app-1.js"] };
-  // A hub's shell, as the network has it on the first install.
+  // A release's install where the shell kept for offline is a hub's: its page boots from the cloud chunks too.
   const hub = worker({ ...opts, network: { ...network, "/sessions": [marked(), HTML] } });
+  await (await hub.cache()).put("/", new Response(marked(), { headers: HTML }));
   await hub.install();
   assert.equal(await (await hub.cache()).text("/assets/cloud-app-1.js"), CLOUD);
   assert.equal(await (await hub.cache()).text("/assets/app-1.js"), APP);
-  // A later install reads the shell kept for offline instead: nothing more is fetched to tell.
-  const later = worker({ ...opts, network });
-  await (await later.cache()).put("/", new Response(marked(), { headers: HTML }));
-  await later.install();
-  assert.equal(await (await later.cache()).text("/assets/cloud-app-1.js"), CLOUD);
-  assert.deepEqual(later.fetched, ["/assets/app-1.js", "/assets/cloud-app-1.js"]);
+  assert.deepEqual(hub.fetched, ["/assets/app-1.js", "/assets/cloud-app-1.js"], "nothing fetched to tell");
   // A local server's shell (no marker): only the local app's boot.
-  const local = worker({ ...opts, network: { ...network, "/sessions": [SHELL, HTML] } });
+  const local = worker({ ...opts, network });
+  await (await local.cache()).put("/", new Response(SHELL, { headers: HTML }));
   await local.install();
   assert.equal(await (await local.cache()).text("/assets/app-1.js"), APP);
   assert.equal(await (await local.cache()).match("/assets/cloud-app-1.js"), undefined);
-  assert.deepEqual(local.fetched, ["/sessions", "/assets/app-1.js"]);
-  // Offline, or no shell to read: the local app's boot, as before.
-  const offline = worker({ ...opts, network });
-  await offline.install();
-  assert.equal(await (await offline.cache()).match("/assets/cloud-app-1.js"), undefined);
-  assert.equal(await (await offline.cache()).text("/assets/app-1.js"), APP);
+  assert.deepEqual(local.fetched, ["/assets/app-1.js"]);
+  // A first install, with no shell kept yet: the local app's boot, and no fetch of a shell to find out.
+  const first = worker({ ...opts, network: { ...network, "/sessions": [marked(), HTML] } });
+  await first.install();
+  assert.equal(await (await first.cache()).match("/assets/cloud-app-1.js"), undefined);
+  assert.equal(await (await first.cache()).text("/assets/app-1.js"), APP);
+  assert.deepEqual(first.fetched, ["/assets/app-1.js"]);
 });
 
 test("activate drops other caches, unlisted and tampered assets, a foreign shell and anything else", async () => {

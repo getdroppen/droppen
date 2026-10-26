@@ -21,6 +21,15 @@ test("what of cloud mode the local app's boot may not hold, and the few modules 
     "/w/web/src/lib/move/receiver.ts",
     "/w/web/src/features/move/index.ts",
     "/w/web/src/features/hosts/legacy.tsx",
+    "/w/web/src/hub-pages.ts",
+    "/w/web/src/features/landing/site-app.tsx",
+    "/w/web/src/features/landing/front-pages.tsx",
+    "/w/web/src/features/landing/security/security.tsx",
+    "/w/web/src/features/link/link-popup.tsx",
+    "/w/web/src/features/link/add-host.ts",
+    "/w/web/src/lib/machines/shells/hub.ts",
+    "/w/web/src/lib/transport/p2p.ts",
+    "/w/web/src/api/hub.ts",
   ]) {
     assert.ok(cloudCode(id), id);
   }
@@ -31,7 +40,14 @@ test("what of cloud mode the local app's boot may not hold, and the few modules 
     "/w/web/src/lib/e2e/bytes.ts",
     "/w/web/src/lib/e2e/keys.ts",
     "/w/web/src/lib/move/types.ts",
-    "/w/web/src/lib/machines/shells/hub.ts",
+    "/w/web/src/features/landing/route.ts",
+    "/w/web/src/features/landing/get-droppen.ts",
+    "/w/web/src/features/link/handoff.ts",
+    "/w/web/src/lib/machines/shells/gateway.ts",
+    "/w/web/src/lib/transport/direct.ts",
+    "/w/web/src/api/client.ts",
+    // Shared with the local settings page (push notifications from this device's server).
+    "/w/web/src/lib/push.ts",
     "/w/web/src/features/sessions/session-detail.tsx",
     "/w/web/node_modules/react/index.js",
   ]) {
@@ -144,3 +160,27 @@ test("a build whose entry reaches cloud code through a static import fails, nami
     (error: Error) => /cloud mode are in the local app's boot, through the hub client: .*src\/main\.ts → src\/app\/view\.ts → src\/lib\/hub\/api\.ts\./.test(error.message),
   );
 });
+
+test("a static import of any module only cloud mode loads fails the build, not only the hub client's", async () => {
+  await assert.rejects(
+    buildApp({
+      ...APP_FILES,
+      "features/landing/site-app.tsx": "export const SiteApp = () => 'the public pages';\n",
+      "main.ts": 'import { SiteApp } from "./features/landing/site-app";\nvoid import("./hub-pages");\nconsole.log(SiteApp());\n',
+    }),
+    (error: Error) => /cloud mode are in the local app's boot, through the public pages: .*src\/main\.ts → src\/features\/landing\/site-app\.tsx\./.test(error.message),
+  );
+});
+
+test("a module only cloud mode loads that the guard does not name fails the build until it is named", async () => {
+  await assert.rejects(
+    buildApp({
+      ...APP_FILES,
+      "features/elsewhere/thing.ts": "export const thing = () => 'cloud only';\n",
+      "hub-pages.ts": 'export { CloudApp } from "./features/cloud/cloud-app";\nexport { thing } from "./features/elsewhere/thing";\n',
+      "main.ts": 'import { view } from "./app/view";\nvoid import("./hub-pages").then((m) => m.thing());\nconsole.log(view());\n',
+    }),
+    (error: Error) => /1 module\(s\) only a page a hub serves loads are not named in CLOUD_CODE \(build\/local-boot\.ts\): src\/features\/elsewhere\/thing\.ts\./.test(error.message),
+  );
+});
+

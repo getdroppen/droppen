@@ -77,6 +77,16 @@ export function takeReturn(): { attempt: string; sealed: string } | null {
   return answer;
 }
 
+/**
+ * Put `answer` back on `env`'s address, the way droppen.app sent it, for a
+ * reload to take it again (`main.tsx`: the page's own chunk did not come).
+ * Only for the moment of the reload: the reloaded page takes it off again
+ * before anything else reads the address.
+ */
+export function restoreReturn(env: Pick<FragmentEnv, "location" | "history">, answer: { attempt: string; sealed: string }): void {
+  env.history.replaceState(env.history.state, "", `${env.location.pathname}${env.location.search}#${RETURN_FRAGMENT}=${answer.attempt}.${answer.sealed}`);
+}
+
 /** The browser's own objects, when there is a browser. */
 export function browserEnv(): FragmentEnv | null {
   if (typeof window === "undefined") return null;

@@ -514,6 +514,7 @@ export const zhCN: Record<string, string> = {
   "connection lost — reconnecting…": "连接已断开，重连中…",
   "showing the copy saved on this device — updating…": "正在显示这台设备上保存的副本 — 更新中…",
   "the terminal could not be loaded": "终端加载失败",
+  "the page could not be loaded": "页面加载失败",
   "this session is no longer available on the server — what is below is the last copy loaded": "服务器上已找不到这个会话 — 下面显示的是最后一次加载到的内容",
   "nothing in this transcript yet": "这个会话还没有任何内容",
   "send a message below to start the session": "在下方发一条消息就可以开始",

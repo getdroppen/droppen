@@ -32,7 +32,18 @@ export function showsOtherDevices(status: { seesOtherDevices?: boolean; aggregat
   return status?.seesOtherDevices === true && status.aggregator?.enabled === true && status.aggregator.state === "on";
 }
 
-export function GatewayBoot() {
+/**
+ * The shell and the copies it reads: a chunk of their own, fetched only by a
+ * page that shows other devices.
+ */
+const loadGatewayShell = () => import("./gateway-shell");
+
+/**
+ * `loadShell` and `retryMs` stand in for the shell's chunk and the wait
+ * before it is fetched again when it did not come (tests); the page uses its
+ * own and {@link RECHECK_MS}.
+ */
+export function GatewayBoot({ loadShell = loadGatewayShell, retryMs = RECHECK_MS }: { loadShell?: () => Promise<Pick<typeof import("./gateway-shell"), "startGatewayShell">>; retryMs?: number } = {}) {
   const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: cloudKey(LOCAL),
@@ -45,7 +56,8 @@ export function GatewayBoot() {
     retry: false,
   });
   const show = showsOtherDevices(data);
-  // Bumped after a `bye` once the status was looked at again: a new gateway, if still shown.
+  // Bumped after a `bye` once the status was looked at again, and when the
+  // shell's chunk did not come: a new gateway, if still shown.
   const [round, setRound] = useState(0);
   useEffect(() => {
     if (!show) {
@@ -60,22 +72,29 @@ export function GatewayBoot() {
       onTrouble: lookAgain,
     });
     let gone = false;
+    let again: ReturnType<typeof setTimeout> | undefined;
     const offBye = link.onBye(() => {
       stopGatewayShell();
       void queryClient.refetchQueries({ queryKey: cloudKey(LOCAL) }).finally(() => {
         if (!gone) setRound((n) => n + 1);
       });
     });
-    // The shell and the copies it reads are a chunk of their own, fetched
-    // only by a page that shows other devices.
-    void import("./gateway-shell").then(({ startGatewayShell }) => {
-      if (!gone) startGatewayShell(link, { user: currentUser() ?? null });
-    });
+    void loadShell().then(
+      ({ startGatewayShell }) => {
+        if (!gone) startGatewayShell(link, { user: currentUser() ?? null });
+      },
+      () => {
+        // The chunk did not come (the link dropped, or the server moved to
+        // another build): fetched again at the next look.
+        if (!gone) again = setTimeout(() => setRound((n) => n + 1), retryMs);
+      },
+    );
     return () => {
       gone = true;
+      clearTimeout(again);
       offBye();
       stopGatewayShell();
     };
-  }, [show, round, queryClient]);
+  }, [show, round, queryClient, loadShell, retryMs]);
   return null;
 }

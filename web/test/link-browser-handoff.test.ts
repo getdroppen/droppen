@@ -18,7 +18,7 @@ import {
   plainOrigin,
   returnAddress,
 } from "../src/features/link/handoff.js";
-import { captureLinkFragments, forgetHandoff, HANDOFF_STORE_KEY, pendingHandoff, takeReturn, type FragmentEnv } from "../src/features/link/fragment-boot.js";
+import { captureLinkFragments, forgetHandoff, HANDOFF_STORE_KEY, pendingHandoff, restoreReturn, takeReturn, type FragmentEnv } from "../src/features/link/fragment-boot.js";
 import { giveBack, RETURN_API } from "../src/features/link/link-return.js";
 import { type Attempt, type HandoffStatus, LinkOpener, type OpenerWindow } from "../src/features/link/opener.js";
 import { formatLeft } from "../src/features/link/browser-sign-in.js";
@@ -144,6 +144,21 @@ test("each page takes its fragment out of the address before anything reads it",
   const other = fakeEnv("/sessions", "#section-2");
   captureLinkFragments(other);
   assert.deepEqual(other.replaced, [], "anything else is left be");
+});
+
+test("an answer put back on the address for a reload is the one the reloaded page takes, and is never stored", () => {
+  const sealed = base64Url(fill(80, 7));
+  const page = fakeEnv("/link/return", `#droppen-return=${ATTEMPT}.${sealed}`);
+  captureLinkFragments(page);
+  const answer = takeReturn()!;
+  restoreReturn(page, answer);
+  assert.deepEqual(page.replaced, ["/link/return", `/link/return#droppen-return=${ATTEMPT}.${sealed}`]);
+  // The page as the reload loads it, at that address.
+  const reloaded = fakeEnv("/link/return", page.replaced[1]!.slice("/link/return".length));
+  captureLinkFragments(reloaded);
+  assert.deepEqual(reloaded.replaced, ["/link/return"], "off the address again at once");
+  assert.deepEqual(takeReturn(), answer);
+  assert.equal(page.kept.size + reloaded.kept.size, 0);
 });
 
 test("the return page hands the answer over without a login, and says how it went", async () => {
