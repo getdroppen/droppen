@@ -5,5 +5,7 @@
 // it reads at load (the stored language, the browser's).
 const app = await import("../src/i18n/index.js");
 await Promise.all((["zh-CN", "zh-TW", "ja"] as const).map((lang) => app.loadLanguage(lang)));
+// And in the language the page starts in, as its first frame is.
+await app.languageShown();
 
 export default app.default;

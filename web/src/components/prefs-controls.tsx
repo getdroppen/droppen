@@ -33,7 +33,7 @@ export function PrefsControls() {
   const active = LANGUAGE_NAMES.find((l) => l.id === i18n.language) ?? LANGUAGE_NAMES[LANGUAGE_NAMES.length - 1]!;
   const browser = LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
   const chooseLanguage = (value: LanguagePref) => {
-    applyLanguage(value);
+    void applyLanguage(value);
     setLanguage(value);
   };
   const Icon = MODE_ICONS[theme];

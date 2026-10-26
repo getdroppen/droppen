@@ -63,7 +63,7 @@ function LanguagePicker() {
   const active = LANGUAGE_NAMES.find((l) => l.id === i18n.language) ?? LANGUAGE_NAMES[LANGUAGE_NAMES.length - 1]!;
   const browser = LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
   const choose = (language: LanguagePref) => {
-    applyLanguage(language);
+    void applyLanguage(language);
     setChosen(language);
     if (!prefs) return;
     const next = { ...prefs, language } as Prefs;

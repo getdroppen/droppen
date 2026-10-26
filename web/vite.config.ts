@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type Rollup } from "vite";
 import { cloudBuild, cloudConfig } from "./build/cloud-mode";
@@ -139,6 +140,7 @@ function precacheBootSet(): Plugin {
  * files beyond the boot set, which a page in that language boots from too,
  * and how the chunk's name starts in any build, by which the worker knows an
  * earlier build's chunk of the same language in its cache (`public/sw.js`).
+ * A language with no chunk fails the build: the worker would never keep it.
  */
 function languageChunks(bundle: Rollup.OutputBundle, boot: ReadonlySet<string>): LanguageFiles {
   const out: LanguageFiles = {};
@@ -158,6 +160,9 @@ function languageChunks(bundle: Rollup.OutputBundle, boot: ReadonlySet<string>):
     visit(chunk.fileName);
     out[lang] = { prefix: `/${prefix}`, files };
   }
+  const languages = readdirSync(fileURLToPath(new URL("./src/i18n", import.meta.url))).flatMap((file) => /^lang-([\w-]+)\.ts$/.exec(file)?.[1] ?? []);
+  const missing = languages.filter((lang) => !out[lang]);
+  if (languages.length === 0 || missing.length > 0) throw new Error(`no chunk for the translations of ${missing.join(", ") || "any language"} (src/i18n/lang-*.ts)`);
   return out;
 }
 

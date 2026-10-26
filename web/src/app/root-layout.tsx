@@ -289,7 +289,7 @@ function PrefsSync() {
   useEffect(() => {
     if (prefs) {
       applyFontSize(prefs.fontSize);
-      applyLanguage(prefs.language);
+      void applyLanguage(prefs.language);
     }
   }, [prefs]);
   return null;

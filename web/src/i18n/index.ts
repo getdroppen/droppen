@@ -74,13 +74,14 @@ const loader = languageLoader(i18n, {
 /** `lang`'s translations into i18next, fetched once (see `LanguageLoader.load`). */
 export const loadLanguage = loader.load;
 
-/** Settles once the language asked for last shows: its translations in, or English if they did not load. */
+/** Settles once the language asked for last shows, or could not be loaded. */
 export const languageShown = loader.shown;
 
 /**
  * The server pref is the source of truth; localStorage caches it for boot.
- * The page changes language once that language's translations are in (or to
- * English if they cannot be had), which the returned promise waits for.
+ * The page changes language once that language's translations are in (and
+ * stays in the one it shows if they cannot be had), which the returned
+ * promise waits for.
  */
 export function applyLanguage(pref: LanguagePref): Promise<void> {
   try {
@@ -92,20 +93,33 @@ export function applyLanguage(pref: LanguagePref): Promise<void> {
 }
 
 /**
+ * How long main.tsx's first frame waits for the reader's translations before
+ * it is drawn in English, to change language when they come. The largest
+ * chunk (ja: 290 kB as the local server sends it, uncompressed) takes about
+ * 1.6 s on Slow 4G (1.6 Mbps, 150 ms round trips); 3 s leaves that link its
+ * language first, and bounds the blank page a stalled request would
+ * otherwise leave for good.
+ */
+const FIRST_FRAME_WAIT_MS = 3_000;
+
+/**
  * `root` (main.tsx's), drawing its first frame once the page's language
- * shows: in the reader's language from the start, never English first.
+ * shows: in the reader's language from the start, never English first (or,
+ * past {@link FIRST_FRAME_WAIT_MS}, English until it comes).
  */
 export function rootInLanguage(root: Root): Root {
-  return rootAfter(root, languageShown());
+  return rootAfter(root, languageShown(), FIRST_FRAME_WAIT_MS);
 }
 
 const initial = resolveLanguage(storedLanguagePref());
 
 // Synchronous: with `resources` given (empty: each language comes as its
-// chunk loads), init finishes before it returns, in `initial`.
+// chunk loads), init finishes before it returns. In English, the one
+// language whose words are always there: the page changes to `initial` once
+// its chunk is in.
 void i18n.use(initReactI18next).init({
   resources: {},
-  lng: initial,
+  lng: "en",
   fallbackLng: false,
   keySeparator: false,
   nsSeparator: false,
@@ -113,9 +127,9 @@ void i18n.use(initReactI18next).init({
 });
 void loader.show(initial);
 
-// `<html lang>` says the page's language from the first paint on (the shell
-// is `en` until a script runs), and follows every change after.
-setDocumentLanguage(initial);
+// `<html lang>` says the language the page shows, from the first paint on,
+// and follows every change after.
+setDocumentLanguage(i18n.language);
 i18n.on("languageChanged", setDocumentLanguage);
 
 // `auto` follows the browser when its languages change while the page is open.

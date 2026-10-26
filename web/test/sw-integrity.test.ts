@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fillServiceWorker, inlineScriptSources } from "../build/service-worker.js";
+import { pickLanguage } from "../src/i18n/match.js";
 
 const ORIGIN = "https://droppen.test";
 const SOURCE = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
@@ -68,6 +69,8 @@ function worker(
     scripts?: string[];
     httpCache?: Record<string, string>;
     hub?: string;
+    /** The worker's `navigator`: its `languages` and `language`. */
+    navigator?: { languages?: string[]; language?: string };
   } = {},
 ) {
   const table = opts.table ?? { "/assets/app-1.js": sha(APP), "/assets/vendor-1.js": sha(VENDOR) };
@@ -125,7 +128,7 @@ function worker(
       openWindow: async (url: string) => void opened.push(url),
     },
   };
-  new Function("self", "caches", "fetch", "crypto", "navigator", text)(self, caches, fetch, globalThis.crypto, {});
+  new Function("self", "caches", "fetch", "crypto", "navigator", text)(self, caches, fetch, globalThis.crypto, opts.navigator ?? {});
 
   /** Dispatch `type` and wait for everything it waits on; the response, for a fetch. */
   async function dispatch(type: string, extra: Record<string, unknown> = {}): Promise<Response | undefined> {
@@ -249,6 +252,58 @@ test("install precaches the translations of the languages this browser shows, wi
   const tampered = worker({ precache: [], languages, table, httpCache: { "/assets/lang-zh-CN-2.js": EVIL }, network: { "/assets/lang-zh-CN-2.js": [EVIL, JS] } });
   await tampered.install();
   assert.equal(await (await tampered.cache()).match("/assets/lang-zh-CN-2.js"), undefined);
+});
+
+test("the first release with per-language chunks, or after the kill switch: the language the browser's own languages pick is precached", async () => {
+  const ZH = "export default { settings: '設定' }";
+  const languages = {
+    "zh-CN": { prefix: "/assets/lang-zh-CN-", files: ["/assets/lang-zh-CN-2.js"] },
+    "zh-TW": { prefix: "/assets/lang-zh-TW-", files: ["/assets/lang-zh-TW-2.js"] },
+  };
+  const table = { "/assets/app-2.js": sha(APP), "/assets/lang-zh-CN-2.js": sha("zh-CN"), "/assets/lang-zh-TW-2.js": sha(ZH) };
+  // The older build's worker kept its boot set, no language chunk among it; the page never fetched this build's.
+  const sw = worker({ precache: ["/assets/app-2.js"], languages, table, navigator: { languages: ["fr-FR", "zh-HK", "en"], language: "fr-FR" }, network: { "/assets/app-2.js": [APP, JS], "/assets/lang-zh-TW-2.js": [ZH, JS], "/assets/lang-zh-CN-2.js": ["zh-CN", JS] } });
+  await (await sw.cache()).put("/assets/app-1.js", new Response(APP, { headers: JS }));
+  await sw.install();
+  await sw.activate();
+  assert.equal(await (await sw.cache()).text("/assets/lang-zh-TW-2.js"), ZH);
+  assert.equal(await (await sw.cache()).match("/assets/lang-zh-CN-2.js"), undefined);
+  // Offline, the reload after it finds its words.
+  for (const path of Object.keys(sw.network)) delete sw.network[path];
+  assert.equal(await (await sw.get("/assets/lang-zh-TW-2.js"))!.text(), ZH);
+});
+
+test("the worker picks the browser's language by the page's own rule (match.ts)", async () => {
+  const languages = {
+    "zh-CN": { prefix: "/assets/lang-zh-CN-", files: ["/assets/lang-zh-CN-2.js"] },
+    "zh-TW": { prefix: "/assets/lang-zh-TW-", files: ["/assets/lang-zh-TW-2.js"] },
+    ja: { prefix: "/assets/lang-ja-", files: ["/assets/lang-ja-2.js"] },
+  };
+  const table = Object.fromEntries(Object.keys(languages).map((lang) => [`/assets/lang-${lang}-2.js`, sha(lang)]));
+  const network = Object.fromEntries(Object.keys(languages).map((lang): [string, [string, Record<string, string>]] => [`/assets/lang-${lang}-2.js`, [lang, JS]]));
+  const cases: [string[] | undefined, string][] = [
+    [["zh-CN"], "zh-CN"],
+    [["zh-Hant-TW"], "zh-CN"],
+    [["zh-Hans-HK", "ja"], "zh-CN"],
+    [["zh_TW"], "zh-CN"],
+    [["ZH-hk"], "zh-CN"],
+    [["zh-MO", "en"], "zh-CN"],
+    [["fr-FR", "ja-JP", "zh-CN"], "zh-CN"],
+    [["de-DE", "zh-Hant", "ja"], "zh-CN"],
+    [["en-US", "zh-CN"], "zh-CN"],
+    [["ko-KR", "es"], "zh-CN"],
+    [[], "zh-CN"],
+    [undefined, "ja"],
+    [["", "yue-Hant-HK", "jav"], "zh-CN"],
+    [["ko-KR"], "fr"],
+  ];
+  for (const [languagesOfBrowser, language] of cases) {
+    const sw = worker({ precache: [], languages, table, network, navigator: { languages: languagesOfBrowser, language } });
+    await sw.install();
+    const kept = (await (await sw.cache()).keys()).map((r) => /lang-([\w-]+)-2\.js$/.exec(new URL(r.url).pathname)?.[1]);
+    const want = pickLanguage([...(languagesOfBrowser ?? []), language]);
+    assert.deepEqual(kept, want === "en" ? [] : [want], `${JSON.stringify(languagesOfBrowser)} / ${language}: the page shows ${want}`);
+  }
 });
 
 test("activate drops other caches, unlisted and tampered assets, a foreign shell and anything else", async () => {

@@ -1,7 +1,7 @@
 // The page's language (`i18n/index.ts`): an explicit choice as it is; `auto`
 // the first of the browser's languages, in its order, that the app speaks
-// (en, zh-CN, zh-TW, ja), else English. `<html lang>` says it from the start,
-// and the first frame is drawn once the language's translations are in.
+// (en, zh-CN, zh-TW, ja), else English. The first frame is drawn once the
+// language's translations are in, and `<html lang>` says it from that frame.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -41,21 +41,18 @@ setBrowser(["fr-FR", "zh-HK", "en-US"], "fr-FR");
 const { default: i18n, applyLanguage, browserLanguages, languageShown, matchLanguage, pickLanguage, resolveLanguage, rootInLanguage, storedLanguagePref } = await import(
   "../src/i18n/index.js"
 );
-// main.tsx's root, drawn into straight away: what each frame says, in the words i18next has when it is drawn.
+// main.tsx's root, drawn into straight away: each frame's `<html lang>` and words, as i18next has them when it is drawn.
 const frames: string[] = [];
-rootInLanguage({ render: () => void frames.push(i18n.t("check again")), unmount: () => undefined }).render(null);
+rootInLanguage({ render: () => void frames.push(`${html.lang} ${i18n.t("check again")}`), unmount: () => undefined }).render(null);
 const drawnAtOnce = frames.length;
 
-test("the first page is in the reader's language, and <html lang> says so from the start", () => {
-  assert.equal(i18n.language, "zh-TW");
-  assert.equal(html.lang, "zh-TW");
-});
-
-test("the first frame waits for the reader's translations, and is drawn in them", async () => {
+test("the first page is in the reader's language, drawn once its translations are in, and <html lang> says so from that frame", async () => {
   assert.equal(drawnAtOnce, 0, "nothing drawn before the zh-TW chunk is in");
   await languageShown();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(frames, ["重新檢查"], "drawn once, in zh-TW: never English first");
+  assert.deepEqual(frames, ["zh-TW 重新檢查"], "drawn once, in zh-TW: never English first");
+  assert.equal(i18n.language, "zh-TW");
+  assert.equal(html.lang, "zh-TW");
 });
 
 test("each tag maps to a language the app speaks, or to none", () => {

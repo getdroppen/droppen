@@ -204,19 +204,41 @@ async function fetchListed(req, path) {
 }
 
 /* The files of the languages this browser shows, as much a part of its boot
- * set as PRECACHE: a language whose chunk is in the cache from an earlier
- * build (a page showed it), or whose chunk of this build the browser's HTTP
+ * set as PRECACHE: the one its own languages pick (what a page shows unless
+ * told otherwise), one whose chunk is in the cache from an earlier build (a
+ * page showed it), and one whose chunk of this build the browser's HTTP
  * cache has (a page fetched it before any worker saw its requests: the first
  * install), which `only-if-cached` asks without going to the network. A
  * language this browser has not shown is fetched when a page first shows
  * it, and kept then, as a lazy chunk is. */
 async function shownLanguages(cache) {
   const kept = (await cache.keys()).map((req) => new URL(req.url).pathname);
+  const own = browserLanguage();
   const out = [];
-  for (const { prefix, files } of Object.values(LANGUAGES)) {
-    if (kept.some((path) => path.startsWith(prefix)) || (await httpCached(files[0]))) out.push(...files);
+  for (const [lang, { prefix, files }] of Object.entries(LANGUAGES)) {
+    if (lang === own || kept.some((path) => path.startsWith(prefix)) || (await httpCached(files[0]))) out.push(...files);
   }
   return out;
+}
+
+/* The language the browser's languages pick, by the page's rule for `auto`
+ * (src/i18n/match.ts `pickLanguage`, which test/sw-integrity.test.ts holds
+ * this to): the first of them the app speaks, else English. Chinese in
+ * Traditional script (`zh-Hant`, else Taiwan, Hong Kong or Macao) is zh-TW,
+ * any other Chinese zh-CN, `ja…` ja and `en…` en; the script decides over
+ * the region. */
+function browserLanguage() {
+  const tags = [...(Array.isArray(navigator.languages) ? navigator.languages : []), navigator.language];
+  for (const tag of tags) {
+    if (typeof tag !== "string" || !tag) continue;
+    const [primary, ...rest] = tag.trim().replace(/_/g, "-").toLowerCase().split("-");
+    if (primary === "en" || primary === "ja") return primary;
+    if (primary !== "zh") continue;
+    if (rest.includes("hant")) return "zh-TW";
+    if (rest.includes("hans")) return "zh-CN";
+    return rest.some((part) => part === "tw" || part === "hk" || part === "mo") ? "zh-TW" : "zh-CN";
+  }
+  return "en";
 }
 
 async function httpCached(url) {
