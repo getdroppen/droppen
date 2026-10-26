@@ -236,8 +236,17 @@ export function renderMermaidDiagram(code: string, theme: DiagramTheme, signal?:
     signal?.throwIfAborted();
     mermaid.initialize(mermaidConfig(theme));
     // A plain id: Mermaid puts it in a CSS selector, so no React `useId` colons.
-    const { svg } = await within(mermaid.render(`droppen-diagram-${++nextId}`, code), engine.timeoutMs);
-    return diagramPicture(svg);
+    const id = `droppen-diagram-${++nextId}`;
+    try {
+      const { svg } = await within(mermaid.render(id, code), engine.timeoutMs);
+      return diagramPicture(svg);
+    } catch (error) {
+      // Mermaid draws in a scratch node, `#d<id>` in <body>, and one failure
+      // throws before its own cleanup: a `classDef` name its stylesheet cannot
+      // take, raised between parsing and drawing.
+      document.getElementById(`d${id}`)?.remove();
+      throw error;
+    }
   });
   queue = next.then(
     () => undefined,

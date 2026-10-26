@@ -3,7 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { ChevronLeft, Loader2, SendHorizontal } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DiagramRendering, Markdown, MathRendering } from "@/components/markdown";
+import { DiagramRendering, drawsDiagrams, Markdown, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { autoGrowTextarea, useEnterSendsModifier } from "@/features/sessions/composer-controls";
@@ -103,7 +103,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
   });
   const bubble = prefs?.transcriptStyle === "bubble";
   const renderMath = prefs?.math !== "source";
-  const renderDiagrams = prefs?.diagrams !== "source";
+  const renderDiagrams = drawsDiagrams(prefs);
 
   const send = async (message: string) => {
     if (busyRef.current) return;

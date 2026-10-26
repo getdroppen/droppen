@@ -33,7 +33,7 @@ import type { components } from "@/api/schema";
 import { FileChip } from "@/components/file-chip";
 import { LightboxImage } from "@/components/image-lightbox";
 import { LiveDot } from "@/components/live-dot";
-import { DiagramRendering, Markdown, MathRendering } from "@/components/markdown";
+import { DiagramRendering, drawsDiagrams, Markdown, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
@@ -2318,8 +2318,8 @@ export function SessionDetailInner({
   const transcriptStyle: TranscriptStyle = prefs?.transcriptStyle ?? "flat";
   // Typeset unless asked not to: a server from before the pref sends none.
   const renderMath = prefs?.math !== "source";
-  // Drawn unless asked not to, the same way.
-  const renderDiagrams = prefs?.diagrams !== "source";
+  // Drawn unless asked not to, and only once the prefs are in (`drawsDiagrams`).
+  const renderDiagrams = drawsDiagrams(prefs);
   // Recomputed only when the window itself changes; item identity is what the
   // renderer consults, so it must come from this exact array.
   const pairing = useMemo(() => pairToolResults(data?.items ?? []), [data?.items]);

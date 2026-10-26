@@ -68,6 +68,17 @@ function urlTransform(url: string): string {
  */
 export const DiagramRendering = createContext(false);
 
+/**
+ * The value a view provides for `DiagramRendering`, from its device's prefs:
+ * drawn unless they say `source` (a server from before the pref sends none),
+ * but not before they have been read — a reader who chose the source must not
+ * have Mermaid run on the agent's text while the prefs load, or when they
+ * cannot be read at all.
+ */
+export function drawsDiagrams(prefs: { diagrams?: "rendered" | "source" } | undefined): boolean {
+  return prefs !== undefined && prefs.diagrams !== "source";
+}
+
 /** The little of hast's shape this file reads: a fenced block is a `pre` with one `code`. */
 interface HastNode {
   type: string;

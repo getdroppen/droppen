@@ -44,7 +44,7 @@ const { createRoot } = await import("react-dom/client");
 type Root = import("react-dom/client").Root;
 const i18next = (await import("i18next")).default;
 const { I18nextProvider, initReactI18next } = await import("react-i18next");
-const { DiagramRendering, Markdown } = await import("../src/components/markdown.js");
+const { DiagramRendering, drawsDiagrams, Markdown } = await import("../src/components/markdown.js");
 const { MERMAID_STABLE_MS, diagramPicture, mermaidConfig, renderMermaidDiagram, setMermaidForTests } = await import(
   "../src/lib/mermaid-render.js"
 );
@@ -261,6 +261,8 @@ test("a render that fails leaves nothing behind in the page (the real engine)", 
   const before = document.body.innerHTML;
   await assert.rejects(renderMermaidDiagram("flowchart TD\n  A-->", "light"));
   await assert.rejects(renderMermaidDiagram("this is not a diagram", "dark"));
+  // Mermaid's stylesheet step throws outside its own cleanup.
+  await renderMermaidDiagram("flowchart TD\n  classDef a/b fill:red\n  A-->B", "light").catch(() => undefined);
   assert.equal(document.body.innerHTML, before, "no error picture, no leftover render node");
 });
 
@@ -510,4 +512,11 @@ test("turning diagrams off returns an open transcript to the code block", async 
   assert.match(container.innerHTML, /language-mermaid/);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
   assert.equal(diagramImage(), null);
+});
+
+test("a view draws diagrams only once its prefs are in, and not when they say source", () => {
+  assert.equal(drawsDiagrams(undefined), false, "prefs still loading, or unreadable");
+  assert.equal(drawsDiagrams({ diagrams: "source" }), false);
+  assert.equal(drawsDiagrams({ diagrams: "rendered" }), true);
+  assert.equal(drawsDiagrams({}), true, "a server from before the pref");
 });
