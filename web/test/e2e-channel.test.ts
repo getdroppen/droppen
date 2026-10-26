@@ -20,7 +20,7 @@ import {
   fromRaw,
   generateDeviceKeys,
   Initiator,
-  loadOrCreateDeviceKeys,
+  loadDeviceKeys,
   MAX_PAYLOAD_LEN,
   MAX_TRANSPORT_DATA,
   MemoryKeyStore,
@@ -228,12 +228,12 @@ test("records seal and open in WebCrypto, padded to a bucket", async () => {
 
 test("device keys are non-extractable once loaded, and the stored ones come back", async () => {
   const store = new MemoryKeyStore();
-  const keys = await loadOrCreateDeviceKeys(store);
+  const keys = (await loadDeviceKeys(store)).keys;
   assert.equal(keys.sign.privateKey.extractable, false);
   assert.equal(keys.dh.privateKey.extractable, false);
   await assert.rejects(crypto.subtle.exportKey("pkcs8", keys.dh.privateKey));
   assert.equal(keys.dhPublic.length, 32);
-  const again = await loadOrCreateDeviceKeys(store);
+  const again = (await loadDeviceKeys(store)).keys;
   // Opened from the store again (a new `CryptoKey`), but the same keys, not new ones.
   assert.deepEqual(again.dhPublic, keys.dhPublic, "the stored key comes back, not a new one");
   assert.deepEqual(again.signPublic, keys.signPublic, "the stored key comes back, not a new one");

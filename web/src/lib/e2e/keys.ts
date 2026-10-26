@@ -243,7 +243,3 @@ export async function generateDeviceKeys(): Promise<DeviceKeys> {
   const dhPair = (await subtle().generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
   return { sign, dh: dhPair, signPublic: await exportPublic(sign.publicKey), dhPublic: await exportPublic(dhPair.publicKey) };
 }
-
-export function sameKey(a: Uint8Array, b: Uint8Array): boolean {
-  return equal(a, b);
-}

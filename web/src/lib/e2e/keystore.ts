@@ -592,11 +592,6 @@ export async function loadDeviceKeys(store: KeyStore, opts: LoadDeviceKeysOption
   });
 }
 
-/** This device's keys, generated on first use and kept ({@link loadDeviceKeys} without saying which). */
-export async function loadOrCreateDeviceKeys(store: KeyStore, now: () => number = Date.now): Promise<DeviceKeys> {
-  return (await loadDeviceKeys(store, { now })).keys;
-}
-
 /**
  * Ask the browser to keep this site's storage — the device keys among it —
  * out of its eviction under storage pressure (`navigator.storage.persist()`).

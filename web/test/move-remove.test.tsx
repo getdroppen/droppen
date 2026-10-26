@@ -11,7 +11,7 @@ import test, { after } from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { loadOrCreateDeviceKeys, MemoryKeyStore } from "../src/lib/e2e/keystore.js";
+import { loadDeviceKeys, MemoryKeyStore } from "../src/lib/e2e/keystore.js";
 
 class MapStorage {
   readonly values = new Map<string, string>();
@@ -94,7 +94,7 @@ test("with no unfinished move, Remove opens the account to take the device off i
   seed(null);
   const { api, calls } = recordingApi();
   const store = new MemoryKeyStore();
-  await loadOrCreateDeviceKeys(store);
+  await loadDeviceKeys(store);
   const removal = await prepareRemoval(here as never, "wss://droppen.app", { api: api as never, store });
   assert.equal(removal.localOnly, undefined);
   assert.ok(calls.length > 0 && !calls[0]!.startsWith("logout"), `it tried to open the account, signing the device in (${calls.join(", ")})`);

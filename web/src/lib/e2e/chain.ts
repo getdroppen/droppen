@@ -1036,11 +1036,6 @@ export async function entryHash(e: Entry): Promise<Bytes> {
   return sha256(HASH_LABEL, encodeEntry(e));
 }
 
-/** Whether `e` is a v3 entry. */
-export function isV3Entry(e: Entry): boolean {
-  return e.draft.version === CHAIN_VERSION_3;
-}
-
 function verifyWith(e: Entry, key: Uint8Array): Promise<boolean> {
   return verifyLabelled(key, CHAIN_ENTRY, encodeDraft(e.draft), e.signature);
 }

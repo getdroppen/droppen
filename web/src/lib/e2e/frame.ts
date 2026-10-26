@@ -9,7 +9,6 @@
 import { type Bytes, concat, DecodeError, fromUtf8, Reader, Writer } from "./bytes";
 import { decodeSealedRecord, encodeSealedRecord, type SealedRecord } from "./record";
 
-export const AGENT_PATH = "/v1/agent";
 export const CLIENT_PATH = "/v1/client";
 export const HEADER_LEN = 7;
 export const MAX_FRAME_LEN = 64 * 1024;

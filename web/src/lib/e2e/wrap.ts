@@ -386,12 +386,6 @@ export async function unwrapUnder(key: Uint8Array | CryptoKey, ctx: Uint8Array, 
   }
 }
 
-/** Unwrap under a symmetric key (an HKDF `CryptoKey` such as `UK`) into a non-extractable key. */
-export async function unwrapUnderToKey(key: Uint8Array | CryptoKey, ctx: Uint8Array, wrapped: Uint8Array, target: Target): Promise<CryptoKey> {
-  const [nonce, ct] = split(wrapped, 12);
-  return unwrapWith(await symKek(key, ctx, ["unwrapKey"]), nonce, ct, copy(ctx), target);
-}
-
 async function pairingMac(s: Uint8Array, fields: Uint8Array[]): Promise<Bytes> {
   const key = await crypto.subtle.importKey("raw", copy(s), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const w = new Writer().raw(PAIR_LABEL);

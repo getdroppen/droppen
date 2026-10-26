@@ -1,8 +1,8 @@
 /*
- * The browser's half of remote-hand's end-to-end protocol, on WebCrypto.
- * Nothing in the app uses it yet (milestone M0 is the primitives and their
- * interop with the Rust crate `server-rs/crates/rh-proto`); M1 wires it into a
- * hub transport behind `lib/transport`.
+ * The browser's half of remote-hand's end-to-end protocol, on WebCrypto: the
+ * primitives and their interop with the Rust crate `server-rs/crates/rh-proto`,
+ * which the app's cloud mode runs on — the hub transports under `lib/hub` and
+ * `lib/transport`, the device key stores, and the chain the account is.
  */
 export * from "./bridge";
 export * from "./bytes";

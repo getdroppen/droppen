@@ -7,7 +7,7 @@
 // and tabs channel; one hub serves both, and signs a device in only for a
 // `HubLogin` its key signed naming the host the request came to.
 import { hex, fromHex } from "../src/lib/e2e/bytes.js";
-import { type KeyStore, KEY_STORE_DB, KEY_STORE_STORE, loadOrCreateDeviceKeys } from "../src/lib/e2e/keystore.js";
+import { type KeyStore, KEY_STORE_DB, KEY_STORE_STORE, loadDeviceKeys } from "../src/lib/e2e/keystore.js";
 import { verifyHubLogin } from "../src/lib/e2e/sig.js";
 import { SEEN_DB, SEEN_STORE } from "../src/lib/hub/seen-store.js";
 import type { MoveEnv, MoveLocks, MoveStorage, PeerMessage, PeerWindow } from "../src/lib/move/env.js";
@@ -263,7 +263,7 @@ export const DEVICE = "dev-1";
 export async function seedDevice(world: World, origin = LEGACY): Promise<{ signPublic: string }> {
   const site = world.site(origin);
   const ks = site.keyStore();
-  const keys = await loadOrCreateDeviceKeys(ks);
+  const keys = (await loadDeviceKeys(ks)).keys;
   await ks.put("local-wrap/v1", await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]));
   await ks.put(`uk/${ACCOUNT}/0`, { iv: new Uint8Array(12), sealed: new Uint8Array([1, 2, 3]) });
   await site.records(SEEN_DB, SEEN_STORE).write([{ key: ACCOUNT, value: { v: 1, genesis: "ab".repeat(32), seen: null } }], "overwrite", 1);
