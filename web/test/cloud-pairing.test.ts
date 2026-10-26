@@ -75,6 +75,12 @@ async function until(r: PairingResponder, done: (s: ResponderState) => boolean, 
   return r.state;
 }
 
+/** Wait for the responder's fire-and-forget hub write (a close) to land. */
+async function settles(check: () => boolean, ms = 2_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 2));
+}
+
 async function twoDevices() {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
@@ -224,6 +230,7 @@ test("numeric code: a wrong code aborts on both ends, and the code is spent", as
   const state = await until(r, (s) => s.kind === "failed");
   assert.equal(state.kind, "failed");
   assert.equal((state as { reason: string }).reason, "codeFailed");
+  await settles(() => hub.pairings.size === 0);
   assert.equal(hub.pairings.size, 0, "…then gives up and closes it");
   assert.equal(a.chain!.deviceRecord(b.deviceId), undefined, "nothing signed");
   assert.equal(hub.mail.filter((m) => m.recipient === b.deviceId).length, 0);
@@ -269,6 +276,7 @@ test("a code answered but never confirmed: the new device gives up and closes th
   clock += 10 * 60 * 1000 + 1;
   const state = await until(r, (s) => s.kind === "failed");
   assert.equal((state as { reason: string }).reason, "codeFailed");
+  await settles(() => hub.pairings.size === 0);
   assert.equal(hub.pairings.size, 0);
 });
 
