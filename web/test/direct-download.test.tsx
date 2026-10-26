@@ -142,7 +142,10 @@ function landing(lng: string, opts: { hints?: EnvironmentHints; signedIn?: boole
 function hero(html: string): string {
   const from = html.indexOf('data-testid="hero-get"');
   assert.ok(from >= 0, "the hero's actions are there");
-  return html.slice(html.lastIndexOf("<div", from), html.indexOf('data-diagram="hero"', from));
+  // Up to the proof row under them (what it works with, the source).
+  const to = html.indexOf('data-testid="hero-proof"', from);
+  assert.ok(to > from, "the proof row follows the actions");
+  return html.slice(html.lastIndexOf("<div", from), html.lastIndexOf("<ul", to));
 }
 
 function download(
@@ -458,9 +461,9 @@ test("the hero on a Mac: 「Download for Mac」 is the one primary action, the f
   assert.ok(text(h).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   assert.match(h, new RegExp(`<a href="${esc(RELEASE.releasesPage)}" target="_blank" rel="noopener noreferrer" data-testid="hero-release-link"`));
   assert.match(h, /<a href="\/download" data-testid="hero-other-systems"/);
-  // The account's ways in stay, as secondaries.
-  assert.match(h, /<a href="\/signup" class="[^"]*">Get started<\/a>/);
-  assert.match(h, /<a href="\/signin"/);
+  // Sign-up stays, as the secondary; signing in is the header's and the footer's.
+  assert.match(h, /<a href="\/signup" class="[^"]*">Start for free<\/a>/);
+  assert.doesNotMatch(h, /href="\/signin"/);
   assert.doesNotMatch(h, /data-testid="hero-install-command"/);
   // Signed in: the download, and back into the app.
   const signedIn = hero(landing("en", { hints: HINTS.mac, signedIn: true }));
@@ -494,7 +497,7 @@ test("the hero on Windows and on a phone: droppen.app in the browser is the prim
   const w = hero(windows);
   assert.match(w, /data-offer="windows"/);
   assert.ok(text(w).includes("No Windows app yet. Droppen works in this browser"));
-  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Get started<\/a>/);
+  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Start for free<\/a>/);
   assert.match(w, /<a href="\/download\?os=macos-app" data-testid="hero-mac-tab"/);
   assert.match(w, /<a href="\/download\?os=linux" data-testid="hero-linux-tab"/);
   assert.doesNotMatch(w, /Droppen-0\.2\.129\.dmg|github\.com/, "no Mac file for a Windows device");

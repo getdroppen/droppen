@@ -8,7 +8,7 @@ import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELE
 import { CommandLine } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
-import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The home page hero's actions, for the device reading it (`detect.ts`,
@@ -58,9 +58,9 @@ function ReleaseLink({ release }: { release: LatestRelease | null | undefined })
 }
 
 /**
- * The account's ways in: signed out, sign up (where sign-up is closed, the
- * waitlist) and sign in; signed in, back into the app. `lead`: the hero's
- * primary action is the first.
+ * The account's way in: signed out, sign up (where sign-up is closed, the
+ * waitlist) — signing in is the header's, once on the page; signed in, back
+ * into the app. `lead`: the hero's primary action is the first.
  */
 function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
   const { t } = useTranslation();
@@ -82,18 +82,15 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
   return (
     <>
       <a {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)} {...first}>
-        {closed ? t("Join the waitlist") : t("Get started")}
-      </a>
-      <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
-        {t("Sign in")}
+        {closed ? t("Join the waitlist") : t("Start for free")}
       </a>
     </>
   );
 }
 
 const row = "flex flex-wrap items-center gap-3";
-const note = "max-w-[34em] text-xs leading-5 text-muted";
-const small = "font-mono text-2xs leading-5 text-faint";
+const note = "max-w-[34em] text-sm leading-6 text-muted";
+const small = "font-mono text-xs leading-5 text-muted";
 
 /**
  * The hero's actions for `offer`. `release`: the latest release as the hub

@@ -41,6 +41,8 @@ const SCRIPT = [
   { at: 10.0, cmd: "ls", out: "README.md  src  web" },
 ];
 const KEY_GAP = 0.2;
+/** What the computer's terminal already shows before the loop's first line arrives: a terminal is never a blank box. */
+export const TERMINAL_HISTORY = ["$ cd ~/code/shop-api", "$ git pull", "  Already up to date."] as const;
 
 interface Key {
   /** Which command, and how many of its characters this key completes (Enter = one past the end). */
@@ -223,7 +225,8 @@ function sample([lo, hi]: [number, number], i: number): number {
 
 export function DirectPath() {
   const { t } = useTranslation();
-  const [scenario, setScenario] = useState<Scenario>("same");
+  // The headline is about typing from a phone, so the phone on 4G is what shows first.
+  const [scenario, setScenario] = useState<Scenario>("phone");
   const box = useRef<HTMLDivElement>(null);
   const { w, h: boxH } = useSize(box, 680);
   const L = directLayout(w);
@@ -300,7 +303,7 @@ export function DirectPath() {
     });
     const cmd = SCRIPT[line]!.cmd;
     setText(typed.current, `$ ${cmd.slice(0, Math.min(upto, cmd.length))}${upto > cmd.length ? " ⏎" : ""}`);
-    const lines: string[] = [];
+    const lines: string[] = [...TERMINAL_HISTORY];
     SCRIPT.forEach((s, li) => {
       const arrived = keys.filter((k) => k.line === li && time >= k.arrive).length;
       if (arrived === 0) return;
@@ -351,8 +354,8 @@ export function DirectPath() {
     "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 font-mono text-[11px] whitespace-nowrap tabular-nums data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
   const value = "data-[latency=ok]:text-ok data-[latency=warn]:text-warn-fg data-[latency=danger]:text-danger";
   const scenarios: { id: Scenario; label: string }[] = [
-    { id: "same", label: t("same computer") },
     { id: "phone", label: t("on 4G") },
+    { id: "same", label: t("same computer") },
   ];
   return (
     <div ref={root} data-path="direct" className="flex h-full flex-col">
@@ -483,7 +486,9 @@ export function DirectPath() {
           status={<LiveDot />}
           rows={[]}
         >
-          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-[18px] whitespace-pre text-fg" />
+          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-[18px] whitespace-pre text-fg">
+            {TERMINAL_HISTORY.join("\n")}
+          </span>
         </Ledger>
       </Stage>
       {/* Fixed height and a fixed-width count: a status that changes length moves nothing on the page. */}

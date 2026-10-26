@@ -53,12 +53,13 @@ export function SectionHead({ label, title, lead, className }: { label: string; 
   );
 }
 
-export function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
+/** A list of points; `large`: the landing page's reading size (14px), else the 12px of the denser pages. */
+export function Points({ items, className, render, large }: { items: string[]; className?: string; render?: (item: string) => ReactNode; large?: boolean }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
-        <li key={item} className="flex gap-2.5 text-xs leading-5 text-muted">
-          <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
+        <li key={item} className={cn("flex gap-2.5 text-muted", large ? "text-sm leading-6 text-pretty" : "text-xs leading-5")}>
+          <span className={cn("size-1.5 shrink-0 bg-fg", large ? "mt-[9px]" : "mt-[7px]")} />
           <span>{render ? render(item) : item}</span>
         </li>
       ))}

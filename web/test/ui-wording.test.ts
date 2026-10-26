@@ -51,7 +51,7 @@ import { sourceFiles, sourceTexts } from "./screen-text.js";
  * `security/*`, `terms/*`, `page-kit.tsx`) are the product's own words, and are checked like any other
  * interface source — their tables below.
  */
-const LANDING_MARKETING = ["copy.ts", "landing.tsx", "hero-agents.tsx", "hero-diagram.tsx", "direct-path.tsx", "offline-copy.tsx", "kit.tsx", "motion.ts", "story.ts"];
+const LANDING_MARKETING = ["copy.ts", "landing.tsx", "product-tour.tsx", "direct-path.tsx", "offline-copy.tsx", "kit.tsx", "motion.ts", "story.ts"];
 const NOT_INTERFACE = [...LANDING_MARKETING.map((file) => `features/landing/${file}`), "i18n/"];
 
 const words = (s: string) => s.replace(/\{\{[^}]*\}\}/g, "");
