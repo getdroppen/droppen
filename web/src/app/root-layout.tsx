@@ -35,7 +35,9 @@ import { RailHint } from "@/components/ui/rail-hint";
 import { applyFontSize } from "@/lib/font-size";
 import { applyThemeMode, NEXT_MODE, storedThemeMode, type ThemeMode } from "@/lib/theme";
 import { useTranslation } from "react-i18next";
+import { ApiError } from "@/api/errors";
 import { AppFrames } from "@/features/apps/app-frames";
+import { appLaunchErrorText, CodeServerMissingDialog, isCodeServerMissing } from "@/features/apps/code-server-missing";
 import { ScreenFrames } from "@/features/screens/screen-frames";
 import { ScreensRail } from "@/features/screens/screens-rail";
 import { applyLanguage } from "@/i18n";
@@ -186,11 +188,18 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
   const openNewSession = useOpenNewSession(routeMachine);
   const newSessionKeys = useNewSessionShortcut();
 
+  // A device without code-server says so in a dialog that says what to install
+  // and links to how, instead of a red 「+」 whose tooltip quotes an OS error.
+  const [codeServerMissing, setCodeServerMissing] = useState(false);
+
   const create = useMutation({
     mutationFn: async (type: "vscode") => {
       const res = await api.POST("/api/apps", { body: { type } });
-      if (res.error) throw new Error(res.error.error);
+      if (res.error) throw new ApiError(res.error);
       return res.data;
+    },
+    onError: (error) => {
+      if (isCodeServerMissing(error)) setCodeServerMissing(true);
     },
     onSuccess: (info) => {
       // Write-through so the keep-alive frame can mount before the refetch.
@@ -207,7 +216,7 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
       <div className="my-1 h-px w-5 bg-border" />
       <Menu.Root>
         <Menu.Trigger
-          title={create.isError ? create.error.message : t("new…")}
+          title={create.isError ? appLaunchErrorText(create.error, t) : t("new…")}
           className={cn(
             "flex size-8 items-center justify-center hover:bg-hover hover:text-fg",
             create.isError ? "text-danger" : "text-muted",
@@ -253,6 +262,7 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
           </Menu.Positioner>
         </Menu.Portal>
       </Menu.Root>
+      <CodeServerMissingDialog open={codeServerMissing} onOpenChange={setCodeServerMissing} />
     </div>
   );
 }

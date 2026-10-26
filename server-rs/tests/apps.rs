@@ -515,14 +515,11 @@ async fn a_failing_launch_is_a_409_that_says_why() {
     let response = request(probe.addr, "POST", "/api/apps", Some(r#"{"type":"vscode"}"#)).await;
 
     assert_eq!(response.status, 409);
-    let message = serde_json::from_str::<Value>(&response.body).expect("JSON body")["error"]
-        .as_str()
-        .expect("error message")
-        .to_string();
-    assert!(
-        message.starts_with("cannot launch code-server (is it installed?)"),
-        "the reason has to reach the user: {message}"
-    );
+    let body = serde_json::from_str::<Value>(&response.body).expect("JSON body");
+    // A token the web app acts on, not an `os error 2` to quote.
+    assert_eq!(body["error"], "code_server_missing", "{body}");
+    let hint = body["hint"].as_str().expect("a sentence beside the token");
+    assert!(hint.starts_with("code-server is not installed"), "the reason has to reach the user: {hint}");
     assert!(probe.apps.list().is_empty(), "a failed launch leaves nothing listed");
 
     probe.stop().await;

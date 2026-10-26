@@ -430,6 +430,14 @@ cargo-zigbuild 构建（对 glibc 2.28 链接）：发版时由 `release.yml` �
 `DROPPEN_K8S_NAMESPACE` 指定）；打包后在 Debian 10 容器里冒烟测试
 （[`.github/scripts/smoke-linux.sh`](.github/scripts/smoke-linux.sh)）。
 
+**可选：网页里的 VS Code。** 侧栏「+」→ `vscode` 用 [code-server](https://github.com/coder/code-server)
+在浏览器里打开 VS Code，Droppen 不会替你安装它。要用的话，把 code-server 装在服务端所在的设备上
+（装法见 [code-server 的安装说明](https://coder.com/docs/code-server/install)），并且装在服务端的
+`PATH` 能找到的目录里：安装脚本设置的服务（launchd agent 或 systemd 用户服务）和桌面 App 启动的
+服务端，`PATH` 里都有 `~/.local/bin`，code-server 的独立安装（`--method=standalone`）正好装在这里；
+运行安装脚本时用 `DROPPEN_SERVICE_PATH=…` 可以指定别的 `PATH`。服务端每次打开编辑器时才去找
+`code-server`，装好后不用重启；找不到时，网页会提示缺少 code-server，并给出安装说明的链接。
+
 手动安装：前端已经嵌进可执行文件里，**整个服务端就是这一个文件**，不装
 运行时、不装依赖。从 [Releases](https://github.com/getdroppen/droppen/releases) 下载
 `droppen-<tag>-macos-aarch64.tar.gz`（Apple Silicon；Intel 用 `-x86_64`，两者通用的是 `-universal`）。

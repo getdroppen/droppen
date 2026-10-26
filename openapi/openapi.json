@@ -7359,7 +7359,7 @@
                 }
               }
             },
-            "description": "App could not be started"
+            "description": "App could not be started; `code_server_missing` (with a `hint`) when code-server is not on the server's PATH"
           }
         },
         "summary": "Create an app",

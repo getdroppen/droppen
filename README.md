@@ -101,6 +101,19 @@ whatever the network's own name resolution says, so a device on the same
 network that controls it can still reach the routes that answer without a
 session (sign-in, first-run setup, status); everything else needs a session.
 
+**Optional: VS Code in the web app.** The rail's `+` → `vscode` opens VS Code
+in the browser through [code-server](https://github.com/coder/code-server),
+which Droppen does not install. To use it, install code-server on the computer
+the server runs on (see
+[code-server's install guide](https://coder.com/docs/code-server/install)),
+somewhere on the server's `PATH`. The service the installer sets up (the
+launchd agent or the systemd user service) and the desktop app's server have
+`~/.local/bin` on their `PATH`, which is where code-server's standalone install
+(`--method=standalone`) puts it; `DROPPEN_SERVICE_PATH` sets another `PATH`
+when you run the installer. The server looks for `code-server` each time an
+editor is opened, so it needs no restart. Without it, opening VS Code says that
+code-server is missing and links to the guide.
+
 ## Build from source
 
 You need Rust (stable), Node 22 (see `.nvmrc`) and pnpm 10.6.3 (the version in

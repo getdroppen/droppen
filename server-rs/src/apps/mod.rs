@@ -85,6 +85,9 @@ const HEALTH_CAP: usize = 64 * 1024;
 const HEALTH: &str = "/healthz";
 /// The program an app of type `vscode` runs.
 const COMMAND: &str = "code-server";
+/// The `error` of the `409` for a `vscode` app when [`COMMAND`] is not on the
+/// `PATH` it would be started with.
+pub const CODE_SERVER_MISSING: &str = "code_server_missing";
 
 /// One running app, as the API describes it.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -117,6 +120,13 @@ impl AppType {
             AppType::Vscode => COMMAND,
         }
     }
+
+    /// The `error` a `409` carries when [`Self::program`] is not installed.
+    fn missing(self) -> &'static str {
+        match self {
+            AppType::Vscode => CODE_SERVER_MISSING,
+        }
+    }
 }
 
 /// The `GET /api/apps` response.
@@ -136,15 +146,26 @@ pub struct AppCreate {
 
 /// Why an app could not be started.
 ///
-/// The message is the contract: the route answers `409` with it verbatim,
-/// exactly as the TypeScript's `err instanceof AppError ? err.message : …` does.
+/// For every failure but one the message is the contract: the route answers
+/// `409` with it verbatim, exactly as the TypeScript's
+/// `err instanceof AppError ? err.message : …` does. The one is a program that
+/// is not installed, which is also the commonest — `code-server` is an optional
+/// prerequisite nothing installs for the user — and the only one a person fixes
+/// on the device rather than by trying again; see [`AppError::into_api`].
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct AppError(String);
+pub enum AppError {
+    /// The program an app of this type runs is not on the `PATH` it would be
+    /// started with.
+    #[error("{} is not installed on this device, or is not on the server's PATH", .0.program())]
+    Missing(AppType),
+    /// Anything else, said as it is.
+    #[error("{0}")]
+    Failed(String),
+}
 
 impl AppError {
     fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self::Failed(message.into())
     }
 
     /// What the route says when the failure was not one this module named —
@@ -152,6 +173,39 @@ impl AppError {
     fn opaque() -> Self {
         Self::new("cannot start app")
     }
+
+    /// The `409` this failure is answered with.
+    ///
+    /// A missing program is a token beside a sentence,
+    /// `{"error":"code_server_missing","hint":…}` — the shape of every refusal
+    /// a client is meant to act on (`attachment_missing`, `provider_mismatch`)
+    /// — so the web app can say what to install, in the reader's language and
+    /// with a link, instead of quoting an `os error 2`. Everything else is the
+    /// sentence alone, as it always was.
+    fn into_api(self) -> ApiError {
+        let message = self.to_string();
+        match self {
+            AppError::Missing(kind) => ApiError::with_body(
+                StatusCode::CONFLICT,
+                serde_json::json!({ "error": kind.missing(), "hint": message }),
+            ),
+            AppError::Failed(_) => ApiError::conflict(message),
+        }
+    }
+}
+
+/// What a spawn of `kind`'s program that failed with `error` says.
+///
+/// `NotFound` is the program missing after all: [`Registry::create_app`] looked
+/// on the same `PATH` a moment earlier, but it can be uninstalled in between,
+/// and an `exec` whose `#!` interpreter is gone fails the same way — a broken
+/// install, which is close enough to none. Anything else (a permission, a limit
+/// on processes) is said as it is.
+fn spawn_error(kind: AppType, error: &std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return AppError::Missing(kind);
+    }
+    AppError::new(format!("cannot launch {}: {error}", kind.program()))
 }
 
 /// Per-app state (settings DB, "last opened folder", UI layout) and logs, under
@@ -463,8 +517,23 @@ impl Registry {
         // One arm today; `match` rather than `let` so a second `AppType` cannot
         // be added without this deciding what to run for it.
         let AppType::Vscode = kind;
+        // Looked up before a port is reserved or a directory made, on the very
+        // `PATH` the spawn below is handed: a program that is not there is the
+        // usual way for this to fail, and this is what lets the answer say so
+        // rather than "No such file or directory". Asked on every create, not
+        // once at boot, so an editor installed while the server runs works on
+        // the next click with no restart.
+        let env = app_env();
+        if process_env::resolve_on_path(kind.program(), &env).is_none() {
+            tracing::warn!(
+                program = kind.program(),
+                path = env.get("PATH").map_or("", String::as_str),
+                "cannot start an app: its program is not on the PATH apps are started with"
+            );
+            return Err(AppError::Missing(kind));
+        }
         let (info, port, exited) = self.reserve(kind)?;
-        match self.launch(&info, port, exited).await {
+        match self.launch(&info, port, exited, &env).await {
             Ok(()) => Ok(info),
             Err(error) => {
                 // A launch that failed *after* the spawn may still have a
@@ -476,8 +545,9 @@ impl Registry {
         }
     }
 
-    /// Spawn the child and wait for `/healthz`, leaving the instance listed.
-    async fn launch(self: &Arc<Self>, info: &AppInfo, port: u16, exited: Arc<AtomicBool>) -> Result<(), AppError> {
+    /// Spawn the child with `env` and wait for `/healthz`, leaving the instance
+    /// listed.
+    async fn launch(self: &Arc<Self>, info: &AppInfo, port: u16, exited: Arc<AtomicBool>, env: &Env) -> Result<(), AppError> {
         let user_data_dir = self.app_dir(&info.id);
         tokio::fs::create_dir_all(&user_data_dir).await.map_err(|error| {
             tracing::warn!(%error, dir = %user_data_dir.display(), "cannot create the app's state directory");
@@ -499,7 +569,7 @@ impl Registry {
             extensions_dir(&self.home).to_string_lossy().into_owned(),
             self.home.to_string_lossy().into_owned(),
         ]);
-        process_env::apply_env(&mut command, &app_env());
+        process_env::apply_env(&mut command, env);
 
         // Every flag below is what makes the app outlive this server.
         // `process_group(0)` takes it out of the server's group, so a `kill`
@@ -516,9 +586,7 @@ impl Registry {
         command.kill_on_drop(false);
         command.process_group(0);
 
-        let child = command
-            .spawn()
-            .map_err(|error| AppError::new(format!("cannot launch {COMMAND} (is it installed?): {error}")))?;
+        let child = command.spawn().map_err(|error| spawn_error(info.kind, &error))?;
         self.attach_pid(&info.id, child.id());
 
         let (exit_tx, exit_rx) = oneshot::channel::<Option<i32>>();
@@ -1018,7 +1086,7 @@ pub async fn create_app(State(state): State<AppState>, ApiJson(body): ApiJson<Ap
         .create_app(body.kind)
         .await
         .map(Json)
-        .map_err(|error| ApiError::new(StatusCode::CONFLICT, error.to_string()))
+        .map_err(AppError::into_api)
 }
 
 /// Stop an app instance.
@@ -1034,7 +1102,12 @@ pub async fn close_app(State(state): State<AppState>, ApiPath(id): ApiPath<Strin
 pub fn describe(reg: &mut ExtraResponses) {
     reg.describe("GET", "/api/apps", 200, "Running embedded app instances")
         .describe("POST", "/api/apps", 200, "App started; embed via /embed/{id}/")
-        .error("POST", "/api/apps", 409, "App could not be started")
+        .error(
+            "POST",
+            "/api/apps",
+            409,
+            "App could not be started; `code_server_missing` (with a `hint`) when code-server is not on the server's PATH",
+        )
         .describe("DELETE", "/api/apps/{id}", 200, "App closed")
         .error("DELETE", "/api/apps/{id}", 404, "App not found");
 }
@@ -1167,6 +1240,56 @@ mod tests {
     #[test]
     fn every_app_type_names_the_program_its_pid_must_be_running() {
         assert_eq!(AppType::Vscode.program(), COMMAND);
+        assert_eq!(AppType::Vscode.missing(), CODE_SERVER_MISSING);
+    }
+
+    #[test]
+    fn a_program_that_is_not_installed_is_a_409_with_a_token_beside_the_sentence() {
+        let missing = AppError::Missing(AppType::Vscode).into_api();
+        assert_eq!(missing.status(), StatusCode::CONFLICT, "still a 409, as it always was");
+        assert_eq!(missing.body()["error"], CODE_SERVER_MISSING, "the token the web app acts on");
+        let hint = missing.body()["hint"].as_str().expect("a sentence beside it");
+        assert_eq!(hint, "code-server is not installed on this device, or is not on the server's PATH");
+
+        // Every other failure keeps its sentence, and nothing else.
+        let other = AppError::new("app did not become ready in time").into_api();
+        assert_eq!(other.status(), StatusCode::CONFLICT);
+        assert_eq!(other.body(), &serde_json::json!({ "error": "app did not become ready in time" }));
+    }
+
+    #[test]
+    fn a_spawn_that_finds_no_program_is_the_program_missing() {
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(matches!(spawn_error(AppType::Vscode, &not_found), AppError::Missing(AppType::Vscode)));
+
+        // Not every spawn failure is a missing program, and the others say what
+        // they were rather than guessing at an install.
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let error = spawn_error(AppType::Vscode, &denied);
+        assert!(
+            matches!(&error, AppError::Failed(message) if message.starts_with("cannot launch code-server: ")),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_app_whose_program_is_not_on_the_path_is_refused_before_anything_is_reserved() {
+        // The override is this test thread's own (`process_env`), so the empty
+        // `PATH` is seen by this create and by no test running beside it.
+        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
+        process_env::set_child_path(Some(empty.path().to_string_lossy().into_owned()));
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = registry(home.path(), "missing");
+        let result = registry.create_app(AppType::Vscode).await;
+
+        assert!(matches!(result, Err(AppError::Missing(AppType::Vscode))), "{result:?}");
+        assert!(registry.list().is_empty(), "nothing is listed");
+        assert!(
+            !app_data_root(&registry.instance).exists(),
+            "and nothing was made for an app that never had a program to run"
+        );
     }
 
     #[test]

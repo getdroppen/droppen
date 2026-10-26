@@ -6816,7 +6816,7 @@ export interface operations {
                     "application/json": components["schemas"]["AppInfo"];
                 };
             };
-            /** @description App could not be started */
+            /** @description App could not be started; `code_server_missing` (with a `hint`) when code-server is not on the server's PATH */
             409: {
                 headers: {
                     [name: string]: unknown;
