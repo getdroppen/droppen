@@ -3,7 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { ChevronLeft, Loader2, SendHorizontal } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Markdown, MathRendering } from "@/components/markdown";
+import { DiagramRendering, Markdown, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { autoGrowTextarea, useEnterSendsModifier } from "@/features/sessions/composer-controls";
@@ -103,6 +103,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
   });
   const bubble = prefs?.transcriptStyle === "bubble";
   const renderMath = prefs?.math !== "source";
+  const renderDiagrams = prefs?.diagrams !== "source";
 
   const send = async (message: string) => {
     if (busyRef.current) return;
@@ -181,6 +182,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
         className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
       >
         <MathRendering.Provider value={renderMath}>
+        <DiagramRendering.Provider value={renderDiagrams}>
         {rows.map((m, i) => {
           const isUser = m.role === "user";
           const spinner = streaming !== null && i === rows.length - 1 && (
@@ -216,6 +218,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
             </div>
           );
         })}
+        </DiagramRendering.Provider>
         </MathRendering.Provider>
         {rows.length === 0 && (
           <div className="p-3 font-mono text-2xs text-faint">{t("no messages yet")}</div>

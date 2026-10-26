@@ -4,6 +4,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DownloadLink } from "@/components/host-file";
 import { LightboxImage } from "@/components/image-lightbox";
+import { MermaidBlock } from "@/components/mermaid-block";
 import { ImageFallback } from "@/components/source-image";
 import { cn } from "@/lib/cn";
 import { localFilePath } from "@/lib/fs-url";
@@ -60,6 +61,57 @@ function urlTransform(url: string): string {
   return /^file:/i.test(url) ? url : defaultUrlTransform(url);
 }
 
+/**
+ * Whether a ```mermaid fence in a message is drawn: the `diagrams` pref of the
+ * device whose transcript this is, provided by the view that read it. Off
+ * outside one.
+ */
+export const DiagramRendering = createContext(false);
+
+/** The little of hast's shape this file reads: a fenced block is a `pre` with one `code`. */
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastNode[];
+}
+
+function hastText(node: HastNode): string {
+  if (node.type === "text") return node.value ?? "";
+  return (node.children ?? []).map(hastText).join("");
+}
+
+/**
+ * The source of a ```mermaid fence, taken from react-markdown's syntax tree,
+ * or null for every other block (and for inline code, which never reaches a
+ * `pre`). Matching the fence's info string here, rather than in `code`, is what
+ * lets the whole `pre` be replaced by the diagram.
+ */
+function mermaidSourceOf(node: unknown): string | null {
+  if (node === null || typeof node !== "object") return null;
+  const pre = node as HastNode;
+  const code = (pre.children ?? []).find((child) => child.type === "element" && child.tagName === "code");
+  if (!code) return null;
+  const classes = code.properties?.className;
+  const names = Array.isArray(classes) ? classes.map(String) : typeof classes === "string" ? classes.split(/\s+/) : [];
+  if (!names.some((name) => /^language-mermaid$/i.test(name))) return null;
+  return hastText(code);
+}
+
+/**
+ * A fenced block. Every block renders exactly as it always has; a ```mermaid
+ * fence is drawn instead when diagrams are on and Mermaid can read it, and is
+ * the same code block in every other case.
+ */
+function MarkdownPre({ children, node }: React.ComponentProps<"pre"> & { node?: unknown }) {
+  const renderDiagrams = useContext(DiagramRendering);
+  const source = mermaidSourceOf(node);
+  const code = <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2">{children}</pre>;
+  if (!renderDiagrams || source === null) return code;
+  return <MermaidBlock code={source} fallback={code} />;
+}
+
 const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   h1: ({ children }) => <h1 className="mt-3 mb-1 text-sm font-semibold first:mt-0">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-3 mb-1 text-[13px] font-semibold first:mt-0">{children}</h2>,
@@ -105,9 +157,7 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
     }
     return <code className="bg-raised px-1 py-px font-mono text-[0.9em] text-fg shadow-[inset_0_0_0_1px_var(--color-border)]">{children}</code>;
   },
-  pre: ({ children }) => (
-    <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2">{children}</pre>
-  ),
+  pre: MarkdownPre,
 };
 
 /**

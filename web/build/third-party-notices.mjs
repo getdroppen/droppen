@@ -15,9 +15,11 @@
 // every asset's source file and every `/*! name vX` banner in the CSS, each
 // mapped to the npm package it came from (the package directory after the
 // last `node_modules/`). First-party code — `web/src` and the workspace
-// packages — is not listed. A package whose licence is missing or not on the
-// allow-list below (AGPL-3.0-compatible permissive licences only) fails.
+// packages — is not listed. A package whose licence is missing (and not
+// clarified below) or not on the allow-list below (AGPL-3.0-compatible
+// permissive licences only) fails.
 
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -39,6 +41,18 @@ export const ALLOWED = new Set([
   "Unlicense",
   "MPL-2.0",
   "CDLA-Permissive-2.0",
+]);
+
+/**
+ * Packages whose package.json declares no licence although they ship one:
+ * the licence is read from that file instead, as cargo-about's `clarify`
+ * does. Each is pinned to its version and to the sha256 of the file, so a new
+ * version, or a different text, fails the check again until somebody reads it.
+ */
+export const CLARIFIED = new Map([
+  // Mermaid's colour maths: MIT in its `license` file and its repository
+  // (github.com/fabiospampinato/khroma).
+  ["khroma@2.1.0", { license: "MIT", file: "license", sha256: "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49" }],
 ]);
 
 /** Licences outside the everyday MIT / Apache / BSD / ISC set, to be named in the summary. */
@@ -138,11 +152,24 @@ export function recorder() {
 }
 
 /**
+ * The licence {@link CLARIFIED} gives a package that declares none, or null
+ * when it is not listed or its file is not the one that was read.
+ */
+function clarifiedLicense(dir, label, clarified) {
+  const clarification = clarified.get(label);
+  if (!clarification) return null;
+  const file = join(dir, clarification.file);
+  if (!existsSync(file)) return null;
+  const sha256 = createHash("sha256").update(readFileSync(file)).digest("hex");
+  return sha256 === clarification.sha256 ? clarification : null;
+}
+
+/**
  * The bundled packages, each with its licence and licence files, from what a
  * build recorded. `webDir` is the app's real path (Vite resolves modules to
  * real paths).
  */
-export function collect(webDir, { files, banners }) {
+export function collect(webDir, { files, banners }, clarified = CLARIFIED) {
   const require = createRequire(join(webDir, "package.json"));
   const viteDir = dirname(require.resolve("vite/package.json"));
   const packages = new Map(); // dir -> null
@@ -184,8 +211,10 @@ export function collect(webDir, { files, banners }) {
   const entries = [];
   for (const dir of packages.keys()) {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-    const license = declared(pkg);
     const label = `${pkg.name}@${pkg.version}`;
+    const own = declared(pkg);
+    const clarification = own ? null : clarifiedLicense(dir, label, clarified);
+    const license = own ?? clarification?.license ?? null;
     let verdict;
     try {
       verdict = license ? evaluate(license) : { ok: false, ids: [] };
@@ -202,7 +231,7 @@ export function collect(webDir, { files, banners }) {
       .map((name) => ({ name, text: readFileSync(join(dir, name), "utf8").trimEnd() }));
     if (!texts.length) withoutText.push(`${label} (${license})`);
     const repository = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
-    entries.push({ label, license, repository, homepage: pkg.homepage, texts });
+    entries.push({ label, license, clarifiedFrom: clarification?.file, repository, homepage: pkg.homepage, texts });
   }
   entries.sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
   const summary = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${n} ${l}`).join(", ");
@@ -222,6 +251,7 @@ export function render({ entries, helpers }, intro) {
   for (const e of entries) {
     lines.push(rule, `${e.label}  ${e.license}`);
     if (e.repository || e.homepage) lines.push(String(e.repository ?? e.homepage).replace(/^git\+/, ""));
+    if (e.clarifiedFrom) lines.push(`(Its package.json declares no licence; ${e.license} is what its ${e.clarifiedFrom} file says.)`);
     lines.push("");
     if (e.texts.length) {
       for (const t of e.texts) lines.push(`[${t.name}]`, t.text, "");

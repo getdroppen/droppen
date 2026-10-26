@@ -1,6 +1,6 @@
 //! UI preferences.
 //!
-//! Port of the former TypeScript server's `prefs.ts`: six settings, one row
+//! Port of the former TypeScript server's `prefs.ts`: seven settings, one row
 //! each in the machine-wide state database ([`crate::db`]) under
 //! [`scope::PREFS`], keyed by the same camelCase names the wire uses. A row per
 //! field rather than one row holding the document, because that is the shape
@@ -111,6 +111,17 @@ pub enum MathStyle {
     Source,
 }
 
+/// How a Mermaid diagram in a message renders.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagramStyle {
+    /// Drawn: a fenced `mermaid` block is shown as the diagram it describes.
+    #[default]
+    Rendered,
+    /// The block as the agent wrote it.
+    Source,
+}
+
 /// The stored UI preferences.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -131,6 +142,10 @@ pub struct Prefs {
     // field, and that save should land rather than be refused.
     #[serde(default)]
     pub math: MathStyle,
+    /// How a Mermaid diagram in a message renders; a body without it means `rendered`.
+    // Defaulted for the same reason as `math`.
+    #[serde(default)]
+    pub diagrams: DiagramStyle,
 }
 
 /// One field of a parsed preferences file, or its default.
@@ -156,6 +171,7 @@ fn prefs_from_value(raw: &Value) -> Prefs {
         language: field(raw, "language"),
         transcript_style: field(raw, "transcriptStyle"),
         math: field(raw, "math"),
+        diagrams: field(raw, "diagrams"),
     }
 }
 
@@ -264,6 +280,7 @@ mod tests {
         assert_eq!(prefs.language, Language::Auto);
         assert_eq!(prefs.transcript_style, TranscriptStyle::Flat);
         assert_eq!(prefs.math, MathStyle::Rendered, "math is typeset unless the user asks for the source");
+        assert_eq!(prefs.diagrams, DiagramStyle::Rendered, "and so are diagrams drawn");
     }
 
     #[test]
@@ -275,6 +292,7 @@ mod tests {
             "language": "zh-TW",
             "transcriptStyle": "bubble",
             "math": "source",
+            "diagrams": "source",
         });
         let prefs = prefs_from_value(&raw);
         assert_eq!(prefs.session_grouping, SessionGrouping::Directory);
@@ -283,6 +301,7 @@ mod tests {
         assert_eq!(prefs.language, Language::ZhTw);
         assert_eq!(prefs.transcript_style, TranscriptStyle::Bubble);
         assert_eq!(prefs.math, MathStyle::Source);
+        assert_eq!(prefs.diagrams, DiagramStyle::Source);
     }
 
     #[test]
@@ -317,6 +336,7 @@ mod tests {
             language: Language::ZhCn,
             transcript_style: TranscriptStyle::Bubble,
             math: MathStyle::Source,
+            diagrams: DiagramStyle::Source,
         };
         let encoded = serde_json::to_value(&prefs).expect("encode");
         assert_eq!(encoded["sessionGrouping"], "directory");
@@ -325,6 +345,7 @@ mod tests {
         assert_eq!(encoded["language"], "zh-CN", "the locale tags are literal, not kebab-cased");
         assert_eq!(encoded["transcriptStyle"], "bubble");
         assert_eq!(encoded["math"], "source");
+        assert_eq!(encoded["diagrams"], "source");
     }
 
     /// A page from before the setting saves the five fields it knows. The save
@@ -344,6 +365,23 @@ mod tests {
         assert_eq!(prefs.math, MathStyle::Rendered);
     }
 
+    /// The same for a page from before diagrams: its save lands, and diagrams
+    /// go back to being drawn.
+    #[test]
+    fn a_body_without_diagrams_is_still_a_save() {
+        let body = serde_json::json!({
+            "sessionGrouping": "directory",
+            "composerSend": "modifier",
+            "fontSize": "large",
+            "language": "ja",
+            "transcriptStyle": "bubble",
+            "math": "source",
+        });
+        let prefs: Prefs = serde_json::from_value(body).expect("an older page's save decodes");
+        assert_eq!(prefs.math, MathStyle::Source);
+        assert_eq!(prefs.diagrams, DiagramStyle::Rendered);
+    }
+
     fn paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
@@ -358,6 +396,7 @@ mod tests {
             language: Language::Ja,
             transcript_style: TranscriptStyle::Bubble,
             math: MathStyle::Source,
+            diagrams: DiagramStyle::Source,
         }
     }
 
@@ -421,7 +460,7 @@ mod tests {
         assert_eq!(reopened.kv_scope(scope::PREFS).get("language").map(String::as_str), Some("ja"));
         assert_eq!(
             reopened.kv_scope(scope::PREFS).len(),
-            6,
+            7,
             "one row per field, and the row is the wire spelling"
         );
     }

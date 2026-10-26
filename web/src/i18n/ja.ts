@@ -85,6 +85,13 @@ export const ja: Record<string, string> = {
   rendered: "レンダリング",
   source: "ソース",
   "click to copy the TeX": "クリックで TeX をコピー",
+  /* ```mermaid in a message (`components/mermaid-block.tsx`): its settings row, the per-block control and the picture's alt text */
+  "Mermaid diagrams": "Mermaid 図",
+  "```mermaid blocks in messages · other code stays as written": "メッセージ内の ```mermaid ブロック · ほかのコードはそのまま",
+  diagram: "図",
+  "show source": "ソースを表示",
+  "show diagram": "図を表示",
+  "Mermaid diagram": "Mermaid の図",
   "rename failed: {{msg}}": "名前の変更に失敗：{{msg}}",
   "Please look at the attached file(s).": "添付したファイルを見てください。",
   "attach files (or paste into the message box)": "ファイルを添付（または入力欄に貼り付け）",

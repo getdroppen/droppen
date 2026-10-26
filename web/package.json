@@ -31,6 +31,7 @@
     "jsqr": "^1.4.0",
     "katex": "^0.19.1",
     "lucide-react": "^0.475.0",
+    "mermaid": "12.2.0",
     "openapi-fetch": "^0.13.4",
     "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",

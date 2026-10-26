@@ -11,6 +11,7 @@
 // writes and the source, in every language.
 import * as React from "react";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,6 +88,37 @@ test("what a build renders is mapped to its packages, listed with their licences
     assert.match(failed ?? "", /2 npm package\(s\) bundled into the web app fail the licence check/);
     assert.match(failed ?? "", /copyleft@1\.0\.0: GPL-3\.0-only is not on the allow-list/);
     assert.match(failed ?? "", /nameless@1\.0\.0: no licence declared/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a package that declares no licence passes only as clarified: that version, that licence file, byte for byte", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "notices-clarify-")));
+  try {
+    const web = join(root, "web");
+    const dir = join(web, "node_modules", "quiet");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(web, "package.json"), JSON.stringify({ name: "web" }));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "quiet", version: "2.1.0" }));
+    const text = "The MIT License (MIT)\n\nquiet's licence\n";
+    writeFileSync(join(dir, "license"), text);
+    const seen = recorder();
+    seen.record({ "assets/app.js": { type: "chunk", modules: { [join(dir, "index.js")]: { renderedLength: 1 } } } } as never);
+    const sha256 = createHash("sha256").update(text).digest("hex");
+
+    const found = collect(web, seen, new Map([["quiet@2.1.0", { license: "MIT", file: "license", sha256 }]]));
+    assert.equal(failureText(found), null);
+    assert.deepEqual(found.entries.map((e) => `${e.label} ${e.license}`), ["quiet@2.1.0 MIT"]);
+    assert.ok(render(found, []).includes("quiet@2.1.0  MIT\n(Its package.json declares no licence; MIT is what its license file says.)\n"));
+
+    for (const clarified of [
+      new Map([["quiet@2.1.1", { license: "MIT", file: "license", sha256 }]]),
+      new Map([["quiet@2.1.0", { license: "MIT", file: "license", sha256: "0".repeat(64) }]]),
+      new Map([["quiet@2.1.0", { license: "MIT", file: "LICENSE.md", sha256 }]]),
+    ]) {
+      assert.match(failureText(collect(web, seen, clarified)) ?? "", /quiet@2\.1\.0: no licence declared/, JSON.stringify([...clarified]));
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

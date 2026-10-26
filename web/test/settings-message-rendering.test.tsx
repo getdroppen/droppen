@@ -1,6 +1,7 @@
 // Settings → message rendering (getdroppen/droppen#167): LaTeX math is a group
 // of its own, not a row among the app's preferences, and it reads the `math`
-// pref — a server from before the pref sends none, which is "rendered".
+// pref — a server from before the pref sends none, which is "rendered". Mermaid
+// diagrams are the group's second row, the `diagrams` pref, the same way.
 //
 // `react-dom/server` with the prefs already in the query cache, like the other
 // render tests. `import * as React` because the test directory is outside the
@@ -55,6 +56,8 @@ function draw(node: React.ReactNode, prefs: Record<string, string>, lang = "en")
 
 /** The label of the tab drawn as chosen. */
 const chosen = (html: string) => /<button[^>]*aria-selected="true"[^>]*>([^<]*)</.exec(html)?.[1];
+/** Every row's chosen tab, in order. */
+const allChosen = (html: string) => [...html.matchAll(/<button[^>]*aria-selected="true"[^>]*>([^<]*)</g)].map((m) => m[1]);
 
 test("LaTeX math is its own group, titled for what it is about", () => {
   const group = draw(<MessageRenderingSection />, { ...PREFS, math: "rendered" });
@@ -69,9 +72,22 @@ test("the tab drawn as chosen is the pref, and a server without the pref means r
   assert.equal(chosen(draw(<MessageRenderingSection />, PREFS)), "rendered");
 });
 
+test("Mermaid diagrams are the group's next row: the pref, and a server without the pref means rendered", () => {
+  const group = draw(<MessageRenderingSection />, { ...PREFS, math: "rendered", diagrams: "source" });
+  assert.match(group, /Mermaid diagrams/);
+  assert.match(group, /```mermaid blocks in messages · other code stays as written/);
+  assert.doesNotMatch(draw(<PreferencesSection />, { ...PREFS, diagrams: "source" }), /Mermaid/, "not a preferences row");
+  assert.deepEqual(allChosen(group), ["rendered", "source"]);
+  assert.deepEqual(allChosen(draw(<MessageRenderingSection />, { ...PREFS, math: "source" })), ["source", "rendered"]);
+  assert.deepEqual(allChosen(draw(<MessageRenderingSection />, PREFS)), ["rendered", "rendered"]);
+});
+
 test("in Chinese", () => {
-  const html = draw(<MessageRenderingSection />, { ...PREFS, math: "rendered" }, "zh-CN");
+  const html = draw(<MessageRenderingSection />, { ...PREFS, math: "rendered", diagrams: "rendered" }, "zh-CN");
   assert.match(html, /消息渲染/);
   assert.match(html, /LaTeX 公式/);
+  assert.match(html, /Mermaid 图表/);
+  assert.match(html, /消息里的 ```mermaid 代码块 · 其他代码保持原样/);
   assert.equal(chosen(html), "渲染");
+  assert.deepEqual(allChosen(html), ["渲染", "渲染"]);
 });

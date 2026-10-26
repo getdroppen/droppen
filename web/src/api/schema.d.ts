@@ -3512,6 +3512,11 @@ export interface components {
             /** @description The four buckets added up. */
             total: number;
         };
+        /**
+         * @description How a Mermaid diagram in a message renders.
+         * @enum {string}
+         */
+        DiagramStyle: "rendered" | "source";
         /** @description The Droppen accounts stored for one CLI. */
         DroppenAccounts: {
             /** @description The label of the one new sessions follow, if one is the default. */
@@ -4265,6 +4270,8 @@ export interface components {
         Prefs: {
             /** @description What sends a composer message. */
             composerSend: components["schemas"]["ComposerSend"];
+            /** @description How a Mermaid diagram in a message renders; a body without it means `rendered`. */
+            diagrams?: components["schemas"]["DiagramStyle"];
             /** @description UI scale. */
             fontSize: components["schemas"]["FontSize"];
             /** @description UI language; `auto` follows the browser locale. */

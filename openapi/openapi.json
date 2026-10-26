@@ -1817,6 +1817,14 @@
         ],
         "type": "object"
       },
+      "DiagramStyle": {
+        "description": "How a Mermaid diagram in a message renders.",
+        "enum": [
+          "rendered",
+          "source"
+        ],
+        "type": "string"
+      },
       "DroppenAccounts": {
         "description": "The Droppen accounts stored for one CLI.",
         "properties": {
@@ -3315,6 +3323,10 @@
           "composerSend": {
             "$ref": "#/components/schemas/ComposerSend",
             "description": "What sends a composer message."
+          },
+          "diagrams": {
+            "$ref": "#/components/schemas/DiagramStyle",
+            "description": "How a Mermaid diagram in a message renders; a body without it means `rendered`."
           },
           "fontSize": {
             "$ref": "#/components/schemas/FontSize",

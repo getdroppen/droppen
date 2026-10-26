@@ -33,7 +33,7 @@ import type { components } from "@/api/schema";
 import { FileChip } from "@/components/file-chip";
 import { LightboxImage } from "@/components/image-lightbox";
 import { LiveDot } from "@/components/live-dot";
-import { Markdown, MathRendering } from "@/components/markdown";
+import { DiagramRendering, Markdown, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
@@ -2318,6 +2318,8 @@ export function SessionDetailInner({
   const transcriptStyle: TranscriptStyle = prefs?.transcriptStyle ?? "flat";
   // Typeset unless asked not to: a server from before the pref sends none.
   const renderMath = prefs?.math !== "source";
+  // Drawn unless asked not to, the same way.
+  const renderDiagrams = prefs?.diagrams !== "source";
   // Recomputed only when the window itself changes; item identity is what the
   // renderer consults, so it must come from this exact array.
   const pairing = useMemo(() => pairToolResults(data?.items ?? []), [data?.items]);
@@ -2906,6 +2908,7 @@ export function SessionDetailInner({
         <QuestionsContext.Provider value={questionIndex}>
         <LiveContext.Provider value={live}>
         <MathRendering.Provider value={renderMath}>
+        <DiagramRendering.Provider value={renderDiagrams}>
         {items.length === 0 && (pendingSends > 0 ? (
           // A first message is on its way in (a session just started, its
           // message pending below): it is starting, not empty.
@@ -2936,6 +2939,7 @@ export function SessionDetailInner({
             transcript only grows by written entries and nothing in it changes
             height under the reader while a turn runs (`turn-status.tsx`). */}
         <div ref={rowsRef} className="transcript-rows">{rows}</div>
+        </DiagramRendering.Provider>
         </MathRendering.Provider>
         </LiveContext.Provider>
         </QuestionsContext.Provider>

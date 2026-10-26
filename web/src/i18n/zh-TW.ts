@@ -85,6 +85,13 @@ export const zhTW: Record<string, string> = {
   rendered: "渲染",
   source: "原始碼",
   "click to copy the TeX": "點擊複製 TeX 原始碼",
+  /* ```mermaid in a message (`components/mermaid-block.tsx`): its settings row, the per-block control and the picture's alt text */
+  "Mermaid diagrams": "Mermaid 圖表",
+  "```mermaid blocks in messages · other code stays as written": "訊息中的 ```mermaid 區塊 · 其他程式碼保持原樣",
+  diagram: "圖表",
+  "show source": "顯示原始碼",
+  "show diagram": "顯示圖表",
+  "Mermaid diagram": "Mermaid 圖表",
   "rename failed: {{msg}}": "重新命名失敗：{{msg}}",
   "Please look at the attached file(s).": "請查看附加的檔案。",
   "attach files (or paste into the message box)": "附加檔案（或直接貼到輸入框）",

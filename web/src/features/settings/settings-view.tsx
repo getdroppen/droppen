@@ -289,6 +289,27 @@ export function MessageRenderingSection() {
           <span className="font-mono text-xs text-muted">…</span>
         )}
       </div>
+      <div className={cn(preferenceRow, "mt-3")}>
+        <div>
+          <div className={ROW_LABEL}>{t("Mermaid diagrams")}</div>
+          <div className={ROW_HINT}>{t("```mermaid blocks in messages · other code stays as written")}</div>
+        </div>
+        {prefs ? (
+          <Tabs
+            className="w-full"
+            // A server from before the pref sends none, and draws them.
+            value={prefs.diagrams ?? "rendered"}
+            onValueChange={(v) => save.mutate({ ...prefs, diagrams: v as Prefs["diagrams"] })}
+          >
+            <TabsList className="w-full">
+              <TabsTab value="rendered">{t("rendered")}</TabsTab>
+              <TabsTab value="source">{t("source")}</TabsTab>
+            </TabsList>
+          </Tabs>
+        ) : (
+          <span className="font-mono text-xs text-muted">…</span>
+        )}
+      </div>
     </section>
   );
 }

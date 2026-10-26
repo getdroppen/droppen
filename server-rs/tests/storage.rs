@@ -35,6 +35,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
             "language": "auto",
             "transcriptStyle": "flat",
             "math": "rendered",
+            "diagrams": "rendered",
         })
     );
 
@@ -45,6 +46,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
         "language": "zh-CN",
         "transcriptStyle": "bubble",
         "math": "source",
+        "diagrams": "source",
     });
     let (status, body) = server.json("PUT", "/api/prefs", &wanted).await;
     assert_eq!(status, 200, "PUT /api/prefs -> {status}: {body}");
@@ -65,6 +67,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
         stored,
         [
             "composerSend=modifier",
+            "diagrams=source",
             "fontSize=xlarge",
             "language=zh-CN",
             "math=source",
