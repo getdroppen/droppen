@@ -25,7 +25,13 @@ export function createHubClient(baseUrl: string, fetchImpl: (input: string, init
         headers[name] = value;
       });
       const init: RequestInit = { method: request.method, headers };
-      if (request.method !== "GET" && request.method !== "HEAD") init.body = await request.text();
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        // A DELETE has no body; sending `""` makes some in-process hubs parse
+        // an empty string as JSON, and an empty body is what the old client
+        // sent too.
+        const body = await request.text();
+        if (body !== "") init.body = body;
+      }
       if (!relative) return fetchImpl(request.url, init);
       const url = new URL(request.url);
       return fetchImpl(`${url.pathname}${url.search}`, init);
