@@ -53,9 +53,11 @@ const REACT = new Set(["react", "react-dom", "scheduler"]);
 
 /**
  * `@rollup/plugin-commonjs`'s helpers, which every CommonJS package (React's
- * among them) imports. Left alone, Rollup would put them in `vendor` with the
- * first such package there, and `vendor-react` would import `vendor`, which
- * imports `vendor-react`.
+ * among them) imports. Left alone, they would go to the manual chunk of the
+ * first CommonJS module to run. That is React today; but once a CommonJS
+ * package in `vendor` runs before it (the entry importing it first), the
+ * helpers would land in `vendor`, and `vendor-react` would import `vendor`,
+ * which imports `vendor-react`.
  */
 const COMMONJS_HELPERS = "\0commonjsHelpers.js";
 
@@ -90,9 +92,10 @@ function packageOf(id: string): string | null {
 /**
  * Fail the build when the boot chunks (the entry and what it imports
  * statically, as the shell preloads and the service worker precaches them)
- * render code of a package the app loads on demand (`onDemand`: package
- * names, a trailing `/` for a scope), or when a vendor chunk imports anything
- * but `vendor-react`.
+ * hold code or a stylesheet of a package the app loads on demand (`onDemand`:
+ * package names, a trailing `/` for a scope), or when a vendor chunk imports
+ * anything but `vendor-react`. A stylesheet's JS proxy renders to nothing, but
+ * its CSS ships with the chunk as a render-blocking `<link>`.
  *
  * `vendorChunk` keeps lazy-only packages out of `vendor` by itself. This is
  * the alarm for one of them becoming eager by a static import in the wrong
@@ -116,11 +119,11 @@ export function guardBootChunks(onDemand: readonly string[]): Plugin {
       for (const chunk of chunks.values()) if (chunk.isEntry) visit(chunk.fileName);
       for (const fileName of boot) {
         const eager = Object.entries(chunks.get(fileName)!.modules)
-          .filter(([id, m]) => m.renderedLength > 0 && isOnDemand(packageOf(id) ?? ""))
+          .filter(([id, m]) => (m.renderedLength > 0 || /\.css($|\?)/.test(id)) && isOnDemand(packageOf(id) ?? ""))
           .map(([id]) => id);
         if (eager.length)
           this.error(
-            `${fileName} is a boot chunk, but holds code the app loads on demand: ${eager.slice(0, 3).join(", ")} — import it only from a module loaded with import(), or take it off the on-demand list in vite.config.ts`,
+            `${fileName} is a boot chunk, but holds code or CSS the app loads on demand: ${eager.slice(0, 3).join(", ")} — import it only from a module loaded with import(), or take it off the on-demand list in vite.config.ts`,
           );
       }
       for (const chunk of chunks.values()) {

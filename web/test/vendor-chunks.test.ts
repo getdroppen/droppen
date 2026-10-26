@@ -1,6 +1,7 @@
 // Which chunk third-party code goes to (build/vendor-chunks.ts): `vendor` holds
-// only what the entry reaches statically, React has `vendor-react` to itself,
-// icons stay with the app, and a lazy-only package is left to the lazy chunks.
+// only what the entry reaches statically, React has `vendor-react` to itself
+// (with the CommonJS helpers), icons stay with the app, and a lazy-only package
+// is left to the lazy chunks.
 // Small fixture apps built against the web app's own node_modules.
 import assert from "node:assert/strict";
 import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
@@ -83,6 +84,18 @@ test("vendor holds what the entry reaches statically, React its own chunk, and l
   assert.deepEqual(holding(chunks, "lucide-react"), ["entry", "settings"]);
 });
 
+test("the CommonJS helpers go with React, even when another CommonJS package runs first", async () => {
+  // jsQR is CommonJS too, and the entry imports it before React: left to
+  // Rollup, the helpers would follow it into `vendor`.
+  const files = { "entry.js": 'import jsQR from "jsqr";\nimport { createRoot } from "react-dom/client";\nconsole.log(jsQR, createRoot);\n' };
+  const chunks = await bundle(files);
+  const helpers = chunks.filter((c) => (c.modules["\0commonjsHelpers.js"]?.renderedLength ?? 0) > 0).map((c) => c.name);
+  assert.deepEqual(helpers, ["vendor-react"]);
+  assert.deepEqual(holding(chunks, "jsqr"), ["vendor"]);
+  assert.deepEqual(chunk(chunks, "vendor-react").imports, []);
+  assert.deepEqual(namesOf(chunks, chunk(chunks, "vendor").imports), ["vendor-react"]);
+});
+
 test("a new icon leaves the vendor chunks' hashes alone", async () => {
   const before = await bundle(app(["Check"]));
   const after = await bundle(app(["Check", "Plus"]));
@@ -92,9 +105,17 @@ test("a new icon leaves the vendor chunks' hashes alone", async () => {
 
 test("a boot chunk with code of an on-demand package fails the build", async () => {
   const files = { "entry.js": 'import jsQR from "jsqr";\nconsole.log(jsQR);\n' };
-  await assert.rejects(bundle(files, { onDemand: ["jsqr"] }), /is a boot chunk, but holds code the app loads on demand: .*\/node_modules\/jsqr\//);
+  await assert.rejects(bundle(files, { onDemand: ["jsqr"] }), /is a boot chunk, but holds code or CSS the app loads on demand: .*\/node_modules\/jsqr\//);
   // By the whole package name, or a whole scope.
   await bundle(files, { onDemand: ["jsq", "@jsqr/"] });
+});
+
+test("so does one with an on-demand package's stylesheet, which renders no JS", async () => {
+  const eager = { "entry.js": 'import "katex/dist/katex.min.css";\nimport { clsx } from "clsx";\nconsole.log(clsx);\n' };
+  await assert.rejects(bundle(eager, { onDemand: ["katex"] }), /is a boot chunk, but holds code or CSS the app loads on demand: .*\/node_modules\/katex\/dist\/katex\.min\.css/);
+  // Imported by a lazy module, it ships with that module's chunk.
+  const lazy = { "entry.js": 'console.log(() => import("./math.js"));\n', "math.js": 'import "katex/dist/katex.min.css";\nexport default 1;\n' };
+  await bundle(lazy, { onDemand: ["katex"] });
 });
 
 test("a vendor chunk importing anything but vendor-react fails the build", async () => {
