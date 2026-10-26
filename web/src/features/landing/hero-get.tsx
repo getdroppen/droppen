@@ -35,7 +35,7 @@ import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
  * The download page (`download.tsx`) opens on the same device's tab.
  */
 
-const quietLink = "text-muted underline underline-offset-4 hover:text-fg";
+const quietLink = "whitespace-nowrap text-muted underline underline-offset-4 hover:text-fg";
 
 /** The download page on `os`'s tab (every tab: no `os`), in place. */
 function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId: string }) {
