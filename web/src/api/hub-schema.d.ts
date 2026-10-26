@@ -855,7 +855,8 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description `DELETE /v1/account {confirm, current_password? | passkey?}` →
+        /**
+         * @description `DELETE /v1/account {confirm, current_password? | passkey?}` →
          *     `{deleted: true, purged}`: the account and everything it stores
          *     ([`Eraser::delete`]), asked from a current full device (any device before
          *     the account has a chain), with the account's e-mail typed out (`400
@@ -865,7 +866,8 @@ export interface components {
          *     `purged: false`: it is gone for its owner, and the hub finishes erasing
          *     it on its own.
          *     `DELETE /v1/account`: whether the account is gone and whether its data was
-         *     purged at once (a `false` purge finishes in the background). */
+         *     purged at once (a `false` purge finishes in the background).
+         */
         AccountDeleted: {
             deleted: boolean;
             purged: boolean;
@@ -881,13 +883,15 @@ export interface components {
             credential: Record<string, never>;
             label?: string | null;
         };
-        /** @description The error body every handler can send: `{error, message}` (some codes add
+        /**
+         * @description The error body every handler can send: `{error, message}` (some codes add
          *     `retry_after_ms`, `key`/`limit`/`used`). `ApiError` has no `Deserialize`
          *     and is never a success body; this is only how `ApiResult<T>` documents
          *     its `default` response.
          *     The error body's shape, derived: `ApiError` itself has no `Serialize` (it
          *     is never a success body), so its `Schematic` delegates here and the
-         *     document gets the properties, required/optional as the fields are. */
+         *     document gets the properties, required/optional as the fields are.
+         */
         ApiErrorBody: {
             /** @description The stable code, e.g. `rate`, `limit`, `in_chain`. */
             error: string;
@@ -928,11 +932,13 @@ export interface components {
             /** @description The chain's sequence, or `null` before its genesis. */
             seq?: number | null;
         };
-        /** @description A nonce for a device to sign. No bearer: what mints a session is the
+        /**
+         * @description A nonce for a device to sign. No bearer: what mints a session is the
          *     device's signature over the nonce, never a token. Stateless (an HMAC over
          *     the ids and the time), so asking stores nothing; issued whether or not the
          *     device exists, so the answer says nothing about which ids are real.
-         *     `POST /v1/session/challenge`: the nonce to sign. */
+         *     `POST /v1/session/challenge`: the nonce to sign.
+         */
         Challenge: {
             /** @description Hex. */
             nonce: string;
@@ -941,15 +947,19 @@ export interface components {
             account: string;
             device: string;
         };
-        /** @description A WebAuthn ceremony's challenge and options (the options object is the
-         *     browser's own; its shape is WebAuthn's). */
+        /**
+         * @description A WebAuthn ceremony's challenge and options (the options object is the
+         *     browser's own; its shape is WebAuthn's).
+         */
         ChallengeOptions: {
             /** @description Base64url. */
             challenge: string;
             options: unknown;
         };
-        /** @description `DELETE /v1/account`'s body: the account's e-mail typed out, and proof it
-         *     is still the person (as `PUT /v1/password` takes it). */
+        /**
+         * @description `DELETE /v1/account`'s body: the account's e-mail typed out, and proof it
+         *     is still the person (as `PUT /v1/password` takes it).
+         */
         DeleteAccount: {
             confirm?: string | null;
             current_password?: string | null;
@@ -960,7 +970,8 @@ export interface components {
             /** @description Days the address is held. */
             email_hold_days: number;
         };
-        /** @description `POST /v1/rotations/{host}/disputes {seq, entry_hash, sig}` — no session:
+        /**
+         * @description `POST /v1/rotations/{host}/disputes {seq, entry_hash, sig}` — no session:
          *     the retired key's signature is the credential (§3.8 「证据：退役钥签的争议
          *     声明」). A host whose identity key was renewed elsewhere signs, with the key
          *     that renewal retired, a statement over that renewal (`rh/v1
@@ -975,7 +986,8 @@ export interface components {
          *     N1: junk cannot use up the real host's statement).
          *     200 `{ok: true}`; 404 `no_such_renewal`; 410 `host_removed` (stop
          *     sending); 422 `invalid_dispute`; 429.
-         *     `POST /v1/rotations/{host}/disputes`: the statement was taken. */
+         *     `POST /v1/rotations/{host}/disputes`: the statement was taken.
+         */
         Disputed: {
             ok: boolean;
         };
@@ -983,8 +995,10 @@ export interface components {
         EnrollmentMade: {
             expires_ms: number;
         };
-        /** @description `GET /v1/enrollments/{token}`: `waiting`/`expired`, or `proved` with the
-         *     machine's keys and the proof it sent. */
+        /**
+         * @description `GET /v1/enrollments/{token}`: `waiting`/`expired`, or `proved` with the
+         *     machine's keys and the proof it sent.
+         */
         EnrollmentState: {
             device?: string | null;
             dh_key?: string | null;
@@ -1016,7 +1030,8 @@ export interface components {
             updated_ms: number;
             writer: string;
         };
-        /** @description Store one keyring blob: only a current full device, each name once (the
+        /**
+         * @description Store one keyring blob: only a current full device, each name once (the
          *     same bytes again is a retry), only a name that ends with the device itself
          *     and names epochs the chain has committed ([`crate::keyring`]). The blobs
          *     are AEAD-bound to their account, machine and epochs, and every key in them
@@ -1024,7 +1039,8 @@ export interface components {
          *     writer keep a device from crowding out, replacing or squatting what
          *     another writes (M2 re-review #27).
          *     `PUT /v1/keys/{name}`: the name and whether this call stored it (the same
-         *     bytes again is a retry: `stored: false`). */
+         *     bytes again is a retry: `stored: false`).
+         */
         KeyPut: {
             name: string;
             stored: boolean;
@@ -1038,8 +1054,10 @@ export interface components {
             /** @description The known-client token a sign-in to this account gave this client. */
             known_client?: string | null;
             password: string;
-            /** @description The Turnstile widget's token, once the hub asked for one
-             *     (`turnstile_required`: this account or address failed often lately). */
+            /**
+             * @description The Turnstile widget's token, once the hub asked for one
+             *     (`turnstile_required`: this account or address failed often lately).
+             */
             turnstile?: string | null;
         };
         /** @description The hub's offline copy of a machine's streams. */
@@ -1050,18 +1068,24 @@ export interface components {
         };
         MachinePresence: {
             id: string;
-            /** @description Whether its agent attaches to relays (`relays/1` in its `agent_info`);
+            /**
+             * @description Whether its agent attaches to relays (`relays/1` in its `agent_info`);
              *     `false`: an agent from before relays, which no device can reach now
-             *     that the hub carries no channels (§2.15). Absent until it said. */
+             *     that the hub carries no channels (§2.15). Absent until it said.
+             */
             relays?: boolean | null;
             since_ms: number;
             state: components["schemas"]["PresenceState"];
-            /** @description The relays the machine says it is signed in on, with its round trip
-             *     to each (information, never authority: §2.9). */
+            /**
+             * @description The relays the machine says it is signed in on, with its round trip
+             *     to each (information, never authority: §2.9).
+             */
             via?: components["schemas"]["Via"][];
         };
-        /** @description The session device's own mailbox, a page at a time.
-         *     One unacknowledged mail. */
+        /**
+         * @description The session device's own mailbox, a page at a time.
+         *     One unacknowledged mail.
+         */
         MailEntry: {
             epoch: number;
             id: number;
@@ -1078,8 +1102,10 @@ export interface components {
         Mailbox: {
             mail: components["schemas"]["MailEntry"][];
         };
-        /** @description The account's main device as it stands: the machine and when it was set
-         *     (or cleared). `machine: None`: the account has none. */
+        /**
+         * @description The account's main device as it stands: the machine and when it was set
+         *     (or cleared). `machine: None`: the account has none.
+         */
         MainDevice: {
             machine?: string | null;
             set_ms?: number | null;
@@ -1169,9 +1195,11 @@ export interface components {
             /** @description `pending`, `attempt`, `staged`, `committed` or `expired`. */
             state: string;
         };
-        /** @description `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
+        /**
+         * @description `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
          *     (The account's policy is its chain's: `SetRenewalPolicy`.)
-         *     `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state. */
+         *     `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
+         */
         MeRotations: {
             active: components["schemas"]["MeRotationActive"][];
             enabled: boolean;
@@ -1181,13 +1209,17 @@ export interface components {
             dh_key: string;
             /** @description The machine it runs on (an aggregator's host). Metadata only. */
             host?: string | null;
-            /** @description What the device is (local-aggregator §3.3: `"aggregator"`, a
-             *     computer's limited device). Metadata only, shown on the devices page. */
+            /**
+             * @description What the device is (local-aggregator §3.3: `"aggregator"`, a
+             *     computer's limited device). Metadata only, shown on the devices page.
+             */
             kind?: string | null;
-            /** @description The device of this account it takes the place of: its browser lost
+            /**
+             * @description The device of this account it takes the place of: its browser lost
              *     that one's keys (`GET /v1/me` says so, for the device that adds this
              *     one to offer the old one's removal). Metadata only; an id that is not
-             *     a device of this account is kept as none. */
+             *     a device of this account is kept as none.
+             */
             replaces?: string | null;
             sign_key: string;
         };
@@ -1250,15 +1282,19 @@ export interface components {
         PairingMessages: {
             messages: components["schemas"]["PairingMessageEntry"][];
         };
-        /** @description A device opens a pairing for itself (one not in the chain yet, typically:
+        /**
+         * @description A device opens a pairing for itself (one not in the chain yet, typically:
          *     that one gets a short-lived quota, [`crate::pairings::Opener`]).
-         *     `POST /v1/pairings`: the pairing's id. */
+         *     `POST /v1/pairings`: the pairing's id.
+         */
         PairingOpened: {
             id: string;
         };
-        /** @description The initiator is a current full device; the responder is the device that
+        /**
+         * @description The initiator is a current full device; the responder is the device that
          *     opened the pairing.
-         *     `POST /v1/pairings/{id}/messages`: the message's number in the pairing. */
+         *     `POST /v1/pairings/{id}/messages`: the message's number in the pairing.
+         */
         PairingPosted: {
             n: number;
         };
@@ -1274,8 +1310,10 @@ export interface components {
         };
         PasskeyLogin: {
             challenge: string;
-            /** @description Verbatim, checked as WebAuthn's JSON ([`webauthn::verify_registration`],
-             *     [`webauthn::parse_assertion`]). */
+            /**
+             * @description Verbatim, checked as WebAuthn's JSON ([`webauthn::verify_registration`],
+             *     [`webauthn::parse_assertion`]).
+             */
             credential: Record<string, never>;
         };
         /** @description `DELETE /v1/passkeys/{id}`: the passkey was removed. */
@@ -1285,17 +1323,21 @@ export interface components {
         };
         PasskeySignUp: {
             challenge: string;
-            /** @description Verbatim, checked as WebAuthn's JSON ([`webauthn::verify_registration`],
-             *     [`webauthn::parse_assertion`]). */
+            /**
+             * @description Verbatim, checked as WebAuthn's JSON ([`webauthn::verify_registration`],
+             *     [`webauthn::parse_assertion`]).
+             */
             credential: Record<string, never>;
             email: string;
             invite?: string | null;
             lang?: string | null;
         };
-        /** @description One passkey as the account's devices see it (`GET /v1/passkeys`). Nothing
+        /**
+         * @description One passkey as the account's devices see it (`GET /v1/passkeys`). Nothing
          *     here is a secret: the credential id is what every assertion carries, and
          *     the page needs it to ask that very passkey for its PRF (§4.5).
-         *     One passkey, as `GET /v1/passkeys` and the add/rename routes show it. */
+         *     One passkey, as `GET /v1/passkeys` and the add/rename routes show it.
+         */
         PasskeyView: {
             backup_eligible: boolean;
             backup_state: boolean;
@@ -1325,8 +1367,10 @@ export interface components {
         PasswordState: {
             password: boolean;
         };
-        /** @description What went through the relays in the period (what went straight between two
-         *     devices is not counted). */
+        /**
+         * @description What went through the relays in the period (what went straight between two
+         *     devices is not counted).
+         */
         PlanTransfer: {
             bytes: number;
             /** @description The plan's share; `null` is unlimited. */
@@ -1347,12 +1391,14 @@ export interface components {
             storage_bytes: number;
             transfer: components["schemas"]["PlanTransfer"];
         };
-        /** @description `/v1/me`'s `plan`: the plan, its dates, the effective entitlements and the
+        /**
+         * @description `/v1/me`'s `plan`: the plan, its dates, the effective entitlements and the
          *     usage — and `warnings`, the keys the account is near (80%) where nearing
          *     one matters before it is met: `chain.entries` (a full chain takes only
          *     removals and the way out: [`crate::hub::chain_caps`]).
          *     `/v1/me`'s `plan`: the plan, its dates, the effective entitlements, the
-         *     usage and the keys it is nearing. */
+         *     usage and the keys it is nearing.
+         */
         PlanView: {
             /** @description Entitlement key → value; `null` is unlimited. */
             entitlements: unknown;
@@ -1382,9 +1428,11 @@ export interface components {
          * @enum {string}
          */
         PresenceState: "online" | "offline" | "unknown";
-        /** @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+        /**
+         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
-         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]). */
+         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
+         */
         Proof: {
             current_password?: string | null;
             grant?: string | null;
@@ -1419,11 +1467,13 @@ export interface components {
             relays: unknown[];
             throttled: boolean;
         };
-        /** @description `PATCH /v1/relays/prefs {standby?}` → `{standby}`: the account's relay
+        /**
+         * @description `PATCH /v1/relays/prefs {standby?}` → `{standby}`: the account's relay
          *     preferences, set by a current device of its chain. Not security-sensitive
          *     (which relays carry ciphertext); a change fills or trims the set at once
          *     ([`Hub::fill_set`]) and its agents hear of it.
-         *     `PATCH /v1/relays/prefs`: the account's relay preferences. */
+         *     `PATCH /v1/relays/prefs`: the account's relay preferences.
+         */
         RelayPrefs: {
             standby: boolean;
         };
@@ -1433,9 +1483,11 @@ export interface components {
         Resend: {
             turnstile?: string | null;
         };
-        /** @description The account's renewals as `GET /v1/rotations` gives them.
+        /**
+         * @description The account's renewals as `GET /v1/rotations` gives them.
          *     `GET /v1/rotations`: the hub's clock, the policy, each host's state and
-         *     the disputes kept. */
+         *     the disputes kept.
+         */
         RotationsView: {
             /** @description One entry per kept dispute. */
             disputes: unknown[];
@@ -1449,11 +1501,13 @@ export interface components {
             if_unset?: boolean;
             machine: string;
         };
-        /** @description `GET /v1/me`'s `sign_in_changes`: the account's changes of the last
+        /**
+         * @description `GET /v1/me`'s `sign_in_changes`: the account's changes of the last
          *     [`CHANGES_KEPT_MS`] up to `now`, oldest first, at most [`CHANGES_LISTED`]
          *     (the newest), each `{id, kind, device, label, at_ms}` as
          *     `sign_in_changed` says it.
-         *     One recent change to the account's ways to sign in, as `/v1/me` lists it. */
+         *     One recent change to the account's ways to sign in, as `/v1/me` lists it.
+         */
         SignInChange: {
             at_ms: number;
             device?: string | null;
@@ -1473,12 +1527,16 @@ export interface components {
         };
         SignedIn: {
             account: string;
-            /** @description Whether the account's e-mail is verified (always `true` with
-             *     verification off). */
+            /**
+             * @description Whether the account's e-mail is verified (always `true` with
+             *     verification off).
+             */
             email_verified?: boolean | null;
             expires_ms: number;
-            /** @description The hub's word that this client signed in to the account
-             *     ([`auth::known_client_token`]): sent with its next login. */
+            /**
+             * @description The hub's word that this client signed in to the account
+             *     ([`auth::known_client_token`]): sent with its next login.
+             */
             known_client?: string | null;
             /** @description The passkey a passkey login used (`POST /v1/login/passkey`). */
             passkey?: unknown;
@@ -1492,11 +1550,13 @@ export interface components {
             expires_ms: number;
             token: string;
         };
-        /** @description `GET /v1/signup/config`: what the sign-up page needs to draw its form.
+        /**
+         * @description `GET /v1/signup/config`: what the sign-up page needs to draw its form.
          *     Field order and `null`s match the `Json<Value>` it replaces (the open
          *     clients read it; a missing field is a contract change). The order is
          *     alphabetical because that `Value` came from `serde_json`'s `BTreeMap`,
-         *     and `tests/golden/single_host.txt` compares the body byte for byte. */
+         *     and `tests/golden/single_host.txt` compares the body byte for byte.
+         */
         SignupConfig: {
             /** @description How long a deleted account's address cannot sign up again. */
             deletion: components["schemas"]["Deletion"];
@@ -1514,8 +1574,10 @@ export interface components {
         /** @description Why one relay got no ticket. */
         TicketRefusal: {
             account_set?: string[];
-            /** @description `unknown` (not in the list for this account), `unavailable` (not
-             *     `up`), `limit` (the set is full) or `forbidden`. */
+            /**
+             * @description `unknown` (not in the list for this account), `unavailable` (not
+             *     `up`), `limit` (the set is full) or `forbidden`.
+             */
             error: string;
             key?: string | null;
             limit?: number | null;
@@ -1535,9 +1597,11 @@ export interface components {
             /** @description Cloudflare's public site key. */
             site_key: string;
         };
-        /** @description The link's token (from the page at `/verify`, which read it from the
+        /**
+         * @description The link's token (from the page at `/verify`, which read it from the
          *     fragment): no session needed — the token is the proof, from any device.
-         *     `POST /v1/email/verify`: the account the link verified. */
+         *     `POST /v1/email/verify`: the account the link verified.
+         */
         Verified: {
             account: string;
             verified: boolean;
@@ -1549,8 +1613,10 @@ export interface components {
             relay: string;
             rtt_ms?: number | null;
         };
-        /** @description `POST /v1/waitlist`: `{ok: true}` whether the address was new or already
-         *     there. */
+        /**
+         * @description `POST /v1/waitlist`: `{ok: true}` whether the address was new or already
+         *     there.
+         */
         Waitlisted: {
             ok: boolean;
         };
@@ -1570,8 +1636,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description `DELETE /v1/account`'s body: the account's e-mail typed out, and proof it
-         *     is still the person (as `PUT /v1/password` takes it). */
+        /**
+         * @description `DELETE /v1/account`'s body: the account's e-mail typed out, and proof it
+         *     is still the person (as `PUT /v1/password` takes it).
+         */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DeleteAccount"];
@@ -2427,9 +2495,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+        /**
+         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
-         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]). */
+         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
+         */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Proof"];
@@ -2556,9 +2626,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+        /**
+         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
-         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]). */
+         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
+         */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Proof"];
@@ -2660,9 +2732,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+        /**
+         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
-         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]). */
+         *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
+         */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Proof"];

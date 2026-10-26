@@ -22,15 +22,18 @@ pnpm --filter @remote-hand/web gen:api:hub
 Do this after a hub release that changes the public API (a new route, a changed
 body, a new response schema), in the same change that starts using it.
 
-Known gaps, where the generated type is still `unknown` and the client keeps
-a hand-written wire shape for now:
+Known gaps, where the generated type is not enough and the client keeps a
+hand-written call or a cast:
 
-- `GET /v1/me?touch=1`: the query is not in the document yet.
-- `me.email`, `me.plan`, `me.rotations`, `me.credentials`,
-  `me.sign_in_changes`, `me.relay_prefs`: JSON values in the document.
-- the error body: the document's `ApiError` schema has no properties (the
-  client reads `{error, message, retry_after_ms, …}` itself).
-- passkey WebAuthn options: JSON values (their shape is WebAuthn's).
+- `PUT /v1/keys/{name}`: the hub's route is a catch-all (`{*name}`), and
+  `openapi-fetch` URL-encodes a path parameter whole, turning the name's `/`
+  into `%2F`; the client still builds that one URL itself (body and response
+  types are generated).
+- `PUT`/`DELETE /v1/rotations/{host}`: the document models an empty 200 (and,
+  for `PUT`, a per-host view it does not model), so these stay untyped.
+- WebAuthn credential objects: JSON values in the document (their shape is
+  WebAuthn's); the client casts the browser's answer.
 
-Each is a hub-side schema improvement; until then those fields are read as
-`unknown` at the edge and validated where they enter the app.
+`Me` and its nested views (`MeEmail`, `PlanView`, `MeChainV3`, `MeRotations`,
+`MeCredentials`, `MeRelayPrefs`, `SignInChange`) and the error body
+(`ApiErrorBody`) are typed now.

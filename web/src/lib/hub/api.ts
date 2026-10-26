@@ -850,15 +850,8 @@ export class HubApi {
 
   /** Who may sign up, the Turnstile widget's page, whether e-mail must be verified, and passkeys (public). */
   async signupConfig(): Promise<SignupConfig> {
-    const r = await this.call<{
-      signup?: unknown;
-      invite_required?: unknown;
-      turnstile?: { site_key?: unknown; origin?: unknown } | null;
-      verification?: unknown;
-      passkeys?: unknown;
-      deletion?: unknown;
-    } | null>("GET", "/v1/signup/config");
-    const signup: SignupMode = r?.signup === "open" || r?.signup === "closed" ? r.signup : "invite";
+    const r = await this.typed<components["schemas"]["SignupConfig"]>((headers) => this.client.GET("/v1/signup/config", { headers }));
+    const signup: SignupMode = r?.signup === "open" || r?.signup === "closed" ? (r.signup as SignupMode) : "invite";
     const deletion = deletionConfig(r?.deletion);
     return {
       signup,
@@ -879,9 +872,9 @@ export class HubApi {
    * plan), 400 `disposable_email`, 429 `rate` with how long to wait.
    */
   async joinWaitlist(input: { email: string; plan: WaitlistPlan; locale?: string }): Promise<void> {
-    const body: Record<string, string> = { email: input.email, plan: input.plan };
+    const body: components["schemas"]["Join"] = { email: input.email, plan: input.plan };
     if (input.locale) body.locale = input.locale;
-    await this.call<unknown>("POST", "/v1/waitlist", { body });
+    await this.typed<components["schemas"]["Waitlisted"]>((headers) => this.client.POST("/v1/waitlist", { body, headers }));
   }
 
   /**
@@ -891,11 +884,11 @@ export class HubApi {
    * widget's token; `lang` the language the verification mail is written in.
    */
   async signUp(email: string, password: string, opts: { invite?: string; turnstile?: string | null; lang?: string } = {}): Promise<SignedIn> {
-    const body: Record<string, string> = { email, password };
+    const body: components["schemas"]["SignUp"] = { email, password };
     if (opts.invite) body.invite = opts.invite;
     if (opts.turnstile) body.turnstile = opts.turnstile;
     if (opts.lang) body.lang = opts.lang;
-    const r = await this.call<SignedInBody>("POST", "/v1/signup", { body });
+    const r = await this.typed<components["schemas"]["SignedIn"]>((headers) => this.client.POST("/v1/signup", { body, headers }));
     await this.keepKnownClient(email, r?.known_client);
     return signedIn(r);
   }
@@ -908,11 +901,11 @@ export class HubApi {
    * not hold it back for others' failures (429 `rate` otherwise).
    */
   async login(email: string, password: string, turnstile?: string | null): Promise<SignedIn> {
-    const body: Record<string, string> = { email, password };
+    const body: components["schemas"]["Login"] = { email, password };
     if (turnstile) body.turnstile = turnstile;
     const known = await this.knownClient(email);
     if (known) body.known_client = known;
-    const r = await this.call<SignedInBody>("POST", "/v1/login", { body });
+    const r = await this.typed<components["schemas"]["SignedIn"]>((headers) => this.client.POST("/v1/login", { body, headers }));
     await this.keepKnownClient(email, r?.known_client);
     return signedIn(r);
   }
@@ -924,11 +917,11 @@ export class HubApi {
    * with. Refused (409 `email_taken`, 403 `bad_invite`, …): make none.
    */
   async passkeySignupOptions(input: { email: string; invite?: string; turnstile?: string | null; lang?: string }): Promise<PasskeyChallenge<CreationOptionsJSON>> {
-    const body: Record<string, string> = { purpose: "signup", email: input.email };
+    const body: components["schemas"]["Options"] = { purpose: "signup", email: input.email };
     if (input.invite) body.invite = input.invite;
     if (input.turnstile) body.turnstile = input.turnstile;
     if (input.lang) body.lang = input.lang;
-    const r = await this.call<unknown>("POST", "/v1/passkeys/options", { body });
+    const r = await this.typed<components["schemas"]["ChallengeOptions"]>((headers) => this.client.POST("/v1/passkeys/options", { body, headers }));
     return passkeyChallenge(r, "create") as PasskeyChallenge<CreationOptionsJSON>;
   }
 
@@ -937,18 +930,23 @@ export class HubApi {
    * and the account. The same answer as a password sign-up (`signUp`).
    */
   async signUpWithPasskey(input: { challenge: string; email: string; invite?: string; lang?: string; credential: RegistrationResponseJSON }): Promise<SignedIn> {
-    const body: Record<string, unknown> = { challenge: input.challenge, email: input.email };
+    const body: components["schemas"]["PasskeySignUp"] = {
+      challenge: input.challenge,
+      email: input.email,
+      // The schema types WebAuthn's own JSON as an empty record; the browser's answer goes as it is.
+      credential: input.credential as unknown as components["schemas"]["PasskeySignUp"]["credential"],
+    };
     if (input.invite) body.invite = input.invite;
     if (input.lang) body.lang = input.lang;
-    body.credential = input.credential;
-    const r = await this.call<SignedInBody>("POST", "/v1/signup/passkey", { body });
+    const r = await this.typed<components["schemas"]["SignedIn"]>((headers) => this.client.POST("/v1/signup/passkey", { body, headers }));
     await this.keepKnownClient(input.email, r?.known_client);
     return signedIn(r);
   }
 
   /** A sign-in challenge for a passkey, and the options to ask for one with (no credential named: the person picks). */
   async passkeyLoginOptions(): Promise<PasskeyChallenge<RequestOptionsJSON>> {
-    const r = await this.call<unknown>("POST", "/v1/passkeys/login/options", { body: {} });
+    // The schema models no body here; the hub still takes an empty one.
+    const r = await this.typed<components["schemas"]["ChallengeOptions"]>((headers) => this.client.POST("/v1/passkeys/login/options", { body: {} as never, headers }));
     return passkeyChallenge(r, "get") as PasskeyChallenge<RequestOptionsJSON>;
   }
 
@@ -959,7 +957,8 @@ export class HubApi {
    * passkey; 401 `bad_passkey`: any other check failed.
    */
   async loginWithPasskey(challenge: string, credential: AuthenticationResponseJSON): Promise<PasskeySignedIn> {
-    const r = await this.call<SignedInBody & { passkey?: unknown }>("POST", "/v1/login/passkey", { body: { challenge, credential } });
+    const body: components["schemas"]["PasskeyLogin"] = { challenge, credential: credential as unknown as components["schemas"]["PasskeyLogin"]["credential"] };
+    const r = await this.typed<components["schemas"]["SignedIn"]>((headers) => this.client.POST("/v1/login/passkey", { body, headers }));
     return { ...signedIn(r), passkey: usedPasskey(r?.passkey) };
   }
 
@@ -967,7 +966,7 @@ export class HubApi {
 
   /** The account's passkeys and whether it has a password (any current device). */
   async signInMethods(token: string): Promise<SignInMethods> {
-    const r = await this.call<{ passkeys?: unknown; password?: unknown; max?: unknown } | null>("GET", "/v1/passkeys", { token });
+    const r = await this.typed<components["schemas"]["PasskeyList"]>((headers) => this.client.GET("/v1/passkeys", { headers }), { token });
     return {
       passkeys: Array.isArray(r?.passkeys) ? r.passkeys.map(accountPasskey).filter((p): p is AccountPasskey => p !== null) : [],
       password: r?.password === true,
@@ -977,22 +976,27 @@ export class HubApi {
 
   /** Adding a passkey, step 1: with proof it is still the person, the options to make one with (a current full device). */
   async passkeyAddOptions(token: string, proof: Reauth): Promise<PasskeyChallenge<CreationOptionsJSON>> {
-    const r = await this.call<unknown>("POST", "/v1/passkeys/add/options", { token, body: reauthBody(proof) });
+    const body: components["schemas"]["Proof"] = reauthBody(proof);
+    const r = await this.typed<components["schemas"]["ChallengeOptions"]>((headers) => this.client.POST("/v1/passkeys/add/options", { body, headers }), { token });
     return passkeyChallenge(r, "create") as PasskeyChallenge<CreationOptionsJSON>;
   }
 
   /** Adding a passkey, step 2: the new passkey for the challenge it answered. */
   async addPasskey(token: string, input: { challenge: string; label?: string; credential: RegistrationResponseJSON }): Promise<AccountPasskey> {
-    const body: Record<string, unknown> = { challenge: input.challenge, credential: input.credential };
+    const body: components["schemas"]["Add"] = { challenge: input.challenge, credential: input.credential as unknown as components["schemas"]["Add"]["credential"] };
     if (input.label) body.label = input.label;
-    const r = await this.call<unknown>("POST", "/v1/passkeys", { token, body });
+    const r = await this.typed<components["schemas"]["PasskeyView"]>((headers) => this.client.POST("/v1/passkeys", { body, headers }), { token });
     const passkey = accountPasskey(r);
     if (!passkey) throw new HubApiError(502, "bad_passkey_row", "the hub's answer names no passkey");
     return passkey;
   }
 
   async renamePasskey(token: string, id: string, label: string): Promise<AccountPasskey> {
-    const r = await this.call<unknown>("PATCH", `/v1/passkeys/${encodeURIComponent(id)}`, { token, body: { label } });
+    const body: components["schemas"]["Rename"] = { label };
+    const r = await this.typed<components["schemas"]["PasskeyView"]>(
+      (headers) => this.client.PATCH("/v1/passkeys/{id}", { params: { path: { id } }, body, headers }),
+      { token },
+    );
     const passkey = accountPasskey(r);
     if (!passkey) throw new HubApiError(502, "bad_passkey_row", "the hub's answer names no passkey");
     return passkey;
@@ -1000,23 +1004,33 @@ export class HubApi {
 
   /** With proof it is still the person. 409 `last_credential`: the account's last way to sign in; 409 `unlock_on`: a slot on the chain names it. */
   async deletePasskey(token: string, id: string, proof: Reauth): Promise<void> {
-    await this.call<unknown>("DELETE", `/v1/passkeys/${encodeURIComponent(id)}`, { token, body: reauthBody(proof) });
+    const body: components["schemas"]["Proof"] = reauthBody(proof);
+    await this.typed<components["schemas"]["PasskeyRemoved"]>(
+      (headers) => this.client.DELETE("/v1/passkeys/{id}", { params: { path: { id } }, body, headers }),
+      { token },
+    );
   }
 
   /** A re-authentication challenge, and options naming the account's own passkeys (409 `no_passkey`: give the password). */
   async passkeyReauthOptions(token: string): Promise<PasskeyChallenge<RequestOptionsJSON>> {
-    const r = await this.call<unknown>("POST", "/v1/passkeys/reauth/options", { token, body: {} });
+    // The schema models no body here; the hub still takes an empty one.
+    const r = await this.typed<components["schemas"]["ChallengeOptions"]>(
+      (headers) => this.client.POST("/v1/passkeys/reauth/options", { body: {} as never, headers }),
+      { token },
+    );
     return passkeyChallenge(r, "get") as PasskeyChallenge<RequestOptionsJSON>;
   }
 
   /** Set or change the password, with proof it is still the person (403 `reauth_failed` / `reauth_required`). */
   async setPassword(token: string, password: string, proof: Reauth): Promise<void> {
-    await this.call<unknown>("PUT", "/v1/password", { token, body: { password, ...reauthBody(proof) } });
+    const body: components["schemas"]["NewPassword"] = { password, ...reauthBody(proof) };
+    await this.typed<components["schemas"]["PasswordState"]>((headers) => this.client.PUT("/v1/password", { body, headers }), { token });
   }
 
   /** Remove the password (409 `last_credential` without a passkey), with proof it is still the person. */
   async deletePassword(token: string, proof: Reauth): Promise<void> {
-    await this.call<unknown>("DELETE", "/v1/password", { token, body: reauthBody(proof) });
+    const body: components["schemas"]["Proof"] = reauthBody(proof);
+    await this.typed<components["schemas"]["PasswordState"]>((headers) => this.client.DELETE("/v1/password", { body, headers }), { token });
   }
 
   /**
@@ -1028,7 +1042,8 @@ export class HubApi {
    * either way.
    */
   async deleteAccount(token: string, confirm: string, proof: Proof): Promise<{ purged: boolean }> {
-    const r = await this.call<{ purged?: unknown } | null>("DELETE", "/v1/account", { token, body: { confirm, ...reauthBody(proof) } });
+    const body: components["schemas"]["DeleteAccount"] = { confirm, ...reauthBody(proof) };
+    const r = await this.typed<components["schemas"]["AccountDeleted"]>((headers) => this.client.DELETE("/v1/account", { body, headers }), { token });
     return { purged: r?.purged !== false };
   }
 
@@ -1045,19 +1060,22 @@ export class HubApi {
 
   /** Send the verification mail again (a login or device session; with the widget's token when Turnstile is on). */
   async resendVerification(token: string, turnstile?: string | null, opts: { noRenew?: boolean } = {}): Promise<{ queued: unknown }> {
-    const r = await this.call<{ queued?: unknown } | null>("POST", "/v1/email/resend", { token, body: turnstile ? { turnstile } : {}, noRenew: opts.noRenew });
+    const body: components["schemas"]["Resend"] = turnstile ? { turnstile } : {};
+    const r = await this.typed<components["schemas"]["Queued"]>((headers) => this.client.POST("/v1/email/resend", { body, headers }), { token, noRenew: opts.noRenew });
     return { queued: r?.queued ?? null };
   }
 
   /** The verification link's token (no session: the token is the proof). 400 `bad_token`, 410 `expired`. */
   async verifyEmail(token: string): Promise<{ account: string; verified: boolean }> {
-    const r = await this.call<{ account?: unknown; verified?: unknown } | null>("POST", "/v1/email/verify", { body: { token } });
+    const body: components["schemas"]["VerifyEmail"] = { token };
+    const r = await this.typed<components["schemas"]["Verified"]>((headers) => this.client.POST("/v1/email/verify", { body, headers }));
     return { account: typeof r?.account === "string" ? r.account : "", verified: r?.verified === true };
   }
 
   /** A challenge to sign for a device session (no bearer: the signature is what counts). */
   async sessionChallenge(account: string, device: string): Promise<Bytes> {
-    const r = await this.call<{ nonce: string }>("POST", "/v1/session/challenge", { body: { account, device } });
+    const body: components["schemas"]["ChallengeFor"] = { account, device };
+    const r = await this.typed<components["schemas"]["Challenge"]>((headers) => this.client.POST("/v1/session/challenge", { body, headers }));
     const nonce = fromHex(r.nonce);
     if (nonce.length !== 32) throw new HubApiError(502, "bad_challenge", "the hub's challenge is not 32 bytes");
     return nonce;
@@ -1070,9 +1088,14 @@ export class HubApi {
    * nonce or device.
    */
   async deviceSession(body: { account: string; device: string; timeMs: number; nonce: Uint8Array; signature: Uint8Array }): Promise<HubSession> {
-    const r = await this.call<{ account: string; device: string; token: string; expires_ms: number }>("POST", "/v1/session", {
-      body: { account: body.account, device: body.device, time_ms: body.timeMs, nonce: hex(body.nonce), signature: hex(body.signature) },
-    });
+    const payload: components["schemas"]["NewDeviceSession"] = {
+      account: body.account,
+      device: body.device,
+      time_ms: body.timeMs,
+      nonce: hex(body.nonce),
+      signature: hex(body.signature),
+    };
+    const r = await this.typed<components["schemas"]["SignedInDevice"]>((headers) => this.client.POST("/v1/session", { body: payload, headers }));
     if (r.account !== body.account || r.device !== body.device) throw new HubApiError(502, "bad_session", "the hub answered for another account or device");
     return { account: r.account, device: r.device, token: r.token, expiresMs: r.expires_ms };
   }
@@ -1194,7 +1217,8 @@ export class HubApi {
    * ({@link hubErrorKind}).
    */
   async mail(token: string, body: { recipient: string; sender: string; purpose: number; epoch: number; sealed: Uint8Array }): Promise<void> {
-    await this.call("POST", "/v1/mailbox", { token, body: { ...body, sealed: hex(body.sealed) } });
+    const payload: components["schemas"]["NewMail"] = { ...body, sealed: hex(body.sealed) };
+    await this.typed<components["schemas"]["MailQueued"]>((headers) => this.client.POST("/v1/mailbox", { body: payload, headers }), { token });
   }
 
   /** What waits in this session's device's mailbox (sealed to it, or MAC'd for it), every page of it, oldest first. */
@@ -1203,9 +1227,8 @@ export class HubApi {
     let after = 0;
     // A bound on pages: the hub keeps at most 256 per recipient.
     for (let page = 0; page < 64; page++) {
-      const r = await this.call<{ mail: { id: number | string; sender: string; purpose: number; epoch: number; sealed: string }[] }>(
-        "GET",
-        `/v1/mailbox?after=${after}&limit=${MAIL_PAGE}`,
+      const r = await this.typed<components["schemas"]["Mailbox"]>(
+        (headers) => this.client.GET("/v1/mailbox", { params: { query: { after, limit: MAIL_PAGE } }, headers }),
         { token },
       );
       const list = Array.isArray(r?.mail) ? r.mail : [];
@@ -1221,12 +1244,13 @@ export class HubApi {
 
   /** Delete mail `id` (only this session's device's own). */
   async ackMail(token: string, id: string): Promise<void> {
-    await this.call("DELETE", `/v1/mailbox/${encodeURIComponent(id)}`, { token });
+    // The schema types the id as a number; the string goes as it is (the hub's ids are numbers).
+    await this.typed<void>((headers) => this.client.DELETE("/v1/mailbox/{id}", { params: { path: { id: id as unknown as number } }, headers }), { token });
   }
 
   /** The account's keyring: opaque wrapped-key blobs the hub cannot open. */
   async keys(token: string): Promise<KeyringEntry[]> {
-    const r = await this.call<{ keys: { name: string; blob: string; updated_ms: number }[] }>("GET", "/v1/keys", { token });
+    const r = await this.typed<components["schemas"]["Keyring"]>((headers) => this.client.GET("/v1/keys", { headers }), { token });
     return r.keys.map((k) => ({ name: k.name, blob: fromHex(k.blob), updatedMs: k.updated_ms }));
   }
 
@@ -1236,42 +1260,49 @@ export class HubApi {
    * other bytes under it are a 409 `exists`.
    */
   async putKey(token: string, name: string, blob: Uint8Array): Promise<{ stored: boolean }> {
-    const r = await this.call<{ stored?: boolean } | null>("PUT", `/v1/keys/${name}`, { token, body: { blob: hex(blob) } });
+    const body: components["schemas"]["NewKeyWrap"] = { blob: hex(blob) };
+    // Left on `call`: a name is several path segments (`mk/m-1/0/0/dev`), and openapi-fetch would
+    // percent-encode its `/` — the hub's route is `{*name}` and takes the name as written.
+    const r = await this.call<components["schemas"]["KeyPut"]>("PUT", `/v1/keys/${name}`, { token, body });
     return { stored: r?.stored !== false };
   }
 
   /** Open a numeric-code pairing for `device` (this session's own device, registered but not in the chain). */
   async openPairing(token: string, device: string): Promise<string> {
-    const r = await this.call<{ id: string }>("POST", "/v1/pairings", { token, body: { device } });
+    const body: components["schemas"]["NewPairing"] = { device };
+    const r = await this.typed<components["schemas"]["PairingOpened"]>((headers) => this.client.POST("/v1/pairings", { body, headers }), { token });
     return r.id;
   }
 
   async pairings(token: string): Promise<PairingSummary[]> {
-    const r = await this.call<{ pairings: { id: string; device: string; created_ms: number }[] }>("GET", "/v1/pairings", { token });
+    const r = await this.typed<components["schemas"]["Pairings"]>((headers) => this.client.GET("/v1/pairings", { headers }), { token });
     return r.pairings.map((p) => ({ id: p.id, device: p.device, createdMs: p.created_ms }));
   }
 
   async postPairingMessage(token: string, id: string, from: PairingRole, body: Uint8Array): Promise<number> {
-    const r = await this.call<{ n: number }>("POST", `/v1/pairings/${encodeURIComponent(id)}/messages`, { token, body: { from, body: hex(body) } });
+    const payload: components["schemas"]["PairingMessage"] = { from, body: hex(body) };
+    const r = await this.typed<components["schemas"]["PairingPosted"]>(
+      (headers) => this.client.POST("/v1/pairings/{id}/messages", { params: { path: { id } }, body: payload, headers }),
+      { token },
+    );
     return r.n;
   }
 
   async pairingMessages(token: string, id: string, after: number): Promise<PairingMessage[]> {
-    const r = await this.call<{ messages: { n: number; from: PairingRole; body: string }[] }>(
-      "GET",
-      `/v1/pairings/${encodeURIComponent(id)}/messages?after=${after}`,
+    const r = await this.typed<components["schemas"]["PairingMessages"]>(
+      (headers) => this.client.GET("/v1/pairings/{id}/messages", { params: { path: { id }, query: { after } }, headers }),
       { token },
     );
-    return r.messages.map((m) => ({ n: m.n, from: m.from, body: fromHex(m.body) }));
+    return r.messages.map((m) => ({ n: m.n, from: m.from as PairingRole, body: fromHex(m.body) }));
   }
 
   async closePairing(token: string, id: string): Promise<void> {
-    await this.call("DELETE", `/v1/pairings/${encodeURIComponent(id)}`, { token });
+    await this.typed<void>((headers) => this.client.DELETE("/v1/pairings/{id}", { params: { path: { id } }, headers }), { token });
   }
 
   /** The account's main device (`GET /v1/main-device`; a hub from before it answers 404). */
   async mainDevice(token: string): Promise<AccountMain> {
-    const main = accountMain(await this.call<unknown>("GET", "/v1/main-device", { token }));
+    const main = accountMain(await this.typed<components["schemas"]["MainDevice"]>((headers) => this.client.GET("/v1/main-device", { headers }), { token }));
     if (!main) throw new HubApiError(502, "bad_main_device", "the hub's main device is not one");
     return main;
   }
@@ -1283,9 +1314,9 @@ export class HubApi {
    * after — with `ifUnset`, maybe another page's.
    */
   async setMainDevice(token: string, machine: string, opts: { ifUnset?: boolean } = {}): Promise<AccountMain> {
-    const body: { machine: string; if_unset?: true } = { machine };
+    const body: components["schemas"]["SetMain"] = { machine };
     if (opts.ifUnset) body.if_unset = true;
-    const main = accountMain(await this.call<unknown>("PUT", "/v1/main-device", { token, body }));
+    const main = accountMain(await this.typed<components["schemas"]["MainDevice"]>((headers) => this.client.PUT("/v1/main-device", { body, headers }), { token }));
     if (!main) throw new HubApiError(502, "bad_main_device", "the hub's main device is not one");
     return main;
   }
@@ -1326,6 +1357,7 @@ export class HubApi {
   async putRotation(token: string, host: string, opts: { nonceHash?: Uint8Array; assurance: 0 | 1 }): Promise<HostRotationView> {
     const body: { nonce_hash?: string; assurance: 0 | 1 } = { assurance: opts.assurance };
     if (opts.nonceHash) body.nonce_hash = hex(opts.nonceHash);
+    // Left on `call`: the schema models this 200 as an empty object, not the host's view `hostRotationView` reads.
     const row = hostRotationView(await this.call<unknown>("PUT", `/v1/rotations/${encodeURIComponent(host)}`, { token, body }));
     if (!row || row.host !== host) throw new HubApiError(502, "bad_rotation", "the hub answered for another renewal");
     return row;
@@ -1341,6 +1373,7 @@ export class HubApi {
    */
   async deleteRotation(token: string, host: string, only?: { nonceHash: Uint8Array | string } | { requestedMs: number }): Promise<void> {
     const body = !only ? undefined : "nonceHash" in only ? { nonce_hash: typeof only.nonceHash === "string" ? only.nonceHash : hex(only.nonceHash) } : { requested_ms: only.requestedMs };
+    // Left on `call`: the schema models this 200 as an empty object, not the per-host view the hub sends.
     await this.call<unknown>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, body ? { token, body } : { token });
   }
 
@@ -1357,11 +1390,11 @@ export class HubApi {
 
   /** The relays this account may use, its set and `relay.max`, and its machines' round trips (`GET /v1/relays`). */
   async relays(token: string): Promise<RelayDirectory> {
-    const r = (await this.call<Record<string, unknown> | null>("GET", "/v1/relays", { token })) ?? {};
-    const list = Array.isArray(r.relays) ? (r.relays as Record<string, unknown>[]) : [];
-    const set = Array.isArray(r.account_set) ? (r.account_set as Record<string, unknown>[]) : [];
+    const r = await this.typed<components["schemas"]["RelayList"]>((headers) => this.client.GET("/v1/relays", { headers }), { token });
+    const list = Array.isArray(r?.relays) ? (r.relays as Record<string, unknown>[]) : [];
+    const set = Array.isArray(r?.account_set) ? (r.account_set as unknown as Record<string, unknown>[]) : [];
     const agents: Record<string, Record<string, number>> = {};
-    if (r.agents && typeof r.agents === "object") {
+    if (r?.agents && typeof r.agents === "object") {
       for (const [machine, rtts] of Object.entries(r.agents as Record<string, unknown>)) {
         if (!rtts || typeof rtts !== "object") continue;
         agents[machine] = {};
@@ -1381,19 +1414,20 @@ export class HubApi {
           state: str(x.state) ?? "up",
           load: num(x.load),
         })),
-      limit: num(r.limit) ?? 0,
+      limit: num(r?.limit) ?? 0,
       accountSet: set.filter((x) => typeof x.id === "string").map((x) => ({ id: x.id as string, lastUsedMs: num(x.last_used_ms) ?? 0 })),
-      emergency: Array.isArray(r.emergency) ? (r.emergency as unknown[]).filter((x): x is string => typeof x === "string") : [],
+      emergency: Array.isArray(r?.emergency) ? (r.emergency as unknown[]).filter((x): x is string => typeof x === "string") : [],
       agents,
-      throttled: r.throttled === true,
+      throttled: r?.throttled === true,
     };
   }
 
   /** Tickets for `relays` (`POST /v1/relays/tickets`): each, or why not. */
   async relayTickets(token: string, relays: string[]): Promise<RelayTickets> {
-    const r = (await this.call<Record<string, unknown> | null>("POST", "/v1/relays/tickets", { token, body: { relays } })) ?? {};
-    const tickets = Array.isArray(r.tickets) ? (r.tickets as Record<string, unknown>[]) : [];
-    const errors = Array.isArray(r.errors) ? (r.errors as Record<string, unknown>[]) : [];
+    const body: components["schemas"]["TicketRequest"] = { relays };
+    const r = await this.typed<components["schemas"]["Tickets"]>((headers) => this.client.POST("/v1/relays/tickets", { body, headers }), { token });
+    const tickets = Array.isArray(r?.tickets) ? (r.tickets as unknown as Record<string, unknown>[]) : [];
+    const errors = Array.isArray(r?.errors) ? (r.errors as unknown as Record<string, unknown>[]) : [];
     return {
       tickets: tickets
         .filter((t) => typeof t.relay === "string" && typeof t.ticket === "string" && typeof t.origin === "string")
@@ -1566,10 +1600,8 @@ export function authErrorKind(error: unknown): AuthErrorKind | null {
   return null;
 }
 
-type SignedInBody = { account: string; token: string; expires_ms: number; email_verified?: boolean; verification?: string; known_client?: string };
-
 /** A sign-in's answer; a hub from before verification says neither field, and verifies nothing. */
-function signedIn(r: SignedInBody): SignedIn {
+function signedIn(r: components["schemas"]["SignedIn"]): SignedIn {
   const verification: Verification = r.verification === "required" ? "required" : "off";
   return { account: r.account, token: r.token, expiresMs: r.expires_ms, emailVerified: verification === "off" || r.email_verified !== false, verification };
 }
@@ -1635,9 +1667,11 @@ function accountPasskey(raw: unknown): AccountPasskey | null {
 }
 
 /** A proof's fields as `PUT`/`DELETE /v1/password` (and `DELETE /v1/account`) take them. */
-function reauthBody(proof: Reauth): Record<string, unknown> {
+function reauthBody(proof: Reauth): components["schemas"]["Proof"] {
   if ("grant" in proof) return { grant: proof.grant };
-  return "currentPassword" in proof ? { current_password: proof.currentPassword } : { passkey: proof.passkey };
+  return "currentPassword" in proof
+    ? { current_password: proof.currentPassword }
+    : { passkey: proof.passkey as unknown as components["schemas"]["ReauthPasskey"] };
 }
 
 /** The widget's page, if the hub names a usable one: an http(s) origin, nothing more. */
