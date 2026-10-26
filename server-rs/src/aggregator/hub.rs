@@ -148,11 +148,6 @@ impl DeviceClient {
         self.session.as_ref().is_some_and(|(_, expires)| *expires > now_ms + RENEW_BEFORE_MS)
     }
 
-    /// Forget the session (the hub refused it).
-    pub fn sign_out(&mut self) {
-        self.session = None;
-    }
-
     async fn send(&self, method: reqwest::Method, path: &str, token: Option<&str>, body: Option<&Value>) -> Result<(u16, Value), HubError> {
         let url = format!("{}{path}", self.hub.http);
         let (status, value) = rh_client::http::request(&self.http, method, &url, token, body)

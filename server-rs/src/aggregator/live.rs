@@ -693,12 +693,7 @@ impl LiveCopies {
         }
     }
 
-    /// The host has no such stream (yet): its subscribers hear so, and stay.
-    pub fn missing(&self, key: &Key) {
-        self.missing_as(key, None);
-    }
-
-    /// [`LiveCopies::missing`], from a stream task verifying under `signer`.
+    /// A `Missing` update from a stream task verifying under `signer`.
     pub fn missing_as(&self, key: &Key, signer: Option<[u8; 32]>) {
         let mut inner = self.lock();
         if !inner.hosts.contains_key(&key.host) || !signer_holds(&inner, &key.host, signer) {
@@ -1197,7 +1192,7 @@ mod tests {
         let key = Key::new("m-2", Kind::Session, "claude/a");
         let (out, mut rx) = Outbox::new(2, 1 << 30);
         let _sub = live.subscribe(key.clone(), 1, &out, None, true).unwrap();
-        live.missing(&key);
+        live.missing_as(&key, None);
         assert_eq!(drain(&mut rx)[0]["t"], "missing");
         // A late subscriber hears it at once.
         let _late = live.subscribe(key.clone(), 2, &out, None, true).unwrap();

@@ -1445,12 +1445,8 @@ impl Live {
         }
     }
 
-    fn on_update(&mut self, c: &mut Copies, update: Update) -> Result<(), Ended> {
-        self.on_update_from(c, None, update)
-    }
-
-    /// [`Live::on_update`], from a stream task verifying under `signer`
-    /// (`None`: from no task, as in tests and the store).
+    /// A stream task's update, verifying under `signer` (`None`: from no
+    /// task, as in tests and the store).
     fn on_update_from(&mut self, c: &mut Copies, signer: Option<[u8; 32]>, update: Update) -> Result<(), Ended> {
         match update {
             Update::State(copied) => {
@@ -2395,8 +2391,8 @@ mod tests {
         );
         // m-9 was followed and purged: its updates come late.
         let purged = want("m-9", "b");
-        live.on_update(&mut c, Update::TooLarge { want: purged.clone() }).ok().unwrap();
-        live.on_update(&mut c, state(&purged, "PURGED")).ok().unwrap();
+        live.on_update_from(&mut c, None, Update::TooLarge { want: purged.clone() }).ok().unwrap();
+        live.on_update_from(&mut c, None, state(&purged, "PURGED")).ok().unwrap();
         assert!(live.pending.is_empty() && live.stored.is_empty(), "nothing of m-9 comes back");
         assert!(!c.too_large.contains(&purged.stream));
         // Even with its sub still listed (the race), a host no longer followed is not admitted.
@@ -2407,10 +2403,10 @@ mod tests {
                 stop: CancellationToken::new(),
             },
         );
-        live.on_update(&mut c, Update::TooLarge { want: purged.clone() }).ok().unwrap();
+        live.on_update_from(&mut c, None, Update::TooLarge { want: purged.clone() }).ok().unwrap();
         assert!(live.pending.is_empty());
         // m-2's updates are kept; a row already pending for m-9 is never written.
-        live.on_update(&mut c, state(&kept, "KEPT")).ok().unwrap();
+        live.on_update_from(&mut c, None, state(&kept, "KEPT")).ok().unwrap();
         live.pending.insert(
             ("m-9".into(), Kind::Session, "b".into()),
             Row {
@@ -2458,10 +2454,10 @@ mod tests {
                 .and_then(|r| r.state)
                 .unwrap_or_default()
         };
-        live.on_update(&mut c, state(&w, "FIRST")).ok().unwrap();
+        live.on_update_from(&mut c, None, state(&w, "FIRST")).ok().unwrap();
         live.flush(&mut c, false).ok().unwrap();
         assert!(text(&c).contains("FIRST"), "the first write is at once");
-        live.on_update(&mut c, state(&w, "SECOND")).ok().unwrap();
+        live.on_update_from(&mut c, None, state(&w, "SECOND")).ok().unwrap();
         live.flush(&mut c, false).ok().unwrap();
         assert!(text(&c).contains("FIRST") && !live.pending.is_empty(), "the next waits");
         live.flush(&mut c, true).ok().unwrap();
@@ -2500,8 +2496,9 @@ mod tests {
             }
             .sign(&machine)
         };
-        live.on_update(
+        live.on_update_from(
             &mut c,
+            None,
             Update::State(Box::new(Copied {
                 want: w.clone(),
                 head: Some(head_at(1_000)),
@@ -2515,8 +2512,9 @@ mod tests {
         .unwrap();
         live.flush(&mut c, true).ok().unwrap();
         // Hours later, a heartbeat: the same place, signed later.
-        live.on_update(
+        live.on_update_from(
             &mut c,
+            None,
             Update::Fresh {
                 want: w.clone(),
                 head: head_at(9_000_000),
