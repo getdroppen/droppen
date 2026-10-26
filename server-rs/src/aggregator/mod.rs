@@ -17,9 +17,8 @@
 //!   it follows there, and follows the sessions a page opens.
 //! - Before chain v3 a sign-in with aggregation on prepared a second
 //!   identity here, a *limited device* (`aggregator/device-key.json`). Chain
-//!   v3 made it unnecessary; one an older release left pending is deleted
-//!   ([`forget`]) when an attempt ends. [`keys_from_seed`] stays for reading
-//!   such a leftover key in tests.
+//!   v3 made it unnecessary; nothing writes it now, and the whole directory
+//!   ([`forget_all`]) takes a leftover with it.
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
@@ -40,15 +39,7 @@ pub mod store;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use hkdf::Hkdf;
-use rh_proto::keys::DhKeypair;
-use sha2::Sha256;
-use zeroize::Zeroizing;
-
 use crate::sessions::Paths;
-
-/// The salt the aggregator's keys expand under.
-const DEVICE_SALT: &[u8] = b"rh/v1 device";
 
 /// Writes under `aggregator/` and its deletion, one at a time: a key the
 /// controller is storing never lands after the directory was deleted.
@@ -137,40 +128,6 @@ pub fn dir(paths: &Paths) -> PathBuf {
 /// `<instance>/aggregator/device-key.json`.
 pub fn key_path(paths: &Paths) -> PathBuf {
     dir(paths).join("device-key.json")
-}
-
-/// The aggregator's public keys.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceKeys {
-    /// Ed25519.
-    pub sign_key: [u8; 32],
-    /// X25519.
-    pub dh_key: [u8; 32],
-}
-
-/// The public keys a device seed expands to.
-pub fn keys_from_seed(seed: &[u8; 32]) -> DeviceKeys {
-    let hk = Hkdf::<Sha256>::new(Some(DEVICE_SALT), seed);
-    let mut ed = Zeroizing::new([0u8; 32]);
-    let mut x = Zeroizing::new([0u8; 32]);
-    hk.expand(b"ed25519", ed.as_mut()).expect("32 bytes");
-    hk.expand(b"x25519", x.as_mut()).expect("32 bytes");
-    let signing = ed25519_dalek::SigningKey::from_bytes(&ed);
-    DeviceKeys {
-        sign_key: signing.verifying_key().to_bytes(),
-        dh_key: DhKeypair::from_secret(*x).public(),
-    }
-}
-
-/// Delete the pending aggregator key a release before chain v3 may have left
-/// (`aggregator/device-key.json`); nothing else in the directory.
-pub fn forget(paths: &Paths) -> Result<(), String> {
-    let key = key_path(paths);
-    with_lock(|| match std::fs::remove_file(&key) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("{}: {e}", key.display())),
-    })
 }
 
 /// Delete the whole directory: other devices' keys and copies with it (the
@@ -339,23 +296,6 @@ pub fn exclude_from_backups(_dir: &std::path::Path) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_leftover_pending_key_is_forgotten_and_nothing_else() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "aggtest");
-        std::fs::create_dir_all(super::dir(&paths)).unwrap();
-        std::fs::write(key_path(&paths), b"{}").unwrap();
-        std::fs::write(super::dir(&paths).join("keys.json"), b"{}").unwrap();
-        forget(&paths).unwrap();
-        assert!(!key_path(&paths).exists());
-        assert!(super::dir(&paths).join("keys.json").exists(), "only the legacy key goes");
-        forget(&paths).unwrap();
-        let machine = rh_proto::identity::MachineIdentity::from_seed(&[5; 32]);
-        assert_ne!(keys_from_seed(&[5; 32]).sign_key, machine.sign_public());
-        forget_all(&paths).unwrap();
-        assert!(!super::dir(&paths).exists());
-    }
 
     /// F7 and N4: turning the aggregator off, disconnecting or a removal
     /// takes the directory away at once and overwrites its files before they

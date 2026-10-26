@@ -271,14 +271,11 @@ impl Cloud {
         removed
     }
 
-    /// The attempt still in flight, if any (an expired one is dropped, with
-    /// its pending aggregator key).
+    /// The attempt still in flight, if any (an expired one is dropped).
     fn live_attempt(&self) -> Option<Attempt> {
         let mut slot = self.attempt.lock().expect("attempt");
         if slot.as_ref().is_some_and(|a| a.expires_ms <= now_ms()) {
             *slot = None;
-            drop(slot);
-            self.forget_pending_aggregator();
             return None;
         }
         slot.clone()
@@ -315,14 +312,6 @@ impl Cloud {
             message,
             at_ms: outcome.at_ms,
         })
-    }
-
-    /// The pending aggregator key goes when no chain lists it (until S1-4
-    /// admits the aggregator, none does).
-    fn forget_pending_aggregator(&self) {
-        if let Err(error) = crate::aggregator::forget(&self.paths) {
-            tracing::warn!(%error, "cannot delete the pending aggregator key");
-        }
     }
 
     /// The whole aggregator directory goes — other devices' machine keys and
@@ -1540,9 +1529,7 @@ async fn complete_sign_in(
     let (account, machine) = match cloud.control.enroll(code, &attempt.hub).await {
         Ok(done) => done,
         Err(error) => {
-            // The link is as it was (`Control::enroll` restores it); the
-            // pending aggregator key goes with the spent attempt.
-            cloud.forget_pending_aggregator();
+            // The link is as it was (`Control::enroll` restores it).
             return Err(match error {
                 ControlError::Begin(BeginError::Unreachable(message)) | ControlError::Unreachable(message) => {
                     tracing::warn!(%message, "the hub is unreachable; the sign-in failed");
@@ -1579,8 +1566,6 @@ async fn complete_sign_in(
         file.email = email;
         file.remote_access.insert(user.clone(), true);
     })?;
-    // The aggregator is not admitted in this release, so its pending key goes.
-    cloud.forget_pending_aggregator();
     tracing::info!(%account, %machine, owner = %user, "signed in to Droppen from the local settings; a device completes the enrollment");
     Ok(Accepted(FinishResult { machine, account }))
 }
@@ -1603,7 +1588,6 @@ pub async fn post_cancel(
             Err(e) => return Err(e),
         }
     }
-    cloud.forget_pending_aggregator();
     Ok(Json(SendResult { accepted: true }))
 }
 
@@ -1993,8 +1977,8 @@ mod tests {
     }
 
     /// Chain v3 review: disconnecting the computer and turning aggregation
-    /// off deleted only the legacy pending key (`aggregator::forget`); other
-    /// devices' machine keys and copies stayed. The whole directory goes now.
+    /// off deleted only the legacy pending key; other devices' machine keys
+    /// and copies stayed. The whole directory goes now.
     #[tokio::test]
     async fn leaving_or_turning_aggregation_off_deletes_the_whole_aggregator_directory() {
         let home = tempfile::tempdir().unwrap();
@@ -2023,11 +2007,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!dir.exists(), "disconnecting deletes them too");
-        // An attempt that ends only drops the legacy pending key.
-        fill();
-        state.cloud.forget_pending_aggregator();
-        assert!(!crate::aggregator::key_path(&state.cloud.paths).exists());
-        assert!(dir.join("keys.json").exists());
     }
 
     /// `docs/host-identity-rotation.md` §3.8 「只剩退役钥时」:
