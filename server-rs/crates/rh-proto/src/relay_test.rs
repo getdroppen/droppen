@@ -1,7 +1,6 @@
 //! The M0 acceptance check, in-process: a device and an agent complete the
 //! end-to-end handshake and talk through a relay that only forwards opaque
 //! frames — and a canary the device sends never appears in the relayed bytes.
-//! `examples/relay_demo.rs` is the same thing across real processes and TCP.
 
 use std::collections::VecDeque;
 
