@@ -941,11 +941,6 @@ impl Paths {
         }
     }
 
-    /// Both roots, local first — the order duplicate ids are resolved against.
-    pub fn claude_roots(&self) -> [(ClaudeRoot, PathBuf); 2] {
-        ClaudeRoot::ALL.map(|root| (root, self.claude_root(root)))
-    }
-
     /// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
     ///
     /// The *local* root only; `crate::claude_roots` owns the managed one and the
@@ -962,16 +957,6 @@ impl Paths {
     /// Every projects directory a Claude session can live in, local first.
     pub fn claude_projects_dirs(&self) -> [(ClaudeRoot, PathBuf); 2] {
         ClaudeRoot::ALL.map(|root| (root, claude_roots::projects_dir(self, root)))
-    }
-
-    /// `~/.claude/sessions` — live-process registrations in the local root.
-    pub fn claude_live(&self) -> PathBuf {
-        claude_roots::live_dir(self, ClaudeRoot::Local)
-    }
-
-    /// Every directory a running CLI registers its pid in.
-    pub fn claude_live_dirs(&self) -> [PathBuf; 2] {
-        ClaudeRoot::ALL.map(|root| claude_roots::live_dir(self, root))
     }
 
     /// `~/.codex`.
