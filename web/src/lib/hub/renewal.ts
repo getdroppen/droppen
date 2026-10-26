@@ -39,7 +39,6 @@
  */
 import { type Action, ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance, type ChainState, equal, hex, type LoginRole, MAX_PAUSE_ENTRY_LEN, type OpenPause, PAUSE_COMPLETED, PAUSE_START, type PauseRemoval, Serial, verifyHubLogin } from "@/lib/e2e";
 import {
-  assuredRenewalAfter,
   type CloudAccount,
   disputeIsolates,
   type Exposure,
@@ -205,11 +204,6 @@ export async function checkRetiredLogin(chain: ChainState, d: HostDispute): Prom
     if (await verifyHubLogin(login, signKey, d.sig)) return { host: d.host, retiredSeq: d.retiredSeq, timeMs: d.login.timeMs };
   }
   return null;
-}
-
-/** Whether `chain` has a renewal of `host` confirmed on the device (`assurance = 1`) after entry `seq`. */
-export function assuredAfter(chain: ChainState, host: string, seq: number): boolean {
-  return assuredRenewalAfter(chain, host, seq);
 }
 
 /**

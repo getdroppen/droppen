@@ -1306,13 +1306,6 @@ export class HubApi {
     await this.typed<void>((headers) => this.client.DELETE("/v1/pairings/{id}", { params: { path: { id } }, headers }), { token });
   }
 
-  /** The account's main device (`GET /v1/main-device`; a hub from before it answers 404). */
-  async mainDevice(token: string): Promise<AccountMain> {
-    const main = accountMain(await this.typed<components["schemas"]["MainDevice"]>((headers) => this.client.GET("/v1/main-device", { headers }), { token }));
-    if (!main) throw new HubApiError(502, "bad_main_device", "the hub's main device is not one");
-    return main;
-  }
-
   /**
    * Make `machine` the account's main device (`PUT /v1/main-device`, a
    * current device of the chain only): every device of the account hears it.
