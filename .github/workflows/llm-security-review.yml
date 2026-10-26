@@ -146,6 +146,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # actions/checkout refuses a fork's commit on pull_request_target
+          # unless told otherwise. Here the commit is only read, never run
+          # (docs/ci-security.md, "Running the pull request's code").
+          allow-unsafe-pr-checkout: true
 
       - name: Prepare the review's input
         id: input
@@ -292,7 +296,8 @@ jobs:
 
       - name: Claude security review (retry after a transient failure)
         id: review_retry
-        if: ${{ !cancelled() && steps.review.outputs.structured_output == '' }}
+        # Not when the first attempt never started (an earlier step failed).
+        if: ${{ !cancelled() && steps.review.outcome != 'skipped' && steps.review.outputs.structured_output == '' }}
         continue-on-error: true
         uses: anthropics/claude-code-action@58985842b834ed26087302ba27d07bc24ca8697a # v1 (2.1.292)
         env:
@@ -369,7 +374,10 @@ jobs:
             PASS | BLOCK) reason="" ;;
             *) verdict=ERROR; reason="the review produced no verdict (claude conclusion: ${CONCLUSION:-none})" ;;
           esac
-          if [ "$tools_ok" != true ]; then
+          if [ "$sessions" -eq 0 ]; then
+            verdict=ERROR
+            reason="the review did not run (an earlier step failed)"
+          elif [ "$tools_ok" != true ]; then
             verdict=ERROR
             reason="the review session's tools could not be confirmed read-only"
           fi

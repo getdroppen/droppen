@@ -74,6 +74,11 @@ This is how each way in is closed:
   install, no build and no script of it. Its commit is checked out by sha
   without persisted credentials (`persist-credentials: false`), with no
   submodules and no LFS. The diff is made with `--no-ext-diff --no-textconv`.
+  actions/checkout refuses a fork's commit on `pull_request_target` by
+  default; the review job opts out (`allow-unsafe-pr-checkout: true`) because
+  it only reads the commit. That leaves this bullet as the only guard: a step
+  added to the review job that installs, builds or runs anything from the
+  checkout makes the job a pwn request.
   The approve job checks out main's script only.
 - **Configuration the agent would load.** claude-code-action works in the
   checkout. Claude Code reads `.claude/` (settings with hooks, which are
