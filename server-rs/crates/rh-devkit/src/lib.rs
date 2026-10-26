@@ -365,16 +365,11 @@ impl Device {
         Ok(())
     }
 
-    /// A snapshot page of `stream` from the hub (`GET /v1/streams/{stream}/pages/{hash}`).
     /// Sign this device in again (a new device session), e.g. after the
     /// hub restarted or the session expired.
     pub async fn renew_session(&mut self) -> Result<()> {
         self.token = device_session(&self.http, &self.hub, &self.account, &self.id, &self.sign).await?;
         Ok(())
-    }
-
-    pub async fn fetch_page(&self, stream: &rh_proto::record::StreamId, hash: &[u8; 32]) -> Result<Vec<u8>> {
-        self.pages().fetch(stream, hash).await
     }
 
     /// Where this device fetches a stream's snapshot pages.
