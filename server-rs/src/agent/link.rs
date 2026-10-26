@@ -109,9 +109,6 @@ pub(super) struct Shared {
     /// When a recovered device's self-activation this agent held back (too
     /// early by its own clock) may be taken: the chain is asked for again then.
     held_until: Mutex<Option<u64>>,
-    /// The account changes this run alerted about, newest last (at most
-    /// [`MAX_ALERT_LOG`]): what the pushes said, kept for the record.
-    alerts: Mutex<Vec<String>>,
     /// Bumped whenever the chain advanced, wherever from ([`chain_moved`]):
     /// the hub connection and every relay connection ([`super::relays`])
     /// close the channels of devices that may no longer control this machine.
@@ -229,11 +226,6 @@ impl Running {
         self.shared.health.lock().expect("health").clone()
     }
 
-    /// The account changes this run alerted about, newest last.
-    pub fn alerts(&self) -> Vec<String> {
-        self.shared.alerts.lock().expect("alerts").clone()
-    }
-
     /// Read the agent state the link keeps.
     pub fn with_state<T>(&self, f: impl FnOnce(&AgentState) -> T) -> T {
         f(&self.shared.state.lock().expect("agent state"))
@@ -245,9 +237,6 @@ impl Running {
 const CONTROL_STOP: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const CONTROL_STOP: Duration = Duration::from_millis(200);
-
-/// The most account changes [`Shared::alerts`] keeps.
-const MAX_ALERT_LOG: usize = 64;
 
 /// Whether the link may run at all (`DROPPEN_AGENT_LINK=0` turns it off).
 pub fn enabled() -> bool {
@@ -305,7 +294,6 @@ pub fn start(
         direct: super::direct::enabled(),
         peers: Arc::new(Semaphore::new(super::direct::MAX_PEERS)),
         held_until: Mutex::new(None),
-        alerts: Mutex::new(Vec::new()),
         chain_version: tokio::sync::watch::channel(0).0,
         lapses: Mutex::new(Vec::new()),
         #[cfg(test)]
@@ -442,7 +430,6 @@ pub(super) fn test_shared(
         direct: false,
         peers: Arc::new(Semaphore::new(1)),
         held_until: Mutex::new(None),
-        alerts: Mutex::new(Vec::new()),
         chain_version: tokio::sync::watch::channel(0).0,
         lapses: Mutex::new(Vec::new()),
         after_admission: Mutex::new(None),
@@ -1426,12 +1413,6 @@ fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
         }
         let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref()) else { continue };
         tracing::warn!(seq = entry.seq(), "account change: {what}");
-        {
-            let mut log = shared.alerts.lock().expect("alerts");
-            log.push(what.clone());
-            let excess = log.len().saturating_sub(MAX_ALERT_LOG);
-            log.drain(..excess);
-        }
         // Kept, and published in the encrypted status stream: every device
         // reads what this machine saw change in the account.
         shared.state.lock().expect("agent state").note_change(now_ms(), &what);
@@ -2694,7 +2675,7 @@ mod tests {
         }
         assert!(closed.contains(&(7, 4403)), "{closed:?}");
         assert_eq!(
-            *a.shared.alerts.lock().unwrap(),
+            a.shared.state.lock().unwrap().changes.iter().map(|a| a.what.clone()).collect::<Vec<_>>(),
             vec![
                 "device d-2 was removed by d-1".to_string(),
                 "device d-thief is coming back with the recovery words".to_string()
@@ -4794,7 +4775,10 @@ mod tests {
         drop_removed(&a.shared, &mut routes, &out_tx);
         assert!(routes.is_empty());
         assert_eq!(closes(&mut out_rx), vec![(7, 4403)]);
-        assert_eq!(*a.shared.alerts.lock().unwrap(), vec!["device d-2 was removed by d-1".to_string()]);
+        assert_eq!(
+            a.shared.state.lock().unwrap().changes.iter().map(|a| a.what.clone()).collect::<Vec<_>>(),
+            vec!["device d-2 was removed by d-1".to_string()]
+        );
     }
 
     /// A hub on loopback that signs the agent in and then only carries
