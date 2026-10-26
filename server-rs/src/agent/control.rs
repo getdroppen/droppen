@@ -311,6 +311,9 @@ impl Control {
         if let Some(old) = old {
             old.stop().await;
         }
+        // An install enrolled before the api. split moves over once, if the
+        // canonical hub takes its sign-in (`agent::migrate_hub`).
+        super::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
         let started = super::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
         *self.running.lock().expect("running") = Some(started);
         Ok(())

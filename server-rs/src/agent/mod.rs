@@ -564,6 +564,49 @@ pub fn key_path(paths: &Paths) -> PathBuf {
     paths.instance_dir().join("agent").join("machine-key.json")
 }
 
+/// The hub origin this deployment used before the `api.` split, and the one
+/// it uses now.
+const LEGACY_HUB: &str = "wss://droppen.app";
+const CANONICAL_HUB: &str = "wss://api.droppen.app";
+/// How long the canonical hub has to answer the pre-flight sign-in.
+const MIGRATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Move an install enrolled before the split from the apex to the canonical
+/// `api.` origin — once, and only if the canonical hub takes its sign-in.
+/// The machine keeps its identity, account and chain; only the origin its
+/// link dials changes. A hub that cannot be reached, or refuses the machine,
+/// leaves the enrolled origin alone (the apex still serves it).
+pub async fn migrate_hub(paths: &Paths) -> Result<(), String> {
+    let Some(mut state) = state::AgentState::load(paths)? else {
+        return Ok(());
+    };
+    if state.hub != LEGACY_HUB {
+        return Ok(());
+    }
+    let (identity, created) = load_or_create(paths)?;
+    if created {
+        return Ok(());
+    }
+    let origin = hub::origin(CANONICAL_HUB)?;
+    let attempt = async {
+        let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
+        hub::login(&mut sink, &mut source, &identity, &state.account, &state.machine, &origin, nonce)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+    match tokio::time::timeout(MIGRATE_TIMEOUT, attempt).await {
+        Ok(Ok(())) => {
+            let from = std::mem::replace(&mut state.hub, origin);
+            state.save(paths)?;
+            tracing::info!(from = %from, to = %state.hub, machine = %state.machine, "moved this machine to the canonical hub");
+        }
+        Ok(Err(error)) => tracing::warn!(%error, "the canonical hub did not take this machine; keeping the enrolled hub"),
+        Err(_) => tracing::warn!("the canonical hub did not answer in time; keeping the enrolled hub"),
+    }
+    Ok(())
+}
+
 /// This instance's machine identity, created on first use. The `bool` says
 /// whether it was created just now.
 pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
