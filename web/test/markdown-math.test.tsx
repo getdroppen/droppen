@@ -16,7 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installMath, Markdown, MathRendering } from "../src/components/markdown.js";
 import * as kit from "../src/components/markdown-math.js";
 
-const { normalizeDelimiters } = kit;
+const { prepareMath } = kit;
 
 function draw(text: string, on = true): string {
   return renderToStaticMarkup(
@@ -42,18 +42,18 @@ test("until KaTeX has loaded, a formula is the text the agent wrote", () => {
 /* ── the delimiters ─────────────────────────────────────────────────────── */
 
 test("\\( \\) and \\[ \\] become the dollars the parser reads", () => {
-  assert.equal(normalizeDelimiters("so \\(E = mc^2\\) holds"), "so $E = mc^2$ holds");
-  assert.equal(normalizeDelimiters("so \\( x \\) holds"), "so $x$ holds", "inner spaces trimmed, or Pandoc's rule would refuse it");
-  assert.equal(normalizeDelimiters("\\[ a^2 + b^2 = c^2 \\]"), "$$a^2 + b^2 = c^2$$");
-  assert.equal(normalizeDelimiters("\\[\n\\sum_i x_i\n\\]"), "$$\n\\sum_i x_i\n$$", "own lines: a block in place");
+  assert.equal(prepareMath("so \\(E = mc^2\\) holds"), "so $E = mc^2$ holds");
+  assert.equal(prepareMath("so \\( x \\) holds"), "so $x$ holds", "inner spaces trimmed, or Pandoc's rule would refuse it");
+  assert.equal(prepareMath("\\[ a^2 + b^2 = c^2 \\]"), "$$a^2 + b^2 = c^2$$");
+  assert.equal(prepareMath("\\[\n\\sum_i x_i\n\\]"), "$$\n\\sum_i x_i\n$$", "own lines: a block in place");
   assert.equal(
-    normalizeDelimiters("1. the sum:\n   \\[\n   \\sum_i x_i\n   \\]\n2. next"),
+    prepareMath("1. the sum:\n   \\[\n   \\sum_i x_i\n   \\]\n2. next"),
     "1. the sum:\n   $$\n   \\sum_i x_i\n   $$\n2. next",
     "the list's indent kept, so the block stays in its item",
   );
-  assert.equal(normalizeDelimiters("> \\[\n> x\n> \\]"), "> $$\n> x\n> $$", "and a quote's markers");
+  assert.equal(prepareMath("> \\[\n> x\n> \\]"), "> $$\n> x\n> $$", "and a quote's markers");
   assert.equal(
-    normalizeDelimiters("\\[ a = b\n   + c \\]"),
+    prepareMath("\\[ a = b\n   + c \\]"),
     "$$a = b + c$$",
     "text beside a delimiter: folded onto one line, so no `$$` opens a block that never closes",
   );
@@ -72,10 +72,10 @@ test("code, escapes and unclosed delimiters are left as they are", () => {
     "\\(across\n\na paragraph\\)",
     "no math here at all",
   ]) {
-    assert.equal(normalizeDelimiters(text), text, text);
+    assert.equal(prepareMath(text), text, text);
   }
   assert.equal(
-    normalizeDelimiters("```\n\\(x\\)\n```\nafter \\(y\\)"),
+    prepareMath("```\n\\(x\\)\n```\nafter \\(y\\)"),
     "```\n\\(x\\)\n```\nafter $y$",
     "the fence closes, and what follows it is prose again",
   );
@@ -116,6 +116,34 @@ test("code is never typeset, ```math included", () => {
   assert.match(html, /\$\$y\$\$/);
   assert.match(html, /<code class="block[^"]*language-math[^"]*">z\^2/);
   assert.match(html, /\\\[w\\\]/);
+});
+
+test("a $ that would pair but is not math is escaped before parsing", () => {
+  assert.equal(prepareMath("$5 and $10"), "\\$5 and $10", "the last has nothing to pair with: as is");
+  assert.equal(prepareMath("$5-$10"), "\\$5-$10");
+  assert.equal(prepareMath("$5 and $x$"), "\\$5 and $x$", "the price escaped, the formula after it kept");
+  assert.equal(prepareMath("a $x$ b"), "a $x$ b");
+  assert.equal(prepareMath("$5 (or `$6`)"), "\\$5 (or `$6`)", "a backtick between: not math, and the code untouched");
+  assert.equal(prepareMath("$$x$$ costs $5"), "$$x$$ costs $5");
+  assert.equal(prepareMath("\\$x\\$ escaped"), "\\$x\\$ escaped");
+  assert.equal(prepareMath("$5 today\n\n$6 tomorrow"), "$5 today\n\n$6 tomorrow", "never paired across a paragraph");
+});
+
+// From a real render: the parser paired `$10 … $` and swallowed the code span
+// between them, and turning the pair back into text could not bring it back.
+test("Markdown between two prices is still Markdown", () => {
+  const code = draw("A100s cost about $2 an hour, so $5 to $10 covers it. Run `echo $CUDA_VISIBLE_DEVICES` to check.");
+  assert.equal(formulas(code), 0);
+  assert.match(code, /<code[^>]*>echo \$CUDA_VISIBLE_DEVICES<\/code>/);
+  assert.match(code, /about \$2 an hour, so \$5 to \$10 covers it/);
+
+  const bold = draw("costs $5 for **pro** and $10 for _team_");
+  assert.match(bold, /<strong>pro<\/strong>/);
+  assert.match(bold, /<em>team<\/em>/);
+
+  const both = draw("$5 and then $x^2$");
+  assert.equal(formulas(both), 1, "the formula after a price still typesets");
+  assert.match(both, /\$5 and then <span class="math math-inline">/);
 });
 
 test("prices and shell variables in prose stay text", () => {

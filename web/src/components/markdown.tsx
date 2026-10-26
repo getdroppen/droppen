@@ -181,7 +181,7 @@ export function Markdown({ text, className }: { text: string; className?: string
         components={components}
         urlTransform={urlTransform}
       >
-        {math ? math.normalizeDelimiters(text) : text}
+        {math ? math.prepareMath(text) : text}
       </ReactMarkdown>
     </div>
   );

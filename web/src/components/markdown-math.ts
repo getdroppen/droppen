@@ -11,9 +11,10 @@
  * - Never inside inline code or a fenced block, ` ```math ` included: code is
  *   shown as written.
  * - A single `$` pair is math only the way Pandoc reads it: no space just
- *   inside either `$`, and no digit right after the closing one. That keeps
- *   prices (`$5 and $10`, `$5-$10`) and shell variables in prose
- *   (`$HOME and $PATH`) as text.
+ *   inside either `$`, and no digit right after the closing one; nor when a
+ *   backtick is between them. That keeps prices (`$5 and $10`, `$5-$10`) and
+ *   shell variables in prose (`$HOME and $PATH`) as text, and the Markdown
+ *   between them (`$5 for **pro**`, `` `echo $PATH` ``) as Markdown.
  * - TeX KaTeX cannot read stays as the text the agent wrote.
  */
 import type { Element, ElementContent, Root as HastRoot } from "hast";
@@ -32,12 +33,19 @@ type Math = Extract<RootContent, { type: "math" }>;
 const FENCE = /^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})/;
 
 /**
- * `\(…\)` and `\[…\]` rewritten as `$…$` and `$$…$$`, which is all the parser
- * understands. Code is left alone: fenced blocks line by line, inline code by
- * its backtick runs, as CommonMark pairs them.
+ * The text as the math parser should read it, before it does.
+ *
+ * `\(…\)` and `\[…\]` are rewritten as `$…$` and `$$…$$`, which is all the
+ * parser understands. And every single `$` the parser would pair but that is
+ * not math (see the top of this file) is escaped: decided after parsing
+ * would be too late, as the pair would already have swallowed what is
+ * between them — a code span, a bold word — as TeX.
+ *
+ * Code is left alone: fenced blocks line by line, inline code by its
+ * backtick runs, as CommonMark pairs them.
  */
-export function normalizeDelimiters(text: string): string {
-  if (!text.includes("\\(") && !text.includes("\\[")) return text;
+export function prepareMath(text: string): string {
+  if (!/\$|\\[([]/.test(text)) return text;
   const out: string[] = [];
   let prose: string[] = [];
   let fence: string | null = null;
@@ -97,15 +105,48 @@ function rewriteProse(s: string): string {
       }
     }
     if (c === "\\") {
-      // An escape: whatever follows is literal, a backtick included.
+      // An escape: whatever follows is literal, a backtick or `$` included.
       out += s.slice(i, i + 2);
       i += 2;
+      continue;
+    }
+    if (c === "$") {
+      let n = 1;
+      while (s[i + n] === "$") n++;
+      const close = n === 1 ? nextSingleDollar(s, i + 1) : -1;
+      if (close >= 0 && isInlineMath(s.slice(i + 1, close), s[close + 1])) {
+        out += s.slice(i, close + 1);
+        i = close + 1;
+      } else {
+        // A `$$` run the parser pairs on its own; a `$` with nothing to pair
+        // with, as is; one that would pair but is not math, escaped.
+        out += close >= 0 ? "\\$" : s.slice(i, i + n);
+        i += close >= 0 ? 1 : n;
+      }
       continue;
     }
     out += c;
     i++;
   }
   return out;
+}
+
+/** The next lone `$` in the paragraph, the one the parser would close `$` with; -1 if none. */
+function nextSingleDollar(s: string, from: number): number {
+  const paragraphEnd = s.slice(from).search(/\n[ \t>]*\n/);
+  const end = paragraphEnd < 0 ? s.length : from + paragraphEnd;
+  for (let i = s.indexOf("$", from); i >= 0 && i < end; i = s.indexOf("$", i)) {
+    let n = 1;
+    while (s[i + n] === "$") n++;
+    if (n === 1) return i;
+    i += n;
+  }
+  return -1;
+}
+
+/** Pandoc's test for `$body$` followed by `after`, plus: no code span inside. */
+function isInlineMath(body: string, after: string | undefined): boolean {
+  return body !== "" && !/^\s|\s$/.test(body) && !/^\d/.test(after ?? "") && !body.includes("`");
 }
 
 /** Where the next run of exactly `n` backticks starts, or -1. */
@@ -146,12 +187,8 @@ function mathData(tex: string, display: boolean, block: boolean) {
 }
 
 /**
- * After parsing: decide which `inlineMath` the parser found is really math,
- * and which is displayed.
- *
- * A `$$…$$` inside a line is displayed, and one alone in its paragraph
- * becomes a block. A single-`$` pair that fails Pandoc's test (see the top of
- * this file) goes back to being the text it was.
+ * After parsing: which math is displayed. A `$$…$$` inside a line is
+ * displayed, and one alone in its paragraph becomes a block.
  */
 function remarkTidyMath() {
   return (tree: MdastRoot, file: { value: unknown }) => {
@@ -176,15 +213,9 @@ function remarkTidyMath() {
   };
 }
 
-function inlineMath(node: InlineMath, source: string): PhrasingContent {
+function inlineMath(node: InlineMath, source: string): InlineMath {
   const from = node.position?.start.offset;
-  const to = node.position?.end.offset;
-  if (from === undefined || to === undefined) return node;
-  const raw = source.slice(from, to);
-  const display = raw.startsWith("$$");
-  if (!display && (/^\$\s/.test(raw) || /\s\$$/.test(raw) || /^\d/.test(source.slice(to)))) {
-    return { type: "text", value: raw, position: node.position };
-  }
+  const display = from !== undefined && source.startsWith("$$", from);
   node.data = mathData(node.value, display, false);
   return node;
 }
