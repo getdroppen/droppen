@@ -46,9 +46,21 @@ const cloud = cloudConfig();
  * The QR encoder and decoder (pairing a device, cloud mode only) import
  * nothing either and are loaded on demand, so they stay out of it altogether,
  * as do compatibility mode's curves (`@noble/curves` and its hashes, reached
- * only from `lib/e2e/soft25519.ts`, on a browser without them natively).
+ * only from `lib/e2e/soft25519.ts`, on a browser without them natively), and
+ * math: KaTeX and the parsing around it (`components/markdown-math.ts`),
+ * fetched by the first message that may hold a formula.
  */
-const LAZY_PACKAGES = ["jsqr/", "qrcode-generator/", "@noble/"];
+const LAZY_PACKAGES = [
+  "jsqr/",
+  "qrcode-generator/",
+  "@noble/",
+  "katex/",
+  "remark-math/",
+  "micromark-extension-math/",
+  "mdast-util-math/",
+  "hast-util-from-html-isomorphic/",
+  "hast-util-from-dom/",
+];
 
 /**
  * Bundled plugins (`build/droppen-plugins.ts`) live in `node_modules` too, but
@@ -63,6 +75,25 @@ function vendorChunk(id: string): string | undefined {
   const pkg = id.slice(at + "/node_modules/".length);
   if (LAZY_PACKAGES.some((p) => pkg.startsWith(p))) return undefined;
   return pkg.startsWith("@xterm/") ? "vendor-xterm" : "vendor";
+}
+
+/**
+ * KaTeX's stylesheet offers each of its twenty fonts as woff2, woff and ttf.
+ * Every browser the app runs in takes woff2, so the other forty would be
+ * files the build emits, the server embeds and the worker hashes, and no page
+ * ever fetches. Before `vite:css`, so the fonts it no longer names are never
+ * emitted.
+ */
+function katexWoff2Only(): Plugin {
+  return {
+    name: "rh-katex-woff2-only",
+    apply: "build",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/\/katex\/dist\/katex(?:\.min)?\.css(?:\?|$)/.test(id)) return null;
+      return code.replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("(?:woff|truetype)"\)/g, "");
+    },
+  };
 }
 
 /**
@@ -119,6 +150,7 @@ export default defineConfig({
     droppenPlugins({ webRoot: fileURLToPath(new URL(".", import.meta.url)) }),
     react(),
     tailwindcss(),
+    katexWoff2Only(),
     precacheBootSet(),
     // Static-hosting output, only with `DROPPEN_WEB_MODE=cloud` (a no-op otherwise).
     cloudBuild(cloud),

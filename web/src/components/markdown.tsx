@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DownloadLink } from "@/components/host-file";
@@ -109,11 +109,79 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   ),
 };
 
+/**
+ * Whether LaTeX in a message is typeset: the `math` pref of the device whose
+ * transcript this is, provided by the view that read it. Off outside one.
+ */
+export const MathRendering = createContext(false);
+
+type MathKit = typeof import("@/components/markdown-math");
+
+/** Anything that could open a formula: a `$`, `\(` or `\[`. A message without one never loads KaTeX. */
+const MAY_HAVE_MATH = /\$|\\[([]/;
+
+let mathKit: MathKit | undefined;
+let mathLoad: Promise<MathKit | undefined> | undefined;
+
+/**
+ * Set the math kit directly, without the fetch (and its stylesheet), which is
+ * what `loadMath` does once it has both. Exported for the render tests, which
+ * have no bundler to load a chunk or a stylesheet with.
+ */
+export function installMath(kit: MathKit) {
+  mathKit = kit;
+  mathLoad = Promise.resolve(kit);
+}
+
+/**
+ * KaTeX and its stylesheet, fetched once for the page. A failed fetch (a
+ * chunk gone after a deploy, the network down) leaves messages as written and
+ * is tried again by the next message that asks.
+ */
+function loadMath(): Promise<MathKit | undefined> {
+  mathLoad ??= Promise.all([import("@/components/markdown-math"), import("katex/dist/katex.min.css")]).then(
+    ([kit]) => {
+      installMath(kit);
+      return kit;
+    },
+    () => {
+      mathLoad = undefined;
+      return undefined;
+    },
+  );
+  return mathLoad;
+}
+
+/** The math kit when `text` should be typeset and it has loaded; until then, nothing. */
+function useMathKit(text: string): MathKit | undefined {
+  const wanted = useContext(MathRendering) && MAY_HAVE_MATH.test(text);
+  const [kit, setKit] = useState(mathKit);
+  useEffect(() => {
+    if (!wanted || kit) return;
+    let live = true;
+    void loadMath().then((loaded) => {
+      if (live && loaded) setKit(loaded);
+    });
+    return () => {
+      live = false;
+    };
+  }, [wanted, kit]);
+  return wanted ? (kit ?? mathKit) : undefined;
+}
+
+const PLAIN = [remarkGfm];
+
 export function Markdown({ text, className }: { text: string; className?: string }) {
+  const math = useMathKit(text);
   return (
     <div className={cn("min-w-0 text-[13px] leading-[21px] break-words max-md:text-sm max-md:leading-[22px]", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
-        {text}
+      <ReactMarkdown
+        remarkPlugins={math ? [remarkGfm, ...math.remarkPlugins] : PLAIN}
+        rehypePlugins={math?.rehypePlugins}
+        components={components}
+        urlTransform={urlTransform}
+      >
+        {math ? math.normalizeDelimiters(text) : text}
       </ReactMarkdown>
     </div>
   );

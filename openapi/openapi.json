@@ -2528,6 +2528,14 @@
         ],
         "type": "string"
       },
+      "MathStyle": {
+        "description": "How LaTeX math in a message renders.",
+        "enum": [
+          "rendered",
+          "source"
+        ],
+        "type": "string"
+      },
       "MessageReceipt": {
         "description": "One message's receipt.",
         "properties": {
@@ -3315,6 +3323,10 @@
           "language": {
             "$ref": "#/components/schemas/Language",
             "description": "UI language; `auto` follows the browser locale."
+          },
+          "math": {
+            "$ref": "#/components/schemas/MathStyle",
+            "description": "How LaTeX math in a message renders; a body without it means `rendered`."
           },
           "sessionGrouping": {
             "$ref": "#/components/schemas/SessionGrouping",

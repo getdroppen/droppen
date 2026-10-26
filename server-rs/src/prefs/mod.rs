@@ -1,17 +1,17 @@
 //! UI preferences.
 //!
-//! Port of the former TypeScript server's `prefs.ts`: five settings, one row
+//! Port of the former TypeScript server's `prefs.ts`: six settings, one row
 //! each in the machine-wide state database ([`crate::db`]) under
 //! [`scope::PREFS`], keyed by the same camelCase names the wire uses. A row per
 //! field rather than one row holding the document, because that is the shape
-//! the store already had — five independent settings that happen to be saved
+//! the store already had — independent settings that happen to be saved
 //! together — and because it is what makes the read below lenient for free.
 //!
 //! The read is deliberately lenient — every field falls back on its own, so a
 //! value this build does not recognise (a newer client, a hand-edited file)
-//! costs the user that one setting instead of all five. `prefs.json` used to be
-//! written straight over itself, so a crash mid-write cost them all five at
-//! once; five rows in one transaction cannot land in halves.
+//! costs the user that one setting instead of all of them. `prefs.json` used to
+//! be written straight over itself, so a crash mid-write cost them all at once;
+//! rows written in one transaction cannot land in halves.
 //!
 //! `prefs.json` is read exactly once, by the import on the first boot after the
 //! upgrade, and never written again. It was a mirror for one version, so a
@@ -100,6 +100,17 @@ pub enum TranscriptStyle {
     Bubble,
 }
 
+/// How LaTeX math in a message renders.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "lowercase")]
+pub enum MathStyle {
+    /// Typeset: `$…$`, `$$…$$`, `\(…\)` and `\[…\]` outside code.
+    #[default]
+    Rendered,
+    /// The text as the agent wrote it.
+    Source,
+}
+
 /// The stored UI preferences.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +125,12 @@ pub struct Prefs {
     pub language: Language,
     /// How transcripts render.
     pub transcript_style: TranscriptStyle,
+    /// How LaTeX math in a message renders; a body without it means `rendered`.
+    // Defaulted, unlike the fields above, because it is newer than pages still
+    // open somewhere: one of those saves the object it knows, without this
+    // field, and that save should land rather than be refused.
+    #[serde(default)]
+    pub math: MathStyle,
 }
 
 /// One field of a parsed preferences file, or its default.
@@ -138,6 +155,7 @@ fn prefs_from_value(raw: &Value) -> Prefs {
         font_size: field(raw, "fontSize"),
         language: field(raw, "language"),
         transcript_style: field(raw, "transcriptStyle"),
+        math: field(raw, "math"),
     }
 }
 
@@ -183,7 +201,7 @@ pub async fn read_prefs(paths: &Paths) -> Prefs {
 ///
 /// Still `io::Result` because [`put_prefs`] turns its error into the route's
 /// `500` and that path is part of the contract. Only the encode of a
-/// five-field struct of enums can fail now, which is to say nothing can; the
+/// struct of enums can fail now, which is to say nothing can; the
 /// commit itself logs rather than returns, as every other store's does.
 pub async fn write_prefs(paths: &Paths, prefs: &Prefs) -> std::io::Result<()> {
     let encoded = serde_json::to_value(prefs).map_err(std::io::Error::other)?;
@@ -245,6 +263,7 @@ mod tests {
         assert_eq!(prefs.font_size, FontSize::Default);
         assert_eq!(prefs.language, Language::Auto);
         assert_eq!(prefs.transcript_style, TranscriptStyle::Flat);
+        assert_eq!(prefs.math, MathStyle::Rendered, "math is typeset unless the user asks for the source");
     }
 
     #[test]
@@ -255,6 +274,7 @@ mod tests {
             "fontSize": "xlarge",
             "language": "zh-TW",
             "transcriptStyle": "bubble",
+            "math": "source",
         });
         let prefs = prefs_from_value(&raw);
         assert_eq!(prefs.session_grouping, SessionGrouping::Directory);
@@ -262,6 +282,7 @@ mod tests {
         assert_eq!(prefs.font_size, FontSize::Xlarge);
         assert_eq!(prefs.language, Language::ZhTw);
         assert_eq!(prefs.transcript_style, TranscriptStyle::Bubble);
+        assert_eq!(prefs.math, MathStyle::Source);
     }
 
     #[test]
@@ -295,6 +316,7 @@ mod tests {
             font_size: FontSize::Xlarge,
             language: Language::ZhCn,
             transcript_style: TranscriptStyle::Bubble,
+            math: MathStyle::Source,
         };
         let encoded = serde_json::to_value(&prefs).expect("encode");
         assert_eq!(encoded["sessionGrouping"], "directory");
@@ -302,6 +324,24 @@ mod tests {
         assert_eq!(encoded["fontSize"], "xlarge");
         assert_eq!(encoded["language"], "zh-CN", "the locale tags are literal, not kebab-cased");
         assert_eq!(encoded["transcriptStyle"], "bubble");
+        assert_eq!(encoded["math"], "source");
+    }
+
+    /// A page from before the setting saves the five fields it knows. The save
+    /// lands, and the setting it never mentioned goes back to its default: a
+    /// PUT is the whole object.
+    #[test]
+    fn a_body_without_math_is_still_a_save() {
+        let body = serde_json::json!({
+            "sessionGrouping": "directory",
+            "composerSend": "modifier",
+            "fontSize": "large",
+            "language": "ja",
+            "transcriptStyle": "bubble",
+        });
+        let prefs: Prefs = serde_json::from_value(body).expect("an older page's save decodes");
+        assert_eq!(prefs.session_grouping, SessionGrouping::Directory);
+        assert_eq!(prefs.math, MathStyle::Rendered);
     }
 
     fn paths() -> (tempfile::TempDir, Paths) {
@@ -317,6 +357,7 @@ mod tests {
             font_size: FontSize::Large,
             language: Language::Ja,
             transcript_style: TranscriptStyle::Bubble,
+            math: MathStyle::Source,
         }
     }
 
@@ -380,7 +421,7 @@ mod tests {
         assert_eq!(reopened.kv_scope(scope::PREFS).get("language").map(String::as_str), Some("ja"));
         assert_eq!(
             reopened.kv_scope(scope::PREFS).len(),
-            5,
+            6,
             "one row per field, and the row is the wire spelling"
         );
     }

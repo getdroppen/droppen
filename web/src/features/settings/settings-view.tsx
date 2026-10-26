@@ -137,6 +137,27 @@ export function PreferencesSection() {
           <span className="font-mono text-xs text-muted">…</span>
         )}
       </div>
+      <div className={cn(preferenceRow, "mt-3")}>
+        <div>
+          <div className={ROW_LABEL}>{t("LaTeX math")}</div>
+          <div className={ROW_HINT}>{t("$…$ and $$…$$ in messages · code stays as written")}</div>
+        </div>
+        {prefs ? (
+          <Tabs
+            className="w-full"
+            // A server from before the pref sends none, and typesets.
+            value={prefs.math ?? "rendered"}
+            onValueChange={(v) => save.mutate({ ...prefs, math: v as Prefs["math"] })}
+          >
+            <TabsList className="w-full">
+              <TabsTab value="rendered">{t("rendered")}</TabsTab>
+              <TabsTab value="source">{t("source")}</TabsTab>
+            </TabsList>
+          </Tabs>
+        ) : (
+          <span className="font-mono text-xs text-muted">…</span>
+        )}
+      </div>
       {onMain ? (
         <>
           <div className={cn(preferenceRow, "mt-3")}>

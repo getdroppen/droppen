@@ -78,6 +78,11 @@ export const zhCN: Record<string, string> = {
   "message display": "消息展示",
   "chat bubbles or a flat list": "聊天气泡或平铺列表",
   bubbles: "气泡",
+  /* settings: whether LaTeX in a message is typeset (`components/markdown-math.ts`) */
+  "LaTeX math": "LaTeX 公式",
+  "$…$ and $$…$$ in messages · code stays as written": "消息里的 $…$ 和 $$…$$ · 代码保持原样",
+  rendered: "渲染",
+  source: "源码",
   "rename failed: {{msg}}": "重命名失败：{{msg}}",
   "Please look at the attached file(s).": "请查看附带的文件。",
   "attach files (or paste into the message box)": "附加文件（或直接粘贴到输入框）",

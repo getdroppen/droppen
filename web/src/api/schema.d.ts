@@ -3904,6 +3904,11 @@ export interface components {
          * @enum {string}
          */
         LoginState: "signed-in" | "signed-out" | "unknown";
+        /**
+         * @description How LaTeX math in a message renders.
+         * @enum {string}
+         */
+        MathStyle: "rendered" | "source";
         /** @description One message's receipt. */
         MessageReceipt: {
             /** @description When the status last changed, ISO-8601. */
@@ -4283,6 +4288,8 @@ export interface components {
             fontSize: components["schemas"]["FontSize"];
             /** @description UI language; `auto` follows the browser locale. */
             language: components["schemas"]["Language"];
+            /** @description How LaTeX math in a message renders; a body without it means `rendered`. */
+            math?: components["schemas"]["MathStyle"];
             /** @description How the session list is grouped. */
             sessionGrouping: components["schemas"]["SessionGrouping"];
             /** @description How transcripts render. */

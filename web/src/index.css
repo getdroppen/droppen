@@ -299,6 +299,18 @@ html.kb-open .pb-safe {
   overscroll-behavior-x: contain;
 }
 
+/* Displayed math (`components/markdown-math.ts`); KaTeX's own stylesheet
+   comes with the formulas. A formula wider than the message scrolls on its
+   own, as a wide code block does, with the same pinned x axis; and half
+   KaTeX's 1em above and below, in step with the transcript's paragraphs. */
+.math-display > .katex-display {
+  margin: 0.5em 0;
+  padding: 0.125em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
 /* Exactly one thing may move the transcript under the reader, and it is the
    prepend anchor in `session-detail.tsx`.
 
