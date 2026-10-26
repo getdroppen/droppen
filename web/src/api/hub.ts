@@ -12,8 +12,13 @@ import type { paths } from "./hub-schema";
 export type HubClient = Client<paths>;
 
 export function createHubClient(baseUrl: string, fetchImpl: (input: string, init?: RequestInit) => Promise<Response>): HubClient {
+  // A page with no hub marker sends to its own origin: `baseUrl` is empty and
+  // the paths stay relative. openapi-fetch builds a `Request`, which needs an
+  // absolute URL, so it gets a placeholder and the wrapper hands the path back.
+  const relative = baseUrl === "";
+  const base = relative ? "http://hub.invalid" : baseUrl;
   return createClient<paths>({
-    baseUrl,
+    baseUrl: base,
     fetch: async (request) => {
       const headers: Record<string, string> = {};
       request.headers.forEach((value, name) => {
@@ -21,7 +26,9 @@ export function createHubClient(baseUrl: string, fetchImpl: (input: string, init
       });
       const init: RequestInit = { method: request.method, headers };
       if (request.method !== "GET" && request.method !== "HEAD") init.body = await request.text();
-      return fetchImpl(request.url, init);
+      if (!relative) return fetchImpl(request.url, init);
+      const url = new URL(request.url);
+      return fetchImpl(`${url.pathname}${url.search}`, init);
     },
   });
 }
