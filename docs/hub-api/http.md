@@ -129,15 +129,6 @@ should not have would otherwise stay: the shell fails the browser's update on
 its MIME type ([web-integrity](../web-integrity.md)). The local server answers
 the same.
 
-### `GET /v1/signup/config`
-→ `{signup: "invite"|"open"|"closed", invite_required, turnstile: null | {site_key, origin}, verification: "required"|"off", passkeys: null | {rp_id}, deletion: {email_hold_days}}`.
-What the sign-up form must ask for. `passkeys`: the hub offers passkeys
-for this relying party id (`null`: it has them off — a hub on an IP
-address always does; absent from hubs before passkeys). `deletion`:
-`email_hold_days` (≥ 0), how many days a deleted account's address cannot
-sign up again (`DELETE /v1/account`; `0`: it can at once), for the page to
-say before an account is deleted; absent from hubs before account deletion.
-
 ### `GET /v1/releases/latest`
 → `{version, tag, published_at, releases_page, platforms: {macos?, "linux-x86_64"?, "linux-aarch64"?}, fetched_ms}`,
 each platform `{name, url, size, download_path?}`. This is the latest public release of
@@ -217,7 +208,7 @@ and its verification link verifies nothing. Any other account keeps the
 e-mail (`409 email_taken`); sign-up by invite never replaces one. A new
 account's verification mail always goes out.
 An address whose account was deleted within the hub's hold
-(`/v1/signup/config` `deletion.email_hold_days`; the address compared in its
+(`DROPPEN_HUB_DELETED_EMAIL_DAYS`, seven by default; the address compared in its
 canonical form: lower-cased, its `+tag` dropped and, at Gmail, its dots) is
 refused with `409 recently_deleted`, whose `until_ms` says when it may sign
 up again. `400 disposable_email` covers the hub's built-in list of throwaway
@@ -271,8 +262,8 @@ Signing up and in with a passkey. WebAuthn's binary values here are
 one stores nothing), good for 2 minutes and answered once; send it back
 exactly as given, with the credential that answers it.
 
-The relying party id is the hub's (`droppen.app`; `/v1/signup/config`
-names it) and the only origins taken are the app's own, compared exactly
+The relying party id is the hub's (`droppen.app`) and the only origins
+taken are the app's own, compared exactly
 (`https://my.droppen.app`, and `https://droppen.app` while browsers move off
 it: README, "Hosts"): an answer made on any other origin — another subdomain
 included — or in a cross-origin frame is refused. Passkeys are discoverable (`residentKey:
@@ -1178,8 +1169,8 @@ address from the moment its deletion begins, even while its stored data is
 still being erased. **What stays:** a keyed hash (HMAC-SHA256 under a secret
 of the hub's) of the inbox the address reaches (lower-cased, a `+tag`
 dropped, and each mail provider's own rules — Gmail's dots, say), for the
-days `GET /v1/signup/config` names (`deletion.email_hold_days`;
-`DROPPEN_HUB_DELETED_EMAIL_DAYS`, 7 by default, `0` keeps none), so the same
+days `DROPPEN_HUB_DELETED_EMAIL_DAYS` names (7 by default, `0` keeps
+none), so the same
 inbox cannot sign up again at once (`409 recently_deleted`); for as long,
 the ids and public signing keys of its devices and hosts, so a device that
 comes back is told the account is gone (`POST /v1/session`, `410`); and an

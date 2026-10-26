@@ -122,7 +122,7 @@ id or a subdomain of it.
 
 | auth (index.json) | how | what it is good for |
 |---|---|---|
-| `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/signup/config`, `GET /v1/releases/latest`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
+| `none` | — | sign-up, login (password or passkey, and the passkey routes' options), the device-session exchange, e-mail verification, `GET /v1/releases/latest`, the waitlist, the WebSocket upgrades (which sign in on the socket) |
 | `session` | `Authorization: Bearer <token>`, a **login** or a **device** session | `POST /v1/devices`, `GET /v1/me`, `GET /v1/chain`, `POST /v1/email/resend`, `POST /v1/logout` |
 | `device` | `Authorization: Bearer <token>` of a **device** session | everything else under `/v1/` — managing the account's passkeys and password, and deleting the account, included (a current full device: a login session never changes how the account signs in) |
 | `admin` | `Authorization: Bearer <the operator's admin token>` | `/v1/admin/*`, the operator routes (documented with the Hub) |
@@ -230,8 +230,8 @@ Relays answer `429 {error: "rate", retry_after_ms}` without a `message`.
 
 ## Without Turnstile
 
-A hub may run without Turnstile (its operator's choice; `GET /v1/signup/config`
-answers `turnstile: null`). No route then asks for it — there is no
+A hub may run without Turnstile (its operator's choice). The web app draws
+no widget either way. No route then asks for it — there is no
 `403 turnstile_required` a client could not satisfy — and what Turnstile
 guarded is held by limits alone: sign-up and resends per address and per
 network, resends per account and per inbox, hub-wide caps on sign-ups and
@@ -315,7 +315,7 @@ tickets. WebSocket limits are in websocket.md.
   speaks in `welcome.features` (`rotate/1`), and a peer sends a feature's
   messages only where it was offered (a hub without it answers an unknown `t`
   with 4400); what the hub offers an account shows in `GET /v1/me`
-  (its `plan`, `email.verification`) and `GET /v1/signup/config`. A client
+  (its `plan`, `email.verification`). A client
   tests for a field's presence rather than a hub version.
 - **The hub keeps working with the previous N−2 released versions of the open
   clients** (the current release and the two before it): a change that would

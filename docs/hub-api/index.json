@@ -8,7 +8,6 @@
     { "server": "hub", "method": "GET", "path": "/.well-known/droppen-build", "auth": "none", "audience": "tooling", "optional": "DROPPEN_HUB_WEB_DIR" },
     { "server": "hub", "method": "GET", "path": "/.well-known/droppen-hub", "auth": "none" },
     { "server": "hub", "method": "POST", "path": "/v1/signup", "auth": "none" },
-    { "server": "hub", "method": "GET", "path": "/v1/signup/config", "auth": "none" },
     { "server": "hub", "method": "GET", "path": "/v1/releases/latest", "auth": "none" },
     { "server": "hub", "method": "GET", "path": "/dl/{platform}", "auth": "none", "response": "none" },
     { "server": "hub", "method": "POST", "path": "/v1/email/verify", "auth": "none" },
