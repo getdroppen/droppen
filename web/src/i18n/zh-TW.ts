@@ -78,11 +78,13 @@ export const zhTW: Record<string, string> = {
   "message display": "訊息顯示",
   "chat bubbles or a flat list": "聊天氣泡或平鋪列表",
   bubbles: "氣泡",
-  /* settings: whether LaTeX in a message is typeset (`components/markdown-math.ts`) */
+  /* LaTeX in a message (`components/markdown-math.ts`): its settings group and row, and a formula's tooltip */
+  "message rendering": "訊息渲染",
   "LaTeX math": "LaTeX 公式",
   "$…$ and $$…$$ in messages · code stays as written": "訊息中的 $…$ 與 $$…$$ · 程式碼保持原樣",
   rendered: "渲染",
   source: "原始碼",
+  "click to copy the TeX": "點擊複製 TeX 原始碼",
   "rename failed: {{msg}}": "重新命名失敗：{{msg}}",
   "Please look at the attached file(s).": "請查看附加的檔案。",
   "attach files (or paste into the message box)": "附加檔案（或直接貼到輸入框）",

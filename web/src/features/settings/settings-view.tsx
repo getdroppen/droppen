@@ -65,23 +65,19 @@ function SettingSwitch({
   return <Switch on={on} blocked={disabled} label={label} onChange={onChange} className="font-sans text-xs font-medium" />;
 }
 
-/** Exported for the render tests (`test/cross-device-render.test.tsx`). */
-export function PreferencesSection() {
+/**
+ * This device's `/api/prefs`, and the save that PUTs the whole object back
+ * (the route replaces it). Every section that shows a pref reads this one
+ * query, so a save in one is seen by the others.
+ */
+function usePrefs() {
   const api = useApi();
   const machine = useMachine();
-  // Font size and language are applied from the main device's prefs only.
-  const home = useHomeMachine();
-  const onMain = machine === home;
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: prefs } = useQuery({
     queryKey: mq(machine, "prefs"),
     queryFn: async () => (await api.GET("/api/prefs")).data,
   });
-  // Not a server pref: what the file browser hides is a per-browser habit, and
-  // it takes effect in an open file list without a save round-trip.
-  const [showHiddenFiles, setShowHiddenFiles] = useShowHiddenFiles();
-
   const save = useMutation({
     mutationFn: async (next: Prefs) => {
       const res = await api.PUT("/api/prefs", { body: next });
@@ -91,6 +87,20 @@ export function PreferencesSection() {
       if (data) queryClient.setQueryData(mq(machine, "prefs"), data);
     },
   });
+  return { prefs, save };
+}
+
+/** Exported for the render tests (`test/cross-device-render.test.tsx`). */
+export function PreferencesSection() {
+  const machine = useMachine();
+  // Font size and language are applied from the main device's prefs only.
+  const home = useHomeMachine();
+  const onMain = machine === home;
+  const { t } = useTranslation();
+  const { prefs, save } = usePrefs();
+  // Not a server pref: what the file browser hides is a per-browser habit, and
+  // it takes effect in an open file list without a save round-trip.
+  const [showHiddenFiles, setShowHiddenFiles] = useShowHiddenFiles();
 
   return (
     <section className="border-b border-border p-3">
@@ -131,27 +141,6 @@ export function PreferencesSection() {
             <TabsList className="w-full">
               <TabsTab value="flat">{t("flat")}</TabsTab>
               <TabsTab value="bubble">{t("bubbles")}</TabsTab>
-            </TabsList>
-          </Tabs>
-        ) : (
-          <span className="font-mono text-xs text-muted">…</span>
-        )}
-      </div>
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("LaTeX math")}</div>
-          <div className={ROW_HINT}>{t("$…$ and $$…$$ in messages · code stays as written")}</div>
-        </div>
-        {prefs ? (
-          <Tabs
-            className="w-full"
-            // A server from before the pref sends none, and typesets.
-            value={prefs.math ?? "rendered"}
-            onValueChange={(v) => save.mutate({ ...prefs, math: v as Prefs["math"] })}
-          >
-            <TabsList className="w-full">
-              <TabsTab value="rendered">{t("rendered")}</TabsTab>
-              <TabsTab value="source">{t("source")}</TabsTab>
             </TabsList>
           </Tabs>
         ) : (
@@ -259,6 +248,46 @@ export function PreferencesSection() {
             <TabsTab value="show">{t("show")}</TabsTab>
           </TabsList>
         </Tabs>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * How what an agent writes is drawn, one row per feature a reader may want
+ * off: kept apart from the preferences above, which are about the app rather
+ * than about a message's content. Each row is a server pref, like those.
+ *
+ * Exported for the render tests (`test/cross-device-render.test.tsx`).
+ */
+export function MessageRenderingSection() {
+  const { t } = useTranslation();
+  const { prefs, save } = usePrefs();
+  return (
+    <section className="border-b border-border p-3">
+      <h2 data-label="" className={SECTION_TITLE}>
+        {t("message rendering")}
+      </h2>
+      <div className={preferenceRow}>
+        <div>
+          <div className={ROW_LABEL}>{t("LaTeX math")}</div>
+          <div className={ROW_HINT}>{t("$…$ and $$…$$ in messages · code stays as written")}</div>
+        </div>
+        {prefs ? (
+          <Tabs
+            className="w-full"
+            // A server from before the pref sends none, and typesets.
+            value={prefs.math ?? "rendered"}
+            onValueChange={(v) => save.mutate({ ...prefs, math: v as Prefs["math"] })}
+          >
+            <TabsList className="w-full">
+              <TabsTab value="rendered">{t("rendered")}</TabsTab>
+              <TabsTab value="source">{t("source")}</TabsTab>
+            </TabsList>
+          </Tabs>
+        ) : (
+          <span className="font-mono text-xs text-muted">…</span>
+        )}
       </div>
     </section>
   );
@@ -647,6 +676,7 @@ function GeneralSettings() {
     <Sheet>
       <SetupSection />
       <PreferencesSection />
+      <MessageRenderingSection />
       <NotificationsSection />
       <PhoneNotificationsSection />
       <InstallSection />

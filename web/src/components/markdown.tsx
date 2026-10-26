@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DownloadLink } from "@/components/host-file";
@@ -171,13 +172,49 @@ function useMathKit(text: string): MathKit | undefined {
 
 const PLAIN = [remarkGfm];
 
+/**
+ * Copy the TeX of the formula a click (or Enter or Space on a focused one)
+ * landed on, then say so on the formula for a moment. One handler for the
+ * whole message rather than one per formula: the formulas are KaTeX's markup,
+ * drawn from hast, with nowhere to hang their own. Not a click that ends a
+ * text selection: that one is someone selecting.
+ */
+function copyFormula(event: React.MouseEvent | React.KeyboardEvent, copied: string) {
+  const formula = (event.target as Element).closest?.("[data-tex]");
+  if (!(formula instanceof HTMLElement) || !event.currentTarget.contains(formula)) return;
+  if (event.type === "keydown") {
+    const { key } = event as React.KeyboardEvent;
+    if (event.target !== formula || (key !== "Enter" && key !== " ")) return;
+  } else if (window.getSelection()?.toString()) {
+    return;
+  }
+  // A formula in a link's text copies rather than follows the link.
+  event.preventDefault();
+  navigator.clipboard?.writeText(formula.dataset.tex ?? "").then(
+    () => {
+      formula.dataset.copied = copied;
+      setTimeout(() => delete formula.dataset.copied, 1500);
+    },
+    () => {
+      // Clipboard refused (no permission, or not a secure context): nothing
+      // was copied, so nothing says it was.
+    },
+  );
+}
+
 export function Markdown({ text, className }: { text: string; className?: string }) {
+  const { t } = useTranslation();
   const math = useMathKit(text);
+  const copied = t("copied");
   return (
-    <div className={cn("min-w-0 text-[13px] leading-[21px] break-words max-md:text-sm max-md:leading-[22px]", className)}>
+    <div
+      className={cn("min-w-0 text-[13px] leading-[21px] break-words max-md:text-sm max-md:leading-[22px]", className)}
+      onClick={math ? (event) => copyFormula(event, copied) : undefined}
+      onKeyDown={math ? (event) => copyFormula(event, copied) : undefined}
+    >
       <ReactMarkdown
         remarkPlugins={math ? [remarkGfm, ...math.remarkPlugins] : PLAIN}
-        rehypePlugins={math?.rehypePlugins}
+        rehypePlugins={math ? [[math.rehypeTypeset, { copyTitle: t("click to copy the TeX") }]] : undefined}
         components={components}
         urlTransform={urlTransform}
       >

@@ -13,16 +13,29 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import i18next from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
 import { installMath, Markdown, MathRendering } from "../src/components/markdown.js";
 import * as kit from "../src/components/markdown-math.js";
 
 const { prepareMath } = kit;
 
+const i18n = i18next.createInstance();
+await i18n.use(initReactI18next).init({
+  lng: "en",
+  resources: { en: { translation: {} } },
+  keySeparator: false,
+  nsSeparator: false,
+  interpolation: { escapeValue: false },
+});
+
 function draw(text: string, on = true): string {
   return renderToStaticMarkup(
-    <MathRendering.Provider value={on}>
-      <Markdown text={text} />
-    </MathRendering.Provider>,
+    <I18nextProvider i18n={i18n}>
+      <MathRendering.Provider value={on}>
+        <Markdown text={text} />
+      </MathRendering.Provider>
+    </I18nextProvider>,
   );
 }
 
@@ -94,19 +107,19 @@ test("the kit installed, every kind of delimiter is typeset", () => {
 
 test("$…$ is inline; $$…$$ and \\[…\\] are displayed, as a block when alone", () => {
   const inline = draw("a $x^2$ b");
-  assert.match(inline, /<p[^>]*>a <span class="math math-inline"><span class="katex">/);
+  assert.match(inline, /<p[^>]*>a <span class="math math-inline" data-tex="x\^2" role="button" tabindex="0" title="click to copy the TeX"><span class="katex">/);
   assert.doesNotMatch(inline, /katex-display/);
 
   for (const text of ["$$x^2$$", "\\[x^2\\]", "$$\nx^2\n$$"]) {
     const html = draw(text);
-    assert.match(html, /^<div[^>]*><div class="math math-display"><span class="katex-display">/, text);
+    assert.match(html, /^<div[^>]*><div class="math math-display" data-tex="x\^2"[^>]*><span class="katex-display">/, text);
     assert.doesNotMatch(html, /<p/, `${text}: a block, not a paragraph around one`);
   }
 
   // Inside a sentence it is still displayed, as LaTeX would: a block-level
   // span in the paragraph, never a <div> inside a <p>.
   const mid = draw("so $$x^2$$ holds");
-  assert.match(mid, /<p[^>]*>so <span class="math math-display"><span class="katex-display">/);
+  assert.match(mid, /<p[^>]*>so <span class="math math-display"[^>]*><span class="katex-display">/);
 });
 
 test("code is never typeset, ```math included", () => {
@@ -143,7 +156,7 @@ test("Markdown between two prices is still Markdown", () => {
 
   const both = draw("$5 and then $x^2$");
   assert.equal(formulas(both), 1, "the formula after a price still typesets");
-  assert.match(both, /\$5 and then <span class="math math-inline">/);
+  assert.match(both, /\$5 and then <span class="math math-inline"/);
 });
 
 test("prices and shell variables in prose stay text", () => {

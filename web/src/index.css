@@ -311,6 +311,36 @@ html.kb-open .pb-safe {
   overscroll-behavior-x: contain;
 }
 
+/* A typeset formula is a button that copies its TeX (`components/markdown.tsx`):
+   the hover a button gets, and "copied" in a small ink tag above its right
+   edge for the moment after. */
+.math[data-tex] {
+  position: relative;
+  cursor: pointer;
+}
+/* All of an inline formula answers the pointer. As an inline box only its
+   line did: the space around a fraction's bar, above and below the text,
+   belonged to the paragraph, and a click there copied nothing. An inline
+   block shrinks to the width there is, so a long formula still wraps. */
+.math-inline[data-tex] {
+  display: inline-block;
+}
+.math[data-tex]:hover {
+  background: var(--color-hover);
+}
+.math[data-copied]::after {
+  content: attr(data-copied);
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  padding: 0 4px;
+  background: var(--color-fg);
+  color: var(--color-bg);
+  font: 10px/16px var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* Exactly one thing may move the transcript under the reader, and it is the
    prepend anchor in `session-detail.tsx`.
 

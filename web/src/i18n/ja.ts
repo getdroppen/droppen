@@ -78,11 +78,13 @@ export const ja: Record<string, string> = {
   "message display": "メッセージ表示",
   "chat bubbles or a flat list": "チャットの吹き出し／フラット表示",
   bubbles: "吹き出し",
-  /* settings: whether LaTeX in a message is typeset (`components/markdown-math.ts`) */
+  /* LaTeX in a message (`components/markdown-math.ts`): its settings group and row, and a formula's tooltip */
+  "message rendering": "メッセージのレンダリング",
   "LaTeX math": "LaTeX 数式",
   "$…$ and $$…$$ in messages · code stays as written": "メッセージ内の $…$ と $$…$$ · コードはそのまま",
   rendered: "レンダリング",
   source: "ソース",
+  "click to copy the TeX": "クリックで TeX をコピー",
   "rename failed: {{msg}}": "名前の変更に失敗：{{msg}}",
   "Please look at the attached file(s).": "添付したファイルを見てください。",
   "attach files (or paste into the message box)": "ファイルを添付（または入力欄に貼り付け）",

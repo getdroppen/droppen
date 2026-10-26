@@ -16,6 +16,9 @@
  *   shell variables in prose (`$HOME and $PATH`) as text, and the Markdown
  *   between them (`$5 for **pro**`, `` `echo $PATH` ``) as Markdown.
  * - TeX KaTeX cannot read stays as the text the agent wrote.
+ *
+ * A typeset formula carries its TeX (`data-tex`) and is a button: clicking it
+ * copies the TeX (`Markdown` in `markdown.tsx` does the copying).
  */
 import type { Element, ElementContent, Root as HastRoot } from "hast";
 import { fromHtmlIsomorphic } from "hast-util-from-html-isomorphic";
@@ -261,7 +264,11 @@ function typeset(tex: string, displayMode: boolean): ElementContent[] | null {
   }
 }
 
-function rehypeTypeset() {
+/**
+ * Typeset every math element the remark step marked. `copyTitle` is the
+ * tooltip of a typeset formula, in the page's language.
+ */
+export function rehypeTypeset({ copyTitle }: { copyTitle: string }) {
   return (tree: HastRoot) => {
     const visit = (parent: { children: (HastRoot["children"][number] | ElementContent)[] }) => {
       for (const node of parent.children) {
@@ -269,7 +276,7 @@ function rehypeTypeset() {
         const className = node.properties.className;
         const classes = Array.isArray(className) ? className : [];
         if (classes.includes("math")) {
-          render(node, classes.includes("math-display"));
+          render(node, classes.includes("math-display"), copyTitle);
           continue;
         }
         visit(node);
@@ -279,11 +286,12 @@ function rehypeTypeset() {
   };
 }
 
-function render(node: Element, display: boolean) {
+function render(node: Element, display: boolean, copyTitle: string) {
   const tex = node.children.map((child) => (child.type === "text" ? child.value : "")).join("");
   const drawn = typeset(tex, display);
   if (drawn) {
     node.children = drawn;
+    Object.assign(node.properties, { dataTex: tex, role: "button", tabIndex: 0, title: copyTitle });
     return;
   }
   // Not TeX KaTeX can read: the source, with the delimiters it was written in.
@@ -293,4 +301,3 @@ function render(node: Element, display: boolean) {
 }
 
 export const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkMath, remarkTidyMath];
-export const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [rehypeTypeset];
