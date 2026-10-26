@@ -482,11 +482,6 @@ pub mod context {
         ]
         .concat()
     }
-
-    /// One epoch of `UK`, wrapped under the recovery wrap key.
-    pub fn user_key_under_recovery(account: &str, uk_epoch: u32) -> Vec<u8> {
-        [&b"rh/v1 UK under RK\0"[..], account.as_bytes(), b"\0", &uk_epoch.to_be_bytes()].concat()
-    }
 }
 
 /// The pairing MAC: `HMAC-SHA256(s, "rh/v1 pair\0" ‖ (u32 len ‖ field)*)`.
