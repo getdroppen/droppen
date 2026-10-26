@@ -183,13 +183,6 @@ export type SignupMode = "invite" | "open" | "closed";
 /** Whether this hub requires accounts to verify their e-mail. */
 export type Verification = "required" | "off";
 
-/** The Turnstile widget's page, on its own origin (never the app's: its script must not load here). */
-export interface TurnstileConfig {
-  siteKey: string;
-  /** e.g. `https://verify.droppen.app`, normalised to a bare origin. */
-  origin: string;
-}
-
 /** Passkeys at this hub (docs/passkeys.md §3.1): the RP ID they are made for. */
 export interface PasskeysConfig {
   rpId: string;
@@ -199,7 +192,6 @@ export interface PasskeysConfig {
 export interface SignupConfig {
   signup: SignupMode;
   inviteRequired: boolean;
-  turnstile: TurnstileConfig | null;
   verification: Verification;
   /** `null`: this hub offers no passkeys (or predates them), and the page says nothing of them. */
   passkeys: PasskeysConfig | null;
@@ -211,15 +203,14 @@ export interface SignupConfig {
  * droppen.app's answers, written here instead of asked of the hub: sign-up is
  * open (an invite code is optional — it may give the account a plan), the
  * e-mail must be verified before a device joins, passkeys are made for
- * `droppen.app`, no Turnstile widget is drawn, and a deleted account's
- * address is held for seven days. The hub no longer answers
+ * `droppen.app`, and a deleted account's address is held for seven days.
+ * The hub no longer answers
  * `GET /v1/signup/config`, and a site served by another hub shows these same
  * answers.
  */
 export const SIGNUP_CONFIG: SignupConfig = {
   signup: "open",
   inviteRequired: false,
-  turnstile: null,
   verification: "required",
   passkeys: { rpId: "droppen.app" },
   deletion: { emailHoldDays: 7 },

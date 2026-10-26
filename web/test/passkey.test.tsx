@@ -915,7 +915,7 @@ test("the autofill's withdrawal waits for the browser to let go, but not for eve
 
 // ------------------------------------------------------------ the form
 
-const CONFIG: SignupConfig = { signup: "open", inviteRequired: false, turnstile: null, verification: "required", passkeys: { rpId: "hub.test" } };
+const CONFIG: SignupConfig = { signup: "open", inviteRequired: false, verification: "required", passkeys: { rpId: "hub.test" } };
 
 test("the form: a passkey first only where both the browser and the hub can; the password otherwise, or when asked for", () => {
   assert.equal(authMethod(true, CONFIG, false), "passkey");
