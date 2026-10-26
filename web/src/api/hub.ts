@@ -32,8 +32,12 @@ export function createHubClient(baseUrl: string, fetchImpl: (input: string, init
         const body = await request.text();
         if (body !== "") init.body = body;
       }
-      if (!relative) return fetchImpl(request.url, init);
       const url = new URL(request.url);
+      // The keyring's names span path segments (`mk/m-1/0/…`), while OpenAPI
+      // has one `{name}` parameter and openapi-fetch encodes the whole value:
+      // put the slashes back for that path.
+      if (url.pathname.startsWith("/v1/keys/")) url.pathname = url.pathname.replace(/%2F/gi, "/");
+      if (!relative) return fetchImpl(url.toString(), init);
       return fetchImpl(`${url.pathname}${url.search}`, init);
     },
   });

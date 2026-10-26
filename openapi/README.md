@@ -22,18 +22,30 @@ pnpm --filter @remote-hand/web gen:api:hub
 Do this after a hub release that changes the public API (a new route, a changed
 body, a new response schema), in the same change that starts using it.
 
-Known gaps, where the generated type is not enough and the client keeps a
-hand-written call or a cast:
+Every response is typed. The remaining hand-written edges, each deliberate:
 
-- `PUT /v1/keys/{name}`: the hub's route is a catch-all (`{*name}`), and
-  `openapi-fetch` URL-encodes a path parameter whole, turning the name's `/`
-  into `%2F`; the client still builds that one URL itself (body and response
-  types are generated).
-- `PUT`/`DELETE /v1/rotations/{host}`: the document models an empty 200 (and,
-  for `PUT`, a per-host view it does not model), so these stay untyped.
-- WebAuthn credential objects: JSON values in the document (their shape is
+- `DELETE /v1/rotations/{host}` has a raw-bytes withdrawal body that the hub
+  marks `#[api(skip)]` (it also accepts no body, for older clients); the
+  response is the documented `Empty`.
+- WebAuthn credential objects are JSON values in the document (their shape is
   WebAuthn's); the client casts the browser's answer.
+- The keyring's `{name}` spans path segments (`mk/m-1/0/…`), while OpenAPI has
+  one parameter; `web/src/api/hub.ts` restores the slashes openapi-fetch
+  encoded (`%2F`) for `/v1/keys/*`.
 
-`Me` and its nested views (`MeEmail`, `PlanView`, `MeChainV3`, `MeRotations`,
-`MeCredentials`, `MeRelayPrefs`, `SignInChange`) and the error body
-(`ApiErrorBody`) are typed now.
+`Me` and its nested views, the error body (`ApiErrorBody`), the rotation host
+view (`RotationHost`/`RotationPut`) and every other response are generated
+types.
+
+## Keeping the snapshot honest
+
+CI checks that `web/src/api/hub-schema.d.ts` is generated from
+`openapi/hub.json`. A nightly workflow (`hub-spec-drift.yml`) runs
+`pnpm check:hub-spec`, which compares `openapi/hub.json` with the deployed
+hub's `https://api.droppen.app/openapi.json` and names the paths/schemas that
+changed. When it fails, refresh:
+
+```sh
+curl -fsS https://api.droppen.app/openapi.json > openapi/hub.json
+pnpm --filter @remote-hand/web gen:api:hub
+```

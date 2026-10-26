@@ -1101,7 +1101,7 @@ export class HubApi {
   }
 
   logout(token: string): Promise<void> {
-    return this.call("POST", "/v1/logout", { token, noRenew: true });
+    return this.typed<void>((headers) => this.client.POST("/v1/logout", { headers }), { token, noRenew: true });
   }
 
   /**
@@ -1263,7 +1263,10 @@ export class HubApi {
     const body: components["schemas"]["NewKeyWrap"] = { blob: hex(blob) };
     // Left on `call`: a name is several path segments (`mk/m-1/0/0/dev`), and openapi-fetch would
     // percent-encode its `/` — the hub's route is `{*name}` and takes the name as written.
-    const r = await this.call<components["schemas"]["KeyPut"]>("PUT", `/v1/keys/${name}`, { token, body });
+    const r = await this.typed<components["schemas"]["KeyPut"]>(
+      (headers) => this.client.PUT("/v1/keys/{name}", { params: { path: { name } }, body, headers }),
+      { token },
+    );
     return { stored: r?.stored !== false };
   }
 
@@ -1355,10 +1358,13 @@ export class HubApi {
    * `needs_assurance`), 409 `not_a_host`, 429 `rate`.
    */
   async putRotation(token: string, host: string, opts: { nonceHash?: Uint8Array; assurance: 0 | 1 }): Promise<HostRotationView> {
-    const body: { nonce_hash?: string; assurance: 0 | 1 } = { assurance: opts.assurance };
+    const body: components["schemas"]["PutRotation"] = { assurance: opts.assurance };
     if (opts.nonceHash) body.nonce_hash = hex(opts.nonceHash);
-    // Left on `call`: the schema models this 200 as an empty object, not the host's view `hostRotationView` reads.
-    const row = hostRotationView(await this.call<unknown>("PUT", `/v1/rotations/${encodeURIComponent(host)}`, { token, body }));
+    const r = await this.typed<components["schemas"]["RotationPut"]>(
+      (headers) => this.client.PUT("/v1/rotations/{host}", { params: { path: { host } }, body, headers }),
+      { token },
+    );
+    const row = hostRotationView(r);
     if (!row || row.host !== host) throw new HubApiError(502, "bad_rotation", "the hub answered for another renewal");
     return row;
   }
@@ -1373,8 +1379,9 @@ export class HubApi {
    */
   async deleteRotation(token: string, host: string, only?: { nonceHash: Uint8Array | string } | { requestedMs: number }): Promise<void> {
     const body = !only ? undefined : "nonceHash" in only ? { nonce_hash: typeof only.nonceHash === "string" ? only.nonceHash : hex(only.nonceHash) } : { requested_ms: only.requestedMs };
-    // Left on `call`: the schema models this 200 as an empty object, not the per-host view the hub sends.
-    await this.call<unknown>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, body ? { token, body } : { token });
+    // The response is the documented `{}`; the withdrawal body stays a raw
+    // bytes compatibility path (`#[api(skip)]` in the hub), so it is sent as it is.
+    await this.call<components["schemas"]["Empty"]>("DELETE", `/v1/rotations/${encodeURIComponent(host)}`, body ? { token, body } : { token });
   }
 
   /**

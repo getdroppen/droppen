@@ -991,6 +991,8 @@ export interface components {
         Disputed: {
             ok: boolean;
         };
+        /** @description `{}`: the request had nothing to do (the state it asked for already stood). */
+        Empty: Record<string, never>;
         /** @description `POST /v1/enrollments`: when the code lapses. */
         EnrollmentMade: {
             expires_ms: number;
@@ -1483,6 +1485,43 @@ export interface components {
         Resend: {
             turnstile?: string | null;
         };
+        /** @description Why a renewal failed, and when. */
+        RotationFailure: {
+            at_ms: number;
+            reason: string;
+        };
+        /**
+         * @description A host's `Rotation` object (`GET /v1/rotations`, `PUT`). While it is an
+         *     `attempt` or `staged`, `nonce_hash` is its attempt's (the hex the `PUT`
+         *     that opened it sent): what a page names to withdraw that attempt and no
+         *     other ([`delete`]), as `requested_ms` names a `pending` mark.
+         *     One host's renewal, as `GET /v1/rotations` and `PUT /v1/rotations/{host}`
+         *     show it. The fields a state does not carry are omitted, as the JSON always
+         *     did.
+         */
+        RotationHost: {
+            /** @description 0 or 1 (`Assurance`). */
+            assurance: number;
+            attempt_expires_ms?: number | null;
+            committed_ms?: number | null;
+            committed_seq?: number | null;
+            dh_key?: string | null;
+            failure?: components["schemas"]["RotationFailure"];
+            host: string;
+            isolated: boolean;
+            needs_assurance: boolean;
+            nonce_hash?: string | null;
+            ready_ms?: number | null;
+            requested_by: string;
+            requested_ms: number;
+            sign_key?: string | null;
+            staged_ms?: number | null;
+            staged_seq?: number | null;
+            /** @description `pending`, `attempt`, `staged`, `committed` or `expired`. */
+            state: string;
+        };
+        /** @description `PUT /v1/rotations/{host}`: the host's state, or `{}` when nothing changed. */
+        RotationPut: components["schemas"]["RotationHost"] | components["schemas"]["Empty"];
         /**
          * @description The account's renewals as `GET /v1/rotations` gives them.
          *     `GET /v1/rotations`: the hub's clock, the policy, each host's state and
@@ -1492,8 +1531,8 @@ export interface components {
             /** @description One entry per kept dispute. */
             disputes: unknown[];
             enabled: boolean;
-            /** @description One entry per host, as `rotation_json` builds it. */
-            hosts: unknown[];
+            /** @description One entry per host. */
+            hosts: components["schemas"]["RotationHost"][];
             now_ms: number;
             window_ms: number;
         };
@@ -2908,7 +2947,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RotationPut"];
                 };
             };
             /** @description `error` is the code, `message` a sentence; some codes add fields below. */
@@ -2939,7 +2978,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Empty"];
                 };
             };
             /** @description `error` is the code, `message` a sentence; some codes add fields below. */

@@ -1,0 +1,25 @@
+name: hub-spec-drift
+
+# The web app's hub types come from `openapi/hub.json`, a snapshot of the
+# deployed hub's public API. This checks the snapshot is still what the hub
+# serves, so a contract change that nobody refreshed is seen within a day
+# rather than at the next release.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: arc-hub
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # No install: the script only reads the snapshot and speaks HTTP.
+      - run: node scripts/check-hub-spec.mjs
