@@ -411,27 +411,6 @@ impl InstanceDirs {
         self.root.join("auth-sessions.json")
     }
 
-    /// The Claude config root this instance owns.
-    ///
-    /// Every session this server starts under an account lives here, which is
-    /// what makes "the sessions this instance owns" a directory listing rather
-    /// than a bookkeeping problem. Kept in step with
-    /// [`crate::sessions::Paths::claude_root`].
-    pub fn claude_root(&self) -> PathBuf {
-        self.root.join("claude")
-    }
-
-    /// The sessions this instance created whose transcripts live elsewhere.
-    ///
-    /// Codex has one config root (`~/.codex`) and no way to isolate it, and a
-    /// claude session on the local login is deliberately written to the user's
-    /// own `~/.claude` — so for both, ownership cannot be read off a path the
-    /// way an account-backed session's is. It is recorded when the session is
-    /// made. See [`crate::sessions::owned_sessions`].
-    pub fn owned_sessions_file(&self) -> PathBuf {
-        self.root.join("owned-sessions.json")
-    }
-
     /// Record the port the listener actually bound.
     ///
     /// Best effort on purpose: a server that cannot write this file still

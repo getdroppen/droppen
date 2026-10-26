@@ -27,7 +27,7 @@
 //! and the TypeScript test-suite both set them; [`env_dir`] is the only place
 //! they — or any other directory override — are read.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
@@ -227,15 +227,6 @@ pub fn local_credentials_path(paths: &Paths) -> PathBuf {
     root_dir(paths, ClaudeRoot::Local).join(".credentials.json")
 }
 
-/// Whether a transcript path sits under the given root's projects directory.
-pub fn root_of(paths: &Paths, file_path: &Path) -> ClaudeRoot {
-    if file_path.starts_with(projects_dir(paths, ClaudeRoot::Managed)) {
-        ClaudeRoot::Managed
-    } else {
-        ClaudeRoot::Local
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,8 +269,6 @@ mod tests {
         let paths = Paths::for_instance(PathBuf::from("/home/me"), "ci-1");
         let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), "ci-1").expect("valid name");
         assert_eq!(paths.instance_dir(), dirs.root());
-        assert_eq!(root_dir(&paths, ClaudeRoot::Managed), dirs.claude_root());
-        assert_eq!(paths.owned_sessions_file(), dirs.owned_sessions_file());
     }
 
     #[test]
@@ -331,14 +320,5 @@ mod tests {
         assert_eq!(override_dir(None), None);
         assert_eq!(override_dir(Some("")), None, "`process.env.X || fallback` treats \"\" as absent");
         assert_eq!(override_dir(Some("/scratch")), Some(PathBuf::from("/scratch")));
-    }
-
-    #[test]
-    fn a_managed_transcript_is_recognised_by_its_path() {
-        let paths = paths();
-        let managed = projects_dir(&paths, ClaudeRoot::Managed).join("-proj").join("s.jsonl");
-        let local = projects_dir(&paths, ClaudeRoot::Local).join("-proj").join("s.jsonl");
-        assert_eq!(root_of(&paths, &managed), ClaudeRoot::Managed);
-        assert_eq!(root_of(&paths, &local), ClaudeRoot::Local);
     }
 }

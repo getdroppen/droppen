@@ -84,7 +84,7 @@
 //! thing to stop.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -587,11 +587,6 @@ pub fn child_args(args: &[String]) -> Vec<String> {
     } else {
         rest.to_vec()
     }
-}
-
-/// Where the supervisor would look for a binary, for `--help` and for tests.
-pub fn installed_path(paths: &Paths) -> PathBuf {
-    BinStore::new(paths).installed()
 }
 
 #[cfg(test)]

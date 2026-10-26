@@ -186,7 +186,7 @@ impl Db {
                 // this build has never written to.
                 tx.execute(
                     "INSERT OR IGNORE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-                    (marker_scope(marker), key.as_str(), value.as_str()),
+                    (marker, key.as_str(), value.as_str()),
                 )?;
             }
             tx.execute(
@@ -201,12 +201,6 @@ impl Db {
             Err(error) => tracing::error!(store = marker, %error, "cannot import a JSON store; it stays the source of truth this boot"),
         }
     }
-}
-
-/// The scope a marker's rows land in. The marker *is* the scope, which keeps the
-/// two from drifting apart.
-fn marker_scope(marker: &str) -> &str {
-    marker
 }
 
 fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, value: &str) -> rusqlite::Result<()> {
