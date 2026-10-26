@@ -2620,7 +2620,6 @@ mod tests {
             direct: false,
             peers: Arc::new(Semaphore::new(1)),
             held_until: Mutex::new(None),
-            alerts: Mutex::new(Vec::new()),
             chain_version: tokio::sync::watch::channel(0).0,
             lapses: Mutex::new(Vec::new()),
             after_admission: Mutex::new(None),
