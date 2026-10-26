@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
  * red words in a red outline. Square, no shadow. Heights follow docs/ui-spec.md:
  * 28px by default, 24px inside a 32px header, 36px on cloud pages.
  */
-export const buttonVariants = cva(
+const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-1.5 border font-medium whitespace-nowrap select-none disabled:pointer-events-none disabled:opacity-40",
   {
     variants: {
@@ -26,8 +26,6 @@ export const buttonVariants = cva(
     defaultVariants: { variant: "secondary", size: "md" },
   },
 );
-
-export type ButtonVariant = NonNullable<VariantProps<typeof buttonVariants>["variant"]>;
 
 export function Button({
   className,

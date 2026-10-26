@@ -14,7 +14,6 @@ import {
   accountsForProvider,
   accountUsageState,
   defaultAccountIdFor,
-  KINDS_BY_PROVIDER,
   modelFamily,
   startAccountFor,
   type Account,
@@ -95,11 +94,6 @@ test("accounts from a server that predates providers are Claude accounts", () =>
   assert.equal(accountsForProvider([legacy], "claude").length, 1);
   assert.equal(accountsForProvider([legacy], "codex").length, 0);
   assert.equal(defaultAccountIdFor({ ...list({ defaultAccountId: "old" }), accounts: [legacy] }, "claude"), "old");
-});
-
-test("each CLI offers only the credential kinds it can use", () => {
-  assert.deepEqual(KINDS_BY_PROVIDER.claude, ["oauth_token", "env"]);
-  assert.deepEqual(KINDS_BY_PROVIDER.codex, ["env"]);
 });
 
 test("a row names the kind, and an env row names the variables it sets", () => {

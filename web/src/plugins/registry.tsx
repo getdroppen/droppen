@@ -53,11 +53,6 @@ const RegistryContext = createContext<PluginRegistry>(EMPTY);
 
 export const usePluginRegistry = () => useContext(RegistryContext);
 
-/** One plugin's live record, or undefined when it is not running here. */
-export function useActivePlugin(id: string): ActivePlugin | undefined {
-  return usePluginRegistry().active.find((p) => p.id === id);
-}
-
 export function PluginRegistryProvider({ children }: { children: ReactNode }) {
   const api = useApi();
   const machine = useMachine();

@@ -21,8 +21,6 @@ import {
 
 /** One rotation; the schema type is nullable because the field is. */
 export type SessionRotation = NonNullable<components["schemas"]["SessionRotation"]>;
-export type RotationOutcome = SessionRotation["outcome"];
-export type RotationTrigger = SessionRotation["trigger"];
 type AccountRef = components["schemas"]["AccountRef"];
 
 /**

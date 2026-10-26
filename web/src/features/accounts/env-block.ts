@@ -164,8 +164,3 @@ export function parseEnvBlock(text: string, provider: AccountProvider): EnvBlock
   }
   return done(null);
 }
-
-/** The names an env account sets, for a row that lists them. */
-export function envKeyNames(block: EnvBlock): string[] {
-  return block.vars.map((v) => v.key);
-}

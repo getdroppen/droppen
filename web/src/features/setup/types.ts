@@ -28,9 +28,6 @@ export type SetupTool = Schemas["Tool"];
 /** `GET /api/setup/tools`, `POST /api/setup/tools/rescan`. */
 export type ToolsReport = Schemas["ToolsReport"];
 
-/** What a whitelisted command does: install a tool, update it, or sign in to it. */
-export type SetupCommandKind = Schemas["TaskKind"];
-
 /** How a tool signs in (`POST /api/setup/tools/{tool}/login {mode}`). */
 export type LoginMode = "claudeai" | "console" | "sso" | "chatgpt" | "device" | "apikey";
 
@@ -39,9 +36,6 @@ export type LoginMode = "claudeai" | "console" | "sso" | "chatgpt" | "device" | 
  * what runs, shown verbatim; a method this device cannot use says why.
  */
 export type SetupCommand = Schemas["SetupCommand"];
-
-/** `GET /api/setup/commands`. */
-export type SetupCommands = Schemas["SetupCommandList"];
 
 /** A folder sessions ran in on this device (`GET /api/setup/projects/recent`): names and paths only, never content. */
 export type RecentFolder = Schemas["RecentFolder"];

@@ -45,7 +45,7 @@ const { constantStore } = await import("../src/lib/machines/store.js");
 const { AccountRows } = await import("../src/features/accounts/account-picker.js");
 const { SessionAccountBadge, LocalLoginExplainer } = await import("../src/features/sessions/session-account-badge.js");
 const { ContinueOnAccountButton, looksLikeLoginFailure } = await import("../src/features/sessions/continue-on-account.js");
-const { localLoginLabel, startAccountIdFor } = await import("../src/features/accounts/use-accounts.js");
+const { localLoginLabel, startAccountFor } = await import("../src/features/accounts/use-accounts.js");
 type Transport = import("../src/lib/transport/index.js").Transport;
 type AccountList = import("../src/features/accounts/use-accounts.js").AccountList;
 
@@ -274,19 +274,19 @@ test("the start account and the local label follow the local login's state", () 
     ({ accounts, defaultAccountId, defaultCodexAccountId: null, local }) as unknown as AccountList;
   const out = signedOut([]).local;
   const unknown = { claude: { state: "unknown", rest: [] }, codex: { state: "unknown", rest: [] } };
-  assert.equal(startAccountIdFor(list(out), "claude"), ACCOUNT_A, "signed out: the first account");
-  assert.equal(startAccountIdFor(list(out, [], null), "claude"), null, "with no account, the local login is all there is");
-  assert.equal(startAccountIdFor(list(out, undefined, ACCOUNT_B), "claude"), ACCOUNT_B, "a configured default always wins");
-  assert.equal(startAccountIdFor(list(unknown), "claude"), null, "not known to be broken: the local login, as before");
-  assert.equal(startAccountIdFor(list(undefined), "claude"), null, "an older server that says nothing");
+  assert.equal(startAccountFor(list(out), "claude").accountId, ACCOUNT_A, "signed out: the first account");
+  assert.equal(startAccountFor(list(out, [], null), "claude").accountId, null, "with no account, the local login is all there is");
+  assert.equal(startAccountFor(list(out, undefined, ACCOUNT_B), "claude").accountId, ACCOUNT_B, "a configured default always wins");
+  assert.equal(startAccountFor(list(unknown), "claude").accountId, null, "not known to be broken: the local login, as before");
+  assert.equal(startAccountFor(list(undefined), "claude").accountId, null, "an older server that says nothing");
   assert.equal(
-    startAccountIdFor(list({ claude: { state: "signed_out", rest: [AUTH_REST] }, codex: { state: "unknown", rest: [] } }), "claude"),
+    startAccountFor(list({ claude: { state: "signed_out", rest: [AUTH_REST] }, codex: { state: "unknown", rest: [] } }), "claude").accountId,
     null,
     "a server from before the start rule (no isDefault) starts on the local login whatever its state, and is shown doing so",
   );
-  assert.equal(startAccountIdFor(list(out), "codex"), null, "the codex login is its own");
+  assert.equal(startAccountFor(list(out), "codex").accountId, null, "the codex login is its own");
   assert.equal(
-    startAccountIdFor(list(out, [account(ACCOUNT_A, "work", [{ ...AUTH_REST, class: "weekly", untilAt: "2099-01-01T00:00:00Z" }]), account(ACCOUNT_B, "spare")]), "claude"),
+    startAccountFor(list(out, [account(ACCOUNT_A, "work", [{ ...AUTH_REST, class: "weekly", untilAt: "2099-01-01T00:00:00Z" }]), account(ACCOUNT_B, "spare")]), "claude").accountId,
     ACCOUNT_B,
     "an account resting on everything is skipped",
   );

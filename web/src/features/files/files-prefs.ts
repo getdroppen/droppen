@@ -9,7 +9,7 @@
  * storage handle, so it can be tested without a DOM.
  */
 import type { MachineKey } from "@/lib/machines/key";
-import { claimMachineItem, machineStorageKey } from "@/lib/machines/storage";
+import { claimMachineItem } from "@/lib/machines/storage";
 
 export interface PrefStorage {
   getItem: (key: string) => string | null;
@@ -31,9 +31,6 @@ export const SHOW_HIDDEN_KEY = "rh.files.showHidden";
  * steer one another. `rh.files.lastDir` on the local machine, as it always was.
  */
 export const LAST_DIR_NAME = "files.lastDir";
-
-/** Where `machine`'s last directory is kept. */
-export const lastDirKey = (machine: MachineKey) => machineStorageKey(machine, LAST_DIR_NAME);
 
 const showHiddenListeners = new Set<() => void>();
 

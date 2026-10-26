@@ -29,8 +29,6 @@ export type AccountQuotaError = NonNullable<components["schemas"]["AccountQuota"
 export type QuotaReadingSource = components["schemas"]["QuotaReadingSource"];
 /** The machine's own login for one CLI: whether it can start a session, and its rests. */
 export type LocalLogin = components["schemas"]["LocalLogin"];
-/** `signed_in`, `signed_out` or `unknown`, as far as the server can tell. */
-export type LocalLoginState = components["schemas"]["LocalLoginState"];
 /** The new session `continueOnAccount` made. */
 export type ContinuedSession = components["schemas"]["ContinuedSession"];
 /** Where a start that names no account runs, and why (`GET /api/accounts/start`). */
@@ -361,16 +359,6 @@ export function knowsStartRule(list: AccountList | undefined, provider: AccountP
   return typeof localLoginOf(list, provider)?.isDefault === "boolean";
 }
 
-/** [`startAccountFor`]'s account, or `null` for the local login (and for no list yet). */
-export function startAccountIdFor(
-  list: AccountList | undefined,
-  provider: AccountProvider,
-  model?: string | null,
-  now: number = Date.now(),
-): string | null {
-  return list ? startAccountFor(list, provider, model, now).accountId : null;
-}
-
 /**
  * Carry a claude session stuck on the local login onto a stored account: the
  * server copies the conversation into a new session bound to the account and
@@ -387,18 +375,6 @@ export async function continueOnAccount(
   if (res.error || !res.data) throw new ApiError(res.error);
   return res.data;
 }
-
-/**
- * The credential kinds each CLI accepts, in the order the add form offers them.
- *
- * Two kinds, which are also the two modes: an OAuth login remote-hand can run
- * the wizard for, or a block of environment variables the user pastes. Codex
- * has no OAuth flow here, so it has only the one.
- */
-export const KINDS_BY_PROVIDER: Record<AccountProvider, AccountKind[]> = {
-  claude: ["oauth_token", "env"],
-  codex: ["env"],
-};
 
 /** Short chip text for an account's credential kind. */
 export function accountKindLabel(kind: AccountKind): string {
@@ -495,21 +471,13 @@ export function tightestWindow(windows: QuotaWindow[]): QuotaWindow | null {
  */
 export const QUOTA_STALE_MS = 10 * 60_000;
 
-/** Whether a reading's timestamp is old enough to warn about. */
-export function quotaIsStale(updatedAt: string | null | undefined, now = Date.now()): boolean {
-  if (!updatedAt) return false;
-  const at = new Date(updatedAt).getTime();
-  return !Number.isNaN(at) && now - at > QUOTA_STALE_MS;
-}
-
 /**
  * How much a reading's age is worth saying, in three values rather than two.
  *
- * `unknown` is the one [`quotaIsStale`] cannot express: a percentage with no
- * timestamp is not a fresh percentage, it is one nobody can date, and drawing
- * it exactly like a reading taken a second ago is how a panel came to show a
- * three-day-old Codex window as the current one. Every place that prints a
- * number prints this beside it.
+ * `unknown` is a percentage with no timestamp: not a fresh percentage, it is
+ * one nobody can date, and drawing it exactly like a reading taken a second
+ * ago is how a panel came to show a three-day-old Codex window as the current
+ * one. Every place that prints a number prints this beside it.
  *
  * A never-probed *account* is a different thing and stays `unknown` here on
  * purpose: its row already says "warming up" through its usage state, and the

@@ -23,7 +23,6 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, LayoutGrid, UserRound } from "lucide-react";
 import { goPublic } from "@/features/landing/route";
 import { cn } from "@/lib/cn";
-import type { KeyStore } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
 import type { HubLink } from "@/lib/hub/link";
 import { useStore } from "@/lib/machines/store";
@@ -107,7 +106,6 @@ export function DevicesButton() {
 export interface MyDevicesProps {
   account: CloudAccount;
   link: HubLink;
-  store: KeyStore;
   origin: string;
   /** Open a device that runs AI (the app on it). */
   onSelect?: (machine: string) => void;

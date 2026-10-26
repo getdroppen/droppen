@@ -12,7 +12,6 @@ import {
   clearLastFilesDir,
   isHiddenEntryName,
   isRestorableDir,
-  lastDirKey,
   readLastFilesDir,
   readShowHiddenFiles,
   restoreFilesDir,
@@ -22,8 +21,10 @@ import {
   writeLastFilesDir,
   writeShowHiddenFiles,
   type PrefStorage,
+  LAST_DIR_NAME,
 } from "../src/features/files/files-prefs.js";
 import { LOCAL } from "../src/lib/machines/key.js";
+import { machineStorageKey } from "../src/lib/machines/storage.js";
 
 class MemoryStorage implements PrefStorage {
   readonly values = new Map<string, string>();
@@ -103,13 +104,13 @@ test("only a path-shaped value is stored or restored", () => {
 
   const storage = new MemoryStorage();
   writeLastFilesDir(storage, LOCAL, "projects/relative");
-  assert.equal(storage.values.has(lastDirKey(LOCAL)), false);
+  assert.equal(storage.values.has(machineStorageKey(LOCAL, LAST_DIR_NAME)), false);
 
   writeLastFilesDir(storage, LOCAL, "/root/projects");
   assert.equal(readLastFilesDir(storage, LOCAL), "/root/projects");
 
   // Corruption from an older build reads as "nothing remembered".
-  storage.setItem(lastDirKey(LOCAL), "not a path");
+  storage.setItem(machineStorageKey(LOCAL, LAST_DIR_NAME), "not a path");
   assert.equal(readLastFilesDir(storage, LOCAL), null);
 
   clearLastFilesDir(storage, LOCAL);

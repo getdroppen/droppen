@@ -10,7 +10,7 @@ import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { askedPlace, cleanDevicesAddress, devicesHref, isDevicesPath } from "../src/features/cloud/devices-route.js";
+import { askedPlace, cleanDevicesAddress, DEVICES_PATH, isDevicesPath } from "../src/features/cloud/devices-route.js";
 import { AccountName, DevicesButton, MyDevicesScreen } from "../src/features/cloud/my-devices.js";
 import { AccountNotices, DevicesPanel, ThisDeviceSection } from "../src/features/cloud/devices.js";
 import { openRelayPicker } from "../src/features/cloud/cloud-bar.js";
@@ -54,7 +54,7 @@ function draw(node: React.ReactElement, lng = "en"): string {
 test("「我的设备」 is /devices, and an old link's `?view=` is dropped from the address", () => {
   assert.ok(isDevicesPath("/devices") && isDevicesPath("/devices/"));
   assert.ok(!isDevicesPath("/sessions") && !isDevicesPath("/devices/x") && !isDevicesPath("/"));
-  assert.equal(devicesHref(), "/devices");
+  assert.equal(DEVICES_PATH, "/devices");
   assert.equal(cleanDevicesAddress("/devices", "?view=ai"), "/devices");
   assert.equal(cleanDevicesAddress("/devices/", "?view=all"), "/devices");
   assert.equal(cleanDevicesAddress("/devices", "?view=ai&x=1"), "/devices?x=1", "anything else is kept");
@@ -79,7 +79,7 @@ function account(hosts: number, others = 1) {
 function shown(acct: ReturnType<typeof account>) {
   let out: React.ReactElement | null = null;
   function Probe() {
-    out = MyDevicesScreen({ account: acct as never, link: {} as never, store: {} as never, origin: "wss://hub.example" }) as React.ReactElement;
+    out = MyDevicesScreen({ account: acct as never, link: {} as never, origin: "wss://hub.example" }) as React.ReactElement;
     return null;
   }
   draw(<Probe />);

@@ -10,13 +10,11 @@ import { cn } from "@/lib/cn";
  * `web/scripts/gen-pwa-assets.mjs` draws the same contour into the favicon
  * (black, transparent ground) and the app icons (paper on an ink tile).
  */
-export const BRAND_PATH = "M2 2H12A10 10 0 1 1 2 12Z";
-
 /**
  * The same contour drawn on a `size`-pixel grid: the corner a whole number
  * of pixels in (about 1/12 of the box), the glyph an even number of pixels
  * wide, so the straight edges stay on whole CSS pixels at any size (20, 18,
- * 14…), not only at multiples of 12. At 24 it is exactly {@link BRAND_PATH}.
+ * 14…), not only at multiples of 12. At 24 it is exactly the mark's own contour.
  */
 export function brandPath(size: number): string {
   const c = Math.max(1, Math.round(size / 12));

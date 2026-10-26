@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Copy, Loader2 } from "lucide-react";
 import { isDesktopApp } from "@/lib/auth";
-import { useLinkFlow } from "./link-flow";
-import type { Attempt, LinkOpener, OpenerState } from "./opener";
+import type { Attempt, LinkOpener } from "./opener";
 
 /*
  * Signing this device in to Droppen through the system browser
@@ -16,8 +15,6 @@ import type { Attempt, LinkOpener, OpenerState } from "./opener";
  *   click itself — the system browser inside the Droppen desktop app (its
  *   window has no popups: a new window goes to the browser), the droppen.app
  *   popup elsewhere;
- * - {@link useDroppenSignIn}: the page's one sign-in (`link-flow.ts`) and
- *   what can be done with it;
  * - {@link BrowserSignInWaiting}: "continue in your browser" — the three
  *   steps, this device's fingerprint (droppen.app shows the same), how long
  *   the link still works, and open again / copy the link / cancel.
@@ -36,27 +33,6 @@ export function signsInThroughBrowser(): boolean {
 export function startDroppenSignIn(opener: LinkOpener, hubWeb: string, opts: { hub?: string } = {}): void {
   if (signsInThroughBrowser()) opener.openInBrowser({ hub: opts.hub, aggregate: true });
   else opener.open(hubWeb, { hub: opts.hub, aggregate: true });
-}
-
-/** The page's one sign-in, for a screen that offers it. */
-export function useDroppenSignIn(): {
-  flow: OpenerState;
-  /** Start (from a click): `hubWeb` is the hub's web origin, `hub` an advanced hub address. */
-  start: (hubWeb: string, opts?: { hub?: string }) => void;
-  /** Open droppen.app again (from a click). */
-  reopen: () => void;
-  cancel: () => void;
-  /** The droppen.app address of the attempt in flight, to copy. */
-  handoffUrl: string | null;
-} {
-  const { flow, opener } = useLinkFlow();
-  return {
-    flow,
-    start: (hubWeb, opts) => startDroppenSignIn(opener, hubWeb, opts),
-    reopen: () => opener.reopen(),
-    cancel: () => opener.cancel(),
-    handoffUrl: opener.handoffUrl,
-  };
 }
 
 /** `ms` as `m:ss`. */

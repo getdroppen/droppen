@@ -21,8 +21,7 @@
  *
  * One machine is the **home**: where the page keeps what belongs to the person
  * rather than a machine — the screens' layout, plugin documents — what the
- * plain addresses (no `/m/<machine>`, `routes.ts`) are about, and what the
- * deprecated page-wide `api` and `transport()` aliases stand for. On
+ * plain addresses (no `/m/<machine>`, `routes.ts`) are about. On
  * droppen.app it is the main device the person chose (`HubShell.setMain`);
  * the machine they look at is the address's, and it moves without the home
  * ({@link setHome} is for a new main device: the app's tree is about the home,
@@ -236,8 +235,8 @@ export function setShell(kind: ShellKind, machine?: MachineKey): void {
 
 /**
  * Move the home to `machine`, which must be open: everything about the home
- * (the app's tree, the deprecated aliases, plugins' documents) is about it
- * from here on. A no-op when it already is.
+ * (the app's tree, plugins' documents) is about it from here on. A no-op
+ * when it already is.
  */
 export function setHome(machine: MachineKey): void {
   runtimeFor(machine);

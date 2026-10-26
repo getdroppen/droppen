@@ -37,9 +37,6 @@ export const PROMPTS: Record<Exclude<PromptChoice, "own">, string> = {
 /** The note over the empty-session view the guide lands on, an i18n key. */
 export const LANDED = "Press Send when you're ready. Model, effort and permission are in the row below.";
 
-/** The practice folder's place (the server adds -2, -3… when it is taken). */
-export const PRACTICE_PATH = "~/Droppen/first-session";
-
 /** Whether a path is a practice folder the guide made (`~/Droppen/first-session`, `-2`, …). */
 export function isPracticeFolder(path: string): boolean {
   return /\/Droppen\/first-session(-\d+)?\/?$/.test(path);

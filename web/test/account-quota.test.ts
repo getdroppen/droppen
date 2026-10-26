@@ -4,7 +4,6 @@ import {
   accountUsageState,
   quotaAge,
   quotaDoubt,
-  quotaIsStale,
   tightestWindow,
   usageNotice,
   type QuotaWindow,
@@ -43,20 +42,6 @@ test("tightestWindow reads an exhausted window as tightest, not as missing", () 
   assert.equal(tightestWindow([some, empty]), empty);
 });
 
-test("quotaIsStale only fires past the threshold", () => {
-  const now = Date.parse("2024-05-01T12:00:00.000Z");
-  assert.equal(quotaIsStale("2024-05-01T11:58:00.000Z", now), false);
-  assert.equal(quotaIsStale("2024-05-01T11:45:00.000Z", now), true);
-});
-
-test("quotaIsStale says nothing about a reading that never happened", () => {
-  // A never-probed account is warming up, not stale: the picker shows the
-  // usage state for that, and a bogus timestamp must not become a warning.
-  assert.equal(quotaIsStale(null), false);
-  assert.equal(quotaIsStale(undefined), false);
-  assert.equal(quotaIsStale("not a date"), false);
-});
-
 test("accountUsageState keeps a failed probe apart from a missing login", () => {
   assert.equal(accountUsageState("oauth_token", true, undefined), "ready");
   assert.equal(accountUsageState("oauth_token", true, "probe_failed"), "unavailable");
@@ -73,11 +58,10 @@ test("quotaAge tells a reading nobody can date apart from a fresh one", () => {
   const now = Date.parse("2024-05-01T12:00:00.000Z");
   assert.equal(quotaAge("2024-05-01T11:58:00.000Z", now), "fresh");
   assert.equal(quotaAge("2024-05-01T11:45:00.000Z", now), "stale");
-  // The distinction `quotaIsStale` cannot draw: no timestamp is not "just now".
+  // No timestamp is not "just now": it is a reading nobody can date.
   assert.equal(quotaAge(null, now), "unknown");
   assert.equal(quotaAge(undefined, now), "unknown");
   assert.equal(quotaAge("not a date", now), "unknown");
-  assert.equal(quotaIsStale(null, now), false, "and the older helper still answers as it did");
 });
 
 // An account's numbers now come mainly from its own sessions; the /usage probe

@@ -42,11 +42,6 @@ export function isShellPagePath(pathname: string): boolean {
   return isDevicesPath(pathname) || isAccountPath(pathname);
 }
 
-/** 「我的设备」's address. */
-export function devicesHref(): string {
-  return DEVICES_PATH;
-}
-
 /**
  * The address 「我的设备」 should have while it is at `pathname` + `search`:
  * without the old filter's `?view=` (anything else kept), or `null` when it

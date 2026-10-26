@@ -403,16 +403,6 @@ export function useMachineStatuses(
 // Drawing
 // ---------------------------------------------------------------------------
 
-/** A machine's name with its id as a quiet second label, or the id alone. */
-export function MachineLabel({ id, name, className }: { id: string; name: string | null; className?: string }) {
-  return (
-    <span className={cn("flex min-w-0 flex-col", className)} title={id}>
-      <span className="truncate font-sans text-sm font-semibold text-fg">{name ?? id}</span>
-      {name && <span className="truncate font-mono text-2xs text-faint">{id}</span>}
-    </span>
-  );
-}
-
 /** Type a new name; empty goes back to the hostname. */
 export function RenameMachineForm({
   initial,

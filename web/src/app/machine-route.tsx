@@ -11,7 +11,7 @@
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useCallback, useState, type ComponentProps, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { MachineProvider, useHoldMachine, useHomeMachine, useInfoOf, useIsOpen, useMachine } from "@/lib/machines/context";
+import { MachineProvider, useHoldMachine, useHomeMachine, useIsOpen, useMachine } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
 import { machineOfPath, machineTarget, plainHomeAddress, splitMachinePath } from "@/lib/machines/routes";
 import { GlobalFeedProvider } from "./global-feed";
@@ -153,9 +153,4 @@ export function useMachineNavigate(machine?: MachineKey): (go: MachineNavigation
     },
     [on, home, navigate],
   );
-}
-
-/** A device's name to show, as the page knows it (its id until its copy says). */
-export function useMachineName(machine: MachineKey): string {
-  return useInfoOf(machine).name;
 }

@@ -140,9 +140,6 @@ export type Section =
   | { kind: "endPause"; device: string; op: Uint8Array }
   | { kind: "words"; words: string[] };
 
-/** A time of day ("14:02"), with the date when it is not today. */
-export const asOfTime = formatAsOf;
-
 /** What this browser is, for its own row: a phone or a browser (the hub is not told). */
 function useIsPhone(): boolean {
   return typeof navigator !== "undefined" && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent ?? "");
