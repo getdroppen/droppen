@@ -1,17 +1,22 @@
 /*
- * The landing diagrams tell one story, checked frame by frame: a message is
- * one fixed pair (plaintext P, ciphertext C); the sender seals P into C in
- * place before anything leaves it; the very same C is the chip on the wire,
- * the value in the Droppen relay (in Droppen Hub, for the offline copy) and
- * the page written to the store; the receiver
- * opens that C into that P. One message moves at a time: a card still
- * holding the one before shows it dimmed, never blank, and never a value
- * that is not the message in flight or the one just delivered.
+ * The landing diagrams tell their stories frame by frame, and these check
+ * them.
+ *
+ * The hero (`hero-agents.tsx`): what a computer's session does reaches the
+ * phone only with a packet down its wire, and what the phone answers reaches
+ * the computer only with a packet up; the phone's composer is the question
+ * exactly while the phone shows that session asking; and the loop ends where
+ * it starts.
+ *
+ * The offline copy: a message is one fixed pair (plaintext P, ciphertext C);
+ * the very same C is the chip on the wire and the value in Droppen Hub; the
+ * receiver opens that C into that P. One message moves at a time: a card
+ * still holding the one before shows it dimmed, never blank, and never a
+ * value that is not the message in flight or the one just delivered.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HERO_CIPHERS, HERO_LOOP, HERO_STARTS, heroFrame, heroStill } from "../src/features/landing/hero-a.js";
-import { JOURNEY_CIPHER, JOURNEY_LOOP, JOURNEY_STARTS, journeyFrame, journeyStill } from "../src/features/landing/journey.js";
+import { AGENTS_LOOP, AGENTS_T, agentsFrame, agentsStill, type AgentsFrame } from "../src/features/landing/hero-agents.js";
 import { OFFLINE_CIPHERS, OFFLINE_LOOP, OFFLINE_STARTS, offlineFrame, offlineStill } from "../src/features/landing/offline-copy.js";
 import { chipLabel, currentMessage, type Message, type Shown, textOf } from "../src/features/landing/story.js";
 import { morph } from "../src/features/landing/motion.js";
@@ -108,83 +113,56 @@ function checkStory({
   }
 }
 
-const heroMessages: Message[] = [
-  { p: "sign-in fixed", c: HERO_CIPHERS[0] },
-  { p: "all tests pass", c: HERO_CIPHERS[1] },
-];
-
-test("hero: sealed on the computer, the same ciphertext on the wire and in the Droppen relay, opened on the phone, one message at a time", () => {
-  checkStory({
-    name: "hero",
-    loop: HERO_LOOP,
-    starts: HERO_STARTS,
-    messages: heroMessages,
-    frame: (t) => heroFrame(t) as never,
-    sender: (f) => (f as unknown as ReturnType<typeof heroFrame>).computer,
-    middle: (f) => [(f as unknown as ReturnType<typeof heroFrame>).hub],
-    receivers: (f) => [(f as unknown as ReturnType<typeof heroFrame>).phone],
-  });
-});
-
-test("hero: both paths are end to end — the direct beat seals and opens the same way, its chip on the green line, the Droppen relay dimmed", () => {
-  let sawSeal = false;
-  let sawOpen = false;
-  let sawChip = false;
-  for (let t = 0; t < HERO_LOOP; t += STEP) {
-    const f = heroFrame(t);
-    if (!f.direct) continue;
-    if (f.computer.msg === 1 && f.computer.kind === "seal") sawSeal = true;
-    if (f.phone.msg === 1 && f.phone.kind === "open") sawOpen = true;
-    for (const chip of f.chips) {
-      assert.equal(chip.wire, "direct", `at ${t.toFixed(2)}s: on the direct beat nothing goes through the relay`);
-      sawChip = true;
+test("hero: a computer's news reaches the phone only down its wire, and the phone's answer reaches the computer only up it", () => {
+  // What each end knew last, and the packet each wire last carried, to see every change follow its packet.
+  let last: AgentsFrame | null = null;
+  const carried: Record<"mac" | "linux", { up: boolean; at: number } | null> = { mac: null, linux: null };
+  let pressedBeforeUp = { mac: false, linux: false };
+  for (const { t, checked } of samples(AGENTS_LOOP)) {
+    const f = agentsFrame(t);
+    const at = `hero at ${t.toFixed(2)}s`;
+    // One packet per wire at a time.
+    for (const wire of ["mac", "linux"] as const) assert.ok(f.chips.filter((c) => c.wire === wire).length <= 1, `${at}: two packets on the ${wire} wire`);
+    // The composer is the question exactly while the phone shows the MacBook's session asking.
+    assert.equal(f.panel === "question", f.phoneMac === "asking", at);
+    // A button is held only on the face that has it, and the prompt is typed only into its composer.
+    if (f.pressed) assert.notEqual(f.panel, "idle", at);
+    if (f.typed > 0) assert.equal(f.panel, "prompt", at);
+    if (f.pressed && f.panel === "question") pressedBeforeUp.mac = true;
+    if (f.pressed && f.panel === "prompt") pressedBeforeUp.linux = true;
+    if (checked && last) {
+      for (const [wire, computer, phone] of [
+        ["mac", "mac", "phoneMac"],
+        ["linux", "linux", "phoneLinux"],
+      ] as const) {
+        const c = carried[wire];
+        // The phone changes only as a packet down this wire arrives; the computer only as a packet up arrives.
+        if (f[phone] !== last[phone] && f[phone] !== "working") assert.ok(c && !c.up && c.at > 0.9, `${at}: the phone's ${wire} row changed with no packet down`);
+        if (f[computer] === "working" && last[computer] !== "working") assert.ok(c && c.up && c.at > 0.9, `${at}: the ${wire} computer went back to work with no packet up`);
+        // And a packet up leaves only once its button was pressed.
+        const chip = f.chips.find((x) => x.wire === wire);
+        if (chip?.up && !carried[wire]?.up) assert.ok(pressedBeforeUp[wire], `${at}: an answer left the phone with no button pressed`);
+      }
     }
-    // The relay holds the message before, dimmed: it never sees this one.
-    assert.equal(f.hub.msg, 0);
-    assert.ok(f.hub.dim);
+    for (const wire of ["mac", "linux"] as const) {
+      const chip = f.chips.find((c) => c.wire === wire);
+      if (chip) carried[wire] = { up: chip.up, at: chip.at };
+      if (chip?.up === false) pressedBeforeUp = { ...pressedBeforeUp, [wire]: false };
+    }
+    last = f;
   }
-  assert.ok(sawSeal && sawOpen && sawChip);
-  // And the relay: a chip through the Droppen relay, the phone's round trip then relay 220 ms.
-  const relay = heroFrame(4.0);
-  assert.deepEqual(relay.chips.map((c) => c.wire), ["toPhone"]);
-  assert.equal(heroFrame(5.0).path, "hub");
-  assert.equal(heroFrame(10.0).path, "direct");
 });
 
-test("hero: the still frame tells it whole — plaintext on the computer, ciphertext in the Droppen relay, the phone's padlock open over the same message", () => {
-  const f = heroStill();
-  assert.equal(f.computer.kind, "plain");
-  assert.equal(f.computer.msg, 0);
-  assert.deepEqual([f.hub.kind, f.hub.msg, f.hub.dim], ["cipher", 0, false]);
-  assert.deepEqual([f.phone.kind, f.phone.msg, f.phone.lock, f.phone.lockOpacity], ["plain", 0, "open", 1]);
-  assert.equal(f.chips.length, 0);
-});
-
-test("journey: the reply's ciphertext is the chip, the Droppen relay's value and the page written; the page count goes up as it is written", () => {
-  const messages: Message[] = [{ p: "all tests pass", c: JOURNEY_CIPHER }];
-  checkStory({
-    name: "journey",
-    loop: JOURNEY_LOOP,
-    starts: JOURNEY_STARTS,
-    messages,
-    frame: (t, round) => journeyFrame(t, round) as never,
-    sender: (f) => (f as unknown as ReturnType<typeof journeyFrame>).computer,
-    middle: (f) => [(f as unknown as ReturnType<typeof journeyFrame>).hub],
-    receivers: (f) => [(f as unknown as ReturnType<typeof journeyFrame>).phone],
-  });
-  // The count only ever grows, by one, at the moment the page chip reaches the store.
-  let last = journeyFrame(0, 0).pages;
-  let wasInStore = false;
-  for (const { t, round } of samples(JOURNEY_LOOP)) {
-    const f = journeyFrame(t, round);
-    const inStore = f.chips.some((c) => c.wire === "toStore");
-    assert.ok(f.pages === last || (f.pages === last + 1 && wasInStore && !inStore), `at ${t.toFixed(2)}s (round ${round}): ${last} → ${f.pages}`);
-    last = f.pages;
-    wasInStore = inStore;
-  }
-  assert.equal(last, journeyFrame(0, 0).pages + 2);
-  const still = journeyStill();
-  assert.deepEqual([still.phone.kind, still.phone.lock, still.hub.dim], ["plain", "open", false]);
+test("hero: the loop ends where it starts, and its first frame is the whole story — one session asking, one done, the question waiting", () => {
+  const first = agentsFrame(0);
+  const end = agentsFrame(AGENTS_LOOP - 0.001);
+  for (const key of ["mac", "phoneMac", "linux", "phoneLinux", "panel"] as const) assert.equal(end[key], first[key], key);
+  assert.deepEqual(agentsStill(), first);
+  assert.deepEqual([first.mac, first.phoneMac, first.linux, first.phoneLinux, first.panel, first.chips.length], ["asking", "asking", "done", "done", "question", 0]);
+  // In between, every session is back at work at least once, and the next prompt is typed out whole before it is sent.
+  const mid = agentsFrame(AGENTS_T.sendUp[1] + 0.1);
+  assert.deepEqual([mid.mac, mid.linux, mid.phoneMac, mid.phoneLinux, mid.panel], ["working", "working", "working", "working", "idle"]);
+  assert.equal(agentsFrame(AGENTS_T.send).typed, 1);
 });
 
 test("offline copy: each page's ciphertext rides to Droppen Hub and the phone, and opens there into its line", () => {

@@ -1,11 +1,12 @@
-import { HeroA } from "./hero-a";
+import { HeroAgents } from "./hero-agents";
 
 /*
- * The hero's picture says one thing: your computer and your phone talk; in
- * the middle Droppen only ever sees ciphertext; and when they can, they
- * connect directly. Three cards in a row and one beat at a time
- * (`hero-a.tsx`, the treatment the user chose over a Droppen-centred one).
+ * The hero's picture says what Droppen is for: your agents keep working on
+ * your computers, and your phone is where you keep up with them — one list
+ * of every session, the question to answer, the next prompt to send
+ * (`hero-agents.tsx`). How the bytes travel is the business of the sections
+ * further down and of /security, not of the hero.
  */
 export function HeroDiagram() {
-  return <HeroA />;
+  return <HeroAgents />;
 }

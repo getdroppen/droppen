@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { EyeOff, FolderTree, Info, KeyRound, MonitorSmartphone, Network, Plug, SquareTerminal, Unplug } from "lucide-react";
+import { Bell, EyeOff, Info, KeyRound, ListChecks, MessageSquareReply, Plug, SquarePlus, SquareTerminal, Users } from "lucide-react";
 import { RegMark } from "@/components/reg-mark";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { secondary } from "@/features/cloud/ui";
@@ -14,7 +14,6 @@ import { DirectPath } from "./direct-path";
 import { type Availability, AVAILABILITY } from "./get-droppen";
 import { HeroDiagram } from "./hero-diagram";
 import { HeroGet } from "./hero-get";
-import { Journey } from "./journey";
 import { OfflineCopy } from "./offline-copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { useLatestRelease } from "./release-files";
@@ -24,13 +23,20 @@ import { APP_PATH, PRICING_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_U
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
  * (droppen.app). Loaded on demand, so the app's own boot does not carry it.
  *
+ * It sells the product before the plumbing, as other AI-agent sites do: the
+ * hero shows the work (your agents' sessions on your phone, one asking, one
+ * done), then how to get there in three steps, what you can do, why it is
+ * fast and works with the lid closed, and only then, in one section, that it
+ * is end-to-end encrypted — the full account of that is /security's.
+ *
  * Drafting-sheet language throughout: a 1152px framed
  * column of hairline sections with registration marks at their seams, one ink
  * primary action (the hero's, for the device reading it: `hero-get.tsx` — the
  * Mac App's download on a Mac, the install command on Linux, else "get
  * started"), display type only for the headlines, and
- * colour only where a diagram shows state — a live direct path, a dropped one,
- * a computer that is off, a round trip by how fast it is.
+ * colour only where a diagram shows state — a session working or asking you,
+ * a live direct path, a dropped one, a computer that is off, a round trip by
+ * how fast it is.
  *
  * Headlines wrap between phrases, never inside a word: `auto-phrase` does it
  * for Japanese, and Chinese keeps its words whole (`keep-all`), breaking at
@@ -43,9 +49,9 @@ for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBund
 function Header({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   const nav = [
-    { href: "#journey", label: t("Privacy") },
+    { href: "#how", label: t("How it works") },
+    { href: "#features", label: t("Features") },
     { href: "#direct", label: t("Speed") },
-    { href: "#offline", label: t("Offline") },
     { href: "#security", label: t("Security") },
   ];
   return <PublicHeader signedIn={signedIn} nav={nav} />;
@@ -68,12 +74,6 @@ function Hero({
   cpu: string | null;
 }) {
   const { t } = useTranslation();
-  const stats = [
-    { value: "1–2 ms", label: t("keystroke echo in a browser on the same computer, direct (measured p50)") },
-    { value: "63–73 ms", label: t("round trip from your phone on 4G, direct; 215–227 ms when it cannot connect directly (measured p50)") },
-    { value: "0", label: t("keys on our servers that can open your code or your conversations") },
-    { value: "12", label: t("recovery words, held only by you: we cannot recover them for you") },
-  ];
   return (
     <>
       {/* From 1280px: copy on the left, the figure on the grid to its right. Below: the figure in a band under the copy. */}
@@ -86,7 +86,7 @@ function Hero({
             {t("Your computer's AI, in your pocket.")}
           </h1>
           <p className="max-w-[34em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
-            {t("Claude Code and Codex keep running on your own computer. Walk away, and from your phone you still watch them work, answer their questions and open a terminal. Every device on one screen, end-to-end encrypted: we cannot see your code.")}
+            {t("Claude Code and Codex keep running on your own computers. When one asks you something or finishes, your phone knows: answer it, send the next prompt, or open a terminal. Every computer and every session in one list, end-to-end encrypted.")}
           </p>
           {/* The way onto this device, and the account's ways in (signed in: back into the app). */}
           <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
@@ -121,41 +121,47 @@ function Hero({
           <HeroDiagram />
         </div>
       </div>
-      <Section>
-        <dl className="grid grid-cols-2 lg:grid-cols-4">
-          {stats.map((s, i) => (
-            <div
-              key={s.value}
-              className={cn(
-                "flex flex-col gap-2 border-border px-6 py-6 max-md:px-4",
-                i > 0 && "lg:border-l",
-                i % 2 === 1 && "max-lg:border-l",
-                i > 1 && "max-lg:border-t",
-              )}
-            >
-              <dt className="order-2 font-mono text-2xs leading-4 text-muted">{s.label}</dt>
-              <dd className="order-1 text-[28px] leading-none font-semibold tracking-[-0.03em] text-fg tabular-nums max-md:text-[24px]">{s.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </Section>
     </>
+  );
+}
+
+/** Three steps from nothing to answering your agents from your phone, each true of the build (`first-host.tsx`, `add-computer.tsx`, `pairing-screen.tsx`). */
+function HowItWorks() {
+  const { t } = useTranslation();
+  const steps = [
+    { title: t("Install it where your AI runs"), body: t("The Mac app, or one command on Linux, on the computer that has Claude Code or Codex. Your sessions show up as they are: nothing to move or set up.") },
+    { title: t("Sign that computer in"), body: t("One click in the Mac app, or a one-time code on a server. Add the computers at home and at work to the same account.") },
+    { title: t("Pick up on your phone"), body: t("Open droppen.app on your phone and let it in from a device you already have, with a QR code. Add it to your home screen, turn on notifications, and you hear when an agent needs you.") },
+  ];
+  return (
+    <Section id="how">
+      <SectionHead label={t("How it works")} title={t("Three steps, then walk away.")} />
+      <ol className="grid border-t border-border md:grid-cols-3">
+        {steps.map(({ title, body }, i) => (
+          <li key={title} className={cn("flex flex-col gap-2 px-6 py-6 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
+            <span className="flex size-[18px] items-center justify-center bg-fg font-mono text-[10px] font-medium text-bg tabular-nums">{i + 1}</span>
+            <span className="text-[13px] leading-5 font-semibold text-fg">{title}</span>
+            <span className="text-xs leading-5 text-muted">{body}</span>
+          </li>
+        ))}
+      </ol>
+    </Section>
   );
 }
 
 function Features() {
   const { t } = useTranslation();
   const items = [
-    { icon: SquareTerminal, title: t("Answer it from anywhere"), body: t("Watch sessions as they run and see at a glance which one is asking you. Answer it, send a follow-up, or open a terminal.") },
-    { icon: Plug, title: t("Your AI, your accounts"), body: t("Claude Code and Codex run on your own computer, with your own accounts, quotas and code, never on our servers. Add a few Claude accounts, and when one hits its limit a session can carry on with another by itself.") },
-    { icon: MonitorSmartphone, title: t("All your devices, one screen"), body: t("The computers at home and at work, side by side on one account, and one list of what needs you across all of them: which session is asking, which has news, which is still working.") },
-    { icon: KeyRound, title: t("Only devices you approve get in"), body: t("A new phone or browser joins only when a device you already have approves it, by QR code or a one-time code. Twelve recovery words; no key escrow.") },
-    { icon: Unplug, title: t("Lost a phone? Cut it off"), body: t("Removing a device closes its connections and direct paths and rotates the keys: it cannot open anything written afterwards.") },
-    { icon: Network, title: t("Direct or not: your call"), body: t("One switch, “Allow direct connections”, decides: turn it off and your device and your computer never learn each other's IP address.") },
+    { icon: ListChecks, title: t("Every session, one list"), body: t("The computers at home and at work, side by side on one account, and one list of what needs you across all of them: which session is asking, which has news, which is still working.") },
+    { icon: MessageSquareReply, title: t("Answer it, steer it"), body: t("Answer an agent's question, send a follow-up (it waits its turn while the agent works), or stop a turn that is going the wrong way.") },
+    { icon: Bell, title: t("Told when it needs you"), body: t("A notification when an agent stops to ask, when a turn ends and you have not read it, or when a run fails. Not one for every line it prints.") },
+    { icon: SquarePlus, title: t("Start one from your phone"), body: t("Pick the agent, the folder and the computer, attach a screenshot, and send: the session starts on that computer.") },
+    { icon: SquareTerminal, title: t("Terminals and files"), body: t("Open a terminal on any of your computers, browse and preview its files, and lay sessions and terminals out side by side.") },
+    { icon: Users, title: t("Hit a limit? Carry on"), body: t("Add a few Claude accounts, and when one hits its limit a session can carry on with another by itself. Prompts can run on a schedule, too.") },
   ];
   return (
     <Section id="features">
-      <SectionHead label={t("What you get")} title={t("Walk away from your desk. Everything stays within reach.")} />
+      <SectionHead label={t("What you get")} title={t("Everything you would walk back to your desk for.")} />
       <ul className="grid border-t border-border sm:grid-cols-2 lg:grid-cols-3">
         {items.map(({ icon: Icon, title, body }) => (
           <li
@@ -177,58 +183,34 @@ function Features() {
   );
 }
 
+/**
+ * End-to-end encryption, once and briefly: what it means for you in three
+ * cards, the beta's caveat, and the way to the whole account of it
+ * (/security, `security/security.tsx`).
+ */
 function Security() {
   const { t } = useTranslation();
-  const columns = [
-    {
-      icon: FolderTree,
-      title: t("What we can see"),
-      items: [
-        t("your e-mail address and when you sign in"),
-        t("which devices and computers are online, when they connect, and from which IP address"),
-        t("how much data moves and when: stored data is padded to fixed sizes, live connections are not"),
-        t("so, roughly when you are working, and in a terminal the rhythm of your typing"),
-      ],
-    },
-    {
-      icon: EyeOff,
-      title: t("What we cannot see"),
-      items: [
-        t("what is said in a session, or typed and printed in a terminal"),
-        t("session titles, folders, repositories and branches"),
-        t("model names, which CLI, your accounts and quotas"),
-        t("the names of your computers and devices, your files and their names"),
-      ],
-    },
-    {
-      icon: KeyRound,
-      title: t("Who holds the keys"),
-      items: [
-        t("Device keys: made in each browser or phone, and kept only there"),
-        t("A computer's identity key: on that computer only"),
-        t("Recovery words: with you only; neither Droppen Hub nor we can recover them for you"),
-        t("Us (Droppen Hub and relays): no key that can decrypt anything"),
-      ],
-    },
+  const cards = [
+    { icon: KeyRound, title: t("Only devices you approve get in"), body: t("A new phone or browser gets in only when a device you already have lets it in, with a QR code or a one-time code. Lost one? Remove it, and it cannot open anything written afterwards.") },
+    { icon: EyeOff, title: t("Nothing readable on our servers"), body: t("What is said in a session, typed in a terminal or kept in your files, and the names of your sessions, folders and models: none of it can be read on our servers. They do see your e-mail address, which devices are online and from which IP address, and how much data moves, when.") },
+    { icon: Plug, title: t("Your computer, your accounts"), body: t("Claude Code and Codex run on your own computer, with your own accounts and quotas, never on our servers. On one computer, Droppen needs no account at all.") },
   ];
   return (
     <Section id="security">
       <SectionHead
-        label={t("Security")}
-        title={t("What we can see and what we cannot, line by line.")}
-        lead={t("Our servers come in two kinds. Droppen Hub only finds your computers and keeps their encrypted copies; Droppen relays only pass ciphertext on. Neither can read what goes through it. Here is exactly where that line is.")}
+        label={t("End-to-end encrypted")}
+        title={t("Your code, for your eyes only.")}
+        lead={t("Encrypted on your computer, opened only on the devices you approved. In between, Droppen Hub only finds your computers and keeps their encrypted copies; Droppen relays only pass ciphertext on. Neither holds a key that can read them.")}
       />
-      <div className="grid border-t border-border md:grid-cols-3">
-        {columns.map(({ icon: Icon, title, items }, i) => (
-          <div key={title} className={cn("flex flex-col gap-4 px-6 py-6 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-            <span className="flex items-center gap-2">
-              <Icon className="size-4 text-fg" />
-              <span className="text-[13px] font-semibold text-fg">{title}</span>
-            </span>
-            <Points items={items} />
-          </div>
+      <ul className="grid border-t border-border md:grid-cols-3">
+        {cards.map(({ icon: Icon, title, body }, i) => (
+          <li key={title} className={cn("flex flex-col gap-2 px-6 py-6 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
+            <Icon className="size-4 text-fg" />
+            <span className="text-[13px] leading-5 font-semibold text-fg">{title}</span>
+            <span className="text-xs leading-5 text-muted">{body}</span>
+          </li>
         ))}
-      </div>
+      </ul>
       <div className="flex items-start gap-3 border-t border-border px-6 py-5 max-md:px-4">
         <Info className="mt-0.5 size-4 shrink-0 text-muted" />
         <p className="max-w-[60em] text-xs leading-5 text-muted">
@@ -287,7 +269,7 @@ function useDocumentMeta() {
     document.documentElement.lang = active.language;
     const meta = document.querySelector('meta[name="description"]');
     const description = meta?.getAttribute("content") ?? null;
-    meta?.setAttribute("content", t("Claude Code and Codex keep running on your own computer; from your phone you watch them, answer their questions and open a terminal. All your devices on one screen, end-to-end encrypted: we cannot see your code."));
+    meta?.setAttribute("content", t("Claude Code and Codex keep running on your own computers; from your phone you answer their questions, send the next prompt and open a terminal. Every computer and every session in one list, end-to-end encrypted."));
     return () => {
       document.title = before;
       if (meta && description !== null) meta.setAttribute("content", description);
@@ -341,31 +323,22 @@ export default function LandingPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
-          <Section id="journey">
-            <SectionHead
-              label={t("End-to-end encrypted")}
-              title={t("Your code, for your eyes only.")}
-              lead={t("From the agent on your computer to the phone in your hand, a message can be read at the two ends and nowhere in between: not on the network, and not on our servers.")}
-            />
-            <div className="border-t border-border">
-              <Journey />
-            </div>
-          </Section>
+          <HowItWorks />
+          <Features />
           <Section id="direct">
             <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
               <div className="flex flex-col lg:border-r lg:border-border">
                 <SectionHead
-                  label={t("Direct path")}
+                  label={t("Speed")}
                   title={t("Typing from your phone stays snappy.")}
-                  lead={t("Whenever your phone and your computer can reach each other, keystrokes go straight across instead of taking the detour through a Droppen relay: on the same computer or network, with IPv6 on both ends, or through a NAT that can be punched through. When they cannot, you do nothing: the Droppen relay is always there and takes over by itself.")}
+                  lead={t("When your phone can reach your computer directly, keystrokes go straight across. When it cannot, a Droppen relay takes over by itself: you never pick a path.")}
                 />
                 <Points
                   className="px-6 pb-8 max-md:px-4"
                   items={[
-                    t("Just as private: the direct path runs its own end-to-end handshake, with the same encryption and the same admission rules as through a Droppen relay."),
+                    t("Measured p50: a keystroke echoes in 1–2 ms in a browser on the same computer, and in 63–73 ms from a phone on 4G, direct; 215–227 ms through a Droppen relay."),
                     t("No keystroke lost: if the direct path drops, traffic is back on the Droppen relay within 1.5 s, and unconfirmed keystrokes are sent again in order. None lost, doubled or reordered."),
                     t("So far about two in three testers got a direct path; the rest go through a Droppen relay automatically."),
-                    t("Rather your other devices and the STUN servers did not learn your IP address? Turn off “Allow direct connections”."),
                   ]}
                 />
               </div>
@@ -381,14 +354,13 @@ export default function LandingPage({
               </div>
               <div className="flex flex-col">
                 <SectionHead
-                  label={t("Offline copy")}
+                  label={t("Offline")}
                   title={t("Lid closed? Your sessions are still there.")}
-                  lead={t("While your computer is on, the agent encrypts what is new every few seconds and leaves it with Droppen Hub. Once the lid is closed, your phone fetches that encrypted copy from Droppen Hub and opens it on the spot.")}
+                  lead={t("Close the lid or lose the network, and your phone still opens every session as it last was: while your computer is on, the agent leaves an encrypted copy of what is new with Droppen Hub every few seconds.")}
                 />
                 <Points
                   className="px-6 pb-8 max-md:px-4"
                   items={[
-                    t("Still only yours: Droppen Hub keeps session text only as encrypted pages, and its database holds metadata only."),
                     t("Read-only meanwhile: sending and terminals wait for your computer to come back."),
                     t("Opens at once next time: each device keeps its own copy, cleared when you sign out."),
                     t("What syncs: each computer's own sessions updated in the last 30 days."),
@@ -397,7 +369,6 @@ export default function LandingPage({
               </div>
             </div>
           </Section>
-          <Features />
           <Security />
           <Footer signedIn={signedIn} signup={signup} />
         </main>

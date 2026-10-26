@@ -72,7 +72,7 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
           {t("Open app")}
         </a>
         {lead && (
-          <a href="#journey" className={secondary}>
+          <a href="#how" className={secondary}>
             {t("How it works")}
           </a>
         )}
