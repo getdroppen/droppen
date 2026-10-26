@@ -25,7 +25,11 @@
     "test:release-notes": "node --test scripts/release-notes.test.mjs",
     "test:ai-attribution": "node --test scripts/check-ai-attribution.test.mjs",
     "test:sdk": "pnpm --filter @droppen/plugin-sdk test",
-    "ui-audit": "node scripts/ui-audit/run.mjs"
+    "ui-audit": "node scripts/ui-audit/run.mjs",
+    "build:web:app": "rm -rf web/dist && DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app pnpm --filter @remote-hand/web build",
+    "build:web:site": "rm -rf web/dist && DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=site pnpm --filter @remote-hand/web build",
+    "deploy:web:my": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:app && npx --yes wrangler@4.152.0 deploy -c web/wrangler.my.jsonc",
+    "deploy:web:www": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:site && npx --yes wrangler@4.152.0 deploy -c web/wrangler.www.jsonc"
   },
   "pnpm": {
     "overrides": {

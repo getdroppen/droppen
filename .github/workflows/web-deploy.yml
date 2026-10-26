@@ -47,17 +47,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # The same two commands Workers Builds runs as its deploy command
+      # (`package.json`: deploy:web:my / deploy:web:www).
       - name: Build and deploy the app (my.)
-        run: |
-          set -euo pipefail
-          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app pnpm --filter @remote-hand/web build
-          npx --yes wrangler@4.152.0 deploy -c web/wrangler.my.jsonc
+        run: pnpm deploy:web:my
 
       - name: Build and deploy the site (www.)
-        run: |
-          set -euo pipefail
-          rm -rf web/dist
-          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=site pnpm --filter @remote-hand/web build
-          npx --yes wrangler@4.152.0 deploy -c web/wrangler.www.jsonc
+        run: pnpm deploy:web:www
