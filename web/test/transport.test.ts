@@ -8,11 +8,11 @@
 // with the auth middleware still running on top of whichever it is.
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { api } from "../src/api/client.js";
 import { feedHubFor } from "../src/app/global-feed.js";
 import { LOCAL } from "../src/lib/machines/key.js";
+import { apiFor, homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
 import { setToken } from "../src/lib/auth.js";
-import { directTransport, setTransport, transport, type SocketLike, type Transport } from "../src/lib/transport/index.js";
+import { directTransport, type SocketLike, type Transport } from "../src/lib/transport/index.js";
 import { tunnelTransport, type Pipe, type PipeKind, type PipeMessage, type PipeMeta } from "../src/lib/transport/tunnel.js";
 import { wsUrl } from "../src/lib/ws-url.js";
 
@@ -28,10 +28,10 @@ function stubGlobal(t: TestContext, name: string, value: unknown): void {
   });
 }
 
-/** Switch the page's transport for the length of one test. */
+/** Point the home machine at `next` for the length of one test. */
 function useTransport(t: TestContext, next: Transport): void {
-  setTransport(next);
-  t.after(() => setTransport(directTransport));
+  openMachine(homeMachine(), next);
+  t.after(() => openMachine(homeMachine(), directTransport));
 }
 
 class FakeSocket implements SocketLike {
@@ -84,14 +84,14 @@ test("the direct transport's address is wsUrl's, and its socket a WebSocket on i
 });
 
 test("the page starts on the direct transport, and one call moves it", (t) => {
-  assert.equal(transport(), directTransport);
+  assert.equal(transportFor(homeMachine()), directTransport);
   const other: Transport = {
     fetch: async () => new Response(null),
     socketUrl: async (path) => path,
     openSocket: (url) => new FakeSocket(url),
   };
   useTransport(t, other);
-  assert.equal(transport(), other);
+  assert.equal(transportFor(homeMachine()), other);
 });
 
 test("typed calls go through the current transport, after the auth middleware", async (t) => {
@@ -106,7 +106,7 @@ test("typed calls go through the current transport, after the auth middleware", 
   });
   setToken("T");
   // An absolute base: a Request outside a page has no origin to resolve "/" against.
-  const { data, response } = await api.GET("/api/accounts", { baseUrl: "http://machine.test" });
+  const { data, response } = await apiFor(homeMachine()).GET("/api/accounts", { baseUrl: "http://machine.test" });
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.url, "http://machine.test/api/accounts");
   assert.equal(seen[0]!.headers.get("Authorization"), "Bearer T");
@@ -133,7 +133,7 @@ test("typed calls run unchanged over a tunnel", async (t) => {
     }),
   );
   setToken("T");
-  const pending = api.GET("/api/accounts", { baseUrl: "http://machine.test" });
+  const pending = apiFor(homeMachine()).GET("/api/accounts", { baseUrl: "http://machine.test" });
   await flush();
   const [rpc] = pipes;
   assert.equal(rpc?.kind, "rpc");

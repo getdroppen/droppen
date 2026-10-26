@@ -52,7 +52,3 @@ export function parseSessionKey(key: string): SessionRef | null {
   if (slash <= 0 || slash === rest.length - 1) return null;
   return { machine: key.slice(0, bar), source: rest.slice(0, slash), id: rest.slice(slash + 1) };
 }
-
-export function sameSession(a: SessionRef | null | undefined, b: SessionRef | null | undefined): boolean {
-  return !!a && !!b && a.machine === b.machine && a.source === b.source && a.id === b.id;
-}

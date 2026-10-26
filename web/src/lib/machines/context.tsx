@@ -13,7 +13,7 @@
  */
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import type { ApiClient } from "@/api/client";
-import type { MachineKey, SessionRef } from "./key";
+import { sessionRef, type MachineKey, type SessionRef } from "./key";
 import { homeMachine, homeMachineStore, isOpen, openMachinesStore, runtimeFor, type MachineInfo, type MachineRuntime } from "./registry";
 import { constantStore, type Store, useStore } from "./store";
 
@@ -105,5 +105,5 @@ export function useApi(): ApiClient {
 /** The session `source/id` on this view's machine, as one stable ref. */
 export function useSessionRef(source: string, id: string): SessionRef {
   const machine = useMachine();
-  return useMemo(() => ({ machine, source, id }), [machine, source, id]);
+  return useMemo(() => sessionRef(machine, source, id), [machine, source, id]);
 }

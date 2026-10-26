@@ -30,10 +30,3 @@ export function openHubMachine(machine: MachineKey, transport: Transport, driver
   if (!isOpen(homeMachine())) setHome(machine);
   return runtime;
 }
-
-/** Open `machine` on droppen.app and make it the home. */
-export function startHubShell(machine: MachineKey, transport: Transport, driver?: MachineDriver): MachineRuntime {
-  const runtime = openHubMachine(machine, transport, driver);
-  setHome(machine);
-  return runtime;
-}

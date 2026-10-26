@@ -66,7 +66,8 @@ test("an unknown send is settled as soon as a new channel is up, not at the next
   // After the stand-ins: the api client takes its `Request` when it is made.
   const { createRoot } = await import("react-dom/client");
   const { useOutboxResolution } = await import("../src/features/sessions/use-outbox-resolution.js");
-  const { directTransport, setTransport } = await import("../src/lib/transport/index.js");
+  const { directTransport } = await import("../src/lib/transport/index.js");
+  const { homeMachine, openMachine } = await import("../src/lib/machines/registry.js");
 
   // The page's transport: its channel is down (a request fails at once, the
   // way one does when its channel went with the hub connection) until a new
@@ -91,8 +92,8 @@ test("an unknown send is settled as soon as a new channel is up, not at the next
       return () => reconnects.delete(fn);
     },
   };
-  setTransport(live);
-  t.after(() => setTransport(directTransport));
+  openMachine(homeMachine(), live);
+  t.after(() => openMachine(homeMachine(), directTransport));
 
   // The composer's outbox, holding one send whose answer was lost with its channel.
   let outbox: OutgoingMessage[] = [{ clientMessageId: "m-1", text: "hello", state: "unknown" }];

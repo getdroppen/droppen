@@ -14,13 +14,13 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { stashPendingMessage, takePendingMessage } from "../src/features/chat/pending-message.js";
-import { clearLastFilesDir, lastDirKey, readLastFilesDir, writeLastFilesDir } from "../src/features/files/files-prefs.js";
+import { clearLastFilesDir, LAST_DIR_NAME, readLastFilesDir, writeLastFilesDir } from "../src/features/files/files-prefs.js";
 import { mergeStoredOutboxes, readOutbox } from "../src/features/sessions/send-receipts.js";
 import { claimSessionDraft, readSessionDraftSnapshot, sessionDraftKey, writeSessionDraft } from "../src/features/sessions/session-draft.js";
 import { rotationDismissName } from "../src/features/accounts/session-rotation.js";
 import { LOCAL } from "../src/lib/machines/key.js";
-import { closeMachine, openMachine, setShell } from "../src/lib/machines/registry.js";
-import { startHubShell } from "../src/lib/machines/shells/hub.js";
+import { closeMachine, openMachine, setHome, setShell } from "../src/lib/machines/registry.js";
+import { openHubMachine } from "../src/lib/machines/shells/hub.js";
 import {
   claimMachineItem,
   machineCacheKey,
@@ -97,7 +97,8 @@ function readEverything(storage: MemoryStorage, machine: string) {
 /** droppen.app with `machines` open, the first one home, for the length of a test. */
 function hubPage(t: TestContext, ...machines: string[]): void {
   for (const machine of machines) openMachine(machine, directTransport);
-  startHubShell(machines[0]!, directTransport);
+  openHubMachine(machines[0]!, directTransport);
+  setHome(machines[0]!);
   t.after(() => {
     setShell("local", LOCAL);
     for (const machine of machines) closeMachine(machine);
@@ -107,7 +108,7 @@ function hubPage(t: TestContext, ...machines: string[]): void {
 test("the local machine's keys are today's keys", () => {
   assert.equal(machineStorageKey(LOCAL, "draft.claude.s-1"), "rh.draft.claude.s-1");
   assert.equal(sessionDraftKey({ machine: LOCAL, source: "claude", id: "s-1" }), "rh.draft.claude.s-1");
-  assert.equal(lastDirKey(LOCAL), "rh.files.lastDir");
+  assert.equal(machineStorageKey(LOCAL, LAST_DIR_NAME), "rh.files.lastDir");
   assert.equal(machineCacheKey(LOCAL, "sessions"), "sessions");
   assert.equal(machineCacheKey(LOCAL, "feed:claude/s-1"), "feed:claude/s-1");
   // Any other machine's are its own, whatever its id is made of.

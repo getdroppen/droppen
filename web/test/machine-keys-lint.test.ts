@@ -1,8 +1,8 @@
-// scripts/check-machine-keys.mjs keeps the page-wide `api`, `transport()` and
-// un-keyed query and storage keys from creeping back into web/src. These cases
-// run it against a scratch tree, and against the real one. It is a lint, not a
-// proof: it catches the common un-keyed forms, not a key held in a variable,
-// an aliased or dynamic import, and the like.
+// scripts/check-machine-keys.mjs keeps un-keyed query and storage keys from
+// creeping back into web/src. These cases run it against a scratch tree, and
+// against the real one. It is a lint, not a proof: it catches the common
+// un-keyed forms, not a key held in a variable, an aliased or dynamic import,
+// and the like.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,25 +27,6 @@ function where(root: string): string[] {
 
 test("the real tree is clean", () => {
   assert.deepEqual(checkMachineKeys(resolve(import.meta.dirname, "../..")), []);
-});
-
-test("the page-wide api and transport may not be imported, by alias or by relative path", () => {
-  const root = tree({
-    "features/a.tsx": 'import { api } from "@/api/client";\n',
-    "features/b.ts": 'import { type ApiClient, api as client } from "../api/client";\n',
-    "features/c.ts": 'import { transport } from "@/lib/transport";\nimport { setTransport } from "@/lib/transport/index";\n',
-    "lib/d.ts": 'import { transport, type Transport } from "./transport";\n',
-    // Allowed: the factory, the types, the machine's own.
-    "features/ok.tsx": [
-      'import { createApiClient, type ApiClient } from "@/api/client";',
-      'import type { Transport } from "@/lib/transport";',
-      'import { directTransport } from "@/lib/transport";',
-      'import { useApi, useMachineRuntime } from "@/lib/machines/context";',
-      "// import { api } from \"@/api/client\" — a comment is not an import",
-      "",
-    ].join("\n"),
-  });
-  assert.deepEqual(where(root), ["features/a.tsx:1", "features/b.ts:1", "features/c.ts:1", "features/c.ts:2", "lib/d.ts:1"]);
 });
 
 test("query keys are built with mq(), never written out, and nothing invalidates every machine", () => {
@@ -96,7 +77,7 @@ test("only the shells, the root and the page's own login name the home machine",
   const root = tree({
     "features/sessions/view.tsx": "const machine = homeMachine();\n",
     "app/root-layout.tsx": "<MachineProvider machine={homeMachine()} />;\n",
-    "features/cloud/cloud-app.tsx": "startHubShell(machine, transport); homeMachine();\n",
+    "features/cloud/cloud-app.tsx": "openHubMachine(machine, transport); homeMachine();\n",
     "lib/auth.ts": "const pageApi = () => apiFor(homeMachine());\n",
   });
   assert.deepEqual(where(root), ["features/sessions/view.tsx:1"]);

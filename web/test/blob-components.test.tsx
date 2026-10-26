@@ -24,7 +24,8 @@ import { Markdown } from "../src/components/markdown.js";
 import { blobErrorText, transfersNow, TransferList } from "../src/components/blob-transfers.js";
 import { githubThroughChannel, MediaFetchError } from "../src/components/source-image.js";
 import { FilePreview } from "../src/features/files/file-preview.js";
-import { directTransport, setTransport, transport, type Transport } from "../src/lib/transport/index.js";
+import { directTransport, type Transport } from "../src/lib/transport/index.js";
+import { homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
 import { BlobError, hostBlobKey, hostBlobs } from "../src/lib/transport/blob.js";
 import { offlineTransport } from "../src/features/cloud/offline-transport.js";
 import { fakeMachine, json } from "./fake-machine.js";
@@ -39,9 +40,9 @@ await i18n.use(initReactI18next).init({
 const t = i18n.t.bind(i18n);
 
 function useTransport(context: TestContext, next: Transport): void {
-  setTransport(next);
+  openMachine(homeMachine(), next);
   context.after(() => {
-    setTransport(directTransport);
+    openMachine(homeMachine(), directTransport);
     hostBlobs.clear();
   });
 }
@@ -175,11 +176,11 @@ test("cloud mode: a GitHub picture goes over the blob lane, and its failure keep
   const machine = fakeMachine((e) => (e.meta.path.includes("missing") ? json(404, { error: "not found on GitHub" }) : { status: 200, headers: [["content-type", "image/png"]], chunks: ["png"] }));
   useTransport(context, machine.transport);
   const url = "https://github.com/o/r/blob/main/a.png";
-  const blob = await githubThroughChannel(url, new AbortController().signal, transport());
+  const blob = await githubThroughChannel(url, new AbortController().signal, transportFor(homeMachine()));
   assert.equal(await blob.text(), "png");
   assert.equal(machine.exchanges[0]!.kind, "blob");
   assert.equal(machine.exchanges[0]!.meta.path, `/api/media/github?url=${encodeURIComponent(url)}`);
-  await assert.rejects(githubThroughChannel("https://github.com/o/r/blob/main/missing.png", new AbortController().signal, transport()), (error: unknown) => {
+  await assert.rejects(githubThroughChannel("https://github.com/o/r/blob/main/missing.png", new AbortController().signal, transportFor(homeMachine())), (error: unknown) => {
     assert.ok(error instanceof MediaFetchError);
     assert.equal(error.status, 404, "the status the retry rule reads");
     assert.equal(error.message, "not found on GitHub");

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { compressionAllowed, FeedHub, HEARTBEAT_MS, hubBackoff, SILENCE_MS, type FeedHubDeps, type HubSocket } from "../src/app/feed-hub.js";
-import { setTransport, transport } from "../src/lib/transport/index.js";
+import { homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
 import { createSessionFeedPool } from "../src/features/sessions/session-feed-pool.js";
 
 class FakeSocket implements HubSocket {
@@ -467,7 +467,7 @@ test("in cloud mode the socket asks for no compression, and refuses a compressed
   t.after(() => {
     g.document = before;
   });
-  assert.equal(compressionAllowed(transport()), false);
+  assert.equal(compressionAllowed(transportFor(homeMachine())), false);
   const { hub, sockets, frames } = harness();
   t.after(() => hub.stop());
   await flush();
@@ -485,12 +485,12 @@ test("in cloud mode the socket asks for no compression, and refuses a compressed
 });
 
 test("a tunneled transport, or a caller that says so, also means no compression; the page's own server keeps it", async (t) => {
-  assert.equal(compressionAllowed(transport()), true, "local mode: the page talks to its own server");
-  const direct = transport();
-  setTransport({ ...direct, tunneled: true });
-  t.after(() => setTransport(direct));
-  assert.equal(compressionAllowed(transport()), false, "a transport through a channel");
-  setTransport(direct);
+  assert.equal(compressionAllowed(transportFor(homeMachine())), true, "local mode: the page talks to its own server");
+  const direct = transportFor(homeMachine());
+  openMachine(homeMachine(), { ...direct, tunneled: true });
+  t.after(() => openMachine(homeMachine(), direct));
+  assert.equal(compressionAllowed(transportFor(homeMachine())), false, "a transport through a channel");
+  openMachine(homeMachine(), direct);
   {
     const { hub, sockets } = harness();
     await flush();

@@ -3,14 +3,9 @@
  * Everything the web app asks a machine for is addressed by the machine
  * (`docs/local-aggregator.md` §6.1, §6.7 M-0/M-1): a transport, a typed
  * client, a query cache entry, a feed, a stored draft. The page-wide versions
- * from before — one `api`, one `transport()`, keys that name no machine — are
- * kept only as deprecated aliases of the home machine, and this check stops
- * new code in `web/src` from reaching for them again:
+ * from before — keys that name no machine — are gone, and this check keeps
+ * new code in `web/src` from reaching for what replaced them wrongly:
  *
- * - **api**: no `import { api } from "@/api/client"`. A component uses
- *   `useApi()` (its view's machine), anything else `apiFor(machine)`.
- * - **transport**: no `transport()` / `setTransport()` from `@/lib/transport`.
- *   `useMachineRuntime().transport`, `transportFor(machine)`.
  * - **home**: `homeMachine()` only where the person's own things are decided
  *   (the shells, the root provider, the page login, plugins' feed) — a view
  *   takes its machine from `useMachine()` or a `SessionRef`.
@@ -115,8 +110,6 @@ const deviceKey = (key) => DEVICE_KEYS.some((allowed) => (allowed.endsWith(".") 
 /** Where `homeMachine()` may be called (paths under `web/src`; a trailing `/` is a directory). */
 const HOME_ALLOWED = [
   "lib/machines/",
-  "api/client.ts",
-  "lib/transport/index.ts",
   "lib/auth.ts",
   "app/root-layout.tsx",
   "app/global-feed.tsx",
@@ -162,13 +155,6 @@ export function checkMachineKeys(root) {
   });
   const say = (file, index, message) => problems.push(`web/src/${file.rel}:${lineOf(file.code, index)}: ${message}`);
 
-  const resolves = (file, spec, targets) => {
-    if (spec.startsWith("@/")) return targets.includes(spec.slice(2).replace(/\.(ts|tsx|js)$/, ""));
-    if (!spec.startsWith(".")) return false;
-    const target = relative(src, resolve(dirname(file.path), spec)).split(sep).join("/").replace(/\.(ts|tsx|js)$/, "");
-    return targets.includes(target);
-  };
-
   // Where each key builder is defined, for the query-key rule.
   const definitions = new Map();
   for (const file of sources) {
@@ -181,23 +167,6 @@ export function checkMachineKeys(root) {
 
   for (const file of sources) {
     const text = file.code;
-
-    // api / transport aliases.
-    for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
-      const names = m[1]
-        .split(",")
-        .map((n) => n.trim())
-        .filter((n) => n && !n.startsWith("type "))
-        .map((n) => n.split(/\s+as\s+/)[0].trim());
-      if (names.includes("api") && resolves(file, m[2], ["api/client"])) {
-        say(file, m.index, "imports the page-wide `api` — use `useApi()` in a component, `apiFor(machine)` elsewhere");
-      }
-      for (const name of ["transport", "setTransport"]) {
-        if (names.includes(name) && resolves(file, m[2], ["lib/transport", "lib/transport/index"])) {
-          say(file, m.index, `imports the page-wide \`${name}\` — a transport is a machine's: \`useMachineRuntime().transport\`, \`transportFor(machine)\``);
-        }
-      }
-    }
 
     // The home machine, named outside the few places that decide it.
     if (!allowedAt(HOME_ALLOWED, file.rel)) {

@@ -6,15 +6,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
-import { api } from "../src/api/client.js";
 import { feedHubFor } from "../src/app/global-feed.js";
-import { LOCAL, parseSessionKey, sameSession, sessionKey, sessionRef } from "../src/lib/machines/key.js";
+import { LOCAL, parseSessionKey, sessionKey, sessionRef } from "../src/lib/machines/key.js";
 import { invalidateMachine, machineQueries, mq } from "../src/lib/machines/query.js";
 import { apiFor, closeMachine, homeMachine, homeMachineStore, isOpen, openMachine, openMachines, perMachine, runtimeFor, setHome, setShell, shellKind, transportFor } from "../src/lib/machines/registry.js";
 import { constantStore } from "../src/lib/machines/store.js";
-import { startHubShell } from "../src/lib/machines/shells/hub.js";
+import { openHubMachine } from "../src/lib/machines/shells/hub.js";
 import { startLocalShell } from "../src/lib/machines/shells/local.js";
-import { directTransport, transport, type SocketLike, type Transport } from "../src/lib/transport/index.js";
+import { directTransport, type SocketLike, type Transport } from "../src/lib/transport/index.js";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 // An absolute base: a Request outside a page has no origin to resolve "/" against.
@@ -53,7 +52,6 @@ test("a page that boots no shell is the local page: one machine, local, reached 
   assert.equal(homeMachine(), LOCAL);
   assert.deepEqual(openMachines(), [LOCAL]);
   assert.equal(runtimeFor(LOCAL).transport, directTransport);
-  assert.equal(transport(), directTransport, "the deprecated alias is the home machine's");
   assert.equal(apiFor(LOCAL), runtimeFor(LOCAL).api, "one client per machine, for the life of the page");
   startLocalShell();
   assert.equal(homeMachine(), LOCAL);
@@ -62,7 +60,7 @@ test("a page that boots no shell is the local page: one machine, local, reached 
 
 test("a machine the page has not opened is a bug, not a silent fallback to the page's own server", () => {
   assert.throws(() => runtimeFor("m-unknown"), /no machine "m-unknown"/);
-  assert.throws(() => startHubShell(LOCAL, directTransport), /not a device id/);
+  assert.throws(() => openHubMachine(LOCAL, directTransport), /not a device id/);
 });
 
 test("two machines: separate transports, clients and per-machine singletons, and the aliases follow the home", async (t) => {
@@ -105,13 +103,14 @@ test("two machines: separate transports, clients and per-machine singletons, and
   await flush();
   assert.deepEqual(log.splice(0).sort(), ["a socket a:/api/events?v=2&z=1", "b socket b:/api/events?v=2&z=1"].sort());
 
-  // The home, and so the deprecated page-wide aliases, are the shell's to say.
-  startHubShell("m-b", runtimeFor("m-b").transport);
+  // The home is the shell's to say.
+  openHubMachine("m-b", runtimeFor("m-b").transport);
+  setHome("m-b");
   assert.equal(homeMachine(), "m-b");
   assert.equal(shellKind(), "hub");
   assert.deepEqual(openMachines()[0], "m-b", "home first");
   assert.throws(() => runtimeFor(LOCAL), /no machine "local"/, "droppen.app has no local machine");
-  await api.GET("/api/prefs", { baseUrl: BASE });
+  await apiFor(homeMachine()).GET("/api/prefs", { baseUrl: BASE });
   assert.deepEqual(log.splice(0), ["b fetch /api/prefs"]);
   assert.throws(() => closeMachine("m-b"), /home machine cannot be closed/);
 
@@ -145,8 +144,8 @@ test("a session's key names its machine, and splits back even when a device id h
   assert.deepEqual(parseSessionKey(sessionKey(odd)), odd);
   assert.equal(parseSessionKey("claude/0b6f"), null, "a bare source/id is not a session key");
   assert.equal(parseSessionKey("local|claude/"), null);
-  assert.ok(sameSession(ref, { machine: LOCAL, source: "claude", id: "0b6f-4c1e" }));
-  assert.ok(!sameSession(ref, { machine: "m-a", source: "claude", id: "0b6f-4c1e" }), "the same id on another machine is another session");
+  assert.deepEqual(ref, { machine: LOCAL, source: "claude", id: "0b6f-4c1e" });
+  assert.notDeepEqual(sessionRef("m-a", "claude", "0b6f-4c1e"), ref, "the same id on another machine is another session");
 });
 
 test("the home moves without anything being rebuilt, and a machine closed goes with what its shell kept for it", async (t) => {

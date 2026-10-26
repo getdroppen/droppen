@@ -9,7 +9,8 @@
 // mode) is untouched: same request, same global fetch, no limits.
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { directTransport, setTransport, transport, type Transport } from "../src/lib/transport/index.js";
+import { directTransport, type Transport } from "../src/lib/transport/index.js";
+import { homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
 import { BlobCache, BlobError, BLOB_LIMITS, dispositionName, fetchBlob, formatLimit, sendUpload } from "../src/lib/transport/blob.js";
 import { BLOB_UPLOAD_MAX, BodyTooLargeError } from "../src/lib/transport/tunnel.js";
 import { offlineTransport } from "../src/features/cloud/offline-transport.js";
@@ -18,8 +19,8 @@ import { fakeMachine, json } from "./fake-machine.js";
 const MiB = 1024 * 1024;
 
 function useTransport(t: TestContext, next: Transport): void {
-  setTransport(next);
-  t.after(() => setTransport(directTransport));
+  openMachine(homeMachine(), next);
+  t.after(() => openMachine(homeMachine(), directTransport));
 }
 
 test("the blob lane opens a blob pipe; the app's calls stay on rpc", async () => {
@@ -124,7 +125,7 @@ test("an upload past 64 MB is refused before anything is sent; under it rides th
   const machine = fakeMachine((e) => json(200, { ok: true, bytes: e.body.length }));
   useTransport(t, machine.transport);
   const big = () => new Request("http://machine.invalid/api/fs/upload?dir=%2Ftmp", { method: "POST", body: "x" });
-  await assert.rejects(sendUpload(big(), BLOB_LIMITS.upload + 1, transport()), (error: unknown) => {
+  await assert.rejects(sendUpload(big(), BLOB_LIMITS.upload + 1, transportFor(homeMachine())), (error: unknown) => {
     assert.ok(error instanceof BlobError);
     assert.equal(error.kind, "tooLarge");
     assert.equal(formatLimit(error.limit!), "64 MB");
@@ -134,7 +135,7 @@ test("an upload past 64 MB is refused before anything is sent; under it rides th
 
   const form = new FormData();
   form.append("file", new Blob(["hello upload"]), "a.txt");
-  const res = await sendUpload(new Request("http://machine.invalid/api/fs/upload?dir=%2Ftmp", { method: "POST", body: form }), 12, transport());
+  const res = await sendUpload(new Request("http://machine.invalid/api/fs/upload?dir=%2Ftmp", { method: "POST", body: form }), 12, transportFor(homeMachine()));
   assert.equal(res.status, 200);
   const exchange = machine.exchanges[0]!;
   assert.equal(exchange.kind, "blob");
