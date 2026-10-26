@@ -1,13 +1,12 @@
-// The public pages and the hub's sign-up mode (`features/landing/signup-mode.ts`),
-// drawn for real in a DOM where effects run.
+// The public pages and sign-up (`features/landing/signup-mode.ts`), drawn for
+// real in a DOM where effects run.
 //
-// What these pin: `useSignupMode` is open until the hub answers, then the
-// hub's mode, and a mode the caller gives wins without asking; the front
-// pages (`front-pages.tsx`) ask the hub only where a page says how to sign up,
-// and hand the answer on — the pricing page draws open, invite and closed
-// sign-up each its own way; and the waitlist form sends what the page shows:
-// Pro whatever the address says where sign-up is open, the plan chosen where
-// it is not.
+// What these pin: sign-up is open, written in `SIGNUP_CONFIG`, so
+// `useSignupMode` says open without asking anyone and a mode the caller gives
+// wins; the front pages (`front-pages.tsx`) draw the open wording, and a page
+// that says nothing of sign-up is the same; and the waitlist form sends what
+// the page shows: Pro whatever the address says where sign-up is open, the
+// plan chosen where an explicit mode says otherwise.
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -32,7 +31,6 @@ const { useSignupMode } = await import("../src/features/landing/signup-mode.js")
 const { FrontPageView } = await import("../src/features/landing/front-pages.js");
 const { default: PricingPage } = await import("../src/features/landing/pricing.js");
 type SignupMode = import("../src/lib/hub/api.js").SignupMode;
-type HubApi = import("../src/lib/hub/api.js").HubApi;
 
 await i18n.changeLanguage("en");
 
@@ -65,76 +63,41 @@ async function until(done: () => boolean, ms = 10_000): Promise<void> {
 const byTestId = (id: string) => container.querySelector(`[data-testid="${id}"]`);
 const words = () => container.textContent ?? "";
 
-/** A hub that says `mode` (or cannot be asked) and keeps what joins its waitlist. */
-function hub(mode: SignupMode | Error) {
+/** A hub that keeps what joins its waitlist (sign-up's answers are not its to give). */
+function hub() {
   const joined: { email: string; plan: string; locale?: string }[] = [];
-  let asked = 0;
-  const api = {
-    signupConfig: async () => {
-      asked++;
-      if (mode instanceof Error) throw mode;
-      return { signup: mode, inviteRequired: mode === "invite", turnstile: null, verification: "required" as const, passkeys: null };
-    },
-    joinWaitlist: async (input: { email: string; plan: string; locale?: string }) => void joined.push(input),
-  };
-  return { api, joined, asked: () => asked };
+  const api = { joinWaitlist: async (input: { email: string; plan: string; locale?: string }) => void joined.push(input) };
+  return { api, joined };
 }
 
-function Probe({ api, given }: { api?: Pick<HubApi, "signupConfig">; given?: SignupMode }) {
-  return <span data-testid="mode">{useSignupMode(api, given)}</span>;
+function Probe({ given }: { given?: SignupMode }) {
+  return <span data-testid="mode">{useSignupMode(given)}</span>;
 }
 
-test("useSignupMode: open until the hub answers, then its mode; a given mode wins and asks nothing", async () => {
-  const invite = hub("invite");
-  await draw(<Probe api={invite.api} />);
-  await until(() => byTestId("mode")?.textContent === "invite");
-  assert.equal(invite.asked(), 1);
-
-  const given = hub("invite");
-  await draw(<Probe api={given.api} given="closed" />);
-  await until(() => byTestId("mode")?.textContent === "closed");
-  assert.equal(given.asked(), 0, "a given mode asks nothing");
-
+test("useSignupMode: open, as written in the page; a given mode wins", async () => {
   await draw(<Probe />);
-  assert.equal(byTestId("mode")?.textContent, "open", "no hub to ask: open");
+  assert.equal(byTestId("mode")?.textContent, "open", "sign-up is open, nothing to ask");
 
-  const failing = hub(new TypeError("Failed to fetch"));
-  await draw(<Probe api={failing.api} />);
-  await until(() => failing.asked() === 1);
-  await act(async () => void (await new Promise((r) => setTimeout(r, 10))));
-  assert.equal(byTestId("mode")?.textContent, "open", "a hub that cannot be asked: open");
+  await draw(<Probe given="closed" />);
+  assert.equal(byTestId("mode")?.textContent, "closed", "a given mode wins");
 });
 
-test("the front pages hand the hub's answer on: the pricing page draws open, invite and closed sign-up each its own way", async () => {
+test("the front pages draw the open sign-up: Free signs up, Pro's waitlist stays", async () => {
   history.replaceState(null, "", "/pricing");
-  const open = hub("open");
+  const open = hub();
   await draw(<FrontPageView page="pricing" signedIn={false} api={open.api as never} />);
-  await until(() => byTestId("plan-free-signup") !== null && open.asked() === 1);
+  await until(() => byTestId("plan-free-signup") !== null);
   assert.equal(byTestId("plan-free-signup")?.getAttribute("data-variant"), "primary");
   assert.equal(byTestId("plan-free-waitlist"), null);
   assert.ok(words().includes("Free, with an account"));
-
-  const invite = hub("invite");
-  await draw(<FrontPageView page="pricing" signedIn={false} api={invite.api as never} />);
-  await until(() => byTestId("plan-free-waitlist") !== null);
-  assert.ok(words().includes("Have an invite code? Sign up"));
-  assert.ok(words().includes("Free; sign-up by invite for now"));
-
-  const closed = hub("closed");
-  await draw(<FrontPageView page="pricing" signedIn={false} api={closed.api as never} />);
-  await until(() => byTestId("plan-free-waitlist") !== null);
-  assert.ok(words().includes("Sign-up is closed for now"));
-  assert.ok(words().includes("Free; sign-up is closed for now"));
-  assert.equal(byTestId("plan-free-signup"), null, "closed: no way to sign up, an invite code neither");
-  assert.doesNotMatch(words(), /invite/i);
 });
 
-test("a page that says nothing of sign-up asks the hub nothing", async () => {
+test("a page that says nothing of sign-up is drawn the same, and nothing is asked", async () => {
   history.replaceState(null, "", "/privacy");
-  const quiet = hub("invite");
+  const quiet = hub();
   await draw(<FrontPageView page="privacy" signedIn={false} api={quiet.api as never} />);
   await until(() => words().includes("If you joined the waitlist"));
-  assert.equal(quiet.asked(), 0);
+  assert.deepEqual(quiet.joined, []);
 });
 
 /** Type `value` into `input` as a person does (React reads the native setter's value on `input`). */
@@ -145,7 +108,7 @@ function type(input: HTMLInputElement, value: string): void {
 
 async function joinWith(signup: SignupMode, search: string) {
   history.replaceState(null, "", `/pricing${search}`);
-  const { api, joined } = hub(signup);
+  const { api, joined } = hub();
   await draw(<PricingPage api={api} signup={signup} />);
   const email = document.getElementById("waitlist-email") as HTMLInputElement;
   await act(async () => type(email, "ada@example.com"));

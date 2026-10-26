@@ -1,12 +1,10 @@
 // The sign-up form's password (`features/cloud/cloud-app.tsx` `AuthScreen`),
 // drawn for real: one shorter than the hub takes (rh-hub `auth::MIN_PASSWORD`,
 // 10) is said in words on the form, in the reader's language, and never sent
-// — the hub would refuse it with a bare 400 and the human check's token would
-// be spent on that. One long enough is sent. And its invite code as the hub's
-// sign-up mode has it: asked for first where sign-up is by invite; where it
-// is open, optional (it may still give a plan) and behind a link — opened
-// for the person by a refused invite too, which, where the hub could not be
-// asked how sign-up works, has the page ask again.
+// — the hub would refuse it with a bare 400. One long enough is sent. And its
+// invite code: sign-up is open, as `SIGNUP_CONFIG` says, so the code is
+// optional (it may still give a plan) and behind a link — opened for the
+// person by a refused invite too.
 //
 // React renders into a stand-in DOM (`fake-dom.ts`) where effects run.
 // `import * as React` because the test directory is outside the tsconfig's
@@ -57,7 +55,6 @@ const submit = () => props(find(container, (n) => n.nodeName === "FORM")).onSubm
 test("sign-up: a password under 10 characters is said on the form and never sent; one of 10 is", async () => {
   const sent: { email: string; password: string }[] = [];
   const api = {
-    signupConfig: async () => ({ signup: "open", inviteRequired: false, turnstile: null, verification: "off", passkeys: null }),
     signUp: async (email: string, password: string) => {
       sent.push({ email, password });
       return new Promise(() => undefined); // left waiting: what was sent is what this pins
@@ -96,12 +93,10 @@ test("sign-up: a password under 10 characters is said on the form and never sent
   }
 });
 
-test("sign-up: an open hub keeps the optional invite code behind a link; an invite hub asks for it first", async () => {
+test("sign-up: the optional invite code waits behind a link; a refused invite opens the field", async () => {
   const { HubApiError } = await import("../src/lib/hub/api.js");
-  let mode: "open" | "invite" = "open";
   const sent: (string | undefined)[] = [];
   const api = {
-    signupConfig: async () => ({ signup: mode, inviteRequired: mode === "invite", turnstile: null, verification: "off", passkeys: null }),
     signUp: async (_email: string, _password: string, opts: { invite?: string }) => {
       sent.push(opts.invite);
       throw new HubApiError(403, "bad_invite", "that invite is unknown, used up or expired");
@@ -140,7 +135,7 @@ test("sign-up: an open hub keeps the optional invite code behind a link; an invi
     } finally {
       root.unmount();
     }
-    // Open, and the hub refuses for want of an invite (it went to invite mode since): the field opens, asked for.
+    // A refused invite opens the field to try another; the code stays optional.
     root = await open();
     try {
       await until(() => byTestId("show-invite") !== null);
@@ -149,75 +144,15 @@ test("sign-up: an open hub keeps the optional invite code behind a link; an invi
       await flush();
       submit();
       await until(() => byTestId("auth-invite") !== null);
-      assert.equal(sent[1], undefined, "none was given");
+      assert.deepEqual(sent, ["INVITE-1", undefined], "none was given");
       assert.ok(words().includes("that invite code is unknown, used up or expired"));
-      assert.ok(words().includes("invite code") && !words().includes("invite code (optional)"));
+      assert.ok(words().includes("invite code (optional)"));
       assert.equal(byTestId("show-invite"), null);
-    } finally {
-      root.unmount();
-    }
-    // By invite: the field first, no link, and nothing sent without a code.
-    mode = "invite";
-    root = await open();
-    try {
-      await until(() => byTestId("auth-invite") !== null);
-      assert.equal(byTestId("show-invite"), null);
-      assert.ok(words().includes("invite code") && !words().includes("(optional)"));
-      type("auth-email", "me@example.test");
-      type("auth-password", "long-enough");
-      await flush();
-      assert.ok(byTestId("password-submit")?.hasAttribute("disabled"), "blocked without a code");
+      assert.ok(!byTestId("password-submit")?.hasAttribute("disabled"), "open sign-up needs no code");
     } finally {
       root.unmount();
     }
   } finally {
     await i18n.changeLanguage("en");
-  }
-});
-
-test("sign-up: the hub could not be asked, then refused for want of an invite — the page asks again and the field is asked for", async () => {
-  const { HubApiError } = await import("../src/lib/hub/api.js");
-  let asked = 0;
-  const sent: (string | undefined)[] = [];
-  const api = {
-    // The first answer is lost; the hub is by invite.
-    signupConfig: async () => {
-      asked++;
-      if (asked === 1) throw new TypeError("Failed to fetch");
-      return { signup: "invite", inviteRequired: true, turnstile: null, verification: "off", passkeys: null };
-    },
-    signUp: async (_email: string, _password: string, opts: { invite?: string }) => {
-      sent.push(opts.invite);
-      throw new HubApiError(403, "bad_invite", "that invite is unknown, used up or expired");
-    },
-  };
-  await i18n.changeLanguage("en");
-  const words = () => (container as FakeNode).textContent;
-  const root = createRoot(container as never);
-  root.render(
-    <I18nextProvider i18n={i18n}>
-      <AuthScreen api={api as never} onSignedIn={noop} initialMode="signup" />
-    </I18nextProvider>,
-  );
-  try {
-    // Not known: the code waits behind the link, and the form can be sent.
-    await until(() => byTestId("show-invite") !== null && byTestId("password-submit") !== null);
-    assert.equal(asked, 1);
-    assert.equal(byTestId("auth-invite"), null);
-    type("auth-email", "me@example.test");
-    type("auth-password", "long-enough");
-    await flush();
-    submit();
-    await until(() => sent.length === 1);
-    assert.deepEqual(sent, [undefined]);
-    // Refused: asked again, and now the field is the required one, first.
-    await until(() => asked === 2 && byTestId("auth-invite") !== null && !words().includes("invite code (optional)"));
-    await flush(100);
-    assert.equal(asked, 2, "asked again once, not on and on");
-    assert.ok(words().includes("that invite code is unknown, used up or expired"));
-    assert.equal(byTestId("show-invite"), null);
-    assert.ok(byTestId("password-submit")?.hasAttribute("disabled"), "blocked without a code");
-  } finally {
-    root.unmount();
   }
 });

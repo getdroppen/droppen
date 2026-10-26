@@ -334,8 +334,9 @@ test("sign-up has its own page: /signup opens the form on its sign-up tab, with 
     );
   const signup = form("signup");
   assert.match(signup, /aria-selected="true"[^>]*>sign up</);
-  // Until the hub says how sign-up works, no invite field and no link to one: an open hub's form never flickers.
-  assert.doesNotMatch(text(signup), /invite code/);
+  // Sign-up is open, as `SIGNUP_CONFIG` says: the optional invite code sits behind a link, no field yet.
+  assert.match(text(signup), /have an invite code\?/);
+  assert.doesNotMatch(signup, /data-testid="auth-invite"/);
   const signin = form();
   assert.match(signin, /aria-selected="true"[^>]*>sign in</);
   assert.doesNotMatch(text(signin), /invite code/);

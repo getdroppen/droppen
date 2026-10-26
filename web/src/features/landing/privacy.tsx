@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useEffect } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { SIGNUP_CONFIG } from "@/lib/hub/api";
 import { PLAN_TABLE } from "@/lib/hub/plan";
 import { landingBundles } from "./copy";
 import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
@@ -27,8 +28,8 @@ for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBund
 /** When the notice last changed, as the page says it. */
 export const PRIVACY_UPDATED = "2026-10-25";
 
-/** How long droppen.app keeps a deleted account's address hash (a setting of Droppen Hub; `GET /v1/signup/config` `deletion`). */
-export const DELETED_EMAIL_HOLD_DAYS = 7;
+/** How long droppen.app keeps a deleted account's address hash (droppen.app's `SIGNUP_CONFIG.deletion`). */
+export const DELETED_EMAIL_HOLD_DAYS = SIGNUP_CONFIG.deletion?.emailHoldDays ?? 0;
 
 /** Within how many days copies in droppen.app's backups and logs expire (the owner's word, 2026-10-23). */
 export const BACKUPS_EXPIRE_DAYS = 30;

@@ -945,7 +945,7 @@ test("a browser without WebAuthn gets the password form as it was, with no word 
   }
 });
 
-test("a browser with WebAuthn, before the hub has said: no password field and no passkey wording yet", () => {
+test("a browser with WebAuthn gets the passkey form at once: the answers are written in the page", () => {
   const g = globalThis as unknown as Record<string, unknown>;
   const before = { pkc: g.PublicKeyCredential, nav: Object.getOwnPropertyDescriptor(globalThis, "navigator") };
   g.PublicKeyCredential = function PublicKeyCredential() {};
@@ -957,8 +957,8 @@ test("a browser with WebAuthn, before the hub has said: no password field and no
       </I18nextProvider>,
     );
     assert.doesNotMatch(html, /data-testid="auth-password"/);
-    assert.match(html, /data-testid="auth-pending"[^>]*disabled/);
-    assert.doesNotMatch(html, /passkey/i);
+    assert.match(html, /data-testid="passkey-signin"/);
+    assert.ok(html.toLowerCase().includes("passkey"));
   } finally {
     if (before.pkc === undefined) delete g.PublicKeyCredential;
     else g.PublicKeyCredential = before.pkc;

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Mail } from "lucide-react";
-import { authErrorKind, type EmailStanding, type HubApi, HubApiError, type SignedIn, type TurnstileConfig } from "@/lib/hub/api";
+import { authErrorKind, type EmailStanding, type HubApi, HubApiError, type SignedIn } from "@/lib/hub/api";
 import type { CloudAccount } from "@/lib/hub/account";
 import { cn } from "@/lib/cn";
 import { PrefsControls } from "@/components/prefs-controls";
 import { publicLink, SIGN_IN_PATH } from "@/features/landing/route";
-import { Turnstile } from "./turnstile";
 import { authErrorText, Centered, ErrorLine, errorText, Note, Panel, primary, quiet, secondary } from "./ui";
 
 /*
@@ -59,14 +58,12 @@ function formatDay(ms: number, lang: string): string {
 }
 
 /**
- * "Send the link again": with the widget first when the hub asks for
- * Turnstile (the mail is sent as soon as it answers), then at most once a
- * minute — or after however long the hub says.
+ * "Send the link again": at most once a minute — or after however long the
+ * hub says.
  */
 export function ResendControl({
   api,
   token,
-  turnstile,
   noRenew,
   compact,
   onVerified,
@@ -75,7 +72,6 @@ export function ResendControl({
   api: HubApi;
   /** A login or device session. */
   token: () => string;
-  turnstile: TurnstileConfig | null;
   noRenew?: boolean;
   compact?: boolean;
   /** The hub says there is nothing to verify (any more). */
@@ -84,7 +80,7 @@ export function ResendControl({
   onExpired?: () => void;
 }) {
   const { t } = useTranslation();
-  const [stage, setStage] = useState<"idle" | "check" | "sending" | "sent">("idle");
+  const [stage, setStage] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
   const [waitUntil, setWaitUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
@@ -103,13 +99,13 @@ export function ResendControl({
     setWaitUntil(at + ms);
   };
 
-  const send = async (check: string | null) => {
+  const send = async () => {
     if (sending.current) return;
     sending.current = true;
     setStage("sending");
     setError(null);
     try {
-      await api.resendVerification(token(), check, { noRenew });
+      await api.resendVerification(token(), null, { noRenew });
       setStage("sent");
       holdFor(RESEND_GAP_MS);
     } catch (err) {
@@ -126,9 +122,7 @@ export function ResendControl({
       }
       if (kind === "rate" && err instanceof HubApiError && err.retryAfterMs !== undefined) holdFor(err.retryAfterMs);
       setError(authErrorText(err, "resend"));
-      // A refused check: show a fresh widget to answer again.
-      const recheck = turnstile && (kind === "turnstileRetry" || kind === "turnstileFailed" || kind === "turnstileRequired");
-      setStage(recheck ? "check" : "idle");
+      setStage("idle");
     } finally {
       sending.current = false;
     }
@@ -137,8 +131,7 @@ export function ResendControl({
   const start = () => {
     if (wait > 0 || stage === "sending") return;
     setError(null);
-    if (turnstile) setStage("check");
-    else void send(null);
+    void send();
   };
 
   return (
@@ -147,7 +140,7 @@ export function ResendControl({
         <button
           type="button"
           className={compact ? cn(secondary, "h-7 px-3 text-xs") : cn(quiet, "-ml-3 self-start")}
-          disabled={stage === "sending" || stage === "check" || wait > 0}
+          disabled={stage === "sending" || wait > 0}
           onClick={start}
         >
           {stage === "sending" && <Loader2 className="size-3.5 animate-spin" />}
@@ -159,15 +152,6 @@ export function ResendControl({
           </span>
         )}
       </div>
-      {stage === "check" && turnstile && (
-        <Turnstile
-          config={turnstile}
-          action="resend"
-          onToken={(check) => {
-            if (check) void send(check);
-          }}
-        />
-      )}
       <ErrorLine message={error} />
     </div>
   );
@@ -183,7 +167,6 @@ export function CheckEmailScreen({
   api,
   session,
   address,
-  turnstile,
   onVerified,
   onBack,
 }: {
@@ -191,7 +174,6 @@ export function CheckEmailScreen({
   session: SignedIn;
   /** The address as it was typed (until the hub says it). */
   address: string;
-  turnstile: TurnstileConfig | null;
   onVerified: (session: SignedIn) => void;
   /** Back to the sign-in form, with what to say there. */
   onBack: (message?: string) => void;
@@ -275,7 +257,7 @@ export function CheckEmailScreen({
             </button>
           </Note>
         )}
-        <ResendControl api={api} token={() => session.token} turnstile={turnstile} noRenew onVerified={verified} onExpired={expired} />
+        <ResendControl api={api} token={() => session.token} noRenew onVerified={verified} onExpired={expired} />
         <div className="border-t border-border pt-3">
           <button type="button" className={cn(quiet, "-ml-3")} onClick={() => handlers.current.onBack()}>
             {t("use another account")}
@@ -426,21 +408,14 @@ export function VerifyEmailPage({ api, onContinue }: { api: HubApi; onContinue?:
 export function VerifyEmailBanner({ account }: { account: CloudAccount }) {
   const { t, i18n } = useTranslation();
   const [email, setEmail] = useState<EmailStanding | null>(null);
-  const [turnstile, setTurnstile] = useState<TurnstileConfig | null>(null);
 
   useEffect(() => {
     let live = true;
-    let configured = false;
     const look = async () => {
       try {
         const me = await account.api.me(account.session.token);
         if (!live) return;
         setEmail(me.email);
-        if (me.email.verification === "required" && !me.email.verified && !configured) {
-          configured = true;
-          const config = await account.api.signupConfig();
-          if (live) setTurnstile(config.turnstile);
-        }
       } catch (error) {
         console.warn("cloud: the account's e-mail standing:", error);
       }
@@ -486,7 +461,6 @@ export function VerifyEmailBanner({ account }: { account: CloudAccount }) {
         <ResendControl
           api={account.api}
           token={() => account.session.token}
-          turnstile={turnstile}
           compact
           onVerified={() => setEmail((e) => (e ? { ...e, verified: true } : e))}
         />

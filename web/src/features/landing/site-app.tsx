@@ -11,7 +11,8 @@ import { frontPage, usePathname } from "./route";
  * lives on the app host, so every page here reads as signed out, and every
  * way into the app ("Open app", sign in, sign up) is a link to the app host
  * (`route.ts` `publicLink`). The only requests are the pages' own (the
- * waitlist, the releases, how sign-up works: `GET /v1/signup/config`).
+ * waitlist and the releases): how sign-up works is written in the page
+ * (`SIGNUP_CONFIG`), not asked of the hub.
  */
 export function SiteApp() {
   const pathname = usePathname();

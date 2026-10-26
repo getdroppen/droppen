@@ -280,21 +280,8 @@ test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite c
   }
 });
 
-test("the page asks the hub once how sign-up works, and keeps the open wording when it cannot", async () => {
-  let asked = 0;
-  const hub = (signup: SignupMode | Error) => ({
-    signupConfig: async () => {
-      asked++;
-      if (signup instanceof Error) throw signup;
-      return { signup, inviteRequired: signup === "invite", turnstile: null, verification: "required" as const, passkeys: null };
-    },
-  });
-  const invite = hub("invite");
-  assert.equal(await signupModeOf(invite), "invite");
-  assert.equal(await signupModeOf(invite), "invite");
-  assert.equal(asked, 1, "asked once per hub client");
-  assert.equal(await signupModeOf(hub("open")), "open");
-  assert.equal(await signupModeOf(hub(new TypeError("Failed to fetch"))), "open");
+test("sign-up is open, written in the page: nothing is asked of the hub", () => {
+  assert.equal(signupModeOf(), "open");
 });
 
 test("signed out, Free offers sign-up (with an invite where sign-up is by invite); signed in, the way back into the app", () => {

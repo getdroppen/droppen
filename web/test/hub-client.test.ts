@@ -1335,24 +1335,38 @@ test("cloud mode is the hub's marker in the shell, and nothing else", async () =
   assert.equal(hubHttpOrigin(undefined), null);
 });
 
+test("signupConfig is droppen.app's answers, written in the page: it asks the hub nothing", async () => {
+  const { HubApi, SIGNUP_CONFIG } = await import("../src/lib/hub/api.js");
+  const asked: string[] = [];
+  const fetchImpl = (async (input: string) => {
+    asked.push(input);
+    return new Response(JSON.stringify({}), { headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  const api = new HubApi("https://hub.test", fetchImpl);
+  const config = await api.signupConfig();
+  assert.deepEqual(asked, [], "no request");
+  assert.deepEqual(config, SIGNUP_CONFIG);
+  assert.notEqual(config, SIGNUP_CONFIG, "a copy: a caller cannot change the page's answers");
+  config.passkeys!.rpId = "elsewhere.test";
+  assert.equal((await api.signupConfig()).passkeys?.rpId, "droppen.app");
+});
+
 test("HubApi's default base is the marker's https form: the browser calls the API cross-origin", async () => {
   const { HubApi } = await import("../src/lib/hub/api.js");
   const asked: string[] = [];
   const fetchImpl = (async (input: string) => {
     asked.push(input);
-    return new Response(JSON.stringify({ signup: "open", invite_required: false, turnstile: null, verification: "off", passkeys: null, deletion: { email_hold_days: 30 } }), {
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(null, { status: 204 });
   }) as unknown as typeof fetch;
   const document = { querySelector: () => ({ getAttribute: () => "wss://api.droppen.app" }) } as unknown as Document;
   const previous = globalThis.document;
   Object.defineProperty(globalThis, "document", { value: document, configurable: true });
   try {
-    await new HubApi(undefined, fetchImpl).signupConfig();
+    await new HubApi(undefined, fetchImpl).joinWaitlist({ email: "me@example.test", plan: "pro" });
   } finally {
     Object.defineProperty(globalThis, "document", { value: previous, configurable: true });
   }
-  assert.deepEqual(asked, ["https://api.droppen.app/v1/signup/config"]);
+  assert.deepEqual(asked, ["https://api.droppen.app/v1/waitlist"]);
 });
 
 test("the local sign-in's enrollment adds only the computer whose keys the request showed", async () => {

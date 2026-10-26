@@ -41,7 +41,7 @@ import { cn } from "@/lib/cn";
 import { formatMoment } from "@/lib/format";
 import { credentialHash, hex } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
-import { type AccountPasskey, HubApiError, PASSWORD_MIN_CHARS, type Proof, type Reauth, type SignInMethods } from "@/lib/hub/api";
+import { type AccountPasskey, HubApiError, PASSWORD_MIN_CHARS, type Proof, type Reauth, SIGNUP_CONFIG, type SignInMethods } from "@/lib/hub/api";
 import type { HubLink } from "@/lib/hub/link";
 import { fromBase64Url, pageCredentials, passkeyAdd, passkeyCancelled, passkeyPrf, passkeyReauth, signalUnknownCredential } from "@/lib/hub/passkey";
 import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
@@ -117,10 +117,9 @@ export function AccountPanel({ account, link, onWords }: { account: CloudAccount
   const me = useMe(account, link);
   const [methods, setMethods] = useState<SignInMethods | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // The relying party the hub's passkeys are for (`null` once known: the hub offers none).
-  const [rpId, setRpId] = useState<string | null | undefined>(undefined);
-  // For how many days a deleted account's address cannot sign up again (`null`: the hub did not say).
-  const [holdDays, setHoldDays] = useState<number | null>(null);
+  // The relying party is droppen.app's, and a deleted address is held for seven days: `SIGNUP_CONFIG` says so.
+  const rpId = SIGNUP_CONFIG.passkeys?.rpId ?? null;
+  const holdDays = SIGNUP_CONFIG.deletion?.emailHoldDays ?? null;
   const token = account.session.token;
   const hashes = useCredentialHashes(methods);
   const reload = useCallback(async () => {
@@ -141,14 +140,7 @@ export function AccountPanel({ account, link, onWords }: { account: CloudAccount
   }, [head, reload]);
   useEffect(() => {
     void reload();
-    account.api
-      .signupConfig()
-      .then((c) => {
-        setRpId(c.passkeys?.rpId ?? null);
-        setHoldDays(c.deletion?.emailHoldDays ?? null);
-      })
-      .catch(() => setRpId(null));
-  }, [account, reload]);
+  }, [reload]);
   return (
     <AccountSettings
       account={account}

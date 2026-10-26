@@ -15,12 +15,10 @@ const SecurityPage = lazy(() => import("@/features/landing/security/security"));
 /** The terms of service (`/terms`), signed in or not: its own chunk, with its own words, too. */
 const TermsPage = lazy(() => import("@/features/landing/terms/terms"));
 
-/** The pages that say how to sign up, and so ask the hub how (`signup-mode.ts`). */
-const SAYS_SIGNUP: readonly FrontPage[] = ["landing", "download", "pricing"];
-
 /** One of the pages that are pages of their own, signed in or not. */
 export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
-  const signup = useSignupMode(SAYS_SIGNUP.includes(page) ? api : undefined);
+  // Sign-up is open, as `SIGNUP_CONFIG` says: the pages have nothing to ask the hub.
+  const signup = useSignupMode();
   return (
     <Suspense fallback={<div className="h-full w-full bg-bg" />}>
       {page === "download" ? (

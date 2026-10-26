@@ -6,7 +6,7 @@
 // current password or a passkey's answer) to `DELETE /v1/account`, and reads
 // the new refusals by kind (`confirm_mismatch`, `account_suspended`,
 // `recently_deleted` with its `until_ms`, `410 account_deleted`) and the
-// sign-up config's `deletion`; the typed address confirms only as the hub
+// sign-up answers' `deletion` (written in the page); the typed address confirms only as the hub
 // compares it (trimmed, any case); the page says what deleting means — with
 // the hub's days, or none — and offers it on a full device only, folded away,
 // its button held until the address is typed; a deletion the hub refuses
@@ -103,13 +103,14 @@ test("the new refusals, by kind: confirm_mismatch, account_suspended, recently_d
   assert.notEqual(hubErrorKind(await refusal(401, { error: "unauthorized" })), "accountDeleted");
 });
 
-test("sign-up config: `deletion` as the hub says it, and nothing from a hub that does not", async () => {
-  const base = { signup: "open", invite_required: false, turnstile: null, verification: "off", passkeys: null };
-  const { api } = fakeHub({ body: { ...base, deletion: { email_hold_days: 7 } } }, { body: { ...base, deletion: { email_hold_days: 0 } } }, { body: base }, { body: { ...base, deletion: { email_hold_days: -1 } } });
+test("sign-up config's deletion: droppen.app holds a deleted address for seven days, written in the page", async () => {
+  let asked = 0;
+  const api = new HubApi("https://hub.test", (async () => {
+    asked++;
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch);
   assert.deepEqual((await api.signupConfig()).deletion, { emailHoldDays: 7 });
-  assert.deepEqual((await api.signupConfig()).deletion, { emailHoldDays: 0 });
-  assert.equal((await api.signupConfig()).deletion, undefined);
-  assert.equal((await api.signupConfig()).deletion, undefined, "not of its shape: not said");
+  assert.equal(asked, 0, "no request");
 });
 
 test("the known-client token kept for an address goes with its account", async () => {

@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
 import { compatAgreedFor, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
 import { AccountError, CloudAccount, KeysUnreadableError } from "@/lib/hub/account";
-import { authErrorKind, clearSession, HubApi, HubApiError, type HubSession, loadSession, type PasskeySignedIn, PASSWORD_MIN_CHARS, saveSession, type SignedIn, type SignupConfig } from "@/lib/hub/api";
+import { authErrorKind, clearSession, HubApi, HubApiError, type HubSession, loadSession, type PasskeySignedIn, PASSWORD_MIN_CHARS, saveSession, SIGNUP_CONFIG, type SignedIn, type SignupConfig } from "@/lib/hub/api";
 import {
   finishPasskeyLogin,
   type PasskeyAnswer,
@@ -37,7 +37,6 @@ import { SignOutChoice, SignOutDialog, StillListedNote } from "./sign-out-dialog
 import { authErrorText, Centered, CloudPage, danger, ErrorLine, errorText, Field, field, Note, Panel, primary, quiet, Tabs } from "./ui";
 import { CheckEmailScreen, VerifyEmailPage } from "./email-verify";
 import { UnsupportedBrowserScreen } from "./browser-support";
-import { Turnstile } from "./turnstile";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { APP_PATH, bootRoute, frontPage, goPublic, isAuthPath, isFrontPath, PRIVACY_PATH, publicHref, publicLink, publicPage, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "@/features/landing/route";
@@ -840,7 +839,7 @@ export function RefusedScreen({ reason }: { reason: "removed" | "denied" }) {
 /** The languages the verification mail is written in (the page's, else English). */
 const MAIL_LANGS = ["en", "zh-CN", "zh-TW", "ja"];
 
-/** How the form asks who you are: a passkey first, the password, or not known yet (the hub has not said). */
+/** How the form asks who you are: a passkey first, the password, or not known yet (the caller has no answer). */
 export type AuthMethod = "passkey" | "password" | "pending";
 
 /**
@@ -856,19 +855,15 @@ export function authMethod(webauthn: boolean, config: SignupConfig | "failed" | 
 }
 
 /**
- * Sign in, or sign up as the hub allows (`/v1/signup/config`): by invite (the
- * invite code asked for first), open (an invite optional — it may give the
- * account a plan — so its field waits behind "have an invite code?"), or not
- * at all. Sign-up passes Turnstile when the hub
- * runs it; sign-in only once the hub asks (after many failures). Every answer
- * spends the widget's token, so a refusal resets it. An account whose e-mail
- * must be verified first waits on "check your e-mail" before going on.
+ * Sign in, or sign up: sign-up is open, as `SIGNUP_CONFIG` says, so an invite
+ * code is optional — it may give the account a plan — and waits behind "have
+ * an invite code?". No Turnstile widget is drawn. An account whose e-mail must
+ * be verified first waits on "check your e-mail" before going on.
  *
- * Where the hub offers passkeys and the browser does WebAuthn, a passkey
- * comes first (docs/passkeys.md §3.4 A, §3.5): sign-up makes one (the hub's
- * checks, the widget's token included, come before it exists), sign-in asks
- * for one, modally or from the e-mail field's autofill, and the password is
- * a step away. A passkey sign-in goes on exactly as a password one does.
+ * Where passkeys are offered and the browser does WebAuthn, a passkey comes
+ * first (docs/passkeys.md §3.4 A, §3.5): sign-up makes one, sign-in asks for
+ * one, modally or from the e-mail field's autofill, and the password is a step
+ * away. A passkey sign-in goes on exactly as a password one does.
  * Exported so the screen can be previewed on its own.
  */
 export function AuthScreen({
@@ -906,14 +901,6 @@ export function AuthScreen({
   const [deleted] = useState(() => takeAccountDeleted());
   // Signed out by the pairing screen's "sign in again": it comes back once signed in.
   const [resumesPairing] = useState(() => pairingResume() !== null);
-  // How sign-up works here (`failed`: the hub did not say; its answers will).
-  const [config, setConfig] = useState<SignupConfig | "failed" | null>(null);
-  const [configTry, setConfigTry] = useState(0);
-  // The widget's token, and a bump to have it ask again once a submit spent it.
-  const [check, setCheck] = useState<string | null>(null);
-  const [reset, setReset] = useState(0);
-  // The hub asked for the human check on sign-in.
-  const [loginCheck, setLoginCheck] = useState(false);
   // Signed in, the e-mail still to verify.
   const [waiting, setWaiting] = useState<{ session: SignedIn; address: string } | null>(null);
   // WebAuthn in this browser at all, and passkeys in the e-mail field's autofill.
@@ -922,20 +909,6 @@ export function AuthScreen({
   // The person chose the password over a passkey.
   const [wantPassword, setWantPassword] = useState(false);
   const autofill = useRef<PasskeyAutofill | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api.signupConfig().then(
-      (c) => live && setConfig(c),
-      (err: unknown) => {
-        console.warn("cloud: sign-up config:", err);
-        if (live) setConfig("failed");
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [api, configTry]);
 
   useEffect(() => {
     if (!webauthn) return;
@@ -949,23 +922,17 @@ export function AuthScreen({
   // On the sign-in / sign-up pages the address follows the tab (a deep link keeps its own).
   const setMode = (next: "signin" | "signup") => {
     setModeState(next);
-    setCheck(null);
     setNote(null);
     setWantPassword(false);
     if (isAuthPath(location.pathname)) goPublic(next === "signup" ? SIGN_UP_PATH : SIGN_IN_PATH, { replace: true });
   };
 
-  const known = config && config !== "failed" ? config : null;
-  const turnstile = known?.turnstile ?? null;
-  const closed = known?.signup === "closed";
-  // Asked for once the hub says sign-up is by invite. Otherwise optional, behind a link — once the hub
-  // has answered (or could not be asked: its refusal says the rest), so an open hub's form never flickers.
-  const inviteRequired = known ? known.inviteRequired : false;
-  const inviteOffered = config !== null && !inviteRequired;
-  const widget = turnstile && (mode === "signup" ? !closed : loginCheck) ? turnstile : null;
+  // Sign-up's answers are constants (`SIGNUP_CONFIG`): open, an optional invite, no widget.
+  const config = SIGNUP_CONFIG;
+  const inviteOffered = true;
   const method = authMethod(webauthn, config, wantPassword);
   // Passkeys here at all: the e-mail field offers them, and the form offers both ways in.
-  const passkeys = webauthn ? (known?.passkeys ?? null) : null;
+  const passkeys = webauthn ? config.passkeys : null;
   const lang = MAIL_LANGS.includes(i18n.language) ? i18n.language : "en";
 
   /** Where a sign-in goes, however it was made: on, or "check your e-mail" first. */
@@ -974,33 +941,14 @@ export function AuthScreen({
     onSignedIn(session);
   };
 
-  /** A refusal in words (a closed passkey prompt as a note); `spent`: the attempt used the widget's token. */
-  const failed = (err: unknown, context: "signup" | "login", spent: boolean) => {
+  /** A refusal in words (a closed passkey prompt as a note). */
+  const failed = (err: unknown, context: "signup" | "login") => {
     if (passkeyCancelled(err)) {
       setNote(context === "signup" ? t("no passkey was created") : t("no passkey was used"));
     } else {
-      const kind = authErrorKind(err);
-      if (kind === "turnstileRequired") {
-        if (mode === "signin") setLoginCheck(true);
-        // The hub runs a check this page was not told about: ask how sign-up works again.
-        if (!turnstile) setConfigTry((n) => n + 1);
-      }
-      if (kind === "signupClosed" && known) setConfig({ ...known, signup: "closed" });
-      if (kind === "badInvite") {
-        setInviteShown(true);
-        // None was given, and the hub wants one: its sign-up is by invite since this page asked.
-        if (known && !invite.trim()) setConfig({ ...known, signup: "invite", inviteRequired: true });
-        // The page never learnt how sign-up works here: ask again, so the field says whether it is required.
-        else if (!known) setConfigTry((n) => n + 1);
-      }
-      // The hub turned passkeys off since: the password form, and no more passkey wording.
-      if (kind === "passkeysOff") setConfig((c) => (c && c !== "failed" ? { ...c, passkeys: null } : c));
+      // A refused invite opens the field: the code may be mistyped or used up.
+      if (authErrorKind(err) === "badInvite") setInviteShown(true);
       setError(authErrorText(err, context));
-    }
-    if (spent) {
-      // Any answer spent the token: the widget asks again.
-      setCheck(null);
-      setReset((n) => n + 1);
     }
     setBusy(false);
   };
@@ -1019,7 +967,7 @@ export function AuthScreen({
       signedIn(session, "");
       return true;
     } catch (err) {
-      failed(err, "login", false);
+      failed(err, "login");
       return false;
     }
   };
@@ -1066,15 +1014,15 @@ export function AuthScreen({
       setError(null);
       setNote(null);
       try {
-        const session = await passkeySignUp(api, { credentials }, { email: address, invite: invite.trim() || undefined, turnstile: widget ? check : null, lang, rpId: passkeys?.rpId });
+        const session = await passkeySignUp(api, { credentials }, { email: address, invite: invite.trim() || undefined, lang, rpId: passkeys?.rpId });
         setBusy(false);
         signedIn(session, address);
       } catch (err) {
-        failed(err, "signup", true);
+        failed(err, "signup");
       }
       return;
     }
-    // Too short for the hub: said here, before the human check's token is spent on a refusal.
+    // Too short for the hub: said here, before a refusal.
     if (mode === "signup" && [...password].length < PASSWORD_MIN_CHARS) {
       setNote(null);
       setError(t("a password needs at least {{n}} characters", { n: PASSWORD_MIN_CHARS }));
@@ -1086,12 +1034,12 @@ export function AuthScreen({
     try {
       const session =
         mode === "signup"
-          ? await api.signUp(address, password, { invite: invite.trim() || undefined, turnstile: widget ? check : null, lang })
-          : await api.login(address, password, widget ? check : null);
+          ? await api.signUp(address, password, { invite: invite.trim() || undefined, lang })
+          : await api.login(address, password);
       setBusy(false);
       signedIn(session, address);
     } catch (err) {
-      failed(err, mode === "signup" ? "signup" : "login", true);
+      failed(err, mode === "signup" ? "signup" : "login");
     }
   };
 
@@ -1101,21 +1049,18 @@ export function AuthScreen({
         api={api}
         session={waiting.session}
         address={waiting.address}
-        turnstile={turnstile}
         onVerified={(session) => onSignedIn(session)}
         onBack={(message) => {
           setWaiting(null);
           setPassword("");
           if (!message) setEmail("");
           setError(message ?? null);
-          setCheck(null);
           setMode("signin");
         }}
       />
     );
   }
 
-  const signupBlocked = mode === "signup" && (config === null || closed || (inviteRequired && !invite.trim()));
   const choose = (usePassword: boolean) => {
     setWantPassword(usePassword);
     setError(null);
@@ -1174,62 +1119,51 @@ export function AuthScreen({
                 { id: "signup", label: t("sign up") },
               ]}
             />
-            {mode === "signup" && closed ? (
-              <Note>
-                <p data-testid="signup-closed" className="text-xs leading-5 text-muted">
-                  {t("Sign-up is closed on this hub. If you have an account, sign in.")}
-                </p>
-              </Note>
-            ) : (
+            {mode === "signup" && inviteShown && (
+              <Field label={t("invite code (optional)")}>
+                <input
+                  data-testid="auth-invite"
+                  value={invite}
+                  onChange={(e) => setInvite(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  // Asked for: the person just opened it.
+                  autoFocus
+                  className={field}
+                />
+              </Field>
+            )}
+            <Field label={t("e-mail")}>
+              <input
+                data-testid="auth-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                // Signing in, this hub's passkeys show in the field's autofill too.
+                autoComplete={mode === "signin" && passkeys ? "username webauthn" : "username"}
+                autoFocus
+                className={field}
+              />
+            </Field>
+            {method === "password" && (
               <>
-                {mode === "signup" && (inviteRequired || (inviteOffered && inviteShown)) && (
-                  <Field label={inviteRequired ? t("invite code") : t("invite code (optional)")}>
-                    <input
-                      data-testid="auth-invite"
-                      value={invite}
-                      onChange={(e) => setInvite(e.target.value)}
-                      autoComplete="off"
-                      spellCheck={false}
-                      // Asked for: the person just opened it.
-                      autoFocus={!inviteRequired}
-                      className={field}
-                    />
-                  </Field>
-                )}
-                <Field label={t("e-mail")}>
+                <Field label={t("password")}>
                   <input
-                    data-testid="auth-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    // Signing in, this hub's passkeys show in the field's autofill too.
-                    autoComplete={mode === "signin" && passkeys ? "username webauthn" : "username"}
-                    autoFocus
+                    data-testid="auth-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
                     className={field}
                   />
                 </Field>
-                {method === "password" && (
-                  <>
-                    <Field label={t("password")}>
-                      <input
-                        data-testid="auth-password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                        className={field}
-                      />
-                    </Field>
-                    {mode === "signup" && <p className="text-xs text-faint">{t("At least 10 characters. Your password signs you in; it cannot decrypt anything.")}</p>}
-                  </>
-                )}
-                {method === "passkey" && mode === "signup" && (
-                  <p className="text-xs text-faint">{t("A passkey signs you in with your device's screen lock; it cannot decrypt anything.")}</p>
-                )}
-                {widget && <Turnstile key={mode} config={widget} action={mode === "signup" ? "signup" : "login"} onToken={setCheck} reset={reset} />}
-                {mode === "signup" && <SignUpTerms />}
+                {mode === "signup" && <p className="text-xs text-faint">{t("At least 10 characters. Your password signs you in; it cannot decrypt anything.")}</p>}
               </>
             )}
+            {method === "passkey" && mode === "signup" && (
+              <p className="text-xs text-faint">{t("A passkey signs you in with your device's screen lock; it cannot decrypt anything.")}</p>
+            )}
+            {mode === "signup" && <SignUpTerms />}
             <ErrorLine message={error} />
             {note && (
               <p data-testid="passkey-cancelled" className="font-mono text-2xs text-muted">
@@ -1242,7 +1176,7 @@ export function AuthScreen({
                   type="submit"
                   data-testid="passkey-signup"
                   data-variant="primary"
-                  disabled={busy || !email.trim() || signupBlocked || (widget !== null && !check)}
+                  disabled={busy || !email.trim()}
                   className={primary}
                 >
                   {busy && <Loader2 className="size-3.5 animate-spin" />}
@@ -1259,19 +1193,19 @@ export function AuthScreen({
                 type="submit"
                 data-testid={method === "password" ? "password-submit" : "auth-pending"}
                 data-variant="primary"
-                disabled={method === "pending" || busy || !email.trim() || !password || signupBlocked || (widget !== null && !check)}
+                disabled={method === "pending" || busy || !email.trim() || !password}
                 className={primary}
               >
                 {(busy || method === "pending") && <Loader2 className="size-3.5 animate-spin" />}
                 {mode === "signup" ? t("create account") : t("sign in")}
               </button>
             )}
-            {mode === "signup" && !closed && inviteOffered && !inviteShown && (
+            {mode === "signup" && inviteOffered && !inviteShown && (
               <button type="button" data-testid="show-invite" className={quiet} onClick={() => setInviteShown(true)}>
                 {t("have an invite code?")}
               </button>
             )}
-            {passkeys && !(mode === "signup" && closed) && (
+            {passkeys && (
               method === "passkey" ? (
                 <button type="button" data-testid="use-password" className={quiet} onClick={() => choose(true)}>
                   {mode === "signup" ? t("sign up with a password instead") : t("sign in with a password")}

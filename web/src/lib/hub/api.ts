@@ -195,7 +195,7 @@ export interface PasskeysConfig {
   rpId: string;
 }
 
-/** What sign-up asks for (`GET /v1/signup/config`). */
+/** What sign-up asks for, as droppen.app answers it ([`SIGNUP_CONFIG`]). */
 export interface SignupConfig {
   signup: SignupMode;
   inviteRequired: boolean;
@@ -207,7 +207,25 @@ export interface SignupConfig {
   deletion?: DeletionConfig | null;
 }
 
-/** What deleting an account leaves behind (`GET /v1/signup/config` `deletion`). */
+/**
+ * droppen.app's answers, written here instead of asked of the hub: sign-up is
+ * open (an invite code is optional — it may give the account a plan), the
+ * e-mail must be verified before a device joins, passkeys are made for
+ * `droppen.app`, no Turnstile widget is drawn, and a deleted account's
+ * address is held for seven days. The hub no longer answers
+ * `GET /v1/signup/config`, and a site served by another hub shows these same
+ * answers.
+ */
+export const SIGNUP_CONFIG: SignupConfig = {
+  signup: "open",
+  inviteRequired: false,
+  turnstile: null,
+  verification: "required",
+  passkeys: { rpId: "droppen.app" },
+  deletion: { emailHoldDays: 7 },
+};
+
+/** What deleting an account leaves behind ([`SIGNUP_CONFIG`]'s `deletion`). */
 export interface DeletionConfig {
   /** For how many days a deleted account's address cannot sign up again (0: it can at once). */
   emailHoldDays: number;
@@ -848,20 +866,14 @@ export class HubApi {
     return (out.data ?? null) as T;
   }
 
-  /** Who may sign up, the Turnstile widget's page, whether e-mail must be verified, and passkeys (public). */
+  /**
+   * What sign-up asks for, as droppen.app answers it ([`SIGNUP_CONFIG`]). It
+   * used to be asked of the hub (`GET /v1/signup/config`); one service, one
+   * page, so the answers are written here and the request is gone. Sites
+   * served by another hub show the same answers.
+   */
   async signupConfig(): Promise<SignupConfig> {
-    const r = await this.typed<components["schemas"]["SignupConfig"]>((headers) => this.client.GET("/v1/signup/config", { headers }));
-    const signup: SignupMode = r?.signup === "open" || r?.signup === "closed" ? (r.signup as SignupMode) : "invite";
-    const deletion = deletionConfig(r?.deletion);
-    return {
-      signup,
-      inviteRequired: typeof r?.invite_required === "boolean" ? r.invite_required : signup === "invite",
-      turnstile: turnstileConfig(r?.turnstile),
-      verification: r?.verification === "required" ? "required" : "off",
-      passkeys: passkeysConfig(r?.passkeys),
-      // Only from a hub that says it (one from before account deletion says nothing).
-      ...(deletion ? { deletion } : {}),
-    };
+    return { ...SIGNUP_CONFIG, passkeys: SIGNUP_CONFIG.passkeys && { ...SIGNUP_CONFIG.passkeys }, deletion: SIGNUP_CONFIG.deletion && { ...SIGNUP_CONFIG.deletion } };
   }
 
   /**
@@ -1613,20 +1625,6 @@ function signedIn(r: components["schemas"]["SignedIn"]): SignedIn {
   return { account: r.account, token: r.token, expiresMs: r.expires_ms, emailVerified: verification === "off" || r.email_verified !== false, verification };
 }
 
-/** `signup/config`'s `passkeys` (absent, from an older hub, or not of its shape: none). */
-function passkeysConfig(raw: unknown): PasskeysConfig | null {
-  if (!raw || typeof raw !== "object") return null;
-  const rpId = (raw as { rp_id?: unknown }).rp_id;
-  return typeof rpId === "string" && rpId ? { rpId } : null;
-}
-
-/** `signup/config`'s `deletion` (absent, from an older hub, or not of its shape: `null`). */
-function deletionConfig(raw: unknown): DeletionConfig | null {
-  if (!raw || typeof raw !== "object") return null;
-  const days = (raw as { email_hold_days?: unknown }).email_hold_days;
-  return typeof days === "number" && Number.isInteger(days) && days >= 0 ? { emailHoldDays: days } : null;
-}
-
 /** `{challenge, options}` of the shape `create()` (or `get()`) needs, else a 502: nothing is asked of the browser. */
 function passkeyChallenge(raw: unknown, kind: "create" | "get"): PasskeyChallenge<unknown> {
   const bad = () => new HubApiError(502, "bad_options", "the hub's passkey options are not usable");
@@ -1679,18 +1677,6 @@ function reauthBody(proof: Reauth): components["schemas"]["Proof"] {
   return "currentPassword" in proof
     ? { current_password: proof.currentPassword }
     : { passkey: proof.passkey as unknown as components["schemas"]["ReauthPasskey"] };
-}
-
-/** The widget's page, if the hub names a usable one: an http(s) origin, nothing more. */
-function turnstileConfig(raw: { site_key?: unknown; origin?: unknown } | null | undefined): TurnstileConfig | null {
-  if (!raw || typeof raw.site_key !== "string" || !raw.site_key || typeof raw.origin !== "string") return null;
-  try {
-    const url = new URL(raw.origin);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return { siteKey: raw.site_key, origin: url.origin };
-  } catch {
-    return null;
-  }
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);

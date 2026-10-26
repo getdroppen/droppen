@@ -52,32 +52,16 @@ function fakeHub(...answers: { status?: number; body?: unknown; headers?: Record
 
 const SIGNED = { account: "a-1", token: "login-token", expires_ms: 1_000 };
 
-test("sign-up config: who may sign up, the widget's page as a bare origin, whether e-mail is verified, and passkeys", async () => {
-  const { api, sent } = fakeHub(
-    {
-      body: {
-        signup: "open",
-        invite_required: false,
-        turnstile: { site_key: "1x00000000000000000000AA", origin: "https://verify.hub.test/" },
-        verification: "required",
-        passkeys: { rp_id: "hub.test" },
-      },
-    },
-    { body: { signup: "invite", invite_required: true, turnstile: null, verification: "off", passkeys: null } },
-    { body: { signup: "weird", turnstile: { site_key: "k", origin: "javascript:alert(1)" }, passkeys: { rp_id: "" } } },
-  );
-  assert.deepEqual(await api.signupConfig(), {
-    signup: "open",
-    inviteRequired: false,
-    turnstile: { siteKey: "1x00000000000000000000AA", origin: "https://verify.hub.test" },
-    verification: "required",
-    passkeys: { rpId: "hub.test" },
-  });
-  assert.equal(sent[0]!.url, "https://hub.test/v1/signup/config");
-  assert.equal(sent[0]!.method, "GET");
-  assert.deepEqual(await api.signupConfig(), { signup: "invite", inviteRequired: true, turnstile: null, verification: "off", passkeys: null });
-  // An unknown mode is the strictest one; a widget page that is not http(s) is no widget; passkeys with no RP are none.
-  assert.deepEqual(await api.signupConfig(), { signup: "invite", inviteRequired: true, turnstile: null, verification: "off", passkeys: null });
+test("sign-up config: droppen.app's answers, written in the page, with no request", async () => {
+  const { api, sent } = fakeHub();
+  const answers = { signup: "open", inviteRequired: false, turnstile: null, verification: "required", passkeys: { rpId: "droppen.app" }, deletion: { emailHoldDays: 7 } };
+  assert.deepEqual(await api.signupConfig(), answers);
+  assert.deepEqual(await api.signupConfig(), answers);
+  assert.deepEqual(sent, [], "no request is made");
+  // A copy each time: a caller cannot change the page's answers.
+  const config = await api.signupConfig();
+  config.passkeys!.rpId = "elsewhere.test";
+  assert.equal((await api.signupConfig()).passkeys?.rpId, "droppen.app");
 });
 
 test("sign-up sends the invite only when there is one, the widget's token and the mail's language", async () => {
