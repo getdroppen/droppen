@@ -9,13 +9,6 @@ export interface DraftStorage {
 
 export interface SessionDraftSnapshot {
   text: string;
-  revision: string | null;
-  pending: boolean;
-}
-
-export interface SubmittedSessionDraft {
-  text: string;
-  revision: string;
 }
 
 interface StoredSessionDraft {
@@ -27,7 +20,6 @@ interface StoredSessionDraft {
 type DraftListener = (snapshot: SessionDraftSnapshot) => void;
 
 const listeners = new Map<string, Set<DraftListener>>();
-const pendingRevisions = new Map<string, string>();
 let revisionSequence = 0;
 
 function nextRevision(): string {
@@ -35,8 +27,13 @@ function nextRevision(): string {
   return `${Date.now().toString(36)}-${revisionSequence.toString(36)}`;
 }
 
-function decodeSessionDraft(raw: string | null): SessionDraftSnapshot {
-  if (raw === null) return { text: "", revision: null, pending: false };
+interface DecodedSessionDraft {
+  text: string;
+  revision: string | null;
+}
+
+function decodeSessionDraft(raw: string | null): DecodedSessionDraft {
+  if (raw === null) return { text: "", revision: null };
   try {
     const parsed = JSON.parse(raw) as Partial<StoredSessionDraft>;
     if (
@@ -44,12 +41,12 @@ function decodeSessionDraft(raw: string | null): SessionDraftSnapshot {
       typeof parsed.text === "string" &&
       typeof parsed.revision === "string"
     ) {
-      return { text: parsed.text, revision: parsed.revision, pending: false };
+      return { text: parsed.text, revision: parsed.revision };
     }
   } catch {
     // Drafts written before the versioned format were plain strings.
   }
-  return { text: raw, revision: null, pending: false };
+  return { text: raw, revision: null };
 }
 
 function notifySessionDraft(key: string, snapshot: SessionDraftSnapshot): void {
@@ -86,10 +83,10 @@ function draftWrittenAt(raw: string): number {
  * Either can be the newer: this build writes straight to the key
  * {@link claimSessionDraft} returned, without claiming again, and a tab still on
  * an older build writes the old key. Both tabs are in one browser, so their
- * clocks agree. A tie stays the machine's. Clearing a draft removes its key
- * ({@link writeSessionDraft}, {@link clearSessionDraft}) rather than storing
- * an empty one, so a draft cleared after the move is not here to compare: an
- * old key found then is text an older tab wrote since, and it is kept.
+ * clocks agree. A tie stays the machine's. Writing an empty draft removes its
+ * key ({@link writeSessionDraft}) rather than storing an empty one, so a draft
+ * cleared after the move is not here to compare: an old key found then is text
+ * an older tab wrote since, and it is kept.
  */
 export function newerSessionDraft(mine: string, old: string): string {
   return draftWrittenAt(old) > draftWrittenAt(mine) ? old : mine;
@@ -109,39 +106,23 @@ export function readSessionDraftSnapshot(
   key: string,
 ): SessionDraftSnapshot {
   try {
-    const snapshot = decodeSessionDraft(storage.getItem(key));
-    return {
-      ...snapshot,
-      pending:
-        snapshot.revision !== null &&
-        pendingRevisions.get(key) === snapshot.revision,
-    };
+    return { text: decodeSessionDraft(storage.getItem(key)).text };
   } catch {
-    return { text: "", revision: null, pending: false };
+    return { text: "" };
   }
-}
-
-export function readSessionDraft(storage: DraftStorage, key: string): string {
-  return readSessionDraftSnapshot(storage, key).text;
 }
 
 export function writeSessionDraft(
   storage: DraftStorage,
   key: string,
   value: string,
-): SessionDraftSnapshot {
-  const snapshot: SessionDraftSnapshot = {
-    text: value,
-    revision: value ? nextRevision() : null,
-    pending: false,
-  };
-  pendingRevisions.delete(key);
+): void {
   try {
     if (value) {
       const stored: StoredSessionDraft = {
         version: 1,
         text: value,
-        revision: snapshot.revision!,
+        revision: nextRevision(),
       };
       storage.setItem(key, JSON.stringify(stored));
     } else {
@@ -150,58 +131,7 @@ export function writeSessionDraft(
   } catch {
     // storage unavailable: callers keep their in-memory value
   }
-  notifySessionDraft(key, snapshot);
-  return snapshot;
-}
-
-/** Remove only the exact draft revision that was submitted successfully. */
-export function clearSessionDraft(
-  storage: DraftStorage,
-  key: string,
-  expectedRevision: string,
-): boolean {
-  try {
-    const current = decodeSessionDraft(storage.getItem(key));
-    if (current.revision !== expectedRevision) return false;
-    storage.removeItem(key);
-    pendingRevisions.delete(key);
-    notifySessionDraft(key, { text: "", revision: null, pending: false });
-    return true;
-  } catch {
-    pendingRevisions.delete(key);
-    notifySessionDraft(key, { text: "", revision: null, pending: false });
-    return false;
-  }
-}
-
-export function markSessionDraftPending(
-  key: string,
-  submitted: SubmittedSessionDraft,
-): void {
-  pendingRevisions.set(key, submitted.revision);
-  notifySessionDraft(key, { ...submitted, pending: true });
-}
-
-export function restoreSessionDraftAfterFailure(
-  storage: DraftStorage,
-  key: string,
-  submitted: SubmittedSessionDraft,
-): boolean {
-  if (pendingRevisions.get(key) !== submitted.revision) return false;
-  pendingRevisions.delete(key);
-
-  let current: SessionDraftSnapshot;
-  try {
-    current = decodeSessionDraft(storage.getItem(key));
-  } catch {
-    current = { ...submitted, pending: false };
-  }
-  if (current.revision !== submitted.revision) {
-    notifySessionDraft(key, current);
-    return false;
-  }
-  notifySessionDraft(key, { ...submitted, pending: false });
-  return true;
+  notifySessionDraft(key, { text: value });
 }
 
 export function subscribeSessionDraft(key: string, listener: DraftListener): () => void {

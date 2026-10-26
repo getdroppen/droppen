@@ -1,25 +1,21 @@
 // What "still running" means, decided away from any component.
 //
-// Three separate questions live here, and each of them used to be answered
+// Two separate questions live here, and each of them used to be answered
 // somewhere it could not be checked: which children of a session are still
-// out (`liveSubtasks`), whether the floating panel has anything to say
-// (`backgroundPanel`), and whether anything at all is moving across the whole
-// feed (`activeWork`). The drain condition joins them because it has the same
+// out (`liveSubtasks`), and whether the floating panel has anything to say
+// (`backgroundPanel`). The drain condition joins them because it has the same
 // shape — a rule that is easy to get subtly wrong and impossible to see go
 // wrong from the outside.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { components } from "../src/api/schema.js";
 import {
-  activeWork,
   activityBadge,
   backgroundPanel,
-  liveSubtask,
   liveSubtasks,
   panelRows,
   queuedMessagesOf,
   residentAbsenceIsFinal,
-  type ActiveWorkRow,
   type ActivityRow,
   type BackgroundTask,
   type DrivenRow,
@@ -82,7 +78,7 @@ test("a fan-out is listed in full, in the order it was launched", () => {
   );
   // The single-child form still means "the newest one", so the composer strip
   // is unchanged where it still draws it.
-  assert.equal(liveSubtask(items)?.text, "review the diff");
+  assert.equal((liveSubtasks(items).at(-1) ?? null)?.text, "review the diff");
 });
 
 test("children that have reported back drop out, the rest keep their order", () => {
@@ -119,7 +115,7 @@ test("a launch receipt does not retire the child it launched", () => {
     liveSubtasks(items).map((s) => s.text),
     ["audit the replay"],
   );
-  assert.equal(liveSubtask(items)?.id, "u1", "the composer strip agrees with the panel");
+  assert.equal((liveSubtasks(items).at(-1) ?? null)?.id, "u1", "the composer strip agrees with the panel");
 });
 
 test("a background shell stays listed while the CLI is still minding it", () => {
@@ -486,77 +482,11 @@ test("a resident that counts background work and names none of it is believed", 
   assert.deepEqual(panel?.subtasks.map((s) => s.id), ["u1", "u2"]);
 });
 
-/* ── the sidebar's roll-up ──────────────────────────────────────────────── */
-
-function feedRow(over: Partial<ActiveWorkRow> & Pick<ActiveWorkRow, "id">): ActiveWorkRow {
-  return { source: "claude", title: over.id, status: "idle", activity: "idle", ...over };
-}
-
-test("nothing running is drawn as nothing, not as a row of zeroes", () => {
-  assert.equal(activeWork([]), null);
-  assert.equal(activeWork([feedRow({ id: "a" }), feedRow({ id: "b" })]), null);
-});
-
-test("working sessions and background tasks are counted separately", () => {
-  const work = activeWork([
-    feedRow({ id: "a", activity: "working", status: "running", resident: resident({ phase: "working" }) }),
-    feedRow({ id: "b", activity: "working", status: "running", resident: resident({ phase: "working" }) }),
-    feedRow({ id: "c", activity: "background", resident: resident({ background: 3 }) }),
-    feedRow({ id: "d" }),
-  ]);
-  assert.equal(work?.working, 2, "sessions");
-  assert.equal(work?.background, 3, "tasks, not sessions");
-  assert.deepEqual(work?.rows.map((r) => r.id), ["a", "b", "c"], "the idle one is not listed");
-});
-
-test("a busy session's background tasks are counted too", () => {
-  // Counting only the `background` rows would make the total *shrink* when a
-  // session picked up a turn, which is exactly backwards.
-  const work = activeWork([
-    feedRow({
-      id: "a",
-      activity: "working",
-      status: "running",
-      resident: resident({ phase: "working", background: 2 }),
-    }),
-  ]);
-  assert.equal(work?.working, 1);
-  assert.equal(work?.background, 2);
-});
-
-test("background work alone is still news", () => {
-  const work = activeWork([feedRow({ id: "a", activity: "background", resident: resident({ background: 1 }) })]);
-  assert.equal(work?.working, 0);
-  assert.equal(work?.background, 1);
-  assert.equal(work?.rows.length, 1);
-});
-
-test("the badge and the roll-up go quiet with the process, for the same reason", () => {
-  // Both read the resident's own count, which is the number that dies with the
-  // process — nothing a transcript says can inflate it. Pinned here because
-  // they are the other two places the panel's "2 background tasks" was echoed,
-  // and a fix that left either of them saying it would only have moved the
-  // lie: the user's evidence that something was still out.
-  const dead: ActiveWorkRow = {
-    id: "dead",
-    title: "the 13:42 session",
-    source: "claude",
-    scope: "owned",
-    claudeRoot: "managed",
-    status: "idle",
-    activity: "idle",
-    resident: null,
-  };
+test("the badge goes quiet with the process, for the same reason", () => {
+  // The badge reads the resident's own count, which is the number that dies
+  // with the process — nothing a transcript says can inflate it.
+  const dead: ActivityRow = { status: "idle", activity: "idle", resident: null };
   assert.deepEqual(activityBadge(dead), { kind: "idle" }, "no bg ×2 in the sidebar");
-  assert.equal(activeWork([dead]), null, "and no bar over the list saying two tasks are out");
-});
-
-test("working sessions sort above background ones", () => {
-  const work = activeWork([
-    feedRow({ id: "bg", activity: "background", resident: resident({ background: 1 }) }),
-    feedRow({ id: "live", activity: "working", status: "running", resident: resident({ phase: "working" }) }),
-  ]);
-  assert.deepEqual(work?.rows.map((r) => r.id), ["live", "bg"]);
 });
 
 /* ── the queue, as a list rather than a number ──────────────────────────── */
@@ -577,7 +507,6 @@ function drain(over: Partial<QueueDrainState> = {}): QueueDrainState {
     failed: false,
     sendFailed: false,
     sending: false,
-    draftPending: false,
     ...over,
   };
 }
@@ -615,7 +544,6 @@ test("the local Codex queue can steer its head into a running session", () => {
     canSend: false,
     injectionRunning: true,
     sending: false,
-    draftPending: false,
     steering: false,
   };
   assert.equal(localQueueHeadAction(head), "steer");
@@ -629,13 +557,11 @@ test("an idle queue sends normally and Claude never uses the local steer", () =>
     canSend: true,
     injectionRunning: false,
     sending: false,
-    draftPending: false,
     steering: false,
   };
   assert.equal(localQueueHeadAction(head), "send");
   assert.equal(localQueueHeadAction({ ...head, source: "claude", canSend: false, injectionRunning: true }), null);
   assert.equal(localQueueHeadAction({ ...head, sending: true }), null);
-  assert.equal(localQueueHeadAction({ ...head, draftPending: true }), null);
 });
 
 test("a POST that failed does not get retried in a loop", () => {
@@ -644,13 +570,6 @@ test("a POST that failed does not get retried in a loop", () => {
   // drain that only asked "can it go?" would send it again one render later,
   // and again, as fast as the network allows. ▶ is what resumes it.
   assert.equal(shouldDrainQueue(drain({ sendFailed: true })), false);
-});
-
-test("a locked draft holds the queue back", () => {
-  // A question's answer used to be a composer message with its own effect, and
-  // the queue waited a beat for it. It goes to the question's own route now and
-  // never passes through the queue at all.
-  assert.equal(shouldDrainQueue(drain({ draftPending: true })), false);
 });
 
 test("a session that will not take a message is not sent one", () => {

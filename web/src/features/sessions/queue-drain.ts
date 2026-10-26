@@ -59,8 +59,6 @@ export interface QueueDrainState {
   sendFailed: boolean;
   /** A send is in flight. Dispatching now would reorder the queue. */
   sending: boolean;
-  /** A submitted draft is locked pending its send; the composer is not free. */
-  draftPending: boolean;
   /**
    * The head of the queue is not a message the drain may send: one already in
    * flight, one whose send got no answer (`unknown`), or one the user has to
@@ -96,10 +94,9 @@ export function localQueueHeadAction(input: {
   canSend: boolean;
   injectionRunning: boolean;
   sending: boolean;
-  draftPending: boolean;
   steering: boolean;
 }): "send" | "steer" | null {
-  if (input.sending || input.draftPending || input.steering) return null;
+  if (input.sending || input.steering) return null;
   if (input.canSend) return "send";
   // Claude's busy messages have already crossed the wire into its resident
   // queue and are rendered by ServerQueue. A one-shot Codex run is the sole
@@ -116,7 +113,6 @@ export function shouldDrainQueue(state: QueueDrainState): boolean {
     !state.failed &&
     !state.sendFailed &&
     !state.sending &&
-    !state.draftPending &&
     !state.headBlocked
   );
 }

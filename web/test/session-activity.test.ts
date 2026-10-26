@@ -10,7 +10,6 @@ import {
   backgroundPanel,
   bannerCanStop,
   latchOutcome,
-  liveSubtask,
   liveSubtasks,
   normalizeTaskStatus,
   panelRows,
@@ -237,7 +236,7 @@ test("the newest unanswered subagent call is what the banner names", () => {
     item({ kind: "tool_result", resultOf: "u1", text: "done" }),
     item({ kind: "tool_use", toolName: "Task", agent: "a2", toolUseId: "u2", text: "write the tests" }),
   ];
-  assert.deepEqual(liveSubtask(items), {
+  assert.deepEqual(liveSubtasks(items).at(-1) ?? null, {
     id: "u2",
     text: "write the tests",
     meta: null,
@@ -254,7 +253,7 @@ test("a subagent that has already reported back is not still running", () => {
     item({ kind: "tool_use", toolName: "Task", agent: "a1", toolUseId: "u1", text: "explore the repo" }),
     item({ kind: "tool_result", resultOf: "u1", text: "done" }),
   ];
-  assert.equal(liveSubtask(items), null);
+  assert.equal(liveSubtasks(items).at(-1) ?? null, null);
 });
 
 test("a receipt for an async launch is not the child reporting back", () => {
@@ -265,7 +264,7 @@ test("a receipt for an async launch is not the child reporting back", () => {
     item({ kind: "tool_use", toolName: "Task", agent: "a1", toolUseId: "u1", text: "explore the repo" }),
     item({ kind: "tool_result", resultOf: "u1", text: "Async agent launched successfully with ID: agent_01H9" }),
   ];
-  assert.equal(liveSubtask(items)?.id, "u1");
+  assert.equal((liveSubtasks(items).at(-1) ?? null)?.id, "u1");
 });
 
 test("a run_in_background launch is child work too", () => {
@@ -274,7 +273,7 @@ test("a run_in_background launch is child work too", () => {
   const items = [
     item({ kind: "tool_use", toolName: "Bash", background: true, toolUseId: "u1", text: "pnpm build", meta: "watch" }),
   ];
-  assert.deepEqual(liveSubtask(items), {
+  assert.deepEqual(liveSubtasks(items).at(-1) ?? null, {
     id: "u1",
     text: "pnpm build",
     meta: "watch",
@@ -292,9 +291,9 @@ test("a subagent too far back to still be running is not claimed to be", () => {
   // rest of the session. Naming it hours later would be a confident lie.
   const stale = item({ kind: "tool_use", toolName: "Task", agent: "a1", toolUseId: "u1", text: "long dead" });
   const filler = Array.from({ length: 90 }, () => item({ kind: "text", text: "…" }));
-  assert.equal(liveSubtask([stale, ...filler]), null);
+  assert.equal(liveSubtasks([stale, ...filler]).at(-1) ?? null, null);
   // Just inside the window it is still believable.
-  assert.deepEqual(liveSubtask([stale, ...filler.slice(0, 70)]), {
+  assert.deepEqual(liveSubtasks([stale, ...filler.slice(0, 70)]).at(-1) ?? null, {
     id: "u1",
     text: "long dead",
     meta: null,
@@ -311,8 +310,8 @@ test("ordinary tool calls are never mistaken for child work", () => {
     item({ kind: "tool_use", toolName: "Read", toolUseId: "u1", text: "src/main.rs" }),
     item({ kind: "text", role: "assistant", text: "here you go" }),
   ];
-  assert.equal(liveSubtask(items), null);
-  assert.equal(liveSubtask([]), null);
+  assert.equal(liveSubtasks(items).at(-1) ?? null, null);
+  assert.equal(liveSubtasks([]).at(-1) ?? null, null);
 });
 
 /* ── the resident's list and the transcript's, as one list ──────────────── */

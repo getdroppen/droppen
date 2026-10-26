@@ -751,18 +751,6 @@ export function liveSubtasks(items: readonly TranscriptItem[]): LiveSubtask[] {
 }
 
 /**
- * The newest of them, for the one-line form the composer strip draws.
- *
- * Defined on top of the list rather than beside it: two scans with the same
- * "has it reported back" rule would be two chances to disagree about it, and
- * the strip and the panel disagreeing about whether a subagent is alive is a
- * worse bug than either of them being wrong.
- */
-export function liveSubtask(items: readonly TranscriptItem[]): LiveSubtask | null {
-  return liveSubtasks(items).at(-1) ?? null;
-}
-
-/**
  * The floating panel over the transcript, or null when it should not be there.
  *
  * Two states, and they are two different sentences. `background` is the one
@@ -958,59 +946,4 @@ export function backgroundPanel(input: {
     return { kind: "working", count, subtasks };
   }
   return null;
-}
-
-/**
- * One session in the sidebar's roll-up of everything that is moving.
- *
- * [`DrivenRow`] rather than [`ActivityRow`]: the roll-up is handed whole feed
- * summaries, and the fields that say whose process a session is are part of
- * what a row *is* here — the two numbers this bar draws are the resident's
- * own, so a row with no resident contributes nothing to either.
- */
-export type ActiveWorkRow = Pick<SessionSummary, "source" | "id" | "title"> & DrivenRow;
-
-/** What the sidebar's floating bar says, or null when nothing is happening. */
-export interface ActiveWork {
-  /** Sessions with a turn in flight. */
-  working: number;
-  /** Background tasks summed across every session, not a session count. */
-  background: number;
-  /** The rows behind those numbers, working first, then background. */
-  rows: ActiveWorkRow[];
-}
-
-/**
- * Everything moving right now, across every session in the feed.
- *
- * The sidebar already draws a dot per row, which answers "is this one busy"
- * for a row you are looking at — and a scrolled list, a collapsed directory or
- * a filtered view is exactly where that stops being an answer. This is the
- * count that survives all three, so it is drawn where scrolling cannot take it
- * away.
- *
- * Null rather than a zeroed shape when nothing is happening: an empty bar
- * saying "0 sessions working" is a permanent strip of chrome reporting the
- * absence of news.
- */
-export function activeWork(sessions: readonly ActiveWorkRow[]): ActiveWork | null {
-  const rows: ActiveWorkRow[] = [];
-  let working = 0;
-  let background = 0;
-  for (const session of sessions) {
-    const activity = activityOf(session);
-    // Summed over every session, not only the ones listed below: a session
-    // whose turn is in flight is minding its background tasks too, and leaving
-    // those out would make the total shrink when a session got busier.
-    background += residentOf(session)?.background ?? 0;
-    if (activity === "working") {
-      working++;
-      rows.push(session);
-    } else if (activity === "background") {
-      rows.push(session);
-    }
-  }
-  if (rows.length === 0 && background === 0) return null;
-  rows.sort((a, b) => Number(activityOf(b) === "working") - Number(activityOf(a) === "working"));
-  return { working, background, rows };
 }

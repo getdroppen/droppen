@@ -55,9 +55,6 @@ export interface OutgoingMessage {
   state?: OutboxState;
 }
 
-/** The fields a send request carries, from the outbox entry it was made from. */
-export type OutgoingBody = Pick<OutgoingMessage, "text" | "images" | "files">;
-
 /**
  * A UUID v4, without needing a secure context.
  *

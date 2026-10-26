@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  clearSessionDraft,
-  markSessionDraftPending,
-  readSessionDraft,
   readSessionDraftSnapshot,
-  restoreSessionDraftAfterFailure,
   sessionDraftKey,
   subscribeSessionDraft,
   writeSessionDraft,
@@ -37,11 +33,11 @@ test("drafts are isolated by session and empty drafts remove their key", () => {
   writeSessionDraft(storage, first, "first draft");
   writeSessionDraft(storage, second, "second draft");
 
-  assert.equal(readSessionDraft(storage, first), "first draft");
-  assert.equal(readSessionDraft(storage, second), "second draft");
+  assert.equal(readSessionDraftSnapshot(storage, first).text, "first draft");
+  assert.equal(readSessionDraftSnapshot(storage, second).text, "second draft");
 
   writeSessionDraft(storage, first, "");
-  assert.equal(readSessionDraft(storage, first), "");
+  assert.equal(readSessionDraftSnapshot(storage, first).text, "");
   assert.equal(storage.values.has(first), false);
 });
 
@@ -58,72 +54,23 @@ test("unavailable storage falls back without throwing", () => {
     },
   };
 
-  assert.equal(readSessionDraft(unavailable, "draft"), "");
+  assert.equal(readSessionDraftSnapshot(unavailable, "draft").text, "");
   assert.doesNotThrow(() => writeSessionDraft(unavailable, "draft", "text"));
   assert.doesNotThrow(() => writeSessionDraft(unavailable, "draft", ""));
 });
 
-test("a completed send only clears the exact submitted draft revision", () => {
+test("a write is heard by its session's subscribers, and only its own", () => {
   const storage = new MemoryStorage();
-  const key = sessionDraftKey({ machine: LOCAL, source: "codex", id: "race" });
-  const submitted = writeSessionDraft(storage, key, "same text");
-  const newer = writeSessionDraft(storage, key, "same text");
-
-  assert.notEqual(submitted.revision, newer.revision);
-  assert.equal(clearSessionDraft(storage, key, submitted.revision!), false);
-  assert.equal(readSessionDraft(storage, key), "same text");
-  assert.equal(clearSessionDraft(storage, key, newer.revision!), true);
-  assert.equal(readSessionDraft(storage, key), "");
-});
-
-test("a pending send stays stored but is marked hidden until success", () => {
-  const storage = new MemoryStorage();
-  const key = sessionDraftKey({ machine: LOCAL, source: "claude", id: "pending-success" });
-  const states: Array<{ text: string; pending: boolean }> = [];
-  const unsubscribe = subscribeSessionDraft(key, ({ text, pending }) => {
-    states.push({ text, pending });
+  const key = sessionDraftKey({ machine: LOCAL, source: "claude", id: "heard" });
+  const other = sessionDraftKey({ machine: LOCAL, source: "claude", id: "other" });
+  const states: Array<{ text: string }> = [];
+  const unsubscribe = subscribeSessionDraft(key, (snapshot) => {
+    states.push(snapshot);
   });
-  const submitted = writeSessionDraft(storage, key, "pending");
-  const request = { text: submitted.text, revision: submitted.revision! };
-
-  markSessionDraftPending(key, request);
-  assert.deepEqual(readSessionDraftSnapshot(storage, key), {
-    text: "pending",
-    revision: request.revision,
-    pending: true,
-  });
-  assert.equal(clearSessionDraft(storage, key, request.revision), true);
+  writeSessionDraft(storage, other, "not this one");
+  writeSessionDraft(storage, key, "pending");
+  writeSessionDraft(storage, key, "");
   unsubscribe();
-  assert.deepEqual(states, [
-    { text: "pending", pending: false },
-    { text: "pending", pending: true },
-    { text: "", pending: false },
-  ]);
-});
-
-test("a failed send restores its draft when no newer edit exists", () => {
-  const storage = new MemoryStorage();
-  const key = sessionDraftKey({ machine: LOCAL, source: "codex", id: "pending-failure" });
-  const submitted = writeSessionDraft(storage, key, "retry me");
-  const request = { text: submitted.text, revision: submitted.revision! };
-
-  markSessionDraftPending(key, request);
-  assert.equal(restoreSessionDraftAfterFailure(storage, key, request), true);
-  assert.deepEqual(readSessionDraftSnapshot(storage, key), {
-    text: "retry me",
-    revision: request.revision,
-    pending: false,
-  });
-});
-
-test("a failed older send never overwrites a newer draft", () => {
-  const storage = new MemoryStorage();
-  const key = sessionDraftKey({ machine: LOCAL, source: "codex", id: "newer-edit" });
-  const submitted = writeSessionDraft(storage, key, "old");
-  const request = { text: submitted.text, revision: submitted.revision! };
-
-  markSessionDraftPending(key, request);
-  const newer = writeSessionDraft(storage, key, "new");
-  assert.equal(restoreSessionDraftAfterFailure(storage, key, request), false);
-  assert.deepEqual(readSessionDraftSnapshot(storage, key), newer);
+  writeSessionDraft(storage, key, "after unsubscribe");
+  assert.deepEqual(states, [{ text: "pending" }, { text: "" }]);
 });

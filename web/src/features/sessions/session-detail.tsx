@@ -1475,32 +1475,25 @@ function Composer({
       claimSessionDraft(localStorage, session);
       return readSessionDraftSnapshot(localStorage, draftKey);
     } catch {
-      return { text: "", revision: null, pending: false };
+      return { text: "" };
     }
   });
-  const [text, setTextState] = useState(
-    initialDraft.pending ? "" : initialDraft.text,
-  );
-  const [draftPending, setDraftPending] = useState(initialDraft.pending);
+  const [text, setTextState] = useState(initialDraft.text);
   // The machine's offline copy is read-only: nothing is queued for later
   // (architecture doc §4: no offline queue), so the composer is shut, not deferred.
   const readOnlyCopy = useShowingCopy();
   // Another device's session in the local app (its gateway, S1-7): nothing
   // here can go to it — not a message, a model or an attachment — until S2.
   const otherDevice = useInfoOf(useMachine()).readOnly === true;
-  const draftRevisionRef = useRef(initialDraft.revision);
   useEffect(() => {
     return subscribeSessionDraft(draftKey, (snapshot) => {
-      draftRevisionRef.current = snapshot.revision;
-      setDraftPending(snapshot.pending);
-      setTextState(snapshot.pending ? "" : snapshot.text);
+      setTextState(snapshot.text);
     });
   }, [draftKey]);
   const setText = (value: string) => {
     setTextState(value);
     try {
-      const snapshot = writeSessionDraft(localStorage, draftKey, value);
-      draftRevisionRef.current = snapshot.revision;
+      writeSessionDraft(localStorage, draftKey, value);
     } catch {
       // Accessing localStorage itself can be blocked; the in-memory draft still works.
     }
@@ -1710,7 +1703,6 @@ function Composer({
     canSend: detail.canSend,
     injectionRunning,
     sending: send.isPending,
-    draftPending,
     steering: codexSteering,
   });
   // The agent is blocked on a question, so what goes in next is its answer:
@@ -1759,7 +1751,7 @@ function Composer({
   // The entry stays in the outbox, marked `sending`, until the server answers:
   // a page closed mid-send then knows to ask about it, rather than forgetting it.
   const dispatchEntry = (entry: OutgoingMessage | undefined) => {
-    if (dispatching.current || entry === undefined || !detail.canSend || send.isPending || draftPending) {
+    if (dispatching.current || entry === undefined || !detail.canSend || send.isPending) {
       return;
     }
     // `unsent` keeps its id, `failed` gets a new one; see `prepareResend`.
@@ -1791,7 +1783,6 @@ function Composer({
         failed,
         sendFailed: sendRefused,
         sending: send.isPending,
-        draftPending,
         // Never past a message whose fate is unknown, or one waiting on a decision.
         headBlocked: !headSendable(queue),
       })
@@ -1808,7 +1799,6 @@ function Composer({
     if (
       (!message && attachments.length === 0) ||
       send.isPending ||
-      draftPending ||
       readOnlyCopy ||
       anyFailed
     ) {
@@ -1970,7 +1960,7 @@ function Composer({
           text={text}
           onText={setText}
           onTextLive={setTextState}
-          disabled={draftPending || readOnlyCopy}
+          disabled={readOnlyCopy}
           onSubmit={submit}
           placeholder={
             readOnlyCopy
@@ -1986,9 +1976,9 @@ function Composer({
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
-            disabled: send.isPending || draftPending || readOnlyCopy || anyFailed || (!text.trim() && attachments.length === 0),
+            disabled: send.isPending || readOnlyCopy || anyFailed || (!text.trim() && attachments.length === 0),
             label: sendsAnswer ? t("send as your answer") : willQueue ? t("add to queue") : t("send"),
-            busy: send.isPending || draftPending || sendQueued,
+            busy: send.isPending || sendQueued,
             queues: willQueue,
           }}
         />

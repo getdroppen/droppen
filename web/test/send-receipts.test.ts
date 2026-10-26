@@ -49,7 +49,6 @@ const drain = (over: Partial<QueueDrainState> = {}): QueueDrainState => ({
   failed: false,
   sendFailed: false,
   sending: false,
-  draftPending: false,
   ...over,
 });
 
