@@ -35,17 +35,6 @@ async fn message(probe: &Probe, source: &str, id: &str, body: Value) -> (u16, Va
     probe.send("POST", &format!("/api/sessions/{source}/{id}/message"), body).await
 }
 
-// A test named an_old_fork_being_written_now_is_not_mistaken_for_a_fresh_one
-// used to live here, with a `birth_time_is_reliable` helper beside it. Both
-// belonged to the resume-drift guard, which inferred a forked session id from
-// file sizes and birth times because a `--print` child had nothing better to go
-// on. A resident is *told* the id in its `system:init` line, so there is nothing
-// left to infer and no window to get wrong: the guard is dormant (see
-// `inject::ResumeGuard`), its arithmetic is still covered by the `born_in_window`
-// unit tests, and what replaced it end to end is the pair of tests above —
-// following an announced fork, and ignoring a neighbouring transcript whose head
-// names this session.
-
 #[tokio::test]
 async fn a_managed_session_spawns_with_the_account_token_and_config_root() {
     let probe = Probe::start().await;

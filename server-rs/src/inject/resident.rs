@@ -277,8 +277,6 @@ impl Fingerprint {
     /// time a conversation alternated between messages with and without an
     /// attachment — the common case, and the worst possible reason to throw a
     /// warm session away.
-    /// Whether a message asking for `self` can go to the process running as
-    /// `live`.
     ///
     /// `None` on the message side is *no opinion*, not "the default": a send
     /// that named no model, effort or permission is asking for the session as
@@ -5878,10 +5876,6 @@ impl Driver {
             state.state = outcome;
             state.error = error.clone();
             state.finished_at = Some(iso8601(std::time::SystemTime::now()));
-            state.finish_reason = Some(match &error {
-                Some(error) => error.clone(),
-                None => "the turn ended".to_string(),
-            });
         }
         let _ = turn.run.finished.send(true);
         // The phase goes back to idle *before* the notification, and the order is
@@ -6139,12 +6133,10 @@ fn running_turn(id: &str) -> Arc<Run> {
             last_progress: Instant::now(),
             idle_killed: false,
             current_id: id.to_string(),
-            finish_reason: None,
             // The journal entry belongs to the *process*, not to the turn, so a
             // turn ending must never retire it.
             run_id: String::new(),
             lock: None,
-            adopted: false,
         }),
         finished,
     })

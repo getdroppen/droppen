@@ -639,8 +639,6 @@ async fn notify_decorate(drive: &crate::drive::Drive, id: &str, env: &mut Env) {
     crate::notify::inject::decorate(&drive.paths, &drive.instance, Source::Claude, id, env).await;
 }
 
-// --------------------------------------------------- the resume-id drift guard
-
 // ------------------------------------------------------------------ operations
 
 /// What a send did with the message.
@@ -1076,20 +1074,12 @@ struct RunState {
     /// The session id the watchdog checks the transcript mtime of; a codex run
     /// re-points it once the real thread id is known.
     current_id: String,
-    /// How the child ended (`exit code 0`, `killed by SIGTERM`), once it has.
-    finish_reason: Option<String>,
     /// Identifies this run in `runs.json`, so completion removes its own entry.
     run_id: String,
     /// This run's cross-instance claim on the session, held for exactly as long
     /// as the CLI is running. `None` once it has finished, and on a run that
     /// never launched.
     lock: Option<lock::InjectLock>,
-    /// True for a run this server inherited rather than spawned.
-    ///
-    /// It changes only what can be *observed* about the run, never what the run
-    /// is: there is no `Child` to wait on and no stdout to capture, so
-    /// completion is a pid poll and the failure tail stays empty.
-    adopted: bool,
 }
 
 impl RunState {
@@ -1634,30 +1624,6 @@ impl InjectionRegistry {
         }
         self.stop_resident_task(id, task_id)
     }
-
-    /// How many runs the registry remembers. Test/observability only.
-    pub fn len(&self) -> usize {
-        self.runs.lock().expect("injections poisoned").len()
-    }
-
-    /// How many of the runs in flight right now were inherited rather than
-    /// started by this server. Test/observability only.
-    pub fn recovered(&self) -> usize {
-        self.runs
-            .lock()
-            .expect("injections poisoned")
-            .values()
-            .filter(|run| {
-                let state = run.state.lock().expect("run state poisoned");
-                state.adopted && state.state == InjectionRunState::Running
-            })
-            .count()
-    }
-
-    /// Whether nothing has ever run.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// The refusal a claimed session produces, naming the holder when it can.
@@ -1902,10 +1868,8 @@ impl InjectionRegistry {
                 last_progress: Instant::now(),
                 idle_killed: false,
                 current_id: record.session_id.clone(),
-                finish_reason: None,
                 run_id: record.run_id.clone(),
                 lock: Some(claim),
-                adopted: true,
             }),
             finished: finished_tx,
         });
@@ -1965,10 +1929,8 @@ impl InjectionRegistry {
                 last_progress: Instant::now(),
                 idle_killed: false,
                 current_id: record.session_id.clone(),
-                finish_reason: Some(RESTART_NOTE.to_string()),
                 run_id: record.run_id.clone(),
                 lock: None,
-                adopted: true,
             }),
             finished: finished_tx,
         });
@@ -2109,7 +2071,6 @@ fn vanished(state: &mut RunState, source: Source, idle_timeout: Duration) {
     // ended, which is the one thing actually known, and the transcript says
     // what it achieved. Calling it a failure would paint every successful
     // adopted run red.
-    state.finish_reason = Some("exited after the server restarted".to_string());
     if state.interrupted {
         state.state = InjectionRunState::Failed;
         state.error = Some("interrupted from Droppen".to_string());

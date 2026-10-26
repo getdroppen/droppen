@@ -470,10 +470,11 @@ impl RunsFile {
 
     /// Point a run at the session id the CLI actually chose.
     ///
-    /// Only codex needs this: `codex exec` invents its own thread id and
-    /// announces it on stdout, so a run is recorded under a provisional id
-    /// first. Without the rewrite, adoption would re-arm the idle watchdog on a
-    /// transcript that does not exist.
+    /// Claude's `--fork-session` adopt path needs this: the CLI may keep the
+    /// session under an id of its own choosing rather than the one the fork
+    /// asked for, and announces it on `system:init`, so a run is recorded under
+    /// a provisional id first. Without the rewrite, adoption would re-arm the
+    /// idle watchdog on a transcript that does not exist.
     pub fn repoint(&self, run_id: &str, session_id: &str) {
         let session_id = session_id.to_string();
         self.patch("the session a run belongs to", run_id, move |run| {
