@@ -671,11 +671,6 @@ pub fn assert_under_uploads(paths: &Paths, requested: &Path) -> Result<PathBuf, 
     Ok(target)
 }
 
-/// Whether `requested` sits under the uploads directory. See [`assert_under_uploads`].
-pub fn is_upload_path(paths: &Paths, requested: &Path) -> bool {
-    assert_under_uploads(paths, requested).is_ok()
-}
-
 // ---------------------------------------------------------------------------
 // Listing and reading
 // ---------------------------------------------------------------------------
@@ -968,15 +963,6 @@ async fn save_attachment(paths: &Paths, file: &UploadedFile) -> Result<Attachmen
 /// never sent leaves its files behind forever; nothing else ever collects them.
 /// Failures are ignored throughout — a sweep that cannot run is not a reason to
 /// refuse to serve, and the next one will try again.
-///
-/// The TypeScript runs this once at import time, which a Rust module has no
-/// equivalent of; it is exposed as a plain function instead. Note that it is
-/// **not** called from [`routes`] and so nothing schedules it yet: `routes` is
-/// handed a router and nothing else, while the [`Paths`] this needs only arrive
-/// with the request state. Spawning it from there would also mean a home
-/// directory guessed from the environment, which is exactly what this module
-/// refuses to do. The right caller is the application bootstrap in
-/// `src/app.rs`, where the path set is built.
 pub async fn sweep_uploads(paths: &Paths) {
     let Ok(mut reader) = tokio::fs::read_dir(paths.uploads_dir()).await else {
         // No uploads directory yet: nothing to sweep.
@@ -1236,10 +1222,10 @@ mod tests {
     fn upload_containment_excludes_the_directory_itself() {
         let paths = paths();
         let uploads = paths.uploads_dir();
-        assert!(is_upload_path(&paths, &uploads.join("abc/x.png")));
-        assert!(!is_upload_path(&paths, &uploads), "the uploads directory is not itself an attachment");
-        assert!(!is_upload_path(&paths, Path::new("/etc/passwd")));
-        assert!(!is_upload_path(&paths, &uploads.join("../../../etc/passwd")));
+        assert!(assert_under_uploads(&paths, &uploads.join("abc/x.png")).is_ok());
+        assert!(assert_under_uploads(&paths, &uploads).is_err(), "the uploads directory is not itself an attachment");
+        assert!(assert_under_uploads(&paths, Path::new("/etc/passwd")).is_err());
+        assert!(assert_under_uploads(&paths, &uploads.join("../../../etc/passwd")).is_err());
     }
 
     #[test]
