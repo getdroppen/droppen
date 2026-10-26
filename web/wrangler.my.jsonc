@@ -6,6 +6,7 @@
     "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
+  "previews": {},
   "routes": [
     { "pattern": "my.droppen.app", "custom_domain": true }
   ]

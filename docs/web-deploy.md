@@ -15,7 +15,8 @@ Cloudflare API token。
 | Build command | 留空（部署脚本自己安装和构建） | 同左 |
 | Deploy command | `pnpm deploy:web:my` | `pnpm deploy:web:www` |
 | 构建变量 | `NODE_VERSION=22.23.3` | 同左 |
-| Preview builds | 关（预览会跑 `wrangler preview`，不是生产命令） | 同左 |
+| Preview builds | 关 | 开（Worker Previews） |
+| Preview command | — | `pnpm preview:web:www` |
 | Build caching | 开 | 开 |
 
 Root 必须是仓库根：`web/package.json` 依赖 workspace 包
@@ -28,11 +29,13 @@ Root 必须是仓库根：`web/package.json` 依赖 workspace 包
 - `pnpm deploy:web:my` — 清理 `web/dist`、`pnpm install --frozen-lockfile`、
   以 `DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app` 和 `SOURCE_DATE_EPOCH`
   构建、用 `wrangler@4.152.0` 部署到 `droppen-my`；
-- `pnpm deploy:web:www` — 同上，`DROPPEN_WEB_ROLE=site`，部署到 `droppen-www`。
+- `pnpm deploy:web:www` — 同上，`DROPPEN_WEB_ROLE=site`，部署到 `droppen-www`；
+- `pnpm preview:web:my` / `pnpm preview:web:www` — 同样安装和构建，最后一步换成
+  `wrangler preview`，发布到该分支自己的 Preview。
 
-两个命令各自完整，Workers Builds 的 Deploy command 填其中一个即可。
+每个命令各自完整，Workers Builds 的 Deploy command / Preview command 填对应的一个。
 `.github/workflows/web-deploy.yml`（需要 `WEB_DEPLOY=true` 与 Cloudflare
-secrets）调用同样的两个命令，作为手动/备用通道。
+secrets）调用同样的两个 deploy 命令，作为手动/备用通道。
 
 ## 手动触发
 
