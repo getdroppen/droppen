@@ -1,6 +1,7 @@
 // The page's language (`i18n/index.ts`): an explicit choice as it is; `auto`
 // the first of the browser's languages, in its order, that the app speaks
-// (en, zh-CN, zh-TW, ja), else English. `<html lang>` says it from the start.
+// (en, zh-CN, zh-TW, ja), else English. `<html lang>` says it from the start,
+// and the first frame is drawn once the language's translations are in.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -37,11 +38,24 @@ stubGlobal("document", { documentElement: html });
 stubGlobal("window", new EventTarget());
 setBrowser(["fr-FR", "zh-HK", "en-US"], "fr-FR");
 
-const { default: i18n, applyLanguage, browserLanguages, matchLanguage, pickLanguage, resolveLanguage, storedLanguagePref } = await import("../src/i18n/index.js");
+const { default: i18n, applyLanguage, browserLanguages, languageShown, matchLanguage, pickLanguage, resolveLanguage, rootInLanguage, storedLanguagePref } = await import(
+  "../src/i18n/index.js"
+);
+// main.tsx's root, drawn into straight away: what each frame says, in the words i18next has when it is drawn.
+const frames: string[] = [];
+rootInLanguage({ render: () => void frames.push(i18n.t("check again")), unmount: () => undefined }).render(null);
+const drawnAtOnce = frames.length;
 
 test("the first page is in the reader's language, and <html lang> says so from the start", () => {
   assert.equal(i18n.language, "zh-TW");
   assert.equal(html.lang, "zh-TW");
+});
+
+test("the first frame waits for the reader's translations, and is drawn in them", async () => {
+  assert.equal(drawnAtOnce, 0, "nothing drawn before the zh-TW chunk is in");
+  await languageShown();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(frames, ["重新檢查"], "drawn once, in zh-TW: never English first");
 });
 
 test("each tag maps to a language the app speaks, or to none", () => {
@@ -93,34 +107,40 @@ test("the browser's languages are navigator.languages in order, then navigator.l
   assert.equal(resolveLanguage("auto"), "en");
 });
 
-test("a choice is kept for the next boot, wins over the browser, and auto gives the browser back", () => {
+test("a choice is kept for the next boot, wins over the browser, and auto gives the browser back", async () => {
   setBrowser(["fr-FR", "zh-CN"], "fr-FR");
-  applyLanguage("ja");
+  const switching = applyLanguage("ja");
   assert.equal(storage.getItem("rh.lang"), "ja");
   assert.equal(storedLanguagePref(), "ja");
   assert.equal(resolveLanguage(storedLanguagePref()), "ja", "what the next boot shows");
+  assert.equal(i18n.language, "zh-TW", "the page stays in its language until the ja chunk is in");
+  await switching;
   assert.equal(i18n.language, "ja");
   assert.equal(html.lang, "ja");
+  assert.equal(i18n.t("check again"), "もう一度確認", "with the ja translations");
 
-  applyLanguage("auto");
+  await applyLanguage("auto");
   assert.equal(storedLanguagePref(), "auto");
   assert.equal(i18n.language, "zh-CN");
   assert.equal(html.lang, "zh-CN");
+  assert.equal(i18n.t("check again"), "重新检查");
 
   storage.setItem("rh.lang", "klingon");
   assert.equal(storedLanguagePref(), "auto", "a value the app does not know is auto");
 });
 
-test("auto follows the browser when its languages change; an explicit choice does not", () => {
-  applyLanguage("auto");
+test("auto follows the browser when its languages change; an explicit choice does not", async () => {
+  await applyLanguage("auto");
   setBrowser(["ja-JP"], "ja-JP");
   window.dispatchEvent(new Event("languagechange"));
+  await languageShown();
   assert.equal(i18n.language, "ja");
   assert.equal(html.lang, "ja");
 
-  applyLanguage("en");
+  await applyLanguage("en");
   setBrowser(["zh-TW"], "zh-TW");
   window.dispatchEvent(new Event("languagechange"));
+  await languageShown();
   assert.equal(i18n.language, "en");
   assert.equal(html.lang, "en");
 });

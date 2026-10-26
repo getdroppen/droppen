@@ -1,18 +1,7 @@
 import i18n from "i18next";
+import type { Root } from "react-dom/client";
 import { initReactI18next } from "react-i18next";
-import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "./cloud-devices";
-import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "./cross-device";
-import { hostsJa, hostsZhCN, hostsZhTW } from "./hosts";
-import { ja } from "./ja";
-import { linkJa, linkZhCN, linkZhTW } from "./link";
-import { moveJa, moveZhCN, moveZhTW } from "./move";
-import { onboardingJa, onboardingZhCN, onboardingZhTW } from "./onboarding";
-import { setupJa, setupZhCN, setupZhTW } from "./setup";
-import { signOutJa, signOutZhCN, signOutZhTW } from "./sign-out";
-import { updatesJa, updatesZhCN, updatesZhTW } from "./updates";
-import { welcomeJa, welcomeZhCN, welcomeZhTW } from "./welcome";
-import { zhCN } from "./zh-CN";
-import { zhTW } from "./zh-TW";
+import { languageLoader, rootAfter } from "./load";
 import { pickLanguage, type Language } from "./match";
 
 export { matchLanguage, pickLanguage, type Language } from "./match";
@@ -20,6 +9,12 @@ export { matchLanguage, pickLanguage, type Language } from "./match";
 /**
  * Translation keys ARE the English source strings, so English needs no
  * resource file and a missing translation falls back to readable English.
+ * Every other language is a chunk of its own (`lang-*.ts`), fetched when the
+ * page first shows it: an English page downloads none of them, any other
+ * page its own alone. So every table is a file of one language
+ * (`cloud-devices.ja.ts`; a file two languages share would be a chunk both
+ * download), and `cloud-devices.ts` and the like name a feature's three for
+ * the tests.
  */
 export type LanguagePref = "auto" | Language;
 
@@ -70,32 +65,53 @@ function setDocumentLanguage(lang: string): void {
   if (typeof document !== "undefined" && document.documentElement) document.documentElement.lang = lang;
 }
 
-/** The server pref is the source of truth; localStorage caches it for boot. */
-export function applyLanguage(pref: LanguagePref): void {
+const loader = languageLoader(i18n, {
+  "zh-CN": () => import("./lang-zh-CN"),
+  "zh-TW": () => import("./lang-zh-TW"),
+  ja: () => import("./lang-ja"),
+});
+
+/** `lang`'s translations into i18next, fetched once (see `LanguageLoader.load`). */
+export const loadLanguage = loader.load;
+
+/** Settles once the language asked for last shows: its translations in, or English if they did not load. */
+export const languageShown = loader.shown;
+
+/**
+ * The server pref is the source of truth; localStorage caches it for boot.
+ * The page changes language once that language's translations are in (or to
+ * English if they cannot be had), which the returned promise waits for.
+ */
+export function applyLanguage(pref: LanguagePref): Promise<void> {
   try {
     localStorage.setItem(CACHE_KEY, pref);
   } catch {
     // storage unavailable: language still applies for this page
   }
-  const lang = resolveLanguage(pref);
-  if (i18n.language !== lang) void i18n.changeLanguage(lang);
-  setDocumentLanguage(lang);
+  return loader.show(resolveLanguage(pref));
+}
+
+/**
+ * `root` (main.tsx's), drawing its first frame once the page's language
+ * shows: in the reader's language from the start, never English first.
+ */
+export function rootInLanguage(root: Root): Root {
+  return rootAfter(root, languageShown());
 }
 
 const initial = resolveLanguage(storedLanguagePref());
 
+// Synchronous: with `resources` given (empty: each language comes as its
+// chunk loads), init finishes before it returns, in `initial`.
 void i18n.use(initReactI18next).init({
-  resources: {
-    "zh-CN": { translation: { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...signOutZhCN, ...updatesZhCN, ...hostsZhCN, ...moveZhCN, ...setupZhCN, ...welcomeZhCN, ...zhCN } },
-    "zh-TW": { translation: { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...signOutZhTW, ...updatesZhTW, ...hostsZhTW, ...moveZhTW, ...setupZhTW, ...welcomeZhTW, ...zhTW } },
-    ja: { translation: { ...onboardingJa, ...crossDeviceJa, ...linkJa, ...cloudDevicesJa, ...signOutJa, ...updatesJa, ...hostsJa, ...moveJa, ...setupJa, ...welcomeJa, ...ja } },
-  },
+  resources: {},
   lng: initial,
   fallbackLng: false,
   keySeparator: false,
   nsSeparator: false,
   interpolation: { escapeValue: false },
 });
+void loader.show(initial);
 
 // `<html lang>` says the page's language from the first paint on (the shell
 // is `en` until a script runs), and follows every change after.
@@ -105,7 +121,7 @@ i18n.on("languageChanged", setDocumentLanguage);
 // `auto` follows the browser when its languages change while the page is open.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("languagechange", () => {
-    if (storedLanguagePref() === "auto") applyLanguage("auto");
+    if (storedLanguagePref() === "auto") void applyLanguage("auto");
   });
 }
 

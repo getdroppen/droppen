@@ -63,7 +63,7 @@ class FakeRequest {
   return reply(404, { error: `unexpected request: ${req.url}` });
 };
 
-const { default: i18n } = await import("../src/i18n/index.js");
+const { default: i18n } = await import("./i18n-all.js");
 const { ApiError } = await import("../src/api/errors.js");
 const { authStatus, currentUser, forgetAuthStatus, getToken, setToken } = await import("../src/lib/auth.js");
 const { localOpenRefusal, SetupPage, SetupProblemLine, SetupView, setupFormProblem, setupRefusal, submitSetup, normalizeSetupCode } =

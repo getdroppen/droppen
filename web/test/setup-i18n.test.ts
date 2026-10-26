@@ -25,7 +25,7 @@ import { STEP01_STRINGS } from "../src/features/setup/tools-step.js";
 import { LANDED, PROMPTS } from "../src/features/setup/first-model.js";
 
 const SETUP = { "zh-CN": welcomeZhCN, "zh-TW": welcomeZhTW, ja: welcomeJa } as const;
-/** What the app had before this table: the feature tables (the setup page's, `i18n/setup.ts`, included) and the main one, as `i18n/index.ts` merges them. */
+/** What the app had before this table: the feature tables (the setup page's, `i18n/setup.ts`, included) and the main one, as `i18n/lang-*.ts` merge them. */
 const EXISTING = {
   "zh-CN": { ...onboardingZhCN, ...crossDeviceZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...setupZhCN, ...zhCN },
   "zh-TW": { ...onboardingZhTW, ...crossDeviceZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...setupZhTW, ...zhTW },

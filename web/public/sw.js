@@ -36,7 +36,9 @@
  * - precache: the build writes the assets it boots from into PRECACHE.
  *   Installing it fetches whatever of the boot set is not cached (and good)
  *   yet — the release's new app chunk, in the background, before the reload
- *   that needs it;
+ *   that needs it. A page boots from its language's translations too (a
+ *   chunk per language but English, LANGUAGES): those of the languages this
+ *   browser shows are precached with it, and no other;
  * - only real assets are kept under /assets/: never the HTML a server answers
  *   for a path it does not have, which cached under a script's name would be
  *   handed to the module loader for good.
@@ -54,6 +56,10 @@ const SHELL_SCRIPTS = [];
  * machine origin its shell's marker names. Empty in a normal build, whose
  * shell marker is this origin's own. */
 const HUB_ORIGIN = "";
+/* Filled in by the build: each language's translations but English's (its
+ * words are the keys), `{prefix, files}` — the files, and how the chunk's
+ * name starts in every build (`/assets/lang-ja-`). */
+const LANGUAGES = {};
 
 /* Where the offline shell is kept: every SPA route is served the same index.html. */
 const SHELL = "/";
@@ -197,6 +203,30 @@ async function fetchListed(req, path) {
   return null;
 }
 
+/* The files of the languages this browser shows, as much a part of its boot
+ * set as PRECACHE: a language whose chunk is in the cache from an earlier
+ * build (a page showed it), or whose chunk of this build the browser's HTTP
+ * cache has (a page fetched it before any worker saw its requests: the first
+ * install), which `only-if-cached` asks without going to the network. A
+ * language this browser has not shown is fetched when a page first shows
+ * it, and kept then, as a lazy chunk is. */
+async function shownLanguages(cache) {
+  const kept = (await cache.keys()).map((req) => new URL(req.url).pathname);
+  const out = [];
+  for (const { prefix, files } of Object.values(LANGUAGES)) {
+    if (kept.some((path) => path.startsWith(prefix)) || (await httpCached(files[0]))) out.push(...files);
+  }
+  return out;
+}
+
+async function httpCached(url) {
+  try {
+    return (await fetch(url, { cache: "only-if-cached", mode: "same-origin" })).ok;
+  } catch {
+    return false;
+  }
+}
+
 /* What the page gets instead of an asset whose bytes are not this build's. */
 function refused(path) {
   return new Response(`${path}: its bytes are not the ones this build lists (sha256); not served\n`, {
@@ -223,7 +253,7 @@ self.addEventListener("install", (e) => {
     (async () => {
       try {
         const cache = await caches.open(CACHE);
-        for (const url of PRECACHE) {
+        for (const url of [...PRECACHE, ...(await shownLanguages(cache))]) {
           const hit = await cache.match(url);
           if (hit !== undefined && (await assetMatches(url, hit))) continue;
           const res = await fetchListed(url, url);

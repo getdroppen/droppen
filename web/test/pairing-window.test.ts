@@ -368,7 +368,7 @@ test("sign in again, and the hub will not register a new device: the sign-in goe
 });
 
 test("the hub's refusals read in words, in the reader's language — never its message; an unknown one by its code", async () => {
-  const { default: i18n } = await import("../src/i18n/index.js");
+  const { default: i18n } = await import("./i18n-all.js");
   const { errorText } = await import("../src/features/cloud/ui.js");
   const e = (status: number, code: string) => new HubApiError(status, code, `RAW HUB MESSAGE ${code}`);
   const cases: [HubApiError | TypeError, string, string][] = [

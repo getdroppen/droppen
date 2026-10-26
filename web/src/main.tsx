@@ -29,7 +29,7 @@ import { startKbNative } from "./lib/kb-native";
 import { startLocalOpen } from "./lib/auth";
 import { startLocalShell } from "./lib/machines/shells/local";
 import { registerSw } from "./lib/sw-register";
-import "./i18n";
+import { rootInLanguage } from "./i18n";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -65,7 +65,9 @@ if (!isCloud() && !returning) {
   // the router asks who it is (`lib/auth.ts`).
   startLocalOpen();
 }
-const root = createRoot(document.getElementById("root")!);
+// Whichever page this is, its first frame waits for the reader's language
+// (a chunk of its own, unless English): never English first (`i18n/index.ts`).
+const root = rootInLanguage(createRoot(document.getElementById("root")!));
 if (returning) {
   registerSw();
   root.render(

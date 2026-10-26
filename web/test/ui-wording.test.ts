@@ -164,7 +164,7 @@ test("the scan catches each way text reaches the screen, and nothing that is cod
 });
 
 test("errors a device's channel, a relay or an enrollment can end in read in the reader's language, never as “machine”", async () => {
-  const { default: i18n } = await import("../src/i18n/index.js");
+  const { default: i18n } = await import("./i18n-all.js");
   const { errorText, knownText } = await import("../src/features/cloud/ui.js");
   const { AccountError } = await import("../src/lib/hub/account.js");
   const { MachineClosedError } = await import("../src/features/cloud/cloud-transport.js");

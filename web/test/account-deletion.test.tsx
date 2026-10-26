@@ -29,7 +29,7 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
-import i18next from "../src/i18n/index.js";
+import i18next from "./i18n-all.js";
 import { createV2Genesis, FakeKeysHub } from "./fake-keys-hub.js";
 
 class MemoryStorage {
@@ -49,7 +49,7 @@ Object.assign(globalThis, { localStorage: new MemoryStorage(), sessionStorage: n
 Object.assign(globalThis, { PublicKeyCredential: function PublicKeyCredential() {} });
 Object.defineProperty(globalThis, "navigator", { value: { credentials: { create: async () => null, get: async () => null } }, configurable: true });
 
-// The app's own tables (`i18n/index.ts`): the page's words and `errorText`'s are read from them.
+// The app's own tables (`i18n/index.ts`, every language loaded: `i18n-all.ts`): the page's words and `errorText`'s are read from them.
 function draw(node: React.ReactElement, lng = "en"): string {
   void i18next.changeLanguage(lng);
   return renderToStaticMarkup(<I18nextProvider i18n={i18next}>{node}</I18nextProvider>);

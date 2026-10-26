@@ -22,7 +22,7 @@ after(() => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
-const { default: i18n } = await import("../src/i18n/index.js");
+const { default: i18n } = await import("./i18n-all.js");
 const { KeysUnreadableScreen } = await import("../src/features/cloud/cloud-app.js");
 
 type Root = ReturnType<typeof createRoot>;

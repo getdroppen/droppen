@@ -20,7 +20,7 @@ after(() => void setTimeout(() => process.exit(), 50));
 const { createRoot } = await import("react-dom/client");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { I18nextProvider } = await import("react-i18next");
-const { default: i18n } = await import("../src/i18n/index.js");
+const { default: i18n } = await import("./i18n-all.js");
 const { CodeShown, countdown, PairingScreen, PairingStopped, pairingActions } = await import("../src/features/cloud/pairing-screen.js");
 const { AuthScreen } = await import("../src/features/cloud/cloud-app.js");
 const { PAIRING_RESUME_KEY } = await import("../src/features/cloud/sign-out.js");

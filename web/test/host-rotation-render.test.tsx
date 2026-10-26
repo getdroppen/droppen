@@ -504,7 +504,7 @@ test("replaced elsewhere: red, said without alarm, and — asked first — “ad
 });
 
 test("a join or an enrollment refused for a retired key reads as “add it again under a new identity”", async () => {
-  const { default: global } = await import("../src/i18n/index.js");
+  const { default: global } = await import("./i18n-all.js");
   const { errorText } = await import("../src/features/cloud/ui.js");
   const { AccountError } = await import("../src/lib/hub/account.js");
   const { RULES } = await import("../src/lib/e2e/index.js");
