@@ -170,6 +170,9 @@ const zhCN: Bundle = {
   // The beta's caveat, under that section
   "Droppen is in beta. Its encryption has had internal security reviews, not an external audit. In a browser, the page code as loaded can use your keys, and could copy them out.":
     "Droppen 目前是测试版。加密设计做过内部安全评审，还没有外部审计。在浏览器里，当次加载的页面代码能用你的私钥，也能把它们复制出去。",
+  // The same caveat, whole, on /security.
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
 
   // Footer
   "Your AI keeps working, wherever you are.": "AI 接着干活，你在哪都能接手。",
@@ -292,6 +295,9 @@ const zhTW: Bundle = {
 
   "Droppen is in beta. Its encryption has had internal security reviews, not an external audit. In a browser, the page code as loaded can use your keys, and could copy them out.":
     "Droppen 目前是測試版。加密設計做過內部安全審查，還沒有外部稽核。在瀏覽器裡，當次載入的頁面程式碼能用你的私密金鑰，也能把它們複製出去。",
+  // The same caveat, whole, on /security.
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
 
   "Your AI keeps working, wherever you are.": "AI 接著工作，你在哪都能接手。",
 };
@@ -415,6 +421,9 @@ const ja: Bundle = {
 
   "Droppen is in beta. Its encryption has had internal security reviews, not an external audit. In a browser, the page code as loaded can use your keys, and could copy them out.":
     "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザでは、読み込んだページのコードが秘密鍵を使え、持ち出すこともできます。",
+  // The same caveat, whole, on /security.
+  "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
+    "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
 
   "Your AI keeps working, wherever you are.": "AI は動き続ける。どこにいても続きから。",
 };
