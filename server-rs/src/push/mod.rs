@@ -168,16 +168,7 @@ fn insecure_endpoints_allowed() -> bool {
 /// does not follow redirects, so an endpoint cannot 3xx its way to somewhere
 /// this would have refused.
 fn endpoint_is_acceptable(endpoint: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(endpoint) else {
-        return false;
-    };
-    match url.scheme() {
-        "https" => true,
-        "http" if insecure_endpoints_allowed() => {
-            matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
-        }
-        _ => false,
-    }
+    crate::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
 }
 
 /// The public key browsers subscribe against, minting the keypair on first ask.
@@ -255,18 +246,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 /// One shared client: building one means building a rustls configuration, which
 /// is far more expensive than the request it would carry.
-static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .user_agent(concat!("remote-hand/", env!("CARGO_PKG_VERSION")))
-        .timeout(SEND_TIMEOUT)
-        // RFC 8030 push endpoints never redirect, so following one can only be a
-        // way past `endpoint_is_acceptable`'s first-hop check — a 3xx to
-        // `http://127.0.0.1:<port>/…` would otherwise reach loopback-only
-        // services on this host. Refuse to follow any redirect.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()
-});
+static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| crate::outbound::no_redirect_client(SEND_TIMEOUT));
 
 /// When each session last had a notification sent for it.
 static SENT_AT: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -295,14 +275,12 @@ fn throttle_allows(tag: &str) -> bool {
 /// a log line — enough to tell FCM from Mozilla from a loopback test, and none
 /// of the secret.
 fn endpoint_origin(endpoint: &str) -> String {
-    match reqwest::Url::parse(endpoint) {
-        Ok(url) => match (url.host_str(), url.port()) {
-            (Some(host), Some(port)) => format!("{}://{host}:{port}", url.scheme()),
-            (Some(host), None) => format!("{}://{host}", url.scheme()),
-            (None, _) => format!("{}://<no-host>", url.scheme()),
-        },
-        Err(_) => "<unparseable>".to_string(),
+    // Empty keeps this module's log spelling; the shared rule answers with `""`
+    // for it, which is what the notify endpoint's API-facing mask wants.
+    if endpoint.is_empty() {
+        return "<unparseable>".to_string();
     }
+    crate::outbound::endpoint_origin(endpoint)
 }
 
 /// What one push service said.

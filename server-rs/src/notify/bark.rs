@@ -49,14 +49,8 @@ pub const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_NOTIFY_ALLOW_INSECURE_END
 /// [`endpoint_is_acceptable`]'s first-hop check could still reach
 /// `http://127.0.0.1:<port>/…` — that is, the loopback-only services on this
 /// host, including this server's own API.
-static CLIENT: std::sync::LazyLock<Option<reqwest::Client>> = std::sync::LazyLock::new(|| {
-    reqwest::Client::builder()
-        .user_agent(concat!("remote-hand/", env!("CARGO_PKG_VERSION")))
-        .timeout(SEND_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()
-});
+static CLIENT: std::sync::LazyLock<Option<reqwest::Client>> =
+    std::sync::LazyLock::new(|| crate::outbound::no_redirect_client(SEND_TIMEOUT));
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
@@ -109,16 +103,7 @@ pub fn normalize_endpoint(raw: &str) -> Option<String> {
 /// A *first-hop* check, which is why the shared `CLIENT` refuses to follow
 /// redirects.
 pub fn endpoint_is_acceptable(endpoint: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(endpoint) else {
-        return false;
-    };
-    match url.scheme() {
-        "https" => true,
-        "http" if insecure_endpoints_allowed() => {
-            matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
-        }
-        _ => false,
-    }
+    crate::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
 }
 
 /// An endpoint's scheme, host and port, and never its path.
@@ -130,17 +115,7 @@ pub fn endpoint_is_acceptable(endpoint: &str) -> bool {
 /// enough to tell `api.day.app` from a self-hosted server, and none of the
 /// secret.
 pub fn endpoint_origin(endpoint: &str) -> String {
-    if endpoint.is_empty() {
-        return String::new();
-    }
-    match reqwest::Url::parse(endpoint) {
-        Ok(url) => match (url.host_str(), url.port()) {
-            (Some(host), Some(port)) => format!("{}://{host}:{port}", url.scheme()),
-            (Some(host), None) => format!("{}://{host}", url.scheme()),
-            (None, _) => format!("{}://<no-host>", url.scheme()),
-        },
-        Err(_) => "<unparseable>".to_string(),
-    }
+    crate::outbound::endpoint_origin(endpoint)
 }
 
 /// An endpoint a person can recognise but not use.
