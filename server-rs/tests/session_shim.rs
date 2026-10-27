@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use remote_hand_server::inject::shim::{self, LinkError, Output, Sidecars, Spawn};
 
+mod common;
+
 /// Point `shim_program` at the binary cargo just built for this test.
 ///
 /// Set once for the whole process rather than per test: it is a process-global,
@@ -79,10 +81,17 @@ async fn claude_outlives_the_server_that_started_it() {
 
     // The server is upgraded: this process's end of everything goes away.
     drop(link);
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // The new server finds the socket and picks the session back up.
-    let mut link = shim::attach(&sidecars).await.expect("the shim is still there");
+    // The new server finds the socket and picks the session back up. Retried
+    // rather than slept on: the shim lets its old link go on its own schedule,
+    // and a flat pause is a guess about a machine.
+    let sidecars_ref = &sidecars;
+    let mut link = common::wait_for_async(
+        "the shim to accept a reattach",
+        Duration::from_secs(5),
+        move || async move { shim::attach(sidecars_ref).await.ok() },
+    )
+    .await;
     assert_eq!(link.claude_pid(), claude, "the same claude, still mid-session");
     assert!(link.shim_pid().is_none(), "the shim belongs to a server that is gone");
     assert_eq!(

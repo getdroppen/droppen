@@ -493,21 +493,17 @@ async fn the_list_carries_both_backends_newest_first() {
 
 /// Write a one-entry claude transcript whose `cwd` is `cwd`.
 fn seed_claude_session(home: &std::path::Path, id: &str, cwd: &std::path::Path) {
-    let project = home.join(".claude/projects/-seeded");
-    std::fs::create_dir_all(&project).expect("project dir");
-    std::fs::write(
-        project.join(format!("{id}.jsonl")),
-        format!(
-            "{}\n",
-            json!({
-                "type": "user",
-                "cwd": cwd.to_string_lossy(),
-                "timestamp": "2024-05-01T10:00:00.000Z",
-                "message": { "content": [{ "type": "text", "text": "hello" }] },
-            })
-        ),
-    )
-    .expect("seed transcript");
+    common::seed_transcript(
+        &home.join(".claude"),
+        "-seeded",
+        id,
+        &[json!({
+            "type": "user",
+            "cwd": cwd.to_string_lossy(),
+            "timestamp": "2024-05-01T10:00:00.000Z",
+            "message": { "content": [{ "type": "text", "text": "hello" }] },
+        })],
+    );
 }
 
 #[tokio::test]

@@ -23,8 +23,9 @@ mod support;
 use std::path::Path;
 use std::time::Duration;
 
+use remote_hand_server::instance::DEFAULT_INSTANCE;
 use serde_json::{json, Value};
-use support::{plan_slow_cli, Probe};
+use support::{common, plan_slow_cli, Probe};
 
 const SESSION: &str = "dddddddd-4444-4444-8444-dddddddddddd";
 
@@ -550,9 +551,10 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     );
 
     // Then the turn is under way, in claude's hands rather than only marked.
-    wait_for(
-        || recorded_runs(&journal).first().is_some_and(|run| run["turn_at"].is_u64()),
+    common::wait_for(
         "the first message to be taken into a turn",
+        Duration::from_secs(20),
+        || recorded_runs(&journal).first().is_some_and(|run| run["turn_at"].is_u64()),
     )
     .await;
     assert_eq!(support::wait_for_prompts(&workspace, 1).await, vec!["carry on".to_string()]);
@@ -579,7 +581,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     assert!(record["turn_at"].is_u64(), "and so is the turn in front of it: {record}");
 
     unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
-    wait_for(|| !alive(first.pid), "the server to die").await;
+    common::wait_for("the server to die", Duration::from_secs(20), || !alive(first.pid)).await;
     assert!(alive(cli_pid), "the CLI must survive a SIGKILL aimed at the server's whole process group");
     // The dead server's claim died with its descriptor — no stale lock, and
     // nothing to detect.
@@ -644,7 +646,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     // returns, which is before the child has necessarily reached its first
     // line, so "how many CLIs ran" is only a stable question once at least one
     // of them has said so.
-    wait_for(|| support::call_count(&workspace) >= 1, "the CLI to record its call").await;
+    common::wait_for("the CLI to record its call", Duration::from_secs(20), || support::call_count(&workspace) >= 1).await;
     assert_eq!(support::call_count(&workspace), 1, "a second CLI must never have been spawned");
 
     // Nothing here was given the chance to tidy up after itself, which is the
@@ -653,7 +655,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     // own `sleep` is left running on the developer's machine.
     unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
     unsafe { libc::kill(-(cli_pid as libc::pid_t), libc::SIGKILL) };
-    wait_for(|| !alive(cli_pid), "the CLI to be cleaned up").await;
+    common::wait_for("the CLI to be cleaned up", Duration::from_secs(20), || !alive(cli_pid)).await;
 }
 
 /// A server started from the real binary, on a home directory the test owns.
@@ -690,45 +692,8 @@ impl Drop for KillGroupOnDrop {
 }
 
 async fn spawn_server(home: &Path) -> Spawned {
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
-    command
-        .arg("serve")
-        .env("APP_HOME_DIR", home)
-        // No login: not a test of authentication (`tests/auth.rs` is).
-        .env("APP_AUTH__ENABLED", "false")
-        .env("APP_SERVER__PORT", "0")
-        .env("APP_SERVER__HOST", "127.0.0.1")
-        // The fake `claude` is on this process's PATH, and the child inherits
-        // it, which is what makes the spawned server drive a fake CLI too.
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        // A group of its own, so the test can kill the group without killing
-        // itself — and so the CLI, which is not in it, demonstrably survives.
-        .process_group(0)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(false);
-    let mut child = command.spawn().expect("spawn the server binary");
-    let pid = child.id().expect("the server has a pid");
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-
-    let port_file = home.join(".local/share/remote-hand/instances/default/server.port");
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|t| t.trim().parse::<u16>().ok()) {
-            let candidate: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
-            if tokio::net::TcpStream::connect(candidate).await.is_ok() {
-                return Spawned { pid, addr: candidate };
-            }
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the server never recorded a port it was listening on"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let spawned = common::spawn_server(home, DEFAULT_INSTANCE, &[]).await;
+    Spawned { pid: spawned.pid, addr: spawned.addr }
 }
 
 /// The one record in the journal, as it stands right now.
@@ -751,14 +716,6 @@ fn queued_texts(record: &Value) -> Vec<&str> {
         .iter()
         .map(|queued| queued["text"].as_str().expect("a queued message has text"))
         .collect()
-}
-
-async fn wait_for(mut done: impl FnMut() -> bool, what: &str) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while !done() {
-        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 fn alive(pid: u32) -> bool {
@@ -784,58 +741,15 @@ fn flock_is_free(path: &Path) -> bool {
 
 /// A one-shot HTTP request against a server in another process.
 async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
-    http(addr, "GET", path, None).await.1
+    let (_, _, body) = common::http(addr, "GET", path, &[], &[]).await;
+    String::from_utf8_lossy(&body).into_owned()
 }
 
 async fn http_json(addr: std::net::SocketAddr, method: &str, path: &str, body: &str) -> (u16, Value) {
-    let (status, raw) = http(addr, method, path, Some(body)).await;
+    let (status, _, raw) = common::http(addr, method, path, &[("Content-Type", "application/json")], body.as_bytes()).await;
+    let raw = String::from_utf8_lossy(&raw).into_owned();
     (
         status,
         serde_json::from_str(&raw).unwrap_or_else(|error| panic!("expected JSON ({error}): {raw}")),
     )
-}
-
-async fn http(addr: std::net::SocketAddr, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        request.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", body.len()));
-    }
-    request.push_str("\r\n");
-    if let Some(body) = body {
-        request.push_str(body);
-    }
-    stream.write_all(request.as_bytes()).await.expect("write");
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.expect("read");
-    let (head, body) = response.split_once("\r\n\r\n").expect("malformed HTTP response");
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    let body = if head.to_lowercase().contains("transfer-encoding: chunked") {
-        dechunk(body)
-    } else {
-        body.to_string()
-    };
-    (status, body)
-}
-
-fn dechunk(body: &str) -> String {
-    let mut out = String::new();
-    let mut rest = body;
-    while let Some((size, remainder)) = rest.split_once("\r\n") {
-        let size = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
-        if size == 0 || remainder.len() < size {
-            break;
-        }
-        out.push_str(&remainder[..size]);
-        rest = remainder[size..].strip_prefix("\r\n").unwrap_or("");
-    }
-    out
 }

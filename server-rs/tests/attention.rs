@@ -22,12 +22,7 @@ const SILENT_ID: &str = "44444444-4444-4444-8444-444444444444";
 
 /// Write a transcript of raw JSONL entries into the local Claude root.
 fn seed(home: &Path, id: &str, entries: &[Value]) -> PathBuf {
-    let project = home.join(".claude/projects/-workspace");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let path = project.join(format!("{id}.jsonl"));
-    let body: String = entries.iter().map(|entry| format!("{entry}\n")).collect();
-    std::fs::write(&path, body).expect("seed transcript");
-    path
+    common::seed_transcript(&home.join(".claude"), "-workspace", id, entries)
 }
 
 fn user(at: &str, text: &str) -> Value {

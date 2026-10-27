@@ -8,14 +8,7 @@ use support::{common, Probe};
 const SECRET: &str = "sk-ant-oat01-TESTSECRETVALUE0123456789";
 
 async fn create(probe: &Probe, label: &str, secret: &str) -> Value {
-    probe
-        .send_ok(
-            "POST",
-            "/api/accounts",
-            json!({"label": label, "kind": "oauth_token", "secret": secret}),
-            201,
-        )
-        .await
+    probe.create_account(label, secret).await
 }
 
 /// One account out of the list, by id — the list holds more than one.

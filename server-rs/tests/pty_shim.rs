@@ -24,9 +24,10 @@ use remote_hand_server::sessions::Paths;
 use remote_hand_server::shutdown::Cleanups;
 use remote_hand_server::terminals::{Chunk, CreateSpec, Registry};
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
+
+mod common;
 
 // ------------------------------------------------------------------- harness
 
@@ -109,11 +110,9 @@ impl Boot {
         // and, on a loaded one, quietly too short. What the successor needs on
         // the other side of it is a shim that answers when dialled, so wait for
         // that: as long as it takes, and loudly if it never comes.
-        wait_for(
-            || sockets.iter().all(|socket| shim_answers(socket)),
-            "the shims to answer a fresh dial",
-            20,
-        )
+        common::wait_for("the shims to answer a fresh dial", Duration::from_secs(20), || {
+            sockets.iter().all(|socket| shim_answers(socket))
+        })
         .await;
     }
 
@@ -133,7 +132,8 @@ impl Boot {
     }
 
     async fn get_json(&self, path: &str) -> Value {
-        let (status, body) = http_request(self.addr, "GET", path, None).await;
+        let (status, _, body) = common::http(self.addr, "GET", path, &[], &[]).await;
+        let body = String::from_utf8_lossy(&body).into_owned();
         assert_eq!(status, 200, "GET {path} -> {status}: {body}");
         serde_json::from_str(&body).expect("json")
     }
@@ -221,31 +221,6 @@ impl Socket {
     }
 }
 
-/// A one-shot HTTP/1.1 request, returning `(status, body)`.
-async fn http_request(addr: SocketAddr, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        request.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", body.len()));
-    }
-    request.push_str("\r\n");
-    if let Some(body) = body {
-        request.push_str(body);
-    }
-    stream.write_all(request.as_bytes()).await.expect("write");
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.expect("read");
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").expect("malformed HTTP response");
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    (status, body.to_string())
-}
-
 /// Ask a shim who it is minding, without disturbing anyone else's link.
 ///
 /// `u64::MAX` as the cursor is the "peek" idiom: the ring clamps it to the head,
@@ -272,17 +247,6 @@ fn alive(pid: u32) -> bool {
 /// line of this function runs.
 fn shim_answers(socket: &Path) -> bool {
     !socket.exists() || std::os::unix::net::UnixStream::connect(socket).is_ok()
-}
-
-/// Poll `condition` until it holds, or fail after `seconds`.
-async fn wait_for(mut condition: impl FnMut() -> bool, what: &str, seconds: u64) {
-    for _ in 0..(seconds * 50) {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("timed out waiting for {what}");
 }
 
 // --------------------------------------------------------- adoption, in process
@@ -335,7 +299,7 @@ async fn a_terminal_is_adopted_across_a_restart_with_the_same_shell() {
     socket.read_until(&["echoed:still-here"], "the adopted shell to answer").await;
 
     second.halt_and_kill().await;
-    wait_for(|| !alive(shell_pid), "the shell to be killed with the test", 10).await;
+    common::wait_for("the shell to be killed with the test", Duration::from_secs(10), || !alive(shell_pid)).await;
 }
 
 /// The golden test: a terminal that is producing output the whole time a
@@ -487,7 +451,7 @@ async fn a_tombstoned_terminal_is_reported_and_swept_rather_than_adopted() {
     // tombstone exists for.
     remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
     let sidecars = Sidecars::new(&shims, &info.id);
-    wait_for(|| sidecars.tombstoned(), "the shim to record the exit", 10).await;
+    common::wait_for("the shim to record the exit", Duration::from_secs(10), || sidecars.tombstoned()).await;
 
     let second = Boot::start(home.path(), DEFAULT_INSTANCE).await;
     assert!(
@@ -516,7 +480,7 @@ async fn a_socket_whose_shim_was_killed_is_swept_rather_than_adopted() {
     unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
     remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
     let sidecars = Sidecars::new(&shims, &info.id);
-    wait_for(|| !alive(shim_pid), "the shim to die", 10).await;
+    common::wait_for("the shim to die", Duration::from_secs(10), || !alive(shim_pid)).await;
     assert!(sidecars.socket().exists(), "the point of this test is the socket that was left behind");
     assert!(!sidecars.tombstoned(), "and that there is no tombstone to explain it");
 
@@ -754,10 +718,17 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     let home = tempfile::tempdir().expect("tempdir");
     let shims = shim_dir(home.path(), DEFAULT_INSTANCE);
 
-    let first = spawn_server(home.path()).await;
-    let created = http_request(first.addr, "POST", "/api/terminals", Some(r#"{"title":"across processes"}"#)).await;
-    assert_eq!(created.0, 200, "create -> {}: {}", created.0, created.1);
-    let id = serde_json::from_str::<Value>(&created.1).expect("json")["id"]
+    let first = common::spawn_server(home.path(), DEFAULT_INSTANCE, &[]).await;
+    let (status, _, body) = common::http(
+        first.addr,
+        "POST",
+        "/api/terminals",
+        &[("Content-Type", "application/json")],
+        br#"{"title":"across processes"}"#,
+    )
+    .await;
+    assert_eq!(status, 200, "create -> {status}: {}", String::from_utf8_lossy(&body));
+    let id = serde_json::from_slice::<Value>(&body).expect("json")["id"]
         .as_str()
         .expect("id")
         .to_string();
@@ -765,14 +736,14 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
 
     // The whole process group, so nothing survives by being merely a child.
     unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
-    wait_for(|| !alive(first.pid), "the server to die", 10).await;
+    common::wait_for("the server to die", Duration::from_secs(10), || !alive(first.pid)).await;
     assert!(
         alive(shell_pid),
         "the shell must survive a SIGKILL aimed at the server's whole process group"
     );
 
-    let second = spawn_server(home.path()).await;
-    let listed: Value = serde_json::from_str(&http_request(second.addr, "GET", "/api/terminals", None).await.1).expect("json");
+    let second = common::spawn_server(home.path(), DEFAULT_INSTANCE, &[]).await;
+    let listed: Value = serde_json::from_slice(&common::http(second.addr, "GET", "/api/terminals", &[], &[]).await.2).expect("json");
     let terminals = listed["terminals"].as_array().expect("array");
     assert_eq!(terminals.len(), 1, "the second process adopts what the first left: {listed}");
     assert_eq!(terminals[0]["id"], id.as_str());
@@ -792,62 +763,13 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
     remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
     unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
-    wait_for(|| !alive(shell_pid), "the shell to be cleaned up", 10).await;
+    common::wait_for("the shell to be cleaned up", Duration::from_secs(10), || !alive(shell_pid)).await;
     // Nothing here was given the chance to tidy up after itself, which is the
     // point; the socket is outside the tempdir, so the test removes it.
     let socket = Sidecars::new(&shims, &id).socket();
     let _ = std::fs::remove_file(&socket);
     if let Some(parent) = socket.parent().filter(|parent| parent.starts_with("/tmp/remote-hand-")) {
         let _ = std::fs::remove_dir(parent);
-    }
-}
-
-/// A server started from the real binary, on a home directory the test owns.
-struct Spawned {
-    pid: u32,
-    addr: SocketAddr,
-}
-
-async fn spawn_server(home: &Path) -> Spawned {
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
-    command
-        .arg("serve")
-        .env("APP_HOME_DIR", home)
-        // No login: not a test of authentication (`tests/auth.rs` is).
-        .env("APP_AUTH__ENABLED", "false")
-        .env("APP_SERVER__PORT", "0")
-        .env("APP_SERVER__HOST", "127.0.0.1")
-        // A group of its own, so the test can kill the group without killing
-        // itself — and so a shim, which takes a group of its own again, is
-        // demonstrably outside it.
-        .process_group(0)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(false);
-    let mut child = command.spawn().expect("spawn the server binary");
-    let pid = child.id().expect("the server has a pid");
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-
-    // The bound port is written into the instance directory precisely so
-    // something other than the server can find it.
-    let port_file = dirs(home, DEFAULT_INSTANCE).port_file();
-    let mut addr = None;
-    for _ in 0..500 {
-        if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|text| text.trim().parse::<u16>().ok()) {
-            let candidate: SocketAddr = ([127, 0, 0, 1], port).into();
-            if tokio::net::TcpStream::connect(candidate).await.is_ok() {
-                addr = Some(candidate);
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    Spawned {
-        pid,
-        addr: addr.expect("the server never recorded a port it was listening on"),
     }
 }
 

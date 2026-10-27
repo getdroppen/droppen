@@ -140,11 +140,7 @@ impl FakeEndpoint {
 
     /// Wait until at least `n` requests have arrived, or fail the test.
     async fn wait_for(&self, n: usize) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while self.count() < n {
-            assert!(std::time::Instant::now() < deadline, "expected {n} push request(s), got {}", self.count());
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        common::wait_for(&format!("{n} push request(s)"), Duration::from_secs(10), || self.count() >= n).await;
     }
 
     /// Give anything still in flight a chance to land, for asserting an absence.
@@ -198,8 +194,6 @@ fn seed_spoken_session(probe: &Probe, id: &str) {
     let workspace = probe.workspace();
     // Owned by this server: the fixture is driven with a send, and only an owned
     // session can be.
-    let project = probe.managed_root().join("projects").join("-workspace");
-    std::fs::create_dir_all(&project).expect("project dir");
     let entries = [
         json!({
             "type": "user",
@@ -213,8 +207,7 @@ fn seed_spoken_session(probe: &Probe, id: &str) {
             "message": {"content": [{"type": "text", "text": "All three sections are done and the numbers reconcile."}]},
         }),
     ];
-    let body: String = entries.iter().map(|entry| format!("{entry}\n")).collect();
-    std::fs::write(project.join(format!("{id}.jsonl")), body).expect("seed transcript");
+    common::seed_transcript(&probe.managed_root(), "-workspace", id, &entries);
 }
 
 /// Run one injected turn to completion.

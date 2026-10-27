@@ -9,7 +9,7 @@ mod common;
 use std::path::Path;
 use std::time::SystemTime;
 
-use common::TestServer;
+use common::{write_jsonl, TestServer};
 use remote_hand_server::sessions::iso8601;
 use serde_json::Value;
 
@@ -23,13 +23,6 @@ fn today() -> String {
 /// integer and fail.
 fn number(value: &Value) -> f64 {
     value.as_f64().unwrap_or_else(|| panic!("expected a number, got {value}"))
-}
-
-/// Write a JSONL transcript, one entry per line.
-fn write_jsonl(path: &Path, entries: &[Value]) {
-    std::fs::create_dir_all(path.parent().expect("a parent directory")).expect("transcript dir");
-    let body: String = entries.iter().map(|entry| format!("{entry}\n")).collect();
-    std::fs::write(path, body).expect("seed transcript");
 }
 
 /// Two Claude assistant turns and one Codex `token_count`, all dated today.

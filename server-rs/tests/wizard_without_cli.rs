@@ -25,17 +25,8 @@ async fn a_missing_cli_fails_the_request_instead_of_opening_a_dead_terminal() {
         json!({ "error": "the `claude` CLI is not on PATH, so the token wizard cannot start" })
     );
 
-    let account = {
-        let (status, raw) = server
-            .json(
-                "POST",
-                "/api/accounts",
-                &json!({ "label": "Work", "kind": "oauth_token", "secret": format!("sk-ant-oat01-{}", "A".repeat(70)) }),
-            )
-            .await;
-        assert_eq!(status, 201, "{raw}");
-        serde_json::from_str::<Value>(&raw).expect("json")
-    };
+    let secret = format!("sk-ant-oat01-{}", "A".repeat(70));
+    let account = common::create_account(&server, "Work", &secret).await;
     let id = account["id"].as_str().expect("id").to_string();
     let (status, body) = server.json("POST", &format!("/api/accounts/{id}/usage-login"), &json!({})).await;
     assert_eq!(status, 500, "{body}");

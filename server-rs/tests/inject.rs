@@ -18,17 +18,7 @@ const OWNED_ID: &str = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 const EXTERNAL_ID: &str = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
 
 async fn stored_account(probe: &Probe) -> String {
-    probe
-        .send_ok(
-            "POST",
-            "/api/accounts",
-            json!({"label": "Work", "kind": "oauth_token", "secret": SECRET}),
-            201,
-        )
-        .await["id"]
-        .as_str()
-        .expect("id")
-        .to_string()
+    probe.create_account_id("Work", SECRET).await
 }
 
 async fn message(probe: &Probe, source: &str, id: &str, body: Value) -> (u16, Value) {
@@ -266,12 +256,7 @@ async fn an_account_the_start_rule_named_is_checked_again_at_the_spawn() {
     let workspace = probe.workspace();
     let default = stored_account(&probe).await;
     const SPARE_SECRET: &str = "sk-ant-oat01-TESTSPAREVALUE0123456789";
-    let spare = probe
-        .send_ok("POST", "/api/accounts", json!({"label": "Spare", "kind": "oauth_token", "secret": SPARE_SECRET}), 201)
-        .await["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
+    let spare = probe.create_account_id("Spare", SPARE_SECRET).await;
     probe.send_ok("PUT", "/api/accounts/default", json!({"accountId": default}), 200).await;
     let start = |dir: &str, body: Value| {
         let (probe, cwd) = (&probe, workspace.join(dir));
@@ -891,9 +876,19 @@ async fn an_interrupted_codex_run_releases_the_composer_for_the_queued_message()
         json!({"type": "event_msg", "timestamp": "2026-09-11T10:00:02.000Z", "payload": {"type": "task_started"}})
     )
     .expect("start codex turn");
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    let working = probe.get_json(&format!("/api/sessions/codex/{id}")).await;
+    let path = format!("/api/sessions/codex/{id}");
+    let path = path.as_str();
+    let server = &probe;
+    let working = common::wait_for_async(
+        "the codex turn to start",
+        std::time::Duration::from_secs(10),
+        move || async move {
+            let detail = server.get_json(path).await;
+            (detail["summary"]["activity"] == "working").then_some(detail)
+        },
+    )
+    .await;
     assert_eq!(working["summary"]["activity"], "working", "{working}");
     assert_eq!(working["canSend"], true, "App Server accepts queued messages while busy");
     assert_eq!(working["summary"]["resident"]["phase"], "working");

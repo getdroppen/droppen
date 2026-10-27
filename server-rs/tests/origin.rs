@@ -8,15 +8,8 @@
 
 mod common;
 
+use common::header;
 use serde_json::Value;
-
-/// Case-insensitive header lookup over a raw response head.
-fn header(head: &str, name: &str) -> Option<String> {
-    head.lines()
-        .filter_map(|line| line.split_once(':'))
-        .find(|(key, _)| key.trim().eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.trim().to_string())
-}
 
 #[tokio::test]
 async fn a_request_without_an_origin_is_untouched() {

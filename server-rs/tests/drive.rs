@@ -445,25 +445,18 @@ async fn an_idle_session_reports_no_injection_at_all() {
 /// to disagree, and letting the filesystem date the writes would make the order
 /// depend on how fast the test ran.
 fn seed_dated_session(root: &std::path::Path, id: &str, cwd: &str, created: &str, mtime_secs: u64) {
-    let project = root.join("projects").join("-workspace");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let path = project.join(format!("{id}.jsonl"));
-    std::fs::write(
-        &path,
-        format!(
-            "{}\n",
-            json!({
-                "type": "user",
-                "cwd": cwd,
-                "timestamp": created,
-                "message": {"content": [{"type": "text", "text": "hello"}]},
-            })
-        ),
-    )
-    .expect("seed transcript");
-    let file = std::fs::OpenOptions::new().write(true).open(&path).expect("open to date");
-    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime_secs);
-    file.set_times(std::fs::FileTimes::new().set_modified(when)).expect("set mtime");
+    let path = common::seed_transcript(
+        root,
+        "-workspace",
+        id,
+        &[json!({
+            "type": "user",
+            "cwd": cwd,
+            "timestamp": created,
+            "message": {"content": [{"type": "text", "text": "hello"}]},
+        })],
+    );
+    common::set_mtime(&path, mtime_secs);
 }
 
 /// A session id that is a plain uuid, distinguished by `n`.

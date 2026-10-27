@@ -12,14 +12,14 @@
 //! script's own `$PWD` is the one place a test can leave it a note.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
-#[path = "common/mod.rs"]
-mod common;
+mod support;
+
+use support::common;
 
 /// The token the fake prints; 70 body characters, as a real one has.
 fn token() -> String {
@@ -112,8 +112,6 @@ exit 0
     )
 }
 
-static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
-
 /// Put the fake `claude` on `PATH`, once per test binary.
 ///
 /// `PATH` is process-global and the harness runs tests in threads, so this is
@@ -122,23 +120,8 @@ static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// Everything a single test needs to vary lives under that test's own data
 /// directory instead.
 fn ensure_fake_claude_on_path() {
-    FAKE_BIN.get_or_init(|| {
-        let dir = tempfile::Builder::new()
-            .prefix("remote-hand-wizard-bin-")
-            .tempdir()
-            .expect("fake bin dir")
-            .keep();
-        let path = dir.join("claude");
-        std::fs::write(&path, fake_claude()).expect("write fake claude");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        }
-        let existing = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{existing}", dir.display()));
-        dir
-    });
+    let script = fake_claude();
+    support::fake_bin("remote-hand-wizard-bin-", &[("claude", &script)]);
 }
 
 async fn start() -> common::TestServer {
@@ -159,37 +142,37 @@ async fn post(server: &common::TestServer, path: &str, body: Value, expect: u16)
 
 /// Poll a capture until it leaves `pending`.
 async fn settle(server: &common::TestServer, capture_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let status = server.get_json(&format!("/api/accounts/setup-token/{capture_id}")).await;
-        if status["status"] != json!("pending") {
-            return status;
-        }
-        assert!(Instant::now() < deadline, "capture {capture_id} never settled: {status}");
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    let path = format!("/api/accounts/setup-token/{capture_id}");
+    let path = path.as_str();
+    common::wait_for_async(
+        &format!("capture {capture_id} to settle"),
+        Duration::from_secs(15),
+        move || async move {
+            let status = server.get_json(path).await;
+            (status["status"] != json!("pending")).then_some(status)
+        },
+    )
+    .await
 }
 
 /// Wait until `predicate` holds of the live terminal list, or give up.
 async fn wait_for_terminals(server: &common::TestServer, what: &str, predicate: impl Fn(&Value) -> bool) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    let predicate = &predicate;
+    common::wait_for_async(&format!("terminals to {what}"), Duration::from_secs(15), move || async move {
         let list = server.get_json("/api/terminals").await;
-        if predicate(&list) {
-            return list;
-        }
-        assert!(Instant::now() < deadline, "terminals never {what}: {list}");
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+        predicate(&list).then_some(list)
+    })
+    .await
 }
 
 /// Wait until a path stops existing, which the wizard's cleanup does off-thread.
 async fn wait_gone(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while path.exists() {
-        assert!(Instant::now() < deadline, "{} was never removed", path.display());
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    common::wait_for_async(
+        &format!("{} to be removed", path.display()),
+        Duration::from_secs(15),
+        move || async move { (!path.exists()).then_some(()) },
+    )
+    .await
 }
 
 fn lists_terminal(list: &Value, id: &str) -> bool {

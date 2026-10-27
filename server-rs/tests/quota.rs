@@ -16,14 +16,7 @@ const USAGE: &str = concat!(
 
 /// A stored, verified account whose probe directory answers `/usage`.
 async fn probing_account(probe: &Probe, label: &str, secret: &str) -> String {
-    let account = probe
-        .send_ok(
-            "POST",
-            "/api/accounts",
-            json!({"label": label, "kind": "oauth_token", "secret": secret}),
-            201,
-        )
-        .await;
+    let account = probe.create_account(label, secret).await;
     let id = account["id"].as_str().expect("id").to_string();
     plan_auth(&probe.data_dir().join("accounts").join(&id).join("cwd"), r#"{"loggedIn": true}"#);
     probe.send_ok("POST", &format!("/api/accounts/{id}/usage-verify"), json!({}), 200).await;
@@ -82,14 +75,7 @@ async fn a_config_dir_that_reports_nothing_is_not_logged_in() {
 #[tokio::test]
 async fn an_account_that_never_opted_in_is_never_probed() {
     let probe = Probe::start().await;
-    let account = probe
-        .send_ok(
-            "POST",
-            "/api/accounts",
-            json!({"label": "Unverified", "kind": "oauth_token", "secret": "sk-ant-oat01-UNVERIFIED0123"}),
-            201,
-        )
-        .await;
+    let account = probe.create_account("Unverified", "sk-ant-oat01-UNVERIFIED0123").await;
     let id = account["id"].as_str().expect("id");
     let config_dir = probe.data_dir().join("accounts").join(id).join("claude");
     plan_usage(&config_dir, USAGE);

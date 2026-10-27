@@ -43,16 +43,12 @@ async fn next_frame_of(stream: &mut FeedStream, kind: &str) -> Value {
 }
 
 fn seed_session(home: &Path) {
-    let project = home.join(".claude/projects/-Users-me-proj");
-    std::fs::create_dir_all(&project).expect("project dir");
-    std::fs::write(
-        project.join(format!("{SESSION_ID}.jsonl")),
-        format!(
-            "{}\n",
-            r#"{"type":"user","cwd":"/Users/me/proj","timestamp":"2026-05-01T10:00:00.000Z","message":{"content":[{"type":"text","text":"watch me"}]}}"#
-        ),
-    )
-    .expect("seed transcript");
+    common::seed_transcript(
+        &home.join(".claude"),
+        "-Users-me-proj",
+        SESSION_ID,
+        &[serde_json::json!({"type":"user","cwd":"/Users/me/proj","timestamp":"2026-05-01T10:00:00.000Z","message":{"content":[{"type":"text","text":"watch me"}]}})],
+    );
 }
 
 #[tokio::test]

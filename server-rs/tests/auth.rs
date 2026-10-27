@@ -21,6 +21,7 @@
 
 mod common;
 
+use common::header;
 use std::path::Path;
 
 use remote_hand_server::auth::users::UsersStore;
@@ -41,14 +42,6 @@ fn accounts(home: &Path, instance: &str) -> UsersStore {
 /// Put an account in the instance a server is about to be started on.
 async fn seed_account(home: &Path, name: &str, password: &str) {
     accounts(home, DEFAULT_INSTANCE).add(name, password).await.expect("seed account");
-}
-
-/// Case-insensitive header lookup over a raw response head.
-fn header(head: &str, name: &str) -> Option<String> {
-    head.lines()
-        .filter_map(|line| line.split_once(':'))
-        .find(|(key, _)| key.trim().eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.trim().to_string())
 }
 
 /// A `GET` carrying a bearer token.
@@ -79,30 +72,9 @@ async fn json_as(server: &common::TestServer, method: &str, path: &str, token: &
 /// N requests genuinely simultaneous, each on its own connection, with nothing
 /// of the harness shared between them.
 async fn login_at(address: std::net::SocketAddr, password: &str) -> (u16, String) {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
     let body = serde_json::to_vec(&json!({ "username": "ada", "password": password })).expect("encode");
-    let head = format!(
-        "POST /api/auth/login HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-        body.len()
-    );
-    let mut stream = tokio::net::TcpStream::connect(address).await.expect("connect");
-    let mut raw = head.into_bytes();
-    raw.extend_from_slice(&body);
-    stream.write_all(&raw).await.expect("write");
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).await.expect("read");
-
-    let text = String::from_utf8_lossy(&response).into_owned();
-    let status = text
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in {text}"));
-    let payload = text.split_once("\r\n\r\n").map(|(_, rest)| rest.to_string()).unwrap_or_default();
-    // `Connection: close` means no chunked framing to unpick — the body is
-    // whatever arrived before the socket did.
-    (status, payload)
+    let (status, _, body) = common::http(address, "POST", "/api/auth/login", &[("Content-Type", "application/json")], &body).await;
+    (status, String::from_utf8_lossy(&body).into_owned())
 }
 
 /// Log in, asserting it worked, and hand back the token.
@@ -131,15 +103,8 @@ const GUARDED: [(&str, &str); 7] = [
 /// relay on this device (`ssh -R`, frp, a LAN-shared proxy) delivers: a
 /// stranger's request, from loopback, saying whatever `Host` it likes.
 async fn raw_get(server: &common::TestServer, path: &str, host: &str) -> (u16, String) {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(server.addr).await.expect("connect");
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.expect("write");
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).await.expect("read");
-    let text = String::from_utf8_lossy(&response).into_owned();
-    let status = text.split_whitespace().nth(1).and_then(|code| code.parse().ok()).expect("a status line");
-    (status, text)
+    let (status, head, body) = common::http(server.addr, "GET", path, &[("Host", host)], &[]).await;
+    (status, format!("{head}\r\n\r\n{}", String::from_utf8_lossy(&body)))
 }
 
 /// No account is not an open door, and connecting from this device is not a

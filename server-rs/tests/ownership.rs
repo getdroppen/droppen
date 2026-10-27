@@ -178,17 +178,7 @@ async fn a_session_started_on_the_local_login_is_this_servers_and_keeps_that_log
     // Binding an account is refused rather than silently forking the
     // conversation: an account spawn needs the transcript in this server's own
     // root, and nothing moves it there.
-    let account = probe
-        .send_ok(
-            "POST",
-            "/api/accounts",
-            json!({"label": "Work", "kind": "oauth_token", "secret": "sk-ant-oat01-TESTSECRETVALUE0123456789"}),
-            201,
-        )
-        .await["id"]
-        .as_str()
-        .expect("account id")
-        .to_string();
+    let account = probe.create_account_id("Work", "sk-ant-oat01-TESTSECRETVALUE0123456789").await;
     let (status, body) = probe
         .send("PUT", &format!("/api/sessions/claude/{id}/account"), json!({"accountId": account}))
         .await;

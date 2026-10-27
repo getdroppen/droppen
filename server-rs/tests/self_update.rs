@@ -33,8 +33,9 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use support::{plan_held_cli, release_turn, Probe};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use remote_hand_server::instance::DEFAULT_INSTANCE;
+use support::{common, plan_held_cli, release_turn, Probe};
+use tokio::io::AsyncWriteExt;
 use tokio_tungstenite::tungstenite::Message;
 
 const SESSION: &str = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
@@ -281,7 +282,7 @@ impl Supervisor {
             home: home.to_path_buf(),
             stopped: false,
         };
-        supervisor.addr = wait_for_listener(home).await;
+        supervisor.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         supervisor
     }
     /// The pid of the server currently serving.
@@ -306,7 +307,7 @@ impl Supervisor {
                 .and_then(|raw| raw.trim().parse::<u32>().ok());
             if let Some(pid) = current.filter(|pid| *pid != previous) {
                 // The port is rebound, so the address may have moved.
-                self.addr = wait_for_listener(&self.home).await;
+                self.addr = common::wait_for_listener(&self.home, DEFAULT_INSTANCE, BUDGET).await;
                 if let (200, _) = self.json("GET", "/api/settings", None).await {
                     return pid;
                 }
@@ -326,7 +327,14 @@ impl Supervisor {
     }
 
     async fn json(&self, method: &str, path: &str, body: Option<&str>) -> (u16, Value) {
-        let (status, raw) = request(self.addr, method, path, "application/json", body.map(str::as_bytes)).await;
+        let (status, _, raw) = common::http(
+            self.addr,
+            method,
+            path,
+            &[("Content-Type", "application/json")],
+            body.map(str::as_bytes).unwrap_or(&[]),
+        )
+        .await;
         let parsed = serde_json::from_slice(&raw).unwrap_or(Value::Null);
         (status, parsed)
     }
@@ -358,12 +366,13 @@ impl Supervisor {
         }
         body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
 
-        let (status, raw) = request(
+        let content_type = format!("multipart/form-data; boundary={BOUNDARY}");
+        let (status, _, raw) = common::http(
             self.addr,
             "POST",
             "/api/server/self-upgrade",
-            &format!("multipart/form-data; boundary={BOUNDARY}"),
-            Some(&body),
+            &[("Content-Type", &content_type)],
+            &body,
         )
         .await;
         (status, serde_json::from_slice(&raw).unwrap_or(Value::Null))
@@ -401,25 +410,6 @@ impl Supervisor {
             // SAFETY: as above, for each shim this test's server started.
             unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
         }
-    }
-}
-
-/// Where a server rooted at `home` is listening, once it is.
-async fn wait_for_listener(home: &Path) -> std::net::SocketAddr {
-    let port_file = home.join(".local/share/remote-hand/instances/default/server.port");
-    let deadline = std::time::Instant::now() + BUDGET;
-    loop {
-        if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|t| t.trim().parse::<u16>().ok()) {
-            let candidate: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
-            if tokio::net::TcpStream::connect(candidate).await.is_ok() {
-                return candidate;
-            }
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the supervised server never recorded a port it was listening on"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -605,35 +595,6 @@ impl Drop for KillGroupOnDrop {
     }
 }
 
-/// A one-shot HTTP/1.1 request against a server in another process.
-async fn request(addr: std::net::SocketAddr, method: &str, path: &str, content_type: &str, body: Option<&[u8]>) -> (u16, Vec<u8>) {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        head.push_str(&format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", body.len()));
-    }
-    head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).await.expect("write head");
-    if let Some(body) = body {
-        stream.write_all(body).await.expect("write body");
-    }
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.expect("read");
-    let split = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .unwrap_or_else(|| panic!("malformed HTTP response: {:?}", String::from_utf8_lossy(&raw)));
-    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    (status, raw[split + 4..].to_vec())
-}
-
 #[cfg(test)]
 mod unit {
     use super::*;
@@ -735,7 +696,7 @@ impl Unsupervised {
             home: home.to_path_buf(),
             stopped: false,
         };
-        server.addr = wait_for_listener(home).await;
+        server.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         server
     }
 
@@ -806,12 +767,13 @@ fn multipart(boundary: &str, bytes: &[u8], sha256: Option<&str>) -> Vec<u8> {
 async fn post_upgrade(addr: std::net::SocketAddr, bytes: &[u8], sha256: Option<&str>) -> (u16, Value) {
     const BOUNDARY: &str = "----remote-hand-self-upgrade-test";
     let body = multipart(BOUNDARY, bytes, sha256);
-    let (status, raw) = request(
+    let content_type = format!("multipart/form-data; boundary={BOUNDARY}");
+    let (status, _, raw) = common::http(
         addr,
         "POST",
         "/api/server/self-upgrade",
-        &format!("multipart/form-data; boundary={BOUNDARY}"),
-        Some(&body),
+        &[("Content-Type", &content_type)],
+        &body,
     )
     .await;
     (status, serde_json::from_slice(&raw).unwrap_or(Value::Null))
@@ -841,12 +803,12 @@ async fn an_upload_that_is_refused_leaves_no_staged_binary_behind() {
     wait_for_a_clean_store(home.path()).await;
 
     // A body with no `binary` part at all never creates a file to begin with.
-    let (status, _) = request(
+    let (status, _, _) = common::http(
         server.addr,
         "POST",
         "/api/server/self-upgrade",
-        "multipart/form-data; boundary=----x",
-        Some(b"------x\r\nContent-Disposition: form-data; name=\"sha256\"\r\n\r\nabc\r\n------x--\r\n"),
+        &[("Content-Type", "multipart/form-data; boundary=----x")],
+        b"------x\r\nContent-Disposition: form-data; name=\"sha256\"\r\n\r\nabc\r\n------x--\r\n",
     )
     .await;
     assert_eq!(status, 400);
@@ -940,7 +902,7 @@ async fn a_client_that_hangs_up_mid_upload_leaves_no_staged_binary_behind() {
     wait_for_a_clean_store(home.path()).await;
     // The server is still there: an abandoned upload is not a crash.
     assert!(alive(server.pid), "the server survived a client hanging up");
-    let (status, _) = request(server.addr, "GET", "/api/settings", "application/json", None).await;
+    let (status, _, _) = common::http(server.addr, "GET", "/api/settings", &[], &[]).await;
     assert_eq!(status, 200, "and is still answering");
 
     server.stop().await;
@@ -975,7 +937,7 @@ async fn an_unsupervised_server_installs_the_binary_and_stays_up() {
     // delayed exit and an immediate check would not have seen it either.
     tokio::time::sleep(Duration::from_millis(2000)).await;
     assert!(alive(server.pid), "an unsupervised server must not stop itself");
-    let (status, _) = request(server.addr, "GET", "/api/settings", "application/json", None).await;
+    let (status, _, _) = common::http(server.addr, "GET", "/api/settings", &[], &[]).await;
     assert_eq!(status, 200, "and must still be serving");
 
     server.stop().await;

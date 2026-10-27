@@ -56,14 +56,7 @@ async fn a_chat_with_an_account_the_start_rule_named_is_checked_again_at_the_spa
     let anchor = probe.data_dir().join("chats");
     let create = |label: &'static str, secret: &'static str| {
         let probe = &probe;
-        async move {
-            probe
-                .send_ok("POST", "/api/accounts", json!({"label": label, "kind": "oauth_token", "secret": secret}), 201)
-                .await["id"]
-                .as_str()
-                .expect("id")
-                .to_string()
-        }
+        async move { probe.create_account_id(label, secret).await }
     };
     const DEFAULT_SECRET: &str = "sk-ant-oat01-TESTCHATDEFAULT0123456789";
     const SPARE_SECRET: &str = "sk-ant-oat01-TESTCHATSPARE00123456789";
