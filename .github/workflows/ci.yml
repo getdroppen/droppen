@@ -27,6 +27,7 @@ jobs:
       ui_audit: ${{ steps.detect.outputs.ui_audit || 'true' }}
       web_reproducible: ${{ steps.detect.outputs.web_reproducible || 'true' }}
       server: ${{ steps.detect.outputs.server || 'true' }}
+      open_boundary: ${{ steps.detect.outputs.open_boundary || 'true' }}
       release_tooling: ${{ steps.detect.outputs.release_tooling || 'true' }}
       desktop_core: ${{ steps.detect.outputs.desktop_core || 'true' }}
     steps:
@@ -294,6 +295,22 @@ jobs:
           df -h .
           if [ -d target ]; then du -sh target; fi
 
+
+  # The open-source boundary, which `server` also runs: the check scans
+  # web/src, web/test, packages/plugin-sdk/src, scripts, the open crates and
+  # .github, so it runs whenever any of those change instead of waiting for a
+  # server change. ubuntu-latest already has cargo, and `cargo metadata
+  # --no-deps` is all the check needs: no toolchain is installed here.
+  open-boundary:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.open_boundary == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server-rs
+    steps:
+      - uses: actions/checkout@v4
+      - run: node ../scripts/check-open-boundary.mjs
 
   # The release tooling's own checks that no other job runs: the personal-name
   # rule of scripts/release-public.sh's text checks (scripts/release-text-

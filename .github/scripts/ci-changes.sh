@@ -30,7 +30,7 @@ set -u
 
 # One output per job that can be skipped. secrets-scan is not here: it runs on
 # every pull request, whatever changed.
-AREAS="web web_tests ui_audit web_reproducible server release_tooling desktop_core"
+AREAS="web web_tests ui_audit web_reproducible server open_boundary release_tooling desktop_core"
 
 paths_file=""
 case "${1:-}" in
@@ -81,7 +81,7 @@ changed_paths() {
 changes=$(changed_paths) || { everything "the pull request's diff cannot be read"; exit 0; }
 [ -n "$changes" ] || { everything "the diff is empty"; exit 0; }
 
-web=0 web_tests=0 ui_audit=0 web_reproducible=0 server=0 release_tooling=0 desktop_core=0
+web=0 web_tests=0 ui_audit=0 web_reproducible=0 server=0 open_boundary=0 release_tooling=0 desktop_core=0
 unknown=""
 
 while IFS= read -r path; do
@@ -102,6 +102,12 @@ while IFS= read -r path; do
   case "$path" in
     web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/src/agent/*|server-rs/src/aggregator/*|server-rs/crates/rh-relay/src/*|server-rs/crates/rh-client/src/*|server-rs/crates/rh-devkit/src/*)
       web=1; matched=1 ;;
+  esac
+
+  # The open-source boundary check scans these trees for anything of the hub's.
+  case "$path" in
+    web/src/*|web/test/*|packages/plugin-sdk/src/*|scripts/*|server-rs/*)
+      open_boundary=1; matched=1 ;;
   esac
 
   # The web tests also read rh-proto's vectors and sources (the interop and the
@@ -157,5 +163,6 @@ emit "web_tests=$(bool "$web_tests")"
 emit "ui_audit=$(bool "$ui_audit")"
 emit "web_reproducible=$(bool "$web_reproducible")"
 emit "server=$(bool "$server")"
+emit "open_boundary=$(bool "$open_boundary")"
 emit "release_tooling=$(bool "$release_tooling")"
 emit "desktop_core=$(bool "$desktop_core")"
