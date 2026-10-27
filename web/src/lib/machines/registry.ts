@@ -11,10 +11,9 @@
  *
  * Which machines there are is the shell's to say (`shells/`):
  *
- * - the local shell (`shells/local.ts`): only {@link LOCAL}, the page's own
- *   server, reached directly — exactly what the page did before. It is what
- *   the registry is until a shell says otherwise, so a page (or a test) that
- *   boots nothing is the local page as it always was;
+ * - the local shell: only {@link LOCAL}, the page's own server, reached
+ *   directly. The registry is that shell until one of the others boots
+ *   ({@link setShell}), so a page that boots nothing is the local page;
  * - droppen.app (`features/cloud/hub-shell.ts`): every machine of the
  *   account at once, each through its own end-to-end channel (or its offline
  *   copy), and no `local`.
