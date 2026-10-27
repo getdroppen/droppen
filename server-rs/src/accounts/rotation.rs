@@ -41,13 +41,10 @@
 //! No continuation prompt: nothing failed, so there is nothing to carry on.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, TimeZone};
-use gotcha::oas::Schema;
 use gotcha::Schematic;
-use gotcha_core::EnhancedSchema;
 use serde::{Deserialize, Serialize};
 
 use super::limits::{LimitClass, SCOPE_ALL};
@@ -997,36 +994,9 @@ impl RotationOutcome {
     }
 }
 
-/// Hand-written so the enum stays *inline* in `SessionRotation`, the way the
-/// contract spells `outcome`, rather than becoming a schema of its own. See
-/// `crate::files::FsKind` for the same arrangement.
-impl Schematic for RotationOutcome {
-    fn name() -> &'static str {
-        "RotationOutcome"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["switched", "no_candidate", "cap_reached"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+/// Inline in `SessionRotation`, the way the contract spells `outcome`, rather
+/// than a schema of its own.
+crate::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
 
 /// What set a rotation off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1060,33 +1030,7 @@ impl RotationTrigger {
 }
 
 /// Inline in `SessionRotation`, like [`RotationOutcome`].
-impl Schematic for RotationTrigger {
-    fn name() -> &'static str {
-        "RotationTrigger"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["limit", "ahead"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+crate::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
 
 /// One automatic account rotation of a session, as `SessionDetail.rotation`
 /// reports it.

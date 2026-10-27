@@ -15,7 +15,6 @@
 //! in this module may reach for `$HOME` or `dirs::home_dir()` directly: doing so
 //! would step straight out of the sandbox the tests set up.
 
-use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -23,9 +22,7 @@ use gotcha::axum::body::Body;
 use gotcha::axum::http::header::{CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::oas::Schema;
 use gotcha::{api, Json, Multipart, Schematic, State};
-use gotcha_core::EnhancedSchema;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
@@ -119,38 +116,9 @@ pub enum FsKind {
     Other,
 }
 
-/// Hand-written rather than derived so the enum stays *inline* in `FsEntry`.
-///
-/// The derive registers a named component and refers to it by `$ref`, which
-/// would add an `FsKind` schema the zod contract does not have (`kind` is an
-/// inline string enum there). Inlining keeps `openapi/openapi.json` unchanged.
-impl Schematic for FsKind {
-    fn name() -> &'static str {
-        "FsKind"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["file", "dir", "symlink", "other"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+/// Inline in `FsEntry`: the contract spells `kind` as an inline string enum,
+/// not a named component.
+crate::inline_string_enum!(FsKind, ["file", "dir", "symlink", "other"]);
 
 /// One row of a directory listing.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
