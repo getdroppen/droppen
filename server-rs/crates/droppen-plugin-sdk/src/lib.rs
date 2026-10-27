@@ -403,9 +403,9 @@ pub struct PluginStatus {
     pub forced: bool,
     /// Why it is off, incompatible or pinned, when it is.
     pub reason: Option<String>,
-    /// Something the user should know that does not stop it working (a failed
-    /// legacy write-back, a store that had to be reset): every notice's text,
-    /// joined. [`Self::notices`] has them one by one.
+    /// Something the user should know that does not stop it working (today, a
+    /// store that had to be reset): every notice's text, joined.
+    /// [`Self::notices`] has them one by one.
     pub notice: Option<String>,
     /// Every notice, oldest first.
     #[serde(default)]
@@ -416,16 +416,16 @@ pub struct PluginStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginNotice {
-    /// Stable while the notice exists; what dismissing names.
+    /// Stable while the notice exists.
     pub id: String,
-    /// What it is about (`import`, `writeBack`, `reconcile`, `storeReset`).
+    /// What it is about (`storeReset`).
     pub kind: String,
     /// For people.
     pub text: String,
     /// When, ISO-8601.
     pub at: String,
-    /// Whether it may be dismissed. A problem that is still there (a failing
-    /// write-back) is not: it goes away when it is fixed.
+    /// Whether a client may dismiss it. A store reset is not: it goes away when
+    /// the user clears its file.
     pub dismissible: bool,
 }
 

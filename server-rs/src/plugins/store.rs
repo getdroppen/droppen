@@ -2,10 +2,9 @@
 //! revision each, written by compare-and-set.
 //!
 //! The wire contract is `docs/plugins/storage-protocol.md`; this is the
-//! transport-agnostic half of it. The HTTP routes ([`super::routes`]), the CLI
-//! ([`super::cli`]) and the legacy ledger import ([`super::legacy_tasks`]) are
-//! all adapters over the same calls, so a Tauri shell can add a fourth without
-//! touching what is here.
+//! transport-agnostic half of it. The HTTP routes ([`super::routes`]) and the
+//! CLI ([`super::cli`]) are both adapters over the same calls, so a Tauri shell
+//! can add a third without touching what is here.
 //!
 //! The store never interprets a value. It checks names, sizes and revisions,
 //! keeps a bounded history of replaced versions, and that is all: a plugin's
@@ -291,30 +290,6 @@ fn over_store_limit(total: u64, limit: u64) -> StoreError {
     }
 }
 
-/// Which documents an import ([`Store::replace_all`]) may replace, and how.
-#[derive(Clone, Copy)]
-pub struct ImportScope<'a> {
-    /// Replace documents already there; without it, a store holding any owned
-    /// document refuses the import.
-    pub replace: bool,
-    /// The documents the import owns; any other is left exactly as it is.
-    pub owned: &'a dyn Fn(&str) -> bool,
-    /// Compare-and-set: the owned documents must still be at exactly these
-    /// revisions, or the import is a [`StoreError::Conflict`].
-    pub expect: Option<&'a [(String, u64)]>,
-}
-
-impl ImportScope<'static> {
-    /// Every document, no compare-and-set: a whole-store restore.
-    pub fn all(replace: bool) -> Self {
-        Self {
-            replace,
-            owned: &|_| true,
-            expect: None,
-        }
-    }
-}
-
 /// One page of a document's past versions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoryPage {
@@ -547,61 +522,25 @@ impl Store {
         Ok(HistoryPage { versions, more })
     }
 
-    /// One `meta` value.
-    pub fn meta(&self, key: &str) -> Result<Option<String>, StoreError> {
-        Ok(self.db.read(|conn| {
-            conn.query_row("SELECT value FROM meta WHERE key = ?1", (key,), |row| row.get(0))
-                .optional()
-        })?)
-    }
-
-    /// Set one `meta` value.
-    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), StoreError> {
-        Ok(self.db.write(|tx| {
-            tx.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                (key, value),
-            )?;
-            Ok(())
-        })?)
-    }
-
-    /// Set several `meta` values in one transaction.
-    pub fn set_metas(&self, values: &[(&str, String)]) -> Result<(), StoreError> {
-        Ok(self.db.write(|tx| {
-            for (key, value) in values {
-                tx.execute(
-                    "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                    (key, value),
-                )?;
-            }
-            Ok(())
-        })?)
-    }
-
-    /// Make the documents `owned` names hold exactly `docs`, in one
-    /// transaction — the import path, never a plugin's. Documents `owned` says
-    /// are not the import's are left exactly as they are.
+    /// Make the store hold exactly `docs`, in one transaction: the export
+    /// import path, never a plugin's.
     ///
-    /// Without `replace`, a store that already holds any owned document is
-    /// refused. With it, every owned document that is replaced or dropped goes
-    /// into its history first, and a replaced document's revision only ever moves forward
-    /// (`max(imported, current + 1)`), so a client still holding the old
-    /// revision gets a conflict rather than a silent overwrite. A document new
-    /// to the store keeps the revision it was imported with.
+    /// Without `replace`, a store that already holds a document is refused.
+    /// With it, every document that is replaced or dropped goes into its
+    /// history first, and a replaced document's revision only ever moves
+    /// forward (`max(imported, current + 1)`), so a client still holding the
+    /// old revision gets a conflict rather than a silent overwrite. A document
+    /// new to the store keeps the revision it was imported with.
     ///
-    /// `meta` is written in the same transaction. Before it commits, every
-    /// document is read back and handed to `verify`; an `Err` from it rolls the
-    /// whole import back as [`StoreError::Rejected`].
+    /// Before it commits, every document is read back and handed to `verify`;
+    /// an `Err` from it rolls the whole import back as [`StoreError::Rejected`].
     pub fn replace_all(
         &self,
         docs: Vec<Doc>,
-        scope: ImportScope<'_>,
+        replace: bool,
         by: Option<&str>,
-        meta: &[(&str, String)],
         verify: impl FnOnce(&[Doc]) -> Result<(), String>,
     ) -> Result<Vec<Doc>, StoreError> {
-        let ImportScope { replace, owned, expect } = scope;
         let mut seen = HashSet::new();
         let mut encoded = Vec::with_capacity(docs.len());
         let mut total = 0u64;
@@ -609,9 +548,6 @@ impl Store {
             check_name(&doc.name)?;
             if !seen.insert(doc.name.clone()) {
                 return Err(StoreError::Invalid(format!("document {:?} appears twice in the import", doc.name)));
-            }
-            if !owned(&doc.name) {
-                return Err(StoreError::Invalid(format!("document {:?} is not one this import may write", doc.name)));
             }
             let text = encode(&doc.name, &doc.value)?;
             total += (text.len() + doc.name.len()) as u64;
@@ -635,38 +571,10 @@ impl Store {
                             },
                         ))
                     })?;
-                    let all: BTreeMap<String, Row> = rows.collect::<rusqlite::Result<_>>()?;
-                    all.into_iter().filter(|(name, _)| owned(name)).collect()
+                    rows.collect::<rusqlite::Result<_>>()?
                 };
                 if !replace && !existing.is_empty() {
                     return Err(abort(StoreError::NotEmpty(existing.len())));
-                }
-                // Compare-and-set over the whole set: the import was worked out
-                // from these owned documents at these revisions, and a write
-                // that landed since must not be replaced unseen.
-                if let Some(expect) = expect {
-                    let want: BTreeMap<&str, u64> = expect.iter().map(|(name, revision)| (name.as_str(), *revision)).collect();
-                    let have: BTreeMap<&str, u64> = existing.iter().map(|(name, row)| (name.as_str(), row.revision)).collect();
-                    if want != have {
-                        let moved = have
-                            .iter()
-                            .find(|(name, revision)| want.get(*name) != Some(*revision))
-                            .map(|(name, _)| name.to_string())
-                            .or_else(|| want.keys().find(|name| !have.contains_key(*name)).map(|name| name.to_string()))
-                            .unwrap_or_default();
-                        let current = existing
-                            .get(&moved)
-                            .map(|row| Row {
-                                revision: row.revision,
-                                value: row.value.clone(),
-                                updated_at: row.updated_at.clone(),
-                                updated_by: row.updated_by.clone(),
-                            })
-                            .map(|row| row.into_doc(&moved))
-                            .transpose()
-                            .map_err(abort)?;
-                        return Err(abort(StoreError::Conflict { doc: moved, current }));
-                    }
                 }
                 for (name, old) in &existing {
                     if !seen.contains(name) {
@@ -689,12 +597,6 @@ impl Store {
                     return Err(abort(over_store_limit(live, self.store_limit)));
                 }
                 fit_history(tx, self.store_limit)?;
-                for (key, value) in meta {
-                    tx.execute(
-                        "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                        (key, value),
-                    )?;
-                }
                 let stored = {
                     let mut statement = tx.prepare("SELECT name, revision, value, updated_at, updated_by FROM docs ORDER BY name")?;
                     let rows = statement.query_map([], |row| {
@@ -935,49 +837,6 @@ mod tests {
     }
 
     #[test]
-    fn an_import_scoped_to_its_own_documents_leaves_the_others_alone() {
-        let (_dir, store) = store();
-        store.put("state", None, json!("old"), None).unwrap();
-        store.put("notes/x", None, json!("not the ledger's"), None).unwrap();
-        let ledger_doc = |name: &str| name == "state" || name.starts_with("events/");
-        let doc = |name: &str, value| Doc {
-            name: name.into(),
-            revision: 1,
-            updated_at: now(),
-            value,
-        };
-        store
-            .replace_all(
-                vec![doc("state", json!("new")), doc("events/2026-10", json!([]))],
-                ImportScope {
-                    replace: true,
-                    owned: &ledger_doc,
-                    expect: None,
-                },
-                None,
-                &[],
-                |_| Ok(()),
-            )
-            .unwrap();
-        assert_eq!(store.get("notes/x").unwrap().unwrap().value, json!("not the ledger's"));
-        assert_eq!(store.get("state").unwrap().unwrap().value, json!("new"));
-        assert!(matches!(
-            store.replace_all(
-                vec![doc("notes/y", json!(1))],
-                ImportScope {
-                    replace: true,
-                    owned: &ledger_doc,
-                    expect: None,
-                },
-                None,
-                &[],
-                |_| Ok(())
-            ),
-            Err(StoreError::Invalid(_))
-        ));
-    }
-
-    #[test]
     fn replacing_everything_moves_revisions_forward_and_keeps_the_old_values() {
         let (_dir, store) = store();
         store.put("state", None, json!("old"), None).unwrap();
@@ -990,30 +849,22 @@ mod tests {
             value,
         };
         assert!(matches!(
-            store.replace_all(vec![doc("state", 1, json!("new"))], ImportScope::all(false), None, &[], |_| Ok(())),
+            store.replace_all(vec![doc("state", 1, json!("new"))], false, None, |_| Ok(())),
             Err(StoreError::NotEmpty(2))
         ));
-        let refused = store.replace_all(
-            vec![doc("state", 1, json!("new"))],
-            ImportScope::all(true),
-            None,
-            &[("k", "v".into())],
-            |_| Err("no".into()),
-        );
+        let refused = store.replace_all(vec![doc("state", 1, json!("new"))], true, None, |_| Err("no".into()));
         assert!(matches!(refused, Err(StoreError::Rejected(_))));
         assert_eq!(
             store.get("state").unwrap().unwrap().value,
             json!("older?"),
             "a rejected import changes nothing"
         );
-        assert_eq!(store.meta("k").unwrap(), None);
 
         let stored = store
             .replace_all(
                 vec![doc("state", 1, json!("new")), doc("fresh", 5, json!("f"))],
-                ImportScope::all(true),
+                true,
                 Some("cli"),
-                &[("k", "v".into())],
                 |docs| {
                     assert_eq!(docs.len(), 2, "the verifier sees what was written, before it commits");
                     Ok(())
@@ -1031,14 +882,11 @@ mod tests {
             "into its history"
         );
         assert_eq!(store.history("state", 0, None).unwrap().versions[0].value, json!("older?"));
-        assert_eq!(store.meta("k").unwrap().as_deref(), Some("v"));
 
         let export = store.export(&PluginId::new("demo").unwrap()).unwrap();
         assert_eq!(export.format, EXPORT_FORMAT);
         let (_other_dir, other) = self::store();
-        other
-            .replace_all(export.docs.clone(), ImportScope::all(false), None, &[], |_| Ok(()))
-            .unwrap();
+        other.replace_all(export.docs.clone(), false, None, |_| Ok(())).unwrap();
         assert_eq!(other.all().unwrap(), export.docs, "an export restores exactly, revisions included");
     }
 }

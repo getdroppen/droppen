@@ -22,7 +22,7 @@
 //! 1. the configuration (`[plugins] disable` beats `enable`; see
 //!    [`crate::config::PluginSettings`]), which also makes the switch read-only;
 //! 2. the instance's own decision, a row in its `state.db` (`kv`, scope
-//!    `plugins`), written by the settings page, the CLI or the legacy import;
+//!    `plugins`), written by the settings page or the CLI;
 //! 3. the distribution's `defaultEnabled`;
 //! 4. off.
 //!
@@ -38,14 +38,12 @@
 //! forgotten and reopened rather than written through a handle to a moved file.
 
 pub mod cli;
-pub mod legacy_tasks;
 pub mod routes;
 pub mod store;
 pub mod wire;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use droppen_plugin_sdk::{sdk_version, BundledManifest, Doc, DocMeta, DocWrite, Manifest, PluginStatus, PutDoc};
@@ -59,71 +57,6 @@ pub use store::{Store, StoreError};
 /// Where the build puts the list of bundled plugins, under `web/dist`.
 pub const MANIFEST_ASSET: &str = "plugins/manifest.json";
 
-/// What a plugin's notice is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum NoticeKind {
-    /// A legacy import that did not happen. A state: there while it is so.
-    Import,
-    /// A legacy write-back that is failing. A state: cleared by the next one
-    /// that works, and not dismissible before that.
-    WriteBack,
-    /// A legacy ledger that moved under another binary and was merged. An
-    /// event: each one is kept until somebody dismisses it.
-    Reconcile,
-}
-
-impl NoticeKind {
-    fn tag(self) -> &'static str {
-        match self {
-            Self::Import => "import",
-            Self::WriteBack => "writeBack",
-            Self::Reconcile => "reconcile",
-        }
-    }
-
-    /// Whether the user may dismiss it; a state goes when it stops being true.
-    fn dismissible(self) -> bool {
-        matches!(self, Self::Reconcile)
-    }
-}
-
-/// One stored notice.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct NoticeEntry {
-    id: String,
-    kind: NoticeKind,
-    text: String,
-    at: String,
-    /// The same thing happening again updates this notice instead of adding one.
-    #[serde(default)]
-    key: Option<String>,
-    /// How many times it has happened.
-    #[serde(default = "once")]
-    count: u32,
-    /// Never pushed out by newer notices: it names something only this
-    /// notice tells (a conflict, edits taken in), so it stays until read.
-    #[serde(default)]
-    important: bool,
-}
-
-fn once() -> u32 {
-    1
-}
-
-/// An event notice to add ([`Plugins::add_notice`]).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct NewNotice {
-    pub text: String,
-    /// Collapses repeats: a notice with the same key is updated and counted.
-    pub key: Option<String>,
-    /// See [`NoticeEntry::important`].
-    pub important: bool,
-}
-
-/// How many event notices one plugin keeps, newest last.
-const NOTICES_KEPT: usize = 20;
-
 /// Who turned a plugin on or off, and through what.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -133,7 +66,8 @@ pub enum DecisionReason {
     /// `remote-hand-server plugin enable|disable`.
     Cli,
     /// The first boot of the release that moved a built-in feature into a
-    /// plugin, which turned it on where it had data ([`legacy_tasks`]).
+    /// plugin, which turned it on where it had data. Kept for the decisions
+    /// that release wrote; nothing writes it now.
     Migrated,
 }
 
@@ -229,13 +163,6 @@ pub struct Plugins {
     force_off: BTreeSet<String>,
     feed: Option<Arc<GlobalFeed>>,
     stores: Mutex<HashMap<String, Arc<Store>>>,
-    /// One legacy write-back (or reconcile) at a time per instance.
-    write_back: Mutex<()>,
-    /// Committed writes to the legacy plugin's store so far.
-    writes_committed: AtomicU64,
-    /// Of those, how many a finished write-back started after: a write whose
-    /// number is at or under this is in the ledger (or its failure is noticed).
-    writes_covered: AtomicU64,
 }
 
 impl std::fmt::Debug for Plugins {
@@ -269,9 +196,6 @@ impl Plugins {
             force_off: config.disabled(),
             feed,
             stores: Mutex::new(HashMap::new()),
-            write_back: Mutex::new(()),
-            writes_committed: AtomicU64::new(0),
-            writes_covered: AtomicU64::new(0),
         }
     }
 
@@ -392,12 +316,6 @@ impl Plugins {
             },
         );
         tracing::info!(plugin = id, enabled, ?by, ?reason, "plugin switched");
-        // Turned on: whatever happened to a legacy ledger while it was off —
-        // a rollback and work under an older binary, most likely — is taken
-        // in now, before the first write could overwrite it.
-        if enabled && id == legacy_tasks::ID {
-            legacy_tasks::reconcile(self);
-        }
         self.announce_status();
         self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))
     }
@@ -415,8 +333,8 @@ impl Plugins {
         Ok(self.open_store(id))
     }
 
-    /// The store of `id`, whatever its switch says: for the CLI and the legacy
-    /// import, which decide for themselves whether to make one.
+    /// The store of `id`, whatever its switch says: for the CLI, which decides
+    /// for itself whether to make one.
     ///
     /// The handle is cached, but only for as long as its file is there: one
     /// moved aside since (a purge) is forgotten, and the store made afresh.
@@ -460,7 +378,7 @@ impl Plugins {
     pub fn put(&self, id: &str, name: &str, write: PutDoc, by: Option<&str>) -> Result<Doc, PluginError> {
         let store = self.require_enabled(id)?;
         let doc = store.put(name, write.expected_revision, write.value, by)?;
-        self.written(id, std::slice::from_ref(&doc));
+        self.published(id, std::slice::from_ref(&doc));
         Ok(doc)
     }
 
@@ -468,7 +386,7 @@ impl Plugins {
     pub fn batch(&self, id: &str, writes: Vec<DocWrite>, by: Option<&str>) -> Result<Vec<Doc>, PluginError> {
         let store = self.require_enabled(id)?;
         let docs = store.batch(writes, by)?;
-        self.written(id, &docs);
+        self.published(id, &docs);
         Ok(docs)
     }
 
@@ -486,32 +404,6 @@ impl Plugins {
         }
     }
 
-    /// After a committed write: tell every client which documents moved, and
-    /// keep a legacy ledger in step.
-    fn written(&self, id: &str, docs: &[Doc]) {
-        self.published(id, docs);
-        if id == legacy_tasks::ID && !docs.is_empty() {
-            // Numbered after the commit: a write-back that starts later has it.
-            let write = self.writes_committed.fetch_add(1, Ordering::SeqCst) + 1;
-            legacy_tasks::write_back_covering(self, write);
-        }
-    }
-
-    /// The number of the newest committed write, for a write-back to cover.
-    pub(crate) fn writes_committed(&self) -> u64 {
-        self.writes_committed.load(Ordering::SeqCst)
-    }
-
-    /// Whether a finished write-back has covered write number `write`.
-    pub(crate) fn write_covered(&self, write: u64) -> bool {
-        self.writes_covered.load(Ordering::SeqCst) >= write
-    }
-
-    /// Record that writes up to `upto` have been written back (or tried).
-    pub(crate) fn cover_writes(&self, upto: u64) {
-        self.writes_covered.fetch_max(upto, Ordering::SeqCst);
-    }
-
     /// Send every client the current list (`{"type":"plugins", …}`).
     pub fn announce_status(&self) {
         if let Some(feed) = &self.feed {
@@ -519,143 +411,8 @@ impl Plugins {
         }
     }
 
-    /// Run what the owner of the instance runs once at boot: the legacy
-    /// ledger's import and reconciliation, when the build bundles its plugin.
-    /// Blocking; call it off the runtime.
-    pub fn boot(&self) {
-        if self.manifest(legacy_tasks::ID).is_some() {
-            legacy_tasks::boot(self);
-        }
-    }
-
-    fn notices(&self, id: &str) -> Vec<NoticeEntry> {
-        crate::db::at(&self.instance_db)
-            .kv_get(scope::PLUGIN_NOTICES, id)
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
-    }
-
-    fn save_notices(&self, id: &str, notices: &[NoticeEntry]) {
-        let db = crate::db::at(&self.instance_db);
-        if notices.is_empty() {
-            db.kv_remove(scope::PLUGIN_NOTICES, id);
-        } else {
-            db.kv_set(scope::PLUGIN_NOTICES, id, &serde_json::to_string(notices).expect("notices serialise"));
-        }
-        self.announce_status();
-    }
-
-    /// Set (or, with `None`, clear) a state notice on `id` — there is at most
-    /// one of each kind. Kept in the instance database, logged at error level
-    /// when set, and pushed to every open client when it changes.
-    pub(crate) fn set_notice(&self, id: &str, kind: NoticeKind, notice: Option<String>) {
-        let mut notices = self.notices(id);
-        let current = notices.iter().position(|n| n.kind == kind);
-        match (notice, current) {
-            (Some(text), Some(at)) if notices[at].text == text => return,
-            (Some(text), at) => {
-                tracing::error!(plugin = id, ?kind, notice = %text, "plugin notice");
-                let entry = NoticeEntry {
-                    id: kind.tag().to_string(),
-                    kind,
-                    text,
-                    at: store::now(),
-                    key: None,
-                    count: 1,
-                    important: false,
-                };
-                match at {
-                    Some(at) => notices[at] = entry,
-                    None => notices.push(entry),
-                }
-            }
-            (None, Some(at)) => {
-                tracing::info!(plugin = id, ?kind, "plugin notice cleared");
-                notices.remove(at);
-            }
-            (None, None) => return,
-        }
-        self.save_notices(id, &notices);
-    }
-
-    /// Add an event notice to `id`, kept beside earlier ones until it is
-    /// dismissed. A notice with the same key as one already there updates and
-    /// counts that one instead. Past [`NOTICES_KEPT`], the oldest notices that
-    /// are not [`NewNotice::important`] give way; an important one never does.
-    pub(crate) fn add_notice(&self, id: &str, notice: NewNotice) {
-        tracing::error!(plugin = id, notice = %notice.text, "plugin notice");
-        let mut notices = self.notices(id);
-        let repeat = notice
-            .key
-            .as_ref()
-            .and_then(|key| notices.iter().position(|n| n.key.as_ref() == Some(key)));
-        match repeat {
-            Some(at) => {
-                let entry = &mut notices[at];
-                entry.text = notice.text;
-                entry.at = store::now();
-                entry.count += 1;
-                entry.important |= notice.important;
-            }
-            None => notices.push(NoticeEntry {
-                id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
-                kind: NoticeKind::Reconcile,
-                text: notice.text,
-                at: store::now(),
-                key: notice.key,
-                count: 1,
-                important: notice.important,
-            }),
-        }
-        let evictable = notices.iter().filter(|n| n.kind.dismissible() && !n.important).count();
-        let events = notices.iter().filter(|n| n.kind.dismissible()).count();
-        let mut excess = events.saturating_sub(NOTICES_KEPT).min(evictable);
-        notices.retain(|n| {
-            if excess > 0 && n.kind.dismissible() && !n.important {
-                excess -= 1;
-                false
-            } else {
-                true
-            }
-        });
-        self.save_notices(id, &notices);
-    }
-
-    /// Dismiss one notice of `id`, once read. A state notice (a write-back
-    /// that is still failing) cannot be: it goes when the problem does.
-    pub fn dismiss_notice(&self, id: &str, notice: &str) -> Result<PluginStatus, PluginError> {
-        if self.manifest(id).is_none() {
-            return Err(PluginError::NotFound(id.to_string()));
-        }
-        let mut notices = self.notices(id);
-        let Some(at) = notices.iter().position(|n| n.id == notice) else {
-            return Err(StoreError::DocNotFound(format!("notice {notice}")).into());
-        };
-        if !notices[at].kind.dismissible() {
-            return Err(StoreError::Invalid("this notice goes away by itself once the problem is fixed".into()).into());
-        }
-        notices.remove(at);
-        tracing::info!(plugin = id, notice, "plugin notice dismissed");
-        self.save_notices(id, &notices);
-        self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))
-    }
-
     fn notice_list(&self, id: &str) -> Vec<droppen_plugin_sdk::PluginNotice> {
-        let mut list: Vec<droppen_plugin_sdk::PluginNotice> = self
-            .notices(id)
-            .into_iter()
-            .map(|n| droppen_plugin_sdk::PluginNotice {
-                id: n.id,
-                kind: n.kind.tag().to_string(),
-                text: if n.count > 1 {
-                    format!("{}（共 {} 次）", n.text, n.count)
-                } else {
-                    n.text
-                },
-                at: n.at,
-                dismissible: n.kind.dismissible(),
-            })
-            .collect();
+        let mut list = Vec::new();
         if let Some(corpse) = reset_store(&self.dir(id)) {
             list.push(droppen_plugin_sdk::PluginNotice {
                 id: "store-reset".into(),

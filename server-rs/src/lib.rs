@@ -113,5 +113,4 @@ pub mod shutdown;
 pub mod static_files;
 pub mod stats;
 pub mod supervisor;
-pub mod tasks;
 pub mod terminals;

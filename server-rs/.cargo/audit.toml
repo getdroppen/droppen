@@ -8,25 +8,6 @@
 # fixed version is in the lock.
 [advisories]
 ignore = [
-    # zip 7.2.0 (through calamine) and 8.6.0 (through rust_xlsxwriter):
-    # `ZipArchive::extract` / `ZipStreamReader::extract` write symlinks,
-    # SUID/SGID bits and permissions from the archive. Neither crate extracts:
-    # calamine reads entries with `by_index`, rust_xlsxwriter writes with
-    # `ZipWriter` (and reads one theme part with `by_name`), and the server
-    # never uses zip itself. Fixed only in zip 9, which neither crate accepts yet.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    # quick-xml 0.39.4, through calamine only: CPU (duplicate-attribute check)
-    # and memory (`NsReader`, which calamine does not use) exhaustion on a
-    # hostile XML document. calamine reads one file, the legacy task ledger at
-    # `<instance>/tasks/待办记录.xlsx` that the server writes itself
-    # (`plugins::legacy_tasks`, and only in a build that bundles the tasks
-    # plugin). Whoever can write that file already runs as the user; the worst
-    # case is a slow or killed local server. Fixed in 0.41, which calamine 0.35
-    # does not accept.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
     # quinn-proto 0.11.17: in the lock through reqwest's optional `http3`
     # feature (quinn), which nothing turns on. Not built.
     "RUSTSEC-2026-0338",

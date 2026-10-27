@@ -77,8 +77,8 @@ pub struct PluginStatus {
     pub forced: bool,
     /// Why it is off, incompatible or pinned, when it is.
     pub reason: Nullable<String>,
-    /// A problem that does not stop it working: a failed legacy write-back, a
-    /// store that had to be reset. Every notice's text, joined.
+    /// A problem that does not stop it working: today, a store that had to be
+    /// reset. Every notice's text, joined.
     pub notice: Nullable<String>,
     /// Every notice, oldest first.
     pub notices: Vec<PluginNotice>,
@@ -87,15 +87,16 @@ pub struct PluginStatus {
 /// One thing a plugin's host wants the user to see.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 pub struct PluginNotice {
-    /// What `DELETE /api/plugins/{id}/notices/{notice}` names.
+    /// Stable while the notice exists.
     pub id: String,
-    /// `import`, `writeBack`, `reconcile` or `storeReset`.
+    /// What it is about (`storeReset`).
     pub kind: String,
     /// For people.
     pub text: String,
     /// When, ISO-8601.
     pub at: String,
-    /// Whether it may be dismissed; a problem still there goes when it is fixed.
+    /// Whether a client may dismiss it. Kept for the wire contract; a store
+    /// reset goes away when the user clears its file.
     pub dismissible: bool,
 }
 
@@ -384,7 +385,7 @@ mod tests {
                         .iter()
                         .map(|text| sdk::PluginNotice {
                             id: "n1".into(),
-                            kind: "writeBack".into(),
+                            kind: "storeReset".into(),
                             text: text.clone(),
                             at: "2026-01-01T00:00:00.000Z".into(),
                             dismissible: false,

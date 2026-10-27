@@ -70,10 +70,6 @@ pub mod scope {
     /// `{"enabled", "by", "at", "reason"}` (see [`crate::plugins`]). Instance
     /// state only — never the machine-wide database two instances share.
     pub const PLUGINS: &str = "plugins";
-    /// Problems a plugin's host wants the user to see (a failed Excel
-    /// write-back, a merged ledger): `<plugin id>` to `{kind: {text, at}}`.
-    /// Kept here, not in memory, so a restart does not hide them.
-    pub const PLUGIN_NOTICES: &str = "plugin-notices";
     /// The first-run guide's own state ([`crate::setup`]): `progress` (where
     /// the guide stands), `pathOverlay` (the directories the user adopted for
     /// a CLI found off the `PATH`), `tasks` (the last install, update or

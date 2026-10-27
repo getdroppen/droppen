@@ -34,7 +34,6 @@ use droppen_plugin_sdk::codes;
 
 const LIST: &str = "/api/plugins";
 const ENABLED: &str = "/api/plugins/{id}/enabled";
-const NOTICE: &str = "/api/plugins/{id}/notices/{notice}";
 const DOCS: &str = "/api/plugins/{id}/docs";
 const DOC: &str = "/api/plugins/{id}/docs/{name}";
 const HISTORY: &str = "/api/plugins/{id}/docs/{name}/history";
@@ -132,8 +131,7 @@ where
     }
 }
 
-/// Run a blocking store call off the runtime: a write is an fsync, and a
-/// `tasks` write is an Excel encode on top.
+/// Run a blocking store call off the runtime: a write is an fsync.
 async fn blocking<T: Send + 'static>(
     plugins: &Arc<Plugins>,
     work: impl FnOnce(&Plugins) -> Result<T, PluginError> + Send + 'static,
@@ -171,19 +169,6 @@ pub async fn set_plugin_enabled(
     })
     .await
     .map(|status| Json(status.into()))
-}
-
-/// Dismiss one of a plugin's notices (a merged Excel ledger, say) once it
-/// has been read. A problem that is still there (a failing write-back) cannot
-/// be dismissed: it goes when it is fixed.
-#[api(id = "dismiss_plugin_notice", group = "plugins", summary = "Dismiss a plugin notice")]
-pub async fn dismiss_plugin_notice(
-    State(state): State<AppState>,
-    ApiPath((id, notice)): ApiPath<(String, String)>,
-) -> Result<Json<PluginStatus>, ApiError> {
-    blocking(&state.plugins, move |plugins| plugins.dismiss_notice(&id, &notice))
-        .await
-        .map(|status| Json(status.into()))
 }
 
 /// A plugin's documents, without values, by name.
@@ -271,7 +256,6 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     router
         .get(LIST, list_plugins)
         .put(ENABLED, set_plugin_enabled)
-        .delete(NOTICE, dismiss_plugin_notice)
         .get(DOCS, list_plugin_docs)
         .get(HISTORY, plugin_doc_history)
         .merge(
@@ -289,14 +273,6 @@ pub fn describe(reg: &mut ExtraResponses) {
     reg.describe("GET", LIST, 200, "Every plugin this build bundles, as this instance sees it")
         .describe("PUT", ENABLED, 200, "The plugin's status after the switch")
         .error("PUT", ENABLED, 404, "`plugin_not_found`: no such plugin is bundled")
-        .describe("DELETE", NOTICE, 200, "The plugin's status without that notice")
-        .error("DELETE", NOTICE, 404, "`plugin_not_found`, or no such notice")
-        .error(
-            "DELETE",
-            NOTICE,
-            400,
-            "`invalid`: the notice goes away by itself once its problem is fixed",
-        )
         .error(
             "PUT",
             ENABLED,

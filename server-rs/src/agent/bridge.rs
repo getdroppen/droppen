@@ -334,12 +334,11 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("PATCH", "/api/screens/{id}", Use),
         ("DELETE", "/api/screens/{id}", Use),
         ("POST", "/api/server/self-upgrade", Posture),
-        // Plugins: their documents (read, write, history, batches) and
-        // notices are the device's own data, like a session's; switching a
-        // plugin on or off changes what this computer runs: admins only.
+        // Plugins: their documents (read, write, history, batches) are the
+        // device's own data, like a session's; switching a plugin on or off
+        // changes what this computer runs: admins only.
         ("GET", "/api/plugins", Use),
         ("PUT", "/api/plugins/{id}/enabled", Posture),
-        ("DELETE", "/api/plugins/{id}/notices/{notice}", Use),
         ("GET", "/api/plugins/{id}/docs", Use),
         ("GET", "/api/plugins/{id}/docs/{name}", Use),
         ("PUT", "/api/plugins/{id}/docs/{name}", Use),
@@ -963,7 +962,7 @@ mod tests {
             ("GET", "/api/sessions/claude/a%20b"),
             ("PUT", "/api/screens/order"),
             ("POST", "/api/notify/test"),
-            // A plugin's documents and notices: the device's own data.
+            // A plugin's documents: the device's own data.
             ("GET", "/api/plugins"),
             ("GET", "/api/plugins/tasks/docs"),
             ("GET", "/api/plugins/tasks/docs/state"),
@@ -972,7 +971,6 @@ mod tests {
             ("PUT", "/api/plugins/tasks/docs/events%2f2026-10"),
             ("GET", "/api/plugins/tasks/docs/events%2F2026-10/history"),
             ("POST", "/api/plugins/tasks/batch"),
-            ("DELETE", "/api/plugins/tasks/notices/legacy-import"),
         ] {
             assert_eq!(refusal(method, path, PLAIN), None, "{method} {path}");
         }

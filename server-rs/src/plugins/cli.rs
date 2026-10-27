@@ -14,9 +14,8 @@
 use std::path::Path;
 
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
-use serde_json::json;
 
-use super::{embedded_manifest, legacy_tasks, store, DecisionReason, PluginError, Plugins, StoreError};
+use super::{embedded_manifest, DecisionReason, PluginError, Plugins, StoreError};
 use crate::sessions::Paths;
 
 /// What to print when the subcommand does not parse.
@@ -26,7 +25,7 @@ USAGE:
     remote-hand-server plugin enable  <id>                      [--instance <name>]
     remote-hand-server plugin disable <id>                      [--instance <name>]
     remote-hand-server plugin export  <id> [--out <file>]       [--instance <name>]
-    remote-hand-server plugin import  <id> [<file>] [--replace] [--instance <name>]
+    remote-hand-server plugin import  <id> <file> [--replace]   [--instance <name>]
     remote-hand-server plugin verify  <id>                      [--instance <name>]
     remote-hand-server plugin purge   <id> --yes                [--instance <name>]
 
@@ -35,10 +34,9 @@ instance. `enable`/`disable` switch one for the instance (the configuration's
 [plugins] enable/disable, or APP_PLUGINS__ENABLE/DISABLE, win over both).
 `export` writes the plugin's documents as JSON (to stdout without --out);
 `import` restores such a file, refusing over existing documents unless
---replace, which keeps the replaced values in their history. `import tasks`
-without a file imports the instance's old Excel task ledger again, and
-`verify tasks` compares the plugin's store with that ledger. `purge` moves a
-plugin's data aside to plugins/<id>.purged-<time>/; the plugin must be off.
+--replace, which keeps the replaced values in their history. `verify` checks a
+plugin's store and its documents. `purge` moves a plugin's data aside to
+plugins/<id>.purged-<time>/; the plugin must be off.
 
 Safe while the server runs.";
 
@@ -48,7 +46,7 @@ enum Action {
     Enable(String),
     Disable(String),
     Export { id: String, out: Option<String> },
-    Import { id: String, file: Option<String>, replace: bool },
+    Import { id: String, file: String, replace: bool },
     Verify(String),
     Purge(String),
 }
@@ -81,14 +79,14 @@ fn parse(args: &[String]) -> Result<Action, String> {
         ["import", _, rest @ ..] => {
             let replace = rest.contains(&"--replace");
             let files: Vec<&&str> = rest.iter().filter(|word| **word != "--replace").collect();
-            if files.len() > 1 || files.iter().any(|word| word.starts_with("--")) {
-                return Err(usage());
+            match files.as_slice() {
+                [file] if !file.starts_with("--") => Ok(Action::Import {
+                    id: id(words.get(1))?,
+                    file: file.to_string(),
+                    replace,
+                }),
+                _ => Err(usage()),
             }
-            Ok(Action::Import {
-                id: id(words.get(1))?,
-                file: files.first().map(|file| file.to_string()),
-                replace,
-            })
         }
         ["verify", _] => Ok(Action::Verify(id(words.get(1))?)),
         ["purge", _, "--yes"] => Ok(Action::Purge(id(words.get(1))?)),
@@ -154,8 +152,6 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             if let Some(reason) = status.reason {
                 println!("  {reason}");
             }
-            // Switching tasks on takes in its Excel ledger (or what changed in
-            // it while the plugin was off) before anything can overwrite it.
             if let Some(notice) = plugins.status_of(&id).and_then(|status| status.notice) {
                 println!("  ! {notice}");
             }
@@ -187,28 +183,7 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             Ok(())
         }
         Action::Import { id, .. } if plugins.manifest(&id).is_none() => Err(format!("this build bundles no plugin {id:?} (instance {instance})")),
-        Action::Import { id, file: None, replace } => {
-            if id != legacy_tasks::ID {
-                return Err("import without a file only means the old Excel task ledger: plugin import tasks".to_string());
-            }
-            let imported = legacy_tasks::import(plugins, replace).map_err(|error| {
-                if error.contains("already holds") {
-                    format!("{error}; add --replace to replace them (the replaced values are kept in their history)")
-                } else {
-                    error
-                }
-            })?;
-            println!(
-                "imported the Excel task ledger into {id} on instance {instance}: {} in {} documents; the ledger was not changed",
-                imported.counts, imported.docs
-            );
-            Ok(())
-        }
-        Action::Import {
-            id,
-            file: Some(file),
-            replace,
-        } => {
+        Action::Import { id, file, replace } => {
             let text = std::fs::read_to_string(&file).map_err(|error| format!("cannot read {file}: {error}"))?;
             let export: StoreExport = serde_json::from_str(&text).map_err(|error| format!("{file} is not a plugin export: {error}"))?;
             if export.format != EXPORT_FORMAT {
@@ -218,63 +193,26 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
                 return Err(format!("{file} holds the documents of {}, not {id}", export.plugin));
             }
             let expected: Vec<(String, serde_json::Value)> = export.docs.iter().map(|doc| (doc.name.clone(), doc.value.clone())).collect();
-            let origin = json!({ "path": file, "exportedAt": export.exported_at, "at": store::now() }).to_string();
             let stored = plugins
                 .open_store(&id)
-                .replace_all(
-                    export.docs,
-                    super::store::ImportScope::all(replace),
-                    None,
-                    &[("restored_from", origin)],
-                    |stored| {
-                        let mut got: Vec<(String, serde_json::Value)> = stored.iter().map(|doc| (doc.name.clone(), doc.value.clone())).collect();
-                        let mut want = expected.clone();
-                        got.sort_by(|a, b| a.0.cmp(&b.0));
-                        want.sort_by(|a, b| a.0.cmp(&b.0));
-                        if got == want {
-                            Ok(())
-                        } else {
-                            Err("the store does not read back as the export".to_string())
-                        }
-                    },
-                )
+                .replace_all(export.docs, replace, None, |stored| {
+                    let mut got: Vec<(String, serde_json::Value)> = stored.iter().map(|doc| (doc.name.clone(), doc.value.clone())).collect();
+                    let mut want = expected.clone();
+                    got.sort_by(|a, b| a.0.cmp(&b.0));
+                    want.sort_by(|a, b| a.0.cmp(&b.0));
+                    if got == want {
+                        Ok(())
+                    } else {
+                        Err("the store does not read back as the export".to_string())
+                    }
+                })
                 .map_err(|error| refusal(error.into()))?;
             println!("imported {} documents into {id} on instance {instance} from {file}", stored.len());
-            if id == legacy_tasks::ID {
-                legacy_tasks::write_back(plugins);
-                if let Some(notice) = plugins.status_of(&id).and_then(|status| status.notice) {
-                    println!("  ! {notice}");
-                }
-            }
             if !plugins.is_enabled(&id) {
                 let hint = format!("  {id} is off on this instance; turn it on with: remote-hand-server plugin enable {id} --instance {instance}");
                 println!("{}", crate::program::Name::invoked().rewrite(&hint));
             }
             Ok(())
-        }
-        Action::Verify(id) if id == legacy_tasks::ID => {
-            let verified = legacy_tasks::verify(plugins)?;
-            println!("instance {instance}, plugin {id}:");
-            println!(
-                "  store:  {} ({} event documents, {} report documents)",
-                verified.store, verified.event_docs, verified.report_docs
-            );
-            println!("  ledger: {}", verified.ledger);
-            println!(
-                "  the ledger on disk is {}",
-                if verified.in_step {
-                    "the file the plugin last wrote"
-                } else {
-                    "NOT the file the plugin last wrote: the next write-back keeps a copy and merges it"
-                }
-            );
-            match verified.difference {
-                None => {
-                    println!("  identical");
-                    Ok(())
-                }
-                Some(path) => Err(format!("the store and the ledger differ, first at {path}")),
-            }
         }
         Action::Verify(id) => {
             let store = plugins
@@ -344,6 +282,7 @@ mod tests {
     use super::*;
     use crate::config::PluginSettings;
     use crate::plugins::tests::{host, manifest};
+    use serde_json::json;
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_string).collect()
@@ -361,18 +300,18 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&args("import tasks --replace")),
+            parse(&args("import tasks backup.json")),
             Ok(Action::Import {
                 id: "tasks".into(),
-                file: None,
-                replace: true
+                file: "backup.json".into(),
+                replace: false
             })
         );
         assert_eq!(
             parse(&args("import tasks backup.json --replace")),
             Ok(Action::Import {
                 id: "tasks".into(),
-                file: Some("backup.json".into()),
+                file: "backup.json".into(),
                 replace: true
             })
         );
@@ -383,6 +322,7 @@ mod tests {
             "",
             "list extra",
             "enable",
+            "import tasks",
             "import tasks a b",
             "import tasks --force",
             "export tasks --out",
@@ -452,7 +392,7 @@ mod tests {
         .unwrap();
         let import = |replace| Action::Import {
             id: "notes".into(),
-            file: Some(file.to_string_lossy().into_owned()),
+            file: file.to_string_lossy().into_owned(),
             replace,
         };
         assert!(execute(&plugins, &paths, import(false)).unwrap_err().contains("--replace"));

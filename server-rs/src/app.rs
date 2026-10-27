@@ -287,16 +287,6 @@ impl RemoteHandApp {
                 // PATH is the whole process's: a throwaway in-process server
                 // must not rewrite it.
                 state.setup.apply_overlay();
-                // The plugins' boot step, today only the legacy task ledger's
-                // import and reconciliation (`plugins::legacy_tasks`), and only
-                // when the build bundles that plugin. Before the listener, so
-                // the first `GET /api/settings` already reports the plugin on
-                // where the ledger was taken in; behind the lock, because it
-                // writes this instance's state and stores.
-                let plugins = state.plugins.clone();
-                if let Err(error) = tokio::task::spawn_blocking(move || plugins.boot()).await {
-                    tracing::error!(%error, "the plugins' boot step panicked");
-                }
                 // The registry is the one piece of ownership state that cannot
                 // be rebuilt from the filesystem, so the owner tidies it here
                 // rather than on every list refresh.

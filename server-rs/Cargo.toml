@@ -152,12 +152,6 @@ croner = { version = "4", default-features = false, features = ["chrono"] }
 # does not run. Default features, because `clock` is what gives `Local` its
 # offset and the local zone *is* the contract (see `schedule::cron`).
 chrono = "0.4"
-# The legacy Excel task ledger: read once to import it into the `tasks`
-# plugin's store, and written back after each change for one more release so a
-# rolled-back binary still reads current data (`plugins::legacy_tasks`).
-rust_xlsxwriter = { version = "0.99", features = ["chrono"] }
-calamine = "0.35"
-
 # An unoptimized argon2 at 64 MiB and three passes takes seconds rather than
 # milliseconds, which would put minutes on every `cargo test` run that touches a
 # login. Optimizing just the hash — and the compression function under it —
