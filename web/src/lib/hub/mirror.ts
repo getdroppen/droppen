@@ -456,7 +456,7 @@ export interface SessionCopy {
 }
 
 /** A copy read back from the device, still good: its state, where it stands, how current. */
-interface Saved<S> {
+export interface Saved<S> {
   state: S;
   at: CopyMark;
   freshestMs: number | null;
@@ -476,6 +476,125 @@ interface StreamSlot<S> {
   /** Its catch-up on the current subscription is over. */
   synced: boolean;
   saveTimer: ReturnType<typeof setTimeout> | undefined;
+}
+
+/** How one kind of copy is kept and read back: the device store it is in, and where it comes from. */
+export interface CopySlotStore {
+  account: string;
+  machine: string;
+  kind: StreamKind;
+  /** `null`, or a source with no keys, when this device holds none: nothing is read back or saved then. */
+  source: CopySource | null;
+  transact: Transact;
+  seal: MirrorSeal;
+}
+
+/** A copy as it stood when its save was asked for: the record, and where it goes. */
+export interface PendingCopy {
+  record: MirrorRecord<unknown>;
+  at: SealAt;
+}
+
+/**
+ * One small copy (the index or the status) as this device keeps it: the state
+ * it holds and where it stands, read back from a sealed record and written as
+ * one — the mechanics the mirror and the machine list's status reader share.
+ * Sessions keep more (an opened list, sweeping) and are the mirror's own.
+ */
+export class CopySlot<S> implements StreamSlot<S> {
+  readonly kind: StreamKind;
+  state: S | null = null;
+  at: CopyMark | null = null;
+  freshestMs: number | null = null;
+  sub: CopyFollow | null = null;
+  /** The hub has said the stream does not exist (yet). */
+  missing = false;
+  /** Its catch-up on the current subscription is over. */
+  synced = false;
+  saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(
+    private readonly store: CopySlotStore,
+    /** Where its copy is kept, as the source names it (the hub's: the stream id, hex). */
+    public place: string,
+    saved: Saved<S> | null = null,
+  ) {
+    this.kind = store.kind;
+    if (saved) {
+      this.state = saved.state;
+      this.at = saved.at;
+      this.freshestMs = saved.freshestMs;
+    }
+  }
+
+  /** The newest of `places` whose stored record (`stored`, by index) opens and still holds; `at` its index (`0` when none does). */
+  read(places: readonly string[], stored: readonly unknown[], ref?: { source: string; id: string }): Promise<{ at: number; saved: Saved<S> | null }> {
+    return newestSavedCopy<S>(this.store, places, stored, ref);
+  }
+
+  /** This copy as it stands now, for a save (`null`: nothing to save). */
+  pending(savedAt: number): PendingCopy | null {
+    if (!this.state || !this.at || !this.place) return null;
+    return {
+      record: { kind: this.kind, head: this.at.mark, state: this.state, freshestMs: this.freshestMs, savedAt },
+      at: copyAt(this.store.account, this.store.machine, this.place),
+    };
+  }
+
+  /** Seal `pending` and write it in one transaction. `beforeWrite` is asked just before the write (`false`: nothing is written). */
+  async write(pending: PendingCopy, beforeWrite?: () => boolean, warning = "mirror: a copy could not be sealed, so it was not saved:"): Promise<void> {
+    let stored: StoredCopy;
+    try {
+      stored = await sealCopy(this.store.seal, pending.at, pending.record);
+    } catch (error) {
+      console.warn(warning, error);
+      return;
+    }
+    if (beforeWrite && !beforeWrite()) return;
+    await this.store.transact<void>(
+      "readwrite",
+      (store) => {
+        store.put(stored, pending.at.key);
+      },
+      2000,
+    );
+  }
+}
+
+/**
+ * A stored record as a starting point, if it opens, is ours and its mark
+ * still holds (the hub's: the head is still the machine's). One that is not
+ * sealed, or does not open, is deleted.
+ */
+async function savedCopy<S>(store: CopySlotStore, stored: unknown, place: string, ref?: { source: string; id: string }): Promise<Saved<S> | null> {
+  const source = store.source;
+  if (!source) return null;
+  const at = copyAt(store.account, store.machine, place);
+  const opened = await openCopy<S>(store.seal, stored, at, store.kind);
+  if (!("record" in opened)) {
+    if (opened.drop) void dropCopy(store.transact, at.key, stored);
+    return null;
+  }
+  const r = opened.record;
+  if (ref && (r.source !== ref.source || r.id !== ref.id)) return null;
+  const mark = await source.resume(place, r.head);
+  // How current: the machine's own time on the mark, not the number stored beside it.
+  return mark ? { at: mark, state: r.state, freshestMs: mark.timeMs } : null;
+}
+
+/** The newest of `places` with a copy on this device that still holds, and that copy; else the first and none. */
+async function newestSavedCopy<S>(
+  store: CopySlotStore,
+  places: readonly string[],
+  stored: readonly unknown[],
+  ref?: { source: string; id: string },
+): Promise<{ at: number; saved: Saved<S> | null }> {
+  for (let i = 0; i < places.length; i++) {
+    if (stored[i] === undefined) continue;
+    const saved = await savedCopy<S>(store, stored[i], places[i]!, ref);
+    if (saved) return { at: i, saved };
+  }
+  return { at: 0, saved: null };
 }
 
 interface SessionSlot extends StreamSlot<FeedCopy> {
@@ -528,8 +647,8 @@ export interface MirrorOptions {
 
 export class MachineMirror {
   /** The index and status copies; `null` until there is one. */
-  index: StreamSlot<IndexState> | null = null;
-  status: StreamSlot<StatusState> | null = null;
+  index: CopySlot<IndexState> | null = null;
+  status: CopySlot<StatusState> | null = null;
   /** Whether the device copy has been read (instant or not, it is what it is now). */
   loaded = false;
   private readonly sessions = new Map<string, SessionSlot>();
@@ -710,14 +829,14 @@ export class MachineMirror {
     if (this.opts.sweep !== false) await sweepCopies(this.transact, account);
   }
 
+  /** How a copy of `kind` is kept here, for the shared slot machinery. */
+  private slotStore(kind: StreamKind): CopySlotStore {
+    return { account: this.opts.account, machine: this.opts.machine, kind, source: this.opts.source, transact: this.transact, seal: this.seal };
+  }
+
   /** Of `places` (the one to show first first), the first with a copy on this device that is still good, and that copy; else the first and none. */
-  private async newestSaved<S>(places: readonly string[], stored: readonly unknown[], kind: StreamKind): Promise<{ at: number; saved: Saved<S> | null }> {
-    for (let i = 0; i < places.length; i++) {
-      if (stored[i] === undefined) continue;
-      const saved = await this.savedOf<S>(stored[i], kind, places[i]!);
-      if (saved) return { at: i, saved };
-    }
-    return { at: 0, saved: null };
+  private newestSaved<S>(places: readonly string[], stored: readonly unknown[], kind: StreamKind): Promise<{ at: number; saved: Saved<S> | null }> {
+    return newestSavedCopy<S>(this.slotStore(kind), places, stored);
   }
 
   /** Follow the index or the status into `slot`, under whichever of its places the source says (the slot moves with it). */
@@ -800,18 +919,8 @@ export class MachineMirror {
     return (await from.places({ kind: "session", source, id, se }))[0] ?? null;
   }
 
-  private slot<S>(kind: StreamKind, place: string, saved: Saved<S> | null): StreamSlot<S> {
-    return {
-      kind,
-      place,
-      state: saved?.state ?? null,
-      at: saved?.at ?? null,
-      freshestMs: saved?.freshestMs ?? null,
-      sub: null,
-      missing: false,
-      synced: false,
-      saveTimer: undefined,
-    };
+  private slot<S>(kind: StreamKind, place: string, saved: Saved<S> | null): CopySlot<S> {
+    return new CopySlot<S>(this.slotStore(kind), place, saved);
   }
 
   /**
@@ -819,20 +928,8 @@ export class MachineMirror {
    * still holds (the hub's: the head is still the machine's). One that is
    * not sealed, or does not open, is deleted.
    */
-  private async savedOf<S>(stored: unknown, kind: StreamKind, place: string, ref?: { source: string; id: string }): Promise<Saved<S> | null> {
-    const source = this.opts.source;
-    if (!source) return null;
-    const at = copyAt(this.opts.account, this.opts.machine, place);
-    const opened = await openCopy<S>(this.seal, stored, at, kind);
-    if (!("record" in opened)) {
-      if (opened.drop) void dropCopy(this.transact, at.key, stored);
-      return null;
-    }
-    const r = opened.record;
-    if (ref && (r.source !== ref.source || r.id !== ref.id)) return null;
-    const mark = await source.resume(place, r.head);
-    // How current: the machine's own time on the mark, not the number stored beside it.
-    return mark ? { at: mark, state: r.state, freshestMs: mark.timeMs } : null;
+  private savedOf<S>(stored: unknown, kind: StreamKind, place: string, ref?: { source: string; id: string }): Promise<Saved<S> | null> {
+    return savedCopy<S>(this.slotStore(kind), stored, place, ref);
   }
 
   /** The opened list read back: the entries that open, in order (each kept as sealed, to be saved again as it is). */
@@ -1152,27 +1249,30 @@ export class MachineMirror {
       savedAt: this.now(),
     };
     const at = copyAt(account, machine, slot.place);
+    if (!session) {
+      const pending = { record, at };
+      return this.saves.run(async () => {
+        // Closed meanwhile (the machine is gone, or the account signed out):
+        // a save its timer queued is dropped; one `flush` asked for is kept.
+        if (this.closed && !flushed) return;
+        await (slot as CopySlot<unknown>).write(pending, () => !this.closed || flushed);
+      });
+    }
     const mine = this.opened;
     return this.saves.run(async () => {
       // Closed meanwhile (the machine is gone, or the account signed out):
       // a save its timer queued is dropped; one `flush` asked for is kept.
       if (this.closed && !flushed) return;
       let stored: StoredCopy;
-      let mineSealed: StoredOpened[] = [];
+      let mineSealed: StoredOpened[];
       try {
         stored = await sealCopy(this.seal, at, record);
-        if (session) mineSealed = await this.sealOpened(mine);
+        mineSealed = await this.sealOpened(mine);
       } catch (error) {
         console.warn("mirror: a copy could not be sealed, so it was not saved:", error);
         return;
       }
       if (this.closed && !flushed) return;
-      if (!session) {
-        await this.transact<void>("readwrite", (store) => {
-          store.put(stored, at.key);
-        }, 2000);
-        return;
-      }
       const kept = await this.kept();
       if (this.closed && !flushed) return;
       const prefix = streamPrefix(account, machine);

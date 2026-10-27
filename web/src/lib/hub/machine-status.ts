@@ -19,8 +19,8 @@
  * epoch held, then older ones, and on to a newer name the moment it has
  * something.
  */
-import type { CopyFollow, CopyMark, CopySource } from "./copy-source";
-import { copyAt, defaultMirrorSeal, deviceTransact, dropCopy, type MirrorRecord, type MirrorSeal, openCopy, sealCopy, sweepCopies, type Transact } from "./mirror";
+import type { CopyFollow, CopySource } from "./copy-source";
+import { copyAt, CopySlot, defaultMirrorSeal, deviceTransact, type MirrorSeal, sweepCopies, type Transact } from "./mirror";
 import type { StatusState } from "./streams";
 
 export interface StatusReaderOptions {
@@ -37,26 +37,27 @@ export interface StatusReaderOptions {
 }
 
 export class MachineStatusReader {
-  /** The status as last signed for; `null` until there is one. */
-  state: StatusState | null = null;
   /** Whether the device copy has been read. */
   loaded = false;
-  private at: CopyMark | null = null;
-  private freshestMs: number | null = null;
-  /** Where the copy is kept (the source's name for it: the hub's stream id, hex). */
-  private place: string | null = null;
+  /** The status as last signed for; `null` until there is one. */
+  get state(): StatusState | null {
+    return this.slot.state;
+  }
+  /** The copy as the device keeps it (the same slot mechanics as the mirror's). */
+  private readonly slot: CopySlot<StatusState>;
   private sub: CopyFollow | null = null;
-  private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private readonly listeners = new Set<() => void>();
   private readonly transact: Transact;
-  private readonly seal: MirrorSeal;
   /** The save in flight: the next waits for it (sealing is asynchronous). */
   private saving: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: StatusReaderOptions) {
     this.transact = opts.transact ?? deviceTransact;
-    this.seal = opts.seal ?? defaultMirrorSeal();
+    this.slot = new CopySlot<StatusState>(
+      { account: opts.account, machine: opts.machine, kind: "status", source: opts.source, transact: this.transact, seal: opts.seal ?? defaultMirrorSeal() },
+      "",
+    );
   }
 
   get machine(): string {
@@ -104,19 +105,13 @@ export class MachineStatusReader {
         3000,
       );
       // The newest name with a copy here that still checks out.
-      let at = 0;
-      let saved: { at: CopyMark; state: StatusState } | null = null;
-      for (let i = 0; i < places.length && !saved; i++) {
-        if (records?.[i] === undefined) continue;
-        saved = await this.savedOf(source, records[i], places[i]!);
-        if (saved) at = i;
-      }
+      const { at, saved } = await this.slot.read(places, records ?? []);
       if (this.closed) return;
-      this.place = places[at]!;
+      this.slot.place = places[at]!;
       if (saved) {
-        this.state = saved.state;
-        this.at = saved.at;
-        this.freshestMs = saved.at.timeMs;
+        this.slot.state = saved.state;
+        this.slot.at = saved.at;
+        this.slot.freshestMs = saved.freshestMs;
       }
       this.loaded = true;
       this.emit();
@@ -126,12 +121,12 @@ export class MachineStatusReader {
         { at, from: saved },
         {
           onMoved: (place) => {
-            this.place = place;
+            this.slot.place = place;
           },
           onState: (change) => {
-            this.state = change.state;
-            this.at = change.at;
-            this.freshestMs = change.freshestMs;
+            this.slot.state = change.state;
+            this.slot.at = change.at;
+            this.slot.freshestMs = change.freshestMs;
             this.scheduleSave();
             this.emit();
           },
@@ -147,58 +142,27 @@ export class MachineStatusReader {
     }
   }
 
-  /** A stored record as a starting point, if it opens, is ours and its mark still holds (one that does not open is deleted). */
-  private async savedOf(source: CopySource, record: unknown, place: string): Promise<{ at: CopyMark; state: StatusState } | null> {
-    const at = copyAt(this.opts.account, this.opts.machine, place);
-    const opened = await openCopy<StatusState>(this.seal, record, at, "status");
-    if (!("record" in opened)) {
-      if (opened.drop) void dropCopy(this.transact, at.key, record);
-      return null;
-    }
-    const mark = await source.resume(place, opened.record.head);
-    return mark ? { at: mark, state: opened.record.state } : null;
-  }
-
   private scheduleSave(): void {
-    if (this.closed || this.saveTimer !== undefined) return;
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = undefined;
+    if (this.closed || this.slot.saveTimer !== undefined) return;
+    this.slot.saveTimer = setTimeout(() => {
+      this.slot.saveTimer = undefined;
       void this.save();
     }, this.opts.saveDelayMs ?? 1000);
   }
 
   /** Save now if a save is pending (the page is going away). */
   flush(): Promise<void> {
-    if (this.saveTimer === undefined) return Promise.resolve();
-    clearTimeout(this.saveTimer);
-    this.saveTimer = undefined;
+    if (this.slot.saveTimer === undefined) return Promise.resolve();
+    clearTimeout(this.slot.saveTimer);
+    this.slot.saveTimer = undefined;
     return this.save();
   }
 
   /** The state and the signed head it stands at, together and sealed, as the mirror writes the status. */
   private save(): Promise<void> {
-    if (!this.state || !this.at || !this.place) return Promise.resolve();
-    const { account, machine } = this.opts;
-    const record: MirrorRecord<StatusState> = {
-      kind: "status",
-      head: this.at.mark,
-      state: this.state,
-      freshestMs: this.freshestMs,
-      savedAt: (this.opts.now ?? Date.now)(),
-    };
-    const at = copyAt(account, machine, this.place);
-    const next = this.saving.then(async () => {
-      let stored;
-      try {
-        stored = await sealCopy(this.seal, at, record);
-      } catch (error) {
-        console.warn("machine status: the copy could not be sealed, so it was not saved:", error);
-        return;
-      }
-      await this.transact<void>("readwrite", (store) => {
-        store.put(stored, at.key);
-      }, 2000);
-    });
+    const pending = this.slot.pending((this.opts.now ?? Date.now)());
+    if (!pending) return Promise.resolve();
+    const next = this.saving.then(() => this.slot.write(pending, undefined, "machine status: the copy could not be sealed, so it was not saved:"));
     this.saving = next.catch(() => undefined);
     return next;
   }
@@ -206,8 +170,8 @@ export class MachineStatusReader {
   /** Stop following (a save still pending is dropped; {@link flush} first to keep it). */
   close(): void {
     this.closed = true;
-    clearTimeout(this.saveTimer);
-    this.saveTimer = undefined;
+    clearTimeout(this.slot.saveTimer);
+    this.slot.saveTimer = undefined;
     this.sub?.close();
     this.sub = null;
     this.listeners.clear();
