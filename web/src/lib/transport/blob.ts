@@ -13,6 +13,7 @@
  * {@link BLOB_LIMITS.image}, a download {@link BLOB_LIMITS.download}, an
  * upload {@link BLOB_LIMITS.upload} (what the agent buffers of a request).
  */
+import { formatBytes } from "@/lib/format";
 import type { MachineKey } from "@/lib/machines/key";
 import { BLOB_UPLOAD_MAX, BodyTooLargeError } from "./tunnel";
 import type { Transport } from "./types";
@@ -45,12 +46,6 @@ export class BlobError extends Error {
     super(message);
     this.name = "BlobError";
   }
-}
-
-/** `1.5 MB`, for the bounds in messages. */
-export function formatLimit(bytes: number): string {
-  const mb = bytes / MiB;
-  return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
 }
 
 /** Where a path is put when a `Request` needs an absolute URL; the tunnel only reads its path and query. */
@@ -129,7 +124,7 @@ export async function fetchBlob(path: string, opts: FetchBlobOptions): Promise<F
   const total = Number.isFinite(declared) && declared >= 0 && res.headers.has("content-length") ? declared : null;
   if (total !== null && total > opts.limit) {
     void res.body?.cancel().catch(() => undefined);
-    throw new BlobError("tooLarge", `larger than ${formatLimit(opts.limit)}`, null, opts.limit);
+    throw new BlobError("tooLarge", `larger than ${formatBytes(opts.limit, true)}`, null, opts.limit);
   }
   const type = res.headers.get("content-type") ?? "";
   const name = dispositionName(res.headers.get("content-disposition"));
@@ -150,7 +145,7 @@ export async function fetchBlob(path: string, opts: FetchBlobOptions): Promise<F
       received += step.value.byteLength;
       if (received > opts.limit) {
         void reader.cancel().catch(() => undefined);
-        throw new BlobError("tooLarge", `larger than ${formatLimit(opts.limit)}`, null, opts.limit);
+        throw new BlobError("tooLarge", `larger than ${formatBytes(opts.limit, true)}`, null, opts.limit);
       }
       chunks.push(step.value);
       opts.onProgress?.(received, total);
@@ -166,12 +161,12 @@ export async function fetchBlob(path: string, opts: FetchBlobOptions): Promise<F
  */
 export async function sendUpload(request: Request, size: number, via: Transport): Promise<Response> {
   if (via.tunneled && size > BLOB_LIMITS.upload) {
-    throw new BlobError("tooLarge", `larger than ${formatLimit(BLOB_LIMITS.upload)}`, null, BLOB_LIMITS.upload);
+    throw new BlobError("tooLarge", `larger than ${formatBytes(BLOB_LIMITS.upload, true)}`, null, BLOB_LIMITS.upload);
   }
   try {
     return await via.fetch(request, { class: "blob" });
   } catch (error) {
-    if (error instanceof BodyTooLargeError) throw new BlobError("tooLarge", `larger than ${formatLimit(error.limit)}`, null, error.limit);
+    if (error instanceof BodyTooLargeError) throw new BlobError("tooLarge", `larger than ${formatBytes(error.limit, true)}`, null, error.limit);
     throw error;
   }
 }

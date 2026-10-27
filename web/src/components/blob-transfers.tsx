@@ -13,12 +13,12 @@ import { Download, Loader2, X } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatBytes } from "@/lib/format";
-import { BlobError, formatLimit } from "@/lib/transport/blob";
+import { BlobError } from "@/lib/transport/blob";
 
 /** What a failed transfer says, in the page's language where it is ours to say. */
 export function blobErrorText(error: unknown, t: TFunction): string {
   if (error instanceof BlobError) {
-    if (error.kind === "tooLarge") return t("larger than {{limit}}: too large to move through the hub", { limit: formatLimit(error.limit ?? 0) });
+    if (error.kind === "tooLarge") return t("larger than {{limit}}: too large to move through the hub", { limit: formatBytes(error.limit ?? 0, true) });
     if (error.kind === "network") return t("the device could not be reached");
     // The machine's own sentence, or the offline copy's (already translated).
     return error.message;

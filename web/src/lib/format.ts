@@ -1,5 +1,15 @@
-export function formatBytes(bytes: number | null): string {
+/**
+ * A byte count: `512 B`, `1.5 KB`, `25.0 MB`, `2.0 GB`.
+ *
+ * `compact` is for a bound quoted in a sentence ("larger than 25 MB"): always
+ * in MB, and whole megabytes without a trailing `.0`.
+ */
+export function formatBytes(bytes: number | null, compact = false): string {
   if (bytes === null) return "";
+  if (compact) {
+    const mb = bytes / 1024 / 1024;
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+  }
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
