@@ -153,8 +153,8 @@ pub enum Refusal {
     /// on its way out.
     Lapsed,
     /// A route no device reaches over a channel — the local Droppen link and
-    /// gateway, and what only a process on this computer can prove it may
-    /// call (403 `not_from_cloud`).
+    /// gateway, runtime-installed plugins, and what only a process on this
+    /// computer can prove it may call (403 `not_from_cloud`).
     NotFromCloud,
     /// A route this computer does not offer other devices: none that
     /// [`ROUTES`] classifies (403 `not_offered`). A route the server gains is
@@ -334,16 +334,9 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("PATCH", "/api/screens/{id}", Use),
         ("DELETE", "/api/screens/{id}", Use),
         ("POST", "/api/server/self-upgrade", Posture),
-        // Plugins: their documents (read, write, history, batches) are the
-        // device's own data, like a session's; switching a plugin on or off
-        // changes what this computer runs: admins only.
-        ("GET", "/api/plugins", Use),
-        ("PUT", "/api/plugins/{id}/enabled", Posture),
-        ("GET", "/api/plugins/{id}/docs", Use),
-        ("GET", "/api/plugins/{id}/docs/{name}", Use),
-        ("PUT", "/api/plugins/{id}/docs/{name}", Use),
-        ("GET", "/api/plugins/{id}/docs/{name}/history", Use),
-        ("POST", "/api/plugins/{id}/batch", Use),
+        // Runtime-installed plugins are this computer's own (`docs/plugins/
+        // runtime.md` §5): no `/api/plugins…` route is listed here, and
+        // [`plugin_route`] refuses every one of them to every device.
         ("GET", "/api/terminals", Use),
         ("POST", "/api/terminals", Use),
         ("PATCH", "/api/terminals/{id}", Use),
@@ -433,6 +426,16 @@ pub fn never_from_cloud(route: &str) -> bool {
     under("/api/cloud") || under("/api/agg")
 }
 
+/// Whether `route` belongs to runtime-installed plugins — listing, switching,
+/// installing, and every document route. They exist only on this computer and
+/// the pages it serves itself (`docs/plugins/runtime.md` §5): deliberately not
+/// in [`ROUTES`] at all, so no device reaches one, and refused before any
+/// class is asked for.
+fn plugin_route(route: &str) -> bool {
+    let under = |prefix: &str| route == prefix || route.starts_with(&format!("{prefix}/"));
+    under("/api/plugins")
+}
+
 /// What becomes of `method path` from a device standing as `standing`:
 /// `None` when it may go on. The route is judged as sent and as the server
 /// sees it once percent-decoded, the stricter answer winning; a route
@@ -443,7 +446,7 @@ pub fn refusal(method: &str, path: &str, standing: Standing) -> Option<Refusal> 
     }
     let route = path.split(['?', '#']).next().unwrap_or_default();
     let decoded = percent_decoded(route);
-    if [route, decoded.as_str()].iter().any(|r| never_from_cloud(r)) {
+    if [route, decoded.as_str()].iter().any(|r| never_from_cloud(r) || plugin_route(r)) {
         return Some(Refusal::NotFromCloud);
     }
     let classes = [classify(method, route), classify(method, &decoded_by_segment(route))];
@@ -541,8 +544,7 @@ fn percent_decoded(text: &str) -> String {
 
 /// `route` percent-decoded one segment at a time, as the router matches
 /// each segment: a slash a segment decodes to stays encoded, inside that
-/// segment — a plugin document's name, the one place [`allowed`] lets one
-/// through — so it cannot add a segment, while `self%2Dupgrade` still reads
+/// segment, so it cannot add a segment, while `self%2Dupgrade` still reads
 /// as `self-upgrade`.
 fn decoded_by_segment(route: &str) -> String {
     route
@@ -565,7 +567,7 @@ pub fn allowed(class: StreamClass, path: &str) -> bool {
         && [route, decoded.as_str()]
             .iter()
             .all(|r| !r.split('/').any(|seg| seg == ".." || seg == ".") && !r.contains("//") && !r.contains('\\'))
-        && (decoded.matches('/').count() == route.matches('/').count() || plugin_doc_route(route))
+        && decoded.matches('/').count() == route.matches('/').count()
         && path.bytes().all(|b| b.is_ascii_graphic());
     if !clean {
         return false;
@@ -581,25 +583,6 @@ pub fn allowed(class: StreamClass, path: &str) -> bool {
             !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         }
         StreamClass::Blob => BLOB_ROUTES.contains(&route),
-    }
-}
-
-/// A plugin document's own route, whose name segment may carry `%2F`.
-///
-/// The store protocol sends a document name as one path segment, so
-/// `events/2026-10` travels as `events%2F2026-10` (`docs/plugins/storage-
-/// protocol.md`). That is the one place an encoded slash is meant: the router
-/// matches the path as it was sent, so the slash stays inside the `{name}`
-/// segment and cannot move the request to another route, and the store
-/// refuses a name with an empty, `.` or `..` segment (the decoded form has
-/// already been held to the dot-segment and `//` rules above).
-fn plugin_doc_route(route: &str) -> bool {
-    let Some(rest) = route.strip_prefix("/api/plugins/") else {
-        return false;
-    };
-    match rest.split('/').collect::<Vec<_>>().as_slice() {
-        [id, "docs", name] | [id, "docs", name, "history"] => droppen_plugin_sdk::valid_id(id) && !name.is_empty(),
-        _ => false,
     }
 }
 
@@ -962,15 +945,6 @@ mod tests {
             ("GET", "/api/sessions/claude/a%20b"),
             ("PUT", "/api/screens/order"),
             ("POST", "/api/notify/test"),
-            // A plugin's documents: the device's own data.
-            ("GET", "/api/plugins"),
-            ("GET", "/api/plugins/tasks/docs"),
-            ("GET", "/api/plugins/tasks/docs/state"),
-            ("PUT", "/api/plugins/tasks/docs/state"),
-            ("GET", "/api/plugins/tasks/docs/events%2F2026-10"),
-            ("PUT", "/api/plugins/tasks/docs/events%2f2026-10"),
-            ("GET", "/api/plugins/tasks/docs/events%2F2026-10/history"),
-            ("POST", "/api/plugins/tasks/batch"),
         ] {
             assert_eq!(refusal(method, path, PLAIN), None, "{method} {path}");
         }
@@ -998,8 +972,6 @@ mod tests {
             ("POST", "/rh/display-name"),
             ("POST", "/rh/rotate"),
             ("post", "/rh/rotate?x=1"),
-            // Switching a plugin changes what this computer runs.
-            ("PUT", "/api/plugins/tasks/enabled"),
         ] {
             assert_eq!(refusal(method, path, PLAIN), Some(Refusal::LimitedDevice), "{method} {path}");
             assert_eq!(refusal(method, path, STALE_ADMIN), Some(Refusal::Stale(View::Stale)), "{method} {path}");
@@ -1022,6 +994,31 @@ mod tests {
             assert_eq!(refusal("POST", path, ADMIN), Some(Refusal::NotFromCloud), "{path}");
             assert_eq!(refusal("POST", path, PLAIN), Some(Refusal::NotFromCloud), "{path}");
         }
+        // Runtime-installed plugins are local-only (`docs/plugins/runtime.md`
+        // §5): no device — admin or plain, whatever the method, however the
+        // path is written — reaches one. The whole surface, including the
+        // routes of installing and uninstalling and the notices, which this
+        // build does not register yet: the rule is the prefix, not a list.
+        for (method, path) in [
+            ("GET", "/api/plugins"),
+            ("GET", "/api/plugins/tasks/enabled"),
+            ("PUT", "/api/plugins/tasks/enabled"),
+            ("GET", "/api/plugins/tasks/docs"),
+            ("GET", "/api/plugins/tasks/docs/state"),
+            ("PUT", "/api/plugins/tasks/docs/state"),
+            ("GET", "/api/plugins/tasks/docs/events%2F2026-10"),
+            ("PUT", "/api/plugins/tasks/docs/events%2f2026-10"),
+            ("GET", "/api/plugins/tasks/docs/events%2F2026-10/history"),
+            ("POST", "/api/plugins/tasks/batch"),
+            ("GET", "/api/plugins/tasks/notices"),
+            ("POST", "/api/plugins"),
+            ("DELETE", "/api/plugins/tasks"),
+            ("GET", "/api/plugins%2Ftasks/docs/state"),
+            ("GET", "/api/%70lugins"),
+        ] {
+            assert_eq!(refusal(method, path, ADMIN), Some(Refusal::NotFromCloud), "{method} {path}");
+            assert_eq!(refusal(method, path, PLAIN), Some(Refusal::NotFromCloud), "{method} {path}");
+        }
         assert_eq!(Refusal::NotFromCloud.answer().0, 403);
         assert_eq!(Refusal::NotFromCloud.answer().1["error"], "not_from_cloud");
         // An allow-list: what no entry classifies is refused to everybody —
@@ -1038,12 +1035,10 @@ mod tests {
             ("GET", "/rh/nope"),
             ("GET", "/rh/rotate"),
             ("POST", "/rh/%72otate"),
-            // The Tasks routes went into a plugin; an encoded slash adds no
-            // segment outside a document's name.
+            // The Tasks routes went into a plugin, and a plugin's prefix is
+            // `/api/plugins` exactly: neither is a route the server registers.
             ("GET", "/api/tasks/state"),
-            ("GET", "/api/plugins/tasks/docs/a%2Fb/other"),
-            ("PUT", "/api/plugins%2Ftasks/enabled"),
-            ("PUT", "/api/plugins/tasks/%65nabled"),
+            ("GET", "/api/pluginsfoo"),
         ] {
             assert_eq!(refusal(method, path, ADMIN), Some(Refusal::Unlisted), "{method} {path}");
             assert_eq!(refusal(method, path, PLAIN), Some(Refusal::Unlisted), "{method} {path}");
@@ -1153,7 +1148,10 @@ mod tests {
     /// Every route the server registers — read off the router it serves
     /// (its OpenAPI document) and off the source (which also finds the
     /// undocumented websockets) — is classified in [`ROUTES`]; a new route
-    /// fails here until it is, and is refused to every device meanwhile.
+    /// fails here until it is, and is refused to every device meanwhile. The
+    /// exception is the plugin routes, which are local-only
+    /// (`docs/plugins/runtime.md` §5) and refused by [`plugin_route`] rather
+    /// than classified: a new one needs no entry here.
     #[tokio::test]
     async fn every_route_the_server_registers_is_classified() {
         use std::collections::BTreeSet;
@@ -1168,7 +1166,10 @@ mod tests {
         );
         let classified: BTreeSet<(String, String)> = ROUTES.iter().map(|(m, p, _)| (m.to_string(), p.to_string())).collect();
         assert_eq!(classified.len(), ROUTES.len(), "a route classified twice");
-        let unclassified: Vec<_> = registered.union(&documented).filter(|r| !classified.contains(*r)).collect();
+        let unclassified: Vec<_> = registered
+            .union(&documented)
+            .filter(|r| !classified.contains(*r) && !plugin_route(&r.1))
+            .collect();
         assert!(unclassified.is_empty(), "classify these in bridge::ROUTES: {unclassified:?}");
         let stale: Vec<_> = classified
             .iter()
@@ -1182,9 +1183,10 @@ mod tests {
             let sent = sent.join("/");
             let judged = refusal(method, &sent, ADMIN);
             assert_ne!(judged, Some(Refusal::Unlisted), "{method} {sent}");
-            let expected = match classify(method, &sent) {
-                Some(RouteClass::Never) => Some(Refusal::NotFromCloud),
-                _ => None,
+            let expected = if plugin_route(&sent) || classify(method, &sent) == Some(RouteClass::Never) {
+                Some(Refusal::NotFromCloud)
+            } else {
+                None
             };
             assert_eq!(judged, expected, "{method} {sent}");
         }
@@ -1233,10 +1235,12 @@ mod tests {
             "the query is not the route"
         );
         assert!(allowed(StreamClass::Rpc, "/api/sessions/claude/a%20b"));
-        // A plugin document's name is the one segment an encoded slash belongs in.
-        assert!(allowed(StreamClass::Rpc, "/api/plugins/tasks/docs/events%2F2026-10"));
-        assert!(allowed(StreamClass::Rpc, "/api/plugins/tasks/docs/events%2f2026-10/history"));
+        // A plugin document's encoded slash gets no exception any more, and
+        // the plugin routes themselves are refused by [`refusal`], not here
+        // (`docs/plugins/runtime.md` §5).
         for path in [
+            "/api/plugins/tasks/docs/events%2F2026-10",
+            "/api/plugins/tasks/docs/events%2f2026-10/history",
             "/api/plugins/tasks/docs%2Fstate",
             "/api/plugins/tasks/batch%2Fx",
             "/api/plugins/Tasks/docs/a%2Fb",
