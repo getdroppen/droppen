@@ -209,6 +209,10 @@ export function FooterLine() {
         <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        {/* Who to write to: the terms' contact part, its addresses for the account and for security. */}
+        <a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+          {t("Contact")}
+        </a>
         <a href={SOURCE_URL} data-testid="footer-source" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Client source code")}
         </a>

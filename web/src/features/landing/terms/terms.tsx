@@ -78,6 +78,11 @@ function useDocumentMeta() {
 export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
   useDocumentMeta();
+  // Arrived at a part of the page (`/terms#contact`, the footer's 「联系我们」): the page was not there to scroll to yet.
+  useEffect(() => {
+    const id = location.hash.slice(1);
+    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
+  }, []);
   const free = PLAN_NUMBERS.free;
   const mail = (email: string, testId: string) => (
     <a href={`mailto:${email}`} data-testid={testId} className={linkClass}>
