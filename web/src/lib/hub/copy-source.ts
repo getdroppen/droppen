@@ -40,7 +40,7 @@ import {
   statusStream,
   streamId,
 } from "@/lib/e2e";
-import { feedFold, indexFold, type NamedStream, NewestStream, type SavedStream, statusFold, StreamClient, type StreamClientOptions, type StreamFold, type StreamSubscription } from "./streams";
+import { copyFolds, type NamedStream, NewestStream, type SavedStream, StreamClient, type StreamClientOptions, type StreamFold, type StreamSubscription } from "./streams";
 
 /** What {@link HubCopySource.following} asks of the account (`CloudAccount` is one). */
 export interface CopyAccount {
@@ -255,12 +255,6 @@ function parseMark(mark: string): { head: SignedHead; keySeq: number | null } {
 function headOf(at: CopyMark): { head: SignedHead; keySeq: number | null } {
   return at instanceof HeadMark ? { head: at.head, keySeq: at.keySeq } : parseMark(at.mark);
 }
-
-const FOLDS: Record<CopyKind, StreamFold<unknown>> = {
-  index: indexFold as StreamFold<unknown>,
-  status: statusFold as StreamFold<unknown>,
-  session: feedFold as StreamFold<unknown>,
-};
 
 /** A machine's index and status names under every epoch held, newest first. */
 export async function namesOf(epochs: ReadonlyMap<number, MachineKey>): Promise<{ index: NamedStream[]; status: NamedStream[] }> {
@@ -478,7 +472,7 @@ export class HubCopySource implements CopySource {
   follow<S>(name: CopyName, places: readonly string[], start: { at: number; from: CopyAt<S> | null }, events: CopyEvents<S>): CopyFollow | null {
     const keys = this.keys;
     if (!keys || this.closed || !places.length) return null;
-    const fold = FOLDS[name.kind] as StreamFold<S>;
+    const fold = copyFolds[name.kind] as StreamFold<S>;
     const kept = start.from ? headOf(start.from.at) : null;
     const saved: SavedStream<S> | null = start.from && kept ? { head: kept.head, state: start.from.state, keySeq: kept.keySeq } : null;
     const onState = (state: S, change: { reset: boolean; bodies: unknown[]; head: SignedHead; freshestMs: number | null; keySeq: number | null }) =>

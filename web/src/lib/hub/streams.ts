@@ -68,6 +68,7 @@ import {
   FMT_INDEX_V1,
   FMT_STATUS_V1,
 } from "@/lib/e2e";
+import type { CopyKind } from "./copy-source";
 import type { LinkState } from "./link";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
@@ -381,6 +382,13 @@ export const feedFold: StreamFold<FeedCopy> = {
       ...held,
     };
   },
+};
+
+/** The fold each kind of copy is kept with (`CopyKind` in `copy-source.ts`). */
+export const copyFolds: Record<CopyKind, StreamFold<unknown>> = {
+  index: indexFold as StreamFold<unknown>,
+  status: statusFold as StreamFold<unknown>,
+  session: feedFold as StreamFold<unknown>,
 };
 
 /** Parse one released body: JSON in UTF-8, of the fold's own format. */

@@ -17,14 +17,8 @@
  * (`gone`, `no_device`) is asked for again while the device is still listed.
  */
 import type { CopyAt, CopyEvents, CopyFollow, CopyMark, CopyName, CopySource } from "@/lib/hub/copy-source";
-import { feedFold, indexFold, statusFold, type StreamFold } from "@/lib/hub/streams";
+import { copyFolds, type StreamFold } from "@/lib/hub/streams";
 import type { GatewayFrom, GatewayLink, GatewayName } from "./link";
-
-const FOLDS = {
-  index: indexFold as StreamFold<unknown>,
-  status: statusFold as StreamFold<unknown>,
-  session: feedFold as StreamFold<unknown>,
-};
 
 /** Waits (ms) before taking a copy again, the last repeated. */
 const AGAIN_MS = [1000, 2000, 5000, 10_000, 30_000];
@@ -89,7 +83,7 @@ export class GatewayCopySource implements CopySource {
 
   follow<S>(name: CopyName, _places: readonly string[], start: { at: number; from: CopyAt<S> | null }, events: CopyEvents<S>): CopyFollow | null {
     if (this.closed) return null;
-    const fold = FOLDS[name.kind] as StreamFold<S>;
+    const fold = copyFolds[name.kind] as StreamFold<S>;
     let place = start.from ? placeOf(start.from.at) : null;
     let state: S | null = place ? (start.from?.state ?? null) : null;
     let synced = false;
