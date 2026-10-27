@@ -339,10 +339,18 @@ pub enum LockLost {
     },
 }
 
-/// A file's `(device, inode)`, which is what identifies it across a rename.
-fn identity_of(meta: &std::fs::Metadata) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (meta.dev(), meta.ino())
+/// A file's identity, on the metadata it is read from.
+trait FileIdentityExt {
+    /// The file's `(device, inode)`, which is what identifies it across a
+    /// rename.
+    fn identity(&self) -> (u64, u64);
+}
+
+impl FileIdentityExt for std::fs::Metadata {
+    fn identity(&self) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        (self.dev(), self.ino())
+    }
 }
 
 impl InstanceLock {
@@ -373,7 +381,7 @@ impl InstanceLock {
                 return Err(InstanceError::io(&path, error));
             }
             return Err(InstanceError::Held {
-                holder: read_holder(&mut file),
+                holder: file.read_holder(),
                 name: dirs.name.clone(),
                 path,
             });
@@ -387,7 +395,7 @@ impl InstanceLock {
         let _ = file.flush();
 
         Ok(Self {
-            identity: file.metadata().as_ref().map(identity_of).ok(),
+            identity: file.metadata().as_ref().map(|meta| meta.identity()).ok(),
             file,
             path,
         })
@@ -423,7 +431,7 @@ impl InstanceLock {
     /// tell whether it did.
     pub fn verify_still_held(&self) -> Result<(), LockLost> {
         let held = match self.file.metadata() {
-            Ok(meta) => identity_of(&meta),
+            Ok(meta) => meta.identity(),
             Err(source) => {
                 return Err(LockLost::Unreadable {
                     path: self.path.clone(),
@@ -432,7 +440,7 @@ impl InstanceLock {
             }
         };
         let named = match std::fs::metadata(&self.path) {
-            Ok(meta) => identity_of(&meta),
+            Ok(meta) => meta.identity(),
             // `ENOENT` is the case worth its own variant: nothing is there at
             // all, so the next server will create one and lock it unopposed.
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Err(LockLost::Deleted { path: self.path.clone() }),
@@ -453,13 +461,20 @@ impl InstanceLock {
     }
 }
 
-/// Read the pid the holder wrote, for the refusal message.
-fn read_holder(file: &mut File) -> String {
-    let mut text = String::new();
-    if file.seek(SeekFrom::Start(0)).is_err() || file.read_to_string(&mut text).is_err() {
-        return describe_holder(None);
+/// The lock file's holder, on the file it was read from.
+trait LockFileExt {
+    /// Read the pid the holder wrote, for the refusal message.
+    fn read_holder(&mut self) -> String;
+}
+
+impl LockFileExt for File {
+    fn read_holder(&mut self) -> String {
+        let mut text = String::new();
+        if self.seek(SeekFrom::Start(0)).is_err() || self.read_to_string(&mut text).is_err() {
+            return describe_holder(None);
+        }
+        describe_holder(parse_holder(&text))
     }
-    describe_holder(parse_holder(&text))
 }
 
 /// The pid last written into the lock file at `path`, read without locking it.

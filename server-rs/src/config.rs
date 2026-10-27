@@ -326,9 +326,9 @@ impl Source for LegacyEnvSource {
 pub fn load(profile: Option<String>) -> Result<ConfigWrapper<AppConfig>, ConfigError> {
     let mut loader = ConfigLoader::new();
     loader.add_source(DefaultsSource);
-    add_file_if_present(&mut loader, "configurations/application.toml");
+    loader.add_file_if_present("configurations/application.toml");
     if let Some(profile) = profile {
-        add_file_if_present(&mut loader, &format!("configurations/application_{profile}.toml"));
+        loader.add_file_if_present(&format!("configurations/application_{profile}.toml"));
     }
     loader.add_source(LegacyEnvSource::from_env());
     loader.add_source(EnvironmentSource::new("APP"));
@@ -337,9 +337,18 @@ pub fn load(profile: Option<String>) -> Result<ConfigWrapper<AppConfig>, ConfigE
     loader.construct().map_err(|error| ConfigError::Error(error.to_string()))
 }
 
-fn add_file_if_present(loader: &mut ConfigLoader, path: &str) {
-    if Path::new(path).exists() {
-        loader.add_source(FileSource::new(std::path::PathBuf::from(path)));
+/// A file source, added only when the file is there.
+trait ConfigLoaderExt {
+    /// Add `path` as a source when it exists; a configuration file that is not
+    /// there is not an error.
+    fn add_file_if_present(&mut self, path: &str);
+}
+
+impl ConfigLoaderExt for ConfigLoader {
+    fn add_file_if_present(&mut self, path: &str) {
+        if Path::new(path).exists() {
+            self.add_source(FileSource::new(std::path::PathBuf::from(path)));
+        }
     }
 }
 

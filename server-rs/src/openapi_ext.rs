@@ -469,15 +469,103 @@ impl ExtraResponses {
     }
 }
 
-fn operation_mut<'a>(spec: &'a mut OpenAPIV3, method: &str, path: &str) -> Option<&'a mut Operation> {
-    let item = spec.paths.get_mut(path)?;
-    match method {
-        "GET" => item.get.as_mut(),
-        "POST" => item.post.as_mut(),
-        "PUT" => item.put.as_mut(),
-        "PATCH" => item.patch.as_mut(),
-        "DELETE" => item.delete.as_mut(),
-        _ => None,
+/// The amendments this module makes, on the document they amend.
+trait OpenApiV3Ext {
+    /// The operation registered under `(method, path)`, if any.
+    fn operation_mut(&mut self, method: &str, path: &str) -> Option<&mut Operation>;
+
+    /// Register the `bearerAuth` scheme every `#[api(security = "bearerAuth")]`
+    /// operation refers to.
+    ///
+    /// gotcha emits the *requirement* on the operation
+    /// (`gotcha-0.4.1/src/openapi/mod.rs:127`) but hard-codes
+    /// `security_schemes: None` on the components it builds (`:175`), so a
+    /// document with requirements and no definitions would be one no generator
+    /// could resolve.
+    ///
+    /// The scheme is named on the `/api/auth/*` operations rather than on the
+    /// document as a whole because the requirement is conditional: a machine
+    /// with no accounts needs no token anywhere, and a machine with accounts
+    /// needs one almost everywhere. Neither is expressible in OpenAPI, so the
+    /// spec states the part that is always true — these routes take a bearer
+    /// token — and `GET /api/auth/status` is what a client asks about the rest.
+    fn declare_bearer_scheme(&mut self);
+
+    /// Move `nullable` off a `{ "$ref": X, "nullable": true }` property and
+    /// onto the component `X` itself.
+    ///
+    /// `$ref` siblings are ignored by every generator, so the field would come
+    /// out as a non-nullable `X`. The checked-in contract puts the nullability
+    /// on the component too (`Injection` is `type: object` with `nullable:
+    /// true` in `openapi/openapi.json`), so this both fixes the type and
+    /// matches it.
+    fn hoist_nullable_refs(&mut self);
+}
+
+impl OpenApiV3Ext for OpenAPIV3 {
+    fn operation_mut(&mut self, method: &str, path: &str) -> Option<&mut Operation> {
+        let item = self.paths.get_mut(path)?;
+        match method {
+            "GET" => item.get.as_mut(),
+            "POST" => item.post.as_mut(),
+            "PUT" => item.put.as_mut(),
+            "PATCH" => item.patch.as_mut(),
+            "DELETE" => item.delete.as_mut(),
+            _ => None,
+        }
+    }
+
+    fn declare_bearer_scheme(&mut self) {
+        use gotcha::oas::{SecurityScheme, SecurityType};
+
+        let components = self.components.get_or_insert_with(default_components);
+        components
+            .security_schemes
+            .get_or_insert_with(BTreeMap::new)
+            .entry(crate::auth::routes::BEARER_SCHEME.to_string())
+            .or_insert_with(|| {
+                Referenceable::Data(SecurityScheme {
+                    _type: SecurityType::Http {
+                        scheme: "bearer".to_string(),
+                        // Not a JWT and deliberately so: it is 32 random bytes
+                        // with no structure, which is why the server can store
+                        // nothing but its sha256 and still check it.
+                        bearer_format: Some("opaque".to_string()),
+                    },
+                    description: Some("A token from `POST /api/auth/login`.".to_string()),
+                })
+            });
+    }
+
+    fn hoist_nullable_refs(&mut self) {
+        let Some(schemas) = self.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
+            return;
+        };
+
+        let mut to_null: Vec<String> = Vec::new();
+        for schema in schemas.values_mut() {
+            let Referenceable::Data(schema) = schema else { continue };
+            let Some(serde_json::Value::Object(properties)) = schema.extras.get_mut("properties") else {
+                continue;
+            };
+            for property in properties.values_mut() {
+                let Some(object) = property.as_object_mut() else { continue };
+                let is_nullable_ref = object.get("nullable") == Some(&serde_json::Value::Bool(true)) && object.contains_key("$ref");
+                if !is_nullable_ref {
+                    continue;
+                }
+                object.remove("nullable");
+                if let Some(name) = object.get("$ref").and_then(|r| r.as_str()).and_then(|r| r.rsplit('/').next()) {
+                    to_null.push(name.to_string());
+                }
+            }
+        }
+
+        for name in to_null {
+            if let Some(Referenceable::Data(schema)) = schemas.get_mut(&name) {
+                schema.nullable = Some(true);
+            }
+        }
     }
 }
 
@@ -508,7 +596,7 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
 
     for entry in &overrides.request_bodies {
         let (schema, components) = (entry.schema)();
-        let Some(operation) = operation_mut(&mut spec, entry.method, entry.path) else {
+        let Some(operation) = spec.operation_mut(entry.method, entry.path) else {
             tracing::error!(method = entry.method, path = entry.path, "openapi override targets an unregistered route");
             continue;
         };
@@ -530,7 +618,7 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
 
     for entry in &overrides.responses {
         let built = entry.schema.map(|factory| factory());
-        let Some(operation) = operation_mut(&mut spec, entry.method, entry.path) else {
+        let Some(operation) = spec.operation_mut(entry.method, entry.path) else {
             tracing::error!(method = entry.method, path = entry.path, "openapi override targets an unregistered route");
             continue;
         };
@@ -579,8 +667,8 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
         }
     }
 
-    declare_bearer_scheme(&mut spec);
-    hoist_nullable_refs(&mut spec);
+    spec.declare_bearer_scheme();
+    spec.hoist_nullable_refs();
     spec
 }
 
@@ -598,79 +686,6 @@ fn default_components() -> gotcha::oas::Components {
     }
 }
 
-/// Register the `bearerAuth` scheme every `#[api(security = "bearerAuth")]`
-/// operation refers to.
-///
-/// gotcha emits the *requirement* on the operation
-/// (`gotcha-0.4.1/src/openapi/mod.rs:127`) but hard-codes
-/// `security_schemes: None` on the components it builds (`:175`), so a document
-/// with requirements and no definitions would be one no generator could resolve.
-///
-/// The scheme is named on the `/api/auth/*` operations rather than on the
-/// document as a whole because the requirement is conditional: a machine with no
-/// accounts needs no token anywhere, and a machine with accounts needs one
-/// almost everywhere. Neither is expressible in OpenAPI, so the spec states the
-/// part that is always true — these routes take a bearer token — and
-/// `GET /api/auth/status` is what a client asks about the rest.
-fn declare_bearer_scheme(spec: &mut OpenAPIV3) {
-    use gotcha::oas::{SecurityScheme, SecurityType};
-
-    let components = spec.components.get_or_insert_with(default_components);
-    components
-        .security_schemes
-        .get_or_insert_with(BTreeMap::new)
-        .entry(crate::auth::routes::BEARER_SCHEME.to_string())
-        .or_insert_with(|| {
-            Referenceable::Data(SecurityScheme {
-                _type: SecurityType::Http {
-                    scheme: "bearer".to_string(),
-                    // Not a JWT and deliberately so: it is 32 random bytes with
-                    // no structure, which is why the server can store nothing but
-                    // its sha256 and still check it.
-                    bearer_format: Some("opaque".to_string()),
-                },
-                description: Some("A token from `POST /api/auth/login`.".to_string()),
-            })
-        });
-}
-
-/// Move `nullable` off a `{ "$ref": X, "nullable": true }` property and onto the
-/// component `X` itself.
-///
-/// `$ref` siblings are ignored by every generator, so the field would come out
-/// as a non-nullable `X`. The checked-in contract puts the nullability on the
-/// component too (`Injection` is `type: object` with `nullable: true` in
-/// `openapi/openapi.json`), so this both fixes the type and matches it.
-fn hoist_nullable_refs(spec: &mut OpenAPIV3) {
-    let Some(schemas) = spec.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
-        return;
-    };
-
-    let mut to_null: Vec<String> = Vec::new();
-    for schema in schemas.values_mut() {
-        let Referenceable::Data(schema) = schema else { continue };
-        let Some(serde_json::Value::Object(properties)) = schema.extras.get_mut("properties") else {
-            continue;
-        };
-        for property in properties.values_mut() {
-            let Some(object) = property.as_object_mut() else { continue };
-            let is_nullable_ref = object.get("nullable") == Some(&serde_json::Value::Bool(true)) && object.contains_key("$ref");
-            if !is_nullable_ref {
-                continue;
-            }
-            object.remove("nullable");
-            if let Some(name) = object.get("$ref").and_then(|r| r.as_str()).and_then(|r| r.rsplit('/').next()) {
-                to_null.push(name.to_string());
-            }
-        }
-    }
-
-    for name in to_null {
-        if let Some(Referenceable::Data(schema)) = schemas.get_mut(&name) {
-            schema.nullable = Some(true);
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -731,7 +746,7 @@ mod tests {
     fn nullable_ref_moves_onto_the_component() {
         let (_, components) = registry::collect(<Outer as Schematic>::generate_schema);
         let mut spec = empty_spec(components);
-        hoist_nullable_refs(&mut spec);
+        spec.hoist_nullable_refs();
 
         let schemas = spec.components.unwrap().schemas.unwrap();
         let Referenceable::Data(outer) = &schemas["Outer"] else {

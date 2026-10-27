@@ -964,7 +964,7 @@ impl Paths {
 
     /// `<data>/claude` — the managed root as it was before it became per-instance.
     ///
-    /// Only [`claude_roots::migrate_legacy_managed_root`] reads this: it is where
+    /// Only [`Paths::migrate_legacy_claude_root`] reads this: it is where
     /// every account-backed session of every earlier build lives, and the default
     /// instance claims it once at boot.
     pub fn legacy_claude_managed(&self) -> PathBuf {

@@ -182,9 +182,23 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// would act on the default instance of the default install: another
 /// server's setup code, typed here, is a wrong one that counts against the
 /// limit.
-pub fn droppen_env(paths: &crate::sessions::Paths) -> Vec<(String, String)> {
-    let home = std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from);
-    droppen_env_for(paths, home.as_deref())
+impl crate::sessions::Paths {
+    /// [`droppen_env`] for these paths and this process's home directory.
+    pub fn droppen_env(&self) -> Vec<(String, String)> {
+        let home = std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from);
+        droppen_env_for(self, home.as_deref())
+    }
+
+}
+
+/// [`droppen_env`] as a person types it before a command: `NAME=value ` for
+/// each, the values made shell words ([`shell_word`]); empty for the usual
+/// install.
+pub fn command_prefix(paths: &crate::sessions::Paths) -> String {
+    paths.droppen_env()
+        .into_iter()
+        .map(|(name, value)| format!("{name}={} ", shell_word(&value)))
+        .collect()
 }
 
 /// [`droppen_env`], with the home directory supplied.
@@ -208,12 +222,6 @@ pub fn droppen_env_for(paths: &crate::sessions::Paths, home: Option<&Path>) -> V
     env
 }
 
-/// [`droppen_env`] as a person types it before a command: `NAME=value ` for
-/// each, the values made shell words ([`shell_word`]); empty for the usual
-/// install.
-pub fn command_prefix(paths: &crate::sessions::Paths) -> String {
-    droppen_env(paths).into_iter().map(|(name, value)| format!("{name}={} ", shell_word(&value))).collect()
-}
 
 /// `text` as one word of a POSIX shell: as it is when nothing in it is
 /// special, else in single quotes — after a leading `~/`, which expands only

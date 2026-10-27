@@ -199,7 +199,8 @@ struct Armed {
     file: PathBuf,
     url: String,
     /// What the commands it suggests need before them to reach this instance
-    /// (`APP_INSTANCE=bob `), or nothing ([`crate::program::command_prefix`]).
+    /// (`APP_INSTANCE=bob `), or nothing
+    /// ([`crate::program::command_prefix`]).
     env: String,
 }
 

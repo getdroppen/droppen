@@ -145,7 +145,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
 
     let baked = std::env::current_exe().map_err(|error| format!("cannot find this executable: {error}"))?;
     let paths = load_paths()?;
-    let store = selfupdate::seed(&paths, &baked);
+    let store = paths.seed_binary_store(&baked);
 
     say(&format!(
         "supervising `{}` from {} (baked: {})",
@@ -219,7 +219,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
                     ));
                 }
                 if step_down {
-                    self::step_down(&store, &baked);
+                    store.step_down(&baked);
                 }
                 say(&format!("restarting in {wait:?}"));
                 sleep_unless_signalled(wait);
@@ -250,7 +250,7 @@ enum Next {
     /// not at fault, so nothing is counted against it.
     AwaitHolder { wait: Duration },
     /// A failure: wait, then try again, moving the binary aside first when
-    /// `step_down` says this was the last fast failure allowed.
+    /// [`BinStore::step_down`] says this was the last fast failure allowed.
     /// `fast_failures` is the count that decided it, for the log.
     Retry { wait: Duration, fast_failures: u32, step_down: bool },
 }
@@ -352,38 +352,40 @@ pub fn failure_exit_code(error: &GotchaError) -> u8 {
     }
 }
 
-/// Move the failing binary aside and say what will be tried instead.
-///
-/// Note what this does *not* do: reset the backoff. A reset would make a
-/// machine where everything is broken cycle 2s, 4s, 2s, 4s forever — three
-/// failures, a step down, a reset, three more failures — hammering a binary
-/// that cannot run at all. Stepping down is not evidence that things are
-/// getting better, so the wait keeps growing.
-fn step_down(store: &BinStore, baked: &Path) {
-    let step = match store.demote() {
-        Ok(step) => step,
-        Err(error) => {
-            say(&format!("cannot move the failing binary aside: {error}"));
-            return;
+impl BinStore {
+    /// Move the failing binary aside and say what will be tried instead.
+    ///
+    /// Note what this does *not* do: reset the backoff. A reset would make a
+    /// machine where everything is broken cycle 2s, 4s, 2s, 4s forever — three
+    /// failures, a step down, a reset, three more failures — hammering a binary
+    /// that cannot run at all. Stepping down is not evidence that things are
+    /// getting better, so the wait keeps growing.
+    fn step_down(&self, baked: &Path) {
+        let step = match self.demote() {
+            Ok(step) => step,
+            Err(error) => {
+                say(&format!("cannot move the failing binary aside: {error}"));
+                return;
+            }
+        };
+        let moved = if step.quarantined {
+            format!("moved the installed binary to {}", self.quarantine().display())
+        } else {
+            // Reached when the supervisor was already running the baked binary,
+            // because nothing was ever installed. Saying "quarantined" here
+            // would be a lie about a file that does not exist.
+            "found nothing installed to move aside".to_string()
+        };
+        match step.fallback {
+            Fallback::Previous => say(&format!(
+                "{FAST_FAILURES} fast failures: {moved} and restored {}",
+                self.installed().display()
+            )),
+            Fallback::Baked => say(&format!(
+                "{FAST_FAILURES} fast failures: {moved}; there is no previous binary, so falling back to {}",
+                baked.display()
+            )),
         }
-    };
-    let moved = if step.quarantined {
-        format!("moved the installed binary to {}", store.quarantine().display())
-    } else {
-        // Reached when the supervisor was already running the baked binary,
-        // because nothing was ever installed. Saying "quarantined" here would be
-        // a lie about a file that does not exist.
-        "found nothing installed to move aside".to_string()
-    };
-    match step.fallback {
-        Fallback::Previous => say(&format!(
-            "{FAST_FAILURES} fast failures: {moved} and restored {}",
-            store.installed().display()
-        )),
-        Fallback::Baked => say(&format!(
-            "{FAST_FAILURES} fast failures: {moved}; there is no previous binary, so falling back to {}",
-            baked.display()
-        )),
     }
 }
 

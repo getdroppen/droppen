@@ -137,75 +137,78 @@ pub enum LegacyMigration {
     Failed,
 }
 
-/// Claim the pre-instance managed root for the default instance, once.
-///
-/// A shared `<data>/claude` may still hold every instance's account-backed
-/// sessions from builds before roots were per-instance. It is now one
-/// instance's own root, and the only defensible answer to "whose?" is the
-/// instance a single-server machine has always been running: `default`. So
-/// `default` renames it into place, and any other instance leaves it exactly
-/// where it is — a name it never owned is not a name it may take.
-///
-/// Idempotent by construction: the rename only happens when the destination does
-/// not exist, so the second boot finds `LegacyMigration::BothPresent` at worst
-/// and `Nothing` in the ordinary case. A rename rather than a copy, because two
-/// roots holding the same session ids is precisely the duplicate-id confusion
-/// the ownership model exists to remove.
-///
-/// **Must only be called while holding the instance lock.** It moves a directory
-/// two servers could otherwise both be reading.
-pub fn migrate_legacy_managed_root(paths: &Paths) -> LegacyMigration {
-    let legacy = paths.legacy_claude_managed();
-    if !legacy.is_dir() {
-        return LegacyMigration::Nothing;
-    }
-    let owned = root_dir(paths, ClaudeRoot::Managed);
-    // An override points the managed root somewhere of the operator's choosing;
-    // moving the legacy tree into it would be a surprise, and `legacy == owned`
-    // (an override that names `<data>/claude`) would be a rename onto itself.
-    if owned == legacy {
-        return LegacyMigration::Nothing;
-    }
-    if paths.instance() != crate::instance::DEFAULT_INSTANCE {
-        tracing::warn!(
-            legacy = %legacy.display(),
-            instance = paths.instance(),
-            "found the pre-instance Claude root; leaving it for the `default` instance to claim"
-        );
-        return LegacyMigration::NotOurs;
-    }
-    if owned.exists() {
-        tracing::warn!(
-            legacy = %legacy.display(),
-            owned = %owned.display(),
-            "both the pre-instance Claude root and this instance's own exist; leaving both alone. \
-             Move what you want to keep by hand — sessions under the old one are no longer listed."
-        );
-        return LegacyMigration::BothPresent;
-    }
-    if let Some(parent) = owned.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            tracing::error!(path = %parent.display(), %error, "cannot create the instance directory for the Claude root");
-            return LegacyMigration::Failed;
+impl Paths {
+    /// Claim the pre-instance managed root for the default instance, once.
+    ///
+    /// A shared `<data>/claude` may still hold every instance's account-backed
+    /// sessions from builds before roots were per-instance. It is now one
+    /// instance's own root, and the only defensible answer to "whose?" is the
+    /// instance a single-server machine has always been running: `default`. So
+    /// `default` renames it into place, and any other instance leaves it
+    /// exactly where it is — a name it never owned is not a name it may take.
+    ///
+    /// Idempotent by construction: the rename only happens when the destination
+    /// does not exist, so the second boot finds `LegacyMigration::BothPresent`
+    /// at worst and `Nothing` in the ordinary case. A rename rather than a
+    /// copy, because two roots holding the same session ids is precisely the
+    /// duplicate-id confusion the ownership model exists to remove.
+    ///
+    /// **Must only be called while holding the instance lock.** It moves a
+    /// directory two servers could otherwise both be reading.
+    pub fn migrate_legacy_claude_root(&self) -> LegacyMigration {
+        let legacy = self.legacy_claude_managed();
+        if !legacy.is_dir() {
+            return LegacyMigration::Nothing;
         }
-    }
-    match std::fs::rename(&legacy, &owned) {
-        Ok(()) => {
+        let owned = root_dir(self, ClaudeRoot::Managed);
+        // An override points the managed root somewhere of the operator's
+        // choosing; moving the legacy tree into it would be a surprise, and
+        // `legacy == owned` (an override that names `<data>/claude`) would be a
+        // rename onto itself.
+        if owned == legacy {
+            return LegacyMigration::Nothing;
+        }
+        if self.instance() != crate::instance::DEFAULT_INSTANCE {
             tracing::warn!(
-                from = %legacy.display(),
-                to = %owned.display(),
-                "the Claude root Droppen owns is now per-instance; moved the existing one into the `default` instance"
+                legacy = %legacy.display(),
+                instance = self.instance(),
+                "found the pre-instance Claude root; leaving it for the `default` instance to claim"
             );
-            LegacyMigration::Claimed
+            return LegacyMigration::NotOurs;
         }
-        Err(error) => {
-            tracing::error!(
-                from = %legacy.display(),
-                to = %owned.display(),
-                %error,
-                "cannot move the pre-instance Claude root; account-backed sessions under it will not be listed"
+        if owned.exists() {
+            tracing::warn!(
+                legacy = %legacy.display(),
+                owned = %owned.display(),
+                "both the pre-instance Claude root and this instance's own exist; leaving both alone. \
+                 Move what you want to keep by hand — sessions under the old one are no longer listed."
             );
-            LegacyMigration::Failed
+            return LegacyMigration::BothPresent;
+        }
+        if let Some(parent) = owned.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::error!(path = %parent.display(), %error, "cannot create the instance directory for the Claude root");
+                return LegacyMigration::Failed;
+            }
+        }
+        match std::fs::rename(&legacy, &owned) {
+            Ok(()) => {
+                tracing::warn!(
+                    from = %legacy.display(),
+                    to = %owned.display(),
+                    "the Claude root Droppen owns is now per-instance; moved the existing one into the `default` instance"
+                );
+                LegacyMigration::Claimed
+            }
+            Err(error) => {
+                tracing::error!(
+                    from = %legacy.display(),
+                    to = %owned.display(),
+                    %error,
+                    "cannot move the pre-instance Claude root; account-backed sessions under it will not be listed"
+                );
+                LegacyMigration::Failed
+            }
         }
     }
 }
@@ -279,13 +282,13 @@ mod tests {
         std::fs::create_dir_all(legacy.join("projects").join("-w")).expect("legacy tree");
         std::fs::write(legacy.join("projects").join("-w").join("s.jsonl"), "{}\n").expect("legacy session");
 
-        assert_eq!(migrate_legacy_managed_root(&paths), LegacyMigration::Claimed);
+        assert_eq!(paths.migrate_legacy_claude_root(), LegacyMigration::Claimed);
         let owned = root_dir(&paths, ClaudeRoot::Managed);
         assert!(owned.join("projects").join("-w").join("s.jsonl").is_file(), "the sessions came with it");
         assert!(!legacy.exists(), "and the old name is gone, so no id lives in two roots");
 
         // Every later boot finds nothing to do.
-        assert_eq!(migrate_legacy_managed_root(&paths), LegacyMigration::Nothing);
+        assert_eq!(paths.migrate_legacy_claude_root(), LegacyMigration::Nothing);
     }
 
     #[test]
@@ -295,13 +298,13 @@ mod tests {
         let legacy = named.legacy_claude_managed();
         std::fs::create_dir_all(&legacy).expect("legacy tree");
 
-        assert_eq!(migrate_legacy_managed_root(&named), LegacyMigration::NotOurs);
+        assert_eq!(named.migrate_legacy_claude_root(), LegacyMigration::NotOurs);
         assert!(legacy.is_dir(), "it is left for `default`");
         assert!(!root_dir(&named, ClaudeRoot::Managed).exists());
 
         // And `default` can still claim it afterwards.
         let default = Paths::new(home.path().to_path_buf());
-        assert_eq!(migrate_legacy_managed_root(&default), LegacyMigration::Claimed);
+        assert_eq!(default.migrate_legacy_claude_root(), LegacyMigration::Claimed);
     }
 
     #[test]
@@ -311,7 +314,7 @@ mod tests {
         std::fs::create_dir_all(paths.legacy_claude_managed()).expect("legacy tree");
         std::fs::create_dir_all(root_dir(&paths, ClaudeRoot::Managed)).expect("own tree");
 
-        assert_eq!(migrate_legacy_managed_root(&paths), LegacyMigration::BothPresent);
+        assert_eq!(paths.migrate_legacy_claude_root(), LegacyMigration::BothPresent);
         assert!(paths.legacy_claude_managed().is_dir(), "nothing is destroyed on this path");
     }
 

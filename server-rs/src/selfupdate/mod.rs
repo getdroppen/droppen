@@ -185,20 +185,22 @@ pub struct ServerBinaryUpload {
     pub sha256: serde_json::Value,
 }
 
-/// The refusal a server run by the desktop app gives: `403` with a reason a
-/// person can act on, and a warning in the log saying who asked.
-fn refuse_under_the_desktop_app(state: &AppState) -> Result<(), ApiError> {
-    if !state.desktop_app {
-        return Ok(());
+impl AppState {
+    /// The refusal a server run by the desktop app gives: `403` with a reason a
+    /// person can act on, and a warning in the log saying who asked.
+    fn refuse_self_upgrade_under_app(&self) -> Result<(), ApiError> {
+        if !self.desktop_app {
+            return Ok(());
+        }
+        tracing::warn!("self-upgrade refused: this server is run by the Droppen desktop app, which updates it with the app");
+        Err(ApiError::with_body(
+            gotcha::axum::http::StatusCode::FORBIDDEN,
+            serde_json::json!({
+                "error": "self_upgrade_disabled",
+                "detail": "this server is run by the Droppen desktop app, which updates it with the app; update the app instead",
+            }),
+        ))
     }
-    tracing::warn!("self-upgrade refused: this server is run by the Droppen desktop app, which updates it with the app");
-    Err(ApiError::with_body(
-        gotcha::axum::http::StatusCode::FORBIDDEN,
-        serde_json::json!({
-            "error": "self_upgrade_disabled",
-            "detail": "this server is run by the Droppen desktop app, which updates it with the app; update the app instead",
-        }),
-    ))
 }
 
 /// Replace the server binary, and restart into it if something is supervising.
@@ -207,7 +209,7 @@ pub async fn self_upgrade(State(state): State<AppState>, multipart: Multipart) -
     // Before anything else, and before a byte is read: a server the desktop app
     // runs is updated with the app, and this route would only replace the
     // shared `<data>/bin` that other instances run (`crate::desktop_app`).
-    refuse_under_the_desktop_app(&state)?;
+    state.refuse_self_upgrade_under_app()?;
     // Ownership first, before a byte is read: replacing `<data>/bin` and
     // restarting is an owner's move, and the flock is only meaningful while
     // its file is the one on disk. A lost or absent claim means another server
@@ -247,7 +249,7 @@ pub async fn self_upgrade(State(state): State<AppState>, multipart: Multipart) -
     // to exist from the moment the file does, and half the ways this can fail
     // — a client that hangs up, a full disk, a hash that does not match — happen
     // inside `receive`, where a guard built afterwards would never run.
-    let upload = receive(&store, multipart).await?;
+    let upload = store.receive_upload(multipart).await?;
 
     if let Some(expected) = &upload.sha256 {
         if !expected.eq_ignore_ascii_case(&upload.digest) {
@@ -337,90 +339,92 @@ struct Upload {
     sha256: Option<String>,
 }
 
-/// Stream the `binary` part to a staging file, hashing as it goes.
-///
-/// Every failure from the `File::create` onwards carries the guard out with it,
-/// so there is no path through this function that leaves a file behind. That is
-/// worth stating because the ways out are not all visible: a client that hangs
-/// up mid-body surfaces as an error from `field.chunk()`, which is a `?` like
-/// any other.
-async fn receive(store: &BinStore, mut multipart: Multipart) -> Result<Upload, ApiError> {
-    let path = store.staging(&format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
-    let mut upload: Option<Upload> = None;
-    let mut sha256 = None;
-
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| ApiError::bad_request(format!("malformed upload: {error}")))?
-    {
-        match field.name() {
-            Some("binary") => {
-                let mut hasher = Sha256::new();
-                let mut file = tokio::fs::File::create(&path)
-                    .await
-                    .map_err(|error| ApiError::internal(format!("cannot write {}: {error}", path.display())))?;
-                // From here the file exists, so from here it is owned. Built
-                // before the first write rather than after the last one,
-                // because everything in between can fail.
-                let staged = Staged { path: path.clone() };
-                let mut written: u64 = 0;
-                // Streamed rather than buffered: a server binary is tens of
-                // megabytes and a debug build several times that, and holding
-                // all of it in memory to write it straight back out is the kind
-                // of thing that turns an upgrade into an OOM kill.
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|error| ApiError::bad_request(format!("upload interrupted: {error}")))?
-                {
-                    written += chunk.len() as u64;
-                    // Checked here as well as by the transport's body limit, so
-                    // that going over answers with something that says what
-                    // happened and what the ceiling is, rather than the bare
-                    // `413` a layer produces with no body at all.
-                    if written > BINARY_LIMIT {
-                        return Err(ApiError::new(
-                            gotcha::axum::http::StatusCode::PAYLOAD_TOO_LARGE,
-                            format!("the uploaded binary is larger than the {BINARY_LIMIT}-byte limit"),
-                        ));
-                    }
-                    hasher.update(&chunk);
-                    file.write_all(&chunk)
+impl BinStore {
+    /// Stream the `binary` part to a staging file, hashing as it goes.
+    ///
+    /// Every failure from the `File::create` onwards carries the guard out
+    /// with it, so there is no path through this function that leaves a file
+    /// behind. That is worth stating because the ways out are not all visible:
+    /// a client that hangs up mid-body surfaces as an error from
+    /// `field.chunk()`, which is a `?` like any other.
+    async fn receive_upload(&self, mut multipart: Multipart) -> Result<Upload, ApiError> {
+        let path = self.staging(&format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let mut upload: Option<Upload> = None;
+        let mut sha256 = None;
+    
+        while let Some(mut field) = multipart
+            .next_field()
+            .await
+            .map_err(|error| ApiError::bad_request(format!("malformed upload: {error}")))?
+        {
+            match field.name() {
+                Some("binary") => {
+                    let mut hasher = Sha256::new();
+                    let mut file = tokio::fs::File::create(&path)
                         .await
                         .map_err(|error| ApiError::internal(format!("cannot write {}: {error}", path.display())))?;
+                    // From here the file exists, so from here it is owned. Built
+                    // before the first write rather than after the last one,
+                    // because everything in between can fail.
+                    let staged = Staged { path: path.clone() };
+                    let mut written: u64 = 0;
+                    // Streamed rather than buffered: a server binary is tens of
+                    // megabytes and a debug build several times that, and holding
+                    // all of it in memory to write it straight back out is the kind
+                    // of thing that turns an upgrade into an OOM kill.
+                    while let Some(chunk) = field
+                        .chunk()
+                        .await
+                        .map_err(|error| ApiError::bad_request(format!("upload interrupted: {error}")))?
+                    {
+                        written += chunk.len() as u64;
+                        // Checked here as well as by the transport's body limit, so
+                        // that going over answers with something that says what
+                        // happened and what the ceiling is, rather than the bare
+                        // `413` a layer produces with no body at all.
+                        if written > BINARY_LIMIT {
+                            return Err(ApiError::new(
+                                gotcha::axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                                format!("the uploaded binary is larger than the {BINARY_LIMIT}-byte limit"),
+                            ));
+                        }
+                        hasher.update(&chunk);
+                        file.write_all(&chunk)
+                            .await
+                            .map_err(|error| ApiError::internal(format!("cannot write {}: {error}", path.display())))?;
+                    }
+                    file.flush()
+                        .await
+                        .map_err(|error| ApiError::internal(format!("cannot write {}: {error}", path.display())))?;
+                    drop(file);
+                    store::make_executable(&path).map_err(|error| ApiError::internal(format!("cannot make the upload executable: {error}")))?;
+                    upload = Some(Upload {
+                        staged,
+                        digest: hex(&hasher.finalize()),
+                        sha256: None,
+                    });
                 }
-                file.flush()
-                    .await
-                    .map_err(|error| ApiError::internal(format!("cannot write {}: {error}", path.display())))?;
-                drop(file);
-                store::make_executable(&path).map_err(|error| ApiError::internal(format!("cannot make the upload executable: {error}")))?;
-                upload = Some(Upload {
-                    staged,
-                    digest: hex(&hasher.finalize()),
-                    sha256: None,
-                });
-            }
-            Some("sha256") => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|error| ApiError::bad_request(format!("malformed sha256 field: {error}")))?;
-                let text = text.trim().to_string();
-                if !text.is_empty() {
-                    sha256 = Some(text);
+                Some("sha256") => {
+                    let text = field
+                        .text()
+                        .await
+                        .map_err(|error| ApiError::bad_request(format!("malformed sha256 field: {error}")))?;
+                    let text = text.trim().to_string();
+                    if !text.is_empty() {
+                        sha256 = Some(text);
+                    }
                 }
+                _ => continue,
             }
-            _ => continue,
         }
-    }
-
-    match upload {
-        // The parts may arrive in either order, so the hash is attached once
-        // both have been seen rather than when the binary was.
-        Some(upload) => Ok(Upload { sha256, ..upload }),
-        // Nothing was staged, so nothing needs removing.
-        None => Err(ApiError::bad_request("the upload has no `binary` part")),
+    
+        match upload {
+            // The parts may arrive in either order, so the hash is attached once
+            // both have been seen rather than when the binary was.
+            Some(upload) => Ok(Upload { sha256, ..upload }),
+            // Nothing was staged, so nothing needs removing.
+            None => Err(ApiError::bad_request("the upload has no `binary` part")),
+        }
     }
 }
 
@@ -517,33 +521,37 @@ async fn capped(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
     String::from_utf8_lossy(&kept).into_owned()
 }
 
-/// Seed `<data>/bin` from the running binary, so a supervisor has one to run.
-///
-/// Called from the supervisor rather than from serving, because it is the
-/// supervisor that needs an installed binary to exist. Best effort in the sense
-/// that a failure is reported and not fatal: a supervisor with no writable data
-/// directory should still run the baked binary rather than refuse to start.
-pub fn seed(paths: &Paths, from: &Path) -> BinStore {
-    let store = BinStore::new(paths);
-    // Before anything else: a previous boot may have died mid-upload, and a
-    // staging file is the size of a server binary.
-    store.sweep_staging();
-    match store.seed(from) {
-        Ok(true) => tracing::info!(from = %from.display(), to = %store.installed().display(), "seeded the server binary"),
-        Ok(false) => {}
-        Err(error) => tracing::warn!(dir = %store.dir().display(), %error, "cannot seed the server binary; running the built-in one"),
+impl Paths {
+    /// Seed `<data>/bin` from the running binary, so a supervisor has one to
+    /// run.
+    ///
+    /// Called from the supervisor rather than from serving, because it is the
+    /// supervisor that needs an installed binary to exist. Best effort in the
+    /// sense that a failure is reported and not fatal: a supervisor with no
+    /// writable data directory should still run the baked binary rather than
+    /// refuse to start.
+    pub fn seed_binary_store(&self, from: &Path) -> BinStore {
+        let store = BinStore::new(self);
+        // Before anything else: a previous boot may have died mid-upload, and a
+        // staging file is the size of a server binary.
+        store.sweep_staging();
+        match store.seed(from) {
+            Ok(true) => tracing::info!(from = %from.display(), to = %store.installed().display(), "seeded the server binary"),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(dir = %store.dir().display(), %error, "cannot seed the server binary; running the built-in one"),
+        }
+        store
     }
-    store
-}
 
-/// Remove any staged binary an unfinished upgrade left in `<data>/bin`.
-///
-/// Called at boot as well as before each upgrade, because the two catch
-/// different things: the boot sweep is what clears a file left by a process
-/// that was killed outright, and the per-request one keeps a server that is
-/// never restarted from accumulating them.
-pub fn sweep_staging(paths: &Paths) {
-    BinStore::new(paths).sweep_staging();
+    /// Remove any staged binary an unfinished upgrade left in `<data>/bin`.
+    ///
+    /// Called at boot as well as before each upgrade, because the two catch
+    /// different things: the boot sweep is what clears a file left by a process
+    /// that was killed outright, and the per-request one keeps a server that is
+    /// never restarted from accumulating them.
+    pub fn sweep_staging_binaries(&self) {
+        BinStore::new(self).sweep_staging();
+    }
 }
 
 /// Register this subsystem's routes.
@@ -596,9 +604,9 @@ mod tests {
     async fn a_server_run_by_the_desktop_app_refuses_to_replace_the_shared_binary() {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
-        assert!(refuse_under_the_desktop_app(&state).is_ok(), "an ordinary server is not refused here");
+        assert!(state.refuse_self_upgrade_under_app().is_ok(), "an ordinary server is not refused here");
         state.desktop_app = true;
-        let error = refuse_under_the_desktop_app(&state).expect_err("refused under the app");
+        let error = state.refuse_self_upgrade_under_app().expect_err("refused under the app");
         let response = gotcha::axum::response::IntoResponse::into_response(error);
         assert_eq!(response.status(), gotcha::axum::http::StatusCode::FORBIDDEN);
         let body = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
