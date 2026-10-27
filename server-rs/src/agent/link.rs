@@ -1930,6 +1930,78 @@ fn now_us() -> u64 {
         .unwrap_or(0)
 }
 
+/// The first message of a channel: on the hub or a relay, or on a direct
+/// path (which names its binding too).
+enum Hello<'a> {
+    /// `Frame::Data` on a hub or relay connection.
+    Channel(&'a [u8]),
+    /// A direct path's hello, over `device`'s binding.
+    Direct(&'a DirectBinding, &'a [u8]),
+}
+
+/// The admission step's refusal with no verified chain to admit against.
+struct NoChain;
+
+/// The step every admission — a channel on the hub or a relay, a direct
+/// path — shares: this agent's live chain and clock, the freshness gate and
+/// the replay guard, under the state lock, with the guard and the device's
+/// record saved before the reply leaves.
+///
+/// `after_open` runs in that same critical section, on the opened channel's
+/// behalf: the channel admission registers its control lapse there, so no
+/// attestation can arrive between a channel being admitted and its lapse
+/// being registered ([`take_attestation`] reads the lapses under this lock).
+/// It gets the accepted state the lock still holds, and must not lock it
+/// again. Entries a hello teaches are returned for the caller to act on as
+/// on any chain change.
+fn admit<R>(
+    shared: &Arc<Shared>,
+    device: &str,
+    hello: Hello<'_>,
+    now: u64,
+    after_open: impl FnOnce(&mut AgentState, &Accepted) -> R,
+) -> Result<(Result<Accepted, HandshakeError>, Vec<Entry>, Option<state::Recorded>, Option<R>), NoChain> {
+    let mut st = shared.state.lock().expect("agent state");
+    let st = &mut *st;
+    let attestations = st.attestation_list();
+    let Some(chain) = st.chain.as_mut() else {
+        return Err(NoChain);
+    };
+    let before = chain.seq();
+    let mut guard = shared.guard.lock().expect("replay guard");
+    let side = AgentSide {
+        chain,
+        clock: &mut st.clock,
+        guard: &mut guard,
+        key: shared.identity.dh(),
+        machine: &st.machine,
+        policy: RekeyPolicy::default(),
+        server_info: &server_info(shared.direct),
+        attestations: &attestations,
+        freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
+    };
+    let outcome = match hello {
+        Hello::Channel(message) => handshake::accept(side, device, message, now),
+        Hello::Direct(bind, message) => handshake::accept_direct(side, device, bind, message, now),
+    };
+    let mut recorded = None;
+    let mut opened = None;
+    if let Ok(accepted) = &outcome {
+        if matches!(accepted, Accepted::Open { .. }) {
+            st.save_guard(&guard);
+            // Who ever opened a channel (review D3), recorded as it opens and
+            // saved with the guard (and any entries the hello taught) before
+            // the reply leaves — in this one step under the lock.
+            recorded = Some(st.record_controller(&shared.paths, device, now));
+            opened = Some(after_open(st, accepted));
+        }
+    }
+    // Whatever the hello taught took effect, refused or not (M2 re-review:
+    // a hello whose later entry failed lost the earlier ones).
+    let learnt = st.entries_after(Some(before));
+    Ok((outcome, learnt, recorded, opened))
+}
+
 /// Direct hellos admitted by exactly the rules of [`accept`]: this agent's
 /// live chain and clock, the freshness gate, the replay guard (persisted
 /// before the reply leaves). Entries a hello teaches go to the connection,
@@ -1942,40 +2014,14 @@ impl Admit for LinkAdmit {
     fn admit(&self, device: &str, bind: &DirectBinding, hello: &[u8]) -> Admission {
         let shared = &self.shared;
         let now = now_ms();
-        let (outcome, learnt, recorded) = {
-            let mut st = shared.state.lock().expect("agent state");
-            let st = &mut *st;
-            let attestations = st.attestation_list();
-            let Some(chain) = st.chain.as_mut() else {
+        let (outcome, learnt, recorded, _) = match admit(shared, device, Hello::Direct(bind, hello), now, |_, _| ()) {
+            Ok(admitted) => admitted,
+            Err(NoChain) => {
                 return Admission::Refused {
                     reply: None,
                     why: "no chain".into(),
-                };
-            };
-            let before = chain.seq();
-            let mut guard = shared.guard.lock().expect("replay guard");
-            let side = AgentSide {
-                chain,
-                clock: &mut st.clock,
-                guard: &mut guard,
-                key: shared.identity.dh(),
-                machine: &st.machine,
-                policy: RekeyPolicy::default(),
-                server_info: &server_info(shared.direct),
-                attestations: &attestations,
-                freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
-            };
-            let outcome = handshake::accept_direct(side, device, bind, hello, now);
-            let mut recorded = None;
-            if matches!(outcome, Ok(Accepted::Open { .. })) {
-                st.save_guard(&guard);
-                // The guard, any entries and the device, saved before the
-                // reply leaves — in this one step under the lock.
-                recorded = Some(st.record_controller(&shared.paths, device, now));
+                }
             }
-            // Whatever the hello taught took effect, refused or not (M2
-            // re-review: a hello whose later entry failed lost the earlier ones).
-            (outcome, st.entries_after(Some(before)), recorded)
         };
         if recorded.is_none() {
             shared.save();
@@ -2298,49 +2344,19 @@ fn accept(
     text: &mpsc::UnboundedSender<String>,
 ) {
     let now = now_ms();
-    let (outcome, learnt, recorded, lapse) = {
-        let mut st = shared.state.lock().expect("agent state");
-        let st = &mut *st;
-        let attestations = st.attestation_list();
-        let Some(chain) = st.chain.as_mut() else {
-            return refuse(out, ch, 4503, "this device has not been added to the account yet");
-        };
-        let before = chain.seq();
-        let mut guard = shared.guard.lock().expect("replay guard");
-        let side = AgentSide {
-            chain,
-            clock: &mut st.clock,
-            guard: &mut guard,
-            key: shared.identity.dh(),
-            machine: &st.machine,
-            policy: RekeyPolicy::default(),
-            server_info: &server_info(shared.direct),
-            attestations: &attestations,
-            freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
-        };
-        let outcome = handshake::accept(side, &device, message, now);
-        let mut recorded = None;
-        if matches!(outcome, Ok(Accepted::Open { .. })) {
-            st.save_guard(&guard);
-            // Who ever opened a channel (review D3), recorded as it opens and
-            // saved with the guard (and any entries the hello taught) before
-            // the reply leaves — in this one step under the lock.
-            recorded = Some(st.record_controller(&shared.paths, &device, now));
-        }
+    let (outcome, learnt, recorded, lapse) = match admit(shared, &device, Hello::Channel(message), now, |st, _| {
         // The channel's control lapse, seeded and registered while the state
         // is still this admission's: an attestation arriving from here on
         // reaches it ([`take_attestation`]), and none can come in between.
-        let lapse = matches!(outcome, Ok(Accepted::Open { .. })).then(|| {
-            let lapse = Arc::new(Mutex::new(ChannelLapse::new(&device)));
-            lapse.lock().expect("channel lapse").update(st, now);
-            let mut lapses = shared.lapses.lock().expect("lapses");
-            lapses.retain(|weak| weak.strong_count() > 0);
-            lapses.push(Arc::downgrade(&lapse));
-            lapse
-        });
-        // Entries a hello taught count as much as the hub's — every one that
-        // took effect, whether or not the handshake then failed (M2 re-review).
-        (outcome, st.entries_after(Some(before)), recorded, lapse)
+        let lapse = Arc::new(Mutex::new(ChannelLapse::new(&device)));
+        lapse.lock().expect("channel lapse").update(st, now);
+        let mut lapses = shared.lapses.lock().expect("lapses");
+        lapses.retain(|weak| weak.strong_count() > 0);
+        lapses.push(Arc::downgrade(&lapse));
+        lapse
+    }) {
+        Ok(admitted) => admitted,
+        Err(NoChain) => return refuse(out, ch, 4503, "this device has not been added to the account yet"),
     };
     #[cfg(test)]
     if let Some(hook) = shared.after_admission.lock().expect("hook").take() {
