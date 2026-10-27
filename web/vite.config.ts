@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { cloudBuild, cloudConfig } from "./build/cloud-mode";
 import { devTools } from "./build/dev-tools";
-import { droppenPlugins, isPluginModule } from "./build/droppen-plugins";
+import { droppenPlugins } from "./build/droppen-plugins";
 import { fillServiceWorker } from "./build/service-worker";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
+import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
 
 /**
  * Which server `pnpm dev` talks to.
@@ -33,90 +34,38 @@ const probeHub = process.env.RH_DEV_HUB;
 const cloud = cloudConfig();
 
 /**
- * Mermaid (`lib/mermaid-render.ts`, fetched by the first ```mermaid fence a
- * message draws) and every package only it imports: d3, the dagre and
- * cytoscape layouts, its parser's chevrotain, DOMPurify and the rest — read
- * off the module graph of the version pinned in package.json. Barrels count
- * too (`d3` re-exports every `d3-*`): a module left to `vendor` takes its
- * static imports in with it. A package listed here that the app itself comes
- * to import leaves `vendor` for the chunk that imports it.
+ * Packages the app loads on demand, which no boot chunk may hold
+ * (`guardBootChunks`). Third-party code goes to the vendor chunks only when
+ * the entry reaches it statically (`build/vendor-chunks.ts`), so a package
+ * used only by lazy code stays out of the boot set without being listed here.
+ * The list is the alarm for these becoming eager by an import in the wrong
+ * place: the terminal (xterm, with the first terminal view), the QR encoder
+ * and decoder (pairing a device, cloud mode only), compatibility mode's curves
+ * (`@noble/curves` and its hashes, reached only from `lib/e2e/soft25519.ts`,
+ * on a browser without them natively), math: KaTeX and the parsing around it
+ * (`components/markdown-math.ts`), fetched by the first message that may hold
+ * a formula, and diagrams: Mermaid (`lib/mermaid-render.ts`), fetched by the
+ * first ```mermaid fence a message draws, with the largest packages only it
+ * uses: its parser's chevrotain, cytoscape and cytoscape's layouts.
  */
-const MERMAID_PACKAGES = [
-  "mermaid/",
-  "@mermaid-js/",
-  "@braintree/sanitize-url/",
-  "@chevrotain/",
-  "chevrotain/",
-  "@iconify/utils/",
-  "@upsetjs/venn.js/",
-  "cose-base/",
-  "layout-base/",
-  "cytoscape/",
-  "cytoscape-",
-  "d3/",
-  "d3-",
-  "dagre-d3-es/",
-  "dayjs/",
-  "delaunator/",
-  "dompurify/",
-  "es-toolkit/",
-  "internmap/",
-  "khroma/",
-  "lodash-es/",
-  "marked/",
-  "robust-predicates/",
-  "roughjs/",
-  "stylis/",
-  "ts-dedent/",
-  "uuid/",
-];
-
-/**
- * Third-party code in a chunk of its own.
- *
- * Every release rehashes the app chunk; if the libraries lived in it too, each
- * deploy would make every browser fetch ~1.8 MB again, which on a weak link is
- * the whole wait. Split out, they keep their hash across releases and stay in
- * the browser's immutable cache.
- *
- * Deliberately coarse: finer library groups import each other, and a cycle
- * between chunks runs one before the other's exports exist (a finer split
- * failed to boot). xterm imports nothing else, so it alone gets its own chunk.
- * The QR encoder and decoder (pairing a device, cloud mode only) import
- * nothing either and are loaded on demand, so they stay out of it altogether,
- * as do compatibility mode's curves (`@noble/curves` and its hashes, reached
- * only from `lib/e2e/soft25519.ts`, on a browser without them natively),
- * math: KaTeX and the parsing around it (`components/markdown-math.ts`),
- * fetched by the first message that may hold a formula, and diagrams
- * ({@link MERMAID_PACKAGES}).
- */
-const LAZY_PACKAGES = [
-  "jsqr/",
-  "qrcode-generator/",
+const ON_DEMAND = [
+  "@xterm/",
+  "jsqr",
+  "qrcode-generator",
   "@noble/",
-  "katex/",
-  "remark-math/",
-  "micromark-extension-math/",
-  "mdast-util-math/",
-  "hast-util-from-html-isomorphic/",
-  "hast-util-from-dom/",
-  ...MERMAID_PACKAGES,
+  "katex",
+  "remark-math",
+  "micromark-extension-math",
+  "mdast-util-math",
+  "hast-util-from-html-isomorphic",
+  "hast-util-from-dom",
+  "mermaid",
+  "@mermaid-js/",
+  "chevrotain",
+  "cytoscape",
+  "layout-base",
+  "cose-base",
 ];
-
-/**
- * Bundled plugins (`build/droppen-plugins.ts`) live in `node_modules` too, but
- * they are lazy chunks of their own: in `vendor` they would be downloaded by
- * every page, enabled or not. `droppenPlugins()` fails the build if one ever
- * ends up statically reachable from the entry.
- */
-function vendorChunk(id: string): string | undefined {
-  if (isPluginModule(id)) return undefined;
-  const at = id.lastIndexOf("/node_modules/");
-  if (at < 0) return undefined;
-  const pkg = id.slice(at + "/node_modules/".length);
-  if (LAZY_PACKAGES.some((p) => pkg.startsWith(p))) return undefined;
-  return pkg.startsWith("@xterm/") ? "vendor-xterm" : "vendor";
-}
 
 /**
  * KaTeX's stylesheet offers each of its twenty fonts as woff2, woff and ttf.
@@ -192,6 +141,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     katexWoff2Only(),
+    guardBootChunks(ON_DEMAND),
     precacheBootSet(),
     // Static-hosting output, only with `DROPPEN_WEB_MODE=cloud` (a no-op otherwise).
     cloudBuild(cloud),

@@ -344,7 +344,7 @@ export function droppenPlugins(options: DroppenPluginsOptions): Plugin {
         const chunk = bundle[fileName];
         if (chunk?.type !== "chunk") continue;
         const leaked = chunk.moduleIds.filter(isPluginModule);
-        if (leaked.length) fail(`plugin code is in the boot chunk ${fileName}: ${leaked.slice(0, 3).join(", ")} — check vendorChunk in vite.config.ts`);
+        if (leaked.length) fail(`plugin code is in the boot chunk ${fileName}: ${leaked.slice(0, 3).join(", ")} — check vendorChunk in build/vendor-chunks.ts`);
       }
       this.emitFile({
         type: "asset",
