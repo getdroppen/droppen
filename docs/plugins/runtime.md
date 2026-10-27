@@ -12,6 +12,9 @@ server**, to the pages that server serves — and to nothing else:
 | A browser on the server's own page (the app's *Open in Browser*, `remote-hand-server open`, a self-hosted server's address) | yes |
 | droppen.app (a page a hub serves, `isCloud()`) | **no** — no code, no list, no documents |
 
+A plugin runs with the page's own rights, unsandboxed: installing one is
+trusting it as fully as a program run in that machine's terminal (§8).
+
 This replaces the build-time *distribution* (`distribution.json`,
 `DROPPEN_DISTRIBUTION`, `web/build/droppen-plugins.ts`,
 `virtual:droppen/bundled-plugins`), which is removed. The plugin package
@@ -69,7 +72,8 @@ The tarball is a gzip'd tar whose every entry is under `package/` (what
 - `droppen.engines.droppen` (Cargo rules, as today) not satisfied by this
   host's SDK version: an incompatible plugin is **not installed**. (One that
   an upgrade of the host makes incompatible stays installed and shows
-  `compatible: false`, as today.)
+  `compatible: false`, as today; while it is switched on, the page names it
+  rather than drops it, §6.)
 - the entry — `exports["."]` (a string, or its `import` / `default`), else
   `module`, else `main`, else `index.js` — not a relative `.js`/`.mjs` file
   inside the package.
@@ -124,6 +128,29 @@ the build already hashes for the service worker's and the cloud headers' CSP,
 and inert where no plugin loads. The server does not touch the shell. Import
 maps need WebKit 16.4 (macOS 13.3) in the desktop app's window.
 
+### Versions
+
+`SDK_VERSION` (`droppen-plugin-sdk` and `@droppen/plugin-sdk`, one value,
+checked by the SDK's tests) is what a plugin's `engines.droppen` ranges over.
+It versions everything a plugin binds to — **React included**: a plugin's bare
+`react` is the host's React, so the web build's React major is as much a part
+of the contract as any SDK type.
+
+- On 0.x, Cargo's rules make `^0.1.0` mean `>=0.1.0, <0.2.0`: a **patch**
+  (0.1.x) may only add or fix, a **minor** (0.2.0) is breaking. From 1.0, the
+  usual major and minor.
+- A React major in the web build (19 → 20) is a breaking SDK change even when
+  no SDK type moved: it takes the next breaking `SDK_VERSION`, and the SDK's
+  `react` peer range follows. `packages/plugin-sdk/test/sdk.test.ts` keeps the
+  table of which React each SDK version lends, and fails when the web's React
+  and `SDK_VERSION` move apart.
+- A breaking bump leaves every installed plugin `compatible: false` on the
+  next start, and the desktop app updates itself without asking. A plugin's
+  build for the new SDK is therefore ready before the host release, and
+  installed once the host has updated (an install is checked against the
+  running host). In between, the page names each switched-on plugin that no
+  longer runs (§6).
+
 ## 4. HTTP API changes
 
 `PluginStatus` (`droppen-plugin-sdk`, `packages/plugin-sdk`, `web/src/plugins/types.ts`)
@@ -135,7 +162,8 @@ interface PluginStatus {
   build: string;          // "<version>-<12 hex>"
   entry: string | null;   // "/plugins/<key>/<id>/<build>/<entry>" when enabled and compatible; else null
   aliases: string[];
-  permissions: string[];
+  permissions: string[];  // declared, not enforced (§8)
+  switchedOn: boolean;    // on by the configuration or the instance, whether or not compatible
 }
 ```
 
@@ -178,6 +206,12 @@ gets none of it:
 - Aliases come from the statuses, so they are known only once the list is:
   an alias path opened directly (`/tasks`) goes to `/p/<id>/` as soon as the
   list says a plugin has it.
+- A plugin that is switched on but cannot run here (`switchedOn` and not
+  `compatible`, typically after a host update, §3) is not loaded, and not
+  dropped either: the rail keeps a plain entry for it marked as needing an
+  update, and its page, its aliases and any pane of it say so, with the
+  status's `reason`. Switching it off in Settings › Plugins takes the entry
+  away.
 - A module cannot be unloaded. After an install, upgrade or uninstall from
   Settings › Plugins the page reloads; one made elsewhere (the CLI, another
   tab) shows a *Reload to finish* prompt in Settings › Plugins and on the
@@ -190,3 +224,23 @@ decisions; only the code's way in changes. An instance that ran a private
 distribution build runs the public build plus `plugin install <tarball>`.
 Before the first such deploy, install the tarball into each instance with the
 new binary (`--instance`), then start it.
+
+## 8. Trust and permissions
+
+Installing a plugin is **trusting it fully**, as with a program run in that
+machine's terminal:
+
+- Its code runs in the host's page, at the host's origin, with no sandbox. It
+  can read whatever the page can — the signed-in user's token in
+  `localStorage` included — and call every API the page can (terminals,
+  sessions, files) as that user.
+- `droppen.permissions` (`storage`, `sessions:read`, `notify`) is
+  **declared, not enforced**. The install checks the names; nothing at run
+  time holds a plugin to them. They tell a reader what the plugin means to
+  use, and keep the field's place for a host that may enforce it later.
+- So install only what you would run in a terminal there. Settings › Plugins
+  says this and asks before an install; `plugin install` is already run from
+  one.
+
+droppen.app loads no plugin code at all (§5), so a plugin never runs on a
+page the hosted service serves.
