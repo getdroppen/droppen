@@ -619,8 +619,6 @@ mod tests {
         let a = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "a");
         let b = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "b");
 
-        assert_eq!(a.push_file(), a.instance_dir().join("push.json"));
-        assert_ne!(a.push_file(), b.push_file());
         assert_ne!(a.scheduled_tasks_file(), b.scheduled_tasks_file());
 
         // And the sidecars that are shared by design did not move with them.

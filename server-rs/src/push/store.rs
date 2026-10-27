@@ -4,8 +4,7 @@
 //! subscription is a permission one browser granted to one *origin*, and the
 //! VAPID key is that origin's identity to the push service. Two servers sharing
 //! the file would each sign with the other's key and deliver to the other's
-//! devices. See [`crate::instance`], which also copies a pre-instance file in
-//! once so an upgrade keeps its devices.
+//! devices. See [`crate::instance`] for why the sidecars are per-instance.
 //!
 //! Stored `0600`, because it holds a private key — the same rule (and the same
 //! reasoning) as [`crate::accounts::store`]. The mode is now the database's; see
@@ -416,8 +415,9 @@ mod tests {
         unsafe { libc::umask(previous) };
         result.expect("mint");
 
-        assert!(!paths.push_file().exists(), "no key is written out beside the database");
-        assert!(!paths.push_file().with_extension("json.tmp").exists());
+        let file = paths.instance_dir().join("push.json");
+        assert!(!file.exists(), "no key is written out beside the database");
+        assert!(!file.with_extension("json.tmp").exists());
         let mode = std::fs::metadata(paths.instance_db()).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
@@ -428,9 +428,10 @@ mod tests {
     async fn no_change_writes_the_file_back() {
         let (_dir, paths) = paths();
         let (p256dh, auth) = valid_keys();
-        std::fs::create_dir_all(paths.push_file().parent().expect("parent")).expect("instance dir");
+        let file = paths.instance_dir().join("push.json");
+        std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
         let before = r#"{"vapidPrivate":null,"subscriptions":[]}"#;
-        std::fs::write(paths.push_file(), before).expect("seed");
+        std::fs::write(&file, before).expect("seed");
 
         vapid_public(&paths).await.expect("mint");
         upsert(&paths, "https://push.example/a".into(), p256dh, auth, Some("phone".into()))
@@ -439,11 +440,11 @@ mod tests {
         assert!(remove(&paths, "https://push.example/a").await.expect("remove"));
 
         assert_eq!(
-            std::fs::read_to_string(paths.push_file()).expect("read"),
+            std::fs::read_to_string(&file).expect("read"),
             before,
             "a mint, an upsert and a removal leave the file byte for byte as found"
         );
-        assert!(!paths.push_file().with_extension("json.tmp").exists());
+        assert!(!file.with_extension("json.tmp").exists());
     }
 
     /// What a restart is, from the store's point of view. The key matters most:

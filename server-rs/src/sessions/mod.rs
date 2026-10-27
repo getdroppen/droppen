@@ -1042,21 +1042,6 @@ impl Paths {
         self.config_dir().join("seen.json")
     }
 
-    /// `<data>/instances/<name>/push.json` — the VAPID keypair and every browser
-    /// subscription.
-    ///
-    /// Instance-scoped: a subscription is a browser's permission for *one
-    /// origin*, granted to the server the PWA was installed from, and the VAPID
-    /// key is that origin's identity to the push service. A second instance
-    /// sharing the file would sign its own notifications with the first one's
-    /// key and deliver them to the first one's devices.
-    ///
-    /// It holds a private key, which is why it was written `0600` — the only
-    /// sidecar that was.
-    pub fn push_file(&self) -> PathBuf {
-        self.instance_dir().join("push.json")
-    }
-
     /// The optional per-model price table that overrides the built-in rates.
     pub fn price_override(&self) -> PathBuf {
         self.home.join(".remote-hand").join("model-prices.json")
