@@ -26,7 +26,6 @@ import { linkZhCN } from "../src/i18n/link.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
-import type { KeyStore } from "../src/lib/e2e/index.js";
 
 async function i18nIn(lng: string, translation: Record<string, string> = {}) {
   const i18n = i18next.createInstance();
@@ -126,7 +125,7 @@ async function consent(handoff: HandoffRequest, lng = "en", table?: Record<strin
   setHandshakeForTest(handoffHandshake(handoff));
   return renderToStaticMarkup(
     <I18nextProvider i18n={await i18nIn(lng, table)}>
-      <LinkFlow account={ACCOUNT} link={null as unknown as HubLink} store={null as unknown as KeyStore} />
+      <LinkFlow account={ACCOUNT} link={null as unknown as HubLink} />
     </I18nextProvider>,
   );
 }

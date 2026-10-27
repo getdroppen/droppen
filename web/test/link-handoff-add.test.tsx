@@ -36,7 +36,6 @@ const { handoffHandshake, LinkFlow, setHandshakeForTest } = await import("../src
 type HandoffRequest = import("../src/features/link/handoff.js").HandoffRequest;
 type CloudAccount = import("../src/lib/hub/account.js").CloudAccount;
 type HubLink = import("../src/lib/hub/link.js").HubLink;
-type KeyStore = import("../src/lib/e2e/index.js").KeyStore;
 
 const HANDOFF: HandoffRequest = {
   attempt: "0123456789abcdef0123456789abcdef",
@@ -125,7 +124,7 @@ async function mount(acc: CloudAccount) {
   sessionStorage.clear();
   setHandshakeForTest(handoffHandshake(HANDOFF));
   const root = createRoot(container as never);
-  root.render(<LinkFlow account={acc} link={null as unknown as HubLink} store={null as unknown as KeyStore} />);
+  root.render(<LinkFlow account={acc} link={null as unknown as HubLink} />);
   await until("the consent page", () => !!byTestId("link-confirm"));
   return root;
 }

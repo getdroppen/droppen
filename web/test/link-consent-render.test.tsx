@@ -15,7 +15,6 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { LinkFlow, startHandshake } from "../src/features/link/link-popup.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
-import type { KeyStore } from "../src/lib/e2e/index.js";
 
 type El = React.ReactElement<Record<string, unknown>>;
 
@@ -63,7 +62,7 @@ test("the consent page asks nothing about what the device may do, and adds it wi
 
     let tree: El[] = [];
     function Probe() {
-      const out = LinkFlow({ account, link, store: {} as KeyStore });
+      const out = LinkFlow({ account, link });
       tree = elements(out);
       return out;
     }

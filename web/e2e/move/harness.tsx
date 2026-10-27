@@ -26,7 +26,7 @@
 // names carry a port, which the hub's parser accepts only on loopback.
 import { createRoot } from "react-dom/client";
 import { hex } from "@/lib/e2e/bytes";
-import { indexedDbKeyStore, KEY_STORE_DB, KEY_STORE_STORE, loadOrCreateDeviceKeys, readDeviceKeys } from "@/lib/e2e/keystore";
+import { indexedDbKeyStore, KEY_STORE_DB, KEY_STORE_STORE, loadDeviceKeys, readDeviceKeys } from "@/lib/e2e/keystore";
 import { signHubLogin } from "@/lib/e2e/sig";
 import { HubApi, loadSession } from "@/lib/hub/api";
 import { hubOrigin } from "@/lib/hub/config";
@@ -79,7 +79,7 @@ async function seed(): Promise<unknown> {
   const account = params.get("account") ?? "acct-1";
   const device = params.get("device") ?? "dev-1";
   const store = indexedDbKeyStore();
-  const keys = await loadOrCreateDeviceKeys(store);
+  const keys = (await loadDeviceKeys(store)).keys;
   await store.put("local-wrap/v1", await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]));
   await store.put(`uk/${account}/0`, { iv: crypto.getRandomValues(new Uint8Array(12)), sealed: crypto.getRandomValues(new Uint8Array(48)) });
   await store.put(`keyring/${account}`, { entries: [1, 2, 3], at: Date.now() });
