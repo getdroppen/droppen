@@ -5,7 +5,7 @@
 //! its `.openapi()` name in the former TypeScript server's `schemas.ts` rather
 //! than after the internal `NormalizedItem`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
@@ -651,6 +651,120 @@ pub fn user_text_item(raw_text: &str, timestamp: Option<&str>) -> TranscriptItem
         item.files = Some(split.files);
     }
     item
+}
+
+/// The newest model/effort pair a transcript's tail names.
+///
+/// Both CLIs record the pair once per turn — Claude on every assistant entry,
+/// Codex in the `turn_context` that opens one — so the newest entry that names
+/// either is what the session is set to run. `extract` reads one entry and
+/// returns its pair, or `None` when the entry says nothing about them.
+pub async fn last_cli_choice(
+    file_path: &Path,
+    tail_bytes: u64,
+    extract: impl Fn(&serde_json::Map<String, serde_json::Value>) -> Option<(Option<String>, Option<String>)>,
+) -> Option<super::CliChoice> {
+    let lines = read_tail_lines(file_path, tail_bytes).await.ok()?;
+    for line in lines.iter().rev() {
+        let Some(entry) = try_parse(line) else { continue };
+        let Some((model, effort)) = extract(&entry) else { continue };
+        return Some(super::CliChoice {
+            model: Nullable(model),
+            effort: Nullable(effort),
+            at: Nullable(entry.get("timestamp").and_then(serde_json::Value::as_str).map(str::to_owned)),
+        });
+    }
+    None
+}
+
+/// A map whose entries are dropped wholesale when it reaches a cap.
+///
+/// An LRU needs a second structure to maintain, and being wrong only costs a
+/// lookup that falls through to the durable tier or a re-read. The file caches
+/// in this module all made that trade one at a time; this is it written once.
+pub struct BoundedMap<K, V> {
+    entries: std::sync::Mutex<std::collections::HashMap<K, V>>,
+    max: usize,
+}
+
+impl<K: std::hash::Hash + Eq, V> BoundedMap<K, V> {
+    /// A map that empties itself once it holds `max` entries.
+    pub fn new(max: usize) -> Self {
+        Self {
+            entries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            max,
+        }
+    }
+
+    /// The value held for `key`, when there is one.
+    pub fn get<Q>(&self, key: &Q) -> Option<V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+        V: Clone,
+    {
+        self.entries.lock().expect("bounded map poisoned").get(key).cloned()
+    }
+
+    /// Hold `value` for `key`.
+    ///
+    /// At the cap the whole map is emptied first — unless `key` is already in
+    /// it: refreshing an entry already held must never trigger the clear, or a
+    /// list of live rows would empty the map on every refresh and never hit it
+    /// again.
+    pub fn insert(&self, key: K, value: V) {
+        let mut entries = self.entries.lock().expect("bounded map poisoned");
+        if entries.len() >= self.max && !entries.contains_key(&key) {
+            entries.clear();
+        }
+        entries.insert(key, value);
+    }
+
+    /// How many entries are held. Tests and observability only.
+    pub fn len(&self) -> usize {
+        self.entries.lock().expect("bounded map poisoned").len()
+    }
+
+    /// Forget every entry. Tests only: the restart a real near tier would see.
+    pub fn clear(&self) {
+        self.entries.lock().expect("bounded map poisoned").clear();
+    }
+}
+
+/// A bounded, process-local cache of a value derived from a file, invalidated
+/// by the file's mtime and size.
+///
+/// The near tier in front of [`crate::db::index`]: a hit is a map lookup, and a
+/// miss falls through to the durable answer or a re-read. Both CLIs build their
+/// list rows this way, and both check the same two fields because those are
+/// what the durable tier's watermark is made of.
+pub struct FileCache<T> {
+    entries: BoundedMap<PathBuf, (f64, u64, T)>,
+}
+
+impl<T: Clone> FileCache<T> {
+    /// A cache holding at most `max` files' answers.
+    pub fn new(max: usize) -> Self {
+        Self {
+            entries: BoundedMap::new(max),
+        }
+    }
+
+    /// The value remembered for `path`, when it was read at this mtime and size.
+    pub fn get(&self, path: &Path, mtime: f64, size: u64) -> Option<T> {
+        let (cached_mtime, cached_size, value) = self.entries.get(path)?;
+        (cached_mtime == mtime && cached_size == size).then_some(value)
+    }
+
+    /// Hold `value` for `path`, read at this mtime and size.
+    pub fn put(&self, path: &Path, mtime: f64, size: u64, value: T) {
+        self.entries.insert(path.to_path_buf(), (mtime, size, value));
+    }
+
+    /// Forget every file. Tests only: the restart a real near tier would see.
+    pub fn clear(&self) {
+        self.entries.clear();
+    }
 }
 
 #[cfg(test)]

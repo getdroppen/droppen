@@ -21,7 +21,7 @@
 //! `titles.json` was a mirror for one version, so a `.prev` binary that had
 //! never heard of the database would still find the names; the rollback floor
 //! has since risen to a build that reads the database, and
-//! `crate::sessions::claude::custom_titles` — the last reader that went to the
+//! `crate::sessions::custom_titles` — the last reader that went to the
 //! file — now asks [`all`] instead. Nothing reads the file any more.
 
 use std::collections::BTreeMap;

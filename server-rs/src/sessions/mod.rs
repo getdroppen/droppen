@@ -1252,6 +1252,21 @@ pub fn sendability(source: Source, scope: SessionScope, status: SessionStatus, i
     }
 }
 
+/// User-set titles, which outrank anything derived from a transcript.
+///
+/// Keyed `source:id` in one shared sidecar, so both CLIs read them through the
+/// same filter.
+async fn custom_titles(paths: &Paths, source: Source) -> HashMap<String, String> {
+    let prefix = format!("{source}:");
+    crate::drive::titles::all(paths)
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let id = key.strip_prefix(&prefix)?;
+            Some((id.to_string(), value))
+        })
+        .collect()
+}
+
 /// The mtime+size signature the transcript cache and the `?sig=` poll share.
 pub async fn file_signature(path: &Path) -> Option<String> {
     let metadata = tokio::fs::metadata(path).await.ok()?;

@@ -24,11 +24,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 
+use super::util::BoundedMap;
 use super::SessionSummary;
 
 /// How long `git` gets before the answer is "no repository".
@@ -58,16 +59,16 @@ const CACHE_MAX: usize = 512;
 /// every time and now pays once a day. The durable tier is the one place a
 /// bounded expiry had to be introduced, precisely because "until the server
 /// restarts" stops being an answer once the answer outlives the server.
-static CACHE: LazyLock<Mutex<HashMap<PathBuf, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static CACHE: LazyLock<BoundedMap<PathBuf, Option<String>>> = LazyLock::new(|| BoundedMap::new(CACHE_MAX));
 
 /// The repository `cwd` belongs to, or `None`.
 pub async fn repo_key(cwd: &Path) -> Option<String> {
-    if let Some(hit) = CACHE.lock().expect("repo key cache poisoned").get(cwd) {
-        return hit.clone();
+    if let Some(hit) = CACHE.get(cwd) {
+        return hit;
     }
     let index = crate::db::index::current();
     if let Some(answer) = index.as_ref().and_then(|index| index.repo_key(cwd)) {
-        remember(cwd, &answer);
+        CACHE.insert(cwd.to_path_buf(), answer.clone());
         return answer;
     }
     // `tokio::fs`, not `Path::is_dir`: this runs inside the list refresh, and a
@@ -82,25 +83,13 @@ pub async fn repo_key(cwd: &Path) -> Option<String> {
     // it is simply never written.
     let exists = tokio::fs::metadata(cwd).await.is_ok_and(|meta| meta.is_dir());
     let answer = if exists { probe(cwd).await } else { None };
-    remember(cwd, &answer);
+    CACHE.insert(cwd.to_path_buf(), answer.clone());
     if exists {
         if let Some(index) = index {
             index.remember_repo_key(cwd, answer.as_deref());
         }
     }
     answer
-}
-
-/// Hold an answer in the near tier, keeping that tier bounded.
-fn remember(cwd: &Path, answer: &Option<String>) {
-    let mut cache = CACHE.lock().expect("repo key cache poisoned");
-    // Cleared rather than evicted one-by-one: an LRU needs a second structure to
-    // maintain, and the whole point of the cache is that a re-list is cheap, not
-    // that any particular entry survives.
-    if cache.len() >= CACHE_MAX {
-        cache.clear();
-    }
-    cache.insert(cwd.to_path_buf(), answer.clone());
 }
 
 /// Variables that would make `git` answer about a repository other than `cwd`'s.
@@ -208,7 +197,7 @@ pub async fn apply(sessions: &mut [SessionSummary]) {
 
 /// How many directories the cache is holding. Test/observability only.
 pub fn cache_len() -> usize {
-    CACHE.lock().expect("repo key cache poisoned").len()
+    CACHE.len()
 }
 
 #[cfg(test)]
@@ -324,8 +313,8 @@ mod tests {
             "a boot that has already resolved this directory does not resolve it again"
         );
         assert_eq!(
-            CACHE.lock().expect("repo key cache poisoned").get(&cwd),
-            Some(&Some("/repos/remembered/.git".to_string())),
+            CACHE.get(&cwd),
+            Some(Some("/repos/remembered/.git".to_string())),
             "and the near tier is filled on the way through, so the next call is a map lookup"
         );
     }

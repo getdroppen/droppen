@@ -12,7 +12,7 @@ use std::sync::{LazyLock, Mutex};
 use serde_json::Value;
 
 use super::transcript::{content_blocks, title_line, user_title_candidate};
-use super::util::{self, read_head_lines, read_tail_lines, try_parse};
+use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
 use super::{iso8601, mtime_ms, Paths, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::claude_roots::{self, ClaudeRoot};
 use crate::openapi_ext::Nullable;
@@ -72,6 +72,31 @@ pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) 
     }
 }
 
+/// Apply the overlays both the list and the single-row lookup need: live
+/// status, the user's own title, and ownership.
+///
+/// None of them is in the cached row, because each can change without the
+/// transcript moving at all — which is why the list and the detail view must
+/// both run this, or a detail that disagreed with the row the user clicked
+/// would read as a different session.
+async fn finish(paths: &Paths, summaries: &mut [SessionSummary]) {
+    if summaries.is_empty() {
+        return;
+    }
+    let live = live_claude_session_ids(paths).await;
+    let titles = super::custom_titles(paths, Source::Claude).await;
+    for summary in summaries.iter_mut() {
+        if live.contains(&summary.id) {
+            let activity = claude_activity(Path::new(&summary.file_path)).await;
+            (summary.status, summary.asking) = (activity.status, activity.asking);
+        }
+        if let Some(custom) = titles.get(&summary.id) {
+            summary.title = custom.clone();
+        }
+    }
+    mark_owned(paths, summaries).await;
+}
+
 /// How many transcripts the in-memory tier holds before it is emptied.
 ///
 /// There was no bound at all, and that was a leak rather than a simplification:
@@ -95,19 +120,7 @@ const CACHE_MAX: usize = 2048;
 /// The near tier of two. This one is a `HashMap` lookup and dies with the
 /// process; behind it sits [`crate::db::index`], which is what stops a restart
 /// costing 11.2 MB of head and tail parsing before the first list appears.
-static LIST_CACHE: LazyLock<Mutex<HashMap<PathBuf, (f64, SessionSummary)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Hold a summary in the near tier, keeping that tier bounded.
-fn remember(file_path: &Path, mtime: f64, summary: &SessionSummary) {
-    let mut cache = LIST_CACHE.lock().expect("list cache poisoned");
-    // Refreshing a transcript already in the map must never trigger the clear:
-    // at the cap, a list of live sessions would otherwise empty the cache on
-    // every single refresh and never hit it again.
-    if cache.len() >= CACHE_MAX && !cache.contains_key(file_path) {
-        cache.clear();
-    }
-    cache.insert(file_path.to_path_buf(), (mtime, summary.clone()));
-}
+static LIST_CACHE: LazyLock<FileCache<SessionSummary>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
 /// A summary as `index.db` stored it, read with tolerance for the fields added
 /// since.
@@ -130,13 +143,10 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
     let metadata = tokio::fs::metadata(file_path).await?;
     let mtime = mtime_ms(&metadata);
     let mark = crate::db::index::Watermark::of(file_path, &metadata);
-    if let Some((cached_mtime, summary)) = LIST_CACHE.lock().expect("list cache poisoned").get(file_path) {
-        // Size as well as mtime, so the near tier agrees with the durable one
-        // about what "unchanged" means. It is free — the summary already carries
-        // the length it was built from.
-        if *cached_mtime == mtime && summary.size_bytes == metadata.len() {
-            return Ok(summary.clone());
-        }
+    // Size as well as mtime, so the near tier agrees with the durable one
+    // about what "unchanged" means.
+    if let Some(summary) = LIST_CACHE.get(file_path, mtime, metadata.len()) {
+        return Ok(summary);
     }
 
     // What some previous boot worked out about this exact file. The watermark is
@@ -154,7 +164,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         // owned would be offered a send button it must not have.
         .filter(|summary: &SessionSummary| summary.claude_root == Some(root))
     {
-        remember(file_path, mtime, &summary);
+        LIST_CACHE.put(file_path, mtime, summary.size_bytes, summary.clone());
         return Ok(summary);
     }
 
@@ -267,7 +277,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         children: Vec::new(),
         parent_id: Nullable(None),
     };
-    remember(file_path, mtime, &summary);
+    LIST_CACHE.put(file_path, mtime, summary.size_bytes, summary.clone());
     // Both tiers hold the row *before* the overlays — ownership, live status,
     // the user's own title, the account binding. Those are applied to the copy
     // that goes out, by the callers below, because each of them can change
@@ -476,20 +486,6 @@ pub async fn archived_ids(paths: &Paths) -> HashSet<String> {
     crate::drive::archive::archived_ids(paths)
 }
 
-/// User-set titles, which outrank anything derived from the transcript.
-///
-/// Keyed `source:id` in one shared sidecar, so Codex discovery reads it too.
-pub(super) async fn custom_titles(paths: &Paths, source: Source) -> HashMap<String, String> {
-    let prefix = format!("{source}:");
-    crate::drive::titles::all(paths)
-        .into_iter()
-        .filter_map(|(key, value)| {
-            let id = key.strip_prefix(&prefix)?;
-            Some((id.to_string(), value))
-        })
-        .collect()
-}
-
 /// Every `<uuid>.jsonl` under one root's projects directory.
 async fn root_transcripts(paths: &Paths, root: ClaudeRoot) -> Vec<(PathBuf, String)> {
     let Ok(mut project_dirs) = tokio::fs::read_dir(claude_roots::projects_dir(paths, root)).await else {
@@ -543,24 +539,10 @@ pub async fn list_claude_sessions(paths: &Paths, bindings: &BTreeMap<String, Str
     }
 
     let mut summaries: Vec<SessionSummary> = order.into_iter().filter_map(|id| by_id.remove(&id)).collect();
-    let live = live_claude_session_ids(paths).await;
     for summary in &mut summaries {
         summary.account_id = bindings.get(&summary.id).cloned();
-        if live.contains(&summary.id) {
-            let activity = claude_activity(Path::new(&summary.file_path)).await;
-            (summary.status, summary.asking) = (activity.status, activity.asking);
-        }
     }
-
-    let titles = custom_titles(paths, Source::Claude).await;
-    if !titles.is_empty() {
-        for summary in &mut summaries {
-            if let Some(custom) = titles.get(&summary.id) {
-                summary.title = custom.clone();
-            }
-        }
-    }
-    mark_owned(paths, &mut summaries).await;
+    finish(paths, &mut summaries).await;
     summaries
 }
 
@@ -646,46 +628,27 @@ pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSumma
     crate::db::index::install(paths);
     let found = find_claude_session(paths, id).await?;
     let mut summary = summarize_file(&found.file_path, id, found.root).await.ok()?;
-    if live_claude_session_ids(paths).await.contains(id) {
-        let activity = claude_activity(&found.file_path).await;
-        (summary.status, summary.asking) = (activity.status, activity.asking);
-    }
-    let titles = custom_titles(paths, Source::Claude).await;
-    if let Some(custom) = titles.get(id) {
-        summary.title = custom.clone();
-    }
-    // And the same for ownership: the composer's verdict is read off this row,
-    // so it has to say what the list said.
-    mark_owned(paths, std::slice::from_mut(&mut summary)).await;
+    finish(paths, std::slice::from_mut(&mut summary)).await;
     Some(summary)
 }
 
 /// The model/effort a session last ran with, read from its transcript tail.
 pub async fn read_cli_choice(file_path: &Path) -> Option<super::CliChoice> {
     // Claude writes model+effort on every assistant entry, so a small tail is enough.
-    let lines = read_tail_lines(file_path, 128 * 1024).await.ok()?;
-    for line in lines.iter().rev() {
-        let Some(entry) = try_parse(line) else { continue };
+    util::last_cli_choice(file_path, 128 * 1024, |entry| {
         if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
-            continue;
+            return None;
         }
         let model = entry
             .get("message")
             .and_then(Value::as_object)
-            .and_then(|m| m.get("model"))
+            .and_then(|message| message.get("model"))
             .and_then(Value::as_str)
             .map(str::to_owned);
         let effort = entry.get("effort").and_then(Value::as_str).map(str::to_owned);
-        if model.is_none() && effort.is_none() {
-            continue;
-        }
-        return Some(super::CliChoice {
-            model: Nullable(model),
-            effort: Nullable(effort),
-            at: Nullable(entry.get("timestamp").and_then(Value::as_str).map(str::to_owned)),
-        });
-    }
-    None
+        (model.is_some() || effort.is_some()).then_some((model, effort))
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -1070,7 +1033,7 @@ mod tests {
         assert_eq!(first.title, "from the transcript");
 
         // The restart: the in-memory tier is precisely the part that dies.
-        LIST_CACHE.lock().expect("list cache poisoned").clear();
+        LIST_CACHE.clear();
 
         let index = crate::db::index::open(&paths);
         let metadata = std::fs::metadata(&path).expect("stat");
@@ -1094,7 +1057,7 @@ mod tests {
         .expect("JSON");
         older.as_object_mut().expect("an object").remove("unreadCount");
         index.remember_summary(Source::Claude, id, crate::db::index::Watermark::of(&path, &metadata), &older);
-        LIST_CACHE.lock().expect("list cache poisoned").clear();
+        LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
             "cached before unreadCount"
@@ -1108,7 +1071,7 @@ mod tests {
             let mut file = std::fs::OpenOptions::new().append(true).open(&path).expect("append");
             writeln!(file, r#"{{"type":"custom-title","customTitle":"renamed since"}}"#).expect("write");
         }
-        LIST_CACHE.lock().expect("list cache poisoned").clear();
+        LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
             "renamed since",
@@ -1123,7 +1086,7 @@ mod tests {
         std::fs::create_dir_all(wrecked.index_db().parent().expect("parent")).expect("mkdir");
         std::fs::write(wrecked.index_db(), b"this is not a database").expect("write");
         crate::db::index::install(&wrecked);
-        LIST_CACHE.lock().expect("list cache poisoned").clear();
+        LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
             "renamed since",
