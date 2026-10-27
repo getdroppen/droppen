@@ -1,7 +1,5 @@
 //! Browsing, reading, downloading and uploading files under the home directory.
 //!
-//! Port of the former TypeScript server's `files.ts` plus its five routes in
-//! `app.ts`.
 //! Every path the client names is resolved and then proven to sit under the home
 //! directory before a syscall touches it, and the two upload routes are the only
 //! writes the API performs outside its own config directory. A device reaching
@@ -9,11 +7,9 @@
 //! config directories on top of that, save what the transcript links to in
 //! there ([`fence`]).
 //!
-//! Where the TypeScript reads `homedir()` once at module scope, every entry
-//! point here takes the request's [`Paths`]. That is what lets the integration
-//! test point a whole server at a temporary home — and it is equally why nothing
-//! in this module may reach for `$HOME` or `dirs::home_dir()` directly: doing so
-//! would step straight out of the sandbox the tests set up.
+//! Every entry point takes the request's [`Paths`], and nothing here may read
+//! `$HOME` or `dirs::home_dir()` directly: the integration tests point a whole
+//! server at a temporary home, and a direct read would step out of it.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -42,19 +38,17 @@ const ATTACHMENT_LIMIT: u64 = 100 * 1024 * 1024;
 /// Headroom over the file-size ceiling for the multipart framing that carries it.
 ///
 /// axum caps every request body at 2 MiB unless a route says otherwise
-/// (`DefaultBodyLimit`), which node had no equivalent of — so both upload routes
-/// silently refused anything past 2 MiB with a bare `413` no matter what
-/// [`UPLOAD_LIMIT`] said. The transport limit is set from the declared ceiling
-/// plus this, so that a file *at* the ceiling still arrives and it is the
-/// handler's own check — and therefore the TypeScript's own message — that
-/// answers anything over it.
+/// (`DefaultBodyLimit`), and answers past the cap with a bare `413`. Each upload
+/// route's transport limit is its ceiling plus this, so a file *at* the ceiling
+/// still arrives, and one just over it is refused by the handler's own check,
+/// with its message.
 const MULTIPART_OVERHEAD: u64 = 64 * 1024;
 /// How long an uploaded-but-never-sent attachment survives; see [`sweep_uploads`].
 const UPLOAD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How much of a download is read per stream poll.
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
-/// The message every containment failure carries, verbatim from the TypeScript.
+/// The message every containment failure carries.
 const OUTSIDE_HOME: &str = "path is outside the home directory";
 /// What a device reaching this computer through Droppen is told about the
 /// server's own directories ([`fence`]).
@@ -68,11 +62,10 @@ const PRIVATE_TO_THIS_COMPUTER: &str = "this device's Droppen data and settings 
 /// what it still contains: an
 /// `svg` served as `image/svg+xml` with `Content-Disposition: inline` is a
 /// *document*, and a script inside it would otherwise run on this server's
-/// origin. That was survivable while the API had no credentials to steal; with
-/// [`crate::auth`] it is not, because the page keeps its bearer token in the
-/// origin's own storage and an agent that can write a file can write an SVG.
+/// origin — where the page keeps its bearer token in the origin's own storage,
+/// and an agent that can write a file can write an SVG.
 ///
-/// The fix is [`INLINE_CSP`] rather than dropping `svg` from this list: an
+/// [`INLINE_CSP`] defuses it rather than dropping `svg` from this list: an
 /// avatar or a diagram in a repository is exactly the thing the file browser
 /// exists to preview, and the sandbox costs nothing to display it.
 const INLINE_IMAGE_MIME: &[(&str, &str)] = &[
@@ -263,14 +256,14 @@ impl Schematic for FileBytes {
 // Containment
 // ---------------------------------------------------------------------------
 
-/// A filesystem failure, split the way the TypeScript's `catch` splits it.
+/// A filesystem failure, split by what the client is told.
 ///
-/// `files.ts` throws `FsAccessError` for anything the user should read, and lets
-/// every other failure (a failed syscall) fall through to a per-route fallback
-/// message. Modelling that split here is what keeps the error text identical.
+/// A refusal the user can act on carries its own message; any other failure
+/// (a failed syscall) is answered with the route's fallback text, never with
+/// the OS error.
 #[derive(Debug)]
 pub enum FsError {
-    /// An `FsAccessError`: its message is what the client sees.
+    /// A refusal the user should read: its message is what the client sees.
     Access(&'static str),
     /// A device reaching this computer through Droppen asked for the
     /// server's own data or settings directory ([`fence`]): a `403`.
@@ -280,7 +273,7 @@ pub enum FsError {
 }
 
 impl FsError {
-    /// Render as a `400`, substituting `fallback` for a non-`FsAccessError`
+    /// Render as a `400`, substituting `fallback` for [`FsError::Other`]
     /// (and a `403 not_from_cloud` for [`FsError::Private`]).
     pub fn into_api(self, fallback: &'static str) -> ApiError {
         match self {
@@ -356,17 +349,17 @@ const READABLE_IN_CLAUDE_ROOT: [&str; 2] = ["plans", "image-cache"];
 /// Read-only to devices, like [`READABLE_IN_CLAUDE_ROOT`].
 const READABLE_IN_PROJECTS: [(&str, usize); 2] = [("memory", 2), ("tool-results", 3)];
 
-/// Defence in depth for devices that reach this computer through Droppen
-/// (chain v3 review, D3): the server's own data directory (the instance's
-/// machine key, chain state, accounts, the managed Claude root…) and its
-/// config directory are not theirs to list, read, download or write into —
+/// Defence in depth for devices that reach this computer through Droppen: the
+/// server's own data directory (the instance's machine key, chain state,
+/// accounts, the managed Claude root…) and its config directory are not theirs
+/// to list, read, download or write into —
 /// whichever path leads there, through `..` (gone by [`resolve_safe`]) or
 /// symlinks, dangling ones included, and whatever the case on a
 /// case-insensitive disk (directories are compared by identity, not by
 /// name).
 ///
 /// What the transcript shows from in there stays reachable: the uploads
-/// directory (composer attachments, as before), and — to read only — this
+/// directory (composer attachments), and — to read only — this
 /// instance's managed Claude root's plans, pasted images, memory notes and
 /// saved tool output ([`READABLE_IN_CLAUDE_ROOT`], [`READABLE_IN_PROJECTS`]),
 /// judged on where
@@ -378,7 +371,7 @@ const READABLE_IN_PROJECTS: [(&str, usize); 2] = [("memory", 2), ("tool-results"
 /// with more than one name may be a login or a key from elsewhere in the
 /// fenced trees under a name the walk lets through. Claude Code and this
 /// server only ever write single-named files there. Elsewhere in the home
-/// directory a hard-linked file reads as before — a build's outputs
+/// directory a hard-linked file reads like any other — a build's outputs
 /// (cargo links every one), a local `git clone`'s objects, a pnpm store on a
 /// disk without clones — because no name there is in the fenced trees, and a
 /// second name made for a fenced file outside them is a copy that no
@@ -539,17 +532,17 @@ fn real_path(path: &Path) -> Option<PathBuf> {
     Some(resolved)
 }
 
-/// Node's `path.resolve`, which is **purely lexical**.
+/// `requested` made absolute against the process working directory, with `.`
+/// and `..` collapsed **textually**.
 ///
-/// It makes a relative path absolute against the process working directory, then
-/// collapses `.` and `..` textually. It does *not* consult the filesystem, so it
-/// does not resolve symlinks — which means a symlink inside the home directory
-/// that points outside it passes the containment check in [`resolve_safe`] and
-/// its target is served. That is the TypeScript's behaviour, and reproducing it
-/// (rather than "fixing" it with [`std::fs::canonicalize`]) is deliberate: the
-/// two servers must answer the same request the same way, and the check is a
-/// guard against *typed* paths, not against a home directory whose owner has
-/// deliberately linked something in. `tests/files.rs` pins it.
+/// It does *not* consult the filesystem, so it does not resolve symlinks: a
+/// symlink inside the home directory that points outside it passes the
+/// containment check in [`resolve_safe`] and its target is served. That is
+/// deliberate (no [`std::fs::canonicalize`]): the check guards against *typed*
+/// paths, not against a home directory whose owner has linked something in.
+/// A device reaching this computer through Droppen is judged on the real path
+/// too, but only against the server's own directories ([`fence`]).
+/// `tests/files.rs` pins it.
 fn resolve(requested: &Path) -> PathBuf {
     let absolute = if requested.is_absolute() {
         requested.to_path_buf()
@@ -564,7 +557,7 @@ fn resolve(requested: &Path) -> PathBuf {
         match component {
             Component::Prefix(_) | Component::RootDir => out.push(component.as_os_str()),
             Component::CurDir => {}
-            // `..` at the root is the root, as it is in Node.
+            // `..` at the root is the root, as the kernel resolves it.
             Component::ParentDir => {
                 if out.parent().is_some() {
                     out.pop();
@@ -578,10 +571,8 @@ fn resolve(requested: &Path) -> PathBuf {
 
 /// Expand a leading `~` and prove the result stays inside the home directory.
 ///
-/// Port of `resolveSafe`. `Path::starts_with` compares whole components, so the
-/// single call covers both halves of the TypeScript's `target !== HOME &&
-/// !target.startsWith(HOME + sep)` — a sibling directory such as `/home/alice2`
-/// does not start with `/home/alice`.
+/// `Path::starts_with` compares whole components, so the home directory itself
+/// passes and a sibling such as `/home/alice2` does not start with `/home/alice`.
 pub fn resolve_safe(paths: &Paths, requested: Option<&str>) -> Result<PathBuf, FsError> {
     let home = paths.home.as_path();
     let raw = requested.unwrap_or_default().trim();
@@ -590,9 +581,8 @@ pub fn resolve_safe(paths: &Paths, requested: Option<&str>) -> Result<PathBuf, F
         home.to_path_buf()
     } else if let Some(rest) = raw.strip_prefix("~/") {
         // String concatenation, not `Path::join`: `join` treats an absolute
-        // right-hand side as a replacement, so `~//etc` would resolve to `/etc`
-        // and be rejected, where the TypeScript's `HOME + sep + rest` keeps the
-        // prefix and collapses the doubled separator into `$HOME/etc`.
+        // right-hand side as a replacement, so `~//etc` would become `/etc` and
+        // be refused, where a shell reads it as `$HOME/etc`.
         let mut joined = home.as_os_str().to_os_string();
         joined.push(std::path::MAIN_SEPARATOR_STR);
         joined.push(rest);
@@ -612,25 +602,22 @@ pub fn resolve_safe(paths: &Paths, requested: Option<&str>) -> Result<PathBuf, F
 
 /// Prove that `requested` sits **under** the uploads directory, or fail.
 ///
-/// Port of `isUploadPath`. This is a security gate rather than a convenience:
-/// the paths a client attaches to a message are handed to the CLI as arguments
-/// (`--add-dir`, image arguments), so a path that escaped the uploads directory
-/// would hand the CLI read access to anything the user can read. Callers must
-/// therefore use the returned, resolved path rather than the one they passed in.
+/// This is a security gate rather than a convenience: the paths a client
+/// attaches to a message are handed to the CLI as arguments (`--add-dir`, image
+/// arguments), so a path that escaped the uploads directory would hand the CLI
+/// read access to anything the user can read. Callers must therefore use the
+/// returned, resolved path rather than the one they passed in.
 ///
-/// The failure is the `409` the TypeScript's send route answers with
-/// (the former TypeScript server's `app.ts`), because that is the only thing
-/// `isUploadPath` guards; the message is that route's, verbatim.
+/// The failure is the send routes' `409`; they are its only callers.
 ///
-/// Resolution is lexical, matching [`resolve`] — a symlink inside the uploads
-/// directory is accepted on the strength of its path, exactly as in the
-/// TypeScript. Only remote-hand itself writes into that directory, so nothing
-/// can plant one without already having filesystem access.
+/// Resolution is lexical, as in [`resolve`]: a symlink inside the uploads
+/// directory is accepted on the strength of its path. Only this server writes
+/// into that directory, so nothing can plant one without already having
+/// filesystem access.
 pub fn assert_under_uploads(paths: &Paths, requested: &Path) -> Result<PathBuf, ApiError> {
     let uploads = paths.uploads_dir();
     let target = resolve(requested);
-    // `starts_with` is true for the directory itself; the TypeScript compares
-    // against `UPLOADS_DIR + sep`, which is not, so the equal case is excluded.
+    // `starts_with` is true for the directory itself, which is no attachment.
     if target == uploads || !target.starts_with(&uploads) {
         return Err(ApiError::new(StatusCode::CONFLICT, "attachment paths must come from /api/uploads"));
     }
@@ -641,7 +628,6 @@ pub fn assert_under_uploads(paths: &Paths, requested: &Path) -> Result<PathBuf, 
 // Listing and reading
 // ---------------------------------------------------------------------------
 
-/// Port of `listDir`.
 async fn list_dir(paths: &Paths, reach: Reach, requested: Option<&str>) -> Result<FsList, FsError> {
     let path = resolve_safe(paths, requested)?;
     let through = judge(paths, reach, Access::Read, &path)?;
@@ -651,7 +637,7 @@ async fn list_dir(paths: &Paths, reach: Reach, requested: Option<&str>) -> Resul
     while let Some(dirent) = reader.next_entry().await.map_err(|_| FsError::Other)? {
         let name = dirent.file_name().to_string_lossy().into_owned();
         // `file_type` comes from the directory entry, so a symlink reports as a
-        // symlink instead of as whatever it points at — as `Dirent` does in Node.
+        // symlink instead of as whatever it points at.
         let kind = match dirent.file_type().await {
             Ok(file_type) if file_type.is_dir() => FsKind::Dir,
             Ok(file_type) if file_type.is_file() => FsKind::File,
@@ -684,9 +670,7 @@ async fn list_dir(paths: &Paths, reach: Reach, requested: Option<&str>) -> Resul
         });
     }
 
-    // Directories first, then by name. `localeCompare` over the names a
-    // filesystem actually holds is a code-point comparison, which is what `Ord`
-    // on `String` does; both sorts are stable, so ties keep readdir order.
+    // Directories first, then names in code-point order (`Ord` on `String`).
     entries.sort_by(|a, b| match ((a.kind == FsKind::Dir), (b.kind == FsKind::Dir)) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
@@ -707,7 +691,6 @@ async fn list_dir(paths: &Paths, reach: Reach, requested: Option<&str>) -> Resul
     })
 }
 
-/// Port of `readFileSafe`.
 async fn read_file_safe(paths: &Paths, reach: Reach, requested: &str) -> Result<FsRead, FsError> {
     let path = resolve_safe(paths, Some(requested))?;
     fence(paths, reach, Access::Read, &path)?;
@@ -740,8 +723,6 @@ async fn read_file_safe(paths: &Paths, reach: Reach, requested: &str) -> Result<
         mtime: metadata.modified().ok().map(iso8601).into(),
         binary,
         truncated: size > READ_LIMIT,
-        // `Buffer.toString("utf8")` substitutes U+FFFD for invalid sequences,
-        // which is what `from_utf8_lossy` does.
         content: if binary {
             String::new()
         } else {
@@ -750,7 +731,7 @@ async fn read_file_safe(paths: &Paths, reach: Reach, requested: &str) -> Result<
     })
 }
 
-/// Port of `statForDownload`, returning the resolved path and its base name.
+/// The resolved path of a file to download, and its base name.
 async fn stat_for_download(paths: &Paths, reach: Reach, requested: &str) -> Result<(PathBuf, String), FsError> {
     let path = resolve_safe(paths, Some(requested))?;
     fence(paths, reach, Access::Read, &path)?;
@@ -764,10 +745,8 @@ async fn stat_for_download(paths: &Paths, reach: Reach, requested: &str) -> Resu
 
 /// The file's bytes as a stream, so the response is chunked.
 ///
-/// `tokio_util::io::ReaderStream` would say this in one line, but the crate's
-/// `tokio-util` dependency does not enable the `io` feature and this module does
-/// not own `Cargo.toml`; `unfold` over the same `File` costs one function and
-/// keeps the response genuinely streamed rather than buffered.
+/// `unfold` rather than `tokio_util::io::ReaderStream`, which needs the `io`
+/// feature `tokio-util` is built without here.
 fn file_stream(file: tokio::fs::File) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> {
     futures_util::stream::unfold(Some(file), |state| async move {
         let mut file = state?;
@@ -799,7 +778,7 @@ fn encode_uri_component(value: &str) -> String {
     out
 }
 
-/// The lowercased extension of a name, as `name.split(".").pop()` computes it.
+/// The lowercased text after a name's last `.`, or the whole name when it has none.
 fn extension(name: &str) -> String {
     name.rsplit('.').next().unwrap_or_default().to_lowercase()
 }
@@ -811,8 +790,8 @@ fn extension(name: &str) -> String {
 /// One multipart `file` field, read into memory.
 ///
 /// Buffered rather than streamed to disk because both limits are checked against
-/// the complete size before anything is written, exactly as `File.size` lets the
-/// TypeScript do — a streamed write would have to be undone on overrun.
+/// the complete size before anything is written; a streamed write would have to
+/// be undone on overrun.
 struct UploadedFile {
     /// The client-supplied filename, unsanitised.
     name: String,
@@ -822,8 +801,8 @@ struct UploadedFile {
 
 /// Take the `file` field out of a multipart body.
 ///
-/// A missing field is [`FsError::Other`], so the route answers with the same
-/// fallback text the TypeScript uses when its form validation hands it nothing.
+/// A missing field is [`FsError::Other`], so the route answers with its
+/// fallback text.
 async fn take_file_field(mut multipart: Multipart) -> Result<UploadedFile, FsError> {
     while let Some(field) = multipart.next_field().await.map_err(|_| FsError::Other)? {
         if field.name() != Some("file") {
@@ -837,7 +816,7 @@ async fn take_file_field(mut multipart: Multipart) -> Result<UploadedFile, FsErr
     Err(FsError::Other)
 }
 
-/// POSIX `path.basename`, which splits on `/` only and ignores trailing slashes.
+/// The last `/`-separated segment of a name, trailing slashes ignored.
 fn base_name(raw: &str) -> &str {
     let trimmed = raw.trim_end_matches('/');
     match trimmed.rsplit_once('/') {
@@ -846,16 +825,14 @@ fn base_name(raw: &str) -> &str {
     }
 }
 
-/// `basename(name)` with every separator stripped.
+/// [`base_name`] with every separator stripped.
 ///
-/// The backslash pass matters on a POSIX server: `basename` does not treat `\`
-/// as a separator, so a Windows client's `C:\Users\me\x.txt` would otherwise
-/// survive whole into a filename.
+/// The backslash pass matters: [`base_name`] splits on `/` only, so a Windows
+/// client's `C:\Users\me\x.txt` would otherwise survive whole into a filename.
 fn sanitize_name(raw: &str) -> String {
     base_name(raw).chars().filter(|c| *c != '/' && *c != '\\').collect()
 }
 
-/// Port of `saveUpload`.
 async fn save_upload(paths: &Paths, reach: Reach, dir_requested: &str, file: &UploadedFile) -> Result<FsUpload, FsError> {
     let dir = resolve_safe(paths, Some(dir_requested))?;
     fence(paths, reach, Access::Write, &dir)?;
@@ -890,8 +867,6 @@ async fn save_upload(paths: &Paths, reach: Reach, dir_requested: &str, file: &Up
     })
 }
 
-/// Port of `saveAttachment`.
-///
 /// Each upload lands in its own uuid directory under the original filename, so
 /// the download name stays meaningful and same-named files never collide, while
 /// the path still resolves under the uploads directory — which is what
@@ -940,8 +915,7 @@ pub async fn sweep_uploads(paths: &Paths) {
     let now = SystemTime::now();
     while let Ok(Some(entry)) = reader.next_entry().await {
         let target = entry.path();
-        // A single unreadable entry skips rather than abandoning the sweep; the
-        // TypeScript's one try/catch around the whole loop stops at the first.
+        // An unreadable entry is skipped, not a reason to abandon the sweep.
         let Ok(metadata) = tokio::fs::metadata(&target).await else { continue };
         let Ok(modified) = metadata.modified() else { continue };
         if now.duration_since(modified).unwrap_or_default() > UPLOAD_TTL {
@@ -992,10 +966,9 @@ pub async fn fs_download(
         .await
         .map_err(|error| error.into_api(fallback))?;
 
-    // The TypeScript opens lazily inside `createReadStream`, so a file that
-    // disappears between the stat and the open breaks a `200` mid-body there and
-    // becomes a `400` here. Answering before the status line is committed is
-    // strictly the better failure, and the message is the route's own fallback.
+    // Opened before the status line is committed: a file that disappears after
+    // the stat is a `400` with the route's fallback text, not a `200` that
+    // breaks mid-body.
     let file = tokio::fs::File::open(&path).await.map_err(|_| ApiError::bad_request(fallback))?;
 
     let inline = query.inline.unwrap_or(false);
@@ -1082,13 +1055,10 @@ where
         .layer(gotcha::axum::extract::DefaultBodyLimit::max((limit + MULTIPART_OVERHEAD) as usize))
 }
 
-/// Everything gotcha cannot express about those routes.
 /// The `multipart/form-data` body both upload routes read.
-///
-/// gotcha derives nothing from a `Multipart` extractor — the generated
-/// `requestBody` names the media type and stops — so the one part the handlers
-/// actually read is documented explicitly, matching `z.object({ file: z.any() })`
-/// in the golden contract.
+// gotcha derives nothing from a `Multipart` extractor — the generated
+// `requestBody` names the media type and stops — so the one part the handlers
+// read is documented by hand.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 pub struct FileUpload {
     /// The file part; the only one either route looks at.
@@ -1147,7 +1117,7 @@ mod tests {
     fn resolve_collapses_segments_textually() {
         assert_eq!(resolve(Path::new("/a/b/../c")), PathBuf::from("/a/c"));
         assert_eq!(resolve(Path::new("/a/./b//c/")), PathBuf::from("/a/b/c"));
-        // `..` above the root is the root, as in Node.
+        // `..` above the root is the root.
         assert_eq!(resolve(Path::new("/a/../../..")), PathBuf::from("/"));
     }
 
@@ -1166,8 +1136,8 @@ mod tests {
 
     #[test]
     fn a_doubled_separator_after_the_tilde_stays_inside_the_home_directory() {
-        // `Path::join` would make this `/etc`; the TypeScript's concatenation
-        // makes it `/home/tester//etc`, which collapses back under the home.
+        // `Path::join` would make this `/etc`; concatenated, as a shell reads it,
+        // it is `/home/tester//etc`, which collapses back under the home.
         assert_eq!(safe("~//etc").expect("~//etc"), PathBuf::from("/home/tester/etc"));
     }
 
@@ -1210,7 +1180,7 @@ mod tests {
     fn an_extension_is_the_tail_after_the_last_dot() {
         assert_eq!(extension("photo.PNG"), "png");
         assert_eq!(extension(".png"), "png");
-        // No dot at all: `split(".").pop()` returns the whole name, not "".
+        // No dot at all: the whole name, not "".
         assert_eq!(extension("file"), "file");
     }
 
@@ -1230,9 +1200,9 @@ mod tests {
         assert_eq!(encode_uri_component("a/b&c=d"), "a%2Fb%26c%3Dd");
     }
 
-    /// Chain v3 review, D3 (defence in depth): a device reaching this
-    /// computer through Droppen lists, reads, downloads and uploads under the
-    /// home directory as before — composer attachments included — but not
+    /// Defence in depth: a device reaching this computer through Droppen
+    /// lists, reads, downloads and uploads under the home directory —
+    /// composer attachments included — but not
     /// into the server's own data or config directory, however the path gets
     /// there: directly, through `..`, through a symlink (a dangling one for
     /// an upload too), or in another case on a case-insensitive disk. A 403
@@ -1404,19 +1374,17 @@ mod tests {
         assert_eq!(refused(login.await.unwrap_err()), (403, Some("not_from_cloud".into())));
     }
 
-    /// Chain v3 re-review: the fence above also refused what the transcript
-    /// links to in this instance's managed Claude root — a plan a session
-    /// wrote and named, a pasted image it read back, the memory notes it
-    /// saved, a tool's saved output — to the account's own devices. Those
-    /// read again (list, read,
-    /// download), however the path gets there; nothing can be uploaded into
-    /// them; and everything else in the root, the rest of the data directory
-    /// and the config directory stay fenced: the login and its backups, what
-    /// was pasted, the transcripts themselves, the machine key and the
-    /// databases, another instance's root — through `..`, through a symlink
-    /// in an opened directory, a symlink in an opened directory's place, a
-    /// `memory` or `tool-results` at another depth, or another case on a
-    /// case-insensitive disk.
+    /// What the transcript links to in this instance's managed Claude root —
+    /// a plan a session wrote and named, a pasted image it read back, the
+    /// memory notes it saved, a tool's saved output — reads for the account's
+    /// own devices (list, read, download), however the path gets there;
+    /// nothing can be uploaded into it; and everything else in the root, the
+    /// rest of the data directory and the config directory stay fenced: the
+    /// login and its backups, what was pasted, the transcripts themselves, the
+    /// machine key and the databases, another instance's root — through `..`,
+    /// through a symlink in an opened directory, a symlink in an opened
+    /// directory's place, a `memory` or `tool-results` at another depth, or
+    /// another case on a case-insensitive disk.
     #[tokio::test]
     async fn devices_through_droppen_read_what_the_transcript_links_to_in_the_claude_root() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1585,15 +1553,14 @@ mod tests {
         assert!(private(read_file_safe(&paths, cloud, &at("plans/machine-key.json")).await.map(drop)));
     }
 
-    /// Chain v3 re-review, follow-up: the walk up from a path compares
-    /// directories, and a hard link has no directory of its own — a second
-    /// name for the login or the machine key, made in a reopened directory,
-    /// went through as whatever it was called there. A device neither reads,
-    /// downloads nor sees listed a hard-linked file in one (plans, pasted
-    /// images, memory, saved tool output, attachments), however the path
-    /// gets there, while the single-named files beside it read as before.
-    /// Elsewhere in the home directory a hard-linked file (a build's output)
-    /// reads as it did; local users are not fenced.
+    /// The walk up from a path compares directories, and a hard link has no
+    /// directory of its own: a second name for the login or the machine key,
+    /// made in a reopened directory, would go through as whatever it is called
+    /// there. So a device neither reads, downloads nor sees listed a
+    /// hard-linked file in one (plans, pasted images, memory, saved tool
+    /// output, attachments), however the path gets there, while the
+    /// single-named files beside it read. Elsewhere in the home directory a
+    /// hard-linked file (a build's output) reads; local users are not fenced.
     #[tokio::test]
     async fn devices_through_droppen_do_not_read_hard_links_in_reopened_directories() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1647,7 +1614,7 @@ mod tests {
             assert!(local.contains(&linked_name), "{linked} is listed locally");
         }
 
-        // Elsewhere in the home directory a hard-linked file reads as before:
+        // Elsewhere in the home directory a hard-linked file still reads:
         // cargo links every build output to its hashed twin.
         let deps = home.path().join("app/target/debug/deps/app-0123abcd");
         put(&deps, b"\x7fELF");
@@ -1671,7 +1638,7 @@ mod tests {
         assert_eq!(Reach::of(&MaybeIdentity(None)), Reach::Local);
     }
 
-    /// Past the ceiling, the answer is still the TypeScript's own `400`.
+    /// Past the ceiling, the answer is the handler's own `400` and message.
     ///
     /// `vec![0u8; n]` of this size costs nothing to allocate (zeroed pages are
     /// mapped lazily) and both functions check the length before they touch the

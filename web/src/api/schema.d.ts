@@ -3601,15 +3601,7 @@ export interface components {
             /** @description Absolute path on the server. */
             path: string;
         };
-        /**
-         * @description Everything gotcha cannot express about those routes.
-         *     The `multipart/form-data` body both upload routes read.
-         *
-         *     gotcha derives nothing from a `Multipart` extractor — the generated
-         *     `requestBody` names the media type and stops — so the one part the handlers
-         *     actually read is documented explicitly, matching `z.object({ file: z.any() })`
-         *     in the golden contract.
-         */
+        /** @description The `multipart/form-data` body both upload routes read. */
         FileUpload: {
             /** @description The file part; the only one either route looks at. */
             file: unknown;
@@ -4874,7 +4866,7 @@ export interface components {
         /** @description The body of `PATCH /api/screens/{id}`. */
         ScreenUpdate: {
             /**
-             * @description The revision this change was made against. It must still be the stored
+             * @description The revision this save was made against. It must still be the stored
              *     one; otherwise nothing is written and the answer is `409` with the
              *     screen as it is now.
              */
@@ -4885,9 +4877,9 @@ export interface components {
              * @description New pane tree; absent leaves it alone.
              *
              *     The custom deserializer is what keeps "absent" and "`null`" apart:
-             *     [`Optional`] alone folds a JSON `null` into `None`, but the TypeScript
-             *     treats an explicit `null` as a layout that was *supplied* and sanitizes
-             *     it down to a single empty pane.
+             *     [`Optional`] alone folds a JSON `null` into `None`, but the contract
+             *     treats an explicit `null` as a layout that was *supplied*, sanitized
+             *     down to a single empty pane.
              */
             layout?: unknown;
             /** @description New display name; absent leaves it alone. */
@@ -5815,9 +5807,8 @@ export interface components {
         /**
          * @description Whether the session list shows the subagents each session delegated to.
          *
-         *     Opt-in: off until somebody turns it on, and while it is off the list is
-         *     exactly what it was before the tree existed — the subagents are not even
-         *     looked for ([`crate::sessions::subagents`]).
+         *     Opt-in: off until somebody turns it on, and while it is off the subagents are
+         *     not even looked for ([`crate::sessions::subagents`]).
          * @enum {string}
          */
         SubagentTree: "off" | "on";

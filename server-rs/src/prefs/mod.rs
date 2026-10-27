@@ -1,25 +1,21 @@
 //! UI preferences.
 //!
-//! Port of the former TypeScript server's `prefs.ts`: eight settings, one row
-//! each in the machine-wide state database ([`crate::db`]) under
-//! [`scope::PREFS`], keyed by the same camelCase names the wire uses. A row per
-//! field rather than one row holding the document, because that is the shape
-//! the store already had — independent settings that happen to be saved
-//! together — and because it is what makes the read below lenient for free.
+//! Eight settings, one row each in the machine-wide state database
+//! ([`crate::db`]) under [`scope::PREFS`], keyed by the same camelCase names the
+//! wire uses. A row per field rather than one row holding the document, because
+//! the settings are independent ones that happen to be saved together, and
+//! because it is what makes the read below lenient for free.
 //!
 //! The read is deliberately lenient — every field falls back on its own, so a
 //! value this build does not recognise (a newer client, a hand-edited file)
-//! costs the user that one setting instead of all of them. `prefs.json` used to
-//! be written straight over itself, so a crash mid-write cost them all at once;
-//! rows written in one transaction cannot land in halves.
+//! costs the user that one setting instead of all of them. A `prefs.json` written
+//! straight over itself could lose them all to a crash mid-write; rows written in
+//! one transaction cannot land in halves.
 //!
 //! `prefs.json` is read exactly once, by the import on the first boot after the
-//! upgrade, and never written again. It was a mirror for one version, so a
-//! `.prev` binary that had never heard of this database would still find the
-//! settings; the rollback floor has since risen to a build that reads the
-//! database. The file is left where it is rather than deleted: it costs nothing,
-//! and it is the cheapest way to seed a database that has to be rebuilt from
-//! scratch.
+//! upgrade, and never written again. It is left where it is rather than deleted:
+//! it costs nothing, and it is the cheapest way to seed a database that has to be
+//! rebuilt from scratch.
 
 use gotcha::{api, Json, Schematic, State};
 use serde::de::DeserializeOwned;
@@ -46,9 +42,8 @@ pub enum SessionGrouping {
 
 /// Whether the session list shows the subagents each session delegated to.
 ///
-/// Opt-in: off until somebody turns it on, and while it is off the list is
-/// exactly what it was before the tree existed — the subagents are not even
-/// looked for ([`crate::sessions::subagents`]).
+/// Opt-in: off until somebody turns it on, and while it is off the subagents are
+/// not even looked for ([`crate::sessions::subagents`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "lowercase")]
 pub enum SubagentTree {
@@ -227,8 +222,7 @@ fn parse_file(paths: &Paths) -> Value {
 /// The rows are reassembled into the object [`prefs_from_value`] already knows
 /// how to read, rather than parsed field by field here. That keeps the fallback
 /// rule and the recognised spellings in exactly one place — a setting saved by a
-/// newer client and a setting hand-edited into nonsense degrade identically, and
-/// they always did.
+/// newer client and a setting hand-edited into nonsense degrade identically.
 pub async fn read_prefs(paths: &Paths) -> Prefs {
     let stored = store(paths).kv_scope(scope::PREFS);
     let raw = Value::Object(stored.into_iter().map(|(key, value)| (key, Value::String(value))).collect());
@@ -238,9 +232,9 @@ pub async fn read_prefs(paths: &Paths) -> Prefs {
 /// Persist the preferences, in one transaction.
 ///
 /// Still `io::Result` because [`put_prefs`] turns its error into the route's
-/// `500` and that path is part of the contract. Only the encode of a
-/// struct of enums can fail now, which is to say nothing can; the
-/// commit itself logs rather than returns, as every other store's does.
+/// `500` and that path is part of the contract. Only the encode of a struct of
+/// enums can fail, which is to say nothing can; the commit itself logs rather
+/// than returns, as every other store's does.
 pub async fn write_prefs(paths: &Paths, prefs: &Prefs) -> std::io::Result<()> {
     let encoded = serde_json::to_value(prefs).map_err(std::io::Error::other)?;
     let rows: Vec<(String, String)> = encoded

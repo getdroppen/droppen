@@ -1,16 +1,15 @@
 //! Persistent screens — saved pane layouts.
 //!
-//! Port of the former TypeScript server's `screens.ts`. A screen's layout is a
-//! binary split tree whose leaves *reference* server-side resources (sessions,
-//! terminals, chats); the server never interprets those ids and never owns what
-//! they point at, so deleting a screen leaves the resources alone.
+//! A screen's layout is a binary split tree whose leaves *reference*
+//! server-side resources (sessions, terminals, chats); the server never
+//! interprets those ids and never owns what they point at, so deleting a screen
+//! leaves the resources alone.
 //!
-//! The file is instance-scoped (`<data>/instances/<name>/screens.json`) rather
-//! than shared like most sidecars: those leaf ids name terminals and resident
-//! sessions that only their own server can resolve, so a layout from a sibling
-//! instance is a screen of dead panes. [`crate::instance`] has the whole rule.
-//! The layouts themselves are rows in the instance database now, and the file is
-//! neither read nor written.
+//! A screen belongs to one instance rather than being shared like most sidecars:
+//! those leaf ids name terminals and resident sessions that only their own
+//! server can resolve, so a layout from a sibling instance is a screen of dead
+//! panes ([`crate::instance`]). The layouts are rows in the instance database;
+//! nothing reads or writes `screens.json`.
 //!
 //! The tree arrives from the web client, which makes the sanitizers below the
 //! security boundary rather than a tidying step: nothing from the request is
@@ -20,31 +19,22 @@
 //!
 //! # Where a screen actually lives
 //!
-//! In [`crate::db`], one row per layout, since the version that added it. Older
-//! builds drained `screens.json` into that table once, on the first read; the
-//! upgrade floor is 0.2.125, which has already done so, and the drain is gone.
-//! The bug that motivated the move is worth naming: `screens.json` was written
-//! *in place*, `tokio::fs::write` straight over the live file with no lock of
-//! any kind, and every reader here turns a truncated file into an empty list. A
-//! crash in that window therefore did not damage one layout, it silently deleted
-//! all of them. A transaction has no such window.
-//!
-//! The release that added the table went on writing the file after every save,
-//! so that a [`crate::supervisor`] demotion to a `.prev` binary — one that had
-//! never heard of the database — would still find its layouts where it left
-//! them. No such binary is left to demote to, so that write is gone; with the
-//! import gone too, nothing opens the file at all.
+//! In [`crate::db`], one row per layout. A `screens.json` written *in place* —
+//! `tokio::fs::write` straight over the live file with no lock of any kind — is
+//! truncated by a crash in that window, and every reader here turns a truncated
+//! file into an empty list: all the layouts go at once rather than one being
+//! damaged. A transaction has no such window, and nothing opens the file now.
 //!
 //! # Two devices, one layout
 //!
-//! A phone and a laptop open the same screen. Until the version that added
-//! [`Screen::revision`] the server could not tell their saves apart: every
-//! layout save replaced the whole tree, create and delete re-wrote every row
-//! from a list read outside the transaction, and the client never looked at
-//! the server again once it had a tree. Whoever saved last erased the other
-//! without either of them seeing it happen.
+//! A phone and a laptop open the same screen. Without [`Screen::revision`] the
+//! server cannot tell their saves apart: every layout save replaces the whole
+//! tree, create and delete re-write every row from a list read outside the
+//! transaction, and the client never looks at the server again once it has a
+//! tree — whoever saves last erases the other without either of them seeing it
+//! happen.
 //!
-//! Now every row carries a revision, bumped by each write, and a save names the
+//! So every row carries a revision, bumped by each write, and a save names the
 //! revision it started from: a save based on a revision that is no longer the
 //! stored one is refused with `409` and the screen as it is now, so the client
 //! adopts it rather than overwriting it. Membership and order carry a revision
@@ -165,7 +155,7 @@ pub struct ScreenCreate {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenUpdate {
-    /// The revision this change was made against. It must still be the stored
+    /// The revision this save was made against. It must still be the stored
     /// one; otherwise nothing is written and the answer is `409` with the
     /// screen as it is now.
     pub base_revision: u64,
@@ -178,9 +168,9 @@ pub struct ScreenUpdate {
     /// New pane tree; absent leaves it alone.
     ///
     /// The custom deserializer is what keeps "absent" and "`null`" apart:
-    /// [`Optional`] alone folds a JSON `null` into `None`, but the TypeScript
-    /// treats an explicit `null` as a layout that was *supplied* and sanitizes
-    /// it down to a single empty pane.
+    /// [`Optional`] alone folds a JSON `null` into `None`, but the contract
+    /// treats an explicit `null` as a layout that was *supplied*, sanitized
+    /// down to a single empty pane.
     #[serde(default, deserialize_with = "explicit_layout", skip_serializing_if = "Optional::is_none")]
     pub layout: Optional<AnyValue>,
 }
@@ -240,8 +230,7 @@ fn picker_leaf() -> Value {
 
 /// An id the client supplied, or a fresh one.
 ///
-/// A blank id is as unusable as a missing one, and both `sanitizeId`'s length
-/// test and the callers' truthiness test reject it in the TypeScript.
+/// A blank id is as unusable as a missing one: it names nothing.
 fn sanitize_id(value: Option<&Value>) -> String {
     value
         .and_then(Value::as_str)
@@ -263,7 +252,7 @@ fn content_id(raw: &serde_json::Map<String, Value>) -> Option<&str> {
 /// another. The server never resolves it (the web does, among the devices it
 /// holds), so it is kept like an id: a non-empty string of at most
 /// [`MAX_CONTENT_ID`] characters with no control or format characters. Absent, or
-/// unusable, the content is this device's, as every layout from before was.
+/// unusable, the content is this device's.
 fn content_machine(raw: &serde_json::Map<String, Value>) -> Option<&str> {
     raw.get("machine").and_then(Value::as_str).filter(|machine| {
         !machine.is_empty() && machine.chars().count() <= MAX_CONTENT_ID && !machine.chars().any(|c| c.is_control() || is_format(c))
@@ -340,9 +329,9 @@ fn sanitize_kind(value: Option<&Value>) -> Value {
         // to check, and it names no resource — it becomes a `session` pane
         // once its first message has started one.
         Some("new-session") => json!({ "kind": "new-session" }),
-        // The built-in task checklist, from before Tasks became a plugin. Kept
-        // for ever: a layout saved by an older build still holds it, and the web
-        // reads it as the `tasks` plugin's `checklist` pane.
+        // The built-in task checklist. Kept for ever: a layout saved by an
+        // older build still holds it, and the web reads it as the `tasks`
+        // plugin's `checklist` pane.
         Some("tasks") => json!({ "kind": "tasks" }),
         // A plugin's pane. Kept whether or not that plugin is on — or even
         // bundled — for the reason `browser` below is: the server does not own
@@ -364,10 +353,10 @@ fn sanitize_kind(value: Option<&Value>) -> Value {
             }
             content
         }
-        // No route serves a browser pane any more, but a row written by an
-        // older build still holds them and the web still renders one as a
-        // picker. Degrading it here would silently rewrite the user's layout on
-        // the next save; the server does not own these ids and must not.
+        // No route serves a browser pane, but a row written by an older build
+        // still holds one and the web still renders it as a picker. Degrading it
+        // here would silently rewrite the user's layout on the next save; the
+        // server does not own these ids and must not.
         Some("browser") => id.map_or_else(picker, |id| json!({ "kind": "browser", "id": id })),
         _ => picker(),
     }
@@ -667,11 +656,10 @@ const LIST_REVISION: &str = "list-revision";
 /// Every saved screen, in order, read on a connection the caller holds.
 ///
 /// A row that will not parse is dropped rather than fatal and an empty store
-/// reads as an empty list, which is the same tolerance the file had and for the
-/// same reason: nothing here may lock the user out of making new screens.
-/// `ordinal` is what preserves the order the JSON array carried, where order was
-/// the only thing saying which screen the user made first; `rowid` breaks the
-/// tie two rows written by an older build could share.
+/// reads as an empty list: nothing here may lock the user out of making new
+/// screens. `ordinal` preserves the order the rows were written, which is the
+/// order the user made them; `rowid` breaks the tie two rows written by an older
+/// build could share.
 fn screens_in(conn: &Connection) -> rusqlite::Result<Vec<Screen>> {
     let mut statement = conn.prepare("SELECT payload, revision FROM screens ORDER BY ordinal, rowid")?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
@@ -1227,13 +1215,10 @@ mod tests {
         assert_eq!(ids(&screens), vec!["good"], "a row that will not parse is dropped");
     }
 
-    /// The bug this store moved to end, and the contract that replaced it.
-    ///
-    /// `screens.json` was written in place, so a crash mid-write left a
-    /// truncated file — and every reader here turned a truncated file into no
-    /// screens at all, which is every saved layout gone at once rather than one
-    /// damaged. Now a layout is a row: a save writes the table and creates no
-    /// file, and nothing reads one.
+    /// A `screens.json` written in place is truncated by a crash mid-write, and
+    /// every reader here turns a truncated file into no screens at all — every
+    /// saved layout gone at once rather than one damaged. A layout is a row: a
+    /// save writes the table and creates no file, and nothing reads one.
     #[tokio::test]
     async fn a_save_writes_only_the_table() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1571,9 +1556,9 @@ mod tests {
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
-    /// The bug this design ends: create and delete used to read the whole list
-    /// outside the transaction and write it all back, so two of them at once
-    /// restored whichever list was read last — and one device's screen was gone.
+    /// Create and delete must not read the whole list outside the transaction
+    /// and write it all back: two of them at once would restore whichever list
+    /// was read last, and one device's screen would be gone.
     #[tokio::test]
     async fn interleaved_creates_and_deletes_from_two_devices_keep_each_others_rows() {
         let home = tempfile::tempdir().expect("tempdir");
