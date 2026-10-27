@@ -342,17 +342,18 @@ pub fn parse_claude_usage(text: &str, now_ms: i64) -> Vec<QuotaWindow> {
 
 // ------------------------------------------------------------- claude: probing
 
-/// Run `/usage` against one config root.
-///
-/// `config_dir` `None` means the user's own login (whatever the CLI picks up by
-/// itself); anything else is an account's probe directory. `TZ` is pinned so the
-/// reset labels always carry `(UTC)`, which is the only form
-/// [`parse_resets_at`] understands.
-pub async fn probe_claude_usage(paths: &Paths, config_dir: Option<&Path>) -> UsageProbe {
+impl Paths {
+    /// Run `/usage` against one config root.
+    ///
+    /// `config_dir` `None` means the user's own login (whatever the CLI picks
+    /// up by itself); anything else is an account's probe directory. `TZ` is
+    /// pinned so the reset labels always carry `(UTC)`, which is the only form
+    /// [`parse_resets_at`] understands.
+    pub async fn probe_claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe {
     let mut command = tokio::process::Command::new("claude");
     command
         .args(USAGE_ARGS)
-        .current_dir(config_dir.map(Path::to_path_buf).unwrap_or_else(|| paths.home.clone()))
+        .current_dir(config_dir.map(Path::to_path_buf).unwrap_or_else(|| self.home.clone()))
         .stdin(std::process::Stdio::null())
         // A timed-out probe that kept running would also break the one-at-a-time
         // rule: the next queued probe would start beside it.
@@ -405,17 +406,19 @@ pub async fn probe_claude_usage(paths: &Paths, config_dir: Option<&Path>) -> Usa
             rate_limited: false,
         };
     }
-    UsageProbe {
-        windows,
-        // A 429 says the reading did not happen; only silence with no such
-        // marker says there is nobody logged in. Getting this the wrong way
-        // round would send a perfectly good account back through `auth login`.
-        error: Some(if rate_limited {
-            QuotaProbeError::ProbeFailed
-        } else {
-            QuotaProbeError::NotLoggedIn
-        }),
-        rate_limited,
+        UsageProbe {
+            windows,
+            // A 429 says the reading did not happen; only silence with no such
+            // marker says there is nobody logged in. Getting this the wrong way
+            // round would send a perfectly good account back through `auth
+            // login`.
+            error: Some(if rate_limited {
+                QuotaProbeError::ProbeFailed
+            } else {
+                QuotaProbeError::NotLoggedIn
+            }),
+            rate_limited,
+        }
     }
 }
 
@@ -508,17 +511,20 @@ impl UsageReading {
 /// A probe that is already running; awaiting it is free.
 type Pending = Shared<BoxFuture<'static, ()>>;
 
-/// Whether the fallback probe may run for an account at all: an OAuth account
-/// that opted in. A pasted key or an env block has no usage login to probe.
-fn probeable(account: &Account) -> bool {
-    account.usage_enabled && account.kind == AccountKind::OauthToken
+impl Account {
+    /// Whether the fallback probe may run for this account at all: an OAuth
+    /// account that opted in. A pasted key or an env block has no usage login
+    /// to probe.
+    fn probeable(&self) -> bool {
+        self.usage_enabled && self.kind == AccountKind::OauthToken
+    }
 }
 
 /// Every login the fallback probe looks after: the user's own, then each
 /// probeable account.
 fn probe_logins(accounts: &[Account]) -> Vec<UsageLogin> {
     std::iter::once(UsageLogin::Local)
-        .chain(accounts.iter().filter(|a| probeable(a)).map(|a| UsageLogin::Account(a.id.clone())))
+        .chain(accounts.iter().filter(|a| a.probeable()).map(|a| UsageLogin::Account(a.id.clone())))
         .collect()
 }
 
@@ -720,7 +726,7 @@ impl QuotaCache {
         if !self.fallback_due(login) {
             return;
         }
-        let probe = probe_claude_usage(&self.paths, target.config_dir.as_deref()).await;
+        let probe = self.paths.probe_claude_usage(target.config_dir.as_deref()).await;
         if probe.rate_limited {
             tracing::warn!(
                 login = ?login,
@@ -778,7 +784,7 @@ impl QuotaCache {
                     windows: reading.windows,
                     updated_at: Nullable(reading.updated_at),
                     source: Optional(reading.source),
-                    error: Optional(reading.error.filter(|_| probeable(account))),
+                    error: Optional(reading.error.filter(|_| account.probeable())),
                 }
             })
             .collect()
@@ -983,7 +989,7 @@ mod tests {
     }
 
     /// A real `claude -p /usage --output-format json` reading from `2026-09-10`,
-    /// spawned exactly as [`probe_claude_usage`] spawns it.
+    /// spawned exactly as [`Paths::probe_claude_usage`] spawns it.
     #[test]
     fn a_live_usage_reading_keeps_its_reset_instants() {
         let text = concat!(
