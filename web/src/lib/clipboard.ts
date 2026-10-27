@@ -10,9 +10,10 @@ import { useEffect, useRef, useState } from "react";
 const COPIED_MS = 1500;
 
 /**
- * Copy `text`, and say so for a moment. A refused copy (no permission, no
- * secure context) calls `onError` if the caller passed one; the value is
- * still on screen and selectable.
+ * Copy `text`, and say so for a moment. Every failure — no Clipboard API (an
+ * insecure context, or no `writeText`), no permission, or a write that throws
+ * or rejects — calls `onError` if the caller passed one; the value is still
+ * on screen and selectable.
  */
 export function useCopy({
   onSuccess,
@@ -27,7 +28,19 @@ export function useCopy({
   return {
     copied,
     copy: (text) => {
-      void navigator.clipboard?.writeText(text).then(
+      const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+      if (!clipboard || typeof clipboard.writeText !== "function") {
+        onError?.();
+        return;
+      }
+      let write: Promise<void>;
+      try {
+        write = clipboard.writeText(text);
+      } catch {
+        onError?.();
+        return;
+      }
+      void write.then(
         () => {
           setCopied(true);
           clearTimeout(timer.current);
