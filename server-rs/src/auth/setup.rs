@@ -203,6 +203,31 @@ struct Armed {
     env: String,
 }
 
+impl Armed {
+    /// Say where the code is: the code itself only to a terminal, where the
+    /// person who started the server is looking; a log file (launchd, systemd,
+    /// a `nohup` redirect) gets where to find it, never the code. The commands
+    /// the banner suggests read in the name the server was started as
+    /// ([`crate::program::Name::rewrite`]), and reach this instance.
+    fn announce(&self, code: &str) {
+        let env = &self.env;
+        if stderr_is_a_terminal() {
+            let rule = "=".repeat(72);
+            let banner = format!(
+                "\n{rule}\n  Droppen: this device has no account yet.\n\n  On this device, open the page signed in with:\n      {env}remote-hand-server open\n\n  From another device, open this device's page ({url})\n  and enter this one-time setup code to create the first account:\n\n      {code}\n\n  It works once, only until an account exists, and only while this\n  server runs. `{env}remote-hand-server setup-code` shows it again.\n  Or create the account on this device: {env}remote-hand-server user add <name>\n{rule}\n",
+                url = self.url,
+                code = display(code),
+            );
+            eprintln!("{}", crate::program::Name::invoked().rewrite(&banner));
+        }
+        tracing::warn!(
+            url = %self.url,
+            file = %self.file.display(),
+            "this device has no account yet: open the page with `{env}remote-hand-server open` on it, or create the first account with the one-time setup code (`{env}remote-hand-server setup-code` shows it; it is in the file, readable only by this user)"
+        );
+    }
+}
+
 /// The code, as far as this server is concerned.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum Code {
@@ -279,7 +304,7 @@ impl Setup {
                 if let Err(error) = write_code_file(&armed.file, &fresh) {
                     tracing::error!(path = %armed.file.display(), %error, "cannot write the setup code file; the code is only on standard error");
                 }
-                announce(&armed, &fresh);
+                armed.announce(&fresh);
                 *code = Code::Live(fresh);
             }
             (false, armed) if *code != Code::None => {
@@ -392,28 +417,6 @@ pub fn read_code_file(path: &Path) -> Option<String> {
     (code.len() == CODE_SYMBOLS && code.bytes().all(|b| ALPHABET.contains(&b))).then_some(code)
 }
 
-/// Say where the code is: the code itself only to a terminal, where the
-/// person who started the server is looking; a log file (launchd, systemd, a
-/// `nohup` redirect) gets where to find it, never the code. The commands the
-/// banner suggests read in the name the server was started as
-/// ([`crate::program::Name::rewrite`]), and reach this instance.
-fn announce(armed: &Armed, code: &str) {
-    let env = &armed.env;
-    if stderr_is_a_terminal() {
-        let rule = "=".repeat(72);
-        let banner = format!(
-            "\n{rule}\n  Droppen: this device has no account yet.\n\n  On this device, open the page signed in with:\n      {env}remote-hand-server open\n\n  From another device, open this device's page ({url})\n  and enter this one-time setup code to create the first account:\n\n      {code}\n\n  It works once, only until an account exists, and only while this\n  server runs. `{env}remote-hand-server setup-code` shows it again.\n  Or create the account on this device: {env}remote-hand-server user add <name>\n{rule}\n",
-            url = armed.url,
-            code = display(code),
-        );
-        eprintln!("{}", crate::program::Name::invoked().rewrite(&banner));
-    }
-    tracing::warn!(
-        url = %armed.url,
-        file = %armed.file.display(),
-        "this device has no account yet: open the page with `{env}remote-hand-server open` on it, or create the first account with the one-time setup code (`{env}remote-hand-server setup-code` shows it; it is in the file, readable only by this user)"
-    );
-}
 
 #[cfg(unix)]
 fn stderr_is_a_terminal() -> bool {

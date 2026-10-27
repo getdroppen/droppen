@@ -80,16 +80,124 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// The fragment key the page reads the token from (`web/src/lib/auth.ts`).
 pub const FRAGMENT_KEY: &str = "local-open";
 
-/// `<instance>/control/`: the socket and the redirect pages, `0700`.
-pub fn control_dir(paths: &Paths) -> PathBuf {
-    paths.instance_dir().join("control")
+impl Paths {
+    /// `<instance>/control/`: the socket and the redirect pages, `0700`.
+    pub fn control_dir(&self) -> PathBuf {
+        self.instance_dir().join("control")
+    }
+
+    /// Where the control socket is: in [`Paths::control_dir`] when the address
+    /// fits a `sun_path`, else in the instance's `0700` directory under `/tmp`
+    /// ([`crate::pty_shim::sidecar::socket_path`]).
+    pub fn control_socket(&self) -> PathBuf {
+        crate::pty_shim::sidecar::socket_path(&self.control_dir(), "local-open")
+    }
+
+    /// The port this instance's server recorded when it bound.
+    pub fn recorded_port(&self) -> Option<u16> {
+        let dirs = crate::instance::InstanceDirs::new(&self.data_dir(), self.instance()).ok()?;
+        std::fs::read_to_string(dirs.port_file()).ok()?.trim().parse().ok()
+    }
 }
 
-/// Where the control socket is: in [`control_dir`] when the address fits a
-/// `sun_path`, else in the instance's `0700` directory under `/tmp`
-/// ([`crate::pty_shim::sidecar::socket_path`]).
-pub fn socket_path(paths: &Paths) -> PathBuf {
-    crate::pty_shim::sidecar::socket_path(&control_dir(paths), "local-open")
+/// `remote-hand-server open`'s half: ask the running server of this instance
+/// for a local-open token — and believe nothing it was not this user's server
+/// that said.
+///
+/// The socket can sit in a `/tmp` directory whose name anybody can predict
+/// ([`Paths::control_socket`]); another user who makes it first keeps the real
+/// server from listening there and can listen there instead. So: the socket's
+/// directory must be this user's own `0700` one, the peer at the other end this
+/// user, and the answer one this instance's server could give — a loopback page
+/// on the port it recorded, a link to that page, and a redirect page directly
+/// in [`Paths::control_dir`], ours and no symlink. Anything else is a refusal,
+/// never something handed to a browser.
+pub async fn ask(paths: &Paths) -> Result<OpenAnswer, String> {
+    let socket = paths.control_socket();
+    if let Some(dir) = socket.parent() {
+        private_to_me(dir).map_err(|why| {
+            format!(
+                "refusing the control socket in {}: {why} — another user may have made it; remove it and restart the server",
+                dir.display()
+            )
+        })?;
+    }
+    let stream = tokio::net::UnixStream::connect(&socket).await.map_err(|error| {
+        format!(
+            "no control socket for instance {} at {} ({error}): its server is not running, or could not open the socket (its log says why); start it first",
+            paths.instance(),
+            socket.display()
+        )
+    })?;
+    if !stream.is_same_user() {
+        return Err(format!(
+            "refusing the control socket at {}: whatever answers there is not this user's server",
+            socket.display()
+        ));
+    }
+    let (read, mut write) = stream.into_split();
+    write.write_all(b"open\n").await.map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    let mut reader = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(read, 64 * 1024));
+    tokio::time::timeout(READ_TIMEOUT, reader.read_line(&mut line))
+        .await
+        .map_err(|_| "the server did not answer".to_string())?
+        .map_err(|e| e.to_string())?;
+    if line.trim().is_empty() {
+        return Err("the server refused the request".into());
+    }
+    let answer: OpenAnswer = serde_json::from_str(line.trim()).map_err(|e| format!("the server's answer does not read: {e}"))?;
+    let port = paths
+        .recorded_port()
+        .ok_or_else(|| format!("instance {} has no recorded port: is its server running?", paths.instance()))?;
+    answer.check(port, &paths.control_dir())?;
+    Ok(answer)
+}
+
+impl Paths {
+    /// Listen on the control socket until `cancel`, answering for `auth`;
+    /// `page` is this server's address. Only the server that owns its instance
+    /// calls this ([`crate::app::RemoteHandApp::prepare`]).
+    ///
+    /// On a server the desktop app runs (`desktop_app`), the socket refuses
+    /// every request: see the module notes.
+    pub fn serve_local_open(
+        &self,
+        auth: Arc<Auth>,
+        page: String,
+        desktop_app: bool,
+        cancel: CancellationToken,
+    ) -> std::io::Result<PathBuf> {
+        let dir = self.control_dir();
+        private_dir(&dir)?;
+        let socket = self.control_socket();
+        crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir)?;
+        // A socket left by a server that did not get to remove its own: this
+        // one owns the instance now, so nobody is listening on it.
+        let _ = std::fs::remove_file(&socket);
+        let listener = tokio::net::UnixListener::bind(&socket)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+        }
+        let path = socket.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    accepted = listener.accept() => {
+                        let Ok((stream, _)) = accepted else { continue };
+                        let (auth, page, dir) = (auth.clone(), page.clone(), dir.clone());
+                        tokio::spawn(async move { stream.answer_open(&auth, &page, &dir, desktop_app).await });
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&path);
+            auth.local_open.sweep_now();
+        });
+        Ok(socket)
+    }
 }
 
 struct Live {
@@ -242,117 +350,92 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Listen on the control socket until `cancel`, answering for `auth`; `page`
-/// is this server's address. Only the server that owns its instance calls
-/// this ([`crate::app::RemoteHandApp::prepare`]).
-///
-/// On a server the desktop app runs (`desktop_app`), the socket refuses every
-/// request: see the module notes.
-pub fn serve(paths: &Paths, auth: Arc<Auth>, page: String, desktop_app: bool, cancel: CancellationToken) -> std::io::Result<PathBuf> {
-    let dir = control_dir(paths);
-    private_dir(&dir)?;
-    let socket = socket_path(paths);
-    crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir)?;
-    // A socket left by a server that did not get to remove its own: this one
-    // owns the instance now, so nobody is listening on it.
-    let _ = std::fs::remove_file(&socket);
-    let listener = tokio::net::UnixListener::bind(&socket)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+/// The control socket's requests and its peer check, on the stream they act on.
+pub(crate) trait UnixStreamExt {
+    /// Whether the peer at the other end is the user this server runs as.
+    fn is_same_user(&self) -> bool;
+
+    /// Answer one control-socket request: a page link for `open`, a refusal
+    /// on the desktop app's instance, or "unknown request".
+    async fn answer_open(self, auth: &Auth, page: &str, dir: &Path, desktop_app: bool);
+}
+
+impl UnixStreamExt for tokio::net::UnixStream {
+    fn is_same_user(&self) -> bool {
+        // SAFETY: `geteuid` reads a process property and cannot fail.
+        let me = unsafe { libc::geteuid() };
+        self.peer_cred().is_ok_and(|cred| cred.uid() == me)
     }
-    let path = socket.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                () = cancel.cancelled() => break,
-                accepted = listener.accept() => {
-                    let Ok((stream, _)) = accepted else { continue };
-                    let (auth, page, dir) = (auth.clone(), page.clone(), dir.clone());
-                    tokio::spawn(async move { answer(stream, &auth, &page, &dir, desktop_app).await });
-                }
-            }
+
+    async fn answer_open(self, auth: &Auth, page: &str, dir: &Path, desktop_app: bool) {
+        if !self.is_same_user() {
+            tracing::warn!("a control-socket connection from another user was refused");
+            return;
         }
-        let _ = std::fs::remove_file(&path);
-        auth.local_open.sweep_now();
-    });
-    Ok(socket)
+        let (read, mut write) = self.into_split();
+        let mut line = String::new();
+        let mut reader = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(read, MAX_LINE));
+        if tokio::time::timeout(READ_TIMEOUT, reader.read_line(&mut line)).await.is_err() {
+            return;
+        }
+        let reply = match line.trim() {
+            "open" if desktop_app => OpenAnswer {
+                page: page.to_string(),
+                error: Some(DESKTOP_APP_REFUSAL.into()),
+                ..OpenAnswer::default()
+            },
+            "open" => auth.open_page(page, dir).await,
+            _ => OpenAnswer {
+                page: page.to_string(),
+                error: Some("unknown request".into()),
+                ..OpenAnswer::default()
+            },
+        };
+        let mut body = serde_json::to_vec(&reply).unwrap_or_default();
+        body.push(b'\n');
+        let _ = write.write_all(&body).await;
+        let _ = write.shutdown().await;
+    }
 }
 
-/// Whether the peer of `stream` is the user this server runs as.
-fn same_user(stream: &tokio::net::UnixStream) -> bool {
-    // SAFETY: `geteuid` reads a process property and cannot fail.
-    let me = unsafe { libc::geteuid() };
-    stream.peer_cred().is_ok_and(|cred| cred.uid() == me)
-}
-
-async fn answer(stream: tokio::net::UnixStream, auth: &Auth, page: &str, dir: &Path, desktop_app: bool) {
-    if !same_user(&stream) {
-        tracing::warn!("a control-socket connection from another user was refused");
-        return;
-    }
-    let (read, mut write) = stream.into_split();
-    let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(read, MAX_LINE));
-    if tokio::time::timeout(READ_TIMEOUT, reader.read_line(&mut line)).await.is_err() {
-        return;
-    }
-    let reply = match line.trim() {
-        "open" if desktop_app => OpenAnswer {
+impl Auth {
+    /// The answer to `open`: a token and its redirect page, or why not.
+    async fn open_page(&self, page: &str, dir: &Path) -> OpenAnswer {
+        let mut answer = OpenAnswer {
             page: page.to_string(),
-            error: Some(DESKTOP_APP_REFUSAL.into()),
             ..OpenAnswer::default()
-        },
-        "open" => open(auth, page, dir).await,
-        _ => OpenAnswer {
-            page: page.to_string(),
-            error: Some("unknown request".into()),
-            ..OpenAnswer::default()
-        },
-    };
-    let mut body = serde_json::to_vec(&reply).unwrap_or_default();
-    body.push(b'\n');
-    let _ = write.write_all(&body).await;
-    let _ = write.shutdown().await;
+        };
+        if self.is_off() {
+            answer.error = Some("authentication is off on this instance (auth.enabled = false): the page needs no opening".into());
+            return answer;
+        }
+        if self.users.has_users().await {
+            answer.accounts = true;
+            return answer;
+        }
+        let Some(token) = self.local_open.mint() else {
+            answer.error = Some("too many unused open links: wait a minute and try again".into());
+            return answer;
+        };
+        let url = format!("{page}#{FRAGMENT_KEY}={token}");
+        let mut name = [0u8; 8];
+        rand::rngs::OsRng.fill_bytes(&mut name);
+        let file = dir.join(format!("open-{}.html", crate::text::hex(&name)));
+        match write_redirect(&file, &url) {
+            Ok(()) => {
+                self.local_open.attach_page(&token, file.clone());
+                answer.redirect = Some(file);
+            }
+            Err(error) => tracing::warn!(%error, "could not write the local-open redirect page"),
+        }
+        answer.url = Some(url);
+        answer
+    }
 }
 
 /// Why the desktop app's server opens nothing over its socket.
 pub const DESKTOP_APP_REFUSAL: &str =
     "this instance is the Droppen app's: open its page with the app's Open in Browser (its own login asks for it), not over the control socket";
-
-/// The answer to `open`: a token and its redirect page, or why not.
-async fn open(auth: &Auth, page: &str, dir: &Path) -> OpenAnswer {
-    let mut answer = OpenAnswer {
-        page: page.to_string(),
-        ..OpenAnswer::default()
-    };
-    if auth.is_off() {
-        answer.error = Some("authentication is off on this instance (auth.enabled = false): the page needs no opening".into());
-        return answer;
-    }
-    if auth.users.has_users().await {
-        answer.accounts = true;
-        return answer;
-    }
-    let Some(token) = auth.local_open.mint() else {
-        answer.error = Some("too many unused open links: wait a minute and try again".into());
-        return answer;
-    };
-    let url = format!("{page}#{FRAGMENT_KEY}={token}");
-    let mut name = [0u8; 8];
-    rand::rngs::OsRng.fill_bytes(&mut name);
-    let file = dir.join(format!("open-{}.html", crate::text::hex(&name)));
-    match write_redirect(&file, &url) {
-        Ok(()) => {
-            auth.local_open.attach_page(&token, file.clone());
-            answer.redirect = Some(file);
-        }
-        Err(error) => tracing::warn!(%error, "could not write the local-open redirect page"),
-    }
-    answer.url = Some(url);
-    answer
-}
 
 /// A page that sends the browser to `url` at once, `0600`.
 fn write_redirect(file: &Path, url: &str) -> std::io::Result<()> {
@@ -361,64 +444,6 @@ fn write_redirect(file: &Path, url: &str) -> std::io::Result<()> {
         "<!doctype html><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\"><title>Droppen</title>\n<script>location.replace({quoted})</script>\n"
     );
     crate::fsutil::write_private(file, body.as_bytes())
-}
-
-/// `remote-hand-server open`'s half: ask the running server of `paths`'
-/// instance for a token — and believe nothing it was not this user's server
-/// that said.
-///
-/// The socket can sit in a `/tmp` directory whose name anybody can predict
-/// ([`socket_path`]); another user who makes it first keeps the real server
-/// from listening there and can listen there instead. So: the socket's
-/// directory must be this user's own `0700` one, the peer at the other end
-/// this user, and the answer one this instance's server could give — a
-/// loopback page on the port it recorded, a link to that page, and a redirect
-/// page directly in [`control_dir`], ours and no symlink. Anything else is a
-/// refusal, never something handed to a browser.
-pub async fn ask(paths: &Paths) -> Result<OpenAnswer, String> {
-    let socket = socket_path(paths);
-    if let Some(dir) = socket.parent() {
-        private_to_me(dir).map_err(|why| {
-            format!(
-                "refusing the control socket in {}: {why} — another user may have made it; remove it and restart the server",
-                dir.display()
-            )
-        })?;
-    }
-    let stream = tokio::net::UnixStream::connect(&socket).await.map_err(|error| {
-        format!(
-            "no control socket for instance {} at {} ({error}): its server is not running, or could not open the socket (its log says why); start it first",
-            paths.instance(),
-            socket.display()
-        )
-    })?;
-    if !same_user(&stream) {
-        return Err(format!(
-            "refusing the control socket at {}: whatever answers there is not this user's server",
-            socket.display()
-        ));
-    }
-    let (read, mut write) = stream.into_split();
-    write.write_all(b"open\n").await.map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    let mut reader = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(read, 64 * 1024));
-    tokio::time::timeout(READ_TIMEOUT, reader.read_line(&mut line))
-        .await
-        .map_err(|_| "the server did not answer".to_string())?
-        .map_err(|e| e.to_string())?;
-    if line.trim().is_empty() {
-        return Err("the server refused the request".into());
-    }
-    let answer: OpenAnswer = serde_json::from_str(line.trim()).map_err(|e| format!("the server's answer does not read: {e}"))?;
-    let port = recorded_port(paths).ok_or_else(|| format!("instance {} has no recorded port: is its server running?", paths.instance()))?;
-    check_answer(&answer, port, &control_dir(paths))?;
-    Ok(answer)
-}
-
-/// The port this instance's server recorded when it bound.
-fn recorded_port(paths: &Paths) -> Option<u16> {
-    let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).ok()?;
-    std::fs::read_to_string(dirs.port_file()).ok()?.trim().parse().ok()
 }
 
 /// Whether `dir` is a directory of this user's, reachable by nobody else, and
@@ -440,55 +465,58 @@ fn private_to_me(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// What an answer may say, to be handed to a browser at all: the page on this
-/// instance's recorded `port` at a loopback address, a link that is that page
-/// with a token in its fragment, and a redirect page that is a regular file of
-/// this user's directly in `control` (no symlink), named as the server names
-/// them.
-fn check_answer(answer: &OpenAnswer, port: u16, control: &Path) -> Result<(), String> {
-    let allowed = [format!("http://127.0.0.1:{port}/"), format!("http://[::1]:{port}/")];
-    if !allowed.contains(&answer.page) {
-        // A server bound to one LAN or Tailscale address (not to all of them)
-        // answers with that address: `open` hands a browser loopback pages
-        // only, so the way in there is the code, or an account made here.
-        return Err(format!(
-            "the server's page is not a loopback address on this instance's port {port}, and `open` hands a browser nothing else. \
-             If that server is yours and listens on one address only, open its page yourself and make the first account \
-             with the setup code (`remote-hand-server setup-code`), or here with `remote-hand-server user add <name>`"
-        ));
+impl OpenAnswer {
+    /// What an answer may say, to be handed to a browser at all: the page on
+    /// this instance's recorded `port` at a loopback address, a link that is
+    /// that page with a token in its fragment, and a redirect page that is a
+    /// regular file of this user's directly in `control` (no symlink), named as
+    /// the server names them.
+    fn check(&self, port: u16, control: &Path) -> Result<(), String> {
+        let allowed = [format!("http://127.0.0.1:{port}/"), format!("http://[::1]:{port}/")];
+        if !allowed.contains(&self.page) {
+            // A server bound to one LAN or Tailscale address (not to all of
+            // them) answers with that address: `open` hands a browser loopback
+            // pages only, so the way in there is the code, or an account made
+            // here.
+            return Err(format!(
+                "the server's page is not a loopback address on this instance's port {port}, and `open` hands a browser nothing else. \
+                 If that server is yours and listens on one address only, open its page yourself and make the first account \
+                 with the setup code (`remote-hand-server setup-code`), or here with `remote-hand-server user add <name>`"
+            ));
+        }
+        if let Some(url) = &self.url {
+            let token = url
+                .strip_prefix(self.page.as_str())
+                .and_then(|rest| rest.strip_prefix(&format!("#{FRAGMENT_KEY}=")))
+                .ok_or("the server's link is not its page")?;
+            let shaped = token.len() == 43 && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            if !shaped {
+                return Err("the server's link does not carry a token".into());
+            }
+        }
+        if let Some(redirect) = &self.redirect {
+            use std::os::unix::fs::MetadataExt;
+            private_to_me(control).map_err(|why| format!("the control directory {}: {why}", control.display()))?;
+            if redirect.parent() != Some(control) {
+                return Err("the redirect page is not in the control directory".into());
+            }
+            let name = redirect.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            let named = name
+                .strip_prefix("open-")
+                .and_then(|rest| rest.strip_suffix(".html"))
+                .is_some_and(|hex| hex.len() == 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+            if !named {
+                return Err("the redirect page is not one the server writes".into());
+            }
+            let found = std::fs::symlink_metadata(redirect).map_err(|e| e.to_string())?;
+            // SAFETY: `geteuid` reads a process property and cannot fail.
+            let me = unsafe { libc::geteuid() };
+            if !found.file_type().is_file() || found.uid() != me || found.mode() & 0o077 != 0 {
+                return Err("the redirect page is not a private file of this user's".into());
+            }
+        }
+        Ok(())
     }
-    if let Some(url) = &answer.url {
-        let token = url
-            .strip_prefix(answer.page.as_str())
-            .and_then(|rest| rest.strip_prefix(&format!("#{FRAGMENT_KEY}=")))
-            .ok_or("the server's link is not its page")?;
-        let shaped = token.len() == 43 && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if !shaped {
-            return Err("the server's link does not carry a token".into());
-        }
-    }
-    if let Some(redirect) = &answer.redirect {
-        use std::os::unix::fs::MetadataExt;
-        private_to_me(control).map_err(|why| format!("the control directory {}: {why}", control.display()))?;
-        if redirect.parent() != Some(control) {
-            return Err("the redirect page is not in the control directory".into());
-        }
-        let name = redirect.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        let named = name
-            .strip_prefix("open-")
-            .and_then(|rest| rest.strip_suffix(".html"))
-            .is_some_and(|hex| hex.len() == 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
-        if !named {
-            return Err("the redirect page is not one the server writes".into());
-        }
-        let found = std::fs::symlink_metadata(redirect).map_err(|e| e.to_string())?;
-        // SAFETY: `geteuid` reads a process property and cannot fail.
-        let me = unsafe { libc::geteuid() };
-        if !found.file_type().is_file() || found.uid() != me || found.mode() & 0o077 != 0 {
-            return Err("the redirect page is not a private file of this user's".into());
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -562,36 +590,36 @@ mod tests {
         };
         let file = control.join("open-0123456789abcdef.html");
         crate::fsutil::write_private(&file, b"x").unwrap();
-        assert_eq!(check_answer(&good(Some(file.clone())), 8700, &control), Ok(()));
-        assert_eq!(check_answer(&good(None), 8700, &control), Ok(()));
-        assert!(check_answer(&good(None), 8701, &control).is_err(), "another port");
+        assert_eq!(good(Some(file.clone())).check(8700, &control), Ok(()));
+        assert_eq!(good(None).check(8700, &control), Ok(()));
+        assert!(good(None).check(8701, &control).is_err(), "another port");
 
         let mut evil = good(None);
         evil.page = "http://attacker.invalid/".into();
-        assert!(check_answer(&evil, 8700, &control).is_err(), "not loopback");
+        assert!(evil.check(8700, &control).is_err(), "not loopback");
         let mut evil = good(None);
         evil.url = Some("http://attacker.invalid/#local-open=x".into());
-        assert!(check_answer(&evil, 8700, &control).is_err(), "a link elsewhere");
+        assert!(evil.check(8700, &control).is_err(), "a link elsewhere");
         let mut evil = good(None);
         evil.url = Some(format!("{page}#local-open=short"));
-        assert!(check_answer(&evil, 8700, &control).is_err(), "no token shape");
+        assert!(evil.check(8700, &control).is_err(), "no token shape");
         assert!(
-            check_answer(&good(Some(PathBuf::from("/tmp/x/evil.command"))), 8700, &control).is_err(),
+            &good(Some(PathBuf::from("/tmp/x/evil.command"))).check(8700, &control).is_err(),
             "a file outside the control directory"
         );
         let other = control.join("evil.command");
         crate::fsutil::write_private(&other, b"x").unwrap();
-        assert!(check_answer(&good(Some(other)), 8700, &control).is_err(), "not a name the server writes");
+        assert!(good(Some(other)).check(8700, &control).is_err(), "not a name the server writes");
         let link = control.join("open-fedcba9876543210.html");
         std::os::unix::fs::symlink("/etc/hosts", &link).unwrap();
-        assert!(check_answer(&good(Some(link)), 8700, &control).is_err(), "a symlink");
+        assert!(good(Some(link)).check(8700, &control).is_err(), "a symlink");
         let open = control.join("open-1111111111111111.html");
         std::fs::write(&open, "x").unwrap();
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(check_answer(&good(Some(open)), 8700, &control).is_err(), "readable by others");
+        assert!(good(Some(open)).check(8700, &control).is_err(), "readable by others");
         std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
-            check_answer(&good(Some(file)), 8700, &control).is_err(),
+            &good(Some(file)).check(8700, &control).is_err(),
             "a control directory others can reach"
         );
     }
@@ -603,7 +631,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(home.path().to_path_buf(), "fake");
-        let socket = socket_path(&paths);
+        let socket = paths.control_socket();
         let dir = socket.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -619,7 +647,7 @@ mod tests {
         let refusal = ask(&paths).await.expect_err("refused");
         assert!(refusal.contains("others can reach it"), "{refusal}");
         let _ = std::fs::remove_file(&socket);
-        if dir != control_dir(&paths) {
+        if dir != paths.control_dir() {
             let _ = std::fs::remove_dir(&dir);
         }
     }
@@ -633,9 +661,9 @@ mod tests {
         let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
         dirs.create().unwrap();
         dirs.write_port(8700);
-        let dir = control_dir(&paths);
+        let dir = paths.control_dir();
         private_dir(&dir).unwrap();
-        let socket = socket_path(&paths);
+        let socket = paths.control_socket();
         crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir).unwrap();
         let _ = std::fs::remove_file(&socket);
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -661,8 +689,8 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let auth = state.drive.auth.clone();
         let cancel = CancellationToken::new();
-        let socket = serve(&state.paths, auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
-        let dir = control_dir(&state.paths);
+        let socket = state.paths.serve_local_open(auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
+        let dir = state.paths.control_dir();
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777, 0o600);
         if let Some(parent) = socket.parent().filter(|p| *p != dir) {
@@ -709,7 +737,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let auth = state.drive.auth.clone();
         let cancel = CancellationToken::new();
-        serve(&paths, auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
+        paths.serve_local_open(auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
         crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap().write_port(9);
         let answer = ask(&paths).await.expect("an answer");
         assert_eq!(answer.error.as_deref(), Some(DESKTOP_APP_REFUSAL));

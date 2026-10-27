@@ -409,7 +409,7 @@ impl RemoteHandApp {
                 // reach — for a one-time token that opens the page signed in
                 // as this device's owner (`crate::auth::local_open`).
                 let page = crate::auth::local_open::page_url(addr);
-                if let Err(error) = crate::auth::local_open::serve(&paths, auth_for_link.clone(), page, desktop_app, cancel.clone()) {
+                if let Err(error) = paths.serve_local_open(auth_for_link.clone(), page, desktop_app, cancel.clone()) {
                     tracing::error!(%error, "cannot listen on the control socket; `remote-hand-server open` will not work");
                 }
                 // And again every few seconds, so that an account made or

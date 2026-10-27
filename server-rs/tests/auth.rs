@@ -375,7 +375,7 @@ async fn remote_hand_server_open_signs_the_page_in_as_the_owner() {
     let server = common::TestServer::start_guarded().await;
     let control = server.paths.instance_dir().join("control");
     assert_eq!(std::fs::metadata(&control).expect("control dir").permissions().mode() & 0o777, 0o700);
-    let socket = remote_hand_server::auth::local_open::socket_path(&server.paths);
+    let socket = server.paths.control_socket();
     assert_eq!(std::fs::metadata(&socket).expect("control socket").permissions().mode() & 0o777, 0o600);
 
     let out = cli_beside(&server, &["open", "--print"]).await;
