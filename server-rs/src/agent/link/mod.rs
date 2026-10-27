@@ -2292,7 +2292,7 @@ mod tests {
         a.shared.save();
         let mut keys = crate::aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
         keys.put("m-2", 0, &[2; 32]).unwrap();
-        let refused = startable(&a.shared.paths).err().expect("a removed machine does not start");
+        let refused = a.shared.paths.startable().err().expect("a removed machine does not start");
         assert!(refused.contains("removed"), "{refused}");
         assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }

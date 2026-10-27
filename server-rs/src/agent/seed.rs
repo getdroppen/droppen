@@ -5,7 +5,7 @@ use rh_proto::identity::MachineIdentity;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{check_private, hub, link, rotation, write_private};
+use super::{check_private, hub, link, write_private};
 use crate::sessions::Paths;
 
 /// The key file's contents.
@@ -402,7 +402,7 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
     let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(paths), &uuid)?;
     // A seed this device archived as retired (a crash, or a copy put back)
     // is never used again (`docs/host-identity-rotation.md` §3.8).
-    if !created && rotation::archived(paths, &identity) {
+    if !created && paths.seed_archived(&identity) {
         return Err(format!(
             "{} is an archived (retired) identity key and is never used again: add this device again under a new identity",
             paths.machine_key_path().display()

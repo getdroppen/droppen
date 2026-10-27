@@ -252,7 +252,7 @@ pub(super) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> R
         .flatten()
         .map(|s| MachineIdentity::from_seed(&s.seed).sign_public());
     // A seed a renewal retired (or one archived) never signs up again.
-    let identity = rotation::identity_for_enrolling(paths)?;
+    let identity = paths.identity_for_enrolling()?;
     let created = before != Some(identity.sign_public());
     describe(paths, &identity, created);
     println!(

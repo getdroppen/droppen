@@ -127,8 +127,8 @@ pub fn start(
 ) -> Result<Running, String> {
     // Adding this device again under a new identity, interrupted by a crash:
     // finished first — it never starts as the old enrollment.
-    super::rotation::finish_re_enroll(paths)?;
-    let loaded = startable(paths)?;
+    paths.finish_re_enroll()?;
+    let loaded = paths.startable()?;
     let identity = match super::load_or_create(paths)? {
         (identity, false) => identity,
         (_, true) => return Err("this instance has agent state but its identity key was missing (a new one was made); re-enroll it".into()),
@@ -347,20 +347,22 @@ pub(in crate::agent) fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Sen
     })
 }
 
-/// The saved agent state a link may start from — none when this instance is
-/// not enrolled, or its chain removed it. A removed one also loses what it
-/// held to control the other devices (`aggregator/`): its removal may have
-/// been learnt by a build that did not delete it, or by a run that stopped
-/// before the delete.
-pub(in crate::agent) fn startable(paths: &Paths) -> Result<AgentState, String> {
-    let loaded = AgentState::load(paths)?.ok_or("this instance is not enrolled")?;
-    if loaded.removed() {
-        if let Err(error) = crate::aggregator::forget_all(paths) {
-            tracing::error!(%error, "cannot delete the other devices' keys of a removed machine");
+impl Paths {
+    /// The saved agent state a link may start from — none when this instance is
+    /// not enrolled, or its chain removed it. A removed one also loses what it
+    /// held to control the other devices (`aggregator/`): its removal may have
+    /// been learnt by a build that did not delete it, or by a run that stopped
+    /// before the delete.
+    pub(in crate::agent) fn startable(&self) -> Result<AgentState, String> {
+        let loaded = AgentState::load(self)?.ok_or("this instance is not enrolled")?;
+        if loaded.removed() {
+            if let Err(error) = crate::aggregator::forget_all(self) {
+                tracing::error!(%error, "cannot delete the other devices' keys of a removed machine");
+            }
+            return Err("this device was removed from the account; it does not connect again".into());
         }
-        return Err("this device was removed from the account; it does not connect again".into());
+        Ok(loaded)
     }
-    Ok(loaded)
 }
 
 /// The writer's check of a machine key from `machine-keys.json`: exactly the
@@ -437,7 +439,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         }
         super::rotation::Verdict::Unchanged | super::rotation::Verdict::Renewed => {}
     }
-    let stagings = super::rotation::staged_seeds(&shared.paths, &shared.identity);
+    let stagings = shared.paths.staged_seeds(&shared.identity);
     // While any staged seed is kept, EVERY sign-in tries the staged keys first
     // (`docs/host-identity-rotation.md` §3.5 「不拿旧钥误伤自己」): a renewal may
     // have been committed while this device slept, its chain still stale. The
@@ -559,7 +561,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         // before takes it again — and no staging that expired before now was
         // committed, nor should be (set aside, not deleted).
         let named = super::rotation::named_keys(&shared.state.lock().expect("agent state"));
-        super::rotation::set_aside_expired(&shared.paths, named, &shared.identity, since);
+        shared.paths.set_aside_expired_stagings(named, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
         if st.rotation.refused_ms.take().is_some() {
             tracing::info!("the hub takes this device's identity key again");

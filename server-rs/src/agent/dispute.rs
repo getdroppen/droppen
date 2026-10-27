@@ -348,7 +348,7 @@ impl Paths {
                         let at = now_ms();
                         tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
                         s.acked_ms = Some(at);
-                         self.note_dispute_evidence(&s, at);
+                        self.note_dispute_evidence(&s, at);
                         done(&path, &s);
                     }
                     Delivery::Removed => {
@@ -716,7 +716,7 @@ mod tests {
         let (_dir, paths) = instance("disputefresh", [4; 32], &st);
         let s = statement(&st, &k0, now_ms()).unwrap();
         paths.keep_dispute(&s).unwrap();
-        let fresh = crate::agent::rotation::re_enroll_fresh(&paths, 99).unwrap();
+        let fresh = paths.re_enroll_fresh(99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());
         assert!(!paths.has_agent_state(), "the enrollment is forgotten");
         assert_eq!(paths.kept_disputes(), vec![(s.path(&paths), s.clone())], "the statement is not");
