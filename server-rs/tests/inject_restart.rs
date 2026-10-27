@@ -3,15 +3,13 @@
 //! The mechanism has three parts and this file tests each at the level it
 //! actually has to work at:
 //!
-//! * **boot adoption** — a `runs.json` record and a live pid, seeded on disk,
-//!   and a server booted onto them. The run is registered again, the composer
-//!   stays blocked, and the state clears when the process exits. Seeding by
-//!   hand rather than through a first server is deliberate: two servers in one
-//!   test process cannot simulate a restart, because the first one's `flock`
-//!   descriptor and its `wait()` task are both still alive. `runs.json` is the
-//!   right thing to seed even though nothing writes one any more — it is exactly
-//!   what an install upgrading from an older build has, and the boot drains it
-//!   into the journal table these tests then read.
+//! * **boot adoption** — a `runs` row and a live pid, seeded directly in the
+//!   instance's `state.db`, and a server booted onto them. The run is
+//!   registered again, the composer stays blocked, and the state clears when
+//!   the process exits. Seeding by hand rather than through a first server is
+//!   deliberate: two servers in one test process cannot simulate a restart,
+//!   because the first one's `flock` descriptor and its `wait()` task are both
+//!   still alive.
 //! * **the pid-reuse guard** — the same, with a live pid that is not the
 //!   process the record named.
 //! * **the real thing** — an actual server binary, `SIGKILL`ed through its
@@ -77,14 +75,13 @@ impl Drop for Stand {
     }
 }
 
-/// Write a `runs.json` holding one in-flight run.
+/// Put one in-flight run in the instance's journal.
 ///
 /// Spelled out as JSON rather than built through the server's own types on
-/// purpose: the file is the contract between the build that last wrote one and
-/// the build that imports it, and a test that wrote it with the same code that
-/// reads it would prove nothing about that.
-fn seed_runs_file(path: &Path, session: &str, pid: u32, pid_token: Option<&str>) {
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("instance dir");
+/// purpose: the `payload` column is the record's serde encoding, and a test
+/// that wrote it with the same code that reads it would prove nothing about
+/// that shape.
+fn seed_run(db: &Path, session: &str, pid: u32, pid_token: Option<&str>) {
     let mut record = json!({
         "run_id": "run-under-test",
         "source": "claude",
@@ -96,7 +93,14 @@ fn seed_runs_file(path: &Path, session: &str, pid: u32, pid_token: Option<&str>)
     if let Some(token) = pid_token {
         record["pid_token"] = json!(token);
     }
-    std::fs::write(path, serde_json::to_vec_pretty(&json!({ "runs": [record] })).expect("encode")).expect("write runs.json");
+    remote_hand_server::db::at(db)
+        .write(|tx| {
+            tx.execute(
+                "INSERT INTO runs (run_id, session_id, ordinal, payload) VALUES (?1, ?2, 0, ?3)",
+                ("run-under-test", session, record.to_string()),
+            )
+        })
+        .expect("seed the run journal");
 }
 
 /// Append a completed assistant turn, so the transcript no longer reads as
@@ -137,10 +141,7 @@ async fn wait_until(probe: &Probe, id: &str, what: &str, check: impl Fn(&Value) 
 
 /// The runs the journal currently holds, in the order it holds them.
 ///
-/// The `runs` table of the instance's `state.db`, not the `runs.json` the
-/// fixtures above still plant: that file is drained into the table on the first
-/// boot that finds it and is never written again, so a test that read it back
-/// would be reading its own seed and calling it a result.
+/// The `runs` table of the instance's `state.db`.
 fn recorded_runs(db: &Path) -> Vec<Value> {
     support::common::json_rows(db, "SELECT payload FROM runs ORDER BY ordinal", ())
 }
@@ -204,7 +205,7 @@ async fn a_run_that_outlived_its_server_is_adopted_and_keeps_the_composer_blocke
     ));
 
     let instance = home.path().join(".local/share/remote-hand/instances/default");
-    seed_runs_file(&instance.join("runs.json"), SESSION, stand.pid, None);
+    seed_run(&instance.join("state.db"), SESSION, stand.pid, None);
 
     let probe = Probe::start_at(home.path()).await;
 
@@ -292,7 +293,7 @@ async fn a_run_killed_with_its_server_is_cleaned_up_and_reported_softly() {
     .expect("seed transcript");
 
     let instance = home.path().join(".local/share/remote-hand/instances/default");
-    seed_runs_file(&instance.join("runs.json"), SESSION, dead_pid, None);
+    seed_run(&instance.join("state.db"), SESSION, dead_pid, None);
 
     let probe = Probe::start_at(home.path()).await;
 
@@ -353,8 +354,8 @@ async fn a_run_that_finished_while_the_server_was_down_is_reported_as_nothing() 
     // The CLI got its answer out before it died with the server.
     append_assistant_turn(&transcript);
 
-    seed_runs_file(
-        &home.path().join(".local/share/remote-hand/instances/default/runs.json"),
+    seed_run(
+        &home.path().join(".local/share/remote-hand/instances/default/state.db"),
         SESSION,
         dead_pid,
         None,
@@ -402,8 +403,8 @@ async fn a_recycled_pid_is_not_mistaken_for_the_run_that_had_it() {
     .expect("seed transcript");
 
     // A start-time token from a moment this process cannot have started at.
-    seed_runs_file(
-        &home.path().join(".local/share/remote-hand/instances/default/runs.json"),
+    seed_run(
+        &home.path().join(".local/share/remote-hand/instances/default/state.db"),
         SESSION,
         stranger.pid,
         Some("1.000000"),

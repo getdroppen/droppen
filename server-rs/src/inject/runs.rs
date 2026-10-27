@@ -23,9 +23,9 @@
 //! <data>/instances/<name>/state.db
 //! ```
 //!
-//! The `runs.json` this module is still named after is read exactly once, on
-//! the first boot of a build that has the table, and is never written; see
-//! [`RunsFile::import`].
+//! The `runs.json` this module is still named after was read once, on the first
+//! boot of a build that has the table. It is no longer read: one left on disk
+//! is inert.
 //!
 //! # Why it stays small
 //!
@@ -247,27 +247,14 @@ fn is_zero(value: &u8) -> bool {
 // adoption never rebuilds an environment — the process it adopts was spawned
 // with one long ago. A second copy could only go stale.
 
-/// The envelope of the file the table was imported from.
-///
-/// An object rather than a bare array so that a later phase could add a sibling
-/// key without every older server failing to parse it. Only [`RunsFile::import`]
-/// still reads it; nothing writes it.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Document {
-    #[serde(default)]
-    runs: Vec<RunRecord>,
-}
-
-/// The journal: the `runs` table, plus the path of the file it was seeded from.
+/// The journal: the `runs` table of the instance's database.
 ///
 /// # What moved, and what did not
 ///
 /// The records live in the instance's `state.db`, and every read and every
-/// write goes there. `runs.json` is read exactly once ever — to fill the table
-/// on the first boot after the upgrade — and is not written, not renamed and
-/// not deleted. Leaving it where it is costs nothing and is worth something: a
-/// file restored by hand is how a fresh database gets seeded, and
-/// [`crate::db::Db::import_once`] will take it.
+/// write goes there. `runs.json` was read once ever — to fill the table on the
+/// first boot after the upgrade — and is no longer read, written, renamed or
+/// deleted. Leaving it where it is costs nothing: it is inert history.
 ///
 /// The release that added the table also wrote every commit back out as
 /// `runs.json`, because [`crate::supervisor`] demotes to the `.prev` binary
@@ -295,7 +282,6 @@ struct Document {
 /// cross-*process* exclusion is the instance flock's job, as it always was.
 #[derive(Debug)]
 pub struct RunsFile {
-    path: PathBuf,
     db: std::sync::Arc<crate::db::Db>,
 }
 
@@ -304,61 +290,12 @@ impl RunsFile {
     ///
     /// Derived from the old file's path rather than passed in, so that every
     /// caller and every test that already knew where `runs.json` goes needs to
-    /// learn nothing new — and so that [`RunsFile::import`] knows what to read.
+    /// learn nothing new.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let db = crate::db::at(path.with_file_name("state.db"));
-        let file = Self { path, db };
-        file.import();
-        file
-    }
-
-    /// Fill the table from the file, once ever.
-    ///
-    /// A run that was in flight when the upgrade happened is a run this server
-    /// still has to adopt, so the very first thing the new code does is read the
-    /// old code's last word.
-    fn import(&self) {
-        let path = self.path.clone();
-        self.db.import_once("runs", || {
-            let Ok(raw) = std::fs::read(&path) else {
-                return Vec::new();
-            };
-            let Ok(document) = serde_json::from_slice::<Document>(&raw) else {
-                tracing::warn!(path = %path.display(), "the journal being migrated is unreadable; no run will be adopted");
-                return Vec::new();
-            };
-            document
-                .runs
-                .iter()
-                .enumerate()
-                .filter_map(|(ordinal, run)| serde_json::to_string(run).ok().map(|json| (format!("{ordinal:04}:{}", run.run_id), json)))
-                .collect()
-        });
-        // `import_once` puts the rows in `kv` under its own marker; move them
-        // into the table they belong in, still exactly once, because that is
-        // where every read below looks.
-        self.db.commit("the migrated journal", |tx| {
-            let mut statement = tx.prepare("SELECT key, value FROM kv WHERE scope = 'runs' ORDER BY key")?;
-            let staged: Vec<(String, String)> = statement
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
-                .filter_map(Result::ok)
-                .collect();
-            drop(statement);
-            for (ordinal, (_, json)) in staged.iter().enumerate() {
-                let Ok(record) = serde_json::from_str::<RunRecord>(json) else {
-                    continue;
-                };
-                tx.execute(
-                    "INSERT OR IGNORE INTO runs (run_id, session_id, ordinal, payload) VALUES (?1, ?2, ?3, ?4)",
-                    (&record.run_id, &record.session_id, ordinal as i64, json.as_str()),
-                )?;
-            }
-            if !staged.is_empty() {
-                tx.execute("DELETE FROM kv WHERE scope = 'runs'", [])?;
-            }
-            Ok(())
-        });
+        Self {
+            db: crate::db::at(path.with_file_name("state.db")),
+        }
     }
 
     /// Every recorded run, or nothing at all.
@@ -543,7 +480,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = RunsFile::new(dir.path().join("runs.json"));
 
-        assert!(file.read().is_empty(), "no file is an empty journal, not an error");
+        assert!(file.read().is_empty(), "an empty database is an empty journal, not an error");
 
         file.add(record("run-1", "session-a", 4242));
         file.add(record("run-2", "session-b", 4243));
@@ -649,7 +586,7 @@ mod tests {
     /// file *was* the journal, and a truncated one meant every in-flight run was
     /// orphaned — the composer unblocked on sessions that still had a CLI
     /// attached. Then it was a mirror, rewritten whole on every step of every
-    /// turn for a rolled-back binary's sake. Now nothing writes it: a turn costs
+    /// turn for a rolled-back binary's sake. Now nothing touches it: a turn costs
     /// no whole-file encode, no `fsync` and no rename, and whatever the file
     /// happens to contain neither helps nor hurts.
     #[test]
@@ -662,8 +599,8 @@ mod tests {
         assert!(!path.exists(), "recording a run writes the table and nothing else");
 
         // A file that appears afterwards — a rollback's leavings, a restore done
-        // by hand — is left exactly as found. The import is long past, so it is
-        // not adopted, and there is no writer left to overwrite it.
+        // by hand — is left exactly as found. Nothing reads it, so it is not
+        // adopted, and there is no writer left to overwrite it.
         let planted = b"{\"runs\": [{\"run_id\"".to_vec();
         std::fs::write(&path, &planted).expect("write");
         file.remove("run-2");
@@ -686,8 +623,7 @@ mod tests {
             file.add(record("run-1", "session-a", 4242));
             file.mark_progress("run-1", Some(4096), &[]);
         }
-        // A second `RunsFile` over the same directory is the next boot: the
-        // import has already happened, so nothing is read back out of the file.
+        // A second `RunsFile` over the same directory is the next boot.
         let next = RunsFile::new(&path);
         let runs = next.read();
         assert_eq!(runs.len(), 1);
@@ -695,50 +631,27 @@ mod tests {
         assert_eq!(runs[0].turn_at, Some(4096), "including what it was in the middle of");
     }
 
-    /// A journal written by the previous version is adopted, once.
-    #[test]
-    fn the_runs_a_previous_version_left_behind_are_taken_over() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("runs.json");
-        let handed_over = Document {
-            runs: vec![record("run-1", "session-a", 4242), record("run-2", "session-b", 4243)],
-        };
-        std::fs::write(&path, serde_json::to_vec(&handed_over).expect("encode")).expect("write");
-
-        let file = RunsFile::new(&path);
-        let runs = file.read();
-        assert_eq!(runs.len(), 2, "an upgrade does not orphan what was in flight");
-        assert_eq!(runs[0].run_id, "run-1", "and the order the file had is the order adoption sees");
-        assert_eq!(runs[1].run_id, "run-2");
-
-        // The user finishes one and restarts. The import must not resurrect it.
-        file.remove("run-1");
-        let next = RunsFile::new(&path);
-        assert_eq!(next.read().len(), 1, "the import happens once, not on every boot");
-        assert_eq!(next.read()[0].run_id, "run-2");
-    }
-
+    /// A row that will not parse costs that run, not the whole adoption.
     #[test]
     fn a_corrupt_journal_forgets_runs_instead_of_refusing_to_boot() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("runs.json");
-        std::fs::write(&path, b"{\"runs\": [{\"run_id\"").expect("write");
+        let db = crate::db::at(path.with_file_name("state.db"));
+        db.write(|tx| {
+            tx.execute(
+                "INSERT INTO runs (run_id, session_id, ordinal, payload) VALUES ('half-written', 'session-a', 0, ?1)",
+                (r#"{"run_id":"half-writ"#,),
+            )
+        })
+        .expect("a half-written row");
+
         let file = RunsFile::new(&path);
         assert!(file.read().is_empty());
 
-        // And it costs only the runs that were in the rubbish: the table came up
-        // empty rather than broken, so the next run is recorded normally. The
-        // unreadable file stays where it is, for a human to look at.
+        // And it costs only the run in the rubbish: the table came up otherwise
+        // whole, so the next run is recorded normally.
         file.add(record("run-1", "session-a", 7));
         assert_eq!(file.read().len(), 1);
-        assert!(path.exists(), "and nothing here deletes or rewrites it");
-    }
-
-    #[test]
-    fn an_unknown_key_survives_a_round_trip_through_an_older_reader() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("runs.json");
-        std::fs::write(&path, br#"{"runs": [], "somethingLater": 1}"#).expect("write");
-        assert!(RunsFile::new(&path).read().is_empty(), "an unknown key is not a parse failure");
+        assert!(!path.exists(), "and nothing here creates a file");
     }
 }
