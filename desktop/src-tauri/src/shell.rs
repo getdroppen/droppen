@@ -14,8 +14,9 @@
 //!    in as soon as it answers; a stored login of another name (installs that
 //!    named the account after the macOS login name) is replaced by a
 //!    `droppen-app` one ([`accounts::ready_login`]); until the instance's
-//!    marker records it done, remove the accounts it inherited from the device
-//!    so only the app's can log in;
+//!    marker records it done, finish removing the accounts an older build's
+//!    first start may have inherited from the device, so only the app's can
+//!    log in;
 //! 6. start the server under the [`Supervisor`];
 //! 7. [`Shell::connect`]: wait for it, prove the listener is the child, log in,
 //!    check the instance, and hand the login to the windows; once signed in,
@@ -353,7 +354,7 @@ impl Shell {
         }
 
         // The instance must be the app's own before anything touches it.
-        match instance::ownership(&self.instance_dir) {
+        let fresh = match instance::ownership(&self.instance_dir) {
             Ownership::NotOurs => {
                 return Err(format!(
                     "This device already has a Droppen server instance called \"{INSTANCE}\" that the Droppen app did not create ({}). \
@@ -361,10 +362,11 @@ impl Shell {
                     self.instance_dir.display()
                 ))
             }
-            Ownership::Ours => {}
+            Ownership::Ours => false,
             Ownership::New => {
                 instance::claim_new(&self.instance_dir).map_err(|error| format!("Droppen could not create its server folder: {error}"))?;
                 log::info!("created instance {INSTANCE} at {}", self.instance_dir.display());
+                true
             }
         };
         match instance::lock_state(&self.instance_dir) {
@@ -451,6 +453,18 @@ impl Shell {
             None => {}
         }
         let credential = ready.credential;
+        // Until the marker records it, every start finishes the cleanup an
+        // older build's first start may have left: that build inherited the
+        // machine-wide accounts, and a start cut short before removing them
+        // must not leave them for good. A new instance has none.
+        if fresh || instance::needs_pruning(&self.instance_dir) {
+            let removed = cli.prune_others(&credential.username)?;
+            if !removed.is_empty() {
+                log::info!("new instance: removed {} inherited account(s): {}", removed.len(), removed.join(", "));
+            }
+            instance::mark_pruned(&self.instance_dir).map_err(|error| format!("Droppen could not record its server folder's state: {error}"))?;
+            log::info!("instance {INSTANCE} has only the app's account ({})", credential.username);
+        }
 
         {
             let mut inner = self.inner();

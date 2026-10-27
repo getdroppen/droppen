@@ -221,6 +221,37 @@ impl Cli {
 
 }
 
+impl Cli {
+    /// Remove every account on the instance but `keep` — every user account
+    /// and every other app-internal one — returning the names removed.
+    ///
+    /// This finishes the cleanup an older build's first start may have left:
+    /// such a build inherited the machine-wide accounts into a new instance
+    /// and removed them right after creating its own account, so an instance
+    /// whose first start was cut short in between still has them, with the
+    /// marker saying so. Every start retries until they are gone; an instance
+    /// created by this build has nothing but `keep` to begin with. `keep` must
+    /// be an app-internal account already, so the app's window can always sign
+    /// in. Every removal passes `--yes`, which the server asks for before it
+    /// removes an instance's last user account.
+    pub fn prune_others(&self, keep: &str) -> Result<Vec<String>, String> {
+        let apps = self.list(Kind::App)?;
+        if !apps.iter().any(|name| name == keep) {
+            return Err(format!(
+                "refusing to prune: {keep} is not an app-internal account on instance {}",
+                self.instance
+            ));
+        }
+        let users = self.list(Kind::User)?;
+        let mut removed = Vec::new();
+        for name in users.into_iter().chain(apps.into_iter().filter(|name| name != keep)) {
+            self.run(&["rm", &name, "--yes"], None)?;
+            removed.push(name);
+        }
+        Ok(removed)
+    }
+}
+
 /// [`std::process::Child::wait_with_output`], but a command still running
 /// after `limit` is killed — by its own pid, through its handle — and is an
 /// error.
@@ -842,6 +873,37 @@ esac
         assert_eq!(ready.ensured, Ensured::Migrated { password_reset: true });
         assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
         assert_eq!(read(dir.path(), "passwords.txt"), format!("{}\n", ready.credential.password));
+    }
+
+    #[test]
+    fn a_new_instance_keeps_only_the_apps_account() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Left by an older build's first start: people's logins, and an
+        // app-internal account that is not this app's.
+        seed(
+            dir.path(),
+            &[("someone-else", "user"), ("ada", "user"), ("third", "user"), ("stray-app", "app")],
+        );
+        let cli = cli(dir.path());
+        ready_login(&cli, None, "carol", never_recorded, Kept::default().keep()).expect("ready");
+        let removed = cli.prune_others(APP_ACCOUNT).expect("prune");
+        assert_eq!(removed, vec!["someone-else", "ada", "third", "stray-app"]);
+        assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
+        assert_eq!(cli.list(Kind::User).expect("list"), Vec::<String>::new());
+        // The last user account needs --yes, and got it.
+        assert!(read(dir.path(), "calls.txt").contains("user rm third --yes --instance droppen-app"));
+        assert!(cli.prune_others("nobody").is_err(), "never prunes when the keeper is missing");
+        assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
+    }
+
+    #[test]
+    fn pruning_refuses_while_the_keeper_is_a_user_account() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        seed(dir.path(), &[("someone-else", "user"), (APP_ACCOUNT, "user")]);
+        let cli = cli(dir.path());
+        let error = cli.prune_others(APP_ACCOUNT).expect_err("refuses");
+        assert!(error.contains("not an app-internal account"), "{error}");
+        assert_eq!(cli.list(Kind::User).expect("list"), vec!["someone-else", APP_ACCOUNT], "nothing removed");
     }
 
     #[test]

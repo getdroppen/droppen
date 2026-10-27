@@ -302,7 +302,7 @@ check "the account was made before the server started" '[ "$(grep -n "password k
 check "the app's login is droppen-app" '[ "$USER_NAME" = droppen-app ]'
 check "the machine-wide account was not inherited; only the app's app-internal account is on the instance" '! grep -q "inherited account(s)" "$LOG" && [ "$(server_cli user list --app --instance "$E2E_INSTANCE" | sed 1d | cut -f1)" = droppen-app ] && server_cli user list --instance "$E2E_INSTANCE" | head -1 | grep -q "^no accounts"'
 check "the machine-wide login is refused" '[ "$(login_code intruder intruder-password-0001)" = 401 ]'
-check "the marker records no pruning state" '! grep -q "pruned" "$INSTANCE_DIR/droppen-app.json"'
+check "the marker records the pruning done" 'grep -q "\"pruned\": true" "$INSTANCE_DIR/droppen-app.json"'
 check "the password is in the 0600 file (keychain off)" '[ "$(stat -f %Lp "$SUPPORT/credentials.json")" = 600 ] && [ "$(stat -f %Lp "$SUPPORT")" = 700 ]'
 check "no secret in the app log" 'nowhere -F "$(password)" "$LOG"'
 STATUS=$(curl -fsS "http://127.0.0.1:$PORT/api/auth/status")

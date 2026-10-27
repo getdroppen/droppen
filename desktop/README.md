@@ -265,11 +265,14 @@ password it made up.
    the login name or read it from a stale keychain item (one the last save
    could not replace; a save that falls back to the file removes it) — and
    the removal itself refuses a user account.
-2. **Only the app's account.** The app's instance starts with no account but
-   the one the app makes: accounts are per-instance, and the machine-wide set
-   an older build kept is not inherited (`server-rs/src/auth/users.rs`), so on
-   a shared Mac nobody else's login opens the app's server. Accounts someone
-   adds to that instance on purpose are left alone.
+2. **Only the app's account.** Accounts are per-instance; a new instance does
+   not inherit the machine-wide set an older build kept
+   (`server-rs/src/auth/users.rs`). One cleanup remains for instances an older
+   build first started: if that start was cut short before the inherited
+   accounts were removed, the marker still says so and every start retries the
+   removal (`user rm --yes`, which the server asks for before removing the last
+   user account). `droppen-app`, app-internal already or nothing removed,
+   stays; accounts someone adds on purpose are left alone.
 3. **The password** is the app's own secret: one generic-password item in the
    login keychain, service `app.droppen.desktop`, account
    `local-login:droppen-app`. If the keychain will not take or give it, a

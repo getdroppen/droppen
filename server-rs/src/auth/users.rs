@@ -41,7 +41,7 @@
 //! In [`crate::db`], at `<instance>/state.db` — the same database the runs, the
 //! layouts and the schedule are in, so an account and this instance's state are
 //! one file and one `fsync`. `users.json` is still written beside it, on every
-//! change, but it is a *copy* — nothing reads it after the imports below.
+//! change, but it is a *copy* — nothing reads it after the import below.
 //!
 //! That way round, and not the other, because of the one bug this store has that
 //! no amount of care inside one process can fix: `remote-hand-server user add`
@@ -56,14 +56,15 @@
 //!
 //! Only its own accounts. It does **not** inherit the machine-wide set the old
 //! design kept (`<config>/state.db`'s `users` table, and `<config>/users.json`
-//! beside it): that copy was an upgrade bridge, and every install from 0.2.125
-//! has already made it. An install upgrading straight from an older build, or a
-//! new instance made on a 0.2.125+ machine, therefore starts with no user
-//! account and is in its setup state until the first one exists
-//! ([`super::setup`]). That is fail-closed, not authentication off: no API route
-//! opens, and the ways in are `droppen user add`, `droppen open` or the setup
-//! code. The machine-wide set is left on disk untouched, so it remains a manual
-//! recovery source and a rolled-back binary still finds accounts.
+//! beside it): that copy was an upgrade bridge, and every install from 0.2.37
+//! (when accounts became per-instance) has already made it. An install
+//! upgrading straight from an older build, or a new instance made by this
+//! build, therefore starts with no user account and is in its setup state until
+//! the first one exists ([`super::setup`]). That is fail-closed, not
+//! authentication off: no API route opens, and the ways in are
+//! `droppen user add`, `droppen open` or the setup code. The machine-wide set
+//! is left on disk untouched, so it remains a manual recovery source and a
+//! rolled-back binary still finds accounts.
 //!
 //! # App-internal accounts
 //!
@@ -158,6 +159,16 @@ pub const MAX_USERNAME: usize = 32;
 /// already been drained. Also the scope its rows are staged in on the way
 /// through; see [`UsersStore::ensure_imported`].
 const IMPORT_MARKER: &str = "users.json";
+
+/// The marker for the machine-wide *seed*, which this store no longer performs.
+///
+/// It is still written — once, with no rows — the first time an instance's
+/// store is opened. An instance created by this build thus records that the
+/// seed has been considered, so a fallback to an older binary (the supervisor's
+/// `.prev`, or an image-baked build) does not copy the machine-wide accounts
+/// into an instance that deliberately started without them. Not a path, so it
+/// cannot be confused with one: nothing is drained from a file called this.
+const SEED_MARKER: &str = "machine-wide-users";
 
 /// Where the two ISO stamps live, keyed by user name.
 ///
@@ -387,6 +398,16 @@ impl UsersStore {
             self.db.import_once(IMPORT_MARKER, || staged_from_json(&path));
             drain_staged(&self.db, IMPORT_MARKER);
 
+            // The seed is gone, but its marker is still written, once, with no
+            // rows. An instance created here may later be served by an older
+            // binary (`supervisor`'s `.prev`, or an image-baked build), and that
+            // build seeds itself from the machine-wide set unless this marker
+            // says the instance has already been through it. Recording
+            // "considered, nothing to copy" keeps such a fallback from silently
+            // reinstating machine-wide accounts on an instance that
+            // deliberately started without them.
+            self.db.import_once(SEED_MARKER, || Vec::new());
+
             // Accounts in the table and no file beside them is the one shape
             // that reads as "this server has no accounts" — an open API — if
             // the database is ever set aside as corrupt. An instance whose
@@ -410,7 +431,7 @@ impl UsersStore {
     /// off on a server published to the internet — so when the database says
     /// nobody is on file the mirror gets a vote too, and an account in the file
     /// with no row behind it keeps the door shut while somebody works out why.
-    /// It cannot fire in the ordinary course of events: the imports put every
+    /// It cannot fire in the ordinary course of events: the import puts every
     /// user in the file into the table, and every write updates both. A file
     /// that does not parse still reads as no accounts, which is the deliberate
     /// fail-open this module has always had.
@@ -868,8 +889,8 @@ fn write_mirror(path: &Path, file: &UsersFile) {
 ///
 /// `INSERT OR IGNORE` rather than `REPLACE`, for [`Db::import_once`]'s reason: a
 /// row that is already there was written by this build and is newer than a file
-/// this build has never read from twice. It is also what makes the order of the
-/// two imports a precedence: whichever staged an account first keeps it.
+/// this build has never read from twice — a crash between staging and draining
+/// must not let the older copy overwrite an edit made since.
 /// Ordered by creation stamp because `kv` hands rows back by key —
 /// alphabetically by name — and the order the rowids are handed out in is the
 /// order the list will come back in for ever after.
@@ -1346,6 +1367,25 @@ mod tests {
         );
         let file = std::fs::read_to_string(home.path().join(".config/remote-hand/users.json")).expect("still there");
         assert!(file.contains("ada"), "and the file an older build reads still names it");
+    }
+
+    /// The seed no longer runs, but its marker is still written — once, with no
+    /// rows — so a fallback to a binary that still seeds does not copy the
+    /// machine-wide accounts into an instance created here.
+    #[tokio::test]
+    async fn a_fresh_instance_records_the_seed_marker_without_importing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let machine = machine_wide(home.path());
+        machine.add("ada", "correct horse battery").await.expect("seed the machine-wide set");
+
+        let fresh = instance(home.path(), "alice");
+        assert!(fresh.is_empty().await, "reading the store is what writes the marker");
+        assert_eq!(
+            fresh.db.kv_get(db::scope::IMPORTED, SEED_MARKER).as_deref(),
+            Some("0"),
+            "considered, with nothing to copy"
+        );
+        assert!(!fresh.exists("ada").await, "and no machine-wide account came with it");
     }
 
     /// A mirror somebody deleted — tidying, a restore, a `rm` that meant
