@@ -171,6 +171,3 @@ tempfile = "3"
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
 # be asserted without a test that actually takes minutes.
 tokio = { version = "1", features = ["test-util"] }
-# The integration tests build a synthetic Codex state database, which means
-# linking SQLite from the test binary as well as from the library.
-rusqlite = { version = "0.32", features = ["bundled"] }
