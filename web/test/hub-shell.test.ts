@@ -10,11 +10,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
-import { addressOn, HubShell, mainMachine, selectedMachine, switchPath } from "../src/features/cloud/hub-shell.js";
+import { addressOn, endHubShell, HubShell, mainMachine, selectedMachine, switchPath } from "../src/features/cloud/hub-shell.js";
 import { type AccountMain, HubApiError } from "../src/lib/hub/api.js";
 import type { PresenceState } from "../src/lib/hub/link.js";
 import type { MachineStatus } from "../src/lib/hub/machine.js";
 import { mq } from "../src/lib/machines/query.js";
+import { hubShell, setHubShell } from "../src/features/machines/shells.js";
+import { renewalRunner, setRenewalRunner } from "../src/lib/hub/renewal.js";
 import { homeMachine, homeMachineStore, isOpen, openMachines, perMachine, runtimeFor, shellKind, transportFor } from "../src/lib/machines/registry.js";
 import { MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, until } from "./stream-fixtures.js";
@@ -1085,4 +1087,19 @@ test("a choice the hub could not take now is sent again a little later, without 
   shell.stop();
   await flush(80);
   assert.equal(api.writes.length, 4);
+});
+
+test("leaving the account ends the shell, its slot and the renewal runner together (a fork included)", () => {
+  const stopped: string[] = [];
+  setHubShell({ stop: () => void stopped.push("shell") } as never);
+  setRenewalRunner({ stop: () => void stopped.push("renewals") } as never);
+  try {
+    endHubShell();
+    assert.deepEqual(stopped, ["shell", "renewals"]);
+    assert.equal(hubShell(), null);
+    assert.equal(renewalRunner(), null);
+  } finally {
+    setHubShell(null);
+    setRenewalRunner(null);
+  }
 });

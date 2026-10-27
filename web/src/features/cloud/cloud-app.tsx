@@ -26,8 +26,8 @@ import { meStore } from "@/lib/hub/me";
 import { RenewalRunner, setRenewalRunner } from "@/lib/hub/renewal";
 import { followPushRenewals } from "@/lib/push";
 import { useStore } from "@/lib/machines/store";
-import { HubShell, shellCourier } from "./hub-shell";
-import { hubShell, setHubShell } from "@/features/machines/shells";
+import { endHubShell, HubShell, shellCourier } from "./hub-shell";
+import { setHubShell } from "@/features/machines/shells";
 import { AccountScreen } from "./account-settings";
 import { isAccountPath } from "./devices-route";
 import { MyDevicesScreen } from "./my-devices";
@@ -188,9 +188,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         return setPhase({ kind: "removed", failures });
       }
       clearSession();
-      hubShell()?.stop();
-      setHubShell(null);
-      setRenewalRunner(null);
+      endHubShell();
       setPhase({ kind: "refused", reason: refusal ?? "denied" });
     },
     [store],
@@ -200,8 +198,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   const forked = useCallback((account: CloudAccount, link: HubLink | null, message: string) => {
     account.stopSession();
     link?.stop();
-    hubShell()?.stop();
-    setHubShell(null);
+    endHubShell();
     setPhase({ kind: "fork", message, held: { api: account.api, token: account.session.token, account: account.account, store } });
   }, [store]);
 
@@ -286,7 +283,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         relays.start();
         // Every machine of the account, each on its copy until it is wanted
         // live, and the one this browser last had in view brought back.
-        hubShell()?.stop();
+        endHubShell();
         const shell = new HubShell({ api, account, link, relays, store, queryClient });
         setHubShell(shell);
         // Every admin page renews the identity keys of the devices that run AI a removed device could control
@@ -719,9 +716,7 @@ export function ErrorScreen({ message, held }: { message: string; held?: HeldSes
 async function wipeRemoved(account: CloudAccount, link: HubLink | null, store: KeyStore): Promise<string[]> {
   account.stopSession();
   link?.stop();
-  hubShell()?.stop();
-  setHubShell(null);
-  setRenewalRunner(null);
+  endHubShell();
   clearSession();
   const failures = await wipeAccountHere(account, store);
   if (failures.length) console.warn("cloud: the removed device could not clear:", failures);

@@ -63,7 +63,8 @@ import { closeMachine, homeMachine, isOpen, type MachineDriver, runtimeFor, setH
 import { machinePath, splitMachinePath } from "@/lib/machines/routes";
 import type { AppShell, MachineInfo, MachineRuntime } from "@/lib/machines/runtime";
 import { enterHubShell, openHubMachine } from "@/lib/machines/shells/hub";
-import { hubShell } from "@/features/machines/shells";
+import { hubShell, setHubShell } from "@/features/machines/shells";
+import { setRenewalRunner } from "@/lib/hub/renewal";
 import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
 import { onPageResume } from "@/lib/page-resume";
 import { type Pipe, type PipeMessage, type PipeOpener, tunnelTransport } from "@/lib/transport/tunnel";
@@ -74,6 +75,17 @@ import { ModeController, SwitchingTransport } from "@/lib/transport/switching";
 import { DEVICES_PATH, isShellPagePath } from "./devices-route";
 import { shownName } from "./machine-name";
 import { offlineTransport, type OfflineOptions } from "@/lib/transport/offline";
+
+/**
+ * End the page's hub shell: stop it, drop the slot, and stop renewals. Every
+ * path that leaves the account (refused, forked, removed, signed out) goes
+ * through here, so none of them keeps a shell or a renewal runner running.
+ */
+export function endHubShell(): void {
+  hubShell()?.stop();
+  setHubShell(null);
+  setRenewalRunner(null);
+}
 
 /** What the offline copy says in the app, in the page's language at the moment it is said. */
 const offlineMessages: OfflineOptions["messages"] = {

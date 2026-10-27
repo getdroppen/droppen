@@ -3,11 +3,11 @@ import { CloudAccount, type SelfRemoval, wipeFailures } from "@/lib/hub/account"
 import { clearSession, type HubApi, type Proof } from "@/lib/hub/api";
 import { deviceMirrorStore, forgetMirrorKey } from "@/lib/hub/mirror";
 import { forgetPasskeySignIn } from "@/lib/hub/passkey-join";
-import { setRenewalRunner } from "@/lib/hub/renewal";
 import { cacheWipe } from "@/lib/local-cache";
 import { disablePushOnSignOut } from "@/lib/push";
 import { SIGN_IN_PATH } from "@/features/landing/route";
 import { hubShell } from "@/features/machines/shells";
+import { endHubShell } from "./hub-shell";
 
 /** Where a sign-out that could not clear everything leaves the list of what, for the sign-in screen. */
 export const SIGN_OUT_FAILURES_KEY = "rh.cloud.signout-failures";
@@ -177,9 +177,8 @@ export async function signOut(from?: CloudAccount, held?: HeldSession, opts: Sig
   const failures: string[] = [];
   // First, while the devices are still reached: the subscription goes (its device's row, then the browser's own).
   await capped((opts.dropPush ?? (() => disablePushOnSignOut()))(), SIGN_OUT_PUSH_CAP_MS, "the push subscription").catch(() => undefined);
-  // Every machine's copy stops following (nothing is saved after this), and its channel goes.
-  shell?.stop();
-  setRenewalRunner(null);
+  // Every machine's copy stops following (nothing is saved after this), its channel goes, and renewals stop.
+  endHubShell();
   let stillListed: StillListed | null = null;
   if (remove && account) {
     // Off the account's devices, while its session is still renewed: signed by itself, its last entry. The
@@ -292,8 +291,7 @@ export async function deleteAccount(
  */
 export async function leaveDeletedAccount(account: CloudAccount, email: string | null): Promise<void> {
   const shell = hubShell();
-  shell?.stop();
-  setRenewalRunner(null);
+  endHubShell();
   account.stopSession();
   shell?.link.stop();
   forgetPasskeySignIn();
