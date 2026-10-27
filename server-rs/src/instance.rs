@@ -257,16 +257,6 @@ impl InstanceDirs {
         self.root.join("apps.json")
     }
 
-    /// The bearer tokens (as digests) that are logged in to this instance.
-    ///
-    /// Instance-scoped, unlike the account file it authenticates against, which
-    /// is machine-wide: an *account* is a person, and a *session* is a claim on
-    /// one server. Stopping the staging instance should not log the phone out of
-    /// the default one. See [`crate::auth::sessions`].
-    pub fn auth_sessions_file(&self) -> PathBuf {
-        self.root.join("auth-sessions.json")
-    }
-
     /// Record the port the listener actually bound.
     ///
     /// Best effort on purpose: a server that cannot write this file still

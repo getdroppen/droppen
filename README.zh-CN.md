@@ -298,7 +298,7 @@ ticket 只活 60 秒。
 
 - `POST /api/auth/login` `{username, password}` → `{token, expiresAt, username}`。token 是
   32 字节随机数的 base64url(43 字符),**服务端只存 `sha256(token)`**(在
-  `instances/<name>/auth-sessions.json`,mode 0600),所以它自己也拿不出你的 token,
+  `instances/<name>/state.db`,mode 0600),所以它自己也拿不出你的 token,
   「列出我的会话」这个接口在原理上就漏不了。
 - 之后每个请求带 `Authorization: Bearer <token>`。有效期 **7 天绝对过期**,用它不会续期——
   滑动过期正是「泄漏一次 = 永久有效」的成因(攻击者自己的轮询就能把它续活)。
