@@ -104,6 +104,11 @@ impl GotchaApp for RemoteHandApp {
             // path and `prepare`'s agree by construction: both read the same two
             // config fields.
             let instance = Arc::new(instance_dirs(&paths, &instance)?);
+            // The pre-chain-v3 pending aggregator key is deleted once at boot,
+            // whatever the link and cloud state: nothing writes it any more,
+            // and while it exists the status route would keep reporting
+            // `pending` for ever.
+            crate::aggregator::sweep_legacy_key(paths.as_ref());
             // Attachments uploaded but never sent accumulate; sweep the stale
             // ones once at boot, off the startup path so a slow disk cannot
             // delay the listener (the former TypeScript server's `files.ts`

@@ -292,7 +292,7 @@ impl FileSeedStore {
         Self { path: key_path(paths) }
     }
 
-    /// A seed file somewhere else (the aggregator's device key).
+    /// A seed file at an explicit path (an archived or expired key).
     pub fn at(path: PathBuf) -> Self {
         Self { path }
     }

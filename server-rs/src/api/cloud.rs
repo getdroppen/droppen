@@ -2009,6 +2009,24 @@ mod tests {
         assert!(!dir.exists(), "disconnecting deletes them too");
     }
 
+    /// A pre-chain-v3 pending key is deleted at boot, whatever the link state,
+    /// so an install that carries the leftover does not report `pending` (and
+    /// hide the other devices' copies) for ever.
+    #[tokio::test]
+    async fn a_pre_chain_v3_pending_key_is_not_pending_after_the_next_boot() {
+        let home = tempfile::tempdir().unwrap();
+        let state = crate::api::test_support::state(home.path()).await;
+        let key = crate::aggregator::key_path(&state.cloud.paths);
+        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+        std::fs::write(&key, b"{}").unwrap();
+        assert_eq!(status_for(&state, None).await.aggregator.state, "pending");
+
+        // The next boot builds the state from the same home again.
+        let rebooted = crate::api::test_support::state(home.path()).await;
+        assert!(!key.exists(), "the leftover key is deleted at startup");
+        assert_ne!(status_for(&rebooted, None).await.aggregator.state, "pending");
+    }
+
     /// `docs/host-identity-rotation.md` §3.8 「只剩退役钥时」:
     /// only a computer whose identity key was renewed elsewhere starts again
     /// with a new identity — its seed archived, never used again, the

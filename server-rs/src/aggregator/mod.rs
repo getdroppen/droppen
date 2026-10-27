@@ -17,8 +17,8 @@
 //!   it follows there, and follows the sessions a page opens.
 //! - Before chain v3 a sign-in with aggregation on prepared a second
 //!   identity here, a *limited device* (`aggregator/device-key.json`). Chain
-//!   v3 made it unnecessary; nothing writes it now, and the whole directory
-//!   ([`forget_all`]) takes a leftover with it.
+//!   v3 made it unnecessary; nothing writes it now, and a leftover is deleted
+//!   once at startup ([`sweep_legacy_key`]).
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
@@ -128,6 +128,22 @@ pub fn dir(paths: &Paths) -> PathBuf {
 /// `<instance>/aggregator/device-key.json`.
 pub fn key_path(paths: &Paths) -> PathBuf {
     dir(paths).join("device-key.json")
+}
+
+/// Delete the pre-chain-v3 pending key an older release may have left
+/// (`aggregator/device-key.json`), once at startup.
+///
+/// Nothing writes it any more, and while it exists the status route reports
+/// the aggregator as `pending`, which keeps other devices' copies hidden. It
+/// is removed on every boot, whatever the link and cloud state; the status
+/// branch stays for a page or a file seen before that boot.
+pub fn sweep_legacy_key(paths: &Paths) {
+    let key = key_path(paths);
+    with_lock(|| match std::fs::remove_file(&key) {
+        Ok(()) => tracing::info!(path = %key.display(), "deleted the pre-chain-v3 aggregator key"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(path = %key.display(), %error, "cannot delete the pre-chain-v3 aggregator key"),
+    });
 }
 
 /// Delete the whole directory: other devices' keys and copies with it (the
@@ -296,6 +312,19 @@ pub fn exclude_from_backups(_dir: &std::path::Path) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_leftover_pending_key_is_forgotten_at_start_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "aggtest");
+        std::fs::create_dir_all(super::dir(&paths)).unwrap();
+        std::fs::write(key_path(&paths), b"{}").unwrap();
+        std::fs::write(super::dir(&paths).join("keys.json"), b"{}").unwrap();
+        sweep_legacy_key(&paths);
+        assert!(!key_path(&paths).exists());
+        assert!(super::dir(&paths).join("keys.json").exists(), "only the legacy key goes");
+        sweep_legacy_key(&paths);
+    }
 
     /// F7 and N4: turning the aggregator off, disconnecting or a removal
     /// takes the directory away at once and overwrites its files before they
