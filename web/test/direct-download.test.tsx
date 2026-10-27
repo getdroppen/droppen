@@ -448,8 +448,11 @@ test("the download page opens on the detected tab without ?os=; a device it cann
   const unknown = download("en", { hints: HINTS.unknown });
   assert.match(unknown, /data-testid="environments" data-os="macos-app"/);
   assert.doesNotMatch(unknown, /data-detected=|data-testid="detected"/);
-  assert.ok(text(unknown).includes("Pick the device your AI runs on: every way is one click away."));
-  assert.ok(!text(unknown).includes("We picked the way for the device you are on"));
+  // A phone marks no computer: it installs nothing, and is told where to open the page.
+  const phone = download("en", { hints: HINTS.phone });
+  assert.doesNotMatch(phone, /data-testid="detected"/);
+  assert.match(phone, /data-testid="on-a-phone"/);
+  assert.doesNotMatch(unknown, /data-testid="on-a-phone"/);
   // Windows: no app, droppen.app in this browser, and the Mac and Linux ways for a server.
   const windows = download("en", { hints: HINTS.windows });
   assert.match(windows, /data-testid="to-macos-app"/);
