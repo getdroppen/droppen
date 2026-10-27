@@ -394,6 +394,38 @@ mod tests {
     }
 
     #[test]
+    fn an_export_to_a_missing_directory_is_refused_with_enoent() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
+        let paths = Paths::new(dir.path().to_path_buf());
+        plugins
+            .put(
+                "notes",
+                "state",
+                droppen_plugin_sdk::PutDoc {
+                    expected_revision: None,
+                    value: json!({ "name": "state" }),
+                },
+                None,
+            )
+            .unwrap();
+        let out = dir.path().join("missing").join("notes.json");
+        let error = execute(
+            &plugins,
+            &paths,
+            Action::Export {
+                id: "notes".into(),
+                out: Some(out.to_string_lossy().into_owned()),
+            },
+        )
+        .expect_err("writing into a directory that is not there is the old ENOENT");
+        assert!(error.contains("cannot write"), "{error}");
+        assert!(error.contains("os error 2"), "{error}");
+        assert!(!out.exists());
+        assert!(!out.parent().expect("parent").exists(), "the missing directory is not created");
+    }
+
+    #[test]
     fn an_export_imports_back_and_refuses_to_overwrite_without_replace() {
         let dir = tempfile::tempdir().unwrap();
         let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);

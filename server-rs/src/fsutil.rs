@@ -11,8 +11,8 @@
 //!    `chmod` — and a temp file left by an earlier crash is never reused;
 //! 3. set `0600` once more before the rename, so the mode does not depend on
 //!    the umask or on how the inode came to exist;
-//! 4. create a missing parent directory `0700`, so a key's directory is private
-//!    from the moment it exists.
+//! 4. optionally create a missing parent directory `0700`, for the writers that
+//!    own the directory they write into (the agent's key/state paths).
 //!
 //! The rule was written out at each of the five sites that needed it, which is
 //! how one of the steps goes missing from one of them; this is the one copy.
@@ -23,14 +23,31 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Write `data` to `path` as a new `0600` file in a `0700` directory, atomically.
+/// Write `data` to `path` as a new `0600` file, atomically.
+///
+/// The parent directory must already exist; a missing one is `NotFound`, which
+/// is what every caller except the agent's own directories reported before the
+/// rule was shared.
 pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    write(path, data, false)
+}
+
+/// [`write_private`] for a caller whose directory may not exist yet: creates the
+/// whole parent chain `0700` first. The agent's key, state and rotation paths
+/// have always done this; a missing `plugin export --out` directory has not.
+pub(crate) fn write_private_creating_parent(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    write(path, data, true)
+}
+
+fn write(path: &Path, data: &[u8], create_parent: bool) -> std::io::Result<()> {
     let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)?;
+    if create_parent {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)?;
+    }
     let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("file");
     // Unique, so two writers of the same path (or a temp left by a crash) can
     // never collide, and `create_new` can never reopen an inode with a mode
@@ -44,7 +61,7 @@ pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
         file.write_all(data)?;
         file.sync_all()?;
         #[cfg(unix)]
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         std::fs::rename(&tmp, path)
     });
     if let Err(error) = written {
@@ -64,13 +81,22 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("made/up").join("secret.json");
-        write_private(&path, b"{\"token\":\"x\"}").expect("write");
+        write_private_creating_parent(&path, b"{\"token\":\"x\"}").expect("write");
         assert_eq!(std::fs::read(&path).expect("read back"), b"{\"token\":\"x\"}");
         assert_eq!(std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777, 0o600);
         assert_eq!(
             std::fs::metadata(path.parent().expect("parent")).expect("metadata").permissions().mode() & 0o777,
             0o700
         );
+    }
+
+    #[test]
+    fn a_missing_parent_directory_is_still_not_found() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing").join("secret.json");
+        let error = write_private(&path, b"x").expect_err("no directory to write into");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(!path.parent().expect("parent").exists(), "and nothing was created");
     }
 
     #[test]

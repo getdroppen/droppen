@@ -682,10 +682,11 @@ pub(crate) fn check_private(_: &Path) -> Result<(), String> {
 /// Write `data` to `path` as a new 0600 file in a 0700 directory, atomically:
 /// a half-written key file must never be what the next run finds.
 ///
-/// The rule itself lives in [`crate::fsutil::write_private`]; this adds the
-/// path to the error, which is the shape every caller here reports.
+/// The rule itself lives in [`crate::fsutil::write_private_creating_parent`];
+/// this adds the path to the error, which is the shape every caller here
+/// reports.
 pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
-    crate::fsutil::write_private(path, data).map_err(|error| format!("{}: {error}", path.display()))
+    crate::fsutil::write_private_creating_parent(path, data).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn describe(paths: &Paths, identity: &MachineIdentity, created: bool) {
