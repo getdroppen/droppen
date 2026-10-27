@@ -66,6 +66,7 @@ use crate::openapi_ext::{Nullable, Optional};
 use crate::process_env::{apply_env, claude_env};
 use crate::sessions::util::try_parse;
 use crate::sessions::{iso8601, Paths};
+use crate::time::now_ms;
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
 pub use readings::{QuotaReadingSource, UsageLogin};
@@ -246,20 +247,6 @@ fn claude_window_label(raw: &str) -> (String, i64) {
 
 const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-/// Days since the epoch for a civil date (Howard Hinnant's algorithm).
-///
-/// The inverse of the civil-from-days conversion in `crate::sessions::iso8601`,
-/// so the two agree without pulling in a date crate.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// The reset label usually carries no year, so pick the one that puts it in the
 /// future — but take the year the CLI printed when it printed one.
 ///
@@ -288,39 +275,35 @@ fn parse_resets_at(raw: Option<&str>, now_ms: i64) -> Option<String> {
     let minute: i64 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
     let hour = if caps[6].eq_ignore_ascii_case("pm") { hour12 + 12 } else { hour12 };
 
-    let at = |year: i64| (days_from_civil(year, month + 1, day) * 86_400 + hour * 3_600 + minute * 60) * 1000;
+    // The day is the 1st plus the label's offset, so a day past the month's end
+    // keeps normalising (the civil-date arithmetic this replaced did that too).
+    // The time of day stays plain arithmetic for the same reason: a label the
+    // regex accepts but a calendar would not is still read the way it was.
+    let at = |year: i64| -> Option<i64> {
+        let first = chrono::NaiveDate::from_ymd_opt(year as i32, (month + 1) as u32, 1)?;
+        let date = if day >= 1 {
+            first.checked_add_days(chrono::Days::new((day - 1) as u64))?
+        } else {
+            first.checked_sub_days(chrono::Days::new(1))?
+        };
+        let midnight = date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis();
+        Some(midnight + hour * 3_600_000 + minute * 60_000)
+    };
     let timestamp = match stated_year {
-        Some(year) => at(year),
+        Some(year) => at(year)?,
         None => {
-            let year = civil_year(now_ms);
-            let timestamp = at(year);
+            use chrono::Datelike;
+            let year = i64::from(chrono::DateTime::from_timestamp_millis(now_ms)?.year());
+            let timestamp = at(year)?;
             // A window never resets in the past; a day of slack absorbs the rounding.
             if timestamp < now_ms - 24 * 60 * 60 * 1000 {
-                at(year + 1)
+                at(year + 1)?
             } else {
                 timestamp
             }
         }
     };
     Some(iso8601(std::time::UNIX_EPOCH + Duration::from_millis(u64::try_from(timestamp).ok()?)))
-}
-
-/// The UTC year a millisecond timestamp falls in.
-fn civil_year(now_ms: i64) -> i64 {
-    let days = (now_ms.div_euclid(1000)).div_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    if month <= 2 {
-        year + 1
-    } else {
-        year
-    }
 }
 
 fn window(label: String, minutes: i64, used: f64, resets_at: Option<String>) -> QuotaWindow {
@@ -490,12 +473,6 @@ fn mentions_status_429(lower: &str) -> bool {
     false
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 // --------------------------------------------------------------------- caching
 
@@ -1079,19 +1056,6 @@ mod tests {
         );
         assert!(parse_claude_usage(text, NOW_MS).is_empty());
         assert!(!is_rate_limited(text), "an unauthenticated probe is not a rate-limited one");
-    }
-
-    #[test]
-    fn the_civil_date_conversions_are_inverses() {
-        for days in [0i64, 1, 19_000, 20_300, -1] {
-            let iso = iso8601(std::time::UNIX_EPOCH + Duration::from_secs(days.max(0) as u64 * 86_400));
-            let (year, month, day) = (
-                iso[0..4].parse::<i64>().expect("year"),
-                iso[5..7].parse::<i64>().expect("month"),
-                iso[8..10].parse::<i64>().expect("day"),
-            );
-            assert_eq!(days_from_civil(year, month, day), days.max(0), "round trip for {iso}");
-        }
     }
 
     const ACCOUNT: &str = "0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f";

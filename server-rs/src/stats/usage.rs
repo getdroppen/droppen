@@ -142,35 +142,17 @@ pub struct UsageStats {
 
 // --- civil dates -------------------------------------------------------------
 
-/// Days since 1970-01-01 for a civil date — Howard Hinnant's `days_from_civil`.
-///
-/// The inverse of the `civil_from_days` inlined in [`crate::sessions::iso8601`],
-/// so window arithmetic needs no date crate either.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// Epoch milliseconds of UTC midnight on a `YYYY-MM-DD` date, JS's `Date.parse`.
 fn millis_from_date(date: &str) -> Option<i64> {
-    let year: i64 = date.get(0..4)?.parse().ok()?;
-    let month: i64 = date.get(5..7)?.parse().ok()?;
-    let day: i64 = date.get(8..10)?.parse().ok()?;
-    if date.as_bytes().get(4) != Some(&b'-') || date.as_bytes().get(7) != Some(&b'-') {
-        return None;
-    }
-    Some(days_from_civil(year, month, day) * DAY_MS)
+    let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis())
 }
 
 /// The UTC calendar day an instant falls on, `YYYY-MM-DD`.
 fn date_from_millis(millis: i64) -> String {
-    let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(millis.max(0) as u64);
-    iso8601(time)[..10].to_string()
+    chrono::DateTime::from_timestamp_millis(millis.max(0))
+        .map(|at| at.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| "1970-01-01".to_string())
 }
 
 /// `(since, cutoff)` for a window of `window_days` UTC days ending on `today`.
