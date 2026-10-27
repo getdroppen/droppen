@@ -19,8 +19,8 @@
 #
 #   0. an instance directory the app did not create is refused, untouched;
 #   1. first launch: the account, `droppen-app`, is made before the server
-#      starts, is app-internal and is the only one (an inherited machine-wide
-#      account is removed), the server is the bundled sidecar on a loopback
+#      starts, is app-internal and is the only one (the machine-wide account
+#      is not inherited), the server is the bundled sidecar on a loopback
 #      port, the web app loads logged in (no login page) and opens the
 #      first-run guide by itself, on its welcome page, as the server says a
 #      fresh install does; going through it as a new user does (Get started,
@@ -280,7 +280,7 @@ command quit >/dev/null
 wait_for "the app to exit" '! alive "$APP_PID"' 30 || true
 rm -rf "$INSTANCE_DIR"
 
-say "seed a machine-wide account the new instance would inherit"
+say "seed a machine-wide account the new instance must not inherit"
 printf '%s\n' "intruder-password-0001" | server_cli user add intruder --instance scratch >/dev/null
 mkdir -p "$HOME_DIR/.config/remote-hand"
 cp "$HOME_DIR/.local/share/remote-hand/instances/scratch/users.json" "$HOME_DIR/.config/remote-hand/users.json"
@@ -300,9 +300,9 @@ check "the server is the bundled sidecar" '[ "$(ps -o comm= -p "$SERVER_PID")" =
 check "the instance is app-made (marker) and held by that server" '[ -f "$INSTANCE_DIR/droppen-app.json" ] && [ "$(cat "$INSTANCE_DIR/lock")" = "$SERVER_PID" ] && [ "$(cat "$INSTANCE_DIR/server.port")" = "$PORT" ]'
 check "the account was made before the server started" '[ "$(grep -n "password kept in the" "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n "server started" "$LOG" | head -1 | cut -d: -f1)" ]'
 check "the app's login is droppen-app" '[ "$USER_NAME" = droppen-app ]'
-check "the inherited account was removed; only the app's app-internal account remains" 'grep -q "removed 1 inherited account(s): intruder" "$LOG" && [ "$(server_cli user list --app --instance "$E2E_INSTANCE" | sed 1d | cut -f1)" = droppen-app ] && server_cli user list --instance "$E2E_INSTANCE" | head -1 | grep -q "^no accounts"'
-check "the inherited login is refused" '[ "$(login_code intruder intruder-password-0001)" = 401 ]'
-check "the marker records the pruning done" 'grep -q "\"pruned\": true" "$INSTANCE_DIR/droppen-app.json"'
+check "the machine-wide account was not inherited; only the app's app-internal account is on the instance" '! grep -q "inherited account(s)" "$LOG" && [ "$(server_cli user list --app --instance "$E2E_INSTANCE" | sed 1d | cut -f1)" = droppen-app ] && server_cli user list --instance "$E2E_INSTANCE" | head -1 | grep -q "^no accounts"'
+check "the machine-wide login is refused" '[ "$(login_code intruder intruder-password-0001)" = 401 ]'
+check "the marker records no pruning state" '! grep -q "pruned" "$INSTANCE_DIR/droppen-app.json"'
 check "the password is in the 0600 file (keychain off)" '[ "$(stat -f %Lp "$SUPPORT/credentials.json")" = 600 ] && [ "$(stat -f %Lp "$SUPPORT")" = 700 ]'
 check "no secret in the app log" 'nowhere -F "$(password)" "$LOG"'
 STATUS=$(curl -fsS "http://127.0.0.1:$PORT/api/auth/status")

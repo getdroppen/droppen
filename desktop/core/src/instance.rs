@@ -43,12 +43,6 @@ pub struct Marker {
     pub created_by: String,
     /// When, ISO-8601.
     pub created_at: String,
-    /// Whether the accounts the new instance inherited from the device have
-    /// been removed. Until it says so, every start tries again: a first start
-    /// cut short between creating the folder and pruning must not leave
-    /// someone else's login on the app's server for good.
-    #[serde(default)]
-    pub pruned: bool,
 }
 
 /// Whose the instance directory is.
@@ -83,18 +77,6 @@ fn write_marker(dir: &Path, marker: &Marker) -> io::Result<()> {
     crate::state::write_atomically(&dir.join(MARKER), &body, 0o644)
 }
 
-/// Whether the inherited accounts still have to be removed.
-pub fn needs_pruning(dir: &Path) -> bool {
-    !marker(dir).is_some_and(|marker| marker.pruned)
-}
-
-/// Record in the marker that the inherited accounts are gone.
-pub fn mark_pruned(dir: &Path) -> io::Result<()> {
-    let mut marker = marker(dir).ok_or_else(|| io::Error::other("the instance has no marker"))?;
-    marker.pruned = true;
-    write_marker(dir, &marker)
-}
-
 /// Create `dir` (which must not exist yet) with the app's marker in it.
 pub fn claim_new(dir: &Path) -> io::Result<()> {
     if let Some(parent) = dir.parent() {
@@ -104,7 +86,6 @@ pub fn claim_new(dir: &Path) -> io::Result<()> {
     let marker = Marker {
         created_by: crate::BUNDLE_ID.to_string(),
         created_at: crate::logging::timestamp(std::time::SystemTime::now()),
-        pruned: false,
     };
     write_marker(dir, &marker)
 }
@@ -206,22 +187,6 @@ mod tests {
         claim_new(&dir).expect("claim");
         assert_eq!(ownership(&dir), Ownership::Ours);
         assert!(claim_new(&dir).is_err(), "never claims a directory that exists");
-    }
-
-    #[test]
-    fn pruning_is_owed_until_it_is_recorded() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let dir = dir_under(root.path(), "droppen-app");
-        claim_new(&dir).expect("claim");
-        assert!(needs_pruning(&dir), "a new instance still has its inherited accounts");
-        // A start cut short here leaves the debt in place for the next one.
-        assert!(needs_pruning(&dir));
-        mark_pruned(&dir).expect("mark");
-        assert!(!needs_pruning(&dir));
-        assert_eq!(ownership(&dir), Ownership::Ours, "still the app's");
-        // A marker written before this field existed reads as not yet pruned.
-        std::fs::write(dir.join(MARKER), format!(r#"{{"createdBy":"{}","createdAt":"x"}}"#, crate::BUNDLE_ID)).expect("old marker");
-        assert!(needs_pruning(&dir));
     }
 
     #[test]

@@ -160,9 +160,9 @@ impl Cli {
     ///
     /// An existing **user** account of that name is turned into an
     /// app-internal one (`user mark-app`) rather than added again, which would
-    /// fail and leave the app unable to start: on a new instance, an inherited
-    /// account that happens to have the app's name (the first launch gives it
-    /// a new password).
+    /// fail and leave the app unable to start: an account made before the app's
+    /// login was app-internal can carry the app's name (the first launch then
+    /// gives it a new password).
     pub fn ensure(&self, credential: &Credential, reset_password: bool) -> Result<Ensured, String> {
         let name = credential.username.as_str();
         let password = Some(credential.password.as_str());
@@ -219,39 +219,6 @@ impl Cli {
         Ok(Retired::Removed)
     }
 
-}
-
-impl Cli {
-    /// Remove every account on the instance but `keep` — every user account
-    /// and every other app-internal one — returning the names removed.
-    ///
-    /// For a new instance only, right after the app's own account exists. A
-    /// new instance on a device that already has accounts inherits them, once
-    /// ever (`server-rs/src/auth/users.rs`, "What an instance inherits") — on a
-    /// shared Mac that can be another person's login, which has no business
-    /// opening the app's server. The server removes an account from one
-    /// instance and from nothing else (the machine-wide set stays as it is),
-    /// and because the inheritance is marked as done in the same transaction
-    /// it never comes back. `keep` must be an app-internal account already,
-    /// so the app's window can always sign in. Every removal passes `--yes`,
-    /// which the server asks for before it removes an instance's last user
-    /// account.
-    pub fn prune_others(&self, keep: &str) -> Result<Vec<String>, String> {
-        let apps = self.list(Kind::App)?;
-        if !apps.iter().any(|name| name == keep) {
-            return Err(format!(
-                "refusing to prune: {keep} is not an app-internal account on instance {}",
-                self.instance
-            ));
-        }
-        let users = self.list(Kind::User)?;
-        let mut removed = Vec::new();
-        for name in users.into_iter().chain(apps.into_iter().filter(|name| name != keep)) {
-            self.run(&["rm", &name, "--yes"], None)?;
-            removed.push(name);
-        }
-        Ok(removed)
-    }
 }
 
 /// [`std::process::Child::wait_with_output`], but a command still running
@@ -864,9 +831,10 @@ esac
     }
 
     #[test]
-    fn an_inherited_account_with_the_apps_name_becomes_the_apps_with_a_new_password() {
-        // A new instance inherits the device's accounts; one named droppen-app
-        // is made the app's on this instance only, rather than failing to add.
+    fn a_user_account_with_the_apps_name_becomes_the_apps_with_a_new_password() {
+        // An account made before the app's login was app-internal can carry the
+        // app's name; it is made the app's on this instance only, rather than
+        // failing to add.
         let dir = tempfile::tempdir().expect("tempdir");
         seed(dir.path(), &[(APP_ACCOUNT, "user")]);
         let cli = cli(dir.path());
@@ -874,37 +842,6 @@ esac
         assert_eq!(ready.ensured, Ensured::Migrated { password_reset: true });
         assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
         assert_eq!(read(dir.path(), "passwords.txt"), format!("{}\n", ready.credential.password));
-    }
-
-    #[test]
-    fn a_new_instance_keeps_only_the_apps_account() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        // Inherited from the device's machine-wide set: people's logins, and
-        // an app-internal account that is not this app's.
-        seed(
-            dir.path(),
-            &[("someone-else", "user"), ("ada", "user"), ("third", "user"), ("stray-app", "app")],
-        );
-        let cli = cli(dir.path());
-        ready_login(&cli, None, "carol", never_recorded, Kept::default().keep()).expect("ready");
-        let removed = cli.prune_others(APP_ACCOUNT).expect("prune");
-        assert_eq!(removed, vec!["someone-else", "ada", "third", "stray-app"]);
-        assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
-        assert_eq!(cli.list(Kind::User).expect("list"), Vec::<String>::new());
-        // The last user account needs --yes, and got it.
-        assert!(read(dir.path(), "calls.txt").contains("user rm third --yes --instance droppen-app"));
-        assert!(cli.prune_others("nobody").is_err(), "never prunes when the keeper is missing");
-        assert_eq!(cli.list(Kind::App).expect("list"), vec![APP_ACCOUNT]);
-    }
-
-    #[test]
-    fn pruning_refuses_while_the_keeper_is_a_user_account() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        seed(dir.path(), &[("someone-else", "user"), (APP_ACCOUNT, "user")]);
-        let cli = cli(dir.path());
-        let error = cli.prune_others(APP_ACCOUNT).expect_err("refuses");
-        assert!(error.contains("not an app-internal account"), "{error}");
-        assert_eq!(cli.list(Kind::User).expect("list"), vec!["someone-else", APP_ACCOUNT], "nothing removed");
     }
 
     #[test]

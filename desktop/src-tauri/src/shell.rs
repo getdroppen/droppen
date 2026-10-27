@@ -353,7 +353,7 @@ impl Shell {
         }
 
         // The instance must be the app's own before anything touches it.
-        let fresh = match instance::ownership(&self.instance_dir) {
+        match instance::ownership(&self.instance_dir) {
             Ownership::NotOurs => {
                 return Err(format!(
                     "This device already has a Droppen server instance called \"{INSTANCE}\" that the Droppen app did not create ({}). \
@@ -361,11 +361,10 @@ impl Shell {
                     self.instance_dir.display()
                 ))
             }
-            Ownership::Ours => false,
+            Ownership::Ours => {}
             Ownership::New => {
                 instance::claim_new(&self.instance_dir).map_err(|error| format!("Droppen could not create its server folder: {error}"))?;
                 log::info!("created instance {INSTANCE} at {}", self.instance_dir.display());
-                true
             }
         };
         match instance::lock_state(&self.instance_dir) {
@@ -452,17 +451,6 @@ impl Shell {
             None => {}
         }
         let credential = ready.credential;
-        // Until the marker records it, every start removes the accounts the
-        // instance inherited — a first start cut short in between must not
-        // leave them for good.
-        if fresh || instance::needs_pruning(&self.instance_dir) {
-            let removed = cli.prune_others(&credential.username)?;
-            if !removed.is_empty() {
-                log::info!("new instance: removed {} inherited account(s): {}", removed.len(), removed.join(", "));
-            }
-            instance::mark_pruned(&self.instance_dir).map_err(|error| format!("Droppen could not record its server folder's state: {error}"))?;
-            log::info!("instance {INSTANCE} has only the app's account ({})", credential.username);
-        }
 
         {
             let mut inner = self.inner();
@@ -1020,8 +1008,9 @@ fn handed_off_since(handed_off: Option<Instant>, asked: Instant) -> bool {
     handed_off.is_some_and(|at| at > asked)
 }
 
-/// Log that the app's account was a user account and is now app-internal: on
-/// a new instance, an inherited account that happened to have the app's name.
+/// Log that the app's account was a user account and is now app-internal: an
+/// account made before the app's login was app-internal can carry the app's
+/// name.
 fn log_migrated(username: &str, password_reset: bool) {
     log::info!(
         "account {username} was a user account; it is now the app's app-internal one (user mark-app), {}",
