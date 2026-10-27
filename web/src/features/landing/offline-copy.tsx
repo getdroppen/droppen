@@ -94,9 +94,14 @@ export function offlineLocks(L: Layout): Pt[] {
 
 const HUB_W = 156;
 
+/** The phone card's width in a row: room for its longest message row in every language (English's, 254px). */
+const DEVICE_W = 280;
+/** Below this the three cards and their gaps do not fit in a row with the phone at `DEVICE_W`: they stack. */
+const ROW_MIN_W = 740;
+
 export function offlineLayout(w: number): Layout {
   const pad = 12;
-  if (w < 560) {
+  if (w < ROW_MIN_W) {
     // The computer on top; Droppen with the store beside it; the phone below.
     const machine = { x: pad, y: pad, w: w - 2 * pad, h: ledgerH(1) };
     const hub = { x: pad, y: machine.y + machine.h + 44, w: Math.min(HUB_W, Math.round(w * 0.42)), h: ledgerH(1) };
@@ -117,8 +122,8 @@ export function offlineLayout(w: number): Layout {
     };
   }
   const gap = 36;
-  const machineW = Math.min(208, Math.round(w * 0.3));
-  const deviceW = Math.min(224, Math.round(w * 0.32));
+  const machineW = Math.min(208, Math.round(w * 0.28));
+  const deviceW = Math.min(DEVICE_W, w - 2 * pad - machineW - HUB_W - 2 * gap);
   const x0 = Math.round((w - (machineW + HUB_W + deviceW + 2 * gap)) / 2);
   const top = 24;
   const mid = top + Math.round(ledgerH(2) / 2);
@@ -160,7 +165,7 @@ export function OfflineCopy() {
   const roles = ["USER", "CLAUDE"];
   // Plaintext only: the phone shows the session as it was, and nothing on the way shows any words.
   const messages: Message[] = [
-    { p: t("make the sign-in button dark"), c: "" },
+    { p: t("darken the sign-in button"), c: "" },
     { p: t("done, tests pass"), c: "" },
   ];
   const titles = { shut: t("encrypted locally"), open: t("decrypted locally") };

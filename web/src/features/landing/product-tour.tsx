@@ -197,7 +197,7 @@ export function ProductTour() {
     const timer = setTimeout(() => setActive((tab) => TOUR_TABS[(TOUR_TABS.indexOf(tab) + 1) % TOUR_TABS.length]!), TOUR_ADVANCE_MS);
     return () => clearTimeout(timer);
   }, [active, reduced, picked, visible]);
-  // On a phone the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
+  // Under 1280px the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
   useEffect(() => {
     const tab = tabs.current[active];
     const list = tab?.parentElement;
@@ -222,7 +222,7 @@ export function ProductTour() {
   const now = copy[active];
   return (
     <div ref={root} data-testid="product-tour">
-      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-md:flex max-md:overflow-x-auto max-md:[scrollbar-width:none]">
+      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-xl:flex max-xl:overflow-x-auto max-xl:[scrollbar-width:none]">
         {TOUR_TABS.map((tab, i) => {
           const on = tab === active;
           return (
@@ -238,13 +238,13 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "group relative flex flex-col items-start gap-1 px-5 pt-4 pb-5 text-left transition-colors max-md:w-[220px] max-md:shrink-0 max-md:px-4",
+                "group relative flex flex-col items-start gap-1 px-5 pt-4 pb-5 text-left transition-colors max-xl:w-[220px] max-xl:shrink-0 max-md:px-4",
                 i > 0 && "border-l border-border",
                 on && "bg-raised",
               )}
             >
               <span className={cn("text-sm leading-5 font-semibold", on ? "text-fg" : "text-muted group-hover:text-fg")}>{copy[tab].label}</span>
-              <span className="text-[13px] leading-5 text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{copy[tab].line}</span>
+              <span className="text-[13px] leading-5 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{copy[tab].line}</span>
               {/* The active tab's rule; while the tour advances by itself, it fills up to the next tab. */}
               {on && (
                 <span

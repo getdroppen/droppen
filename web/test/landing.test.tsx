@@ -467,6 +467,27 @@ test("every diagram is right-angled: each wire straight or a single L, through n
   }
 });
 
+test("every diagram's cards stay inside it, at every width a pane can have, and the phone's rows have room", () => {
+  // The panes run from a 288px phone to about 830px beside the text in the 1360px column.
+  for (let w = 288; w <= 900; w += 2) {
+    const D = directLayout(w);
+    const O = offlineLayout(w);
+    for (const [name, r] of [
+      ["direct device", D.device],
+      ["direct computer", D.machine],
+      ["direct relay", around(D.hub, DIRECT_HUB)],
+      ["offline computer", O.machine],
+      ["offline hub", O.hub],
+      ["offline store", O.store],
+      ["offline phone", O.device],
+    ] as const) {
+      assert.ok(r.x >= 0 && r.x + r.w <= w, `${name} at ${w}: ${r.x}..${r.x + r.w}`);
+    }
+    // The longest message row (English, "darken the sign-in button") needs 254px.
+    assert.ok(O.device.w >= 254, `offline phone at ${w}: ${O.device.w}px`);
+  }
+});
+
 test("the tour shows the product: six tabs of real screenshots, each in its frame, in English for every reader and in both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
