@@ -203,8 +203,11 @@ mod tests {
         [("PATH".to_string(), path.to_string())].into_iter().collect()
     }
 
-    // The tests below are the desktop app's (`env_path.rs`), kept with the
-    // copy so the two cannot drift apart unnoticed.
+    // The PATH rule's contract, pinned where the server uses it: the fixed
+    // directories and their order decide which `node` and `claude` a session
+    // runs, and the login shell's entries and the session-bin filter decide the
+    // rest. `env_path.rs` pins the same contract from the app's side, so a
+    // change to the rule or to an expectation is deliberate on both.
 
     #[test]
     fn without_the_login_shell_the_base_is_the_path() {
