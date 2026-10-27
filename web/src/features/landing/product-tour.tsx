@@ -142,41 +142,17 @@ export function ProductTour() {
   const [active, setActive] = useState<TourTab>("sessions");
   const tabs = useRef<Partial<Record<TourTab, HTMLButtonElement | null>>>({});
 
-  // Each tab says in one line what its picture shows, in the tab itself: the picture hangs straight off the tab row.
-  const copy: Record<TourTab, { label: string; line: string; alt: string }> = {
-    sessions: {
-      label: t("Sessions"),
-      line: t("Answer the question it is waiting on, and it carries on."),
-      alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer"),
-    },
-    split: {
-      label: t("Split screen"),
-      line: t("Sessions and terminals side by side, from any of your computers."),
-      alt: t("Droppen with three panes: two sessions and a terminal"),
-    },
-    terminal: {
-      label: t("Terminal"),
-      line: t("A shell on any of your computers, from any browser."),
-      alt: t("A terminal in Droppen"),
-    },
-    cloud: {
-      label: t("Cloud"),
-      line: t("Every computer on your account, and what needs you on all of them."),
-      alt: t("my.droppen.app: three computers and the list of what needs you"),
-    },
-    phone: {
-      label: t("Phone"),
-      line: t("No app to install: add droppen.app to your home screen."),
-      alt: t("Droppen on a phone: what needs you, and a session's question"),
-    },
-    security: {
-      label: t("Security"),
-      line: t("A new device gets in only when one you already have lets it in, with a QR code."),
-      alt: t("Letting a new device in with a QR code"),
-    },
+  // A tab is its name: the picture under it says the rest (and its alt text, to a screen reader).
+  const copy: Record<TourTab, { label: string; alt: string }> = {
+    sessions: { label: t("Sessions"), alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer") },
+    split: { label: t("Split screen"), alt: t("Droppen with three panes: two sessions and a terminal") },
+    terminal: { label: t("Terminal"), alt: t("A terminal in Droppen") },
+    cloud: { label: t("Cloud"), alt: t("my.droppen.app: three computers and the list of what needs you") },
+    phone: { label: t("Phone"), alt: t("Droppen on a phone: what needs you, and a session's question") },
+    security: { label: t("Security"), alt: t("Letting a new device in with a QR code") },
   };
 
-  // Under 1280px the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
+  // On a phone the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
   useEffect(() => {
     const tab = tabs.current[active];
     const list = tab?.parentElement;
@@ -200,7 +176,7 @@ export function ProductTour() {
   const now = copy[active];
   return (
     <div data-testid="product-tour">
-      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-xl:flex max-xl:overflow-x-auto max-xl:[scrollbar-width:none]">
+      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-md:flex max-md:overflow-x-auto max-md:[scrollbar-width:none]">
         {TOUR_TABS.map((tab, i) => {
           const on = tab === active;
           return (
@@ -216,13 +192,12 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "group relative flex flex-col items-start gap-1 px-5 pt-4 pb-5 text-left transition-colors max-xl:w-[220px] max-xl:shrink-0 max-md:px-4",
+                "relative flex h-12 items-center justify-center px-4 text-sm whitespace-nowrap transition-colors max-md:shrink-0 max-md:px-5",
                 i > 0 && "border-l border-border",
-                on && "bg-raised",
+                on ? "bg-raised font-semibold text-fg" : "text-muted hover:text-fg",
               )}
             >
-              <span className={cn("text-sm leading-5 font-semibold", on ? "text-fg" : "text-muted group-hover:text-fg")}>{copy[tab].label}</span>
-              <span className="text-[13px] leading-5 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{copy[tab].line}</span>
+              {copy[tab].label}
               {/* The active tab's rule. */}
               {on && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-fg" />}
             </button>

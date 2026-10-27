@@ -129,7 +129,8 @@ export function HeroGet({
           </div>
           <p className={small}>
             {release && dmg && <span data-testid="hero-file-facts">{fileFacts(release, dmg)} · </span>}
-            {t("macOS 13 or later · Apple silicon and Intel")} · <TabLink label={t("other systems")} testId="hero-other-systems" /> · <ReleaseLink release={release} />
+            {/* The checksums and the release's other files are the download page's, one click away. */}
+            {t("macOS 13 or later · Apple silicon and Intel")} · <TabLink label={t("other systems")} testId="hero-other-systems" />
           </p>
         </>
       )}

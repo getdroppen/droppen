@@ -43,10 +43,11 @@ export function Section({ id, children, className }: { id?: string; children: Re
   );
 }
 
-export function SectionHead({ label, title, lead, className }: { label: string; title: ReactNode; lead?: ReactNode; className?: string }) {
+/** A section's head; `label`, the caps line over the title, only where the title does not already say what the section is. */
+export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      <CapsLabel>{label}</CapsLabel>
+      {label && <CapsLabel>{label}</CapsLabel>}
       <h2 className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>

@@ -67,7 +67,7 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   for (const line of [
     // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
     "电脑上的 AI，手机上接着用。",
-    "回答它在等的问题，它就接着干。",
+    "Claude Code 和 Codex 照常在你自己的电脑上跑。",
     "三步装好，走到哪都能接手。",
     "本来要走回工位才能做的事，手机上都能做。",
     "所有会话，一个列表",
@@ -176,7 +176,7 @@ test("routing: `/` is the landing page signed in or not; the app keeps its own r
 
 test("the numbers are the measured ones, and nothing claims more than the build does", () => {
   const words = text(draw("en"));
-  for (const n of ["63–73 ms", "215–227 ms", "1.5 s", "two in three", "30 days"]) assert.ok(words.includes(n), `missing: ${n}`);
+  for (const n of ["63–73 ms", "215–227 ms", "1.5 s", "30 days"]) assert.ok(words.includes(n), `missing: ${n}`);
   assert.match(words, /internal security reviews, not an external audit/);
   assert.match(words, /Droppen is in beta\./);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
@@ -206,7 +206,7 @@ test("only the client is called open source: the hub never is, and nothing says 
     assert.doesNotMatch(words, all, lng);
   }
   // The link goes to the source.
-  assert.match(draw("en"), /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="hero-source"/);
+  assert.match(draw("en"), /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="landing-source"/);
 });
 
 test("open sign-up by default: no invite wording; the invite wording only where the hub says sign-up is by invite, and \"closed for now\" where it is closed", () => {
@@ -218,8 +218,6 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     assert.ok(words.includes(`Public beta: free for ${PLAN_NUMBERS.free.hosts} computers.`));
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
     assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
-    assert.ok(words.includes("Public beta"));
-    assert.ok(words.includes("Sign up with your e-mail, connect your computer, and pick up from your phone."));
     assert.match(html, /<a href="\/signup"[^>]*>Start for free<\/a>/);
   }
   for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
@@ -231,15 +229,11 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   assert.ok(text(invited).includes("Invite-only for now: sign-up needs an invite code."));
   assert.match(invited, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
   assert.doesNotMatch(invited, /data-testid="hero-pricing"/);
-  assert.ok(text(invited).includes("Invite-only beta"));
-  assert.ok(text(invited).includes("Sign up with your invite code, connect your computer, and pick up from your phone."));
-  assert.ok(text(draw("zh-CN", { signup: "invite" })).includes("邀请制测试版"));
   // Closed: closed for now, and the waitlist; no invite code and nothing to sign up with.
   const closed = draw("en", { signup: "closed" });
   assert.ok(text(closed).includes("Sign-up is closed for now."));
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>Join the waitlist<\/a>/);
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
-  assert.ok(text(closed).includes("Beta"));
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
   assert.doesNotMatch(closed, /href="\/signup"|Start for free/);
   assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>Join the waitlist<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
@@ -282,12 +276,14 @@ test("every string on the page is translated into zh-CN, zh-TW and ja", () => {
 
 test("the home page's words are its own: no key it draws is one the app translates differently", async () => {
   // The landing bundle is added without overwriting (`landing.tsx`), so a key the app already has shows the app's wording.
-  const { default: appI18n } = await import("../src/i18n/index.js");
+  // Every language loaded: the app fetches a language's tables only when it first shows it.
+  const { default: appI18n } = await import("./i18n-all.js");
   const home = ["landing.tsx", "product-tour.tsx"].flatMap((file) => [
     ...readFileSync(new URL(`../src/features/landing/${file}`, import.meta.url), "utf8").matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g),
   ]).map((m) => JSON.parse(`"${m[1]}"`) as string);
   for (const lng of ["zh-CN", "zh-TW", "ja"] as const) {
     const appTable = (appI18n.store.data[lng]?.translation ?? {}) as Record<string, string>;
+    assert.ok(Object.keys(appTable).length > 500, `${lng}: the app's table is loaded`);
     for (const key of home) {
       if (key in appTable && key in landingBundles[lng]) assert.equal(appTable[key], landingBundles[lng][key], `${lng}: the app's "${appTable[key]}" hides the page's "${landingBundles[lng][key]}" for ${key}`);
     }
@@ -538,9 +534,9 @@ test("no region is named anywhere on the page: the relay is Droppen's, wherever 
   }
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), region, lng);
   assert.doesNotMatch(readFileSync(new URL("../index.html", import.meta.url), "utf8"), region);
-  // The prose introduces both, where it draws the line: Droppen Hub finds your computers, Droppen relays pass ciphertext on.
-  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 只负责找到你的电脑、保管加密副本，Droppen 中继只负责转发密文"));
-  assert.ok(text(draw("en")).includes("Droppen Hub only finds your computers and keeps their encrypted copies; Droppen relays only pass ciphertext on"));
+  // The encryption card draws the line between them: Droppen Hub keeps the encrypted copies, Droppen relays pass ciphertext on.
+  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 只保管加密副本，Droppen 中继只转发密文"));
+  assert.ok(text(draw("en")).includes("Droppen Hub only keeps encrypted copies and Droppen relays only pass ciphertext on"));
 });
 
 test("the diagrams show product properties, not implementation trivia, and call the relay a Droppen relay", () => {

@@ -142,10 +142,10 @@ function landing(lng: string, opts: { hints?: EnvironmentHints; signedIn?: boole
 function hero(html: string): string {
   const from = html.indexOf('data-testid="hero-get"');
   assert.ok(from >= 0, "the hero's actions are there");
-  // Up to the proof row under them (what it works with, the source).
-  const to = html.indexOf('data-testid="hero-proof"', from);
-  assert.ok(to > from, "the proof row follows the actions");
-  return html.slice(html.lastIndexOf("<div", from), html.lastIndexOf("<ul", to));
+  // Up to the product tour under the hero.
+  const to = html.indexOf('id="tour"', from);
+  assert.ok(to > from, "the product tour follows the hero");
+  return html.slice(html.lastIndexOf("<div", from), to);
 }
 
 function download(
@@ -452,14 +452,15 @@ test("the download page opens on the detected tab without ?os=; a device it cann
   assert.equal(primaries(windows), 1);
 });
 
-test("the hero on a Mac: 「Download for Mac」 is the one primary action, the file itself; the release page and the other systems beside it", () => {
+test("the hero on a Mac: 「Download for Mac」 is the one primary action, the file itself; the other systems beside it, and the checksums one click further", () => {
   const html = landing("en", { hints: HINTS.mac });
   const h = hero(html);
   assert.match(h, /data-offer="mac"/);
   assert.match(h, new RegExp(`<a href="${esc(`${DL}Droppen-0.2.129.dmg`)}" data-variant="primary" data-testid="hero-download"[^>]*>.*Download for Mac</a>`));
   assert.equal(primaries(html), 1, "one primary on the page");
   assert.ok(text(h).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
-  assert.match(h, new RegExp(`<a href="${esc(RELEASE.releasesPage)}" target="_blank" rel="noopener noreferrer" data-testid="hero-release-link"`));
+  // The checksums and the release's other files are the download page's (`other systems`), not the hero's.
+  assert.doesNotMatch(h, /data-testid="hero-release-link"/);
   assert.match(h, /<a href="\/download" data-testid="hero-other-systems"/);
   // Sign-up stays, as the secondary; signing in is the header's and the footer's.
   assert.match(h, /<a href="\/signup" class="[^"]*">Start for free<\/a>/);
@@ -531,7 +532,7 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["No Windows app yet."], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "其他系统", "校验值和其他文件"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-CN": { mac: ["下载 Mac 版", "其他系统"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
     "zh-TW": { mac: ["下載 Mac 版", "其他系統"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Windows 版 App 還沒有。"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
     ja: { mac: ["Mac 版をダウンロード", "ほかの OS"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Windows 版アプリはまだありません。"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
   };
