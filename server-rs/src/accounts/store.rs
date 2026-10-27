@@ -760,6 +760,12 @@ fn normalize_label(raw: &str) -> Result<String, AccountError> {
 /// handed to a spawn as an OAuth token it is not, which bills the wrong login
 /// or 401s under a label that says everything is fine. It is dropped, loudly,
 /// exactly as a row with no usable secret is.
+///
+/// `api_key` and `auth_token` are the exception, because they are not
+/// unrecognised: v0.2.58 shipped them, and every one of those rows says exactly
+/// what it would have put in the environment. They are converted here, on the
+/// way in, and written back in the new shape by the next update that touches
+/// the row — see [`legacy_block`].
 fn sanitize_account(raw: &serde_json::Value, now: &str) -> Option<StoredAccount> {
     let object = raw.as_object()?;
     let id = object.get("id").and_then(|v| v.as_str()).filter(|id| is_uuid(id))?;
@@ -775,11 +781,19 @@ fn sanitize_account(raw: &serde_json::Value, now: &str) -> Option<StoredAccount>
     let secret = string("secret").filter(|s| !s.is_empty());
     let raw_kind = object.get("kind").and_then(|v| v.as_str()).map(str::trim);
 
-    // What this build writes, and anything else — which is a row from the
-    // future or a hand edit, and is not an account this build may guess at.
+    // The three-way split: what this build writes, what v0.2.58 wrote, and
+    // anything else — which is a row from the future or a hand edit, and is not
+    // an account this build may guess at.
     let (kind, env) = match raw_kind {
         None | Some("") | Some("oauth_token") => (AccountKind::OauthToken, Vec::new()),
         Some("env") => (AccountKind::Env, read_env(object.get("env"))),
+        Some(legacy @ ("api_key" | "auth_token")) => {
+            let Some(secret) = secret.as_deref() else {
+                tracing::warn!(account = %id, "a v1 key account with no key is not an account");
+                return None;
+            };
+            (AccountKind::Env, legacy_block(provider, legacy, secret, string("baseUrl").as_deref()))
+        }
         Some(other) => {
             tracing::warn!(account = %id, kind = %other, "an account whose kind this build does not know is not an account");
             return None;
@@ -805,8 +819,8 @@ fn sanitize_account(raw: &serde_json::Value, now: &str) -> Option<StoredAccount>
     }
     let hash = match kind {
         AccountKind::OauthToken => string("secretSha256").unwrap_or_else(|| sha256_hex(&secret)),
-        // Never the stored hash for an env account: a row's hash is of its
-        // block, and the duplicate check compares blocks.
+        // Never the stored hash for an env account: a converted v1 row's hash is
+        // of the bare token, and the duplicate check now compares blocks.
         AccountKind::Env => block_sha256(&env),
     };
     Some(StoredAccount {
@@ -848,6 +862,32 @@ fn read_env(raw: Option<&serde_json::Value>) -> Vec<EnvVar> {
             })
         })
         .collect()
+}
+
+/// A v0.2.58 key account as the block it was always shorthand for.
+///
+/// Exactly the variables that build injected, under exactly the names it used,
+/// so an account that was working before the upgrade is working after it. The
+/// codex pair is the one that moves: v1 put the key straight into the variable
+/// the injected provider reads, and a block says what the user's key *is*
+/// (`OPENAI_API_KEY`) and lets [`launch_for`] do the translating.
+fn legacy_block(provider: AccountProvider, kind: &str, secret: &str, base_url: Option<&str>) -> Vec<EnvVar> {
+    let (key_var, url_var) = match provider {
+        AccountProvider::Claude if kind == "auth_token" => ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
+        AccountProvider::Claude => ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+        AccountProvider::Codex => (CODEX_KEY_CANDIDATES[0], CODEX_BASE_URL_VAR),
+    };
+    let mut block = vec![EnvVar {
+        key: key_var.to_string(),
+        value: secret.to_string(),
+    }];
+    if let Some(base_url) = base_url.map(str::trim).filter(|url| !url.is_empty()) {
+        block.push(EnvVar {
+            key: url_var.to_string(),
+            value: base_url.to_string(),
+        });
+    }
+    block
 }
 
 impl AccountsStore {
@@ -2241,6 +2281,60 @@ mod tests {
         let many = (0..=MAX_ENV_VARS).map(|i| format!("K{i}=v")).collect::<Vec<_>>().join("\n");
         assert!(refused(&many).contains("more than"));
         assert!(refused(&format!("K=\"{}\"", "x".repeat(MAX_ENV_BYTES))).contains("KiB"));
+    }
+
+    /// v0.2.58 shipped four key-account shapes. Every one of them has to come
+    /// back as the block it was always shorthand for, or an account that worked
+    /// before the upgrade stops working after it.
+    #[test]
+    fn every_v1_key_account_is_read_as_the_block_it_was_shorthand_for() {
+        let now = "2024-01-01T00:00:00.000Z";
+        let id = "11111111-2222-3333-4444-555555555555";
+        let row = |kind: &str, provider: &str, base_url: Option<&str>| {
+            let mut object = serde_json::json!({
+                "id": id, "label": "From v1", "kind": kind, "provider": provider,
+                "secret": "the-key", "secretSha256": "stale-hash-of-the-bare-token"
+            });
+            if let Some(base_url) = base_url {
+                object["baseUrl"] = serde_json::json!(base_url);
+            }
+            sanitize_account(&object, now).expect("a v1 row is still an account")
+        };
+        let pairs = |account: &StoredAccount| account.env.iter().map(|var| (var.key.clone(), var.value.clone())).collect::<Vec<_>>();
+
+        let api = row("api_key", "claude", None);
+        assert_eq!(api.kind, AccountKind::Env);
+        assert_eq!(api.secret, "", "the bare token field is emptied on the way in");
+        assert_eq!(pairs(&api), vec![("ANTHROPIC_API_KEY".into(), "the-key".into())]);
+
+        let auth = row("auth_token", "claude", Some("https://gw/v1"));
+        assert_eq!(
+            pairs(&auth),
+            vec![
+                ("ANTHROPIC_AUTH_TOKEN".to_string(), "the-key".to_string()),
+                ("ANTHROPIC_BASE_URL".to_string(), "https://gw/v1".to_string()),
+            ]
+        );
+        assert_eq!(pairs(&row("api_key", "claude", Some("https://gw/v1")))[1].0, "ANTHROPIC_BASE_URL");
+
+        // The codex pair is the one that moves: v1 stored the key under the
+        // variable the *injected provider* reads, and a block says what the
+        // user's key is and lets `launch_for` do the translating.
+        let codex = row("api_key", "codex", Some("https://relay/openai"));
+        assert_eq!(
+            pairs(&codex),
+            vec![
+                ("OPENAI_API_KEY".to_string(), "the-key".to_string()),
+                ("OPENAI_BASE_URL".to_string(), "https://relay/openai".to_string()),
+            ]
+        );
+        assert_eq!(
+            codex.secret_sha256,
+            block_sha256(&codex.env),
+            "and the stale hash of the bare token is replaced, so duplicates compare blocks"
+        );
+        // A v1 row with nothing to convert is not an account.
+        assert!(sanitize_account(&serde_json::json!({"id": id, "kind": "api_key"}), now).is_none());
     }
 
     /// A row written before any of this, and a row this build cannot read.

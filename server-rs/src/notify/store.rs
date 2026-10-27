@@ -142,8 +142,7 @@ fn from_value(raw: &Value) -> StoredNotify {
 /// Everything configured; an empty store reads as nothing configured.
 ///
 /// The rows are reassembled into the document [`from_value`] already knows how
-/// to read, so a row and a hand-edited file cannot come to mean different
-/// things.
+/// to read, so a hand-edited row cannot come to mean something else.
 pub async fn read(paths: &Paths) -> StoredNotify {
     let rows = store(paths).kv_scope(scope::NOTIFY);
     let raw = Value::Object(
@@ -183,7 +182,7 @@ pub async fn write(paths: &Paths, data: &StoredNotify) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Apply a patch under the write lock, and hand back what the file now says.
+/// Apply a patch under the write lock, and hand back what the store now says.
 ///
 /// Read-modify-write rather than a whole-document `PUT` because the endpoint is
 /// write-only from the client's side: a settings page that has never been shown

@@ -119,8 +119,8 @@ fn provider_from_value(raw: &Value) -> StoredProvider {
 /// The stored configuration; an empty store reads as nothing configured.
 pub async fn read_provider(paths: &Paths) -> StoredProvider {
     let rows = store(paths).kv_scope(scope::CHAT_PROVIDER);
-    // Back through the same reader the file went through, so the rows and a
-    // hand-edited file cannot come to mean different things.
+    // Back through the same tolerant reader, so a hand-edited row cannot come
+    // to mean something else.
     provider_from_value(&Value::Object(rows.into_iter().map(|(key, value)| (key, Value::String(value))).collect()))
 }
 
