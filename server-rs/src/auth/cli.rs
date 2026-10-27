@@ -583,12 +583,10 @@ fn open_in_browser(what: Opening<'_>) -> Opened {
 
 /// The session store of the instance being worked on.
 ///
-/// The path still names `auth-sessions.json`, because that is what
-/// [`SessionsStore::new`] takes and what identifies the *instance*; the store
-/// derives its database from the directory the path sits in, and the file
-/// itself has not been written since the sessions moved into that database.
+/// Keyed by that instance's own state database — [`Paths::instance_db`] — which
+/// is where its logins live and what identifies the instance.
 fn sessions_of(paths: &Paths) -> SessionsStore {
-    SessionsStore::new(paths.instance_dir().join("auth-sessions.json"), NOMINAL_TTL)
+    SessionsStore::new(paths.instance_db(), NOMINAL_TTL)
 }
 
 /// Every instance that has a directory on this machine, in name order.

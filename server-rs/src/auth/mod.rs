@@ -281,7 +281,7 @@ impl Auth {
         };
         Arc::new(Self {
             users: UsersStore::new(paths),
-            sessions: sessions::SessionsStore::new(instance.auth_sessions_file(), DAY * settings.session_ttl_days()),
+            sessions: sessions::SessionsStore::new(paths.instance_db(), DAY * settings.session_ttl_days()),
             tickets: Tickets::new(),
             lockouts: Lockouts::new(),
             setup: setup::Setup::default(),

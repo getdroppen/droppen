@@ -1,4 +1,4 @@
-//! Login sessions: `<data>/instances/<name>/auth-sessions.json`.
+//! Login sessions: rows in this instance's state database.
 //!
 //! Per-instance, unlike the account file next door in [`super::users`]. An
 //! instance is a server, and a token is a claim on *a server* — so restarting
@@ -17,25 +17,15 @@
 //! sliding window is the one thing that turns a leaked token into a permanent
 //! one, because the attacker's own polling keeps it alive.
 //!
-//! # Where the sessions actually live now
+//! # Where the sessions live
 //!
-//! In this instance's [`crate::db`], at `<instance>/state.db`.
-//! `auth-sessions.json` is read exactly once, to drain it into that database,
-//! and is never written — so a phone that was logged in before the upgrade stays
-//! logged in, and a restored backup can seed a fresh database by being dropped
-//! back in.
-//!
-//! It was written after every change for one release, so that a
-//! [`crate::supervisor`] demotion to a `.prev` binary that had never heard of
-//! the database would not log every device out. No binary that old is left to
-//! demote to. [`super::users`] keeps its own copy for reasons of its own; this
-//! store no longer needs one, and not writing it means the digests are in one
-//! place rather than two.
+//! In this instance's [`crate::db`], at `<instance>/state.db` — the database
+//! [`crate::sessions::Paths::instance_db`] names.
 //!
 //! Expiry is the reason this store has a *column* and not just a payload. The
-//! file had to be read whole and filtered in Rust to answer "which of these are
-//! still alive", so every login, every revocation and every list rewrote the
-//! whole thing to drop the dead ones. `expires_at` makes that
+//! file it replaced had to be read whole and filtered in Rust to answer "which
+//! of these are still alive", so every login, every revocation and every list
+//! rewrote the whole thing to drop the dead ones. `expires_at` makes that
 //! `DELETE FROM auth_sessions WHERE expires_at < ?`, and the index makes it a
 //! range scan over the ones that are actually dead. It is stored in
 //! **milliseconds**, matching the ISO stamps beside it in the payload rather
@@ -44,7 +34,7 @@
 //! for the rest of that second.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -59,8 +49,8 @@ use crate::db::{self, Db};
 use crate::sessions::iso8601;
 
 /// How many random bytes a token carries. 256 bits, base64url'd to 43
-/// characters — long enough that the digest in the file is a one-way function in
-/// practice as well as in principle.
+/// characters — long enough that the digest in the store is a one-way function
+/// in practice as well as in principle.
 const TOKEN_BYTES: usize = 32;
 
 /// How long a `lastSeenAt` may be stale before it is written down.
@@ -71,12 +61,7 @@ const TOKEN_BYTES: usize = 32;
 /// something every other request also read.
 const LAST_SEEN_FLUSH: Duration = Duration::from_secs(5 * 60);
 
-/// The name this store's JSON file goes by in `kv`'s record of what has already
-/// been drained, and the scope its rows are staged in on the way through; see
-/// [`SessionsStore::ensure_imported`].
-const IMPORT_MARKER: &str = "auth-sessions.json";
-
-/// One live login, as it sits on disk.
+/// One live login, as it is stored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
@@ -95,15 +80,6 @@ pub struct StoredSession {
     /// so the list is recognisable. Absent when it called itself nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-}
-
-/// `auth-sessions.json` as a whole — the shape the importer reads.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionsFile {
-    /// Every live login, oldest first.
-    #[serde(default)]
-    pub sessions: Vec<StoredSession>,
 }
 
 /// A freshly minted login: the one moment the token exists in this process.
@@ -126,12 +102,7 @@ pub struct NewSession {
 /// meant to be total. Holding the lock across [`SessionsStore::issue`] as well
 /// is what makes the ordering definite either way.
 pub struct SessionsStore {
-    /// `auth-sessions.json`: an import source, read once, never written.
-    path: PathBuf,
     db: Arc<Db>,
-    /// The JSON file is drained once per process at most; the marker in the
-    /// database makes it once per instance.
-    imported: std::sync::Once,
     ttl: Duration,
     write_lock: tokio::sync::Mutex<()>,
     /// When each token's `lastSeenAt` was last written. Keyed by digest, so it
@@ -140,54 +111,25 @@ pub struct SessionsStore {
 }
 
 impl SessionsStore {
-    /// A store over one instance's session file.
+    /// A store over one instance's state database.
     ///
-    /// The database is the one beside the file — `<instance>/state.db`, which is
-    /// what [`crate::sessions::Paths::instance_db`] names — so a store built
-    /// from a path, as [`super::cli`] builds one per instance it finds, reaches
-    /// that instance's sessions and nobody else's.
-    pub fn new(path: PathBuf, ttl: Duration) -> Self {
-        let db = path.parent().unwrap_or_else(|| Path::new(".")).join("state.db");
+    /// `db` is [`crate::sessions::Paths::instance_db`] — `<instance>/state.db` —
+    /// so a store built for an instance, as [`super::cli`] builds one per
+    /// instance it finds, reaches that instance's sessions and nobody else's.
+    pub fn new(db: PathBuf, ttl: Duration) -> Self {
         Self {
-            path,
             db: db::at(db),
-            imported: std::sync::Once::new(),
             ttl,
             write_lock: tokio::sync::Mutex::new(()),
             flushed: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    /// The `auth-sessions.json` this store was seeded from.
-    ///
-    /// Kept, and kept public, because it is what names the *instance*: two
-    /// stores are the same store when this is the same path, which is how
-    /// [`super::cli`] finds one per instance. Nothing writes it.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Drain `auth-sessions.json` into the database, once ever.
-    ///
-    /// Staged through `kv` and then moved, for the reason spelled out in
-    /// [`super::users::UsersStore::ensure_imported`]: the helper that makes an
-    /// import happen exactly once writes rows into `kv`, and these rows belong
-    /// in `auth_sessions`. The second hop is idempotent, so a crash between them
-    /// costs a boot rather than everyone's login.
-    fn ensure_imported(&self) {
-        self.imported.call_once(|| {
-            let path = self.path.clone();
-            self.db.import_once(IMPORT_MARKER, || staged_from_json(&path));
-            drain_staged(&self.db);
-        });
-    }
-
     /// Every session that has not expired, oldest first.
     ///
-    /// `ORDER BY rowid` is the file's order — the order they were minted in —
-    /// which is what the list route hands back.
+    /// `ORDER BY rowid` is the order they were minted in, which is what the
+    /// list route hands back.
     fn live(&self, now: i64) -> Vec<StoredSession> {
-        self.ensure_imported();
         self.db
             .read(|conn| {
                 let mut statement = conn.prepare("SELECT payload FROM auth_sessions WHERE expires_at > ?1 ORDER BY rowid")?;
@@ -223,7 +165,6 @@ impl SessionsStore {
         };
 
         let _guard = self.write_lock.lock().await;
-        self.ensure_imported();
         self.db
             .write(|tx| {
                 prune(tx, epoch_millis(now))?;
@@ -317,7 +258,6 @@ impl SessionsStore {
     /// reader for ever.
     pub async fn list(&self) -> Vec<StoredSession> {
         let _guard = self.write_lock.lock().await;
-        self.ensure_imported();
         let now = now_millis();
         self.sweep_expired(now);
         self.live(now)
@@ -326,7 +266,6 @@ impl SessionsStore {
     /// Drop one session by its id (which is its digest). `true` if it was there.
     pub async fn revoke(&self, digest: &str) -> bool {
         let _guard = self.write_lock.lock().await;
-        self.ensure_imported();
         let removed = self.db.write(|tx| {
             prune(tx, now_millis())?;
             Ok(tx.execute("DELETE FROM auth_sessions WHERE digest = ?1", (digest,))? > 0)
@@ -349,7 +288,6 @@ impl SessionsStore {
     /// one they are holding.
     pub async fn revoke_user(&self, username: &str, except: Option<&str>) -> usize {
         let _guard = self.write_lock.lock().await;
-        self.ensure_imported();
         // The name is inside the payload rather than in a column of its own, so
         // the rows are read and decided on here. Bounded by the sessions one
         // machine has, which is the number of devices one household owns.
@@ -375,7 +313,6 @@ impl SessionsStore {
     /// so this is tidying rather than enforcement.
     pub async fn sweep(&self, known_users: &[String]) {
         let _guard = self.write_lock.lock().await;
-        self.ensure_imported();
         let now = now_millis();
         let doomed: Vec<String> = self
             .live(now)
@@ -392,8 +329,7 @@ impl SessionsStore {
     ///
     /// Answers with both counts because [`SessionsStore::revoke_user`] reports
     /// the first of them to its caller; the second is what the expiry sweep
-    /// collected on the way past, which nothing has to act on now that no file
-    /// is rewritten when it is not zero.
+    /// collected on the way past.
     fn delete_all(&self, digests: &[String]) -> rusqlite::Result<(usize, usize)> {
         self.db.write(|tx| {
             let pruned = prune(tx, now_millis())?;
@@ -438,55 +374,6 @@ fn now_millis() -> i64 {
     epoch_millis(SystemTime::now())
 }
 
-/// The rows [`Db::import_once`] stages, keyed by digest.
-fn staged_from_json(path: &Path) -> Vec<(String, String)> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    serde_json::from_str::<SessionsFile>(&raw)
-        .unwrap_or_default()
-        .sessions
-        .into_iter()
-        .filter(|session| !session.token_sha256.is_empty())
-        .filter_map(|session| Some((session.token_sha256.clone(), serde_json::to_string(&session).ok()?)))
-        .collect()
-}
-
-/// Move whatever is staged into `auth_sessions`, and forget it was staged.
-///
-/// A session whose `expiresAt` cannot be read has no expiry, and a token with no
-/// expiry is the one thing this module exists to prevent — so it is dropped,
-/// which logs that device out and costs it one login. Ordered by creation stamp
-/// because `kv` hands rows back by key, and the rowid order they acquire here is
-/// the order the list keeps for ever after.
-fn drain_staged(db: &Db) {
-    let staged: Vec<String> = db
-        .read(|conn| {
-            let mut statement = conn.prepare("SELECT value FROM kv WHERE scope = ?1")?;
-            let rows = statement.query_map((IMPORT_MARKER,), |row| row.get::<_, String>(0))?;
-            Ok(rows.filter_map(Result::ok).collect())
-        })
-        .unwrap_or_default();
-    if staged.is_empty() {
-        return;
-    }
-    let mut sessions: Vec<StoredSession> = staged.iter().filter_map(|raw| serde_json::from_str(raw).ok()).collect();
-    sessions.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    db.commit("the imported login sessions", |tx| {
-        for session in &sessions {
-            let Some(expires_at) = crate::record::replay::parse_iso8601(&session.expires_at) else {
-                continue;
-            };
-            tx.execute(
-                "INSERT OR IGNORE INTO auth_sessions (digest, expires_at, payload) VALUES (?1, ?2, ?3)",
-                (&session.token_sha256, expires_at, serde_json::to_string(session).unwrap_or_default()),
-            )?;
-        }
-        tx.execute("DELETE FROM kv WHERE scope = ?1", (IMPORT_MARKER,))?;
-        Ok(())
-    });
-}
-
 /// A fresh token: 32 bytes from the OS, base64url without padding.
 fn new_token() -> String {
     let mut bytes = [0u8; TOKEN_BYTES];
@@ -506,7 +393,7 @@ mod tests {
 
     fn store(ttl: Duration) -> (tempfile::TempDir, SessionsStore) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = SessionsStore::new(dir.path().join("auth-sessions.json"), ttl);
+        let store = SessionsStore::new(dir.path().join("state.db"), ttl);
         (dir, store)
     }
 
@@ -530,12 +417,10 @@ mod tests {
         assert_ne!(first, second);
     }
 
-    /// The stored row holds the digest and the label, never the token — and
-    /// there is exactly one place that has to be true of, because nothing is
-    /// written outside the database any more.
+    /// The stored row holds the digest and the label, never the token.
     #[tokio::test]
     async fn what_is_stored_is_the_digest_and_never_the_token() {
-        let (dir, store) = store(WEEK);
+        let (_dir, store) = store(WEEK);
         let issued = store.issue("ada", Some("curl/8".into())).await.expect("issue");
 
         let payload: String = store
@@ -545,36 +430,6 @@ mod tests {
         assert!(!payload.contains(&issued.token), "the token must exist nowhere but the response");
         assert!(payload.contains(&digest_of(&issued.token)));
         assert!(payload.contains("curl/8"));
-        assert!(
-            !dir.path().join("auth-sessions.json").exists(),
-            "and there is no second copy of it beside the database"
-        );
-    }
-
-    /// The contract that replaced the mirror: `auth-sessions.json` is an input,
-    /// once, and never an output. A change that wrote it back would be one a
-    /// hand-restored file could not survive being imported from — and would put
-    /// the digests back in two places instead of one.
-    #[tokio::test]
-    async fn no_change_writes_the_file_back() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("auth-sessions.json");
-        let before = r#"{"sessions":[]}"#;
-        std::fs::write(&path, before).expect("seed");
-
-        let store = SessionsStore::new(path.clone(), WEEK);
-        let issued = store.issue("ada", Some("curl/8".into())).await.expect("issue");
-        assert!(store.resolve(&issued.token).await.is_some());
-        store.list().await;
-        assert!(store.revoke(&digest_of(&issued.token)).await);
-        store.sweep(&[]).await;
-
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read"),
-            before,
-            "a login, a use, a list, a revocation and a sweep leave the file byte for byte as found"
-        );
-        assert!(!path.with_extension("json.tmp").exists());
     }
 
     /// Absolute expiry, and no sliding window: a token that has been used every
@@ -588,12 +443,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_expired_session_is_swept_out_by_the_next_write() {
-        let (_dir, store) = store(Duration::from_millis(0));
+        let (dir, store) = store(Duration::from_millis(0));
         store.issue("ada", None).await.expect("issue");
         assert_eq!(store.list().await.len(), 0, "the list never shows a dead session");
         // The sweep removes rows strictly before now; cross the expiry millisecond.
         tokio::time::sleep(Duration::from_millis(2)).await;
-        let live = SessionsStore::new(store.path().to_path_buf(), WEEK);
+        let live = SessionsStore::new(dir.path().join("state.db"), WEEK);
         live.issue("ada", None).await.expect("issue");
         assert_eq!(rows(&live), 1, "the write that added one dropped the dead one");
     }
@@ -691,48 +546,12 @@ mod tests {
         let (dir, expiring) = store(Duration::from_millis(0));
         expiring.issue("ada", None).await.expect("issue");
         tokio::time::sleep(Duration::from_millis(2)).await;
-        let live = SessionsStore::new(dir.path().join("auth-sessions.json"), WEEK);
+        let live = SessionsStore::new(dir.path().join("state.db"), WEEK);
         let kept = live.issue("grace", None).await.expect("issue");
 
         assert_eq!(live.list().await.len(), 1);
         assert_eq!(rows(&live), 1, "one row left, and it is the one that has not expired");
         assert_eq!(live.resolve(&kept.token).await.as_deref(), Some("grace"));
-    }
-
-    /// The upgrade path: a phone that was logged in before this build shipped
-    /// stays logged in, and stays logged out once it is revoked.
-    #[tokio::test]
-    async fn an_existing_session_file_is_imported_once_and_then_left_alone() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("auth-sessions.json");
-        let token = "a-token-the-previous-build-handed-out";
-        let now = SystemTime::now();
-        let existing = SessionsFile {
-            sessions: vec![StoredSession {
-                token_sha256: digest_of(token),
-                username: "ada".into(),
-                created_at: iso8601(now),
-                expires_at: iso8601(now + WEEK),
-                last_seen_at: iso8601(now),
-                label: Some("curl/8".into()),
-            }],
-        };
-        std::fs::write(&path, serde_json::to_string(&existing).expect("encode")).expect("seed");
-
-        let store = SessionsStore::new(path.clone(), WEEK);
-        assert_eq!(
-            store.resolve(token).await.as_deref(),
-            Some("ada"),
-            "the login survives the move into the database"
-        );
-        assert_eq!(store.list().await[0].label.as_deref(), Some("curl/8"), "payload and all");
-
-        // Revoking it and then building another store over the same file must
-        // not put it back: the file is drained once, not consulted for ever.
-        assert!(store.revoke(&digest_of(token)).await);
-        let reopened = SessionsStore::new(path, WEEK);
-        assert_eq!(reopened.resolve(token).await, None);
-        assert_eq!(rows(&reopened), 0);
     }
 
     #[test]
