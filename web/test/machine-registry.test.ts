@@ -12,7 +12,6 @@ import { invalidateMachine, machineQueries, mq } from "../src/lib/machines/query
 import { apiFor, closeMachine, homeMachine, homeMachineStore, isOpen, openMachine, openMachines, perMachine, runtimeFor, setHome, setShell, shellKind, transportFor } from "../src/lib/machines/registry.js";
 import { constantStore } from "../src/lib/machines/store.js";
 import { openHubMachine } from "../src/lib/machines/shells/hub.js";
-import { startLocalShell } from "../src/lib/machines/shells/local.js";
 import { directTransport, type SocketLike, type Transport } from "../src/lib/transport/index.js";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -53,7 +52,6 @@ test("a page that boots no shell is the local page: one machine, local, reached 
   assert.deepEqual(openMachines(), [LOCAL]);
   assert.equal(runtimeFor(LOCAL).transport, directTransport);
   assert.equal(apiFor(LOCAL), runtimeFor(LOCAL).api, "one client per machine, for the life of the page");
-  startLocalShell();
   assert.equal(homeMachine(), LOCAL);
   assert.equal(transportFor(LOCAL), directTransport);
 });

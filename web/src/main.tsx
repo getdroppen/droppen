@@ -25,7 +25,6 @@ import { startBadgeSync } from "./lib/badge";
 import "./lib/install";
 import { startKbNative } from "./lib/kb-native";
 import { startLocalOpen } from "./lib/auth";
-import { startLocalShell } from "./lib/machines/shells/local";
 import { registerSw } from "./lib/sw-register";
 import { rootInLanguage } from "./i18n";
 import "./index.css";
@@ -67,7 +66,6 @@ startBadgeSync();
 const hubPages = () => import("./hub-pages");
 const returning = !isCloud() && isReturnPath(location.pathname);
 if (!isCloud() && !returning) {
-  startLocalShell();
   // A page opened signed in from the device itself trades its token before
   // the router asks who it is (`lib/auth.ts`).
   startLocalOpen();
