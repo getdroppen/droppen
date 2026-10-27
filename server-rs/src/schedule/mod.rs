@@ -288,12 +288,10 @@ fn now_iso() -> String {
 
 /// A stored ISO-8601 stamp as an instant, if it is one.
 ///
-/// Only [`iso8601`]'s own output is ever parsed here, but the file is editable by
-/// hand and a stamp that does not parse must not wedge the runner — it reads as
-/// "no schedule", which the next tick fixes by computing one.
-pub fn parse_iso(stamp: &str) -> Option<SystemTime> {
-    chrono::DateTime::parse_from_rfc3339(stamp).ok().map(SystemTime::from)
-}
+/// The parser lives in [`crate::time::parse_iso`], beside the clock; it stays
+/// re-exported here because the agent's stream code and the aggregator reach
+/// for it under this path.
+pub use crate::time::parse_iso;
 
 /// A string field, or the empty string, from a hand-editable file.
 fn string_at(entry: &Value, key: &str) -> String {

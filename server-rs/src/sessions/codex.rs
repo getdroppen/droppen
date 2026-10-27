@@ -28,6 +28,7 @@ use serde_json::Value;
 
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
+use crate::time::now_ms;
 use super::transcript::title_line;
 use super::util::{make_item, parse_attachment_suffix, read_head_lines, read_tail_lines, try_parse, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{iso8601, mtime_ms, owned_sessions, CliChoice, Paths, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
@@ -44,13 +45,6 @@ const TAIL_BYTES: u64 = 64 * 1024;
 /// run long, so the model/effort reading needs a much deeper tail than Claude's.
 const CHOICE_TAIL_BYTES: u64 = 1024 * 1024;
 
-/// Milliseconds since the epoch, matching `Date.now()`.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 /// Is this session doing anything, judged from the tail of its transcript?
 async fn codex_status(file_path: &Path, updated_ms: i64) -> SessionStatus {
