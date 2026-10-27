@@ -167,9 +167,7 @@ export const downloadZhCN: Bundle = {
   "Run the install script again with --uninstall:": "加上 --uninstall 再运行一次安装脚本：",
 
   // The end of the page
-  "AI tools": "AI 工具",
-  "System": "系统",
-  "Account": "账户",
+  "Before you install:": "安装前需要：",
   "Mac app": "Mac 应用",
   "A Droppen account. Sign-up is closed for now.": "一个 Droppen 账户。目前暂停注册。",
   "Open my devices": "打开「我的设备」",
@@ -333,9 +331,7 @@ export const downloadZhTW: Bundle = {
   "Command line: run the install script again with --uninstall:": "命令列安裝：加上 --uninstall 再執行一次安裝腳本：",
   "Run the install script again with --uninstall:": "加上 --uninstall 再執行一次安裝腳本：",
 
-  "AI tools": "AI 工具",
-  "System": "系統",
-  "Account": "帳戶",
+  "Before you install:": "安裝前需要：",
   "Mac app": "Mac 應用程式",
   "A Droppen account. Sign-up is closed for now.": "一個 Droppen 帳戶。目前暫停註冊。",
   "Open my devices": "打開「我的裝置」",
@@ -502,9 +498,7 @@ export const downloadJa: Bundle = {
   "Command line: run the install script again with --uninstall:": "コマンドライン：--uninstall を付けてインストールスクリプトをもう一度実行します：",
   "Run the install script again with --uninstall:": "インストールスクリプトを --uninstall 付きでもう一度実行します：",
 
-  "AI tools": "AI ツール",
-  "System": "システム",
-  "Account": "アカウント",
+  "Before you install:": "インストールの前に必要なもの：",
   "Mac app": "Mac アプリ",
   "A Droppen account. Sign-up is closed for now.": "Droppen アカウント。現在、新規登録を停止しています。",
   "Open my devices": "「マイデバイス」を開く",

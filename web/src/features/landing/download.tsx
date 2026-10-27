@@ -439,26 +439,23 @@ function Environments({
       data-os={os}
       data-detected={detected ?? undefined}
     >
-      <BaseTabs.List aria-label={t("Choose your system")} activateOnFocus className="grid grid-cols-3 gap-px border-b border-border bg-border">
+      <BaseTabs.List aria-label={t("Choose your system")} activateOnFocus className="flex gap-8 border-b border-border px-6 max-md:gap-6 max-md:px-4">
         {tabs.map(({ os: value, label, icon: Icon }) => (
           <BaseTabs.Tab
             key={value}
             value={value}
             data-testid={`os-${value}`}
-            className={cn(
-              "group flex min-h-14 min-w-0 items-center gap-2.5 bg-bg px-4 py-2.5 text-left text-fg outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent",
-              "data-[active]:bg-fg data-[active]:text-bg data-[active]:hover:bg-fg",
-            )}
+            className="group relative flex h-12 shrink-0 items-center gap-2 text-sm text-muted outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent data-[active]:font-semibold data-[active]:text-fg"
           >
             <Icon aria-hidden="true" className="size-4 shrink-0" />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate text-[13px] leading-5 font-medium">{label}</span>
-              {value === marked && (
-                <span data-testid="detected" className={cn("font-mono text-[10px] leading-3.5 tracking-wider text-muted uppercase group-data-[active]:text-bg/70", cjkTracking)}>
-                  {t("Detected")}
-                </span>
-              )}
-            </span>
+            {label}
+            {value === marked && (
+              <span data-testid="detected" className="border border-border px-1.5 text-2xs leading-4 font-normal text-muted">
+                {t("Detected")}
+              </span>
+            )}
+            {/* The chosen tab's rule. */}
+            <span aria-hidden="true" className="absolute inset-x-0 -bottom-px hidden h-0.5 bg-fg group-data-[active]:block" />
           </BaseTabs.Tab>
         ))}
       </BaseTabs.List>
@@ -517,20 +514,23 @@ function Needs({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) 
       </a>
     </>
   );
-  const rows = [
-    { term: t("AI tools"), body: t("Claude Code or Codex, installed and signed in on that device") },
-    { term: t("System"), body: t("macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64)") },
-    { term: t("Account"), body: account },
+  const items: { key: string; body: ReactNode }[] = [
+    { key: "tools", body: t("Claude Code or Codex, installed and signed in on that device") },
+    { key: "system", body: t("macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64)") },
+    { key: "account", body: account },
   ];
   return (
-    <dl data-testid="download-needs" className="grid border-t border-border md:grid-cols-3">
-      {rows.map((r, i) => (
-        <div key={r.term} className={cn("flex flex-col gap-1.5 px-6 py-5 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-          <dt className={cn("label-caps text-2xs text-faint", cjkTracking)}>{r.term}</dt>
-          <dd className="text-[13px] leading-5 text-pretty text-fg">{r.body}</dd>
-        </div>
-      ))}
-    </dl>
+    <div data-testid="download-needs" className="flex flex-col gap-2.5">
+      <p className="text-sm leading-6 font-semibold text-fg">{t("Before you install:")}</p>
+      <ul className="flex flex-col gap-2">
+        {items.map((item) => (
+          <li key={item.key} className="flex gap-2.5 text-sm leading-6 text-pretty text-muted">
+            <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
+            <span>{item.body}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -723,8 +723,10 @@ export default function DownloadPage({
                 <CommandLine command={pageAddress()} label={t("copy")} testId="page-address" />
               </div>
             )}
+            <div className="mt-3">
+              <Needs signedIn={signedIn} signup={signup} />
+            </div>
           </div>
-          <Needs signedIn={signedIn} signup={signup} />
           <Section id="get">
             <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={arch} release={latest} />
           </Section>
