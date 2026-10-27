@@ -85,10 +85,6 @@ const INLINE_IMAGE_MIME: &[(&str, &str)] = &[
     ("svg", "image/svg+xml"),
 ];
 
-/// Extensions an attachment is flagged as an image for. Only drives whether the
-/// composer draws a thumbnail, so it can be broader than [`INLINE_IMAGE_MIME`].
-const IMAGE_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
-
 /// What every inline response carries, so that "render this in place" cannot
 /// mean "run this in place".
 ///
@@ -948,11 +944,10 @@ async fn save_attachment(paths: &Paths, file: &UploadedFile) -> Result<Attachmen
     let target = dir.join(&name);
     tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
 
-    let extension = extension(&name);
     Ok(Attachment {
         path: target.to_string_lossy().into_owned(),
         size_bytes: size as i64,
-        is_image: IMAGE_EXT.contains(&extension.as_str()),
+        is_image: crate::sessions::util::is_image_name(&name),
         name,
     })
 }

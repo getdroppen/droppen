@@ -13,8 +13,8 @@ use serde_json::{Map, Value};
 
 use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
 use super::util::{
-    clip, first_line_of, make_item, make_tool_item, parse_attachment_suffix, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay,
-    TranscriptItem, DETAIL_LIMIT,
+    clip, first_line_of, is_image_path, make_item, make_tool_item, parse_attachment_suffix, try_parse, ItemKind, LossyLines, PatchHunk, Role,
+    ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
 use crate::openapi_ext::Nullable;
 
@@ -717,30 +717,11 @@ fn result_images(
         return None;
     }
     let named = tool_paths.get(tool_use_id?)?;
-    if !is_renderable_image(Path::new(named)) {
+    if !is_image_path(Path::new(named)) {
         return None;
     }
     let resolved = super::mentions::resolve_within_home(home, named, cwd.map(Path::new))?;
     Some(vec![resolved.to_string_lossy().into_owned()])
-}
-
-/// Whether a browser would draw this file in an `<img>`.
-///
-/// The count of image blocks in a result is not enough on its own to name the
-/// call's file as a thumbnail. `Read` answers with image blocks for a *PDF*
-/// too — it rasterises the pages — and the path on that call is the `.pdf`,
-/// which an `<img>` renders as a broken-image icon. That is strictly worse than
-/// the `[N images]` line it replaced, so the extension has to agree before a
-/// path is offered.
-///
-/// An allowlist rather than a "not pdf" test, because the failure mode is a
-/// broken picture on the page and the next format the CLI learns to rasterise
-/// should default to the working fallback, not to the broken one.
-pub(super) fn is_renderable_image(path: &Path) -> bool {
-    const RENDERABLE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| RENDERABLE.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// The metas describing the children of the transcript being parsed.

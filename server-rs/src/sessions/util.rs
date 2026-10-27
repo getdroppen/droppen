@@ -289,14 +289,27 @@ pub fn make_tool_item(role: Role, kind: ItemKind, display: ToolDisplay, timestam
     }
 }
 
+/// Extensions a browser draws in an `<img>`, and so the ones that may render as
+/// a thumbnail rather than a download chip.
+///
+/// An allowlist rather than a "not pdf" test, because the failure mode is a
+/// broken picture on the page and the next format the CLI learns to rasterise
+/// (`Read` answers a PDF with page images) should default to the working
+/// fallback, not to the broken one.
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
 
-/// Whether a path/name looks like an image, so it renders as a thumbnail vs a download chip.
+/// Whether a name looks like an image, so it renders as a thumbnail vs a
+/// download chip. The one allowlist three subsystems share.
 pub fn is_image_name(name: &str) -> bool {
     match name.rsplit('.').next() {
         Some(ext) if name.contains('.') => IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str()),
         _ => false,
     }
+}
+
+/// [`is_image_name`] for a path's file name.
+pub fn is_image_path(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()).is_some_and(is_image_name)
 }
 
 /// Strip CSI escape sequences, which leak in from CLI stdout captures.
@@ -360,7 +373,7 @@ pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
         if path.is_empty() {
             continue;
         }
-        if is_image_name(path) {
+        if is_image_path(Path::new(path)) {
             images.push(path.to_string());
         } else {
             files.push(FileRef {

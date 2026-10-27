@@ -64,8 +64,7 @@ use serde_json::{json, Map, Value};
 use super::iso8601;
 use super::mentions::resolve_within_home;
 use super::tool_display::{as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name};
-use super::transcript::is_renderable_image;
-use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
+use super::util::{first_line_of, is_image_path, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use crate::record::replay::parse_iso8601;
 
 type Json = Map<String, Value>;
@@ -172,7 +171,7 @@ fn file_path_of(raw: &str) -> String {
 /// An image a result can offer as a thumbnail: one a browser draws, inside
 /// the home directory `/api/fs/download` is willing to serve.
 fn thumbnail(path: &str, context: Context<'_>) -> Option<Vec<String>> {
-    if !is_renderable_image(Path::new(path)) {
+    if !is_image_path(Path::new(path)) {
         return None;
     }
     let resolved = resolve_within_home(context.home, path, context.cwd.map(Path::new))?;
