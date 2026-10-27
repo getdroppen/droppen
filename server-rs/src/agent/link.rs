@@ -41,14 +41,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rand::Rng;
 use rh_proto::bridge::{RequestHead, ResponseHead};
 use rh_proto::chain::{Action, Attestation, ChainClock, ChainError, ChainState, Entry, Signer};
 use rh_proto::channel::{PathOptions, Session};
 use rh_proto::direct::{Admission, Admit, AgentDirect};
 use rh_proto::driver::{Channel, Incoming};
 use rh_proto::frame::Frame;
-use rh_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
+use rh_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
 use rh_proto::identity::MachineIdentity;
 use rh_proto::mux::Role;
 use rh_proto::mux::StreamClass;
@@ -62,14 +61,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 use super::bridge::{self, Loopback};
-use super::hub::{self, now_ms};
+use super::hub::{self, now_ms, Backoff, HEARTBEAT, SILENCE};
 use super::state::{self, AgentState};
 use crate::sessions::Paths;
 
-const BACKOFF_MIN: Duration = Duration::from_millis(500);
-const BACKOFF_MAX: Duration = Duration::from_secs(30);
-/// A connection that lasted this long resets the backoff.
-const STABLE: Duration = Duration::from_secs(60);
 /// The close of a handshake this agent took but could not save the device
 /// of (review D3: a device not on its record yet is let in only once it is):
 /// the page says the computer cannot save, rather than retrying blind.
@@ -84,11 +79,6 @@ const LAPSE_POLL: Duration = Duration::from_secs(10 * 60);
 /// The hub's close once it committed a renewal of this device's identity key
 /// (`docs/host-identity-rotation.md` §3.5): sign in with the new key.
 pub const ROTATED: u16 = 4005;
-/// The heartbeat (architecture doc §5).
-const HEARTBEAT: Duration = Duration::from_secs(20);
-/// Silence from the hub after which the connection is presumed dead.
-const SILENCE: Duration = Duration::from_secs(60);
-
 pub(super) struct Shared {
     pub(super) paths: Paths,
     /// Mailed machine keys this agent could not judge yet (the chain had not
@@ -508,7 +498,7 @@ fn controllers_view(state: Arc<Mutex<AgentState>>) -> super::streams::Controller
 }
 
 pub(super) async fn run(shared: Arc<Shared>) {
-    let mut backoff = BACKOFF_MIN;
+    let mut backoff = Backoff::new(hub::BACKOFF_MIN, hub::BACKOFF_MAX, hub::STABLE);
     loop {
         let started = Instant::now();
         let result = tokio::select! {
@@ -538,11 +528,7 @@ pub(super) async fn run(shared: Arc<Shared>) {
         if shared.rotation.take_again() {
             continue;
         }
-        if started.elapsed() > STABLE {
-            backoff = BACKOFF_MIN;
-        }
-        let wait = rand::thread_rng().gen_range(Duration::ZERO..=backoff);
-        backoff = (backoff * 2).min(BACKOFF_MAX);
+        let wait = backoff.after(started.elapsed());
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
             () = shared.cancel.cancelled() => return,
@@ -797,29 +783,9 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     shared.set_health(true, None);
 
     // One writer for the socket: frames from every channel, and control text.
-    let (frames_tx, mut frames_rx) = mpsc::unbounded_channel::<Frame>();
-    let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(async move {
-        let mut beat = tokio::time::interval(HEARTBEAT);
-        let mut nonce = 0u64;
-        loop {
-            let message = tokio::select! {
-                f = frames_rx.recv() => match f {
-                    Some(f) => match f.encode() { Ok(b) => Message::Binary(b.into()), Err(_) => continue },
-                    None => break,
-                },
-                t = text_rx.recv() => match t { Some(t) => Message::Text(super::traffic::agent_out(t).into()), None => break },
-                _ = beat.tick() => {
-                    nonce += 1;
-                    Message::Binary(Frame::Ping { nonce }.encode().expect("a ping encodes").into())
-                }
-            };
-            if sink.send(message).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
+    let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, super::traffic::agent_out);
 
     // The streams' writer has this connection only while this machine runs
     // AI in its account (and is told again whenever the chain changes that).

@@ -47,7 +47,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rand::Rng;
 use rh_proto::frame::Frame;
 use rh_proto::netpolicy;
 use rh_proto::sig::{HubLogin, LoginRole};
@@ -56,16 +55,11 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use super::hub::{hex, now_ms, unhex32};
+use super::hub::{self, hex, now_ms, unhex32, Backoff, Peer, HEARTBEAT, SILENCE};
 use super::link::{drop_ended, drop_removed, expire_pending, on_channel_frame, Pending, Routes, Shared};
 
 /// What this agent names in `agent_info` when it attaches to relays.
 pub const FEATURE: &str = "relays/1";
-const HEARTBEAT: Duration = Duration::from_secs(20);
-const SILENCE: Duration = Duration::from_secs(60);
-const STEP: Duration = Duration::from_secs(15);
-const BACKOFF_MIN: Duration = Duration::from_millis(500);
-const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// Tickets are asked for again when they have less than this left.
 const RENEW_BEFORE_MS: u64 = 5 * 60 * 1000;
 const MEASURE_EVERY: Duration = Duration::from_secs(15 * 60);
@@ -380,12 +374,10 @@ fn http_client(insecure: bool) -> Option<reqwest::Client> {
         .ok()
 }
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// The websocket to `<origin>/v1/connect`, over a TCP connection dialled
 /// here to an address the rules allow; TLS (its SNI) and `Host` still name
 /// the origin's host.
-async fn connect(origin: &str, insecure: bool) -> Result<Socket, String> {
+async fn connect(origin: &str, insecure: bool) -> Result<hub::Socket, String> {
     if !origin_ok(origin, insecure) {
         return Err(format!("{origin}: not an origin this agent dials"));
     }
@@ -702,7 +694,7 @@ async fn run(
     channels: Arc<AtomicUsize>,
     events: mpsc::UnboundedSender<Event>,
 ) {
-    let mut backoff = BACKOFF_MIN;
+    let mut backoff = Backoff::new(hub::BACKOFF_MIN, hub::BACKOFF_MAX, hub::STABLE);
     loop {
         let started = Instant::now();
         let current = ticket.borrow().clone();
@@ -739,35 +731,10 @@ async fn run(
                 continue;
             }
         }
-        if started.elapsed() > Duration::from_secs(60) {
-            backoff = BACKOFF_MIN;
-        }
-        let wait = rand::thread_rng().gen_range(Duration::ZERO..=backoff);
-        backoff = (backoff * 2).min(BACKOFF_MAX);
+        let wait = backoff.after(started.elapsed());
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
             () = cancel.cancelled() => return,
-        }
-    }
-}
-
-async fn next_json<S>(source: &mut S) -> Result<Value, String>
-where
-    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-{
-    loop {
-        match tokio::time::timeout(STEP, source.next()).await {
-            Ok(Some(Ok(Message::Text(t)))) => return serde_json::from_str(super::traffic::relay_in(t.as_str())).map_err(|e| e.to_string()),
-            Ok(Some(Ok(Message::Close(frame)))) => {
-                return Err(format!(
-                    "the relay closed the connection: {}",
-                    frame.map(|f| format!("{} {}", u16::from(f.code), f.reason)).unwrap_or_default()
-                ))
-            }
-            Ok(Some(Ok(_))) => continue,
-            Ok(Some(Err(e))) => return Err(e.to_string()),
-            Ok(None) => return Err("the relay closed the connection".into()),
-            Err(_) => return Err("the relay did not answer in time".into()),
         }
     }
 }
@@ -794,11 +761,11 @@ async fn session(
         return Err("waiting for the hub link to sign in (an identity key renewal is staged)".into());
     }
     let (origin, insecure) = (target.origin.as_str(), target.insecure);
-    let socket = tokio::time::timeout(STEP, connect(origin, insecure))
+    let socket = tokio::time::timeout(hub::STEP, connect(origin, insecure))
         .await
         .map_err(|_| format!("{origin}: timed out"))??;
     let (mut sink, mut source) = socket.split();
-    let challenge = next_json(&mut source).await?;
+    let challenge = hub::read_json(&mut source, Peer::Relay).await?;
     let nonce = challenge["nonce"]
         .as_str()
         .and_then(unhex32)
@@ -825,7 +792,7 @@ async fn session(
     ))
     .await
     .map_err(|e| e.to_string())?;
-    let welcome = match next_json(&mut source).await {
+    let welcome = match hub::read_json(&mut source, Peer::Relay).await {
         Ok(v) => v,
         Err(e) if e.starts_with(&format!("the relay closed the connection: {CLOSE_REVOKED} ")) => return Err(REVOKED.into()),
         Err(e) => return Err(e),
@@ -840,29 +807,9 @@ async fn session(
     let _ = events.send(Event::Attached(id.to_string(), true));
     tickets.mark_unchanged();
 
-    let (frames_tx, mut frames_rx) = mpsc::unbounded_channel::<Frame>();
-    let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(async move {
-        let mut beat = tokio::time::interval(HEARTBEAT);
-        let mut nonce = 0u64;
-        loop {
-            let message = tokio::select! {
-                f = frames_rx.recv() => match f {
-                    Some(f) => match f.encode() { Ok(b) => Message::Binary(b.into()), Err(_) => continue },
-                    None => break,
-                },
-                t = text_rx.recv() => match t { Some(t) => Message::Text(super::traffic::relay_out(t).into()), None => break },
-                _ = beat.tick() => {
-                    nonce += 1;
-                    Message::Binary(Frame::Ping { nonce }.encode().expect("a ping encodes").into())
-                }
-            };
-            if sink.send(message).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
+    let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, super::traffic::relay_out);
     let mut chain = shared.chain_version.subscribe();
     let mut routes: Routes = HashMap::new();
     let mut pending = Pending::new();
@@ -1380,7 +1327,7 @@ mod tests {
         .await;
         for origin in [format!("ws://{relay}"), format!("ws://localhost:{}", relay.port())] {
             let mut socket = connect(&origin, true).await.unwrap();
-            assert_eq!(next_json(&mut socket).await.unwrap()["t"], "challenge", "{origin}");
+            assert_eq!(hub::read_json(&mut socket, Peer::Relay).await.unwrap()["t"], "challenge", "{origin}");
         }
     }
 
