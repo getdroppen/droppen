@@ -50,6 +50,11 @@ export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offl
 /** The identity renewal's parts, each with an anchor of its own. */
 export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging", "renewal-policy", "renewal-disputes", "renewal-groups", "renewal-hub"] as const;
 
+/**
+ * Prose keeps its measure (46em: about 46 characters of Chinese, 95 of English a line) however wide
+ * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
+ * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
+ */
 const prose = "max-w-[46em] text-[13px] leading-[21px] text-muted";
 
 /**
@@ -192,7 +197,7 @@ function List({ items }: { items: ReactNode[] }) {
 
 /** The code's own bytes, quoted, never translated (the formulas: `Formula`). */
 function Spec({ children }: { children: ReactNode }) {
-  return <div className="flex max-w-[46em] flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
+  return <div className="flex flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
 }
 
 function Line({ children }: { children: ReactNode }) {
@@ -220,7 +225,7 @@ function Topic({ id, n, title, children }: { id?: string; n: string; title: stri
 /** Two lists side by side (one above the other when narrow). */
 function Pair({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
   return (
-    <div className="grid max-w-[60em] gap-6 md:grid-cols-2">
+    <div className="grid gap-6 md:grid-cols-2">
       {[left, right].map((side) => (
         <div key={side.title} className="flex min-w-0 flex-col gap-3">
           <span className="text-xs leading-5 font-semibold text-fg">{withConcepts(side.title)}</span>
@@ -922,7 +927,7 @@ function VerifySection() {
           lead={withConcepts(t("Statements about the protocol, the apps and the local program come from this repository's code and design notes; Droppen Hub is closed, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub). Here is where to look."))}
         />
         <Topic n="8.1" title={t("Algorithms")}>
-          <dl className="grid max-w-[46em] grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
+          <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
             {choices.map(([name, value]) => (
               <div key={name} className="contents">
                 <dt className="text-xs leading-5 font-semibold text-fg">{name}</dt>

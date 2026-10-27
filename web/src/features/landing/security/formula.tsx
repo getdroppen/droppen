@@ -194,7 +194,7 @@ function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; tex
       aria-pressed={pinned === "1"}
       aria-describedby={hidden ? `${descId(term)} ${hiddenId(hidden)}` : descId(term)}
       className={cn(
-        "cursor-help decoration-1 underline-offset-[3px] outline-offset-1 transition-[background-color,color,outline-color] duration-100 motion-reduce:transition-none",
+        "cursor-help whitespace-nowrap decoration-1 underline-offset-[3px] outline-offset-1 transition-[background-color,color,outline-color] duration-100 motion-reduce:transition-none",
         KIND_CLASS[kind],
         LIT_CLASS[lit],
         hidden && HIDDEN_CLASS,
@@ -476,7 +476,7 @@ export function Formula({ block }: { block: BlockId }) {
     next?.focus();
   };
   return (
-    <div data-formula={block} className="flex max-w-[46em] flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
+    <div data-formula={block} className="flex flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
       <Tools block={block} legendId={legendId} showLegend={legend} onLegend={() => setLegend((on) => !on)} />
       <Legend id={legendId} open={legend} />
       <div
