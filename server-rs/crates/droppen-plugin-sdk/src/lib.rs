@@ -30,8 +30,10 @@ pub fn sdk_version() -> semver::Version {
 pub mod codes {
     /// The plugin is not enabled on this instance (or is incompatible).
     pub const PLUGIN_DISABLED: &str = "plugin_disabled";
-    /// No plugin of that id is bundled with this build.
+    /// No plugin of that id is installed on this instance.
     pub const PLUGIN_NOT_FOUND: &str = "plugin_not_found";
+    /// `POST /api/plugins` refused the package; `message` says why.
+    pub const INVALID_PACKAGE: &str = "invalid_package";
     /// The document does not exist.
     pub const DOC_NOT_FOUND: &str = "doc_not_found";
     /// A write named a revision that is no longer the current one.
@@ -153,6 +155,23 @@ pub enum Permission {
     Notify,
 }
 
+impl Permission {
+    /// The permission's name on the wire, and in a manifest.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::SessionsRead => "sessions:read",
+            Self::Notify => "notify",
+        }
+    }
+}
+
+impl fmt::Display for Permission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One string, or one per language (`en` required as the fallback).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -204,9 +223,19 @@ pub struct Manifest {
     /// Old top-level paths the host redirects to `/p/<id>/`.
     #[serde(default)]
     pub aliases: Vec<String>,
-    /// Enabled on an instance that has never decided. The distribution may override it.
-    #[serde(default)]
-    pub default_enabled: bool,
+}
+
+/// The top-level paths the shell, the server and droppen.app already answer:
+/// an alias may not take one — `/settings` as an alias would hijack Settings.
+///
+/// Kept in one file, `reserved-paths.txt`, one name per line, so the web
+/// router's test can read the same list rather than keeping a second copy in
+/// step by hand.
+pub const RESERVED_PATHS: &str = include_str!("../reserved-paths.txt");
+
+/// Whether `name` (an alias without its `/`) is a path the host already owns.
+pub fn is_reserved_path(name: &str) -> bool {
+    RESERVED_PATHS.lines().map(str::trim).any(|reserved| !reserved.is_empty() && reserved == name)
 }
 
 impl Manifest {
@@ -224,80 +253,18 @@ impl Manifest {
             }
         }
         for alias in &self.aliases {
+            let name = alias.strip_prefix('/');
             let ok = alias.len() <= 64
-                && alias
-                    .strip_prefix('/')
-                    .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
+                && name.is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
             if !ok {
                 problems.push(format!("alias {alias:?} must be one lower-case path segment such as \"/tasks\""));
-            }
-            if alias == "/p" {
-                problems.push("alias \"/p\" would shadow every plugin".to_string());
+            } else if let Some(name) = name {
+                if is_reserved_path(name) {
+                    problems.push(format!("alias {alias:?} would shadow the shell's own {name} — pick another path"));
+                }
             }
         }
         problems
-    }
-}
-
-/// `dist/plugins/manifest.json`: which plugins a build bundles.
-///
-/// Written by the build (never by hand) and embedded with the web assets, so
-/// the server learns what it ships without running any JavaScript.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BundledManifest {
-    /// The SDK version the build was checked against.
-    #[serde(default)]
-    pub sdk_version: Option<semver::Version>,
-    /// The distribution's name (`public` for the open build).
-    #[serde(default)]
-    pub distribution: Option<String>,
-    /// Every bundled plugin.
-    #[serde(default)]
-    pub plugins: Vec<Manifest>,
-}
-
-impl BundledManifest {
-    /// Read `dist/plugins/manifest.json` one plugin at a time: an entry that
-    /// does not parse (a bad id, range, version, permission or name) is left
-    /// out and described in the second half of the answer, so one bad plugin
-    /// never takes the others with it. Only a file that is not a JSON object
-    /// with a `plugins` array is an error.
-    pub fn from_json_lenient(bytes: &[u8]) -> Result<(Self, Vec<String>), String> {
-        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        let object = value.as_object().ok_or("the manifest is not a JSON object")?;
-        let entries = match object.get("plugins") {
-            None => Vec::new(),
-            Some(serde_json::Value::Array(entries)) => entries.clone(),
-            Some(_) => return Err("`plugins` is not an array".into()),
-        };
-        let mut problems = Vec::new();
-        let sdk_version = match object.get("sdkVersion") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(raw) => serde_json::from_value(raw.clone())
-                .map_err(|error| problems.push(format!("sdkVersion: {error}")))
-                .ok(),
-        };
-        let distribution = object.get("distribution").and_then(serde_json::Value::as_str).map(str::to_string);
-        let mut plugins = Vec::new();
-        for (index, entry) in entries.into_iter().enumerate() {
-            let label = entry
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(|| format!("plugins[{index}]"), |id| format!("plugins[{index}] ({id:?})"));
-            match serde_json::from_value::<Manifest>(entry) {
-                Ok(manifest) => plugins.push(manifest),
-                Err(error) => problems.push(format!("{label}: {error}")),
-            }
-        }
-        Ok((
-            Self {
-                sdk_version,
-                distribution,
-                plugins,
-            },
-            problems,
-        ))
     }
 }
 
@@ -391,7 +358,7 @@ pub struct DocVersion<T = serde_json::Value> {
 pub struct PluginStatus {
     /// See [`PluginId`].
     pub id: PluginId,
-    /// The bundled package version.
+    /// The installed package version.
     pub version: semver::Version,
     /// Display name.
     pub name: LocalizedText,
@@ -410,6 +377,18 @@ pub struct PluginStatus {
     /// Every notice, oldest first.
     #[serde(default)]
     pub notices: Vec<PluginNotice>,
+    /// This install's build: `<version>-<first 12 hex of the tarball's sha256>`.
+    /// It names the exact code in every `/plugins/…` URL, so a reinstall of the
+    /// same version with other bytes is a new URL.
+    pub build: String,
+    /// Where the page imports the plugin from when it is enabled and
+    /// compatible (`/plugins/<key>/<id>/<build>/<entry>`); `null` otherwise —
+    /// and never given to a bridged (`cloud:`) request.
+    pub entry: Option<String>,
+    /// The old top-level paths the host redirects to `/p/<id>/`.
+    pub aliases: Vec<String>,
+    /// What it asks the host for.
+    pub permissions: Vec<Permission>,
 }
 
 /// One thing a plugin's host wants the user to see.
@@ -488,7 +467,6 @@ mod tests {
     #[test]
     fn a_manifest_round_trips_and_answers_compatibility() {
         let parsed: Manifest = serde_json::from_value(manifest()).expect("a manifest");
-        assert!(!parsed.default_enabled, "plugins are off unless something says otherwise");
         assert_eq!(parsed.permissions, vec![Permission::Storage]);
         assert!(parsed.problems().is_empty());
         let again: Manifest = serde_json::from_value(serde_json::to_value(&parsed).unwrap()).unwrap();
@@ -516,27 +494,19 @@ mod tests {
     }
 
     #[test]
-    fn one_bad_plugin_in_a_bundled_manifest_leaves_the_others_standing() {
-        let mut bad_range = manifest();
-        bad_range["id"] = json!("notes");
-        bad_range["engines"]["droppen"] = json!(">=0.1.0 <0.2.0 || ^0.3");
-        let mut bad_permission = manifest();
-        bad_permission["id"] = json!("clock");
-        bad_permission["permissions"] = json!(["storage", "everything"]);
-        let text = serde_json::to_vec(&json!({
-            "sdkVersion": "0.1.0",
-            "distribution": "mine",
-            "plugins": [bad_range, manifest(), bad_permission, {"id": "Bad"}]
-        }))
-        .unwrap();
-        let (bundled, problems) = BundledManifest::from_json_lenient(&text).unwrap();
-        assert_eq!(bundled.plugins.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["tasks"]);
-        assert_eq!(bundled.distribution.as_deref(), Some("mine"));
-        assert_eq!(problems.len(), 3, "{problems:?}");
-        assert!(problems[0].contains("notes"), "{problems:?}");
-        assert!(BundledManifest::from_json_lenient(b"[1]").is_err());
-        assert!(BundledManifest::from_json_lenient(b"{\"plugins\": 3}").is_err());
-        assert_eq!(BundledManifest::from_json_lenient(b"{}").unwrap().0.plugins.len(), 0);
+    fn an_alias_may_not_take_a_path_the_host_already_answers() {
+        // The same list the web router test reads (`reserved-paths.txt`).
+        assert!(is_reserved_path("settings"));
+        assert!(is_reserved_path("plugins"));
+        assert!(!is_reserved_path("tasks"));
+        let mut taken = manifest();
+        taken["aliases"] = json!(["/settings"]);
+        let taken: Manifest = serde_json::from_value(taken).unwrap();
+        assert!(taken.problems().iter().any(|problem| problem.contains("shadow")), "{:?}", taken.problems());
+        let mut free = manifest();
+        free["aliases"] = json!(["/tasks"]);
+        let free: Manifest = serde_json::from_value(free).unwrap();
+        assert!(free.problems().is_empty());
     }
 
     #[test]
@@ -602,9 +572,17 @@ mod tests {
             reason: None,
             notice: None,
             notices: Vec::new(),
+            build: "0.1.0-0123456789ab".into(),
+            entry: Some("/plugins/key/tasks/0.1.0-0123456789ab/dist/index.js".into()),
+            aliases: vec!["/tasks".into()],
+            permissions: vec![Permission::Storage],
         };
         let value = serde_json::to_value(&status).unwrap();
         assert_eq!(value["version"], json!("0.1.0"));
         assert_eq!(value["reason"], json!(null));
+        assert_eq!(value["entry"], json!("/plugins/key/tasks/0.1.0-0123456789ab/dist/index.js"));
+        assert_eq!(value["aliases"], json!(["/tasks"]));
+        assert_eq!(value["permissions"], json!(["storage"]));
+        assert_eq!(value["build"], json!("0.1.0-0123456789ab"));
     }
 }
