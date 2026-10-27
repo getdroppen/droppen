@@ -67,18 +67,9 @@ pub enum Verdict {
     Hidden,
 }
 
-/// Whether `id` names a file rather than a path.
-///
-/// The same rule [`super::codex::find_codex_session`] admits an id under, and
-/// narrow for the same reason: the id becomes a path segment, so anything that
-/// could traverse is refused rather than sanitised.
-fn safe_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-}
-
 /// `<data>/codex-claims/<id>`, or `None` when the id is not a bare name.
 fn claim_file(paths: &Paths, id: &str) -> Option<PathBuf> {
-    safe_id(id).then(|| paths.codex_claims_dir().join(id))
+    super::reference::is_path_segment_id(id).then(|| paths.codex_claims_dir().join(id))
 }
 
 /// The instance named by one claim file, or `None` when it names nothing usable.
@@ -207,7 +198,7 @@ impl Claims {
         if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let id = entry.file_name().to_string_lossy().into_owned();
-                if !safe_id(&id) {
+                if !super::reference::is_path_segment_id(&id) {
                     continue;
                 }
                 match tokio::fs::read_to_string(entry.path()).await {
@@ -343,7 +334,7 @@ pub async fn prune(paths: &Paths) -> usize {
     let mut mine: Vec<(String, PathBuf)> = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let id = entry.file_name().to_string_lossy().into_owned();
-        if !safe_id(&id) {
+        if !super::reference::is_path_segment_id(&id) {
             continue;
         }
         let path = entry.path();

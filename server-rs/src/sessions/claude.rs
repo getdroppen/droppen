@@ -610,19 +610,11 @@ pub async fn find_claude_session(paths: &Paths, id: &str) -> Option<ClaudeSessio
 /// not a hypothetical: everything that strips `.jsonl` off a located path and
 /// treats the remainder as this session's own directory would then be handed a
 /// directory holding every session there is.
+///
+/// An id that becomes a *directory* of its own is held to the stricter
+/// [`crate::sessions::reference::is_path_segment_id`] instead.
 pub fn is_session_id(id: &str) -> bool {
     !id.is_empty() && !id.bytes().all(|b| b == b'.') && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
-}
-
-/// Whether an id may name a *directory* beside its transcript.
-///
-/// Strictly narrower than [`is_session_id`], and used wherever an id becomes a
-/// path segment of its own rather than part of a file name, such as the task
-/// sidecars. Real ids are uuids, so nothing
-/// legitimate is turned away — and a rule with no dots in it at all cannot be
-/// argued into traversing.
-pub fn is_session_dir_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// A session's transcript in one *named* root, ignoring the other.
@@ -980,10 +972,10 @@ mod tests {
     fn an_id_of_dots_is_never_a_session() {
         for id in ["..", ".", "...", "a/b", "a\\b", ""] {
             assert!(!is_session_id(id), "{id:?} must not name a transcript");
-            assert!(!is_session_dir_id(id), "{id:?} must not name a directory");
+            assert!(!crate::sessions::reference::is_path_segment_id(id), "{id:?} must not name a directory");
         }
         assert!(is_session_id("a..b"), "a dot inside a name is merely unusual");
-        assert!(!is_session_dir_id("a..b"), "but never part of a directory name");
+        assert!(!crate::sessions::reference::is_path_segment_id("a..b"), "but never part of a directory name");
     }
 
     /// What an adoption by an earlier build left behind: a copy in this

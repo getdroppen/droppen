@@ -47,7 +47,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{claude, Paths};
+use super::{claude, reference, Paths};
 use crate::claude_roots::{self, ClaudeRoot};
 
 /// Suffix the copy wears until it is complete; swept at boot by
@@ -73,7 +73,7 @@ pub enum ContinueError {
 /// Returns the new transcript's path. The original is only read.
 pub async fn copy_local_session(paths: &Paths, id: &str, new_id: &str) -> Result<PathBuf, ContinueError> {
     // The strict rule for both: each becomes a directory name below.
-    if !claude::is_session_dir_id(id) || !claude::is_session_dir_id(new_id) || id == new_id {
+    if !reference::is_path_segment_id(id) || !reference::is_path_segment_id(new_id) || id == new_id {
         return Err(ContinueError::NotFound);
     }
     let original = claude::find_in_root(paths, ClaudeRoot::Local, id).await.ok_or(ContinueError::NotFound)?;

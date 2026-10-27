@@ -402,7 +402,7 @@ impl Recorders {
         // whatever the CLI announced rather than anything this server minted.
         // Refusing the odd ones is cheaper than sanitising them, and a session
         // whose id is not id-shaped has bigger problems than its recording.
-        if !safe_id(session) {
+        if !crate::sessions::reference::is_path_segment_id(session) {
             tracing::warn!(session = %session, "not recording a session whose id is not a plain identifier");
             return Recorder::disabled();
         }
@@ -440,11 +440,6 @@ impl Recorders {
             replay_noted: AtomicBool::new(false),
         })))
     }
-}
-
-/// Whether an id may become a file name.
-fn safe_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && !id.starts_with('-')
 }
 
 // -------------------------------------------------------------- the handle
@@ -1001,9 +996,9 @@ mod tests {
     fn the_environment_decides_whether_anything_is_recorded_at_all() {
         // The parse rules rather than the process environment, which is shared
         // with every other test in this binary.
-        assert!(safe_id("11111111-1111-4111-8111-111111111111"));
-        assert!(safe_id("agent_1"));
-        assert!(!safe_id("a b"));
+        assert!(crate::sessions::reference::is_path_segment_id("11111111-1111-4111-8111-111111111111"));
+        assert!(crate::sessions::reference::is_path_segment_id("agent_1"));
+        assert!(!crate::sessions::reference::is_path_segment_id("a b"));
         assert_eq!(clip("short", 10), "short");
         assert_eq!(clip("0123456789abc", 10).chars().count(), 11);
     }

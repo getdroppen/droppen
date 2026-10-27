@@ -1278,7 +1278,7 @@ mod tests {
         let continued = continue_on(&state, Source::Claude, STUCK, &work.id).await.expect("continued");
         assert_eq!(continued.source, Source::Claude);
         assert_ne!(continued.id, STUCK, "a new session, not the old one moved");
-        assert!(crate::sessions::claude::is_session_dir_id(&continued.id));
+        assert!(crate::sessions::reference::is_path_segment_id(&continued.id));
 
         assert_eq!(std::fs::read(&original).expect("the original"), before, "the original is untouched");
         let copy = crate::sessions::claude::find_in_root(&paths, ClaudeRoot::Managed, &continued.id)

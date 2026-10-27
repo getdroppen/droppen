@@ -229,6 +229,24 @@ pub(crate) fn stem(session_id: &str) -> String {
     out
 }
 
+/// Whether `id` may be one path segment of its own.
+///
+/// The rule for an id that is joined as a directory or file *name*, not merely
+/// part of a `<id>.jsonl`: ASCII alphanumerics, `_` or `-`, 1 to 128 bytes, and
+/// no leading `-`. Dots are refused outright, so `..` cannot walk out of the
+/// directory it is joined to; a leading `-` is refused so a file name can never
+/// read as an option to a command.
+///
+/// This is the strictest of the rules the path-segment checks carried before
+/// they were shared. Every id a supported CLI writes is a uuid (`claude` and
+/// `codex` both mint them, and `codex`'s rollout file names are matched against
+/// a hex-uuid pattern), so nothing legitimate is refused: a uuid is 36 ASCII
+/// bytes, contains neither a dot nor a non-ASCII character, and does not start
+/// with `-`.
+pub(crate) fn is_path_segment_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && !id.starts_with('-')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

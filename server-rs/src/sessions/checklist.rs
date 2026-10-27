@@ -52,9 +52,8 @@ pub struct Checklist {
 /// becomes a path *segment*, so `..` would walk out of the tasks directory —
 /// hence a stricter rule than the lookup's.
 fn is_session_dir_name(id: &str) -> bool {
-    // One rule for every id that becomes a path segment of its own; see
-    // [`crate::sessions::claude::is_session_dir_id`].
-    super::claude::is_session_dir_id(id)
+    // One rule for every id that becomes a path segment of its own.
+    super::reference::is_path_segment_id(id)
 }
 
 /// `<root>/tasks/<session-id>` — one directory per session, one JSON per task.
