@@ -36,6 +36,8 @@
 
 use std::time::Duration;
 
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+
 use crate::sessions::Paths;
 
 use super::sessions::SessionsStore;
@@ -132,17 +134,24 @@ enum Kind {
     App,
 }
 
+/// What `user` was asked to do, with the instance it was asked for.
+#[derive(Debug, PartialEq, Eq)]
+struct Invocation {
+    action: Action,
+    /// `--instance`, already validated as a name.
+    instance: Option<String>,
+}
+
 /// Run a `user` subcommand. `args` is everything after `user`.
 ///
 /// The arguments are read before the configuration is: a mistyped subcommand
 /// must answer with the usage on any machine, including one where the
 /// configuration will not load or the instance cannot be worked out.
 pub async fn run(args: &[String]) -> Result<(), String> {
-    let (args, instance) = take_instance(args)?;
-    let action = parse(&args)?;
-    let paths = home_paths(instance.as_deref())?;
+    let invocation = parse_invocation(args)?;
+    let paths = home_paths(invocation.instance.as_deref())?;
     let store = UsersStore::new(&paths);
-    match action {
+    match invocation.action {
         Action::Add(name, kind) => add(&store, &paths, &name, kind).await,
         Action::List(kind) => list(&store, &paths, kind).await,
         Action::Passwd(name) => passwd(&store, &paths, &name).await,
@@ -151,24 +160,143 @@ pub async fn run(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// The subcommand, or the usage.
-///
-/// The argument count is part of every arm, so a stray word — the shape a
-/// half-remembered `user add ada --instance bob` takes when the flag is
-/// misspelled — is the usage rather than a silently ignored argument.
-fn parse(args: &[String]) -> Result<Action, String> {
-    let app = args.iter().any(|arg| arg == "--app");
-    let yes = args.iter().any(|arg| arg == "--yes");
-    let words: Vec<&str> = args.iter().map(String::as_str).filter(|arg| *arg != "--app" && *arg != "--yes").collect();
-    let kind = if app { Kind::App } else { Kind::User };
-    match (words.as_slice(), app, yes) {
-        (["add", name], _, false) => Ok(Action::Add((*name).to_string(), kind)),
-        (["list"], _, false) => Ok(Action::List(kind)),
-        (["passwd", name], false, false) => Ok(Action::Passwd((*name).to_string())),
-        (["rm", name], false, _) => Ok(Action::Remove((*name).to_string(), yes)),
-        (["mark-app", name], false, false) => Ok(Action::MarkApp((*name).to_string())),
-        _ => Err(USAGE.to_string()),
+/// The instance and the action, from everything after `user`.
+fn parse_invocation(args: &[String]) -> Result<Invocation, String> {
+    let lifted = lift_flags(args)?;
+    // clap reserves `--` as a terminator; this grammar treats it as a word (a
+    // name can be `--`). Only argv containing one take the word matcher below;
+    // everything else is clap's.
+    if has_bare_separator(args) {
+        return parse_words(lifted);
     }
+    let cli = user_command()
+        .try_get_matches_from(std::iter::once("user".to_string()).chain(lifted.words.iter().cloned()))
+        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let cli = UserWordsCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let kind = lifted.kind();
+    let action = match cli.command {
+        Some(UserWordCommand::Add { name }) if !lifted.yes => Action::Add(name, kind),
+        Some(UserWordCommand::List) if !lifted.yes => Action::List(kind),
+        Some(UserWordCommand::Passwd { name }) if !lifted.app && !lifted.yes => Action::Passwd(name),
+        // `rm` is the one that reads --yes; --app means nothing to it.
+        Some(UserWordCommand::Rm { name }) if !lifted.app => Action::Remove(name, lifted.yes),
+        Some(UserWordCommand::MarkApp { name }) if !lifted.app && !lifted.yes => Action::MarkApp(name),
+        _ => return Err(USAGE.to_string()),
+    };
+    Ok(Invocation { action, instance: lifted.instance })
+}
+
+/// `user`'s command tree, shown under the name this binary was run as.
+fn user_command() -> clap::Command {
+    let name = crate::program::Name::invoked();
+    UserWordsCli::command()
+        .bin_name(format!("{} user", name.command()))
+        .after_long_help(name.rewrite(USAGE).into_owned())
+}
+
+/// Everything `user` takes out of its arguments before the words are read:
+/// the instance, and the two flags that are allowed anywhere.
+struct UserWords {
+    words: Vec<String>,
+    instance: Option<String>,
+    app: bool,
+    yes: bool,
+}
+
+impl UserWords {
+    fn kind(&self) -> Kind {
+        if self.app {
+            Kind::App
+        } else {
+            Kind::User
+        }
+    }
+}
+
+/// Take the flags out before clap sees the words: a user name may start with
+/// a hyphen (`--help` is a legal name), so clap cannot tell an option from a
+/// name; these three are the only option-looking tokens the grammar lifts.
+fn lift_flags(args: &[String]) -> Result<UserWords, String> {
+    let (words, instance) = take_instance(args)?;
+    let app = words.iter().any(|word| word == "--app");
+    let yes = words.iter().any(|word| word == "--yes");
+    let words = words.into_iter().filter(|word| word != "--app" && word != "--yes").collect();
+    Ok(UserWords { words, instance, app, yes })
+}
+
+/// The word matcher for the one argv shape clap cannot express: a bare `--`,
+/// which this grammar treats as a word (and which can be a user name). The arms
+/// are the word shapes the rest of the parser accepts; `--` never reaches clap.
+fn parse_words(lifted: UserWords) -> Result<Invocation, String> {
+    let kind = lifted.kind();
+    let action = match (lifted.words.as_slice(), lifted.app, lifted.yes) {
+        ([command, name], _, false) if command == "add" => Action::Add(name.clone(), kind),
+        ([command], _, false) if command == "list" => Action::List(kind),
+        ([command, name], false, false) if command == "passwd" => Action::Passwd(name.clone()),
+        ([command, name], false, yes) if command == "rm" => Action::Remove(name.clone(), yes),
+        ([command, name], false, false) if command == "mark-app" => Action::MarkApp(name.clone()),
+        _ => return Err(USAGE.to_string()),
+    };
+    Ok(Invocation { action, instance: lifted.instance })
+}
+
+/// `user`'s words: a subcommand and, for some, one name. Names may start with
+/// a hyphen (the old parser lifted only --app/--yes/--instance, and every
+/// other word was a name), so the positionals accept hyphen values.
+#[derive(Debug, Parser)]
+#[command(
+    name = "user",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct UserWordsCli {
+    #[command(subcommand)]
+    command: Option<UserWordCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum UserWordCommand {
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Add {
+        #[arg(allow_hyphen_values = true)]
+        name: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    List,
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Passwd {
+        #[arg(allow_hyphen_values = true)]
+        name: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Rm {
+        #[arg(allow_hyphen_values = true)]
+        name: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    MarkApp {
+        #[arg(allow_hyphen_values = true)]
+        name: String,
+    },
+}
+
+/// Whether `args` holds a `--` that the old parser would have seen as a word.
+/// The value after `--instance` is skipped: that token may be `--` and is an
+/// option value, not a word.
+fn has_bare_separator(args: &[String]) -> bool {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--instance" => {
+                iter.next();
+            }
+            "--" => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Pull `--instance <name>` (or `--instance=<name>`) out of the arguments,
@@ -396,10 +524,7 @@ async fn remove(store: &UsersStore, paths: &Paths, name: &str, yes: bool) -> Res
 /// state printed, read back from the file it wrote. `args` is everything after
 /// `setup-code`.
 pub async fn setup_code(args: &[String]) -> Result<(), String> {
-    let (rest, instance) = take_instance(args)?;
-    if !rest.is_empty() {
-        return Err(SETUP_CODE_USAGE.to_string());
-    }
+    let instance = parse_setup_code(args)?;
     let (paths, config) = cli_context(instance.as_deref())?;
     let store = UsersStore::new(&paths);
     let name = paths.instance();
@@ -437,16 +562,46 @@ pub async fn setup_code(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The instance, from everything after `setup-code` (which takes no words).
+fn parse_setup_code(args: &[String]) -> Result<Option<String>, String> {
+    // Every --instance is validated and removed before clap sees the words, as
+    // `take_instance` always did.
+    let (rest, instance) = take_instance(args)?;
+    // clap reserves `--` as a terminator, so it would read `setup-code --` as
+    // "no arguments" and run; this command has always refused it.
+    if has_bare_separator(&rest) {
+        return Err(SETUP_CODE_USAGE.to_string());
+    }
+    setup_code_command()
+        .try_get_matches_from(std::iter::once("setup-code".to_string()).chain(rest.iter().cloned()))
+        .map_err(|error| format!("{error}\n\n{SETUP_CODE_USAGE}"))?;
+    Ok(instance)
+}
+
+/// `setup-code`'s command tree, shown under the name this binary was run as.
+fn setup_code_command() -> clap::Command {
+    let name = crate::program::Name::invoked();
+    SetupCodeCli::command()
+        .bin_name(format!("{} setup-code", name.command()))
+        .after_long_help(name.rewrite(SETUP_CODE_USAGE).into_owned())
+}
+
+/// `setup-code` takes only the instance.
+#[derive(Debug, Parser)]
+#[command(
+    name = "setup-code",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct SetupCodeCli {}
+
 /// `remote-hand-server open`: open the instance's page in this device's
 /// browser — signed in as its owner while it has no user account. `args` is
 /// everything after `open`.
 pub async fn open(args: &[String]) -> Result<(), String> {
-    let (rest, instance) = take_instance(args)?;
-    let print = match rest.as_slice() {
-        [] => false,
-        [flag] if flag == "--print" => true,
-        _ => return Err(OPEN_USAGE.to_string()),
-    };
+    let (print, instance) = parse_open(args)?;
     let paths = home_paths(instance.as_deref())?;
     let answer = super::local_open::ask(&paths).await?;
     if let Some(error) = answer.error {
@@ -489,6 +644,50 @@ pub async fn open(args: &[String]) -> Result<(), String> {
     say!("{url}");
     say!("Open that link in a browser on this device: it signs the page in as this device's owner, works once, and only within a minute.");
     opened.outcome()
+}
+
+/// The instance and `--print`, from everything after `open`.
+fn parse_open(args: &[String]) -> Result<(bool, Option<String>), String> {
+    // Every --instance is validated and removed before clap sees the words, as
+    // `take_instance` always did.
+    let (rest, instance) = take_instance(args)?;
+    // As in `setup-code`: a `--` is not "no arguments" here.
+    if has_bare_separator(&rest) {
+        return Err(OPEN_USAGE.to_string());
+    }
+    let cli = open_command()
+        .try_get_matches_from(std::iter::once("open".to_string()).chain(rest.iter().cloned()))
+        .map_err(|error| format!("{error}\n\n{OPEN_USAGE}"))?;
+    let cli = OpenCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{OPEN_USAGE}"))?;
+    // `--print` twice was two words, and the shape allows one.
+    let print = match cli.print {
+        0 => false,
+        1 => true,
+        _ => return Err(OPEN_USAGE.to_string()),
+    };
+    Ok((print, instance))
+}
+
+/// `open`'s command tree, shown under the name this binary was run as.
+fn open_command() -> clap::Command {
+    let name = crate::program::Name::invoked();
+    OpenCli::command()
+        .bin_name(format!("{} open", name.command()))
+        .after_long_help(name.rewrite(OPEN_USAGE).into_owned())
+}
+
+/// `open` takes the instance and its one flag.
+#[derive(Debug, Parser)]
+#[command(
+    name = "open",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct OpenCli {
+    #[arg(long, action = clap::ArgAction::Count)]
+    print: u8,
 }
 
 /// How handing something to the browser went.
@@ -945,12 +1144,12 @@ mod tests {
     fn the_subcommand_is_read_out_of_what_the_flag_left_behind() {
         let args = |words: &[&str]| words.iter().map(|word| word.to_string()).collect::<Vec<_>>();
         let (rest, _) = take_instance(&args(&["rm", "ada", "--instance", "bob"])).expect("parse");
-        assert!(matches!(parse(&rest), Ok(Action::Remove(name, false)) if name == "ada"));
+        assert!(matches!(parse_invocation(&rest).map(|parsed| parsed.action), Ok(Action::Remove(name, false)) if name == "ada"));
         assert!(
-            parse(&args(&["add", "ada", "extra"])).is_err(),
+            parse_invocation(&args(&["add", "ada", "extra"])).is_err(),
             "a stray word is the usage, not an ignored word"
         );
-        assert!(parse(&args(&["list", "ada"])).is_err());
+        assert!(parse_invocation(&args(&["list", "ada"])).is_err());
     }
 
     #[tokio::test]
@@ -988,15 +1187,142 @@ mod tests {
     #[test]
     fn app_internal_accounts_are_asked_for_with_a_flag() {
         let args = |words: &[&str]| words.iter().map(|word| word.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse(&args(&["add", "ada"])), Ok(Action::Add("ada".into(), Kind::User)));
-        assert_eq!(parse(&args(&["add", "--app", "ada"])), Ok(Action::Add("ada".into(), Kind::App)));
-        assert_eq!(parse(&args(&["add", "ada", "--app"])), Ok(Action::Add("ada".into(), Kind::App)));
-        assert_eq!(parse(&args(&["list", "--app"])), Ok(Action::List(Kind::App)));
-        assert_eq!(parse(&args(&["list"])), Ok(Action::List(Kind::User)));
-        assert_eq!(parse(&args(&["mark-app", "ada"])), Ok(Action::MarkApp("ada".into())));
-        assert!(parse(&args(&["rm", "ada", "--app"])).is_err(), "the flag means nothing to rm");
-        assert_eq!(parse(&args(&["rm", "--yes", "ada"])), Ok(Action::Remove("ada".into(), true)));
-        assert!(parse(&args(&["add", "ada", "--yes"])).is_err(), "--yes is rm's alone");
-        assert!(parse(&args(&["mark-app"])).is_err());
+        assert_eq!(parse_invocation(&args(&["add", "ada"])).map(|parsed| parsed.action), Ok(Action::Add("ada".into(), Kind::User)));
+        assert_eq!(parse_invocation(&args(&["add", "--app", "ada"])).map(|parsed| parsed.action), Ok(Action::Add("ada".into(), Kind::App)));
+        assert_eq!(parse_invocation(&args(&["add", "ada", "--app"])).map(|parsed| parsed.action), Ok(Action::Add("ada".into(), Kind::App)));
+        assert_eq!(parse_invocation(&args(&["list", "--app"])).map(|parsed| parsed.action), Ok(Action::List(Kind::App)));
+        assert_eq!(parse_invocation(&args(&["list"])).map(|parsed| parsed.action), Ok(Action::List(Kind::User)));
+        assert_eq!(parse_invocation(&args(&["mark-app", "ada"])).map(|parsed| parsed.action), Ok(Action::MarkApp("ada".into())));
+        assert!(parse_invocation(&args(&["rm", "ada", "--app"])).is_err(), "the flag means nothing to rm");
+        assert_eq!(parse_invocation(&args(&["rm", "--yes", "ada"])).map(|parsed| parsed.action), Ok(Action::Remove("ada".into(), true)));
+        assert!(parse_invocation(&args(&["add", "ada", "--yes"])).is_err(), "--yes is rm's alone");
+        assert!(parse_invocation(&args(&["mark-app"])).is_err());
     }
+    /// The `user` command lines, pinned so the hand parser and clap answer
+    /// alike. Names may be hyphen-led (`--help` included): the old parser
+    /// lifted only `--app`, `--yes` and `--instance`, and every other word was
+    /// a name.
+    #[test]
+    fn the_user_argument_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let accepted: Vec<Vec<String>> = [
+            &["add", "ada"][..],
+            &["add", "--app", "ada"],
+            &["add", "ada", "--app"],
+            &["add", "ada", "--app", "--app"],
+            &["list"],
+            &["list", "--app"],
+            &["list", "--app", "--app"],
+            &["passwd", "ada"],
+            &["rm", "ada"],
+            &["rm", "ada", "--yes"],
+            &["rm", "--yes", "ada"],
+            &["rm", "ada", "--yes", "--yes"],
+            &["mark-app", "ada"],
+            &["add", "ada", "--instance", "bob"],
+            &["--instance=bob", "list"],
+            &["--instance", "bob", "--instance", "carol", "list"],
+            &["add", "--"],
+            &["add", "--", "--app"],
+            &["passwd", "--"],
+            &["rm", "--", "--yes"],
+            &["mark-app", "--"],
+            &["add", "--help"],
+            &["rm", "--anything"],
+            &["add", "-x"],
+            &["add", "--instance", "bob", "ada"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &accepted {
+            assert!(parse_invocation(argv).is_ok(), "{argv:?} must parse: {:?}", parse_invocation(argv).err());
+        }
+
+        let refused: Vec<Vec<String>> = [
+            &[][..],
+            &["add"],
+            &["add", "ada", "extra"],
+            &["add", "ada", "--yes"],
+            &["list", "--yes"],
+            &["passwd", "ada", "--app"],
+            &["passwd", "ada", "--yes"],
+            &["rm", "ada", "--app"],
+            &["mark-app", "ada", "--app"],
+            &["mark-app", "ada", "--yes"],
+            &["--instance"],
+            &["--instance", "Bad Name", "list"],
+            &["bogus"],
+            &["--help"],
+            &["-h"],
+            &["list", "--app", "--yes"],
+            &["add", "ada", "--instance"],
+            &["add", "ada", "--instance", "Bad", "--instance", "probe"],
+            &["--instance", "Bad", "--instance", "probe", "list"],
+            &["list", "--instance=Bad", "--instance=probe"],
+            &["list", "--instance=", "--instance", "probe"],
+            &["list", "--instance", "", "--instance", "probe"],
+            &["list", "--instance", "a b", "--instance", "probe"],
+            &["--", "list"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &refused {
+            assert!(parse_invocation(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn the_user_action_and_instance_are_read_from_the_same_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let parsed = parse_invocation(&words(&["add", "ada", "--app", "--instance", "bob"])).expect("parsed");
+        assert_eq!(parsed.action, Action::Add("ada".into(), Kind::App));
+        assert_eq!(parsed.instance.as_deref(), Some("bob"));
+
+        let parsed = parse_invocation(&words(&["rm", "--yes", "--", "--instance=bob"])).expect("parsed");
+        assert_eq!(parsed.action, Action::Remove("--".into(), true));
+        assert_eq!(parsed.instance.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn open_and_setup_code_read_their_own_words() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+
+        assert_eq!(parse_open(&words(&[])), Ok((false, None)));
+        assert_eq!(parse_open(&words(&["--print"])), Ok((true, None)));
+        assert_eq!(parse_open(&words(&["--instance=bob", "--print"])), Ok((true, Some("bob".into()))));
+        assert_eq!(parse_open(&words(&["--print", "--instance", "bob"])), Ok((true, Some("bob".into()))));
+        for argv in [
+            &["nonsense"][..],
+            &["--print", "--print"],
+            &["--print=x"],
+            &["--", "--print"],
+            &["--print", "--"],
+            &["-h"],
+            &["--help"],
+            &["--instance"],
+            &["--instance", "Bad", "--instance", "probe"],
+            &["--instance=", "--instance", "probe"],
+            &["--instance", "a b", "--instance", "probe", "--print"],
+        ] {
+            assert!(parse_open(&words(argv)).is_err(), "{argv:?} must be refused");
+        }
+
+        assert_eq!(parse_setup_code(&words(&[])), Ok(None));
+        assert_eq!(parse_setup_code(&words(&["--instance", "bob"])), Ok(Some("bob".into())));
+        for argv in [
+            &["junk"][..],
+            &["--"],
+            &["--", "x"],
+            &["--help"],
+            &["--instance"],
+            &["--instance", "Bad Name"],
+            &["--instance", "Bad", "--instance", "probe"],
+            &["--instance=", "--instance", "probe"],
+        ] {
+            assert!(parse_setup_code(&words(argv)).is_err(), "{argv:?} must be refused");
+        }
+    }
+
 }

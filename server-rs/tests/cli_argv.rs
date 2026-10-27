@@ -231,6 +231,80 @@ fn agent_argv_keeps_its_shape() {
     }
 }
 
+/// `user`, `setup-code` and `open` keep their word shapes, including names that look like flags and the
+/// bare `--` that clap reserves.
+#[test]
+fn auth_argv_keeps_its_shape() {
+    let invocation = Invocation::new();
+
+    for argv in [
+        vec!["user", "list"],
+        vec!["user", "list", "--app"],
+        vec!["user", "--instance", "probe", "list"],
+        vec!["user", "list", "--instance=probe"],
+        vec!["user", "--app", "list"],
+        vec!["user", "list", "--app", "--app"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
+    }
+
+    // A word that looks like a flag is a user name: `--help` here is not help.
+    let output = invocation.run(&["user", "add", "--help"]);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("at least 12 characters"), "{}", stderr(&output));
+
+    // `--` is a word to this grammar (it can be a name), never a separator.
+    for argv in [
+        vec!["user", "add", "--", "ada"],
+        vec!["user", "--", "list"],
+        vec!["user", "add", "ada", "--yes"],
+        vec!["user", "passwd", "ada", "--app"],
+        vec!["user", "rm", "ada", "--app"],
+        vec!["user", "mark-app", "ada", "--yes"],
+        vec!["user", "--instance", "Bad Name", "list"],
+        vec!["user", "rm", "--help"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}: {}", stdout(&output));
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+
+    // Every --instance is validated before clap: an invalid earlier name is refused even when a good
+    // one follows, and nothing is created for the good one.
+    let fresh = Invocation::new();
+    for argv in [
+        vec!["user", "list", "--instance", "Bad", "--instance", "probe"],
+        vec!["user", "list", "--instance=Bad", "--instance=probe"],
+        vec!["setup-code", "--instance", "Bad", "--instance", "probe"],
+        vec!["setup-code", "--instance=Bad", "--instance=probe"],
+        vec!["open", "--print", "--instance", "Bad", "--instance", "probe"],
+        vec!["open", "--instance", "Bad", "--instance", "probe"],
+    ] {
+        let output = fresh.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}: {}", stdout(&output));
+        assert!(stderr(&output).contains("must be 1-32 characters"), "{argv:?}: {}", stderr(&output));
+    }
+    assert!(!fresh.home.path().join("data/instances/probe/state.db").exists(), "no files for the good name");
+
+    for argv in [
+        vec!["setup-code", "--"],
+        vec!["setup-code", "junk"],
+        vec!["setup-code", "--help"],
+        vec!["open", "--"],
+        vec!["open", "--print", "--print"],
+        vec!["open", "--print", "extra"],
+        vec!["open", "--help"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}: {}", stdout(&output));
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+}
+
 /// The unconverted commands still receive their exact tail, including a `--help` that their own parser
 /// refuses, and the two whose tails are ignored stay permissive.
 #[test]
