@@ -58,6 +58,8 @@ use std::time::Duration;
 use gotcha::{api, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::text::hex;
 use tokio::io::AsyncWriteExt;
 
 use crate::api::error::ApiError;
@@ -511,11 +513,6 @@ async fn capped(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
         }
     }
     String::from_utf8_lossy(&kept).into_owned()
-}
-
-/// Lowercase hex, the form every `sha256sum` prints.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Seed `<data>/bin` from the running binary, so a supervisor has one to run.
