@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { useMachineNavigate } from "@/app/machine-route";
 import { ChevronLeft, Plus, SquareTerminal } from "lucide-react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
@@ -18,6 +17,7 @@ import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
 import { basename, formatRelative } from "@/lib/format";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
+import { useVisited } from "@/lib/use-visited";
 
 export interface TerminalsSearch {
   id?: string;
@@ -106,17 +106,10 @@ export function TerminalsView() {
   // Nothing was gained: the server replays a full repaint on every attach
   // (`server-rs/src/terminals/routes.rs`), so a first selection paints straight
   // away without having been attached in advance.
-  const [visited, setVisited] = useState<string[]>([]);
-  let mounted = visited;
-  if (activeId && terminals.some((t) => t.id === activeId) && !mounted.includes(activeId)) {
-    mounted = [...mounted, activeId];
-  }
   // Prune killed terminals, but only once the list has actually answered — an
   // empty `data` is "not loaded yet" and would unmount every pane on a refetch.
-  if (data) mounted = mounted.filter((id) => terminals.some((t) => t.id === id));
-  if (mounted.length !== visited.length || mounted.some((id, i) => id !== visited[i])) {
-    setVisited(mounted);
-  }
+  const known = data ? terminals.map((t) => t.id) : null;
+  const mounted = useVisited(activeId && known?.includes(activeId) ? activeId : null, known);
 
   return (
     <>

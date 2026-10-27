@@ -1,10 +1,10 @@
 import { RefreshCw, X } from "lucide-react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PaneTreeView } from "@/app/pane-tree-view";
 import { useScreens } from "@/app/screens";
 import { PaneLeafContent } from "@/app/secondary-pane";
 import { cn } from "@/lib/cn";
+import { useVisited } from "@/lib/use-visited";
 
 /**
  * What a screen says about its saves, over the top of its panes: that another
@@ -89,13 +89,8 @@ function ScreenSyncNotices({ id }: { id: string }) {
 export function ScreenFrames() {
   const { screens, activeScreenId, treeApiFor } = useScreens();
 
-  const [visited, setVisited] = useState<string[]>([]);
-  let next = visited;
-  if (activeScreenId && screens?.some((s) => s.id === activeScreenId) && !next.includes(activeScreenId)) {
-    next = [...next, activeScreenId];
-  }
-  if (screens) next = next.filter((id) => screens.some((s) => s.id === id));
-  if (next.length !== visited.length || next.some((id, i) => id !== visited[i])) setVisited(next);
+  const known = screens?.map((s) => s.id) ?? null;
+  const next = useVisited(activeScreenId && known?.includes(activeScreenId) ? activeScreenId : null, known);
 
   return (
     <>

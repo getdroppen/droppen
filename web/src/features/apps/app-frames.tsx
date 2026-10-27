@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
+import { useVisited } from "@/lib/use-visited";
 
 function AppFrame({ id, title }: { id: string; title: string }) {
   const { t } = useTranslation();
@@ -51,11 +52,7 @@ export function AppFrames() {
   // Mount on visit, prune instances the server no longer lists. A freshly
   // created app is already in the cache (AppsRail writes it on success), so
   // pruning strictly by the list is safe.
-  const [visited, setVisited] = useState<string[]>([]);
-  let next = visited;
-  if (activeId && !next.includes(activeId)) next = [...next, activeId];
-  if (apps) next = next.filter((id) => apps.some((a) => a.id === id));
-  if (next.length !== visited.length || next.some((id, i) => id !== visited[i])) setVisited(next);
+  const next = useVisited(activeId, apps ? apps.map((a) => a.id) : null);
 
   return (
     <>
