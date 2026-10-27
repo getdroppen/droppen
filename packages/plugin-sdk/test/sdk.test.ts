@@ -144,3 +144,32 @@ test("the SDK version is the same in the package, the constant and the Rust crat
   const crate = readFileSync(new URL("../../../server-rs/crates/droppen-plugin-sdk/src/lib.rs", import.meta.url), "utf8");
   assert.match(crate, new RegExp(`pub const SDK_VERSION: &str = "${SDK_VERSION.replaceAll(".", "\\.")}";`));
 });
+
+/**
+ * The React major each SDK version lends a plugin. A plugin's bare `react` is
+ * the host's (the web build's import map), so React is part of what
+ * `SDK_VERSION` versions: a new React major is a breaking SDK change, and
+ * takes the next breaking version — a minor while on 0.x — and a row here
+ * (`docs/plugins/runtime.md` §3).
+ */
+const REACT_OF_SDK: Record<string, number> = { "0.1": 19 };
+
+test("the host's React major is the one its SDK version promises plugins", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as Record<string, Record<string, string>>;
+  const major = (range: string | undefined) => Number(/^\^?(\d+)\./.exec(range ?? "")?.[1]);
+  const [maj, min] = SDK_VERSION.split(".").map(Number);
+  // Breaking on 0.x is a minor, from 1.0 a major (Cargo's caret rules).
+  const line = maj === 0 ? `0.${min}` : `${maj}`;
+  const promised = REACT_OF_SDK[line];
+  assert.ok(promised, `SDK ${SDK_VERSION} names no React major: add "${line}" to REACT_OF_SDK`);
+  const web = major(read("../../../web/package.json").dependencies?.react);
+  assert.equal(
+    web,
+    promised,
+    `the web build lends plugins React ${web}, but SDK ${line} promises React ${promised}: a React major is a breaking SDK change — bump SDK_VERSION (here, the package and the Rust crate) and add its row`,
+  );
+  const pkg = read("../package.json");
+  assert.equal(major(pkg.peerDependencies?.react), promised, "the SDK's react peer range is the React it promises");
+  assert.equal(major(pkg.devDependencies?.react), promised, "and the one its tests run on");
+});

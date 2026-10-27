@@ -10,10 +10,15 @@
  *
  * Everything a plugin does to the outside world goes through `host.*`: storage,
  * dialogs, files, printing, the clipboard and navigation. That is what lets one
- * plugin build run unchanged in a local browser tab, on droppen.app and in the
- * desktop shell. The SDK depends on React and nothing else, and it names nothing
- * that belongs to the hosted service (accounts, plans, relays, keys): a host
- * translates those into the generic errors below.
+ * plugin build run unchanged in the desktop app's window and in a browser on
+ * the server's own page (droppen.app loads no plugin code). The SDK depends on
+ * React and nothing else, and it names nothing that belongs to the hosted
+ * service (accounts, plans, relays, keys): a host translates those into the
+ * generic errors below.
+ *
+ * `host.*` is the supported way, not a wall: a plugin runs unsandboxed in the
+ * host's page, and installing one trusts it fully
+ * (`docs/plugins/runtime.md` §8).
  *
  * Licensed MIT OR Apache-2.0, independently of the application that hosts it.
  */
@@ -21,7 +26,11 @@ import { createContext, useContext, type ComponentType, type LazyExoticComponent
 
 export { compareVersions, parseVersion, satisfies, validRange, type Version } from "./semver";
 
-/** The SDK version this package implements. A plugin's `engines.droppen` is a range over it. */
+/**
+ * The SDK version this package implements. A plugin's `engines.droppen` is a
+ * range over it. It versions the host's React too: on 0.x a minor is a
+ * breaking change, and a React major takes one (`docs/plugins/runtime.md` §3).
+ */
 export const SDK_VERSION = "0.1.0";
 
 /** The languages a host may run in. */
@@ -31,9 +40,11 @@ export type Locale = "en" | "zh-CN" | "zh-TW" | "ja";
 export type LocalizedText = string | ({ en: string } & Partial<Record<Locale, string>>);
 
 /**
- * What a plugin asks the host for. Only `storage` is implemented in 0.1;
- * the other two are reserved so a manifest can name them without a breaking
- * change later.
+ * What a plugin says it uses. **Declared, not enforced**: the host checks the
+ * names at install and nothing at run time holds a plugin to them — it runs
+ * with the page's own rights (`docs/plugins/runtime.md` §8). Only `storage`
+ * names something the host offers in 0.1; the other two are reserved so a
+ * manifest can name them without a breaking change later.
  */
 export type Permission = "storage" | "sessions:read" | "notify";
 
@@ -62,6 +73,7 @@ export interface PluginManifest {
   name: LocalizedText;
   /** The SDK range this plugin was built against, e.g. `^0.1.0`. */
   engines: { droppen: string };
+  /** What it says it uses: declared, not enforced (see {@link Permission}). */
   permissions?: Permission[];
   /**
    * Old top-level paths that should keep working, e.g. `["/tasks"]`. The host

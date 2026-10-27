@@ -31,6 +31,30 @@ with the `semver` crate): comparators joined by commas, a bare version meaning
 `^`. `satisfies` and `validRange` implement exactly that, checked against the
 same vectors as the Rust side (`test/engine-vectors.json`).
 
+## Versions
+
+`SDK_VERSION` versions everything a plugin binds to, the host's React
+included — a plugin's `react` *is* the host's:
+
+| SDK | React |
+|---|---|
+| 0.1 | 19 |
+
+On 0.x a minor is breaking: `^0.1.0` means `>=0.1.0, <0.2.0`, and a plugin
+built for 0.1 shows as not compatible on a 0.2 host until a build for 0.2 is
+installed. A React major in the host is such a break even when no SDK type
+moved. `test/sdk.test.ts` fails when the web build's React and this table
+part ways.
+
+## Trust
+
+A plugin runs in the host's page with no sandbox: it can do whatever the
+signed-in user can do there, terminals included. Installing one is trusting
+it as fully as a program run in that machine's terminal. `permissions` is
+declared and checked at install, **not enforced** — it tells a reader what the
+plugin means to use. See
+[`docs/plugins/runtime.md`](../../docs/plugins/runtime.md) §8.
+
 ## Packaging and installing
 
 A plugin is an ESM package whose `package.json` carries the manifest and whose
