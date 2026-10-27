@@ -16,8 +16,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { DownloadLink, HostImage, hostImageRoute, startDownload } from "../src/components/host-file.js";
 import { LightboxImage } from "../src/components/image-lightbox.js";
 import { Markdown } from "../src/components/markdown.js";
@@ -30,12 +29,11 @@ import { BlobError, hostBlobKey, hostBlobs } from "../src/lib/transport/blob.js"
 import { offlineTransport } from "../src/lib/transport/offline.js";
 import { fakeMachine, json } from "./fake-machine.js";
 import { LOCAL } from "../src/lib/machines/key.js";
+import { makeI18n } from "./render.js";
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 const t = i18n.t.bind(i18n);
 

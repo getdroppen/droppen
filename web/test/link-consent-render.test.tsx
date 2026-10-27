@@ -10,11 +10,11 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { LinkFlow, startHandshake } from "../src/features/link/link-popup.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
+import { makeI18n } from "./render.js";
 
 type El = React.ReactElement<Record<string, unknown>>;
 
@@ -29,8 +29,7 @@ function elements(node: unknown, out: El[] = []): El[] {
 }
 
 test("the consent page asks nothing about what the device may do, and adds it with admin false", async () => {
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false }, keySeparator: false, nsSeparator: false });
+  const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } }, keySeparator: false, nsSeparator: false });
   // The computer's page that opened the popup (on this device's loopback), and the popup's window.
   const posted: { t: string }[] = [];
   const opener = { postMessage: (message: { t: string }) => void posted.push(message) };

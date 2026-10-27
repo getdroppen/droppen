@@ -8,10 +8,10 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadDeviceKeys, MemoryKeyStore } from "../src/lib/e2e/keystore.js";
+import { makeI18n } from "./render.js";
 
 class MapStorage {
   readonly values = new Map<string, string>();
@@ -108,13 +108,11 @@ test("another device's unfinished move does not make this one's Remove local-onl
   assert.equal(removal.localOnly, undefined);
 });
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: moveZhCN }, "zh-TW": { translation: moveZhTW }, ja: { translation: moveJa } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 const draw = (node: React.ReactElement, lng = "en") => {
   void i18n.changeLanguage(lng);

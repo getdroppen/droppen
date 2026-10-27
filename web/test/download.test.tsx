@@ -14,8 +14,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/download-copy.js";
@@ -47,36 +46,25 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { MemoryStorage } from "./storage.js";
+import { makeI18n } from "./render.js";
 
 const app = { "zh-CN": { ...cloudDevicesZhCN, ...zhCN }, "zh-TW": { ...cloudDevicesZhTW, ...zhTW }, ja: { ...cloudDevicesJa, ...ja } };
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "zh-CN",
   resources: {
     en: { translation: {} },
     "zh-CN": { translation: { ...landingBundles["zh-CN"], ...app["zh-CN"] } },
     "zh-TW": { translation: { ...landingBundles["zh-TW"], ...app["zh-TW"] } },
-    ja: { translation: { ...landingBundles.ja, ...app.ja } },
+    ja: { translation: { ...landingBundles.ja, ...app.ja } }
   },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
 // The page reads the address (`?os=`) and the session's choice.
 const place = { search: "", origin: "https://droppen.app", hash: "" };
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
+
 const session = new MemoryStorage();
 Object.assign(globalThis, { location: place, sessionStorage: session });
 

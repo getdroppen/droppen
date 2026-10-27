@@ -17,9 +17,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { latencyTone, PathIndicator } from "../src/features/cloud/cloud-bar.js";
 import { DirectConnectionSetting } from "../src/features/cloud/devices.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -27,25 +24,21 @@ import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import type { PathStats } from "../src/lib/e2e/index.js";
+import { makeI18n, pageDraw } from "./render.js";
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: {
     en: { translation: {} },
     "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } },
     "zh-TW": { translation: { ...cloudDevicesZhTW, ...zhTW } },
-    ja: { translation: { ...cloudDevicesJa, ...ja } },
+    ja: { translation: { ...cloudDevicesJa, ...ja } }
   },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 const stats = (over: Partial<PathStats>): PathStats => ({ direct: false, relayRttMs: null, directRttMs: null, ups: 0, downs: 0, resent: 0, duplicates: 0, ...over });
 const text = (html: string) => html.replace(/<[^>]+>/g, "");

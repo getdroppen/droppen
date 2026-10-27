@@ -21,9 +21,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { type AccountPasskey, HubApi, HubApiError, type Reauth, type SignInChange, type SignInMethods } from "../src/lib/hub/api.js";
 import { MeStore } from "../src/lib/hub/me.js";
 import { type CreationOptionsJSON, type CredentialsLike, fromBase64Url, passkeyAdd, passkeyPrf, prfOutputOf, toBase64Url } from "../src/lib/hub/passkey.js";
@@ -41,37 +38,22 @@ import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { signOutJa, signOutZhCN, signOutZhTW } from "../src/i18n/sign-out.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { MemoryStorage } from "./storage.js";
+import { makeI18n, pageDraw } from "./render.js";
 
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 Object.assign(globalThis, { localStorage: new MemoryStorage(), sessionStorage: new MemoryStorage(), location: { pathname: ACCOUNT_PATH, search: "" } });
 // A browser with WebAuthn (the page offers passkeys only there).
 Object.assign(globalThis, { PublicKeyCredential: function PublicKeyCredential() {} });
 Object.defineProperty(globalThis, "navigator", { value: { credentials: { create: async () => null, get: async () => null } }, configurable: true });
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 // ------------------------------------------------------------ the hub's calls
 

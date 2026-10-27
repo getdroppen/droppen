@@ -13,6 +13,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
 import { installJsdom } from "./jsdom.js";
+import { makeI18n } from "./render.js";
 
 const { window, document, container } = installJsdom();
 after(() => {
@@ -29,17 +30,15 @@ Object.defineProperty(window.navigator, "clipboard", {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: i18next } = await import("i18next");
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { installMath, Markdown, MathRendering } = await import("../src/components/markdown.js");
 installMath(await import("../src/components/markdown-math.js"));
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} } },
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 let root: ReturnType<typeof createRoot> | null = null;

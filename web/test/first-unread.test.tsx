@@ -13,9 +13,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   FIRST_UNREAD_IDLE,
   firstUnreadQuery,
@@ -28,6 +25,7 @@ import {
 } from "../src/features/sessions/first-unread.js";
 import { FirstUnreadButton } from "../src/features/sessions/first-unread-view.js";
 import { arrivesAt } from "../src/lib/sw-nav.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 const READ_AT = "2026-10-10T09:00:00.000Z";
 
@@ -133,16 +131,12 @@ test("the message is reached once its top is on screen, or below the top edge", 
 
 /* ── what it draws ─────────────────────────────────────────────────────── */
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 const noop = () => {};
 

@@ -11,20 +11,18 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryHistory, createRootRoute, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { QuotaBlock, QuotaReadingNote, QuotaWindowRow } from "../src/features/accounts/quota-bits.js";
 import type { QuotaWindow } from "../src/features/accounts/use-accounts.js";
+import { makeI18n } from "./render.js";
 
 // English keys are the source strings, so an empty resource bundle renders the
 // same text the untranslated UI does — and asserting on it asserts on the key.
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
 // The usage lines link to Settings, and a router `Link` needs a router to build

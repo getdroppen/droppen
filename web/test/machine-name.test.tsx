@@ -16,9 +16,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
 import { HubCopySource } from "../src/lib/hub/copy-source.js";
 import { FMT_STATUS_V1, hex, MemoryKeyStore, statusStream } from "../src/lib/e2e/index.js";
 import { MachineStatusReader } from "../src/lib/hub/machine-status.js";
@@ -41,18 +38,15 @@ import { DeviceRow, rowMenuItems } from "../src/features/cloud/device-row.js";
 import type { PresenceState } from "../src/lib/hub/link.js";
 import { catchUp, FakeKv, FakeStreamLink, makeMachine, readCopy, StreamWriter, until } from "./stream-fixtures.js";
 import { fakeMachine, json } from "./fake-machine.js";
+import { makeI18n, pageDraw } from "./render.js";
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 const t = i18n.t.bind(i18n);
 
-function draw(node: React.ReactNode): string {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 const status = (body: Record<string, unknown>): StatusState => statusFold.apply(statusFold.empty(), { asOf: 1, ...body });
 

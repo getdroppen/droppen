@@ -14,8 +14,7 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
@@ -37,15 +36,14 @@ import {
   type ResidentInfo,
 } from "../src/features/sessions/session-activity.js";
 import type { MessageReceipt } from "../src/features/sessions/send-receipts.js";
+import { makeI18n } from "./render.js";
 
 // The user's own language, so the assertions read like the screenshot did.
-const zh = i18next.createInstance();
-void zh.use(initReactI18next).init({
+const zh = makeI18n({
   lng: "zh-CN",
   resources: { "zh-CN": { translation: zhCN } },
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 const noop = () => {};

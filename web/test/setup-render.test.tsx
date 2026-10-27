@@ -11,8 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { SetupBarView } from "../src/features/setup/bars.js";
@@ -26,15 +25,14 @@ import { type GuideSignIn, type WhereSignIn, whereSignIn } from "../src/features
 import type { Attempt } from "../src/features/link/opener.js";
 import { LOCAL } from "../src/lib/machines/key.js";
 import { mq } from "../src/lib/machines/query.js";
+import { makeI18n } from "./render.js";
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { "zh-CN": { translation: { ...welcomeZhCN, ...zhCN } }, "zh-TW": { translation: welcomeZhTW }, ja: { translation: welcomeJa } },
   fallbackLng: false,
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 function tool(id: "claude" | "codex", ready: boolean): SetupTool {

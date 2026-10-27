@@ -12,8 +12,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import i18next from "i18next";
 import jsQR from "jsqr";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { ForkScreen, RefusedScreen } from "../src/features/cloud/cloud-app.js";
 import { OldKeyNotice } from "../src/features/cloud/cloud-bar.js";
 import { ApiError, errorText as apiErrorText, hostRefusalText } from "../src/api/errors.js";
@@ -73,20 +71,16 @@ import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
+import { driveWith, elements, makeI18n, pageDraw, type El } from "./render.js";
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } }, ja: { translation: { ...cloudDevicesJa, ...ja } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 test("the QR code drawn for an offer reads back to the same text", async () => {
   const text = "RHP1-AEACAZDFMVZXIAIA2E4D4J4ANSMMNGBTVVBW3SCJZBGZLJYMVIIBG4KRHUBV7VTXEFUP3V24OYGRAZ7XW3NRL2BKOOMXSVW5DSXIVBUFXVPXW7YDXUQCX5MUFFR3EQUUSZA5IIKXGF2BE43ZYO6DQTCT2KSI";
@@ -857,38 +851,7 @@ test("a computer's refusals of a route that manages it, in words: limited_device
 
 // ------------------------------------------------------------ the re-review: which switch opens which confirmation
 
-type El = React.ReactElement<Record<string, unknown>>;
-
-/** Every element in a tree a component returned (not rendered further: a child component's own output is not in it). */
-function elements(node: unknown, out: El[] = []): El[] {
-  if (Array.isArray(node)) for (const n of node) elements(n, out);
-  else if (node && typeof node === "object" && "props" in node) {
-    out.push(node as El);
-    elements((node as El).props.children, out);
-  }
-  return out;
-}
-
-/**
- * Render `Component` inline in a probe — its hooks are the probe's, its
- * returned tree ours to walk — and at render `i` run `steps[i]` on that tree
- * (a click, called as the page would). A click that moves state makes React
- * render again at once (a render-phase update), so the next step sees what
- * it opened; one that does not, ends the steps. Returns the markup, the last
- * tree, and how many steps ran.
- */
-function drive<P>(Component: (props: P) => React.ReactNode, props: P, steps: ((tree: El[]) => void)[], lng = "en"): { html: string; tree: El[]; ran: number } {
-  let i = 0;
-  let tree: El[] = [];
-  function Probe() {
-    const out = Component(props);
-    tree = elements(out);
-    if (i < steps.length) steps[i++]!(tree);
-    return out;
-  }
-  const html = draw(<Probe />, lng);
-  return { html, tree, ran: i };
-}
+const drive = driveWith(draw);
 
 /** A real account at the fake hub for the devices page: this device and another full device, a limited device, a computer that runs AI — with its writes recorded, not made. */
 async function panelAccount() {

@@ -9,14 +9,14 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { UpdatesPage } from "../src/features/updates/updates-view.js";
 import type { UpdateStatus } from "../src/app/desktop-update.js";
 import { ja } from "../src/i18n/ja.js";
 import { updatesZhCN } from "../src/i18n/updates.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { makeI18n } from "./render.js";
 
 const base: UpdateStatus = {
   current: "0.2.130",
@@ -44,8 +44,7 @@ async function html(status: UpdateStatus | null, language = "en", dismissed: str
     "zh-TW": zhTW,
     ja,
   };
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng: language, resources: { [language]: { translation: resources[language] ?? {} } }, interpolation: { escapeValue: false } });
+  const i18n = makeI18n({ lng: language, resources: { [language]: { translation: resources[language] ?? {} } } });
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
       <UpdatesPage

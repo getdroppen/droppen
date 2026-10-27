@@ -11,9 +11,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { approxTokens, createDraftStore, thinkingOf } from "../src/features/sessions/stream-draft.js";
 import { TurnStatus } from "../src/features/sessions/turn-status.js";
 import type { TurnProgress } from "../src/features/sessions/session-activity.js";
@@ -22,17 +19,14 @@ import {
   transcriptWindowOf,
   type SessionStateFields,
 } from "../src/features/sessions/session-feed-state.js";
+import { makeI18n, pageDraw } from "./render.js";
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 /** The text a reader sees: no tags, and not the invisible copy that holds the count's width. */
 function visibleText(html: string): string {

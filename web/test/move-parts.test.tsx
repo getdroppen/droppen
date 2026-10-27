@@ -5,9 +5,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryKeyStore } from "../src/lib/e2e/keystore.js";
 import { CloudAccount } from "../src/lib/hub/account.js";
 import { MemorySeenStore } from "../src/lib/hub/seen-store.js";
@@ -20,6 +17,7 @@ import { PushMovedNotice } from "../src/features/move/push-moved-notice.js";
 import { SenderPanel, ReceiverPanel, outcomeText } from "../src/features/move/move-page.js";
 import { moveJa, moveZhCN, moveZhTW } from "../src/i18n/move.js";
 import { ACCOUNT, DEVICE, LEGACY, ORIGINS, seedDevice, World } from "./move-world.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 test("every note 'remove this browser' forgets is one the move carries", async () => {
   // droppen#73's wipe list is the move's: what a removal forgets, a move must not leave behind.
@@ -126,18 +124,13 @@ test("the app host takes only a bundle from droppen.app, of the listed stores an
   assert.equal(bundle.local.some((e) => e.key === "rh.hub.session" || e.key.startsWith("rh.hub.push.")), false, "the sender never puts them in");
 });
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: moveZhCN }, "zh-TW": { translation: moveZhTW }, ja: { translation: moveJa } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 test("D7: after a move with notifications on, one tap turns them back on (the subscription itself never moved)", async () => {
   assert.equal(draw(<PushMovedNotice moved={() => null} />), "");

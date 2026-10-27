@@ -32,6 +32,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after, beforeEach } from "node:test";
 import { installJsdom } from "./jsdom.js";
+import { makeI18n } from "./render.js";
 
 const { window, document, container } = installJsdom();
 after(() => {
@@ -42,18 +43,15 @@ after(() => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 type Root = import("react-dom/client").Root;
-const i18next = (await import("i18next")).default;
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { DiagramRendering, drawsDiagrams, Markdown } = await import("../src/components/markdown.js");
 const { MERMAID_STABLE_MS, diagramPicture, mermaidConfig, renderMermaidDiagram, setMermaidForTests } = await import(
   "../src/lib/mermaid-render.js"
 );
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
 const FLOWCHART = "```mermaid\nflowchart TD\n  A-->B\n  B-->C\n```";

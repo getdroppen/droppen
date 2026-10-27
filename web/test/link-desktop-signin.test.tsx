@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
+import { makeI18n } from "./render.js";
 
 class FakeRequest {
   url: string;
@@ -70,8 +70,7 @@ test("the first-run card offers signing in inside the desktop app too", async ()
   desktopApp = true;
   forgetAuthStatus();
   await authStatus();
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false } });
+  const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } } });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, gcTime: Infinity } } });
   client.setQueryData(cloudKey(LOCAL), { state: "none", localAuth: true, canManage: true, hubWeb: "https://droppen.app" });
   const html = renderToStaticMarkup(

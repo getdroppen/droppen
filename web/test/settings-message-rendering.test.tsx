@@ -9,24 +9,23 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { makeI18n } from "./render.js";
 
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { default: i18next } = await import("i18next");
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { MessageRenderingSection, PreferencesSection } = await import("../src/features/settings/settings-view.js");
 const { zhCN } = await import("../src/i18n/zh-CN.js");
 const { LOCAL } = await import("../src/lib/machines/key.js");
 const { mq } = await import("../src/lib/machines/query.js");
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { "zh-CN": { translation: zhCN } },
   fallbackLng: false,
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 const PREFS = { sessionGrouping: "flat", composerSend: "enter", fontSize: "default", language: "auto", transcriptStyle: "flat" };

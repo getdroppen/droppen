@@ -7,9 +7,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { askedPlace, DEVICES_PATH, isDevicesPath } from "../src/features/cloud/devices-route.js";
 import { AccountName, DevicesButton, MyDevicesScreen } from "../src/features/cloud/my-devices.js";
 import { AccountNotices, DevicesPanel, ThisDeviceSection } from "../src/features/cloud/devices.js";
@@ -20,36 +17,21 @@ import { constantStore } from "../src/lib/machines/store.js";
 import { meStore } from "../src/lib/hub/me.js";
 import { cloudDevicesZhCN } from "../src/i18n/cloud-devices.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
+import { MemoryStorage } from "./storage.js";
+import { makeI18n, pageDraw } from "./render.js";
 
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 const storage = new MemoryStorage();
 const place = { pathname: "/devices", search: "" };
 Object.assign(globalThis, { localStorage: storage, location: place });
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 test("「我的设备」 is /devices", () => {
   assert.ok(isDevicesPath("/devices") && isDevicesPath("/devices/"));

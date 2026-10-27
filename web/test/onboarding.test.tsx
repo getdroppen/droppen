@@ -13,8 +13,7 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AddComputer, codeDeadline, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
@@ -33,29 +32,17 @@ import { linkZhCN } from "../src/i18n/link.js";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { welcomeZhCN } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
+import { MemoryStorage } from "./storage.js";
+import { makeI18n } from "./render.js";
 
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 const storage = new MemoryStorage();
 Object.assign(globalThis, { localStorage: storage });
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...welcomeZhCN, ...zhCN } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
 function draw(node: React.ReactElement, lng = "en"): string {

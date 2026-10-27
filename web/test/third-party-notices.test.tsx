@@ -16,12 +16,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { collect, evaluate, failureText, NOTICES_FILE, recorder, render } from "../build/third-party-notices.mjs";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { FooterLine, NOTICES_PATH, SOURCE_URL } from "../src/features/landing/page-kit.js";
+import { makeI18n } from "./render.js";
 
 test("the allow-list: permissive licences and MPL-2.0, never a copyleft one", () => {
   for (const ok of ["MIT", "(MIT OR Apache-2.0)", "Apache-2.0 WITH LLVM-exception", "MPL-2.0", "MIT OR GPL-3.0-only", "BSD-3-Clause AND ISC"])
@@ -127,18 +127,16 @@ test("a package that declares no licence passes only as clarified: that version,
 test("every public page's footer links the notices the build writes and the source, in every language", () => {
   assert.equal(NOTICES_PATH, `/${NOTICES_FILE}`);
   assert.equal(SOURCE_URL, "https://github.com/getdroppen/droppen");
-  const i18n = i18next.createInstance();
-  void i18n.use(initReactI18next).init({
+  const i18n = makeI18n({
     lng: "en",
     resources: {
       en: { translation: {} },
       "zh-CN": { translation: landingBundles["zh-CN"] },
       "zh-TW": { translation: landingBundles["zh-TW"] },
-      ja: { translation: landingBundles.ja },
+      ja: { translation: landingBundles.ja }
     },
-    interpolation: { escapeValue: false },
     keySeparator: false,
-    nsSeparator: false,
+    nsSeparator: false
   });
   const words = {
     en: ["Third-party licences", "Source code"],

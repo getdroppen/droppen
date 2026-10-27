@@ -22,6 +22,7 @@ import { chooseAuto, medianAfterFirst, RelayPool, type RelayDirectory } from "..
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { RelaySection } from "../src/features/cloud/relays.js";
 import { decodeFrame, encodeFrame, fromHex, generateDeviceKeys, hex, verifyHubLogin } from "../src/lib/e2e/index.js";
+import { makeI18n } from "./render.js";
 
 const NOW = 1_760_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -128,8 +129,7 @@ test("a set the Hub filled itself (never used: last used 0) keeps no relay from 
   const manual = pool.choose(null);
   assert.equal(manual?.relay.id, "fra-1");
   assert.equal(manual?.mode, "manual");
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false }, keySeparator: false, nsSeparator: false });
+  const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } }, keySeparator: false, nsSeparator: false });
   const html = renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
       <RelaySection pool={pool} machine="m-1" />

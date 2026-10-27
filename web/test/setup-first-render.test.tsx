@@ -11,8 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { EMPTY_FIRST_UI, type FirstUi } from "../src/features/setup/first-model.js";
@@ -23,15 +22,14 @@ import { GuideScreen, STEP_HEADERS, stepAction } from "../src/features/setup/wel
 import { LOCAL } from "../src/lib/machines/key.js";
 import { mq } from "../src/lib/machines/query.js";
 import { HOME, report, tool } from "./setup-fixtures.js";
+import { makeI18n } from "./render.js";
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { "zh-CN": { translation: { ...welcomeZhCN, ...zhCN } }, "zh-TW": { translation: welcomeZhTW }, ja: { translation: welcomeJa } },
   fallbackLng: false,
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 function draw(node: React.ReactNode, lang = "en"): string {

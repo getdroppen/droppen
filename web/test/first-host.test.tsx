@@ -13,8 +13,7 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FirstHostCard, firstHostWay, setupLink } from "../src/features/cloud/first-host.js";
 import { type EnvironmentHints } from "../src/features/landing/detect.js";
@@ -26,19 +25,18 @@ import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboar
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { makeI18n } from "./render.js";
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: {
     en: { translation: {} },
     "zh-CN": { translation: { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...zhCN } },
     "zh-TW": { translation: { ...onboardingZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...zhTW } },
-    ja: { translation: { ...onboardingJa, ...linkJa, ...cloudDevicesJa, ...ja } },
+    ja: { translation: { ...onboardingJa, ...linkJa, ...cloudDevicesJa, ...ja } }
   },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
 const UA = {

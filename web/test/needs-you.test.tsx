@@ -22,8 +22,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
 import { QueryClient } from "@tanstack/react-query";
 import type { components } from "../src/api/schema.js";
 import { FMT_INDEX_V1, FMT_STATUS_V1, hex, indexStream, MemoryKeyStore, statusStream } from "../src/lib/e2e/index.js";
@@ -49,22 +47,18 @@ import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, StreamWriter, until } from "./stream-fixtures.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactNode, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 const NOW = Date.parse("2026-10-18T12:00:00.000Z");
 const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();

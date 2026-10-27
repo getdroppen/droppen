@@ -10,8 +10,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { ApiError } from "../src/api/errors.js";
 import {
   appLaunchErrorText,
@@ -24,6 +23,7 @@ import {
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { makeI18n } from "./render.js";
 
 /** What `POST /api/apps` answers on a device with no code-server on its server's PATH. */
 const MISSING = { error: "code_server_missing", hint: "code-server is not installed on this device, or is not on the server's PATH" };
@@ -31,14 +31,12 @@ const MISSING = { error: "code_server_missing", hint: "code-server is not instal
 const TABLES = { "zh-CN": zhCN, "zh-TW": zhTW, ja } as const;
 
 async function notice(lng: string): Promise<string> {
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({
+  const i18n = makeI18n({
     lng,
     resources: { en: { translation: {} }, "zh-CN": { translation: zhCN }, "zh-TW": { translation: zhTW }, ja: { translation: ja } },
     // As `i18n/index.ts`: the keys are English sentences, with dots and colons in them.
     keySeparator: false,
-    nsSeparator: false,
-    interpolation: { escapeValue: false },
+    nsSeparator: false
   });
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>

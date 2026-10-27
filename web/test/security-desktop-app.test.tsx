@@ -12,17 +12,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { SecuritySection } from "../src/features/settings/security-section.js";
 import { LOCAL } from "../src/lib/machines/key.js";
 import { mq } from "../src/lib/machines/query.js";
+import { makeI18n } from "./render.js";
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
 function draw(desktopApp: boolean, user = desktopApp ? "droppen-app" : "me"): string {

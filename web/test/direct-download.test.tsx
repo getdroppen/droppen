@@ -25,8 +25,7 @@ import test from "node:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import {
@@ -50,20 +49,19 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { makeI18n } from "./render.js";
 
 const app = { "zh-CN": { ...cloudDevicesZhCN, ...zhCN }, "zh-TW": { ...cloudDevicesZhTW, ...zhTW }, ja: { ...cloudDevicesJa, ...ja } };
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: {
     en: { translation: {} },
     "zh-CN": { translation: { ...landingBundles["zh-CN"], ...app["zh-CN"] } },
     "zh-TW": { translation: { ...landingBundles["zh-TW"], ...app["zh-TW"] } },
-    ja: { translation: { ...landingBundles.ja, ...app.ja } },
+    ja: { translation: { ...landingBundles.ja, ...app.ja } }
   },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
 // The download page reads the address (`?os=`) and the session's choice.

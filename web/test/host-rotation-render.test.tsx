@@ -12,9 +12,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { ControlConfirm, DeviceRow, type DeviceRowView, HostControl, rowMenuItems } from "../src/features/cloud/devices.js";
 import { AlwaysConfirmSetting, EndPauseConfirm, EnterCode, PushRenewNotice, RenewalLine, RenewalNotice, RenewalsAhead, RenewPanel } from "../src/features/cloud/renewal.js";
 import { renewalErrorText } from "../src/features/cloud/ui.js";
@@ -26,50 +23,23 @@ import { linkJa, linkZhCN, linkZhTW } from "../src/i18n/link.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
+import { driveWith, elements, makeI18n, pageDraw, type El } from "./render.js";
 
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: {
     en: { translation: {} },
     "zh-CN": { translation: { ...linkZhCN, ...cloudDevicesZhCN, ...zhCN } },
     "zh-TW": { translation: { ...linkZhTW, ...cloudDevicesZhTW, ...zhTW } },
-    ja: { translation: { ...linkJa, ...cloudDevicesJa, ...ja } },
+    ja: { translation: { ...linkJa, ...cloudDevicesJa, ...ja } }
   },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
-function draw(node: React.ReactElement, lng = "en"): string {
-  void i18n.changeLanguage(lng);
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
-type El = React.ReactElement<Record<string, unknown>>;
-
-function elements(node: unknown, out: El[] = []): El[] {
-  if (Array.isArray(node)) for (const n of node) elements(n, out);
-  else if (node && typeof node === "object" && "props" in node) {
-    out.push(node as El);
-    elements((node as El).props.children, out);
-  }
-  return out;
-}
-
-/** Render `Component` inline in a probe and run `steps[i]` on its tree at render `i` (as the devices page tests do). */
-function drive<P>(Component: (props: P) => React.ReactNode, props: P, steps: ((tree: El[]) => void)[], lng = "en"): { html: string; tree: El[]; ran: number } {
-  let i = 0;
-  let tree: El[] = [];
-  function Probe() {
-    const out = Component(props);
-    tree = elements(out);
-    if (i < steps.length) steps[i++]!(tree);
-    return out;
-  }
-  const html = draw(<Probe />, lng);
-  return { html, tree, ran: i };
-}
+const drive = driveWith(draw);
 
 const host = (over: Partial<DeviceRowView> = {}): DeviceRowView => ({
   id: "m-1",

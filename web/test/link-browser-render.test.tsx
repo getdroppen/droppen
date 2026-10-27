@@ -10,8 +10,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { BrowserSignInWaiting } from "../src/features/link/browser-sign-in.js";
 import { cloudKey, DroppenSection } from "../src/features/link/link-settings.js";
 import { linkFlowFor } from "../src/features/link/link-flow.js";
@@ -27,10 +26,10 @@ import { welcomeZhCN } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
+import { makeI18n } from "./render.js";
 
 async function i18nIn(lng: string, translation: Record<string, string> = {}) {
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng, resources: { [lng]: { translation } }, interpolation: { escapeValue: false } });
+  const i18n = makeI18n({ lng, resources: { [lng]: { translation } } });
   return i18n;
 }
 const ZH = { ...cloudDevicesZhCN, ...linkZhCN, ...welcomeZhCN, ...zhCN };

@@ -13,20 +13,18 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { installMath, Markdown, MathRendering } from "../src/components/markdown.js";
 import * as kit from "../src/components/markdown-math.js";
+import { makeI18n } from "./render.js";
 
 const { prepareMath } = kit;
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} } },
   keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
+  nsSeparator: false
 });
 
 function draw(text: string, on = true): string {

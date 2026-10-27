@@ -14,6 +14,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { installJsdom } from "./jsdom.js";
+import { makeI18n } from "./render.js";
 
 const { window, document, container } = installJsdom();
 after(() => {
@@ -30,13 +31,11 @@ Object.assign(globalThis, {
 const { act } = await import("react");
 const { hydrateRoot } = await import("react-dom/client");
 const { renderToString } = await import("react-dom/server");
-const i18next = (await import("i18next")).default;
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { default: SecurityPage } = await import("../src/features/landing/security/security.js");
 const { BLOCKS, TERMS } = await import("../src/features/landing/security/formula-data.js");
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false }, keySeparator: false, nsSeparator: false });
+const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } }, keySeparator: false, nsSeparator: false });
 
 const page = (
   <I18nextProvider i18n={i18n}>
