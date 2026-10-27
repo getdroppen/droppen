@@ -145,7 +145,7 @@ function MacWay({ availability, release }: { availability: Availability; release
           {
             title: t("Sign in to Droppen in the App"),
             body: t(
-              "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.",
+              "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.",
               { app },
             ),
           },

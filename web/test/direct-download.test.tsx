@@ -243,7 +243,7 @@ test("with the hub's answer, every download button is a plain link to the file i
   const page = download("en", { os: "macos-app" });
   assert.ok(text(page).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
   // Downloaded, opened, then signed in from inside the App (`APP_SIGN_IN_AVAILABLE`): never "coming in an update".
-  assert.ok(text(page).includes("Click Sign in to Droppen in the app"));
+  assert.ok(text(page).includes("Sign in to Droppen from the app"));
   assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
   // The release page beside it, for the checksums and the other files: that release's.
   assert.match(page, /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
@@ -437,6 +437,10 @@ test("the Linux tab says the processor and links its tarball after the command, 
   const unknown = download("en", { os: "linux", hints: HINTS.linux });
   assert.doesNotMatch(unknown, /data-testid="linux-cpu"/, "nothing said when nothing is known");
   assert.equal(tarballs(unknown).length, 2, "both, when the processor is not known");
+  // Read on a Mac (Apple silicon is aarch64 too): its processor says nothing about a server's.
+  const mac = download("en", { os: "linux", hints: HINTS.mac, cpu: "aarch64" });
+  assert.doesNotMatch(mac, /data-testid="linux-cpu"/, "no processor named off Linux");
+  assert.equal(tarballs(mac).length, 2, "both, for whichever server it is");
   assert.deepEqual(tarballs(download("en", { os: "linux", hints: HINTS.linux, cpu: "x86_64", release: null })), [], "none without the hub's answer");
 });
 

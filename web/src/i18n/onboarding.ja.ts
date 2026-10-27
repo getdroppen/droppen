@@ -56,7 +56,7 @@ export const onboardingJa: Record<string, string> = {
   "Open the .dmg and drag Droppen to Applications.": ".dmg を開き、Droppen を「アプリケーション」にドラッグします。",
   "Open Droppen": "Droppen を開く",
   "It opens a short setup guide, four steps.": "4 ステップの短いセットアップガイドが開きます。",
-  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.": "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します（あとからは「設定 → アクセス → Droppen」）。{{app}} のウィンドウが開くので、サインインして「このデバイスを追加」を押します。",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.": "セットアップガイドの「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します。ブラウザで {{app}} が開くので、サインインし、フィンガープリントがアプリの表示と一致することを確かめてから「このデバイスを追加」を押します。あとからは「設定 → アクセス → Droppen」でもサインインできます。",
   "Sign in to Droppen in the App": "アプリで「Droppen にサインイン」",
   "A {{app}} window opens: sign in, then click add this device.": "{{app}} のウィンドウが開くので、サインインして「このデバイスを追加」を押します。",
   "Open Terminal on that Mac and run:": "その Mac で「ターミナル」を開いて実行します：",

@@ -126,11 +126,11 @@ function PanelHead({ title, body, children }: { title: string; body: string; chi
   );
 }
 
-/** "Coming soon": said plainly, with where to go meanwhile. */
-function Soon({ label, body, children, testId }: { label: string; body: string; children?: ReactNode; testId: string }) {
+/** "Coming soon": said plainly, with where to go meanwhile (no label where the panel's lead already says it). */
+function Soon({ label, body, children, testId }: { label?: string; body: string; children?: ReactNode; testId: string }) {
   return (
     <div data-testid={testId} className="flex max-w-[44rem] flex-col gap-3 border border-border bg-raised px-4 py-3.5">
-      <span className="inline-flex w-fit items-center border border-fg px-1.5 font-mono text-[10px] leading-4 font-semibold tracking-wider text-fg uppercase">{label}</span>
+      {label && <span className="inline-flex w-fit items-center border border-fg px-1.5 font-mono text-[10px] leading-4 font-semibold tracking-wider text-fg uppercase">{label}</span>}
       <p className="text-xs leading-5 text-fg">{body}</p>
       {children}
     </div>
@@ -143,8 +143,8 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
   const head = {
     title: t("Droppen for Mac"),
     body: availability.appSignIn
-      ? t("Open the app and Droppen is running on your Mac: no terminal, no login page. Then sign it in to Droppen from inside the app.")
-      : t("Open the app and Droppen is running on your Mac: no terminal, no login page."),
+      ? t("Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.")
+      : t("Open the app and Droppen runs on this Mac, with no terminal and no local password."),
   };
   if (!availability.app) {
     return (
@@ -188,9 +188,10 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
           ...(availability.appSignIn
             ? [
                 {
-                  title: t("Click Sign in to Droppen in the app"),
+                  title: t("Sign in to Droppen from the app"),
+                  // The App signs in through the system browser, showing this device's fingerprint (`browser-sign-in.tsx`).
                   body: t(
-                    "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.",
+                    "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.",
                     { app: appHost() },
                   ),
                 },
@@ -216,7 +217,7 @@ function BackgroundPanel() {
   const { t } = useTranslation();
   return (
     <>
-      <PanelHead title={t("Droppen in the background on a Mac")} body={t("For a Mac that stays on as a server, or if you would rather use the terminal: one line, then everything else happens in the browser.")}>
+      <PanelHead title={t("Droppen in the background on a Mac")} body={t("For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.")}>
         <div className="flex max-w-[44rem] flex-col gap-2">
           <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="install-command" primaryCopy />
           <p className="font-mono text-2xs text-faint">{t("Paste it into Terminal on that Mac.")}</p>
@@ -225,10 +226,14 @@ function BackgroundPanel() {
       <Steps
         testId="bg-steps"
         items={[
-          { title: t("It installs and starts at login"), body: t("The script installs Droppen, starts it now and at every login, and creates your first local login: it prints it, or asks you to choose one.") },
-          { title: t("Its page opens"), body: t("Your browser opens Droppen on that device. Sign in with the local login: everything already works there, with no account.") },
-          { title: t("Sign in to Droppen"), body: t("Click Sign in to Droppen on that page. A {{app}} window opens: sign in, check the fingerprint matches, and add the device.", { app: appHost() }) },
-          { title: t("It is in my devices"), body: t("Within seconds it is online in my devices, on every phone and browser of your account. Add another device the same way, and put both on one screen.") },
+          // The local account as install.sh's `ensure_account` makes it: the system user name, a password asked for (12 characters at least), or generated when there is no terminal.
+          {
+            title: t("It installs and starts at login"),
+            body: t("The script installs Droppen, starts it now and at every login, and creates the local page's first account under your user name. It asks you to choose a password (at least 12 characters), or generates one when run without a terminal."),
+          },
+          { title: t("The local page opens"), body: t("Your browser opens Droppen's local page. Sign in with that account: everything works there without a Droppen account. To use it from your phone, continue with the next step.") },
+          { title: t("Sign in to Droppen"), body: t("On the local page, click Sign in to Droppen. A {{app}} window opens: sign in, check that its fingerprint matches the one on the local page, then click add this device.", { app: appHost() }) },
+          { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.") },
         ]}
       />
     </>
@@ -249,7 +254,7 @@ function LinuxPanel({
   const { t } = useTranslation();
   const head = {
     title: t("Droppen on a Linux server"),
-    body: t("Run your AI on a server that never sleeps, and watch it from your phone. No browser needed on the server: it joins your account with a one-time code."),
+    body: t("Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code."),
   };
   if (!availability.linux) {
     return (
@@ -273,7 +278,7 @@ function LinuxPanel({
         )}
         <div className="flex max-w-[44rem] flex-col gap-2">
           <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
-          <p className="text-xs leading-5 text-muted">{t("Replace <code> with a one-time code: on {{app}}, open my devices → add a device that runs AI → show a one-time code.", { app: appHost() })}</p>
+          <p className="text-xs leading-5 text-muted">{t("Replace <code> with the one-time code from step 01 below.")}</p>
           <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
         </div>
       </PanelHead>
@@ -281,8 +286,12 @@ function LinuxPanel({
         testId="linux-steps"
         items={[
           { title: t("Get a one-time code"), body: t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() }) },
-          { title: t("Run the command on the server"), body: t("It installs Droppen, starts it as a service, and joins your account with the code.") },
-          { title: t("It is in my devices"), body: t("Within seconds it is online in my devices, on every phone and browser of your account.") },
+          // install.sh: a systemd user service, never root; it prints the linger command when the service would stop at logout.
+          {
+            title: t("Run the command on the server"),
+            body: t("The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out."),
+          },
+          { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account.") },
         ]}
       />
     </>
@@ -293,8 +302,8 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
   const { t } = useTranslation();
   const into = signedIn ? APP_PATH : SIGN_IN_PATH;
   return (
-    <PanelHead title={t("Droppen on Windows")} body={t("Not supported yet: it is on its way. On Windows you can already watch and answer your AI.")}>
-      <Soon testId="windows-soon" label={t("not yet")} body={t("What works on Windows today:")}>
+    <PanelHead title={t("Droppen on Windows")} body={t("Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.")}>
+      <Soon testId="windows-soon" body={t("What works on Windows today:")}>
         <ul className="flex flex-col gap-2">
           {[
             { key: "browser", line: t("Control your other devices from this browser: sign in at {{app}}.", { app: appHost() }) },
@@ -508,7 +517,7 @@ function Needs({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) 
     </>
   ) : (
     <>
-      {t("A free Droppen account. You can also create it when you sign the device in.")}{" "}
+      {t("A free Droppen account. You can also create one when you sign in to Droppen on the device.")}{" "}
       <a {...publicLink(SIGN_UP_PATH)} data-testid="download-signup" className={link}>
         {t("Create a free account")}
       </a>
@@ -516,7 +525,7 @@ function Needs({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) 
   );
   const items: { key: string; body: ReactNode }[] = [
     { key: "tools", body: t("Claude Code or Codex, installed and signed in on that device") },
-    { key: "system", body: t("macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64)") },
+    { key: "system", body: t("macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)") },
     { key: "account", body: account },
   ];
   return (
@@ -540,28 +549,38 @@ function Verify({ availability }: { availability: Availability }) {
   const rows: { term: string; body: ReactNode }[] = [
     ...(availability.app ? [{ term: t("Mac app"), body: t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.") }] : []),
     { term: t("Install script"), body: t("Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.") },
-    { term: t("Background service"), body: t("A launchd user agent on macOS, a systemd user service on Linux. With --system, a system service that starts at boot; sudo is used only to write its service file.") },
-    { term: t("Network"), body: t("Listens only on 127.0.0.1 (port 8700 by default) and reaches Droppen over outbound connections, so there is no inbound port to open.") },
+    // install.sh: `--system` is Linux only, still runs as you, and `sctl` uses sudo for that service alone. The App's own port is not 8700 (`desktop/core/src/identity.rs`).
+    {
+      term: t("Background service"),
+      body: t("For a command-line install: a launchd user agent on macOS, a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo is used only to set up and manage that service."),
+    },
+    {
+      term: t("Network"),
+      body: t("Listens only on 127.0.0.1 and reaches Droppen over outbound connections, so there is no inbound port to open. A command-line install uses port 8700, or the next free port."),
+    },
     {
       term: t("Manual download"),
       body: (
         <span className="flex flex-col gap-2">
           <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="releases-link" className="inline-flex w-fit items-center gap-1 text-fg underline underline-offset-4 hover:no-underline">
-            {t("latest release on GitHub")}
+            {t("the latest release on GitHub (getdroppen/droppen)")}
             <ExternalLink className="size-3" />
           </a>
-          <span>{t("Check the file before you open it:")}</span>
+          <span>{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</span>
           <CommandLine command={CHECKSUM_COMMAND} label={t("copy")} />
-          <span>{t("The number it prints must be the one the release lists. The install script makes the same check before it installs anything.")}</span>
+          <span>{t("The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.")}</span>
         </span>
       ),
     },
     {
       term: t("Encryption"),
       body: (
-        <a {...publicLink(SECURITY_PATH)} data-testid="download-security" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
-          {t("How the encryption works")}
-        </a>
+        <span className="flex flex-col gap-2">
+          <span>{t("End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.")}</span>
+          <a {...publicLink(SECURITY_PATH)} data-testid="download-security" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
+            {t("How the encryption works")}
+          </a>
+        </span>
       ),
     },
   ];
@@ -584,9 +603,10 @@ function Verify({ availability }: { availability: Availability }) {
 
 function Uninstall({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
+  // Every key it held is replaced (the security page's 2.8); removal stops its link but leaves its files (`agent/control.rs`): the disconnect deletes them.
   const steps = [
-    { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.", { app: appHost() }) },
-    { title: t("Disconnect it"), body: t("On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.") },
+    { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.", { app: appHost() }) },
+    { title: t("Disconnect it"), body: t("On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.") },
   ];
   return (
     <Section id="uninstall">
@@ -610,8 +630,12 @@ function Uninstall({ availability }: { availability: Availability }) {
           <span className="font-mono text-2xs text-faint tabular-nums">03</span>
           <span className="text-[13px] leading-5 font-semibold text-fg">{t("Remove the program")}</span>
           {availability.app && <span className="text-xs leading-5 text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
-          <span className="text-xs leading-5 text-muted">{availability.app ? t("Command line: run the install script again with --uninstall:") : t("Run the install script again with --uninstall:")}</span>
+          <span className="text-xs leading-5 text-muted">
+            {availability.app ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:") : t("Run this on that device, as the user who installed it:")}
+          </span>
           <CommandLine command={UNINSTALL_COMMAND} label={t("copy")} testId="uninstall-command" />
+          {/* install.sh's `--uninstall`: the service and the program go, the data stays, and it prints where that is and how to delete it. */}
+          <span className="text-xs leading-5 text-muted">{t("It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.")}</span>
         </li>
       </ol>
     </Section>
@@ -688,7 +712,8 @@ export default function DownloadPage({
   useDocumentMeta();
   const detected = useMemo(() => osForKind(detectKind(hints ?? browserHints() ?? { userAgent: "" })), [hints]);
   const [os, pick] = useChosenOs(detected);
-  // Linux's processor, said on its tab (from the high-entropy hints, else the user agent; never asked for a Mac: the App is universal).
+  // Linux's processor, said on its tab — only when this browser is on Linux (from the high-entropy hints, else the user agent): a Mac's says nothing about a server.
+  const onLinux = detected === "linux";
   const [arch, setArch] = useState<string | null>(cpu ?? null);
   const latest = useLatestRelease(release);
   // Sent here for the phone (`?os=mobile`): the part about the phone.
@@ -697,13 +722,13 @@ export default function DownloadPage({
     // Once, as the page opens: picking a tab later scrolls nothing.
   }, []);
   useEffect(() => {
-    if (os !== "linux" || hints) return;
+    if (os !== "linux" || !onLinux || hints) return;
     let live = true;
     void browserCpu().then((value) => live && setArch(value));
     return () => {
       live = false;
     };
-  }, [os, hints]);
+  }, [os, onLinux, hints]);
   return (
     <div data-testid="download" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
@@ -714,7 +739,10 @@ export default function DownloadPage({
               {t("Install Droppen on the device that runs your AI.")}
             </h1>
             <p className="max-w-[40em] text-[15px] leading-[26px] text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
-              {t("Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser.", { app: appHost() })}
+              {t(
+                "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.",
+                { app: appHost() },
+              )}
             </p>
             {/* Read on a phone: it installs nothing; the address to open on the computer. */}
             {detected === "mobile" && (
@@ -728,7 +756,7 @@ export default function DownloadPage({
             </div>
           </div>
           <Section id="get">
-            <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={arch} release={latest} />
+            <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={onLinux ? arch : null} release={latest} />
           </Section>
           <PhoneSection signedIn={signedIn} />
           <Verify availability={availability} />
