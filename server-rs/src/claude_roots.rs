@@ -22,10 +22,10 @@
 //! The TypeScript reads `homedir()` at module scope; here the roots hang off a
 //! [`Paths`], which resolves both of them once at construction, so a test can
 //! point a whole server at a synthetic tree without touching process-global
-//! state. The `DROPPEN_CLAUDE_*_ROOT` environment seams are still read under
-//! their TypeScript names, `REMOTE_HAND_CLAUDE_*_ROOT`, because the Docker image
-//! and the TypeScript test-suite both set them; [`env_dir`] is the only place
-//! they — or any other directory override — are read.
+//! state. The `DROPPEN_CLAUDE_*_ROOT` environment seams also answer to their
+//! pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through [`crate::env`];
+//! [`env_dir`] is the only place they — or any other directory override — are
+//! read.
 
 use std::path::PathBuf;
 

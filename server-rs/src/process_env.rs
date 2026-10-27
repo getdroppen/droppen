@@ -159,18 +159,16 @@ fn effective_uid() -> u32 {
 /// The environment a `claude` spawn runs with: [`clean_env`] plus the sandbox
 /// marker when this server is root.
 ///
-/// remote-hand's own Docker image runs as root — `node:22-slim` with no `USER`,
-/// everything it owns under `/root` — and the composer offers `bypassPermissions`
-/// like any other permission mode. Without the marker that combination does not
-/// produce a warning, it produces a CLI that will not start, which reaches the
-/// user as a run that failed for no visible reason.
+/// A root server is ordinary in a container, and the composer offers
+/// `bypassPermissions` like any other permission mode. Without the marker that
+/// combination does not produce a warning, it produces a CLI that will not
+/// start, which reaches the user as a run that failed for no visible reason.
 ///
 /// The marker is set on the *uid*, not on "am I in a container", because the uid
 /// is the thing the CLI actually checks and the only one this process can read
 /// honestly. That does mean a server deliberately run as root on a bare host
-/// gets it too, and that is a real widening: the answer is that remote-hand
-/// running as root is a container deployment by construction, and that a CLI
-/// which refuses to launch would teach the user to reach for `--dangerously-…`
+/// gets it too; that is the widening, and it is the side to err on: a CLI which
+/// refuses to launch would teach the user to reach for `--dangerously-…`
 /// somewhere we cannot see it.
 pub fn claude_env<I, K, V>(extra: I) -> Env
 where

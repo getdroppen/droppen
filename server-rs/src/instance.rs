@@ -74,7 +74,7 @@
 //! an older build kept is left on disk rather than moved or deleted, are all in
 //! its module note.
 //!
-//! # Orphan reaping (a note for the container phase)
+//! # Orphan reaping
 //!
 //! A pty shim is spawned detached, in its own process group, precisely so it
 //! outlives the server. When the server exits, the shim is reparented to the
@@ -83,11 +83,11 @@
 //!
 //! * On a normal Linux or macOS desktop the reaper is pid 1 (systemd, launchd)
 //!   and there is nothing to do.
-//! * **In Docker, the entrypoint script runs as pid 1**, and a shell script is
-//!   not a reaper: it neither reaps orphans nor forwards signals. The container
-//!   phase must therefore either run the entrypoint under an init that does
-//!   (`docker run --init`, `tini`, `dumb-init`) or make the entrypoint itself
-//!   `wait` in a loop. Without that, every restarted terminal leaves a zombie.
+//! * **In a container the entrypoint can be this server's own `up`**, which is
+//!   pid 1 and waits on every child it did not start ([`crate::supervisor`]).
+//!   A plain shell entrypoint is not a reaper: run `up`, or give the container an
+//!   init (`docker run --init`, `tini`, `dumb-init`) or a `wait` loop. Without
+//!   that, every restarted terminal leaves a zombie.
 //! * On macOS the launchd analogue is `AbandonProcessGroup` in a job's plist:
 //!   without it launchd kills the whole process group when the job stops, which
 //!   would defeat the shim on exactly the restart it exists for. A shim spawned

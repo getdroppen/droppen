@@ -26,7 +26,7 @@ use crate::shutdown::{self, Cleanups};
 /// How long a shutdown waits for in-flight requests before giving up.
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
 
-/// The remote-hand server.
+/// The Droppen server.
 #[derive(Debug, Default)]
 pub struct RemoteHandApp {
     /// Overrides `home_dir` from the config file (used by tests).

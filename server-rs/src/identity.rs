@@ -12,11 +12,10 @@
 //! identity: the uuid says *which* server, for ever; the name says what that
 //! server is currently called, so a log line or a UI has something to show.
 //!
-//! **Nothing reads the uuid yet.** It is not on the wire, not in a key, not in
-//! any row but its own. That is deliberate: a later slice can only prove a
-//! session came from a particular machine if the proof already exists on the
-//! machines in the field, and an identity minted the day it is first needed is
-//! an identity every older session predates. Minting it now costs one row.
+//! **The uuid is what a machine key is bound to.** [`crate::agent`] refuses a
+//! stored key whose recorded uuid differs, so a key cannot be carried onto a
+//! server wearing another identity. It is otherwise local: not on the wire, not
+//! in any row but its own.
 //!
 //! # What changes and what does not
 //!
@@ -46,7 +45,7 @@ pub struct ServerIdentity {
 ///
 /// Returns what the row says afterwards, or `None` if the database could not be
 /// read or written — which is survivable in the way everything else in
-/// [`crate::db`] is: nothing reads the uuid yet, and the next boot mints it.
+/// [`crate::db`] is: the next boot mints it.
 ///
 /// Called once, from the boot path, under the instance lock. It is idempotent,
 /// so calling it twice in one process is a read and at most one small write.
