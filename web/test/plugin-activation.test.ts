@@ -28,7 +28,7 @@ class StubRequest {
 globalThis.Request = StubRequest as unknown as typeof Request;
 
 const { openMachine } = await import("../src/lib/machines/registry.js");
-const { activatePlugin } = await import("../src/plugins/activation.js");
+const { activatePlugin, pluginEntryUrl } = await import("../src/plugins/activation.js");
 
 function recording(name: string, log: string[]) {
   return {
@@ -122,10 +122,31 @@ test("a machine closed on the page takes its plugin activations with it", async 
   assert.equal(log.filter((line) => line.startsWith("load ")).length, 2);
 });
 
-test("the browser's own import loads the entry URL the instance gave", async () => {
+test("an entry module the browser imports is activated", async () => {
   openMachine("m-live", recording("live", []));
   const body = 'export default { manifest: { id: "demo" }, activate: () => ({}) };';
   const entry = `data:text/javascript,${encodeURIComponent(body)}`;
-  const result = await activatePlugin({ id: "demo", build: "1.0.0-aaaaaaaaaaaa", entry }, () => undefined, "m-live");
+  const load = (url: string) => import(/* @vite-ignore */ url);
+  const result = await activatePlugin({ id: "demo", build: "1.0.0-aaaaaaaaaaaa", entry }, () => undefined, "m-live", load);
   assert.equal(result.ok, true, result.ok ? "" : result.error);
+});
+
+test("plugin code is imported only from this server's /plugins/", async () => {
+  const origin = "http://127.0.0.1:7000";
+  assert.equal(pluginEntryUrl("/plugins/k/demo/1.0.0-aaaaaaaaaaaa/dist/index.js", origin), `${origin}/plugins/k/demo/1.0.0-aaaaaaaaaaaa/dist/index.js`);
+  for (const entry of [
+    "data:text/javascript,export%20default%20{}",
+    "blob:http://127.0.0.1:7000/0b5e",
+    "https://evil.example/plugins/k/demo/b/dist/index.js",
+    "//evil.example/plugins/k/demo/b/dist/index.js",
+    "/assets/index.js",
+    "/plugins/../api/settings",
+  ]) {
+    assert.throws(() => pluginEntryUrl(entry, origin), /refusing to load plugin code/, entry);
+  }
+  assert.throws(() => pluginEntryUrl("/plugins/k/demo/b/dist/index.js", undefined), /refusing/, "no page origin, nothing loaded");
+
+  openMachine("m-refuse", recording("refuse", []));
+  const result = await activatePlugin({ id: "demo", build: "1.0.0-bbbbbbbbbbbb", entry: "data:text/javascript,export%20default%20{}" }, () => undefined, "m-refuse");
+  assert.equal(result.ok, false, "the browser's own loader refuses an entry that is not this server's");
 });

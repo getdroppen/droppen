@@ -32,8 +32,21 @@ export interface PluginModule {
 /** How an entry URL becomes a module; the dynamic import, or a test's stand-in. */
 export type PluginLoader = (entry: string) => Promise<PluginModule>;
 
+/**
+ * The entry URL as the page will import it, or a refusal. Only this page's
+ * own server serves plugin code, under `/plugins/` (`docs/plugins/runtime.md`
+ * §2), so an entry anywhere else — another origin, a `data:` or `blob:` URL,
+ * another path of this server — is not imported, whatever the status said.
+ */
+export function pluginEntryUrl(entry: string, origin: string | undefined = globalThis.location?.origin): string {
+  const url = origin ? new URL(entry, origin) : null;
+  if (!url || url.origin !== origin || !url.pathname.startsWith("/plugins/"))
+    throw new Error(`refusing to load plugin code from ${entry}: not this server's /plugins/`);
+  return url.href;
+}
+
 /** The browser's way: the instance serves the code, the import map lends it React and the SDK. */
-export const importPluginEntry: PluginLoader = (entry) => import(/* @vite-ignore */ entry);
+export const importPluginEntry: PluginLoader = (entry) => import(/* @vite-ignore */ pluginEntryUrl(entry));
 
 /** The statuses' code parts: which plugin, at which build, from where. */
 export type PluginSource = Pick<PluginStatus, "id" | "build"> & { entry: string };
