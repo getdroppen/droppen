@@ -82,9 +82,12 @@ async fn claude_outlives_the_server_that_started_it() {
     // The server is upgraded: this process's end of everything goes away.
     drop(link);
 
-    // The new server finds the socket and picks the session back up. Retried
-    // rather than slept on: the shim lets its old link go on its own schedule,
-    // and a flat pause is a guess about a machine.
+    // The new server finds the socket and picks the session back up. There is
+    // no "old link is gone" signal in the protocol to wait for: `accept_loop`
+    // serves every connection on its own, and a completed handshake takes a new
+    // generation, which supersedes the dropped link's tasks. Nothing below
+    // depends on the shim having noticed the old link, so this retries only the
+    // new handshake itself.
     let sidecars_ref = &sidecars;
     let mut link = common::wait_for_async(
         "the shim to accept a reattach",
