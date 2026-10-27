@@ -1,3 +1,5 @@
+import { Monitor, Moon, Sun } from "lucide-react";
+
 export type ThemeMode = "auto" | "light" | "dark";
 
 const KEY = "rh.theme";
@@ -32,4 +34,11 @@ export const NEXT_MODE: Record<ThemeMode, ThemeMode> = {
   auto: "light",
   light: "dark",
   dark: "auto",
+};
+
+/** The icon of each mode in the theme toggle. */
+export const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
+  auto: Monitor,
+  light: Sun,
+  dark: Moon,
 };

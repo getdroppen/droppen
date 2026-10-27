@@ -15,9 +15,10 @@ import { forwardRef, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { BrandMark } from "@/components/brand-mark";
+import { activeLanguage, LanguageMenu } from "@/components/language-menu";
 import { RegMark } from "@/components/reg-mark";
 import { Button } from "@/components/ui/button";
-import { applyLanguage, browserLanguages, LANGUAGE_NAMES, pickLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
+import { applyLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
@@ -60,8 +61,7 @@ function LanguagePicker() {
     staleTime: 30_000,
   });
   const [chosen, setChosen] = useState<LanguagePref>(storedLanguagePref);
-  const active = LANGUAGE_NAMES.find((l) => l.id === i18n.language) ?? LANGUAGE_NAMES[LANGUAGE_NAMES.length - 1]!;
-  const browser = LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
+  const active = activeLanguage(i18n.language);
   const choose = (language: LanguagePref) => {
     void applyLanguage(language);
     setChosen(language);
@@ -73,7 +73,7 @@ function LanguagePicker() {
     });
   };
   return (
-    <Menu.Root>
+    <LanguageMenu value={prefs?.language ?? chosen} onChoose={choose} look="guide">
       <Menu.Trigger
         aria-label={t("Language")}
         title={t("Language")}
@@ -83,46 +83,7 @@ function LanguagePicker() {
         <span lang={active.id}>{active.label}</span>
         <ChevronDown className="size-2.5" />
       </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
-          <Menu.Popup className="min-w-36 border border-border-strong bg-bg py-1 outline-none">
-            <Menu.RadioGroup value={prefs?.language ?? chosen} onValueChange={(value: LanguagePref) => choose(value)}>
-              <Menu.RadioItem
-                value="auto"
-                closeOnClick
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-xs text-fg outline-none data-[highlighted]:bg-hover"
-              >
-                <span className="flex size-3.5 shrink-0 items-center justify-center">
-                  <Menu.RadioItemIndicator>
-                    <Check className="size-3.5" />
-                  </Menu.RadioItemIndicator>
-                </span>
-                {t("auto")}
-                <span lang={browser.id} className="text-faint">
-                  {browser.label}
-                </span>
-              </Menu.RadioItem>
-              {LANGUAGE_NAMES.map((l) => (
-                <Menu.RadioItem
-                  key={l.id}
-                  value={l.id}
-                  lang={l.id}
-                  closeOnClick
-                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-xs text-fg outline-none data-[highlighted]:bg-hover"
-                >
-                  <span className="flex size-3.5 shrink-0 items-center justify-center">
-                    <Menu.RadioItemIndicator>
-                      <Check className="size-3.5" />
-                    </Menu.RadioItemIndicator>
-                  </span>
-                  {l.label}
-                </Menu.RadioItem>
-              ))}
-            </Menu.RadioGroup>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+    </LanguageMenu>
   );
 }
 

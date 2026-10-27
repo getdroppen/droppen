@@ -6,12 +6,9 @@ import {
   FolderTree,
   LayoutGrid,
   MessagesSquare,
-  Monitor,
-  Moon,
   Plus,
   Settings,
   SquareTerminal,
-  Sun,
   X,
   Zap,
 } from "lucide-react";
@@ -31,7 +28,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { RegMark } from "@/components/reg-mark";
 import { RailHint } from "@/components/ui/rail-hint";
 import { applyFontSize } from "@/lib/font-size";
-import { applyThemeMode, NEXT_MODE, storedThemeMode, type ThemeMode } from "@/lib/theme";
+import { applyThemeMode, MODE_ICONS, NEXT_MODE, storedThemeMode, type ThemeMode } from "@/lib/theme";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "@/api/errors";
 import { AppFrames } from "@/features/apps/app-frames";
@@ -68,12 +65,6 @@ const NAV = [
   { to: "/terminals", label: "Terminals", icon: SquareTerminal },
   { to: "/files", label: "Files", icon: FolderTree },
 ] as const;
-
-const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
-  auto: Monitor,
-  light: Sun,
-  dark: Moon,
-};
 
 function ThemeToggle() {
   const { t } = useTranslation();
