@@ -76,17 +76,20 @@ export function defaultDevice(input: {
   return open.find(usable) ?? home;
 }
 
-/** A device's state, as the square the bar and the switcher draw. */
-export function DeviceDot({ info }: { info: MachineInfo }) {
+/**
+ * A device's state, as the square the bar, the switcher and the picker draw.
+ * `title`: what it says on hover (`undefined`: the state's own word); `null`:
+ * nothing, where the state is said beside it.
+ */
+export function DeviceDot({ state, title }: { state: MachineInfo["state"]; title?: string | null }) {
   const { t } = useTranslation();
-  const online = info.state === "online";
   return (
     <span
-      data-signal={info.state === "offline" ? "offline" : undefined}
-      title={t(info.state)}
+      data-signal={state === "offline" ? "offline" : undefined}
+      title={title === null ? undefined : (title ?? t(state))}
       className={cn(
         "size-[7px] shrink-0",
-        online ? "bg-fg" : info.state === "unknown" ? "shadow-[inset_0_0_0_1.25px_var(--color-faint)]" : "bg-danger",
+        state === "online" ? "bg-fg" : state === "unknown" ? "shadow-[inset_0_0_0_1.25px_var(--color-faint)]" : "bg-danger",
       )}
     />
   );
@@ -104,7 +107,7 @@ export function DeviceChip({ machine }: { machine: MachineKey }) {
       title={note ? `${t("on this device: {{name}}", { name })} · ${note}` : t("on this device: {{name}}", { name })}
       className="flex max-w-36 min-w-0 shrink items-center gap-1 px-1 font-mono text-2xs text-muted"
     >
-      <DeviceDot info={info} />
+      <DeviceDot state={info.state} />
       <span className="truncate">{name}</span>
     </span>
   );
@@ -138,7 +141,7 @@ function DeviceRow({
         "flex min-h-8 w-full items-center gap-2 px-3 py-1 text-left text-[13px] text-fg hover:bg-hover pointer-coarse:min-h-11 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent",
       )}
     >
-      <DeviceDot info={info} />
+      <DeviceDot state={info.state} />
       <span className="max-w-[60%] shrink-0 truncate" title={machine}>
         {deviceLabel(info, t)}
       </span>
@@ -160,7 +163,7 @@ function Chosen({ machine }: { machine: MachineKey }) {
   const info = useInfoOf(machine);
   return (
     <>
-      <DeviceDot info={info} />
+      <DeviceDot state={info.state} />
       <span className="max-w-40 truncate">{deviceLabel(info, t)}</span>
     </>
   );

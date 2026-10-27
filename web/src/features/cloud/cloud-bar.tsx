@@ -25,6 +25,7 @@ import {
   useRelayPool,
 } from "./context";
 import { useCloudMode } from "@/features/machines/copy-mode";
+import { DeviceDot } from "@/features/machines/device-picker";
 import { AccountAlerts } from "./account-alerts";
 import { AccountButton, DevicesButton, openAccount, openMyDevices, removePasskeyThere } from "./my-devices";
 import { cityName, noticeText } from "./relays";
@@ -106,7 +107,6 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   const keyState = useAgentKeyState(machine.key);
   const me = useMe(shell.account, shell.link);
   const machines = useShellMachines();
-  const online = presence === "online";
   const refusal = machine.channel.refusal;
   const state = barState({ link, presence, channel, mode, copy, refusal: refusal?.kind ?? null });
   // A full cloud storage: the hub took no more of this machine's copy after its last write (§3.8).
@@ -127,14 +127,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   return (
     <>
       <div data-cloud-bar="" className="flex h-7 shrink-0 items-center gap-2 border-b border-border bg-bg px-3 font-mono text-2xs">
-        <span
-          data-signal={!online && presence !== "unknown" ? "offline" : undefined}
-          className={cn(
-            "size-[7px] shrink-0",
-            online ? "bg-fg" : presence === "unknown" ? "shadow-[inset_0_0_0_1.25px_var(--color-faint)]" : "bg-danger",
-          )}
-          title={presence ? t(presence) : t("unknown")}
-        />
+        <DeviceDot state={presence ?? "offline"} title={presence ? undefined : t("unknown")} />
         <BarMachineName machine={machine.key} mirror={machine.mirror} channel={machine.channel} canRename={state.label === "e2e" && shell.account.isAdmin !== false} />
         <MachineSwitcher shell={shell} current={machine.key} />
         {label && (
@@ -622,7 +615,6 @@ export function MachineSwitcher({ shell, current }: { shell: HubShell; current: 
         <ul data-testid="machine-switcher-list" className="flex flex-col">
           {machines.map((info) => {
             const note = switcherNote(info, t);
-            const online = info.state === "online";
             return (
               <li key={info.key}>
                 <button
@@ -632,10 +624,7 @@ export function MachineSwitcher({ shell, current }: { shell: HubShell; current: 
                   onClick={() => pick(info.key)}
                   className="flex h-7 w-full items-center gap-2 px-2 text-left font-mono text-2xs text-fg hover:bg-hover"
                 >
-                  <span
-                    data-signal={info.state === "offline" ? "offline" : undefined}
-                    className={cn("size-[7px] shrink-0", online ? "bg-fg" : info.state === "unknown" ? "shadow-[inset_0_0_0_1.25px_var(--color-faint)]" : "bg-danger")}
-                  />
+                  <DeviceDot state={info.state} title={null} />
                   <span className="max-w-[60%] shrink-0 truncate" title={info.key}>
                     {info.name}
                   </span>
