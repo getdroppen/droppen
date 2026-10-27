@@ -157,14 +157,18 @@ pub(super) fn diff_of(old_text: &str, new_text: &str) -> String {
     removed.chain(added).collect::<Vec<_>>().join("\n")
 }
 
-/// A checklist fold: one line per item, `[x]` when done, `[~]` while in
-/// progress and `[ ]` otherwise.
+/// The fold of a checklist tool: one line per item, `[x]` when done, `[~]` while
+/// in progress and `[ ]` otherwise.
 ///
 /// Claude's `TodoWrite` and Codex's `update_plan` are the same board in two
 /// shapes, so the marks and the joining are written once.
-pub(super) fn checklist_lines<S: AsRef<str>, T: AsRef<str>>(items: impl Iterator<Item = (S, T)>) -> String {
-    items
-        .map(|(status, text)| {
+pub(super) trait ChecklistLinesExt: Iterator + Sized {
+    fn checklist_lines(self) -> String;
+}
+
+impl<S: AsRef<str>, T: AsRef<str>, I: Iterator<Item = (S, T)>> ChecklistLinesExt for I {
+    fn checklist_lines(self) -> String {
+        self.map(|(status, text)| {
             let mark = match status.as_ref() {
                 "completed" => "[x]",
                 "in_progress" | "inProgress" => "[~]",
@@ -174,32 +178,35 @@ pub(super) fn checklist_lines<S: AsRef<str>, T: AsRef<str>>(items: impl Iterator
         })
         .collect::<Vec<_>>()
         .join("\n")
+    }
 }
 
-/// A question tool's fold: each question's title, then one `◦` line per
+/// The fold of a question tool: each question's title, then one `◦` line per
 /// option, a blank line between questions.
 ///
 /// Claude's `AskUserQuestion` and Codex's `request_user_input` spell the
 /// question and its options differently — Claude shows an option's description,
 /// Codex does not — so each caller renders both through its own closures.
-pub(super) fn question_lines<'a>(
-    questions: impl IntoIterator<Item = &'a Json>,
-    title_of: impl Fn(&Json) -> String,
-    option_of: impl Fn(&Value) -> Option<String>,
-) -> Vec<String> {
-    let mut lines = Vec::new();
-    for question in questions {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push(title_of(question));
-        for option in question.get("options").and_then(Value::as_array).into_iter().flatten() {
-            if let Some(line) = option_of(option) {
-                lines.push(line);
+pub(super) trait QuestionLinesExt<'a>: Iterator<Item = &'a Json> + Sized {
+    fn question_lines(self, title_of: impl Fn(&Json) -> String, option_of: impl Fn(&Value) -> Option<String>) -> Vec<String>;
+}
+
+impl<'a, I: Iterator<Item = &'a Json>> QuestionLinesExt<'a> for I {
+    fn question_lines(self, title_of: impl Fn(&Json) -> String, option_of: impl Fn(&Value) -> Option<String>) -> Vec<String> {
+        let mut lines = Vec::new();
+        for question in self {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(title_of(question));
+            for option in question.get("options").and_then(Value::as_array).into_iter().flatten() {
+                if let Some(line) = option_of(option) {
+                    lines.push(line);
+                }
             }
         }
+        lines
     }
-    lines
 }
 
 /// A `$ command` summary, with an ellipsis when more lines follow.
@@ -260,11 +267,14 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
         }
         "TodoWrite" => {
             let todos = input.get("todos").and_then(Value::as_array).cloned().unwrap_or_default();
-            let lines = checklist_lines(todos.iter().map(|todo| {
-                let todo = todo.as_object().cloned().unwrap_or_default();
-                let status = todo.get("status").and_then(Value::as_str).unwrap_or("").to_string();
-                (status, as_display_string(todo.get("content")))
-            }));
+            let lines = todos
+                .iter()
+                .map(|todo| {
+                    let todo = todo.as_object().cloned().unwrap_or_default();
+                    let status = todo.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+                    (status, as_display_string(todo.get("content")))
+                })
+                .checklist_lines();
             ToolDisplay::call(tool_name, format!("{} todos", todos.len()), None, (!lines.is_empty()).then_some(lines))
         }
         "Agent" | "Task" => {
@@ -331,19 +341,21 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
             let questions = input.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
             let first = questions.first().and_then(Value::as_object).cloned().unwrap_or_default();
             let fallback = str_field(input, "__unparsedToolInput").unwrap_or_default();
-            let lines = question_lines(
-                questions.iter().filter_map(Value::as_object),
-                |question| as_display_string(question.get("question")),
-                |option| {
-                    option.as_object().map(|option| {
-                        let description = match option.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
-                            Some(description) => format!(" — {description}"),
-                            None => String::new(),
-                        };
-                        format!("◦ {}{description}", as_display_string(option.get("label")))
-                    })
-                },
-            );
+            let lines = questions
+                .iter()
+                .filter_map(Value::as_object)
+                .question_lines(
+                    |question| as_display_string(question.get("question")),
+                    |option| {
+                        option.as_object().map(|option| {
+                            let description = match option.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+                                Some(description) => format!(" — {description}"),
+                                None => String::new(),
+                            };
+                            format!("◦ {}{description}", as_display_string(option.get("label")))
+                        })
+                    },
+                );
             let headline = match first.get("question").filter(|value| !value.is_null()) {
                 Some(question) => as_display_string(Some(question)),
                 None => fallback.clone(),

@@ -30,9 +30,7 @@ use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use crate::time::now_ms;
 use super::transcript::title_line;
-use super::util::{
-    last_cli_choice, make_item, read_head_lines, read_tail_lines, try_parse, user_text_item, FileCache, ItemKind, LossyLines, Role, TranscriptItem,
-};
+use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{iso8601, mtime_ms, owned_sessions, CliChoice, Paths, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::openapi_ext::Nullable;
 
@@ -558,7 +556,7 @@ pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
         None => list_by_scanning(paths).await,
     };
 
-    finish(paths, &mut summaries, Claims::all(paths).await).await;
+    summaries.finish(paths, Claims::all(paths).await).await;
     summaries
 }
 
@@ -582,22 +580,29 @@ pub(super) async fn rollout_ids(paths: &Paths) -> Option<HashSet<String>> {
     )
 }
 
-/// Apply the overlays a codex row needs after it is built: the user's own title
-/// and the ownership verdict.
-///
-/// `claims` is every claim on the machine for a listing, and just this thread's
-/// for a one-row lookup. Both paths drop a `Hidden` row rather than labelling
-/// it, so a thread another instance made cannot be opened by its id either.
-async fn finish(paths: &Paths, summaries: &mut Vec<SessionSummary>, claims: Claims) {
-    let titles = super::custom_titles(paths, Source::Codex).await;
-    if !titles.is_empty() {
-        for summary in summaries.iter_mut() {
-            if let Some(custom) = titles.get(&summary.id) {
-                summary.title = custom.clone();
+/// The overlays a listing and a single-row lookup both apply to Codex rows.
+trait FinishExt {
+    /// Apply the user's own title and the ownership verdict.
+    ///
+    /// `claims` is every claim on the machine for a listing, and just this
+    /// thread's for a one-row lookup. Both paths drop a `Hidden` row rather than
+    /// labelling it, so a thread another instance made cannot be opened by its id
+    /// either.
+    async fn finish(&mut self, paths: &Paths, claims: Claims);
+}
+
+impl FinishExt for Vec<SessionSummary> {
+    async fn finish(&mut self, paths: &Paths, claims: Claims) {
+        let titles = super::custom_titles(paths, Source::Codex).await;
+        if !titles.is_empty() {
+            for summary in self.iter_mut() {
+                if let Some(custom) = titles.get(&summary.id) {
+                    summary.title = custom.clone();
+                }
             }
         }
+        apply_ownership(paths, self, claims).await;
     }
-    apply_ownership(paths, summaries, claims).await;
 }
 
 /// Promote this instance's own threads, and drop the ones a sibling made.
@@ -606,8 +611,8 @@ async fn finish(paths: &Paths, summaries: &mut Vec<SessionSummary>, claims: Clai
 /// the one place the three-way verdict of [`super::codex_claims`] has to be
 /// applied — the chat list, the global feed and the session count all flow from
 /// [`list_codex_sessions`], and the detail view from [`find_codex_session`],
-/// which runs [`finish`] on its single row so a hidden thread cannot be opened
-/// by typing its URL.
+/// which runs [`FinishExt::finish`] on its single row so a hidden thread cannot
+/// be opened by typing its URL.
 ///
 /// Dropping rather than marking, for the rows another instance claimed: an
 /// account-backed claude session lives in a root a sibling server cannot even
@@ -701,7 +706,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
     // another instance made is dropped by the ownership verdict, so it does not
     // resolve here either.
     let mut summaries = vec![summary];
-    finish(paths, &mut summaries, Claims::just(paths, id).await).await;
+    summaries.finish(paths, Claims::just(paths, id).await).await;
     summaries.pop()
 }
 
@@ -709,7 +714,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
 ///
 /// Port of `codexChoice` in the former TypeScript server's `session-choice.ts`.
 pub async fn read_codex_cli_choice(file_path: &Path) -> Option<CliChoice> {
-    last_cli_choice(file_path, CHOICE_TAIL_BYTES, |entry| {
+    CliChoice::read_tail(file_path, CHOICE_TAIL_BYTES, |entry| {
         if entry.get("type").and_then(Value::as_str) != Some("turn_context") {
             return None;
         }
@@ -816,7 +821,7 @@ fn push_message(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<Strin
             items.push(by_model(make_item(role, ItemKind::Text, text, timestamp), model));
             continue;
         }
-        items.push(user_text_item(text, timestamp));
+        items.push(TranscriptItem::user_text(text, timestamp));
     }
 }
 

@@ -72,29 +72,35 @@ pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) 
     }
 }
 
-/// Apply the overlays both the list and the single-row lookup need: live
-/// status, the user's own title, and ownership.
-///
-/// None of them is in the cached row, because each can change without the
-/// transcript moving at all — which is why the list and the detail view must
-/// both run this, or a detail that disagreed with the row the user clicked
-/// would read as a different session.
-async fn finish(paths: &Paths, summaries: &mut [SessionSummary]) {
-    if summaries.is_empty() {
-        return;
-    }
-    let live = live_claude_session_ids(paths).await;
-    let titles = super::custom_titles(paths, Source::Claude).await;
-    for summary in summaries.iter_mut() {
-        if live.contains(&summary.id) {
-            let activity = claude_activity(Path::new(&summary.file_path)).await;
-            (summary.status, summary.asking) = (activity.status, activity.asking);
+/// The overlays a listing and a single-row lookup both apply to Claude rows.
+trait FinishExt {
+    /// Apply live status, the user's own title and ownership.
+    ///
+    /// None of them is in the cached row, because each can change without the
+    /// transcript moving at all — which is why the list and the detail view must
+    /// both run this, or a detail that disagreed with the row the user clicked
+    /// would read as a different session.
+    async fn finish(&mut self, paths: &Paths);
+}
+
+impl FinishExt for [SessionSummary] {
+    async fn finish(&mut self, paths: &Paths) {
+        if self.is_empty() {
+            return;
         }
-        if let Some(custom) = titles.get(&summary.id) {
-            summary.title = custom.clone();
+        let live = live_claude_session_ids(paths).await;
+        let titles = super::custom_titles(paths, Source::Claude).await;
+        for summary in self.iter_mut() {
+            if live.contains(&summary.id) {
+                let activity = claude_activity(Path::new(&summary.file_path)).await;
+                (summary.status, summary.asking) = (activity.status, activity.asking);
+            }
+            if let Some(custom) = titles.get(&summary.id) {
+                summary.title = custom.clone();
+            }
         }
+        mark_owned(paths, self).await;
     }
-    mark_owned(paths, summaries).await;
 }
 
 /// How many transcripts the in-memory tier holds before it is emptied.
@@ -542,7 +548,7 @@ pub async fn list_claude_sessions(paths: &Paths, bindings: &BTreeMap<String, Str
     for summary in &mut summaries {
         summary.account_id = bindings.get(&summary.id).cloned();
     }
-    finish(paths, &mut summaries).await;
+    summaries.finish(paths).await;
     summaries
 }
 
@@ -628,14 +634,14 @@ pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSumma
     crate::db::index::install(paths);
     let found = find_claude_session(paths, id).await?;
     let mut summary = summarize_file(&found.file_path, id, found.root).await.ok()?;
-    finish(paths, std::slice::from_mut(&mut summary)).await;
+    std::slice::from_mut(&mut summary).finish(paths).await;
     Some(summary)
 }
 
 /// The model/effort a session last ran with, read from its transcript tail.
 pub async fn read_cli_choice(file_path: &Path) -> Option<super::CliChoice> {
     // Claude writes model+effort on every assistant entry, so a small tail is enough.
-    util::last_cli_choice(file_path, 128 * 1024, |entry| {
+    super::CliChoice::read_tail(file_path, 128 * 1024, |entry| {
         if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
             return None;
         }

@@ -63,7 +63,9 @@ use serde_json::{json, Map, Value};
 
 use super::iso8601;
 use super::mentions::resolve_within_home;
-use super::tool_display::{as_display_string, checklist_lines, compact, diff_of, pick_preferred, pretty, question_lines, redact_encrypted, shorten_tool_name};
+use super::tool_display::{
+    as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name, ChecklistLinesExt, QuestionLinesExt,
+};
 use super::transcript::is_renderable_image;
 use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use crate::record::replay::parse_iso8601;
@@ -622,7 +624,10 @@ fn plan_call(steps: &[Step], explanation: Option<String>) -> ToolDisplay {
         Some(current) => format!("{done}/{} · {}", steps.len(), first_line_of(&current.text, LINE)),
         None => format!("{done}/{} steps", steps.len()),
     };
-    let lines = checklist_lines(steps.iter().map(|step| (step.status.as_str(), step.text.as_str())));
+    let lines = steps
+        .iter()
+        .map(|step| (step.status.as_str(), step.text.as_str()))
+        .checklist_lines();
     ToolDisplay::call("update_plan", text, explanation, (!lines.is_empty()).then_some(lines))
 }
 
@@ -643,7 +648,7 @@ fn questions_call(name: &str, input: &Json) -> ToolDisplay {
             .unwrap_or("")
             .to_string()
     };
-    let lines = question_lines(questions.iter().copied(), &title, |option| {
+    let lines = questions.iter().copied().question_lines(&title, |option| {
         Some(match option {
             Value::Object(option) => format!("◦ {}", str_of(option, "label").unwrap_or("")),
             other => format!("◦ {}", as_display_string(Some(other))),

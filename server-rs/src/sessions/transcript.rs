@@ -13,8 +13,8 @@ use serde_json::{Map, Value};
 
 use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
 use super::util::{
-    clip, first_line_of, is_image_ext, make_item, make_tool_item, try_parse, user_text_item, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay,
-    TranscriptItem, DETAIL_LIMIT,
+    clip, first_line_of, is_image_ext, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem,
+    DETAIL_LIMIT,
 };
 use crate::openapi_ext::Nullable;
 
@@ -260,7 +260,7 @@ fn clamped_timestamp(items: &[TranscriptItem], timestamp: Option<&str>) -> Optio
 /// English. Falls back to a boundary of its own when the real one is not in
 /// this window, because dropping it would lose the summary entirely.
 fn attach_compact_summary(items: &mut [TranscriptItem], summary: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
-    if attach_detail(items, ItemKind::Compact, summary) {
+    if items.attach_detail(ItemKind::Compact, summary) {
         return None;
     }
     Some(make_tool_item(
@@ -275,21 +275,28 @@ fn attach_compact_summary(items: &mut [TranscriptItem], summary: &str, timestamp
     ))
 }
 
-/// Hang `body` on the last item, when that item is an unanswered `kind` chip.
-///
-/// A CLI writes the summary or the output as an entry of its own, right after
-/// the line it answers. Folded there it reads as one event; two items put the
-/// text on a row that never says what it belongs to. Returns whether it was
-/// folded, so the caller can fall back to an item of its own.
-fn attach_detail(items: &mut [TranscriptItem], kind: ItemKind, body: &str) -> bool {
-    let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
-    let Some(last) = items.last_mut() else { return false };
-    if last.kind != kind || last.detail.0.is_some() {
-        return false;
+/// Fold a CLI's follow-up entry onto the item it answers.
+trait AttachDetailExt {
+    /// Hang `body` on the last item when it is an unanswered `kind` chip, and
+    /// report whether it was folded so the caller can supply its own fallback.
+    ///
+    /// A CLI writes the summary or the output as an entry of its own, right
+    /// after the line it answers. Folded there it reads as one event; a separate
+    /// item would put the text on a row that never says what it belongs to.
+    fn attach_detail(&mut self, kind: ItemKind, body: &str) -> bool;
+}
+
+impl AttachDetailExt for [TranscriptItem] {
+    fn attach_detail(&mut self, kind: ItemKind, body: &str) -> bool {
+        let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
+        let Some(last) = self.last_mut() else { return false };
+        if last.kind != kind || last.detail.0.is_some() {
+            return false;
+        }
+        last.detail = Nullable(Some(detail));
+        last.truncated = truncated;
+        true
     }
-    last.detail = Nullable(Some(detail));
-    last.truncated = truncated;
-    true
 }
 
 /// What one text block of a `user` entry turned into.
@@ -307,7 +314,7 @@ enum UserLine {
 /// Two items would put the output on a row that never says which command
 /// printed it; folded into the command's own chip it reads as one event.
 fn attach_command_output(items: &mut [TranscriptItem], body: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
-    if attach_detail(items, ItemKind::Command, body) {
+    if items.attach_detail(ItemKind::Command, body) {
         return None;
     }
     // Output whose command fell outside this window still has to show up.
@@ -352,27 +359,29 @@ struct QueuedMessage {
 }
 
 impl QueuedMessage {
+    /// Read the message `entry` carries, when it is a `queued_command` that is
+    /// somebody's rather than the CLI's own bookkeeping.
+    fn from_entry(entry: &Json) -> Option<Self> {
+        let attachment = entry.get("attachment").and_then(Value::as_object)?;
+        if attachment.get("type").and_then(Value::as_str) != Some("queued_command")
+            || attachment.get("commandMode").and_then(Value::as_str) == Some("task-notification")
+        {
+            return None;
+        }
+        let text = queued_prompt_text(attachment)?;
+        let peer_from = attachment
+            .get("origin")
+            .and_then(Value::as_object)
+            .filter(|origin| origin.get("kind").and_then(Value::as_str) == Some("peer"))
+            .map(|origin| origin.get("from").and_then(Value::as_str).map(str::to_owned));
+        Some(Self { text, peer_from })
+    }
+
     /// Whether another agent wrote this rather than the user: its origin says
     /// so, or it is wrapped in the `<agent-message` envelope.
     fn from_peer(&self) -> bool {
         self.peer_from.is_some() || self.text.trim_start().starts_with("<agent-message")
     }
-}
-
-fn queued_message(entry: &Json) -> Option<QueuedMessage> {
-    let attachment = entry.get("attachment").and_then(Value::as_object)?;
-    if attachment.get("type").and_then(Value::as_str) != Some("queued_command")
-        || attachment.get("commandMode").and_then(Value::as_str) == Some("task-notification")
-    {
-        return None;
-    }
-    let text = queued_prompt_text(attachment)?;
-    let peer_from = attachment
-        .get("origin")
-        .and_then(Value::as_object)
-        .filter(|origin| origin.get("kind").and_then(Value::as_str) == Some("peer"))
-        .map(|origin| origin.get("from").and_then(Value::as_str).map(str::to_owned));
-    Some(QueuedMessage { text, peer_from })
 }
 
 /// A message that reached the CLI while a turn was already in flight.
@@ -392,7 +401,7 @@ fn queued_message(entry: &Json) -> Option<QueuedMessage> {
 /// for them; those carry `commandMode: "task-notification"` and are the one
 /// thing here that must stay invisible.
 fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine> {
-    let queued = queued_message(entry)?;
+    let queued = QueuedMessage::from_entry(entry)?;
     // Another agent's report rides the same queue with the same mode; its
     // `origin` is what says it is not the user. See `peer_message_item`.
     if queued.from_peer() {
@@ -429,7 +438,7 @@ pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
     {
         return None;
     }
-    let queued = queued_message(entry)?;
+    let queued = QueuedMessage::from_entry(entry)?;
     (!queued.from_peer()).then_some(queued.text)
 }
 
@@ -480,7 +489,7 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>) -> Option<UserLine>
     if text.starts_with("<task-notification>") {
         return Some(UserLine::Item(Box::new(task_notification_item(text, timestamp))));
     }
-    Some(UserLine::Item(Box::new(user_text_item(raw_text, timestamp))))
+    Some(UserLine::Item(Box::new(TranscriptItem::user_text(raw_text, timestamp))))
 }
 
 /// The diff hunks a transcript entry recorded alongside its tool result.
@@ -564,7 +573,7 @@ pub struct SubagentFile {
 }
 
 /// `agent-<id>.jsonl` / `agent-<id>.meta.json` -> the id and the kind.
-fn agent_file_name(name: &str) -> Option<(String, SubagentFileKind)> {
+fn parse_agent_file_name(name: &str) -> Option<(String, SubagentFileKind)> {
     let rest = name.strip_prefix("agent-")?;
     if let Some(id) = rest.strip_suffix(".jsonl") {
         return Some((id.to_string(), SubagentFileKind::Transcript));
@@ -573,40 +582,48 @@ fn agent_file_name(name: &str) -> Option<(String, SubagentFileKind)> {
     Some((id.to_string(), SubagentFileKind::Meta))
 }
 
-/// Every file under a session's `subagents/` directory, in a stable order.
-///
-/// An ordinary subagent is written at the top level, but the CLI files an agent
-/// spawned by a workflow one level down (`subagents/workflows/agent-<id>.jsonl`),
-/// so one level of subdirectory is searched too — the same depth
-/// [`find_subagent_file`] has always looked at. Every reader of this directory
-/// walks it here, so none can miss a class of agent that another one sees.
-pub async fn subagent_files(session_file: &Path) -> Vec<SubagentFile> {
-    let dir = subagent_dir(session_file);
-    let mut dirs = vec![dir.clone()];
-    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_type().await.map(|kind| kind.is_dir()).unwrap_or(false) {
-                dirs.push(entry.path());
+/// The files under a session's `subagents/` directory.
+pub trait SubagentFilesExt {
+    /// Every agent transcript and meta at the top level and one level down, in a
+    /// stable order.
+    ///
+    /// An ordinary subagent is written at the top level, but the CLI files an
+    /// agent spawned by a workflow one level down
+    /// (`subagents/workflows/agent-<id>.jsonl`), so that level is searched too.
+    /// Every reader goes through this one walk, so no reader can miss a class of
+    /// agent another one sees.
+    fn subagent_files(&self) -> impl std::future::Future<Output = Vec<SubagentFile>> + Send;
+}
+
+impl SubagentFilesExt for Path {
+    async fn subagent_files(&self) -> Vec<SubagentFile> {
+        let dir = subagent_dir(self);
+        let mut dirs = vec![dir.clone()];
+        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.file_type().await.map(|kind| kind.is_dir()).unwrap_or(false) {
+                    dirs.push(entry.path());
+                }
             }
         }
-    }
-    let mut files = Vec::new();
-    for dir in dirs {
-        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some((agent_id, kind)) = agent_file_name(&name) else { continue };
-            files.push(SubagentFile {
-                agent_id,
-                kind,
-                path: entry.path(),
-            });
+        let mut files = Vec::new();
+        for dir in dirs {
+            let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some((agent_id, kind)) = parse_agent_file_name(&name) else { continue };
+                files.push(SubagentFile {
+                    agent_id,
+                    kind,
+                    path: entry.path(),
+                });
+            }
         }
+        // Stable order, so a sweep that finds two agents replays the same way on
+        // every machine.
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        files
     }
-    // Stable order, so a sweep that finds two agents replays the same way on
-    // every machine.
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
 }
 
 /// The transcript of one agent, wherever under `subagents/` it was written.
@@ -617,35 +634,37 @@ pub async fn subagent_files(session_file: &Path) -> Vec<SubagentFile> {
 /// "no such agent" for work that is sitting right there, silently skipping a
 /// whole class of children. One level of subdirectory is what the CLI uses and what this searches.
 pub async fn find_subagent_file(session_file: &Path, agent_id: &str) -> Option<PathBuf> {
-    subagent_files(session_file)
+    session_file
+        .subagent_files()
         .await
         .into_iter()
         .find(|file| file.kind == SubagentFileKind::Transcript && file.agent_id == agent_id)
         .map(|file| file.path)
 }
 
-/// Read one agent's meta sidecar.
-///
-/// Split out from [`list_agent_metas`] because a *subagent's* children are
-/// metas in the same directory as the subagent itself — they name it in
-/// `parentAgentId` rather than living under a directory of their own — so
-/// tagging a subagent's transcript reads the same folder from a different file.
-async fn read_agent_meta(path: &Path, agent_id: String) -> Option<SubagentMeta> {
-    // Half-written meta: the next parse picks it up.
-    let raw = tokio::fs::read_to_string(path).await.ok()?;
-    let Value::Object(meta) = serde_json::from_str::<Value>(&raw).ok()? else {
-        return None;
-    };
-    let string = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
-    Some(SubagentMeta {
-        agent_id,
-        tool_use_id: string("toolUseId"),
-        description: string("description"),
-        agent_type: string("agentType"),
-        spawn_depth: meta.get("spawnDepth").and_then(Value::as_u64).map(|depth| depth as u32),
-        parent_agent_id: string("parentAgentId"),
-        model: string("model"),
-    })
+impl SubagentMeta {
+    /// The meta at `path`, or `None` when it is missing or half-written.
+    ///
+    /// A *subagent's* children are metas in the same directory as the subagent
+    /// itself — they name it in `parentAgentId` rather than living under a
+    /// directory of their own — so tagging a subagent's transcript reads the same
+    /// folder from a different file.
+    async fn read(path: &Path, agent_id: String) -> Option<Self> {
+        let raw = tokio::fs::read_to_string(path).await.ok()?;
+        let Value::Object(meta) = serde_json::from_str::<Value>(&raw).ok()? else {
+            return None;
+        };
+        let string = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
+        Some(Self {
+            agent_id,
+            tool_use_id: string("toolUseId"),
+            description: string("description"),
+            agent_type: string("agentType"),
+            spawn_depth: meta.get("spawnDepth").and_then(Value::as_u64).map(|depth| depth as u32),
+            parent_agent_id: string("parentAgentId"),
+            model: string("model"),
+        })
+    }
 }
 
 /// Read the agent metas in one directory.
@@ -656,10 +675,10 @@ pub async fn list_agent_metas(dir: &Path) -> Vec<SubagentMeta> {
     let mut metas = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some((agent_id, SubagentFileKind::Meta)) = agent_file_name(&name) else {
+        let Some((agent_id, SubagentFileKind::Meta)) = parse_agent_file_name(&name) else {
             continue;
         };
-        if let Some(meta) = read_agent_meta(&entry.path(), agent_id).await {
+        if let Some(meta) = SubagentMeta::read(&entry.path(), agent_id).await {
             metas.push(meta);
         }
     }
@@ -669,11 +688,11 @@ pub async fn list_agent_metas(dir: &Path) -> Vec<SubagentMeta> {
 /// Read the subagent metas that sit beside a session file.
 pub async fn list_subagents(session_file: &Path) -> Vec<SubagentMeta> {
     let mut metas = Vec::new();
-    for SubagentFile { agent_id, kind, path } in subagent_files(session_file).await {
+    for SubagentFile { agent_id, kind, path } in session_file.subagent_files().await {
         if kind != SubagentFileKind::Meta {
             continue;
         }
-        if let Some(meta) = read_agent_meta(&path, agent_id).await {
+        if let Some(meta) = SubagentMeta::read(&path, agent_id).await {
             metas.push(meta);
         }
     }
@@ -699,10 +718,10 @@ pub async fn list_subagents(session_file: &Path) -> Vec<SubagentMeta> {
 /// before deciding which child is worth loading.
 pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
     let mut found: HashMap<String, AgentEntry> = HashMap::new();
-    for SubagentFile { agent_id, kind, path } in subagent_files(session_file).await {
+    for SubagentFile { agent_id, kind, path } in session_file.subagent_files().await {
         match kind {
             SubagentFileKind::Meta => {
-                let Some(meta) = read_agent_meta(&path, agent_id).await else { continue };
+                let Some(meta) = SubagentMeta::read(&path, agent_id).await else { continue };
                 let entry = found.entry(meta.agent_id.clone()).or_insert_with(|| AgentEntry::new(&meta.agent_id));
                 entry.absorb(meta);
             }

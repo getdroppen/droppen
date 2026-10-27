@@ -68,7 +68,7 @@ use tokio::sync::mpsc;
 use super::{Event, Line, Stop, SCHEMA};
 use crate::claude_roots::ClaudeRoot;
 use crate::feed::watch::{self, FileEvents};
-use crate::sessions::transcript::{subagent_files, SubagentFileKind};
+use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
 use crate::sessions::{iso8601, mtime_ms, Paths};
 
 /// How often the files are looked at when the watcher says nothing.
@@ -238,7 +238,7 @@ impl State {
         // meta is what links it to the `Task` call it hangs off. The walk is the
         // one the session page uses, so a workflow's agents (one level down)
         // are recorded too rather than silently skipped.
-        for file in subagent_files(&transcript).await {
+        for file in transcript.subagent_files().await {
             match file.kind {
                 SubagentFileKind::Transcript => {
                     let label = format!("agent:{}", file.agent_id);

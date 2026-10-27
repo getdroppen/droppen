@@ -636,52 +636,29 @@ pub fn try_parse(line: &str) -> Option<serde_json::Map<String, serde_json::Value
     }
 }
 
-/// A user's text as one item, with the CLI's attachment suffix turned into the
-/// image thumbnails and file chips it names.
-///
-/// Both CLIs append the same suffix to a message that carried files, and the
-/// paths in it are the only record of what was attached.
-pub fn user_text_item(raw_text: &str, timestamp: Option<&str>) -> TranscriptItem {
-    let split = parse_attachment_suffix(raw_text);
-    let mut item = make_item(Role::User, ItemKind::Text, &split.text, timestamp);
-    if !split.images.is_empty() {
-        item.images = Some(split.images);
+impl TranscriptItem {
+    /// A user's text as one item, with the CLI's attachment suffix turned into
+    /// the image thumbnails and file chips it names.
+    ///
+    /// Both CLIs append the same suffix to a message that carried files, and the
+    /// paths in it are the only record of what was attached.
+    pub fn user_text(raw_text: &str, timestamp: Option<&str>) -> Self {
+        let split = parse_attachment_suffix(raw_text);
+        let mut item = make_item(Role::User, ItemKind::Text, &split.text, timestamp);
+        if !split.images.is_empty() {
+            item.images = Some(split.images);
+        }
+        if !split.files.is_empty() {
+            item.files = Some(split.files);
+        }
+        item
     }
-    if !split.files.is_empty() {
-        item.files = Some(split.files);
-    }
-    item
-}
-
-/// The newest model/effort pair a transcript's tail names.
-///
-/// Both CLIs record the pair once per turn — Claude on every assistant entry,
-/// Codex in the `turn_context` that opens one — so the newest entry that names
-/// either is what the session is set to run. `extract` reads one entry and
-/// returns its pair, or `None` when the entry says nothing about them.
-pub async fn last_cli_choice(
-    file_path: &Path,
-    tail_bytes: u64,
-    extract: impl Fn(&serde_json::Map<String, serde_json::Value>) -> Option<(Option<String>, Option<String>)>,
-) -> Option<super::CliChoice> {
-    let lines = read_tail_lines(file_path, tail_bytes).await.ok()?;
-    for line in lines.iter().rev() {
-        let Some(entry) = try_parse(line) else { continue };
-        let Some((model, effort)) = extract(&entry) else { continue };
-        return Some(super::CliChoice {
-            model: Nullable(model),
-            effort: Nullable(effort),
-            at: Nullable(entry.get("timestamp").and_then(serde_json::Value::as_str).map(str::to_owned)),
-        });
-    }
-    None
 }
 
 /// A map whose entries are dropped wholesale when it reaches a cap.
 ///
-/// An LRU needs a second structure to maintain, and being wrong only costs a
-/// lookup that falls through to the durable tier or a re-read. The file caches
-/// in this module all made that trade one at a time; this is it written once.
+/// An LRU needs a second structure to maintain, and being wrong here only costs
+/// a lookup that falls through to the durable tier or a re-read.
 pub struct BoundedMap<K, V> {
     entries: std::sync::Mutex<std::collections::HashMap<K, V>>,
     max: usize,
