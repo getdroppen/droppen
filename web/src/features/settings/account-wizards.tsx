@@ -15,6 +15,7 @@ import {
   type Account,
 } from "@/features/accounts/use-accounts";
 import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
@@ -33,25 +34,14 @@ const secondary = SETTINGS_ACTION;
 /** The URL to authorize, as text to copy. Nothing here opens a browser. */
 function AuthUrlBlock({ url }: { url: string }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // No clipboard permission (or no secure context): the field below is
-      // selectable, which is the fallback that always works.
-    }
-  };
+  const { copied, copy } = useCopy();
 
   return (
     <div className="flex flex-col gap-1">
       <span className="text-2xs text-faint">{t("open this url yourself to authorize")}</span>
       <div className="flex items-center gap-1.5">
         <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className={cn(field, "flex-1")} />
-        <button type="button" onClick={() => void copy()} className={cn(secondary, "shrink-0 px-2")}>
+        <button type="button" onClick={() => copy(url)} className={cn(secondary, "shrink-0 px-2")}>
           {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
           {copied ? t("copied") : t("copy")}
         </button>

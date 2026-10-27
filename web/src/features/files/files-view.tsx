@@ -47,6 +47,7 @@ import {
 } from "./files-model";
 import { FilePreview } from "./file-preview";
 import { UploadButton } from "./files-operations";
+import { useCopy } from "@/lib/clipboard";
 import { formatBytes, formatTime } from "@/lib/format";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
@@ -191,16 +192,14 @@ export function FilesBrowser({
       go(target);
     }
   };
-  const copy = async (value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setNotice(t("path copied"));
-    } catch {
+  const copy = useCopy({
+    onSuccess: () => setNotice(t("path copied")),
+    onError: () => {
       setNotice(t("cannot copy path · select it in the address bar"));
       pathRef.current?.focus();
       pathRef.current?.select();
-    }
-  };
+    },
+  }).copy;
 
   return (
     <section

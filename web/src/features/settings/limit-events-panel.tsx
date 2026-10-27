@@ -12,6 +12,7 @@ import {
   type AccountLimitEvent,
 } from "@/features/accounts/account-rest";
 import type { Account } from "@/features/accounts/use-accounts";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { formatExactTime, formatTime } from "@/lib/format";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -24,21 +25,13 @@ const LIMIT_EVENTS_REFRESH_MS = 60_000;
 
 function CopyRaw({ text }: { text: string }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   return (
     <button
       type="button"
       title={copied ? t("copied") : t("copy")}
       aria-label={t("copy")}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // Clipboard refused (insecure context): the block is still selectable.
-        }
-      }}
+      onClick={() => copy(text)}
       className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
     >
       {copied ? <Check data-signal="ok" className="size-3 text-ok" /> : <Copy className="size-3" />}

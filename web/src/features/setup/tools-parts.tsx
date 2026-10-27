@@ -8,29 +8,9 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
 import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { elapsed } from "./tools-model";
-
-/** Copy `text`, and say so for a moment. */
-export function useCopy(): { copied: boolean; copy: (text: string) => void } {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  return {
-    copied,
-    copy: (text) => {
-      void navigator.clipboard?.writeText(text).then(
-        () => {
-          setCopied(true);
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), 1500);
-        },
-        // No clipboard here: the command is on screen and selectable.
-        () => undefined,
-      );
-    },
-  };
-}
 
 /** What a status chip says with its colour: only the state, never decoration. */
 export type ChipTone = "ready" | "running" | "failed" | "warn" | "neutral";
