@@ -6,101 +6,48 @@
 //! one exception is the REST create route, which exists precisely to start the
 //! user's own shell.
 
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use remote_hand_server::pty_shim::proto::Meta;
 use remote_hand_server::pty_shim::sidecar::{self, Sidecars};
 use remote_hand_server::sessions::Paths;
-use remote_hand_server::shutdown::Cleanups;
 use remote_hand_server::terminals::{CreateSpec, Registry, MAX_TERMINALS};
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 
+mod common;
+
 /// A running server plus the terminal registry its handlers share.
-struct Probe {
-    addr: SocketAddr,
-    terminals: Arc<Registry>,
-    cleanups: Cleanups,
-    cancel: tokio_util::sync::CancellationToken,
-    /// An `Option` so `stop` can take it out past this struct's `Drop`.
-    server: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
-    home: tempfile::TempDir,
+type Probe = common::TestServer;
+
+/// Where this probe's shims keep their sidecars.
+fn shim_dir(probe: &Probe) -> std::path::PathBuf {
+    shims_of(&probe.home)
 }
 
-impl Probe {
-    async fn start() -> Probe {
-        let home = tempfile::tempdir().expect("tempdir");
-        let app = RemoteHandApp {
-            home_override: Some(home.path().to_path_buf()),
-            port_override: Some(0),
-            // No login: these tests are not about authentication (`tests/auth.rs` is).
-            auth_enabled_override: Some(false),
-            ..Default::default()
-        };
-        let prepared = app.prepare().await.expect("prepare");
-        let addr = prepared.addr;
-        let cleanups = prepared.cleanups();
-        let terminals = cleanups.terminals.clone();
-        let cancel = prepared.cancel();
-        let server = tokio::spawn(prepared.serve_task());
-        Probe {
-            addr,
-            terminals,
-            cleanups,
-            cancel,
-            server: Some(server),
-            home,
-        }
-    }
-
-    /// Where this probe's shims keep their sidecars.
-    fn shim_dir(&self) -> std::path::PathBuf {
-        shims_of(self.home.path())
-    }
-
-    async fn request(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-        http_request(self.addr, method, path, body).await
-    }
-
-    async fn json(&self, method: &str, path: &str, body: Option<&str>) -> Value {
-        let (status, text) = self.request(method, path, body).await;
-        assert_eq!(status, 200, "{method} {path} -> {status}: {text}");
-        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{method} {path} returned non-JSON ({e}): {text}"))
-    }
-
-    /// Connect to a terminal's attach socket.
-    async fn attach(&self, id: &str) -> Socket {
-        let url = format!("ws://{}/api/terminals/{id}/ws", self.addr);
-        let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");
-        Socket(socket)
-    }
-
-    /// Stop the server, and kill the shims the test started.
-    ///
-    /// A terminal now outlives its server on purpose, so a test that only
-    /// cancelled would leave shells running on the developer's machine.
-    async fn stop(mut self) {
-        self.terminals.kill_all();
-        self.cancel.cancel();
-        if let Some(server) = self.server.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
-        }
+async fn request(probe: &Probe, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+    match body {
+        Some(body) => probe.request(method, path, &[("Content-Type", "application/json")], body.as_bytes()).await,
+        None => probe.request(method, path, &[], &[]).await,
     }
 }
 
-impl Drop for Probe {
-    /// The same safety net for a test that panics before it reaches `stop`.
-    fn drop(&mut self) {
-        self.terminals.kill_all();
-    }
+async fn json(probe: &Probe, method: &str, path: &str, body: Option<&str>) -> Value {
+    let (status, text) = request(probe, method, path, body).await;
+    assert_eq!(status, 200, "{method} {path} -> {status}: {text}");
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{method} {path} returned non-JSON ({e}): {text}"))
+}
+
+/// Connect to a terminal's attach socket.
+async fn attach(probe: &Probe, id: &str) -> Socket {
+    let url = format!("ws://{}/api/terminals/{id}/ws", probe.addr);
+    let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");
+    Socket(socket)
 }
 
 /// A connected attach socket, with the read/write helpers the assertions need.
@@ -139,31 +86,6 @@ impl Socket {
         }
         seen
     }
-}
-
-/// A one-shot HTTP/1.1 request, returning `(status, body)`.
-async fn http_request(addr: SocketAddr, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        request.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", body.len()));
-    }
-    request.push_str("\r\n");
-    if let Some(body) = body {
-        request.push_str(body);
-    }
-    stream.write_all(request.as_bytes()).await.expect("write");
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.expect("read");
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").expect("malformed HTTP response");
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    (status, body.to_string())
 }
 
 /// A terminal running `script` under `/bin/sh`.
@@ -259,7 +181,7 @@ async fn the_rest_routes_list_create_rename_and_kill() {
     let probe = Probe::start().await;
 
     assert_eq!(
-        probe.json("GET", "/api/terminals", None).await["terminals"]
+        json(&probe, "GET", "/api/terminals", None).await["terminals"]
             .as_array()
             .expect("array")
             .len(),
@@ -267,31 +189,29 @@ async fn the_rest_routes_list_create_rename_and_kill() {
     );
 
     // The web sends `{}`; the shell then starts in the home directory.
-    let created = probe.json("POST", "/api/terminals", Some("{}")).await;
+    let created = json(&probe, "POST", "/api/terminals", Some("{}")).await;
     let id = created["id"].as_str().expect("id").to_string();
     assert_eq!(created["title"], "terminal 1", "the default title counts terminals");
-    assert_eq!(created["cwd"], probe.home.path().to_string_lossy().as_ref());
+    assert_eq!(created["cwd"], probe.home.to_string_lossy().as_ref());
     assert!(created["createdAt"].as_str().expect("createdAt").contains('T'));
 
-    let listed = probe.json("GET", "/api/terminals", None).await;
+    let listed = json(&probe, "GET", "/api/terminals", None).await;
     assert_eq!(listed["terminals"].as_array().expect("array").len(), 1);
     assert_eq!(listed["terminals"][0]["id"], id.as_str());
 
-    let renamed = probe
-        .json("PATCH", &format!("/api/terminals/{id}"), Some(r#"{"title":"  build  "}"#))
-        .await;
+    let renamed = json(&probe, "PATCH", &format!("/api/terminals/{id}"), Some(r#"{"title":"  build  "}"#)).await;
     assert_eq!(renamed["title"], "build", "the title is trimmed");
 
-    let killed = probe.json("DELETE", &format!("/api/terminals/{id}"), None).await;
+    let killed = json(&probe, "DELETE", &format!("/api/terminals/{id}"), None).await;
     assert_eq!(killed["accepted"], true);
 
     // Killing removes the entry outright, so a second attempt is a 404 with the
     // body the web client reads.
-    let (status, body) = probe.request("DELETE", &format!("/api/terminals/{id}"), None).await;
+    let (status, body) = request(&probe, "DELETE", &format!("/api/terminals/{id}"), None).await;
     assert_eq!(status, 404);
     assert_eq!(serde_json::from_str::<Value>(&body).expect("json")["error"], "terminal not found");
 
-    let (status, body) = probe.request("PATCH", &format!("/api/terminals/{id}"), Some(r#"{"title":"gone"}"#)).await;
+    let (status, body) = request(&probe, "PATCH", &format!("/api/terminals/{id}"), Some(r#"{"title":"gone"}"#)).await;
     assert_eq!(status, 404);
     assert_eq!(serde_json::from_str::<Value>(&body).expect("json")["error"], "terminal not found");
 
@@ -306,10 +226,10 @@ async fn the_list_keeps_creation_order() {
     // move the user's tabs under them.
     let mut created = Vec::new();
     for _ in 0..8 {
-        created.push(probe.terminals.create_terminal_with(sh("sleep 30")).await.expect("create terminal").id);
+        created.push(probe.terminals().create_terminal_with(sh("sleep 30")).await.expect("create terminal").id);
     }
 
-    let listed: Vec<String> = probe.json("GET", "/api/terminals", None).await["terminals"]
+    let listed: Vec<String> = json(&probe, "GET", "/api/terminals", None).await["terminals"]
         .as_array()
         .expect("array")
         .iter()
@@ -318,9 +238,9 @@ async fn the_list_keeps_creation_order() {
     assert_eq!(listed, created);
 
     // Removing one from the middle must not disturb the rest.
-    assert!(probe.terminals.kill_terminal(&created[3]));
+    assert!(probe.terminals().kill_terminal(&created[3]));
     created.remove(3);
-    let listed: Vec<String> = probe.json("GET", "/api/terminals", None).await["terminals"]
+    let listed: Vec<String> = json(&probe, "GET", "/api/terminals", None).await["terminals"]
         .as_array()
         .expect("array")
         .iter()
@@ -335,7 +255,7 @@ async fn the_list_keeps_creation_order() {
 async fn a_working_directory_outside_home_is_refused() {
     let probe = Probe::start().await;
 
-    let (status, body) = probe.request("POST", "/api/terminals", Some(r#"{"cwd":"/etc"}"#)).await;
+    let (status, body) = request(&probe, "POST", "/api/terminals", Some(r#"{"cwd":"/etc"}"#)).await;
     assert_eq!(status, 400, "the multi-status response the OpenAPI registry documents");
     assert_eq!(
         serde_json::from_str::<Value>(&body).expect("json")["error"],
@@ -343,11 +263,9 @@ async fn a_working_directory_outside_home_is_refused() {
     );
 
     // A path inside home is accepted, `..` and all.
-    let inside = format!("{}/./sub/..", probe.home.path().to_string_lossy());
-    let created = probe
-        .json("POST", "/api/terminals", Some(&serde_json::json!({ "cwd": inside }).to_string()))
-        .await;
-    assert_eq!(created["cwd"], probe.home.path().to_string_lossy().as_ref(), "the path is normalized");
+    let inside = format!("{}/./sub/..", probe.home.to_string_lossy());
+    let created = json(&probe, "POST", "/api/terminals", Some(&serde_json::json!({ "cwd": inside }).to_string())).await;
+    assert_eq!(created["cwd"], probe.home.to_string_lossy().as_ref(), "the path is normalized");
 
     probe.stop().await;
 }
@@ -360,12 +278,12 @@ async fn output_reaches_the_socket_and_the_exit_is_announced() {
     // script is a guess at when the attach happens; a `read` is the attach
     // itself saying so.
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh("echo hello; read _; echo bye"))
         .await
         .expect("create terminal");
 
-    let mut socket = probe.attach(&info.id).await;
+    let mut socket = attach(&probe, &info.id).await;
     // The replay covers whatever landed before the attach; later frames carry
     // the rest. Both are bare text — no envelope, exactly what `term.write` eats.
     // The line's end can come a frame after its text, so wait for both.
@@ -385,7 +303,7 @@ async fn output_reaches_the_socket_and_the_exit_is_announced() {
 
     // An exited terminal drops out of the list but stays attachable for a while,
     // so a client that reconnects still repaints the note.
-    let listed = probe.json("GET", "/api/terminals", None).await;
+    let listed = json(&probe, "GET", "/api/terminals", None).await;
     assert_eq!(listed["terminals"].as_array().expect("array").len(), 0);
 
     probe.stop().await;
@@ -401,14 +319,14 @@ async fn a_resize_frame_reaches_the_kernel_and_junk_is_ignored() {
     // the size unmatched, so the loop runs out and prints the wrong size for
     // the assertion to catch.
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh(
             "i=0; while [ \"$(stty size)\" != \"30 100\" ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done; stty size",
         ))
         .await
         .expect("create terminal");
 
-    let mut socket = probe.attach(&info.id).await;
+    let mut socket = attach(&probe, &info.id).await;
     socket.send(r#"{"type":"resize","cols":100,"rows":30}"#).await;
     // Everything below must be dropped in silence rather than closing the socket
     // or reaching `pty.resize`: out of range, wrong types, unknown type, junk.
@@ -428,12 +346,12 @@ async fn a_resize_frame_reaches_the_kernel_and_junk_is_ignored() {
 async fn input_frames_reach_the_process() {
     let probe = Probe::start().await;
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh("read line; echo \"got:$line\""))
         .await
         .expect("create terminal");
 
-    let mut socket = probe.attach(&info.id).await;
+    let mut socket = attach(&probe, &info.id).await;
     socket.send(r#"{"type":"input","data":"ping\r"}"#).await;
 
     let seen = socket.read_until(&["got:ping"]).await;
@@ -449,13 +367,13 @@ async fn every_attached_client_sees_the_same_stream() {
     // at when both clients would be attached; on a loaded machine the shell
     // had printed and exited first, and an exited terminal refuses an attach.
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh("read _; echo shared"))
         .await
         .expect("create terminal");
 
-    let mut first = probe.attach(&info.id).await;
-    let mut second = probe.attach(&info.id).await;
+    let mut first = attach(&probe, &info.id).await;
+    let mut second = attach(&probe, &info.id).await;
     // Each attach opens with the replay frame, which is the server saying it
     // has registered that client. Only then is the line asked for.
     first.next_text().await.expect("the first client's replay");
@@ -471,7 +389,7 @@ async fn every_attached_client_sees_the_same_stream() {
 #[tokio::test]
 async fn an_unknown_terminal_gets_a_note_and_a_close() {
     let probe = Probe::start().await;
-    let mut socket = probe.attach("11111111-2222-3333-4444-555555555555").await;
+    let mut socket = attach(&probe, "11111111-2222-3333-4444-555555555555").await;
 
     assert_eq!(socket.next_text().await.as_deref(), Some("\r\n[terminal not found]\r\n"));
     assert_eq!(socket.next_text().await, None, "the server closes the socket after the note");
@@ -494,13 +412,16 @@ async fn the_exit_hook_fires_once_on_a_natural_exit() {
             codes.lock().expect("codes poisoned").push(code);
         })
     });
-    probe.terminals.create_terminal_with(spec).await.expect("create terminal");
+    probe.terminals().create_terminal_with(spec).await.expect("create terminal");
 
-    wait_for(|| calls.load(Ordering::SeqCst) == 1, "the exit hook to fire").await;
+    common::wait_for("the exit hook to fire", Duration::from_secs(5), || calls.load(Ordering::SeqCst) == 1).await;
     // The list drops a terminal the moment the lifecycle task notes its exit,
     // which is past every point at which it could have fired the hook again —
     // a condition to wait on rather than a guess at how long that takes.
-    wait_for(|| probe.terminals.list().is_empty(), "the terminal to be marked exited").await;
+    common::wait_for("the terminal to be marked exited", Duration::from_secs(5), || {
+        probe.terminals().list().is_empty()
+    })
+    .await;
     assert_eq!(calls.load(Ordering::SeqCst), 1, "the hook must fire exactly once");
     assert_eq!(*codes.lock().expect("codes poisoned"), vec![7], "the process's own status is reported");
 
@@ -523,14 +444,14 @@ async fn the_exit_hook_fires_once_on_a_kill() {
             codes.lock().expect("codes poisoned").push(code);
         })
     });
-    let info = probe.terminals.create_terminal_with(spec).await.expect("create terminal");
-    let mut socket = probe.attach(&info.id).await;
+    let info = probe.terminals().create_terminal_with(spec).await.expect("create terminal");
+    let mut socket = attach(&probe, &info.id).await;
     // The server attaches after the upgrade response the client has already
     // read, and its first frame (the replay) is what says it has. A kill that
     // arrived before that would earn `[terminal not found]` instead.
     socket.next_text().await.expect("the replay frame");
 
-    assert!(probe.terminals.kill_terminal(&info.id));
+    assert!(probe.terminals().kill_terminal(&info.id));
     assert_eq!(calls.load(Ordering::SeqCst), 1, "the kill fires the hook synchronously");
     assert_eq!(
         *codes.lock().expect("codes poisoned"),
@@ -543,7 +464,7 @@ async fn the_exit_hook_fires_once_on_a_kill() {
     // stands down, so seeing it means every path that could fire has now run.
     socket.read_until(&["[process exited]"]).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1, "the hook must fire exactly once");
-    assert!(!probe.terminals.kill_terminal(&info.id), "the entry is gone");
+    assert!(!probe.terminals().kill_terminal(&info.id), "the entry is gone");
 
     probe.stop().await;
 }
@@ -558,9 +479,12 @@ async fn the_raw_output_hook_sees_the_stream_before_coalescing() {
         let seen = seen.clone();
         Box::new(move |chunk| seen.lock().expect("seen poisoned").push_str(chunk))
     });
-    probe.terminals.create_terminal_with(spec).await.expect("create terminal");
+    probe.terminals().create_terminal_with(spec).await.expect("create terminal");
 
-    wait_for(|| seen.lock().expect("seen poisoned").contains("scanned"), "the scanner to see output").await;
+    common::wait_for("the scanner to see output", Duration::from_secs(5), || {
+        seen.lock().expect("seen poisoned").contains("scanned")
+    })
+    .await;
 
     probe.stop().await;
 }
@@ -569,27 +493,24 @@ async fn the_raw_output_hook_sees_the_stream_before_coalescing() {
 async fn clearing_the_replay_drops_the_scrollback() {
     let probe = Probe::start().await;
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh("echo sk-ant-pretend-token; sleep 30"))
         .await
         .expect("create terminal");
 
-    wait_for(
-        || {
-            probe
-                .terminals
-                .attach(&info.id)
-                .is_some_and(|attachment| attachment.replay.contains("sk-ant-pretend-token"))
-        },
-        "the credential to reach the replay buffer",
-    )
+    common::wait_for("the credential to reach the replay buffer", Duration::from_secs(5), || {
+        probe
+            .terminals()
+            .attach(&info.id)
+            .is_some_and(|attachment| attachment.replay.contains("sk-ant-pretend-token"))
+    })
     .await;
 
-    assert!(probe.terminals.clear_terminal_replay(&info.id));
+    assert!(probe.terminals().clear_terminal_replay(&info.id));
 
-    let attachment = probe.terminals.attach(&info.id).expect("still attachable");
+    let attachment = probe.terminals().attach(&info.id).expect("still attachable");
     assert_eq!(attachment.replay, "\r\n[scrollback cleared: it held a credential]\r\n");
-    assert!(!probe.terminals.clear_terminal_replay("no-such-terminal"));
+    assert!(!probe.terminals().clear_terminal_replay("no-such-terminal"));
 
     probe.stop().await;
 }
@@ -608,22 +529,20 @@ async fn shutdown_detaches_every_terminal_and_leaves_its_shell_alive() {
             calls.fetch_add(1, Ordering::SeqCst);
         })
     });
-    let info = probe.terminals.create_terminal_with(spec).await.expect("create terminal");
-    let mut socket = probe.attach(&info.id).await;
+    let info = probe.terminals().create_terminal_with(spec).await.expect("create terminal");
+    let mut socket = attach(&probe, &info.id).await;
     // Every attach opens with one frame — empty here, the shell having printed
     // nothing — so take it now and leave the assertion below about the close.
     assert_eq!(socket.next_text().await.as_deref(), Some(""), "the opening frame of a silent terminal");
-    let shims = probe.shim_dir();
+    let shims = shim_dir(&probe);
     let shell_pid = read_shell_pid(&shims, &info.id).await;
 
     let mut probe = probe;
-    let terminals = probe.terminals.clone();
+    let terminals = probe.terminals();
     let addr = probe.addr;
-    let server = probe.server.take().expect("the server task");
     // Exactly what `shutdown::supervise` does on SIGTERM: cancel, then run the
     // registered cleanups.
-    probe.cancel.cancel();
-    probe.cleanups.run();
+    let server = probe.shutdown_like_sigterm().expect("the server task");
 
     // The browser socket closes with the listener, as it always did.
     assert_eq!(socket.next_text().await, None, "a live attach socket must be closed on shutdown");
@@ -638,41 +557,16 @@ async fn shutdown_detaches_every_terminal_and_leaves_its_shell_alive() {
     assert!(shims.join(format!("{}.meta.json", info.id)).exists(), "the identity survives too");
     assert!(sidecars(&shims, &info.id).socket().exists(), "and so does the socket");
 
-    wait_for_async(
-        || async move { tokio::net::TcpStream::connect(addr).await.is_err() },
+    common::wait_for_async(
         "the port to be released",
+        Duration::from_secs(5),
+        || async move { tokio::net::TcpStream::connect(addr).await.is_err().then_some(()) },
     )
     .await;
 
     // Left running by shutdown, so this test cleans up after itself.
     terminals.kill_all();
     kill_pid(shell_pid);
-}
-
-/// Poll `condition` until it holds, or fail after five seconds.
-async fn wait_for(mut condition: impl FnMut() -> bool, what: &str) {
-    for _ in 0..250 {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
-/// The same, for a condition that has to be awaited.
-async fn wait_for_async<F, Fut>(mut condition: F, what: &str)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    for _ in 0..250 {
-        if condition().await {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("timed out waiting for {what}");
 }
 
 /// A browser tab that stops draining its socket must not be able to hold the pty
@@ -686,13 +580,13 @@ async fn a_client_that_stops_reading_is_disconnected_rather_than_waited_for() {
     let probe = Probe::start().await;
     // The cheapest unbounded producer there is.
     let info = probe
-        .terminals
+        .terminals()
         .create_terminal_with(sh("yes remote-hand"))
         .await
         .expect("create terminal");
 
-    let mut slow = probe.attach(&info.id).await;
-    let mut fast = probe.attach(&info.id).await;
+    let mut slow = attach(&probe, &info.id).await;
+    let mut fast = attach(&probe, &info.id).await;
     // Where a failure got to, printed with the test's output only when it fails.
     let started = std::time::Instant::now();
 
@@ -734,7 +628,7 @@ async fn a_client_that_stops_reading_is_disconnected_rather_than_waited_for() {
     // The fast client is untouched by its neighbour's disconnection.
     assert!(fast.next_text().await.is_some(), "the other client keeps its stream");
 
-    assert!(probe.terminals.kill_terminal(&info.id));
+    assert!(probe.terminals().kill_terminal(&info.id));
     probe.stop().await;
 }
 
@@ -748,7 +642,7 @@ async fn a_full_registry_answers_429_rather_than_opening_another_pty() {
     // reaped — so it still counts against the cap, which is the point.
     let mut created = 0;
     loop {
-        let (status, body) = probe.request("POST", "/api/terminals", Some("{}")).await;
+        let (status, body) = request(&probe, "POST", "/api/terminals", Some("{}")).await;
         if status == 429 {
             assert_eq!(serde_json::from_str::<Value>(&body).expect("json")["error"], "too many terminals");
             break;
@@ -771,14 +665,14 @@ async fn a_full_registry_answers_429_rather_than_opening_another_pty() {
 async fn an_attach_opens_with_a_frame_even_when_nothing_is_buffered() {
     let probe = Probe::start().await;
     // Prints nothing, ever: the replay is empty and stays empty.
-    let info = probe.terminals.create_terminal_with(sh("sleep 30")).await.expect("create terminal");
+    let info = probe.terminals().create_terminal_with(sh("sleep 30")).await.expect("create terminal");
     assert_eq!(
-        probe.terminals.attach(&info.id).expect("attachable").replay,
+        probe.terminals().attach(&info.id).expect("attachable").replay,
         "",
         "this terminal has produced no output at all"
     );
 
-    let mut socket = probe.attach(&info.id).await;
+    let mut socket = attach(&probe, &info.id).await;
     assert_eq!(
         socket.next_text().await.as_deref(),
         Some(""),

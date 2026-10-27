@@ -17,108 +17,43 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use gotcha::axum::http::{header, HeaderValue};
-use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::apps::record::{self, AppRecord};
-use remote_hand_server::apps::{AppType, Registry};
+use remote_hand_server::apps::AppType;
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use remote_hand_server::sessions::Paths;
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
+mod common;
+
 // ------------------------------------------------------------------ the server
 
 /// A running remote-hand server plus the apps registry its handlers share.
-struct Probe {
-    addr: SocketAddr,
-    apps: Arc<Registry>,
-    /// Where the server thinks `$HOME` is, so a test can read the instance
-    /// directory it boots from.
-    home: PathBuf,
-    cancel: CancellationToken,
-    /// An `Option` so `stop` can take it: this struct has a `Drop`, and a type
-    /// with one cannot have a field moved out of it.
-    server: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
-    _home: tempfile::TempDir,
+type Probe = common::TestServer;
+
+/// `POST`/`GET` a JSON route, asserting the status so the happy path is one line.
+async fn json(probe: &Probe, method: &str, path: &str, body: Option<&str>) -> Value {
+    let (status, text) = match body {
+        Some(body) => probe.request(method, path, &[("Content-Type", "application/json")], body.as_bytes()).await,
+        None => probe.request(method, path, &[], &[]).await,
+    };
+    assert_eq!(status, 200, "{method} {path} -> {status}: {text}");
+    serde_json::from_str(&text).expect("JSON body")
 }
 
-impl Probe {
-    async fn start() -> Probe {
-        Self::start_with(|_| {}).await
-    }
-
-    /// Start on a home directory `seed` has filled in first — which is how a
-    /// test stages the records a boot is supposed to adopt from.
-    async fn start_with(seed: impl FnOnce(&Path)) -> Probe {
-        let home = tempfile::tempdir().expect("tempdir");
-        seed(home.path());
-        let app = RemoteHandApp {
-            home_override: Some(home.path().to_path_buf()),
-            port_override: Some(0),
-            // No login: these tests are not about authentication (`tests/auth.rs` is).
-            auth_enabled_override: Some(false),
-            ..Default::default()
-        };
-        let prepared = app.prepare().await.expect("prepare");
-        let addr = prepared.addr;
-        let apps = prepared.cleanups().apps.clone();
-        let cancel = prepared.cancel();
-        let server = tokio::spawn(prepared.serve_task());
-        Probe {
-            addr,
-            apps,
-            home: home.path().to_path_buf(),
-            cancel,
-            server: Some(server),
-            _home: home,
-        }
-    }
-
-    async fn get(&self, path: &str) -> Exchange {
-        request(self.addr, "GET", path, None).await
-    }
-
-    async fn json(&self, method: &str, path: &str, body: Option<&str>) -> Value {
-        let exchange = request(self.addr, method, path, body).await;
-        assert_eq!(exchange.status, 200, "{method} {path} -> {}: {}", exchange.status, exchange.body);
-        serde_json::from_str(&exchange.body).expect("JSON body")
-    }
-
-    /// The path that names this server's app record.
-    ///
-    /// Still `apps.json`, and it is a name rather than a file: `record::save`
-    /// and `record::load` derive the instance's `state.db` from it, and the file
-    /// itself is neither read nor written.
-    fn record_file(&self) -> PathBuf {
-        instance_dirs(&self.home).apps_file()
-    }
-
-    async fn stop(mut self) {
-        self.cancel.cancel();
-        if let Some(server) = self.server.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
-        }
-    }
-}
-
-impl Drop for Probe {
-    /// Kill whatever apps the test left running.
-    ///
-    /// An app is now *designed* to outlive its server, which is right in
-    /// production and wrong in a test binary, where it would leave a process
-    /// per test on the developer's machine. `kill_all` is the escape hatch for
-    /// exactly this, and it signals rather than waiting so it works from a
-    /// `Drop` with nothing to await on.
-    fn drop(&mut self) {
-        self.apps.kill_all();
-    }
+/// The path that names this server's app record.
+///
+/// Still `apps.json`, and it is a name rather than a file: `record::save`
+/// and `record::load` derive the instance's `state.db` from it, and the file
+/// itself is neither read nor written.
+fn record_file(probe: &Probe) -> PathBuf {
+    instance_dirs(&probe.home).apps_file()
 }
 
 /// The instance directory a home directory's default instance uses.
@@ -134,62 +69,22 @@ struct Exchange {
 }
 
 impl Exchange {
-    /// The (lowercased) value of a response header, or `None`.
+    /// The value of a response header, or `None`.
     fn header(&self, name: &str) -> Option<String> {
-        self.head
-            .lines()
-            .skip(1)
-            .filter_map(|line| line.split_once(':'))
-            .find(|(key, _)| key.trim().eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.trim().to_string())
+        common::header(&self.head, name)
     }
 }
 
 /// A one-shot HTTP/1.1 request. A full client would be a large dependency for
 /// plaintext requests to a loopback port the test just opened.
-async fn request(addr: SocketAddr, method: &str, path: &str, body: Option<&str>) -> Exchange {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        head.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", body.len()));
-    }
-    head.push_str("\r\n");
-    if let Some(body) = body {
-        head.push_str(body);
-    }
-    stream.write_all(head.as_bytes()).await.expect("write");
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.expect("read");
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").expect("malformed HTTP response");
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    let chunked = head.to_lowercase().contains("transfer-encoding: chunked");
-    Exchange {
-        status,
-        head: head.to_string(),
-        body: if chunked { dechunk(body) } else { body.to_string() },
-    }
+async fn get(probe: &Probe, path: &str) -> Exchange {
+    request(probe.addr, "GET", path, None).await
 }
 
-/// Join a chunked body. A streamed upstream response arrives this way.
-fn dechunk(body: &str) -> String {
-    let mut out = String::new();
-    let mut rest = body;
-    while let Some((size, remainder)) = rest.split_once("\r\n") {
-        let size = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
-        if size == 0 || remainder.len() < size {
-            break;
-        }
-        out.push_str(&remainder[..size]);
-        rest = remainder[size..].strip_prefix("\r\n").unwrap_or("");
-    }
-    out
+async fn request(addr: SocketAddr, method: &str, path: &str, body: Option<&str>) -> Exchange {
+    let headers = if body.is_some() { vec![("Content-Type", "application/json")] } else { vec![] };
+    let (status, head, body) = common::http(addr, method, path, &headers, body.map(str::as_bytes).unwrap_or(&[])).await;
+    Exchange { status, head, body: String::from_utf8_lossy(&body).into_owned() }
 }
 
 // ---------------------------------------------------------------- the upstream
@@ -295,9 +190,9 @@ async fn socket(upgrade: gotcha::axum::extract::ws::WebSocketUpgrade) -> gotcha:
 async fn the_proxy_rewrites_the_framing_policy_and_the_path() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
-    let app = probe.apps.register_upstream(upstream.addr.port());
+    let app = probe.apps().register_upstream(upstream.addr.port());
 
-    let response = probe.get(&format!("/embed/{}/stable/index.html?folder=/tmp", app.id)).await;
+    let response = get(&probe, &format!("/embed/{}/stable/index.html?folder=/tmp", app.id)).await;
 
     assert_eq!(response.status, 200);
     assert!(
@@ -330,10 +225,10 @@ async fn the_proxy_rewrites_the_framing_policy_and_the_path() {
 async fn a_bare_app_id_proxies_to_the_apps_root() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
-    let app = probe.apps.register_upstream(upstream.addr.port());
+    let app = probe.apps().register_upstream(upstream.addr.port());
 
     for path in [format!("/embed/{}", app.id), format!("/embed/{}/", app.id)] {
-        let response = probe.get(&path).await;
+        let response = get(&probe, &path).await;
         assert_eq!(response.status, 200, "{path}");
         assert!(
             response.body.contains("target=/<"),
@@ -350,7 +245,7 @@ async fn a_bare_app_id_proxies_to_the_apps_root() {
 async fn bodies_stream_through_in_both_directions() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
-    let app = probe.apps.register_upstream(upstream.addr.port());
+    let app = probe.apps().register_upstream(upstream.addr.port());
 
     // Up: a request body reaches the app whole.
     let sent = "{\"folder\":\"".to_string() + &"a".repeat(20_000) + "\"}";
@@ -364,7 +259,7 @@ async fn bodies_stream_through_in_both_directions() {
 
     // Down: a response the app streams (no length known up front) is forwarded
     // as a stream, and arrives intact.
-    let response = probe.get(&format!("/embed/{}/bulk", app.id)).await;
+    let response = get(&probe, &format!("/embed/{}/bulk", app.id)).await;
     assert_eq!(response.status, 200);
     assert_eq!(
         response.header("transfer-encoding").as_deref(),
@@ -383,7 +278,7 @@ async fn bodies_stream_through_in_both_directions() {
 async fn a_websocket_round_trips_through_the_proxy() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
-    let app = probe.apps.register_upstream(upstream.addr.port());
+    let app = probe.apps().register_upstream(upstream.addr.port());
 
     let mut request = format!("ws://{}/embed/{}/socket", probe.addr, app.id)
         .into_client_request()
@@ -423,7 +318,7 @@ async fn a_websocket_round_trips_through_the_proxy() {
 async fn an_unknown_app_id_is_a_plain_text_404() {
     let probe = Probe::start().await;
 
-    let response = probe.get("/embed/00000000-0000-4000-8000-000000000000/index.html").await;
+    let response = get(&probe, "/embed/00000000-0000-4000-8000-000000000000/index.html").await;
     assert_eq!(response.status, 404);
     assert_eq!(response.body, "app not found");
     assert_eq!(response.header("content-type").as_deref(), Some("text/plain"));
@@ -443,14 +338,14 @@ async fn a_path_that_is_not_an_embed_still_belongs_to_the_spa() {
 
     // Wrapping the fallback must not have taken it away from `static_files`,
     // whose contract is that an unmatched `/api/*` is a JSON 404, not the shell.
-    let response = probe.get("/api/definitely-not-a-route").await;
+    let response = get(&probe, "/api/definitely-not-a-route").await;
     assert_eq!(response.status, 404);
     assert_eq!(response.header("content-type").as_deref(), Some("application/json"));
     assert_eq!(serde_json::from_str::<Value>(&response.body).expect("JSON body")["error"], "not found");
 
     // `/embed/{id}` with no slash before the query is not an embed at all — the
     // TypeScript's regex does not match it, so the SPA gets it.
-    let response = probe.get("/embed/abc?folder=/tmp").await;
+    let response = get(&probe, "/embed/abc?folder=/tmp").await;
     assert_ne!(response.body, "app not found", "this must never reach the proxy");
 
     probe.stop().await;
@@ -461,19 +356,19 @@ async fn the_rest_routes_list_and_close() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
 
-    assert_eq!(probe.json("GET", "/api/apps", None).await["apps"], serde_json::json!([]));
+    assert_eq!(json(&probe, "GET", "/api/apps", None).await["apps"], serde_json::json!([]));
 
-    let app = probe.apps.register_upstream(upstream.addr.port());
-    let listed = probe.json("GET", "/api/apps", None).await;
+    let app = probe.apps().register_upstream(upstream.addr.port());
+    let listed = json(&probe, "GET", "/api/apps", None).await;
     assert_eq!(listed["apps"][0]["id"], app.id);
     assert_eq!(listed["apps"][0]["type"], "vscode");
     assert_eq!(listed["apps"][0]["title"], "vscode 1");
     assert!(listed["apps"][0]["createdAt"].as_str().expect("createdAt").ends_with('Z'));
 
-    assert_eq!(probe.json("DELETE", &format!("/api/apps/{}", app.id), None).await["accepted"], true);
-    assert_eq!(probe.json("GET", "/api/apps", None).await["apps"], serde_json::json!([]));
+    assert_eq!(json(&probe, "DELETE", &format!("/api/apps/{}", app.id), None).await["accepted"], true);
+    assert_eq!(json(&probe, "GET", "/api/apps", None).await["apps"], serde_json::json!([]));
 
-    let gone = probe.get(&format!("/embed/{}/index.html", app.id)).await;
+    let gone = get(&probe, &format!("/embed/{}/index.html", app.id)).await;
     assert_eq!(gone.status, 404, "the proxy stops answering for a closed app");
 
     let again = request(probe.addr, "DELETE", &format!("/api/apps/{}", app.id), None).await;
@@ -488,15 +383,15 @@ async fn the_rest_routes_list_and_close() {
 async fn shutdown_lets_go_of_every_app_without_signalling_it() {
     let upstream = Upstream::start().await;
     let probe = Probe::start().await;
-    probe.apps.register_upstream(upstream.addr.port());
-    assert_eq!(probe.apps.list().len(), 1);
+    probe.apps().register_upstream(upstream.addr.port());
+    assert_eq!(probe.apps().list().len(), 1);
 
     // Shutdown *detaches*: the app leaves the list — which is what the proxy
     // reads — and keeps running. A registered upstream has no process of ours
     // to signal either way, which is why the survival of a real one is asserted
     // against a real process further down.
-    assert_eq!(probe.apps.shutdown_all(), 1);
-    assert!(probe.apps.list().is_empty());
+    assert_eq!(probe.apps().shutdown_all(), 1);
+    assert!(probe.apps().list().is_empty());
 
     probe.stop().await;
     upstream.stop().await;
@@ -520,7 +415,7 @@ async fn a_failing_launch_is_a_409_that_says_why() {
     assert_eq!(body["error"], "code_server_missing", "{body}");
     let hint = body["hint"].as_str().expect("a sentence beside the token");
     assert!(hint.starts_with("code-server is not installed"), "the reason has to reach the user: {hint}");
-    assert!(probe.apps.list().is_empty(), "a failed launch leaves nothing listed");
+    assert!(probe.apps().list().is_empty(), "a failed launch leaves nothing listed");
 
     probe.stop().await;
 }
@@ -678,17 +573,6 @@ fn kill_group(pid: u32) {
     unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
 }
 
-/// Poll `condition` until it holds, or fail after `seconds`.
-async fn wait_for(mut condition: impl FnMut() -> bool, what: &str, seconds: u64) {
-    for _ in 0..(seconds * 50) {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 /// Put records where a server started on `home` will adopt them from.
 ///
 /// Through `record::save`, which is the production writer, so what is staged is
@@ -759,14 +643,14 @@ async fn an_app_that_outlived_its_server_is_adopted_and_still_proxies() {
 
     // The list is rebuilt from the file, and an adopted app does not claim to
     // have been created at the moment the server restarted.
-    let listed = probe.json("GET", "/api/apps", None).await;
+    let listed = json(&probe, "GET", "/api/apps", None).await;
     assert_eq!(listed["apps"].as_array().expect("array").len(), 1, "{listed}");
     assert_eq!(listed["apps"][0]["id"], id);
     assert_eq!(listed["apps"][0]["createdAt"], STARTED_AT);
 
     // And it is a working app rather than a row in a list: the proxy reaches
     // the process that survived, through the id the record named.
-    let response = probe.get(&format!("/embed/{id}/stable/index.html?folder=/tmp")).await;
+    let response = get(&probe, &format!("/embed/{id}/stable/index.html?folder=/tmp")).await;
     assert_eq!(response.status, 200);
     assert!(
         response.body.contains("target=/stable/index.html?folder=/tmp"),
@@ -775,10 +659,10 @@ async fn an_app_that_outlived_its_server_is_adopted_and_still_proxies() {
     );
 
     // Closing it stops a process group this server never spawned.
-    assert_eq!(probe.json("DELETE", &format!("/api/apps/{id}"), None).await["accepted"], true);
-    wait_for(|| !alive(fake.pid), "the adopted app to be killed", 15).await;
+    assert_eq!(json(&probe, "DELETE", &format!("/api/apps/{id}"), None).await["accepted"], true);
+    common::wait_for("the adopted app to be killed", Duration::from_secs(15), || !alive(fake.pid)).await;
     assert!(
-        record::load(&probe.record_file()).is_empty(),
+        record::load(&record_file(&probe)).is_empty(),
         "and takes its record with it, so the next boot has nothing to adopt"
     );
 
@@ -790,15 +674,15 @@ async fn a_shutdown_leaves_a_real_app_running_with_its_record_intact() {
     let fake = Fake::start().await;
     let id = "22222222-2222-4222-8222-222222222222";
     let probe = Probe::start_with(|home| stage(home, &[record_of(id, fake.pid, fake.port)])).await;
-    assert_eq!(probe.apps.list().len(), 1, "the app was adopted");
+    assert_eq!(probe.apps().list().len(), 1, "the app was adopted");
 
     // This is the inversion the phase exists for: the app is *let go of*, not
     // killed, and the record it will be found by is left exactly as it was.
-    assert_eq!(probe.apps.shutdown_all(), 1);
-    assert!(probe.apps.list().is_empty(), "it leaves the list the proxy reads");
+    assert_eq!(probe.apps().shutdown_all(), 1);
+    assert!(probe.apps().list().is_empty(), "it leaves the list the proxy reads");
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(alive(fake.pid), "shutting the server down must not touch the user's editor");
-    let records = record::load(&probe.record_file());
+    let records = record::load(&record_file(&probe));
     assert_eq!(records.len(), 1, "the next boot still has something to adopt: {records:?}");
     assert_eq!(records[0].pid, fake.pid);
     assert_eq!(records[0].port, fake.port);
@@ -840,9 +724,9 @@ async fn a_recorded_pid_that_is_now_a_stranger_is_never_signalled() {
     })
     .await;
 
-    let listed = probe.json("GET", "/api/apps", None).await;
+    let listed = json(&probe, "GET", "/api/apps", None).await;
     assert_eq!(listed["apps"], serde_json::json!([]), "neither record is adopted");
-    assert!(record::load(&probe.record_file()).is_empty(), "and both are dropped");
+    assert!(record::load(&record_file(&probe)).is_empty(), "and both are dropped");
 
     // The assertion the whole guard exists for. A `SIGTERM` would already have
     // been delivered; the escalation is three seconds behind it.
@@ -870,13 +754,13 @@ async fn an_app_whose_pid_was_recycled_is_not_adopted_however_right_the_port_loo
     })
     .await;
 
-    let listed = probe.json("GET", "/api/apps", None).await;
+    let listed = json(&probe, "GET", "/api/apps", None).await;
     assert_eq!(
         listed["apps"],
         serde_json::json!([]),
         "a port that looks right is not an identity: {listed}"
     );
-    assert!(record::load(&probe.record_file()).is_empty(), "and the record is dropped");
+    assert!(record::load(&record_file(&probe)).is_empty(), "and the record is dropped");
 
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(alive(fake.pid), "nor is it signalled: this is somebody's editor, just not ours");
@@ -906,9 +790,9 @@ async fn a_port_held_by_something_that_is_not_the_app_is_left_alone() {
     })
     .await;
 
-    let listed = probe.json("GET", "/api/apps", None).await;
+    let listed = json(&probe, "GET", "/api/apps", None).await;
     assert_eq!(listed["apps"], serde_json::json!([]), "neither record is adopted");
-    assert!(record::load(&probe.record_file()).is_empty(), "and both are dropped");
+    assert!(record::load(&record_file(&probe)).is_empty(), "and both are dropped");
 
     // Both are still serving: adoption looked, did not recognise them, and left.
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -956,7 +840,7 @@ async fn an_app_survives_its_server_being_sigkilled_and_the_next_one_adopts_it()
 
     // The whole process group, so nothing survives by being merely a child.
     unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
-    wait_for(|| !alive(first.pid), "the server to die", 10).await;
+    common::wait_for("the server to die", Duration::from_secs(10), || !alive(first.pid)).await;
     assert!(alive(app), "the app must survive a SIGKILL aimed at the server's whole process group");
 
     let second = spawn_server(home.path(), bin.path()).await;
@@ -976,17 +860,11 @@ async fn an_app_survives_its_server_being_sigkilled_and_the_next_one_adopts_it()
     // And the second server can close what the first one started.
     let closed = request(second.addr, "DELETE", &format!("/api/apps/{id}"), None).await;
     assert_eq!(closed.status, 200, "{}", closed.body);
-    wait_for(|| !alive(app), "the adopted app to be killed with its group", 15).await;
+    common::wait_for("the adopted app to be killed with its group", Duration::from_secs(15), || !alive(app)).await;
 
     unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
-    wait_for(|| !alive(second.pid), "the second server to die", 10).await;
+    common::wait_for("the second server to die", Duration::from_secs(10), || !alive(second.pid)).await;
     kill_group(app);
-}
-
-/// A server started from the real binary, on a home directory the test owns.
-struct Spawned {
-    pid: u32,
-    addr: SocketAddr,
 }
 
 /// Start one, with `bin` in front of its `PATH`.
@@ -995,53 +873,10 @@ struct Spawned {
 /// server resolves `code-server` by name exactly as it does in production, spawns
 /// it exactly as it does in production, and never learns that the thing it
 /// started is a test.
-async fn spawn_server(home: &Path, bin: &Path) -> Spawned {
-    let port_file = instance_dirs(home).port_file();
-    // So a stale port from the previous server is never mistaken for this one's.
-    let _ = std::fs::remove_file(&port_file);
-
+async fn spawn_server(home: &Path, bin: &Path) -> common::Spawned {
     let path = match std::env::var("PATH") {
         Ok(inherited) => format!("{}:{inherited}", bin.display()),
         Err(_) => bin.display().to_string(),
     };
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
-    command
-        .arg("serve")
-        .env("APP_HOME_DIR", home)
-        // No login: not a test of authentication (`tests/auth.rs` is).
-        .env("APP_AUTH__ENABLED", "false")
-        .env("APP_SERVER__PORT", "0")
-        .env("APP_SERVER__HOST", "127.0.0.1")
-        .env("PATH", path)
-        // A group of its own, so the test can kill the group without killing
-        // itself — and so an app, which takes a group of its own again, is
-        // demonstrably outside it.
-        .process_group(0)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(false);
-    let mut child = command.spawn().expect("spawn the server binary");
-    let pid = child.id().expect("the server has a pid");
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-
-    // The bound port is written into the instance directory precisely so
-    // something other than the server can find it.
-    let mut addr = None;
-    for _ in 0..500 {
-        if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|text| text.trim().parse::<u16>().ok()) {
-            let candidate: SocketAddr = ([127, 0, 0, 1], port).into();
-            if tokio::net::TcpStream::connect(candidate).await.is_ok() {
-                addr = Some(candidate);
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    Spawned {
-        pid,
-        addr: addr.expect("the server never recorded a port it was listening on"),
-    }
+    common::spawn_server(home, DEFAULT_INSTANCE, &[("PATH", &path)]).await
 }

@@ -5,124 +5,41 @@
 //! discovery can be tested without depending on (or reading) a user's sessions.
 
 use std::io::Write;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use remote_hand_server::app::RemoteHandApp;
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_util::sync::CancellationToken;
+
+mod common;
+
+use common::TestServer;
 
 const SESSION_ID: &str = "11111111-2222-3333-4444-555555555555";
+const OTHER_ID: &str = "66666666-7777-8888-9999-000000000000";
 
-/// A running server plus everything needed to talk to it and stop it.
-struct Probe {
-    addr: SocketAddr,
-    cancel: CancellationToken,
-    feeds: std::sync::Arc<remote_hand_server::feed::FeedRegistry>,
-    transcript: PathBuf,
-    server: tokio::task::JoinHandle<std::io::Result<()>>,
-    _home: tempfile::TempDir,
-}
-
-/// Give a transcript a definite mtime, since the session list is ordered by it
-/// and two files written in the same instant would otherwise tie.
-fn set_mtime(path: &Path, seconds_since_epoch: u64) {
-    let when = std::time::UNIX_EPOCH + Duration::from_secs(seconds_since_epoch);
-    let file = std::fs::OpenOptions::new().write(true).open(path).expect("open for times");
-    file.set_times(std::fs::FileTimes::new().set_accessed(when).set_modified(when))
-        .expect("set mtime");
-}
-
-impl Probe {
-    async fn start() -> Probe {
-        let home = tempfile::tempdir().expect("tempdir");
-        let project = home.path().join(".claude/projects/-Users-me-proj");
-        std::fs::create_dir_all(&project).expect("project dir");
-        let transcript = project.join(format!("{SESSION_ID}.jsonl"));
-        std::fs::write(
-            &transcript,
-            concat!(
-                r#"{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","timestamp":"2024-05-01T10:00:00.000Z","message":{"content":[{"type":"text","text":"port the server"}]}}"#,
-                "\n",
-                r#"{"type":"assistant","timestamp":"2024-05-01T10:00:01.000Z","message":{"model":"claude-x","content":[{"type":"text","text":"on it"}]}}"#,
-                "\n",
-            ),
-        )
-        .expect("seed transcript");
-
-        // A second project, so the list proves it walks every project directory.
-        let other = home.path().join(".claude/projects/-Users-me-other");
-        std::fs::create_dir_all(&other).expect("other project dir");
-        std::fs::write(
-            other.join("66666666-7777-8888-9999-000000000000.jsonl"),
-            format!(
-                "{}\n",
-                r#"{"type":"summary","summary":"other session","cwd":"/Users/me/other","timestamp":"2024-04-01T10:00:00.000Z"}"#
-            ),
-        )
-        .expect("seed other transcript");
-
-        set_mtime(&transcript, 1_714_500_000);
-        set_mtime(&other.join("66666666-7777-8888-9999-000000000000.jsonl"), 1_711_900_000);
-
-        let app = RemoteHandApp {
-            home_override: Some(home.path().to_path_buf()),
-            port_override: Some(0),
-            // No login: these tests are not about authentication (`tests/auth.rs` is).
-            auth_enabled_override: Some(false),
-            ..Default::default()
-        };
-        let prepared = app.prepare().await.expect("prepare");
-        let addr = prepared.addr;
-        let cancel = prepared.cancel();
-        let feeds = prepared.feeds();
-        let server = tokio::spawn(prepared.serve_task());
-
-        Probe {
-            addr,
-            cancel,
-            feeds,
-            transcript,
-            server,
-            _home: home,
-        }
-    }
-
-    async fn get(&self, path: &str) -> (u16, String) {
-        http_get(self.addr, path).await
-    }
-
-    async fn get_json(&self, path: &str) -> Value {
-        let (status, body) = self.get(path).await;
-        assert_eq!(status, 200, "GET {path} -> {status}: {body}");
-        serde_json::from_str(&body).unwrap_or_else(|e| panic!("GET {path} returned non-JSON ({e}): {body}"))
-    }
-
-    async fn stop(self) {
-        self.cancel.cancel();
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.server).await;
-    }
-}
-
-/// A one-shot HTTP/1.1 GET, returning `(status, body)`.
-async fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.expect("write");
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.expect("read");
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").expect("malformed HTTP response");
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .expect("status line");
-    (status, body.to_string())
+/// Seed the two transcripts the probe's home directory holds, and return the
+/// path of the one the websocket tests append to.
+fn seed(home: &Path) -> PathBuf {
+    let transcript = common::seed_transcript(
+        &home.join(".claude"),
+        "-Users-me-proj",
+        SESSION_ID,
+        &[
+            serde_json::json!({"type":"user","cwd":"/Users/me/proj","gitBranch":"main","timestamp":"2024-05-01T10:00:00.000Z","message":{"content":[{"type":"text","text":"port the server"}]}}),
+            serde_json::json!({"type":"assistant","timestamp":"2024-05-01T10:00:01.000Z","message":{"model":"claude-x","content":[{"type":"text","text":"on it"}]}}),
+        ],
+    );
+    // A second project, so the list proves it walks every project directory.
+    let other = common::seed_transcript(
+        &home.join(".claude"),
+        "-Users-me-other",
+        OTHER_ID,
+        &[serde_json::json!({"type":"summary","summary":"other session","cwd":"/Users/me/other","timestamp":"2024-04-01T10:00:00.000Z"})],
+    );
+    common::set_mtime(&transcript, 1_714_500_000);
+    common::set_mtime(&other, 1_711_900_000);
+    transcript
 }
 
 /// The read half of a connected feed socket.
@@ -150,6 +67,14 @@ async fn next_transcript_frame(stream: &mut FeedStream) -> Value {
     }
 }
 
+/// Start a server on the seeded home.
+async fn start() -> TestServer {
+    TestServer::start_with(|home| {
+        seed(home);
+    })
+    .await
+}
+
 fn append(path: &Path, line: &str) {
     let mut file = std::fs::OpenOptions::new().append(true).open(path).expect("open transcript");
     writeln!(file, "{line}").expect("append");
@@ -158,7 +83,7 @@ fn append(path: &Path, line: &str) {
 
 #[tokio::test]
 async fn the_session_list_reflects_the_home_directory() {
-    let probe = Probe::start().await;
+    let probe = start().await;
     // These fixtures are the *user's* own `~/.claude`, which no server owns, so
     // the default list is empty and `scope=all` is what asks to see them.
     assert_eq!(probe.get_json("/api/sessions").await["total"], 0);
@@ -183,7 +108,7 @@ async fn the_session_list_reflects_the_home_directory() {
 
 #[tokio::test]
 async fn the_session_list_filters_and_limits() {
-    let probe = Probe::start().await;
+    let probe = start().await;
 
     let by_query = probe.get_json("/api/sessions?q=OTHER&scope=all").await;
     assert_eq!(by_query["total"], 1, "the search is case-insensitive over title and cwd");
@@ -206,7 +131,7 @@ async fn the_session_list_filters_and_limits() {
 
 #[tokio::test]
 async fn a_session_detail_carries_its_transcript_and_a_missing_one_404s() {
-    let probe = Probe::start().await;
+    let probe = start().await;
 
     let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
     assert_eq!(detail["summary"]["id"], SESSION_ID);
@@ -238,7 +163,7 @@ async fn a_session_detail_carries_its_transcript_and_a_missing_one_404s() {
 
 #[tokio::test]
 async fn the_spec_is_served_and_names_the_ported_routes() {
-    let probe = Probe::start().await;
+    let probe = start().await;
     let spec = probe.get_json("/openapi.json").await;
 
     assert_eq!(spec["info"]["title"], "remote-hand API");
@@ -291,7 +216,7 @@ fn first_difference(a: &Value, b: &Value, at: String) -> String {
 
 #[tokio::test]
 async fn a_non_api_path_falls_through_to_the_spa() {
-    let probe = Probe::start().await;
+    let probe = start().await;
 
     // Either the embedded shell (200) or the explanatory stub (503), depending
     // on whether `web/dist` existed at build time — never a bare 404.
@@ -308,7 +233,8 @@ async fn a_non_api_path_falls_through_to_the_spa() {
 
 #[tokio::test]
 async fn the_feed_sends_a_snapshot_then_a_delta_when_the_transcript_grows() {
-    let probe = Probe::start().await;
+    let probe = start().await;
+    let transcript = probe.home.join(format!(".claude/projects/-Users-me-proj/{SESSION_ID}.jsonl"));
     let url = format!("ws://{}/api/sessions/claude/{SESSION_ID}/ws", probe.addr);
     let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");
     let (_sink, mut stream) = socket.split();
@@ -327,7 +253,7 @@ async fn the_feed_sends_a_snapshot_then_a_delta_when_the_transcript_grows() {
     assert_eq!(state["summary"]["id"], SESSION_ID);
 
     append(
-        &probe.transcript,
+        &transcript,
         r#"{"type":"assistant","timestamp":"2024-05-01T10:00:02.000Z","message":{"model":"claude-x","content":[{"type":"text","text":"appended"}]}}"#,
     );
 
@@ -345,7 +271,8 @@ async fn the_feed_sends_a_snapshot_then_a_delta_when_the_transcript_grows() {
 
 #[tokio::test]
 async fn a_rewritten_transcript_replaces_from_the_first_changed_item() {
-    let probe = Probe::start().await;
+    let probe = start().await;
+    let transcript = probe.home.join(format!(".claude/projects/-Users-me-proj/{SESSION_ID}.jsonl"));
     let url = format!("ws://{}/api/sessions/claude/{SESSION_ID}/ws", probe.addr);
     let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");
     let (_sink, mut stream) = socket.split();
@@ -357,7 +284,7 @@ async fn a_rewritten_transcript_replaces_from_the_first_changed_item() {
     // A live delta replaces from the first changed item. With no matching
     // items, it must replace from zero rather than append to the old transcript.
     std::fs::write(
-        &probe.transcript,
+        &transcript,
         format!(
             "{}\n",
             r#"{"type":"user","cwd":"/Users/me/proj","timestamp":"2024-05-02T10:00:00.000Z","message":{"content":[{"type":"text","text":"rewritten"}]}}"#
@@ -379,7 +306,7 @@ async fn a_rewritten_transcript_replaces_from_the_first_changed_item() {
 
 #[tokio::test]
 async fn cancelling_stops_the_server_and_tears_down_the_feed_watchers() {
-    let probe = Probe::start().await;
+    let mut probe = start().await;
     let url = format!("ws://{}/api/sessions/claude/{SESSION_ID}/ws", probe.addr);
     let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");
     let (_sink, mut stream) = socket.split();
@@ -387,8 +314,8 @@ async fn cancelling_stops_the_server_and_tears_down_the_feed_watchers() {
     let _ = tokio::time::timeout(Duration::from_secs(5), stream.next()).await.expect("snapshot");
 
     let addr = probe.addr;
-    let feeds = probe.feeds.clone();
-    probe.cancel.cancel();
+    let feeds = probe.feeds();
+    probe.cancel().cancel();
 
     // The socket is told the feed is closing rather than being dropped on the floor.
     let mut sawrelevant = false;
@@ -402,7 +329,7 @@ async fn cancelling_stops_the_server_and_tears_down_the_feed_watchers() {
     }
     assert!(sawrelevant, "a live socket must be told the server is going away");
 
-    let stopped = tokio::time::timeout(Duration::from_secs(5), probe.server).await;
+    let stopped = tokio::time::timeout(Duration::from_secs(5), probe.take_task().expect("the server task")).await;
     assert!(stopped.is_ok(), "the server task must finish after cancellation");
     // The socket task's `FeedAttachment` drops as the socket closes, which is
     // what unregisters the watcher.
@@ -415,15 +342,19 @@ async fn cancelling_stops_the_server_and_tears_down_the_feed_watchers() {
     assert_eq!(feeds.len(), 0, "no feed watcher should be left registered");
 
     // The listener is gone.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "the port must be released");
+    common::wait_for_async(
+        "the port to be released",
+        Duration::from_secs(5),
+        || async move { tokio::net::TcpStream::connect(addr).await.is_err().then_some(()) },
+    )
+    .await;
 }
 
 /// `z.coerce.number().int().min(1).max(1000)` was a `400` there, and clamping
 /// here would quietly answer `limit=0` with two hundred rows instead.
 #[tokio::test]
 async fn a_limit_outside_the_documented_range_is_a_400() {
-    let probe = Probe::start().await;
+    let probe = start().await;
 
     for limit in ["0", "1001", "99999"] {
         let (status, body) = probe.get(&format!("/api/sessions?limit={limit}")).await;
