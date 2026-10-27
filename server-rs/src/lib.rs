@@ -114,3 +114,5 @@ pub mod static_files;
 pub mod stats;
 pub mod supervisor;
 pub mod terminals;
+pub mod text;
+pub mod time;
