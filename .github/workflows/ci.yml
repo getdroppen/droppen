@@ -12,7 +12,38 @@ permissions:
   contents: read
 
 jobs:
+  # What the change set touches: one output per job below, from
+  # `.github/scripts/ci-changes.sh`. A job whose area is false is skipped, and
+  # GitHub counts a skipped job as success for its required check, so a pull
+  # request that touches only docs still merges. A push to main, a manual run,
+  # any `.github/` path and any doubt in the detector run every job.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      # `|| 'true'`: an output the step never wrote (a bug on our side) means
+      # run the job; only a written `false` skips it.
+      web: ${{ steps.detect.outputs.web || 'true' }}
+      web_tests: ${{ steps.detect.outputs.web_tests || 'true' }}
+      ui_audit: ${{ steps.detect.outputs.ui_audit || 'true' }}
+      web_reproducible: ${{ steps.detect.outputs.web_reproducible || 'true' }}
+      server: ${{ steps.detect.outputs.server || 'true' }}
+      release_tooling: ${{ steps.detect.outputs.release_tooling || 'true' }}
+      desktop_core: ${{ steps.detect.outputs.desktop_core || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull request's base commit is not in a shallow checkout.
+          fetch-depth: 0
+      - id: detect
+        env:
+          DROPPEN_CI_EVENT_NAME: ${{ github.event_name }}
+          DROPPEN_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DROPPEN_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/ci-changes.sh
+
   web:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +89,12 @@ jobs:
   # installed; typecheck, build and the checks run once, in `web`.
   # A shard that fails does not cancel the others: all three report.
   web-tests:
+    needs: changes
+    # A job-level `if` is evaluated before the matrix is applied, so gating the
+    # job would never create `web-tests (1/2/3)` and their required checks
+    # would stay pending. The legs always start; every step below is gated
+    # instead, so an unnecessary shard still reports success.
+    if: always()
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -67,13 +104,18 @@ jobs:
       TEST_SHARD: ${{ matrix.shard }}/3
     steps:
       - uses: actions/checkout@v4
+        if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
       - uses: actions/setup-node@v4
+        if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+        if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
       - run: pnpm --filter @remote-hand/web test:shard
+        if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
 
 
   # The UI spec's machine-checkable invariants (`docs/ui-spec.md` §7): the
@@ -81,6 +123,8 @@ jobs:
   # failure is a change that drifted from the spec. Every web UI change runs
   # this before it merges.
   ui-audit:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.ui_audit == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +143,8 @@ jobs:
   # A release's web-manifest.json is only worth checking the site against
   # while this holds (docs/web-integrity.md).
   web-reproducible:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +196,11 @@ jobs:
   # binaries for esbuild, rollup and Tailwind) must give the Linux bytes: the
   # release's macOS job requires it, and this finds out before a tag does.
   web-reproducible-macos:
-    needs: web-reproducible
+    needs: [changes, web-reproducible]
+    # As before, only after the Linux run succeeded; `always()` keeps the
+    # detector's own failure from hiding this job (then the first disjunct is
+    # true and the Linux job is the gate).
+    if: always() && needs.web-reproducible.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -171,6 +221,8 @@ jobs:
         run: node scripts/web-manifest.mjs web/dist --check linux/web-manifest.json
 
   server:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true')
     # A public repository's ubuntu-latest runner is 4 CPUs and 16 GiB, free
     # and unlimited; the two-core figures this file used to assume made the
     # build and the tests wait on half the machine. It stays GitHub-hosted:
@@ -241,6 +293,45 @@ jobs:
         run: |
           df -h .
           if [ -d target ]; then du -sh target; fi
+
+
+  # The release tooling's own checks that no other job runs: the personal-name
+  # rule of scripts/release-public.sh's text checks (scripts/release-text-
+  # check.sh), and the release workflow's tool helpers. The node release tests
+  # (verify-web, install, publish-release, release-notes) already run in
+  # `web-reproducible`, so they are not repeated here. No network, no
+  # credentials, no build.
+  release-tooling:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.release_tooling == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/release-text-check.test.sh
+      - run: bash .github/scripts/approve-fork-runs.test.sh
+      - run: bash .github/scripts/fetch-release-tool.test.sh
+      - run: bash .github/scripts/unpack-artifact.test.sh
+
+  # The desktop workspace's tests, without Tauri: `desktop/core` builds on
+  # Linux (its macOS-only paths have stubs), and this runs none of the app
+  # crate. One test at a time on purpose: in parallel this suite flaked on
+  # Linux (ETXTBSY, lock and pid tests), and `--test-threads=1` is what makes
+  # it reliable there.
+  desktop-core:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.desktop_core == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop -> target
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core -- --test-threads=1
 
 
   secrets-scan:
