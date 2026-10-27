@@ -1200,12 +1200,42 @@ export interface paths {
         };
         /**
          * List plugins
-         * @description Every plugin this build bundles, as this instance sees it.
+         * @description Every plugin installed in this instance, as this instance sees it.
          */
         get: operations["list_plugins"];
         put?: never;
-        post?: never;
+        /**
+         * Install a plugin
+         * @description Install a plugin package: a gzip'd tar whose entries are under `package/`.
+         *
+         *     Replaces an installed plugin of the same id, atomically, and switches it
+         *     on; a refused package leaves the previous install as it was. The bytes are
+         *     the tarball itself, not multipart: `application/gzip` or
+         *     `application/octet-stream`.
+         */
+        post: operations["install_plugin"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plugins/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Uninstall a plugin
+         * @description Uninstall a plugin. Its documents and its on/off decision stay, for a
+         *     later install.
+         */
+        delete: operations["uninstall_plugin"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2109,6 +2139,11 @@ export interface paths {
         /**
          * Server settings
          * @description Server and data-source information.
+         *
+         *     A request bridged from droppen.app gets no plugin status — and so no
+         *     `entry`, which carries the instance's capability key — for the reason
+         *     `docs/plugins/runtime.md` §5 gives: the cloud sees neither the list, the
+         *     code nor the documents. The device's own pages still get it.
          */
         get: operations["settings"];
         put?: never;
@@ -4185,9 +4220,16 @@ export interface components {
             /** @description The new value. */
             value: unknown;
         };
+        /** @description The `400` of `POST /api/plugins`: the package was refused, and why. */
+        PluginInvalidPackage: {
+            /** @description Always `invalid_package`. */
+            error: string;
+            /** @description Human-readable; says which rule the package broke. */
+            message: string;
+        };
         /** @description `GET /api/plugins`. */
         PluginList: {
-            /** @description Every plugin this build bundles. */
+            /** @description Every plugin installed in this instance. */
             plugins: components["schemas"]["PluginStatus"][];
         };
         /** @description One thing a plugin's host wants the user to see. */
@@ -4218,10 +4260,19 @@ export interface components {
         };
         /** @description A plugin as this instance sees it. */
         PluginStatus: {
+            /** @description The old top-level paths the host redirects to `/p/<id>/`. */
+            aliases: string[];
+            /** @description `<version>-<first 12 hex of the tarball's sha256>`: this exact code. */
+            build: string;
             /** @description The host satisfies the plugin's `engines.droppen`. */
             compatible: boolean;
             /** @description On for this instance, and compatible. */
             enabled: boolean;
+            /**
+             * @description Where a page imports the plugin from, when it is enabled and
+             *     compatible (`/plugins/<key>/<id>/<build>/<entry>`); `null` otherwise.
+             */
+            entry: string | null;
             /** @description The configuration pins it on or off; the switch is read-only. */
             forced: boolean;
             /** @description `^[a-z][a-z0-9-]{1,31}$`. */
@@ -4239,9 +4290,11 @@ export interface components {
             notice: string | null;
             /** @description Every notice, oldest first. */
             notices: components["schemas"]["PluginNotice"][];
+            /** @description What it asks the host for (`storage`, `sessions:read`, `notify`). */
+            permissions: string[];
             /** @description Why it is off, incompatible or pinned, when it is. */
             reason: string | null;
-            /** @description The bundled package version. */
+            /** @description The installed package version. */
             version: string;
         };
         /** @description The body of `PUT /api/plugins/{id}/enabled`. */
@@ -5424,8 +5477,9 @@ export interface components {
             /** @description Node-style platform name (`darwin`, `linux`, `win32`). */
             platform: string;
             /**
-             * @description Every plugin this build bundles, as this instance sees it — the same
-             *     list `GET /api/plugins` answers. Empty for a build that bundles none.
+             * @description Every plugin installed in this instance, as the instance sees it — the
+             *     same list `GET /api/plugins` answers. Empty when none is installed, and
+             *     empty for a request bridged from droppen.app.
              */
             plugins: components["schemas"]["PluginStatus"][];
             /**
@@ -8286,13 +8340,85 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Every plugin this build bundles, as this instance sees it */
+            /** @description Every plugin installed in this instance, as this instance sees it */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["PluginList"];
+                };
+            };
+        };
+    };
+    install_plugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The plugin package: a gzip'd tar whose entries are under `package/` (`application/gzip` is the same bytes) */
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The plugin as installed and switched on */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginStatus"];
+                };
+            };
+            /** @description `invalid_package`: the package was refused; `message` says why */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInvalidPackage"];
+                };
+            };
+            /** @description `too_large`: the tarball is over 32 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginTooLarge"];
+                };
+            };
+        };
+    };
+    uninstall_plugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plugin is uninstalled; its documents and its on/off decision are kept */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `plugin_not_found`: no plugin of that id is installed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
@@ -8331,7 +8457,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled */
+            /** @description `plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8383,7 +8509,7 @@ export interface operations {
                     "application/json": components["schemas"]["PluginDocList"];
                 };
             };
-            /** @description `plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled */
+            /** @description `plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8470,7 +8596,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled */
+            /** @description `plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8534,7 +8660,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled */
+            /** @description `plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8570,7 +8696,7 @@ export interface operations {
                     "application/json": components["schemas"]["PluginStatus"];
                 };
             };
-            /** @description `plugin_not_found`: no such plugin is bundled */
+            /** @description `plugin_not_found`: no plugin of that id is installed */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -3125,11 +3125,29 @@
         ],
         "type": "object"
       },
+      "PluginInvalidPackage": {
+        "description": "The `400` of `POST /api/plugins`: the package was refused, and why.",
+        "properties": {
+          "error": {
+            "description": "Always `invalid_package`.",
+            "type": "string"
+          },
+          "message": {
+            "description": "Human-readable; says which rule the package broke.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "type": "object"
+      },
       "PluginList": {
         "description": "`GET /api/plugins`.",
         "properties": {
           "plugins": {
-            "description": "Every plugin this build bundles.",
+            "description": "Every plugin installed in this instance.",
             "items": {
               "$ref": "#/components/schemas/PluginStatus"
             },
@@ -3195,6 +3213,17 @@
       "PluginStatus": {
         "description": "A plugin as this instance sees it.",
         "properties": {
+          "aliases": {
+            "description": "The old top-level paths the host redirects to `/p/<id>/`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "build": {
+            "description": "`<version>-<first 12 hex of the tarball's sha256>`: this exact code.",
+            "type": "string"
+          },
           "compatible": {
             "description": "The host satisfies the plugin's `engines.droppen`.",
             "type": "boolean"
@@ -3202,6 +3231,11 @@
           "enabled": {
             "description": "On for this instance, and compatible.",
             "type": "boolean"
+          },
+          "entry": {
+            "description": "Where a page imports the plugin from, when it is enabled and\ncompatible (`/plugins/<key>/<id>/<build>/<entry>`); `null` otherwise.",
+            "nullable": true,
+            "type": "string"
           },
           "forced": {
             "description": "The configuration pins it on or off; the switch is read-only.",
@@ -3245,13 +3279,20 @@
             },
             "type": "array"
           },
+          "permissions": {
+            "description": "What it asks the host for (`storage`, `sessions:read`, `notify`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "reason": {
             "description": "Why it is off, incompatible or pinned, when it is.",
             "nullable": true,
             "type": "string"
           },
           "version": {
-            "description": "The bundled package version.",
+            "description": "The installed package version.",
             "type": "string"
           }
         },
@@ -3264,7 +3305,11 @@
           "forced",
           "reason",
           "notice",
-          "notices"
+          "notices",
+          "build",
+          "entry",
+          "aliases",
+          "permissions"
         ],
         "type": "object"
       },
@@ -5104,7 +5149,7 @@
             "type": "string"
           },
           "plugins": {
-            "description": "Every plugin this build bundles, as this instance sees it — the same\nlist `GET /api/plugins` answers. Empty for a build that bundles none.",
+            "description": "Every plugin installed in this instance, as the instance sees it — the\nsame list `GET /api/plugins` answers. Empty when none is installed, and\nempty for a request bridged from droppen.app.",
             "items": {
               "$ref": "#/components/schemas/PluginStatus"
             },
@@ -9283,7 +9328,7 @@
     "/api/plugins": {
       "get": {
         "deprecated": false,
-        "description": "Every plugin this build bundles, as this instance sees it.",
+        "description": "Every plugin installed in this instance, as this instance sees it.",
         "operationId": "list_plugins",
         "parameters": [],
         "responses": {
@@ -9295,10 +9340,101 @@
                 }
               }
             },
-            "description": "Every plugin this build bundles, as this instance sees it"
+            "description": "Every plugin installed in this instance, as this instance sees it"
           }
         },
         "summary": "List plugins",
+        "tags": [
+          "plugins"
+        ]
+      },
+      "post": {
+        "deprecated": false,
+        "description": "Install a plugin package: a gzip'd tar whose entries are under `package/`.\n\nReplaces an installed plugin of the same id, atomically, and switches it\non; a refused package leaves the previous install as it was. The bytes are\nthe tarball itself, not multipart: `application/gzip` or\n`application/octet-stream`.",
+        "operationId": "install_plugin",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "description": "The plugin package: a gzip'd tar whose entries are under `package/`.",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "The plugin package: a gzip'd tar whose entries are under `package/` (`application/gzip` is the same bytes)",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginStatus"
+                }
+              }
+            },
+            "description": "The plugin as installed and switched on"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginInvalidPackage"
+                }
+              }
+            },
+            "description": "`invalid_package`: the package was refused; `message` says why"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginTooLarge"
+                }
+              }
+            },
+            "description": "`too_large`: the tarball is over 32 MiB"
+          }
+        },
+        "summary": "Install a plugin",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{id}": {
+      "delete": {
+        "deprecated": false,
+        "description": "Uninstall a plugin. Its documents and its on/off decision stay, for a\nlater install.",
+        "operationId": "uninstall_plugin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The plugin is uninstalled; its documents and its on/off decision are kept"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`plugin_not_found`: no plugin of that id is installed"
+          }
+        },
+        "summary": "Uninstall a plugin",
         "tags": [
           "plugins"
         ]
@@ -9359,7 +9495,7 @@
                 }
               }
             },
-            "description": "`plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled"
+            "description": "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
           },
           "409": {
             "content": {
@@ -9433,7 +9569,7 @@
                 }
               }
             },
-            "description": "`plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled"
+            "description": "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
           }
         },
         "summary": "List a plugin's documents",
@@ -9564,7 +9700,7 @@
                 }
               }
             },
-            "description": "`plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled"
+            "description": "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
           },
           "409": {
             "content": {
@@ -9667,7 +9803,7 @@
                 }
               }
             },
-            "description": "`plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled"
+            "description": "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
           }
         },
         "summary": "A plugin document's history",
@@ -9721,7 +9857,7 @@
                 }
               }
             },
-            "description": "`plugin_not_found`: no such plugin is bundled"
+            "description": "`plugin_not_found`: no plugin of that id is installed"
           },
           "409": {
             "content": {
@@ -12131,7 +12267,7 @@
     "/api/settings": {
       "get": {
         "deprecated": false,
-        "description": "Server and data-source information.",
+        "description": "Server and data-source information.\n\nA request bridged from droppen.app gets no plugin status — and so no\n`entry`, which carries the instance's capability key — for the reason\n`docs/plugins/runtime.md` §5 gives: the cloud sees neither the list, the\ncode nor the documents. The device's own pages still get it.",
         "operationId": "settings",
         "parameters": [],
         "responses": {
