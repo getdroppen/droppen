@@ -691,6 +691,6 @@ pub fn random_key() -> [u8; 32] {
 
 /// What the headless device's hello says it speaks: sequenced frames, and
 /// streams named per key epoch (so an agent it talks to names them so).
-pub fn client_info() -> String {
+fn client_info() -> String {
     format!("rh-devkit {} {}", rh_proto::path::CLIENT_FEATURE, rh_proto::stream::STREAMS_FEATURE)
 }

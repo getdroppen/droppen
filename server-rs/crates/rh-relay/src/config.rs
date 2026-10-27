@@ -239,7 +239,7 @@ pub fn parse_keys(text: &str) -> Option<Vec<(u8, [u8; 32])>> {
 
 /// The relay's key: `DROPPEN_RELAY_KEY`, else the state directory's `relay.key`
 /// (made on first start, mode 0600).
-pub fn load_key(state_dir: Option<&std::path::Path>) -> Result<SigningKey, String> {
+fn load_key(state_dir: Option<&std::path::Path>) -> Result<SigningKey, String> {
     if let Some(seed) = env("DROPPEN_RELAY_KEY") {
         let seed = Zeroizing::new(unhex(&seed).ok_or("DROPPEN_RELAY_KEY is 64 hex characters")?);
         let seed: [u8; 32] = seed.as_slice().try_into().map_err(|_| "DROPPEN_RELAY_KEY is 32 bytes")?;

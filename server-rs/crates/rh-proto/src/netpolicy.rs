@@ -22,7 +22,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Whether `ip` is a public unicast address a relay may be at.
-pub fn is_public(ip: IpAddr) -> bool {
+fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => public_v4(v4),
         IpAddr::V6(v6) => public_v6(v6),

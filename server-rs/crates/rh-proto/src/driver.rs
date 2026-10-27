@@ -32,7 +32,7 @@ use crate::noise::Transport;
 use crate::path::DownReason;
 
 /// What one stream may have queued and not yet sent.
-pub const SEND_BUDGET: usize = 512 * 1024;
+const SEND_BUDGET: usize = 512 * 1024;
 /// What may be handed to a direct path's owner and not yet be on the wire.
 pub const DIRECT_BUDGET: usize = 1024 * 1024;
 /// How often a driver whose direct budget is spent looks for it to drain.

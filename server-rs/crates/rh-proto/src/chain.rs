@@ -117,8 +117,9 @@ pub const VERSION: u8 = 2;
 pub const VERSION_3: u8 = 3;
 /// What every entry hash covers before the entry.
 pub const HASH_LABEL: &[u8] = b"rh/v1 chain-hash\0";
-/// The longest account, device, machine or passkey slot id.
-pub const MAX_ID_LEN: usize = 64;
+/// The longest account, device, machine or passkey slot id
+/// ([`crate::codec::MAX_ID_LEN`], which the Noise prologue shares).
+pub use crate::codec::MAX_ID_LEN;
 /// How long a verifier must have known about a recovery-join before it accepts
 /// the recovered device activating itself.
 pub const RECOVERY_DELAY_MS: u64 = 24 * 60 * 60 * 1000;

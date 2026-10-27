@@ -33,7 +33,7 @@ use crate::codec::{check_u64, put_str16, DecodeError, Reader};
 use crate::sig::{self, RELAY_TICKET};
 
 /// The encoding's version byte.
-pub const TICKET_VERSION: u8 = 1;
+const TICKET_VERSION: u8 = 1;
 /// How long a ticket is good for.
 pub const TICKET_TTL_MS: u64 = 15 * 60 * 1000;
 /// The longest a ticket may run, `expires_ms - issued_ms`, for a verifier to
@@ -46,7 +46,7 @@ pub const MAX_TICKET_LIFETIME_MS: u64 = TICKET_TTL_MS;
 /// default sign-in skew of a minute, so a relay that takes sign-ins at all
 /// does not refuse a fresh ticket for it.
 pub const TICKET_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
-pub const MAX_RELAY_ID_LEN: usize = 32;
+const MAX_RELAY_ID_LEN: usize = 32;
 pub const MAX_PEERS: usize = 64;
 /// `flags` bit 0: the account used up its free transfer; connections are throttled.
 pub const FLAG_THROTTLED: u8 = 1;
@@ -235,7 +235,7 @@ pub struct SignedTicket {
 }
 
 /// The longest ticket text a relay reads.
-pub const MAX_TICKET_TEXT: usize = 8 * 1024;
+const MAX_TICKET_TEXT: usize = 8 * 1024;
 
 impl SignedTicket {
     pub fn parse(text: &str) -> Result<Self, TicketError> {

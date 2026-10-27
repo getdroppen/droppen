@@ -108,7 +108,7 @@ async fn send(sink: &mut Sink, value: &Value) -> Result<(), Ended> {
 
 /// The signature of a relay sign-in: `HubLogin {role: Relay, account: "",
 /// id, hub, nonce, time}` under `key`.
-pub fn login_sig(key: &ed25519_dalek::SigningKey, id: &str, hub: &str, nonce: [u8; 32], time_ms: u64) -> String {
+fn login_sig(key: &ed25519_dalek::SigningKey, id: &str, hub: &str, nonce: [u8; 32], time_ms: u64) -> String {
     let sig = HubLogin {
         role: LoginRole::Relay,
         account: String::new(),

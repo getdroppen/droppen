@@ -97,7 +97,7 @@ pub struct Floor {
 
 /// A head signed further ahead of this device's clock than this does not
 /// raise a floor's time past that clock.
-pub const AHEAD_MAX_MS: u64 = 24 * 60 * 60 * 1000;
+const AHEAD_MAX_MS: u64 = 24 * 60 * 60 * 1000;
 
 impl Floor {
     /// The floor a released head sets, by this device's clock now.

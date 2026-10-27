@@ -9,6 +9,12 @@
 
 use thiserror::Error;
 
+/// The longest account, device, machine or passkey slot id: one limit for
+/// the chain and for the Noise binding's prologue, which must agree — a
+/// chain-valid id longer than a binding's would fail
+/// [`crate::noise::Binding::prologue`].
+pub const MAX_ID_LEN: usize = 64;
+
 /// Why some bytes are not the thing they were supposed to encode.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DecodeError {
