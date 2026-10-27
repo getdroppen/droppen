@@ -58,17 +58,6 @@ const headline = "font-semibold text-balance text-fg [word-break:auto-phrase] [&
 /** The space before a link that follows a sentence: none after Chinese or Japanese punctuation. */
 const gapBefore = (language: string) => (/^(zh|ja)/.test(language) ? "" : " ");
 
-function Header({ signedIn }: { signedIn: boolean }) {
-  const { t } = useTranslation();
-  const nav = [
-    { href: "#tour", label: t("Product") },
-    { href: "#how", label: t("How it works") },
-    { href: "#features", label: t("Features") },
-    { href: "#security", label: t("Security") },
-  ];
-  return <PublicHeader signedIn={signedIn} nav={nav} />;
-}
-
 function Hero({
   signedIn,
   signup,
@@ -96,7 +85,7 @@ function Hero({
       </p>
       {/* The way onto this device, and the account's way in (signed in: back into the app). */}
       <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
-      {/* Below 640px the header has no room for its pricing link: this line is the way there. */}
+      {/* Below 768px the header has no room for its links: this line is the way to the plans. */}
       {!signedIn &&
         (signup === "invite" ? (
           <p className="mt-3 font-mono text-xs text-muted">
@@ -314,7 +303,7 @@ export default function LandingPage({
   }, [offer, cpu]);
   return (
     <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
-      <Header signedIn={signedIn} />
+      <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />

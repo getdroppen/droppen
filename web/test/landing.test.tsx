@@ -89,6 +89,18 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   for (const id of order) assert.match(html, new RegExp(`<a href="#${id}"|id="${id}"`));
 });
 
+test("every public page's header links the site's other pages and the client's source, not the page's own sections", () => {
+  for (const lng of ["en", "zh-CN"]) {
+    const header = draw(lng).slice(0, draw(lng).indexOf("<main"));
+    for (const [path, testId] of [["/download", "header-download"], ["/pricing", "header-pricing"], ["/security", "header-security"]]) {
+      assert.match(header, new RegExp(`<a href="${path}"[^>]*data-testid="${testId}"`), `${lng}: ${path}`);
+    }
+    assert.match(header, /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="header-source"/, lng);
+    assert.doesNotMatch(header, /href="#/, `${lng}: no anchors into the page`);
+  }
+  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>下载<\/a>/);
+});
+
 test("privacy is said once: not in the header, not in the hero's numbers, one section near the end and the rest on /security", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
     const html = draw(lng);

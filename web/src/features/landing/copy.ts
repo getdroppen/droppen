@@ -79,8 +79,7 @@ const zhCN: Bundle = {
   "Claude Code and Codex keep running on your own Macs and Linux machines. From your phone or a browser, see every session across them, answer their questions, steer them and open a terminal. End-to-end encrypted, with an open-source client.":
     "Claude Code 和 Codex 仍在你自己的 Mac 和 Linux 电脑上运行。在手机或浏览器中查看所有电脑上的会话，回答提问、发送指令、打开终端。端到端加密，客户端开源。",
   "On this page": "本页",
-  "Product": "产品",
-  "Features": "功能",
+  "Site navigation": "网站导航",
   "Security": "安全",
   "Client source code": "客户端源代码",
   "Third-party notices": "第三方软件声明",
@@ -218,8 +217,7 @@ const zhTW: Bundle = {
   "Claude Code and Codex keep running on your own Macs and Linux machines. From your phone or a browser, see every session across them, answer their questions, steer them and open a terminal. End-to-end encrypted, with an open-source client.":
     "Claude Code 和 Codex 仍在你自己的 Mac 和 Linux 電腦上執行。在手機或瀏覽器中查看所有電腦上的工作階段，回答提問、傳送指令、開啟終端機。端對端加密，客戶端開源。",
   "On this page": "本頁",
-  "Product": "產品",
-  "Features": "功能",
+  "Site navigation": "網站導覽",
   "Security": "安全",
   "Client source code": "客戶端原始碼",
   "Third-party notices": "第三方軟體聲明",
@@ -349,8 +347,7 @@ const ja: Bundle = {
   "Claude Code and Codex keep running on your own Macs and Linux machines. From your phone or a browser, see every session across them, answer their questions, steer them and open a terminal. End-to-end encrypted, with an open-source client.":
     "Claude Code と Codex は自分の Mac や Linux で動いたまま。スマホやブラウザから全コンピュータのセッションを確認し、質問に答え、指示を送り、ターミナルを開けます。エンドツーエンド暗号化、クライアントはオープンソース。",
   "On this page": "このページ",
-  "Product": "プロダクト",
-  "Features": "機能",
+  "Site navigation": "サイトナビゲーション",
   "Security": "セキュリティ",
   "Client source code": "クライアントのソースコード",
   "Third-party notices": "サードパーティ通知",
