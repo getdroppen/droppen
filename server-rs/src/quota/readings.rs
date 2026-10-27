@@ -18,10 +18,10 @@
 //!
 //! An account's probe runs against its *usage login*, a real `claude auth login`
 //! whose refresh token rotates: every refresh hands out a new one and retires the
-//! old. Two remote-hand instances on one machine share those directories, and
-//! while each probed on its own schedule, both could refresh one expired access
-//! token with the same refresh token. The second use reads as token reuse and the
-//! whole login is revoked — which is how both usage logins died. So:
+//! old. Two instances on one machine share those directories, and if each probes
+//! on its own schedule, both can refresh one expired access token with the same
+//! refresh token. The second use reads as token reuse and the whole login is
+//! revoked. So:
 //!
 //! * only one process machine-wide probes a given login at a time: a
 //!   non-blocking `flock` on `<usage dir>/.rh-probe.lock` ([`ProbeLock`]). The
@@ -178,11 +178,11 @@ pub fn session_login(account: Option<&str>, root: Option<ClaudeRoot>) -> Option<
 /// * `seven_day_<family>` → `weekly (<Family>)`, spelled as the CLI's own
 ///   `/usage` report spells it — which for Sonnet is `Current week (Sonnet
 ///   only)`, read out of the formatter in claude 2.1.281;
-/// * `seven_day_overage_included` → `weekly (Fable)`. **Inferred**, from one
-///   sample: the first real Fable weekly hit arrived under that name, and the
-///   CLI's text for it was "You've reached your Fable limit". The CLI itself
-///   scopes the window to a list of models that need usage credits past it, so
-///   should that list ever hold more than Fable, this label will be too narrow;
+/// * `seven_day_overage_included` → `weekly (Fable)`. **Inferred** from one
+///   sample, whose CLI text was "You've reached your Fable limit". The CLI
+///   itself scopes the window to a list of models that need usage credits past
+///   it, so should that list ever hold more than Fable, this label will be too
+///   narrow;
 /// * any other `seven_day_<x>` → `weekly (<x>)`, as it comes;
 /// * anything else is not a window this knows the length of, and is skipped.
 fn unified_window_label(key: &str) -> Option<(String, i64)> {
@@ -607,10 +607,9 @@ impl Throttle {
 mod tests {
     use super::*;
 
-    /// Verbatim: an `allowed` event, the kind claude writes before nearly
-    /// every turn and which used to be dropped.
+    /// An `allowed` event, the kind claude writes before nearly every turn.
     const ALLOWED: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"five_hour","resetsAt":1790436000,"status":"allowed","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.19},"seven_day":{"resetsAt":1790460000,"utilization":0.46}}}}"#;
-    /// Verbatim: the `rate_limit_info` of the first Fable weekly hit.
+    /// The `rate_limit_info` of a Fable weekly hit.
     const REJECTED_FABLE: &str = r#"{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"seven_day_overage_included","resetsAt":1790575200,"status":"rejected","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.02},"seven_day":{"resetsAt":1790575200,"utilization":0.82},"seven_day_overage_included":{"resetsAt":1790575200,"utilization":1}}}"#;
 
     const MINUTE: i64 = 60_000;

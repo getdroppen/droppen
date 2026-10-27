@@ -1,25 +1,25 @@
 //! Codex's rolling windows, asked of the CLI's own app server.
 //!
-//! The windows used to be scraped out of whichever rollout file had the newest
-//! mtime, which is not the same thing as the newest *reading*: a session opened
-//! a fortnight ago and merely touched today wins that comparison, and its last
-//! few `token_count` events carry `rate_limits: {primary: null, secondary:
-//! null}` — the shape Codex writes when the turn did not come back with fresh
-//! numbers. The old reader walked further back until something had numbers in
-//! it, without a floor, and served whatever it found as the current reading. A
-//! user whose account was fully spent was shown a three-day-old "30% left".
+//! Scraping whichever rollout file has the newest mtime is not the same thing as
+//! the newest *reading*: a session opened a fortnight ago and merely touched
+//! today wins that comparison, and its last few `token_count` events carry
+//! `rate_limits: {primary: null, secondary: null}` — the shape Codex writes when
+//! the turn did not come back with fresh numbers. Walking further back until
+//! something has numbers, without a floor, then serves whatever it finds as the
+//! current reading: a user whose account is fully spent sees a three-day-old
+//! "30% left".
 //!
 //! `codex app-server` answers `account/rateLimits/read` with the account's
 //! live windows, which is the only reading on this machine that is *current* by
 //! construction. So that is the primary path, and [`CodexQuotaSource`] goes on
 //! the wire beside it the way [`crate::models::ModelListSource`] does, because
 //! the log scrape is still the fallback and a guess shown as a fact is the bug
-//! this module exists to fix.
+//! this module exists to prevent.
 //!
 //! # Cost
 //!
-//! An app-server spawn is ~0.8 s, where the old file read was microseconds, so
-//! it obeys the three rules the parent module's header sets out: one probe per
+//! An app-server spawn is ~0.8 s, where a file read is microseconds, so it
+//! obeys the three rules the parent module's header sets out: one probe per
 //! [`crate::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
 //! a time, and a request waits only inside the collect budget it already had.
 //!
@@ -66,9 +66,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// Worth waiting for rather than killing outright: an app server that ends
 /// normally removes its own scratch directory under `~/.codex/tmp/arg0/`, and a
-/// SIGKILL leaves it behind — one per probe, for ever, which is exactly the
-/// residue the Claude model probe had to be taught not to leave. Measured: a
-/// clean exit takes ~25 ms, and the directory count is unchanged across probes.
+/// SIGKILL leaves it behind — one per probe, for ever. Measured: a clean exit
+/// takes ~25 ms, and the directory count is unchanged across probes.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 /// A ceiling on what is read from the child, so an app server that streams
 /// something unexpected cannot grow this process's memory.
@@ -184,7 +183,7 @@ fn rate_limits_reading(result: &Value, now: SystemTime) -> Option<CodexQuota> {
                 .map(str::to_owned),
         ),
         // The reading is live by construction, so it is stamped now. Anything
-        // else here would be the defect this module was written to remove.
+        // else here would be the stale reading this module exists to prevent.
         updated_at: Nullable(Some(iso8601(now))),
         windows,
         source: CodexQuotaSource::AppServer,
@@ -378,11 +377,11 @@ fn log_window(raw: Option<&Value>) -> Option<QuotaWindow> {
 /// written at, or `None` when the file has none inside [`LOG_MAX_AGE`].
 ///
 /// The walk is backwards from the newest line and **stops** at the first entry
-/// older than `floor_ms`. That bound is the fix: without it the loop kept
-/// walking past every `rate_limits: {primary: null}` event until it found
-/// numbers, and there was nothing to stop it reaching a reading from another
-/// week and presenting it as today's. Lines are chronological, so one entry
-/// below the floor means every remaining entry is too.
+/// older than `floor_ms`. That bound is what keeps a reading from another week
+/// out of today's panel: without it the loop walks past every
+/// `rate_limits: {primary: null}` event until it finds numbers, however old.
+/// Lines are chronological, so one entry below the floor means every remaining
+/// entry is too.
 async fn file_reading(path: &Path, floor_ms: i64) -> Option<(i64, CodexQuota)> {
     let lines = read_tail_lines(path, LOG_TAIL_BYTES).await.ok()?;
     for line in lines.iter().rev() {
@@ -460,7 +459,7 @@ async fn newest_codex_files(paths: &Paths, keep: usize) -> Vec<PathBuf> {
 /// file's own answer: mtime orders when a file was last touched, which is not
 /// when its numbers were read. Resuming a fortnight-old session for one turn
 /// makes it the newest file on disk while a younger session holds the newer
-/// windows, and picking by mtime alone is half of the defect this module fixes.
+/// windows, and picking by mtime alone is half of the bug this module prevents.
 async fn log_reading(paths: &Paths, now: SystemTime) -> Option<CodexQuota> {
     let floor_ms = now
         .checked_sub(LOG_MAX_AGE)
@@ -578,15 +577,15 @@ async fn probe(paths: &Paths) -> Option<CodexQuota> {
 mod tests {
     use super::*;
 
-    /// 2026-09-20T12:00:00Z — a fixed "now" for the readings below.
+    /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;
 
     fn now() -> SystemTime {
         std::time::UNIX_EPOCH + Duration::from_millis(NOW_MS)
     }
 
-    /// Verbatim from `codex app-server` on 2026-09-20, on the account that
-    /// prompted this module: fully spent, blocked, one window.
+    /// A real `codex app-server` reply from `2026-09-20`: fully spent, blocked,
+    /// one window.
     fn live_reply() -> Value {
         json!({
             "ordinaryUsageAllowed": false,
@@ -733,9 +732,9 @@ mod tests {
         (home, paths)
     }
 
-    /// The defect, reproduced: the file with the newest mtime is an old session
-    /// whose recent entries carry no numbers, and a younger file holds the
-    /// reading that is actually current.
+    /// The file with the newest mtime is an old session whose recent entries
+    /// carry no numbers, and a younger file holds the reading that is actually
+    /// current.
     #[tokio::test]
     async fn the_newest_reading_wins_over_the_newest_file() {
         let (_home, paths) = sessions(&[
@@ -757,7 +756,7 @@ mod tests {
                         &stamp(6 * 60 * 60 * 1000),
                         json!({"plan_type": "pro", "primary": {"used_percent": 70.0, "window_minutes": 10080}})
                     ),
-                    // The shape that made the old reader walk backwards for ever.
+                    // The shape that would make a reader walk backwards for ever.
                     log_line(&stamp(30 * 60 * 1000), json!({"plan_type": "pro", "primary": null, "secondary": null})),
                 ),
             ),
@@ -788,8 +787,7 @@ mod tests {
         );
     }
 
-    /// The log form still parses, windows and all — it is the fallback, not a
-    /// leftover.
+    /// The log form still parses, windows and all: it is the fallback path.
     #[tokio::test]
     async fn the_log_form_still_parses_both_windows() {
         let (_home, paths) = sessions(&[(

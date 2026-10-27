@@ -196,14 +196,13 @@ impl Shim {
     /// The recorder, taken back from a panic rather than propagating it.
     ///
     /// The house pattern, for the house reason — `crate::db::Db::lock` states
-    /// it in full — and here it is the whole of the incident this file was
-    /// rewritten for. A `vt100` parse panicked inside [`read_pty`] *while it
-    /// held this lock*. From then on every one of the five places that take it
-    /// panicked in turn, and the worst of them is the `HELLO` arm of [`mix`],
-    /// which takes it one line before it writes the reply: every client that
-    /// dialled the shim afterwards had its task killed before a single byte
-    /// went out, so nothing ever got past the handshake. The socket accepted
-    /// connections and the shim answered none of them, for eighteen hours.
+    /// it in full. A `vt100` parse can panic inside [`read_pty`] *while it holds
+    /// this lock*, and from then on every one of the five places that take it
+    /// panics in turn; the worst of them is the `HELLO` arm of [`mix`], which
+    /// takes it one line before it writes the reply, so every client that dials
+    /// afterwards has its task killed before a single byte goes out and nothing
+    /// gets past the handshake. The socket accepts connections the shim never
+    /// answers.
     ///
     /// What is behind the poison is usable — [`Recorder::append`] rebuilds
     /// whatever the panic left — and even if it were not, a stale screen is a
@@ -218,10 +217,9 @@ impl Shim {
 /// Not a log, because a shim has nowhere to log to: it installs no tracing
 /// subscriber of its own, so the `tracing::error!` lines in this file are
 /// collected only when something else in the process has installed one — a test
-/// harness, or a shim that one day grows one. In production they go nowhere, and
-/// the eighteen-hour shim was diagnosed with `sample(1)` on the live process for
-/// exactly that reason. So the few lines that mean *this terminal is broken* are
-/// also written here, as `<id>.fault` beside the tombstone.
+/// harness, or a shim that one day grows one. In production they go nowhere, so
+/// the few lines that mean *this terminal is broken* are also written here, as
+/// `<id>.fault` beside the tombstone.
 ///
 /// Two deliberate properties:
 ///
@@ -373,10 +371,9 @@ pub async fn run(args: Args) -> Result<(), String> {
         // when this process exits, the pty master closes with it and the kernel
         // hangs up the session, which is the same death a closed terminal
         // window is. Losing an unreachable shell that way is the cheaper half
-        // of the trade. The other half was measured — a shim that stayed up for
-        // eighteen hours around an idle shell, showing the browser a snapshot
-        // from its last adoption and swallowing every keystroke, with no way
-        // out but killing it by hand.
+        // of the trade. The other half is what a shim that stays up around an
+        // idle shell shows the browser: a snapshot from its last adoption and
+        // every keystroke swallowed, with no way out but killing it by hand.
         Ending::Deaf | Ending::Blind => -1,
     };
 
@@ -452,8 +449,7 @@ enum Ending {
     /// The accept loop would not stay up. Nothing can reach this shim again.
     Deaf,
     /// The reader thread would not stay up. Nothing is reading the pty, so the
-    /// terminal is frozen at whatever it last recorded — which is exactly what
-    /// the browser was shown for eighteen hours.
+    /// terminal stays frozen at whatever it last recorded.
     Blind,
 }
 
@@ -487,9 +483,8 @@ impl Budget {
 
 /// Wait for the shell, keeping both of the shim's lifelines alive meanwhile.
 ///
-/// [`run`] used to await the shell and nothing else, and that is the bug this
-/// prevents — twice over, because the shim has two things it must keep doing and
-/// an idle login shell can outlast the loss of either by days.
+/// Awaiting only the shell would miss both failures this prevents, and an idle
+/// login shell can outlast the loss of either by days.
 ///
 /// **Accepting.** [`accept_loop`] has no `break`, so the only thing that ends it
 /// is a panic in its task — and a panic there is silent in every way that
@@ -500,12 +495,11 @@ impl Budget {
 ///
 /// **Reading.** [`read_pty`] sits in `poll(2)` for as long as the shell lives,
 /// so it can only leave that loop by being woken deliberately, by the pty
-/// closing, or by a panic. The measured shim had lost this one: thirteen threads
-/// and not one of them in `read_pty`. Nothing was reading the master, so the
-/// recorder never grew, so no client had anything to be sent — while the shell
-/// sat there perfectly healthy, filling a pty buffer nobody would ever drain.
-/// The browser showed the snapshot from its last adoption and swallowed every
-/// keystroke.
+/// closing, or by a panic. A shim that has lost this one has nothing in
+/// `read_pty`: nothing is reading the master, so the recorder never grows and no
+/// client has anything to be sent — while the shell sits there perfectly
+/// healthy, filling a pty buffer nobody will ever drain, and the browser shows
+/// the snapshot from its last adoption and swallows every keystroke.
 ///
 /// Either one that ends is restarted — the shell is fine and the user's terminal
 /// should keep working — and logged at `error`, because what panicked is still
@@ -1128,7 +1122,7 @@ fn read_pty(fd: &OwnedFd, wake: &OwnedFd, shim: &Shim) -> ReaderEnd {
 
         // The ring and the parser advance together, under one lock, so no
         // snapshot can ever describe a screen that never existed. A parse that
-        // panics no longer takes this thread — and the lock — with it; what it
+        // panics does not take this thread — and the lock — with it; what it
         // costs instead is the screen model, and that is said out loud.
         let (total, parsed) = {
             let mut recorder = shim.recorder();
@@ -1248,9 +1242,9 @@ mod tests {
         assert_eq!(snapshot_frames(&[], MAX_SNAPSHOT_FRAME).len(), 1);
     }
 
-    /// The measured failure: the accept loop's task went down and nothing
-    /// noticed, because the shim was awaiting an idle shell that would never
-    /// exit. A loop that ends must be seen to end and be put back.
+    /// The accept loop's task can go down with nothing noticing, because the
+    /// shim awaits an idle shell that will never exit. A loop that ends must be
+    /// seen to end and be put back.
     #[tokio::test]
     async fn an_accept_loop_that_goes_down_is_restarted_rather_than_abandoned() {
         let (exited_tx, exited_rx) = tokio::sync::oneshot::channel::<i32>();
@@ -1373,11 +1367,10 @@ mod tests {
         || panic!("the reader was healthy; nothing should have restarted it")
     }
 
-    /// The measured failure, and the one this file was rewritten for: the
-    /// reader thread was gone. Thirteen threads in the sample and not one of
-    /// them in `read_pty`, around a shell that was perfectly alive — so the
-    /// recorder never grew again, the browser kept the snapshot from its last
-    /// adoption, and every keystroke went into a terminal nothing was reading.
+    /// A reader thread that dies must not be left dead: around a shell that is
+    /// perfectly alive, the recorder would never grow again, the browser would
+    /// keep the snapshot from its last adoption, and every keystroke would go
+    /// into a terminal nothing is reading.
     #[tokio::test]
     async fn a_reader_thread_that_dies_while_the_shell_lives_is_restarted() {
         let (exited_tx, exited_rx) = tokio::sync::oneshot::channel::<i32>();
@@ -1519,21 +1512,19 @@ mod tests {
         })
     }
 
-    /// The incident from the client's side, and the assertion that matters
-    /// most: the recorder's lock was poisoned by the panic that killed the
-    /// reader, and from then on the `HELLO` arm took that lock one line before
-    /// it sent its reply — so every client that dialled had its task killed
-    /// before a byte went out, and none of them ever got past the handshake.
-    /// A poisoned lock must cost nothing but the panic that poisoned it.
+    /// A panic that killed the reader poisons the recorder's lock; from then on
+    /// the `HELLO` arm takes that lock one line before it sends its reply, so
+    /// every client that dials has its task killed before a byte goes out and
+    /// none gets past the handshake. A poisoned lock must cost nothing but the
+    /// panic that poisoned it.
     #[tokio::test]
     async fn a_poisoned_recorder_still_lets_a_client_finish_the_handshake() {
         let dir = tempfile::tempdir().expect("tempdir");
         let shim = test_shim(dir.path());
         assert_eq!(shim.recorder().append(b"before the panic"), Parsed::Screen);
 
-        // Poisoned exactly the way the reader poisoned it: a panic with the
-        // lock held. `expect` here is the old behaviour, on purpose — it is
-        // what this thread is standing in for.
+        // Poisoned the way a panicking reader does it: a panic with the lock
+        // held, through the same `expect` that thread uses.
         let poisoning = shim.clone();
         let _ = std::thread::spawn(move || {
             let _held = poisoning.recorder.lock().expect("the lock is clean until this panics");
@@ -1588,11 +1579,11 @@ mod tests {
         frames
     }
 
-    /// The CI failure behind `tests/wizards.rs`: `claude setup-token` prints the
-    /// token and exits at once, and the shell's status reached the shim before
-    /// the reader had read the token off the master. The exit frame went out
-    /// first, the mixer stopped there, and the wizard was told the CLI exited
-    /// without printing a token. The exit must wait for the reader.
+    /// `claude setup-token` prints the token and exits at once, and the shell's
+    /// status can reach the shim before the reader has read the token off the
+    /// master. Announced then, the exit frame goes out first, the mixer stops
+    /// there, and the wizard is told the CLI exited without printing a token.
+    /// The exit must wait for the reader.
     #[tokio::test]
     async fn the_exit_is_announced_only_after_the_shells_last_output() {
         let dir = tempfile::tempdir().expect("tempdir");

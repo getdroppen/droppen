@@ -85,9 +85,9 @@ pub enum DecisionReason {
     Settings,
     /// `remote-hand-server plugin enable|disable`.
     Cli,
-    /// The first boot of the release that moved a built-in feature into a
-    /// plugin, which turned it on where it had data. Kept for the decisions
-    /// that release wrote; nothing writes it now.
+    /// A decision written by the boot that moved a built-in feature into a
+    /// plugin, which turned it on where it had data. Nothing writes it now, but
+    /// the rows it wrote remain.
     Migrated,
     /// `plugin install` (or `POST /api/plugins`), which turns a plugin on.
     Install,

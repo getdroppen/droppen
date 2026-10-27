@@ -195,9 +195,8 @@ pub struct Meta {
     pub shell: String,
     /// When it was created, ISO-8601.
     ///
-    /// Not in the original design, and added for one reason: `TerminalInfo`
-    /// carries it, so without it every adopted terminal would claim to have been
-    /// created at the moment the server restarted.
+    /// `TerminalInfo` carries it, so without it every adopted terminal would
+    /// claim to have been created at the moment the server restarted.
     pub created_at: String,
 }
 

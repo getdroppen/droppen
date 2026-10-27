@@ -93,14 +93,9 @@ fn runtime_dir(dir: &Path) -> PathBuf {
 /// Create whatever directory `socket` needs, if it is not `beside` — the
 /// directory the caller's other sidecars already live in.
 ///
-/// `0o700`, and only ever under `/tmp`, so the `tmux`-style shared directory is
-/// readable by nobody but its owner. What is inside it hands whoever connects a
-/// shell, or a claude with the user's credentials, so this is the only thing
-/// standing between another user of a shared machine and the user's account.
-///
-/// The mode goes on at `mkdir` time rather than in a `chmod` afterwards: between
-/// the two there is a window, however short, in which the directory exists at
-/// the umask's mode and a socket can be dropped into it.
+/// The `0o700`, the check of a directory that is already there, and why both
+/// matter are [`Sidecars::ensure_socket_dir`]'s; this is that contract applied
+/// to a path pair, plus the retry below.
 ///
 /// # Why it may have to go round twice
 ///
@@ -238,7 +233,8 @@ impl Sidecars {
     /// exists at the umask's mode and a socket can be dropped into it. And a
     /// directory that is already there is *checked* rather than reused — see
     /// [`claim_existing_socket_dir`] — because pre-creating a path under a
-    /// predictable name is the easy half of the same attack.
+    /// predictable name is the easy half of the same attack. [`ensure_socket_dir`]
+    /// adds one thing: the retry for a directory its last user removes mid-call.
     pub fn ensure_socket_dir(&self) -> std::io::Result<()> {
         ensure_socket_dir(&self.socket, &self.dir)
     }
@@ -255,14 +251,13 @@ impl Sidecars {
 
     /// Where the shim's own stderr goes.
     ///
-    /// It went to `/dev/null` until a shim wedged for eighteen hours and the only
-    /// way to find out why was `sample(1)` on the live process. A panic in a
-    /// shim's reader thread prints its message and location to stderr like any
-    /// other Rust panic; sending that to a file costs nothing and is the whole
-    /// difference between diagnosing the next one in a minute and reconstructing
-    /// it from thread names.
+    /// A panic in a shim's reader thread prints its message and location to
+    /// stderr like any other Rust panic; sending that to a file costs nothing and
+    /// is the whole difference between diagnosing the next one in a minute and
+    /// reconstructing it from thread names. It is the shim's only log.
     ///
-    /// Swept with the rest, so a terminal that ends cleanly leaves nothing.
+    /// Swept with the rest when it is empty, so a terminal that ends cleanly
+    /// leaves nothing.
     pub fn stderr(&self) -> PathBuf {
         self.dir.join(format!("{}.{STDERR}", self.id))
     }
@@ -328,7 +323,7 @@ impl Sidecars {
         // that panicked wrote the message and the line that did it, and that is
         // exactly the terminal most likely to be swept — by adoption deciding it
         // "would not answer". Deleting the explanation along with the evidence
-        // is how this incident cost a day of `sample(1)` archaeology.
+        // would leave nothing to diagnose.
         if std::fs::metadata(self.stderr()).is_ok_and(|meta| meta.len() == 0) {
             let _ = std::fs::remove_file(self.stderr());
         }
@@ -530,12 +525,12 @@ mod tests {
     /// The directory's last user takes it with them, so a shim starting while
     /// one leaves can find it gone between `mkdir` saying it is already there
     /// and the check that it is ours. That is two processes behaving correctly
-    /// in an unlucky order, and it used to cost a whole session: a resident
-    /// claude restarted for a settings change is exactly the case where the
-    /// outgoing shim and the incoming one are the only two there are.
+    /// in an unlucky order, and it costs a whole session: a resident claude
+    /// restarted for a settings change is exactly the case where the outgoing
+    /// shim and the incoming one are the only two there are.
     ///
     /// The removal is simulated rather than raced, because a test that raced it
-    /// would fail only sometimes — which is precisely how this was found.
+    /// would fail only sometimes.
     #[test]
     fn a_socket_directory_removed_by_the_shim_leaving_is_simply_made_again() {
         let id = "3f2504e04f8911d39a0c0305e82c3301";

@@ -1,9 +1,9 @@
 //! Pseudo-terminals that outlive the server.
 //!
-//! A web terminal used to be a pty owned by the server process: restart the
-//! server — to upgrade it, because it crashed, because a container was
-//! rescheduled — and every shell died with it, along with whatever was running
-//! in it. The fix is to move the pty one process out.
+//! A pty owned by the server process dies with it: restart the server — to
+//! upgrade it, because it crashed, because a container was rescheduled — and
+//! every shell dies with it, along with whatever was running in it. So the pty
+//! lives one process out.
 //!
 //! ```text
 //!   browser  ──websocket──▶  server  ──unix socket──▶  shim  ──pty──▶  shell

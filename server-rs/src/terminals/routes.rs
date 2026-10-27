@@ -1,8 +1,7 @@
 //! The terminal REST surface and the websocket the browser's xterm attaches to.
 //!
-//! Ports the former TypeScript server's `app.ts` (the four documented routes) and
-//! its `index.ts` (the socket, which the TypeScript mounts outside its OpenAPI
-//! app and therefore never documents — so neither does this).
+//! The four documented routes are the REST surface. The socket is mounted
+//! outside the OpenAPI app and is therefore not documented.
 //!
 //! The wire protocol, as `web/src/features/terminals/xterm-pane.tsx:46-65` reads
 //! and writes it:
@@ -12,17 +11,14 @@
 //!   `xterm-pane.tsx:53`). The first frame after a successful attach is the
 //!   replay buffer, sent whether or not there is anything in it; later frames
 //!   are the 16 ms-coalesced chunks. An unknown id gets
-//!   `"\r\n[terminal not found]\r\n"` and the socket closes (`index.ts:29-33`).
+//!   `"\r\n[terminal not found]\r\n"` and the socket closes.
 //!   Notes are the only thing the server writes into that stream itself, and
 //!   they are plain text like everything around them: the not-found one above,
-//!   plus — with no TypeScript counterpart, because the TypeScript owned its
-//!   ptys in-process and could not lose one this way — `[terminal unreachable:
-//!   reconnecting]` and `[terminal reconnected]` for a terminal that exists but
-//!   whose link to its shim is down.
+//!   plus `[terminal unreachable: reconnecting]` and `[terminal reconnected]`
+//!   for a terminal that exists but whose link to its shim is down.
 //! * **client -> server**: JSON text frames, `{"type":"input","data":"…"}` and
 //!   `{"type":"resize","cols":N,"rows":N}`. Anything else — malformed JSON, an
-//!   unknown `type`, a wrongly typed field — is dropped in silence
-//!   (`index.ts:36-48`).
+//!   unknown `type`, a wrongly typed field — is dropped in silence.
 
 use futures_util::{SinkExt, StreamExt};
 use gotcha::axum::extract::ws::{Message, WebSocket};
@@ -61,7 +57,7 @@ pub async fn list_terminals(State(state): State<AppState>) -> Json<TerminalList>
 #[api(id = "create_terminal", group = "terminals", summary = "Create a terminal")]
 pub async fn create_terminal(State(state): State<AppState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
     let cwd = match body.cwd.as_deref() {
-        // An empty string is falsy in the TypeScript, so it means "no cwd".
+        // An empty string means "no cwd".
         Some(cwd) if !cwd.is_empty() => Some(state.terminals.resolve_safe(cwd).map_err(bad_request)?),
         _ => None,
     };
@@ -95,7 +91,7 @@ pub async fn kill_terminal(State(state): State<AppState>, ApiPath(id): ApiPath<S
 
 /// The attach socket. Deliberately **not** annotated with `#[api]`, for the same
 /// reason [`crate::api::session_feed_ws`] is not: `WebSocketUpgrade` is not a
-/// `ParameterProvider`, and the TypeScript leaves this route out of the spec too.
+/// `ParameterProvider`.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
 /// stands ([`crate::auth::login_ended`]): a shell is the last thing to leave
@@ -114,8 +110,7 @@ pub async fn terminal_ws(
 ///
 /// `#[serde(untagged)]`-style leniency is deliberate: an unknown `type`, a
 /// missing field or a wrongly typed one must be ignored rather than closing the
-/// socket, which is what the TypeScript's `try { JSON.parse } catch {}` plus its
-/// `typeof` guards add up to.
+/// socket.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Control {
@@ -137,20 +132,20 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     };
     // Unconditional, empty replay and all. The client arms a screen reset on
     // re-attach and disarms it on the first frame it receives
-    // (`web/src/features/terminals/xterm-pane.tsx`), so a terminal with nothing
-    // buffered used to leave that reset armed indefinitely — until some
-    // keystroke minutes later produced the first frame and wiped the screen the
-    // user was looking at. One frame on every attach makes the reset fire when
-    // the attach happens, which is the only moment it means anything.
+    // (`web/src/features/terminals/xterm-pane.tsx`), so without a first frame a
+    // terminal with nothing buffered would leave that reset armed indefinitely —
+    // until some keystroke minutes later produced the first frame and wiped the
+    // screen the user was looking at. One frame on every attach makes the reset
+    // fire when the attach happens, which is the only moment it means anything.
     if !send_within(&mut sender, Message::Text(attachment.replay.clone().into()), state.send_limit, &state.cancel).await {
         return;
     }
     // A terminal whose link is down still lists, still attaches and still hands
     // out a full replay, so the pane it paints looks exactly like a working one.
-    // That is what "I can see the terminal but I cannot type into it" was: a
-    // screen frozen at the last adoption, with the server saying nothing about
-    // why. It is said here, after the replay, so the user gets the frozen screen
-    // *and* the reason for it.
+    // A screen frozen at the last adoption, with the server saying nothing about
+    // why, is the "I can see the terminal but I cannot type into it" report. It
+    // is said here, after the replay, so the user gets the frozen screen *and*
+    // the reason for it.
     //
     // Subscribed before the health is read, not after: a link that came back in
     // between would otherwise leave this client holding a note about a problem
@@ -161,10 +156,10 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
         return;
     }
 
-    // Output stops when the terminal finishes, but the socket does not: the
-    // TypeScript leaves it open so the client keeps `[process exited]` on screen
-    // until it navigates away, and closing here would paint `[disconnected]`
-    // over it (`xterm-pane.tsx:56`).
+    // Output stops when the terminal finishes, but the socket does not: closing
+    // here would paint `[disconnected]` over the client's `[process exited]`,
+    // which has to stay on screen until the user navigates away
+    // (`xterm-pane.tsx:56`).
     let mut live = true;
     let mut heartbeat = crate::api::Heartbeat::default();
     loop {
@@ -193,7 +188,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
                 let unreachable = match incoming {
                     Some(Ok(Message::Text(text))) => handle_control(&attachment, &text),
                     Some(Ok(Message::Binary(bytes))) => {
-                        // node's `String(evt.data)` accepts a binary frame too.
+                        // A binary frame is accepted too, as long as it is UTF-8.
                         std::str::from_utf8(&bytes).is_ok_and(|text| handle_control(&attachment, text))
                     }
                     Some(Ok(_)) => false,
@@ -210,8 +205,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
                 }
             }
             // Only ever polled for a client that has been told the terminal is
-            // unreachable — a healthy attach never selects on this at all, and so
-            // sends exactly what it sent before any of this existed.
+            // unreachable; a healthy attach never selects on this at all.
             Ok(()) = link_changes.changed(), if told_unreachable => {
                 // A change is not necessarily good news: `relink` marks the link
                 // down on the way into its backoff too.
@@ -291,9 +285,9 @@ fn handle_control(attachment: &super::Attachment, text: &str) -> bool {
     match serde_json::from_str::<Control>(text) {
         Ok(Control::Input { data }) => !attachment.write(&data),
         Ok(Control::Resize { cols, rows }) => {
-            // The TypeScript only checks `typeof === "number"` and then leans on
-            // the `0 < n < 1000` guard in `attachTerminal`; a non-integral or
-            // out-of-range value simply never reaches `pty.resize`.
+            // A non-finite value casts to `0` and an out-of-range one wraps
+            // through `as u16`, so both are refused here; a fractional one is
+            // truncated, as a browser's fractional layout width always was.
             if cols.is_finite() && rows.is_finite() && (0.0..1000.0).contains(&cols) && (0.0..1000.0).contains(&rows) {
                 attachment.resize(cols as u16, rows as u16);
             }

@@ -1,18 +1,16 @@
 //! Embedded app instances: one VS Code server per app, framed by the web UI.
 //!
-//! Port of the former TypeScript server's `apps.ts` (the supervision) and the
-//! three `/api/apps` routes in the former TypeScript server's `app.ts`. The
-//! transport half — the `/embed/{id}/*` reverse proxy the iframe actually talks
-//! to — is [`embed`], and is deliberately not part of the API surface: the
-//! TypeScript mounts it on the bare node server rather than inside hono, so it
-//! appears in no spec.
+//! The supervision and the three `/api/apps` routes live here. The transport
+//! half — the `/embed/{id}/*` reverse proxy the iframe actually talks to — is
+//! [`embed`], and is deliberately not part of the API surface: it is mounted on
+//! the bare server rather than inside the API app, so it appears in no spec.
 //!
 //! The shape here is one supervisor task per instance, owning the
 //! [`tokio::process::Child`], plus a [`std::sync::Mutex`]-guarded list that is
 //! the whole of the shared state. The list doubles as the port reservation: a
 //! port is claimed under the same lock that scans for a free one, which closes
-//! a race the TypeScript still has (`findFreePort` awaits per-port probes, so
-//! two overlapping creates there can pick the same port).
+//! the race a probe-then-claim design has — two overlapping creates awaiting
+//! per-port probes can otherwise pick the same port.
 //!
 //! # Surviving the server
 //!
@@ -147,8 +145,7 @@ pub struct AppCreate {
 /// Why an app could not be started.
 ///
 /// For every failure but one the message is the contract: the route answers
-/// `409` with it verbatim, exactly as the TypeScript's
-/// `err instanceof AppError ? err.message : …` does. The one is a program that
+/// `409` with it verbatim. The one is a program that
 /// is not installed, which is also the commonest — `code-server` is an optional
 /// prerequisite nothing installs for the user — and the only one a person fixes
 /// on the device rather than by trying again; see [`AppError::into_api`].
@@ -168,8 +165,7 @@ impl AppError {
         Self::Failed(message.into())
     }
 
-    /// What the route says when the failure was not one this module named —
-    /// the TypeScript's fall-through for a non-`AppError` throw.
+    /// What the route says when the failure was not one this module named.
     fn opaque() -> Self {
         Self::new("cannot start app")
     }
@@ -181,7 +177,7 @@ impl AppError {
     /// a client is meant to act on (`attachment_missing`, `provider_mismatch`)
     /// — so the web app can say what to install, in the reader's language and
     /// with a link, instead of quoting an `os error 2`. Everything else is the
-    /// sentence alone, as it always was.
+    /// sentence alone.
     fn into_api(self) -> ApiError {
         let message = self.to_string();
         match self {
@@ -216,9 +212,7 @@ fn spawn_error(kind: AppType, error: &std::io::Error) -> AppError {
 /// *instance* rather than off `$HOME` settles the same question one level up: two
 /// servers on one home are two instances by construction, holding two different
 /// locks over two disjoint trees, so neither can be handed a path the other has
-/// an editor sitting on. This belongs beside the other per-instance paths in
-/// [`InstanceDirs`] and is derived from its root only because that file is not
-/// this change's to edit.
+/// an editor sitting on.
 fn app_data_root(instance: &InstanceDirs) -> PathBuf {
     instance.root().join("apps")
 }
@@ -468,7 +462,7 @@ impl Registry {
         if let Some(instance) = instances.iter_mut().find(|instance| instance.info.id == id) {
             instance.pid = pid;
             // Taken here rather than before the spawn because there is no pid to
-            // take it for until now. The window in between is a child that
+            // take it for before it exists. The window in between is a child that
             // exited and had its number recycled between `spawn` and this line,
             // which is not reachable in practice.
             instance.pid_token = pid.and_then(procs::start_token);
@@ -557,8 +551,8 @@ impl Registry {
         // Ctrl-C — does not take the user's editor with it. `kill_on_drop`
         // keeps tokio from tidying it away when the handle goes. And the stdio
         // is a file, so nothing the app writes depends on a pipe this process
-        // holds open: the TypeScript piped stdout and never read it, which
-        // fills the pipe and stalls a chatty `code-server`.
+        // holds open: a piped stdout that nobody reads fills and stalls a chatty
+        // `code-server`.
         let (out, err) = self.open_log(&info.id);
         command.stdin(std::process::Stdio::null());
         command.stdout(out);
@@ -780,11 +774,10 @@ impl Registry {
 
     /// Delete the per-app state and logs of every app that is not running.
     ///
-    /// This replaces the blanket wipe the constructor used to do at boot. With
-    /// adoption, a live app's settings directory is not dead weight — it is the
-    /// open folder, the layout and the undo history of an editor the user still
-    /// has in front of them, and deleting it pulls that out from under them. The
-    /// log of an app that is gone is kept until the next boot on purpose: it is
+    /// A live app's settings directory is not dead weight — it is the open
+    /// folder, the layout and the undo history of an editor the user still has
+    /// in front of them, and deleting it pulls that out from under them. The log
+    /// of an app that is gone is kept until the next boot on purpose: it is
     /// where a `code-server` that refused to start said why.
     async fn sweep_state(&self) {
         let keep: HashSet<String> = self.lock().iter().map(|instance| instance.info.id.clone()).collect();
@@ -823,11 +816,10 @@ impl Registry {
 
     /// Let go of every app, leaving every one of them running.
     ///
-    /// Called from the shutdown supervisor, and the inversion is the point of
-    /// the whole phase: this used to `SIGTERM` every `code-server`, because an
-    /// orphan holding a loopback port was a leak. Now the app is *supposed* to
-    /// outlive the server — that is what a restart-survivable editor means —
-    /// and killing it would throw away exactly what the user restarted to keep.
+    /// Called from the shutdown supervisor: the app is *supposed* to outlive the
+    /// server — that is what a restart-survivable editor means — and killing it
+    /// would throw away exactly what the user restarted to keep. An app left
+    /// holding a loopback port is not a leak; it is what the next boot adopts.
     ///
     /// `apps.json` is deliberately not rewritten, and the `detached` flag makes
     /// sure nothing else rewrites it either: it is the record the next boot

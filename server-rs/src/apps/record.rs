@@ -22,16 +22,13 @@
 //! # Where the records actually are
 //!
 //! One row each in [`crate::db`]'s `apps` table, in the instance database that
-//! sits beside `apps.json`. Everything the paragraph above asks for is now the
+//! sits beside `apps.json`. Everything the paragraph above asks for is the
 //! transaction's: replacing all the rows at once is atomic by construction, and
-//! the WAL at `synchronous = FULL` is what the hand-rolled `fsync` the temporary
-//! / `rename` / `fsync` the directory dance used to buy.
+//! the WAL at `synchronous = FULL` buys what a hand-rolled tempfile / `rename` /
+//! directory-`fsync` dance would.
 //!
-//! `apps.json` was written for a while after the move, so that a
-//! [`crate::supervisor`] demotion to a `.prev` binary — one that had never heard
-//! of the database — would not adopt nothing and leave a generation of editors
-//! running with no owner. No binary that old is left to demote to, and the file
-//! is no longer read: one left on disk is inert.
+//! Nothing reads `apps.json` any more, and nothing writes it; a file left on
+//! disk is inert.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -94,12 +91,11 @@ fn payload(record: &AppRecord) -> String {
 
 /// Every record the database holds, oldest slot first.
 ///
-/// A row that will not parse is dropped rather than fatal, which is the same
-/// defence the file had for the same reason: a record that is a little bit wrong
-/// points at a pid this boot may signal. `ordinal` preserves the order the file
-/// carried, which [`super::Registry::readopt_all`] re-sorts by `startedAt`
-/// anyway — but the column costs nothing and losing an order the file had would
-/// be a silent change.
+/// A row that will not parse is dropped rather than fatal: a record that is a
+/// little bit wrong points at a pid this boot may signal. `ordinal` preserves
+/// the order the rows were written, which [`super::Registry::readopt_all`]
+/// re-sorts by `startedAt` anyway — but the column costs nothing and losing an
+/// order would be a silent change.
 pub fn load(path: &Path) -> Vec<AppRecord> {
     store(path)
         .read(|conn| {
@@ -228,10 +224,8 @@ mod tests {
         assert_eq!(std::fs::read(&path).expect("read"), planted);
     }
 
-    /// What the move to a transaction bought, stated as the thing that used to
-    /// go wrong. A record that could not reach `apps.json` was once a running
-    /// editor with nobody to own it; now nothing tries to reach it at all, so a
-    /// path that cannot be written costs nothing.
+    /// A path that cannot be written costs nothing: the record is in the
+    /// database, and nothing tries to reach `apps.json` at all.
     #[test]
     fn an_unwritable_file_location_no_longer_costs_the_record() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -510,7 +510,7 @@ fn manifest_of(package: &serde_json::Value) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-/// The entry module's relative path, resolved as the build resolves it:
+/// The entry module's relative path, resolved by the npm rules:
 /// `exports["."]` (a string, or its `import`/`default`), else `module`, else
 /// `main`, else `index.js`; a relative `.js`/`.mjs` file that exists.
 fn entry_of(package: &serde_json::Value, dir: &Path) -> Result<String, String> {
@@ -518,15 +518,15 @@ fn entry_of(package: &serde_json::Value, dir: &Path) -> Result<String, String> {
     resolve_entry(dir, &rel)
 }
 
-/// The entry a package names, before it is checked: the build's `entryOf`,
-/// nullish fallbacks and all. A name that is there but not a string is a
-/// refusal rather than a reason to fall through to `index.js`.
+/// The entry a package names, before it is checked: `exports`, `module` and
+/// `main`, nullish fallbacks and all. A name that is there but not a string is
+/// a refusal rather than a reason to fall through to `index.js`.
 fn entry_field(package: &serde_json::Value) -> Result<String, String> {
     let rel = match package.get("exports") {
         Some(serde_json::Value::String(rel)) => Some(serde_json::Value::String(rel.clone())),
         Some(exports @ serde_json::Value::Object(map)) => {
             // `exp["."] ?? exp`: an absent (or null) dot key means the object
-            // itself is the dot entry, as it is in the build.
+            // itself is the dot entry.
             let dot = map.get(".").filter(|value| !value.is_null()).unwrap_or(exports);
             match dot {
                 serde_json::Value::String(rel) => Some(serde_json::Value::String(rel.clone())),

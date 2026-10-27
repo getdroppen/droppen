@@ -1,10 +1,8 @@
 //! The `/embed/{id}/*` reverse proxy, for HTTP and for websockets.
 //!
-//! Port of the former TypeScript server's `index.ts`, where the TypeScript
-//! drops out of hono entirely: it puts `http-proxy` on the bare node server, in
-//! front of the hono listener for `web` requests and in front of hono's own
-//! upgrade handler for `upgrade` ones. Nothing about it is in the OpenAPI
-//! document, in either server.
+//! The proxy sits on the bare server rather than inside the API app: in front
+//! of the API listener for `web` requests and in front of the upgrade handler
+//! for `upgrade` ones. Nothing about it is in the OpenAPI document.
 //!
 //! # Where it hangs
 //!
@@ -19,20 +17,17 @@
 //! path test in front of every `/api/*` request to serve a route that
 //! by definition never matches one.
 //!
-//! Sitting on the fallback also reproduces one property of the TypeScript for
-//! free: `/embed/*` never passes the `/api/*` origin guard, because that layer
-//! is applied to the routes and not to the fallback — just as the node-level
-//! proxy there never reaches hono's middleware.
+//! Sitting on the fallback also keeps `/embed/*` out of the `/api/*` origin
+//! guard for free: that layer is applied to the routes and not to the fallback.
 //!
 //! # What it does to the traffic
 //!
 //! * **path** — `^/embed/([\w-]+)(/.*)?$` over the full request target,
-//!   query string included, exactly as the TypeScript matches `req.url`;
-//!   group 2 (or `/`) becomes the upstream path.
+//!   query string included, so `/embed/x/y?z` proxies to `/y?z` and
+//!   `/embed/x?z` matches nothing; group 2 (or `/`) becomes the upstream path.
 //! * **headers** — forwarded verbatim in both directions minus the hop-by-hop
-//!   set, so the client's `Host` survives (`http-proxy` only rewrites it under
-//!   `changeOrigin`, which is off) and `code-server` builds its URLs against the
-//!   outer origin. `Content-Length` is left exactly as the upstream set it: the
+//!   set, so the client's `Host` survives and `code-server` builds its URLs
+//!   against the outer origin. `Content-Length` is left exactly as the upstream set it: the
 //!   body is streamed through untouched, so the number is still true.
 //! * **framing** — the response's `Content-Security-Policy` is replaced with
 //!   `frame-ancestors 'self'` and `X-Frame-Options` removed, so the app can be
@@ -70,9 +65,9 @@ pub fn client() -> HttpClient {
 
 /// Only our own UI may frame an embedded app.
 const FRAME_ANCESTORS: &str = "frame-ancestors 'self'";
-/// What the TypeScript's proxy error handler writes.
+/// What a client is told when the app cannot be reached.
 const UNREACHABLE: &str = "app unreachable";
-/// What it writes for an id no instance answers to.
+/// What a client is told for an id no instance answers to.
 const NOT_FOUND: &str = "app not found";
 /// A handshake response head past this is not one.
 const MAX_HEAD: usize = 64 * 1024;
@@ -123,8 +118,8 @@ where
         let target = request.uri().path_and_query().map(|target| target.as_str().to_owned());
         let embed = target.as_deref().and_then(split).map(|(id, path)| (id.to_owned(), path.to_owned()));
         let Some((id, path)) = embed else {
-            // `poll_ready` was called on `self.inner`, so that is the copy that
-            // must serve this request; the clone takes its place for the next.
+            // `poll_ready` ran on `self.inner`, so that is the copy that must
+            // serve this request; the clone takes its place for the next.
             let spare = self.inner.clone();
             let mut ready = std::mem::replace(&mut self.inner, spare);
             return Box::pin(ready.call(request));
@@ -137,8 +132,8 @@ where
 
 /// Split a request target into `(app id, upstream path)`.
 ///
-/// The TypeScript's `/^\/embed\/([\w-]+)(\/.*)?$/` over `req.url`, which in node
-/// carries the query string — so `/embed/x/y?z` proxies to `/y?z`, while
+/// The pattern is `/^\/embed\/([\w-]+)(\/.*)?$/` over the full request target,
+/// which carries the query string — so `/embed/x/y?z` proxies to `/y?z`, while
 /// `/embed/x?z` matches nothing at all and falls through to the SPA.
 fn split(target: &str) -> Option<(&str, &str)> {
     let rest = target.strip_prefix("/embed/")?;
@@ -300,7 +295,7 @@ fn reframe(headers: &mut HeaderMap) {
     headers.remove(header::X_FRAME_OPTIONS);
 }
 
-/// A plain-text response, as the TypeScript's two error paths write them.
+/// A plain-text response, the shape both error paths answer with.
 fn text(status: StatusCode, body: &'static str) -> Response<Body> {
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;

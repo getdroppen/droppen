@@ -1,9 +1,6 @@
 //! Subscription quota: the Claude plan and live window usage, plus Codex's own
 //! rolling windows.
 //!
-//! Port of the former TypeScript server's `quota.ts`, since reworked on the
-//! Claude side.
-//!
 //! ## Claude: sessions first, the probe as a fallback
 //!
 //! A Claude login's windows come from two places, described in full in
@@ -23,7 +20,7 @@
 //! instances probing on their own schedules could refresh it twice, and the
 //! second refresh revokes the login.
 //!
-//! What still holds from the original design:
+//! Three rules hold:
 //!
 //! * a failed probe is remembered, **failures included** — a broken or hanging
 //!   CLI costs one probe per backoff, not one per request;
@@ -41,10 +38,10 @@
 //! ([`readings::PROBE_FAILURE_BACKOFF`]).
 //!
 //! Codex's windows are read of a different CLI over a different protocol, so
-//! they live in [`codex`] and keep the original rules: a reading reused for
-//! [`USAGE_TTL`], probes serialized, requests bounded by [`COLLECT_BUDGET`].
-//! They used to be scraped out of a session file on every request, which is how
-//! the panel came to report a three-day-old percentage as the current one.
+//! they live in [`codex`], with a reading reused for [`USAGE_TTL`], probes
+//! serialized and requests bounded by [`COLLECT_BUDGET`]. Scraping a session
+//! file on every request instead would report a three-day-old percentage as the
+//! current one.
 
 pub mod codex;
 pub mod readings;
@@ -92,7 +89,7 @@ pub const COLLECT_BUDGET: Duration = Duration::from_secs(3);
 /// reset and short enough that a user who fixes the problem is not left staring
 /// at a stale panel.
 pub const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(30 * 60);
-/// The `maxBuffer` the TypeScript gives the probe.
+/// The most of a probe's stdout, or stderr, that is read before judging it.
 const MAX_PROBE_OUTPUT: usize = 1024 * 1024;
 
 /// One rolling window of a subscription.
@@ -255,12 +252,11 @@ const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "au
 /// (`Jan 2, 2027 at 12am (UTC)`) shows up exactly at the turn of the year — the
 /// one moment when guessing is hardest and being told is most useful.
 ///
-/// Date and time have been separated two ways over the CLI's life: the original
-/// comma (`Aug 11, 7:30am (UTC)`) and today's ` at ` (`Sep 10 at 11:59am
-/// (UTC)`). Both are accepted, because the separator is the CLI's presentation
-/// choice and a reading that silently loses its reset instant is the one failure
-/// mode this parser must not have — a cached reading from either era still
-/// resolves.
+/// The CLI separates date and time two ways: a comma (`Aug 11, 7:30am (UTC)`)
+/// and ` at ` (`Sep 10 at 11:59am (UTC)`). Both are accepted, because the
+/// separator is the CLI's presentation choice and a reading that silently loses
+/// its reset instant is the one failure mode this parser must not have — a
+/// cached reading from either era still resolves.
 fn parse_resets_at(raw: Option<&str>, now_ms: i64) -> Option<String> {
     static RESET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RESET.get_or_init(|| {
@@ -276,9 +272,8 @@ fn parse_resets_at(raw: Option<&str>, now_ms: i64) -> Option<String> {
     let hour = if caps[6].eq_ignore_ascii_case("pm") { hour12 + 12 } else { hour12 };
 
     // The day is the 1st plus the label's offset, so a day past the month's end
-    // keeps normalising (the civil-date arithmetic this replaced did that too).
-    // The time of day stays plain arithmetic for the same reason: a label the
-    // regex accepts but a calendar would not is still read the way it was.
+    // keeps normalising. The time of day stays plain arithmetic for the same
+    // reason: a label the regex accepts but a calendar would not is read anyway.
     let at = |year: i64| -> Option<i64> {
         let first = chrono::NaiveDate::from_ymd_opt(year as i32, (month + 1) as u32, 1)?;
         let date = if day >= 1 {
@@ -867,7 +862,7 @@ pub fn spawn_fallback_ticker(quota: Arc<QuotaCache>, store: Arc<crate::accounts:
 mod tests {
     use super::*;
 
-    /// 2024-08-01T00:00:00Z, so the reset-year rule has something to bite on.
+    /// `2024-08-01T00:00:00Z`, so the reset-year rule has something to bite on.
     const NOW_MS: i64 = 1_722_470_400_000;
 
     #[test]
@@ -947,14 +942,15 @@ mod tests {
         );
     }
 
-    /// 2026-09-10T00:00:00Z — the day the fixtures below were read off the CLI.
+    /// `2026-09-10T00:00:00Z`: the fixed "now" for the CLI fixtures below, so
+    /// their reset instants are absolute.
     const SEP_2026_MS: i64 = 1_788_998_400_000;
 
-    /// The CLI moved the date/time separator from `,` to ` at `, which turned
-    /// every Claude window's `resetsAt` into `null` in production while Codex —
-    /// which reports a numeric timestamp — went on working. Both separators are
-    /// asserted here: the new one is what the CLI prints, the old one is what
-    /// readings cached before the change still carry.
+    /// The CLI moved the date/time separator from `,` to ` at `, which turns
+    /// every Claude window's `resetsAt` into `null` if unhandled; Codex reports
+    /// a numeric timestamp and is unaffected. Both separators are asserted
+    /// here: ` at ` is what the CLI prints, the comma is what readings cached
+    /// earlier still carry.
     #[test]
     fn the_at_separator_the_cli_prints_today_parses_like_the_comma_did() {
         assert_eq!(
@@ -985,7 +981,7 @@ mod tests {
         assert_eq!(parse_resets_at(Some("Sep 10 at (UTC)"), SEP_2026_MS), None);
     }
 
-    /// Verbatim from `claude -p /usage --output-format json` on 2026-09-10,
+    /// A real `claude -p /usage --output-format json` reading from `2026-09-10`,
     /// spawned exactly as [`probe_claude_usage`] spawns it.
     #[test]
     fn a_live_usage_reading_keeps_its_reset_instants() {
@@ -1017,10 +1013,10 @@ mod tests {
     /// The shape `claude -p /usage` really prints on a logged-in Max plan.
     ///
     /// Captured from the CLI's own formatter: a lead-in sentence, one line per
-    /// window with the utilization floored to an integer, the Sonnet-only weekly
-    /// window that replaced the Opus one, server-named per-model windows, and the
-    /// "what's contributing" block. Only the window lines may become windows —
-    /// the prose around them must not.
+    /// window with the utilization floored to an integer, a model-scoped weekly
+    /// window, server-named per-model windows, and the "what's contributing"
+    /// block. Only the window lines may become windows — the prose around them
+    /// must not.
     #[test]
     fn the_current_cli_usage_report_parses_to_windows_and_nothing_else() {
         let text = concat!(
@@ -1090,7 +1086,7 @@ mod tests {
         }
     }
 
-    /// The windows of the verbatim `allowed` event.
+    /// The windows of the `allowed` event fixture.
     fn allowed_windows() -> Vec<QuotaWindow> {
         let line: Value = serde_json::from_str(
             r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"five_hour","resetsAt":1790436000,"status":"allowed","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.19},"seven_day":{"resetsAt":1790460000,"utilization":0.46}}}}"#,

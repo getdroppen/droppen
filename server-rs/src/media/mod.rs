@@ -4,17 +4,17 @@
 //! screenshots *in* that repository (a `pr-assets` branch, say) and writes
 //! `![…](https://github.com/<owner>/<repo>/blob/<ref>/<path>?raw=true)` into
 //! its reply. GitHub answers that URL with a `404` to anyone without a session
-//! cookie for github.com, so the transcript showed a broken image to everyone
-//! who was not, at that moment, logged into GitHub in the same browser.
+//! cookie for github.com, so the transcript shows a broken image to everyone
+//! who is not, at that moment, logged into GitHub in the same browser.
 //!
 //! `GET /api/media/github?url=…` fetches it instead, through the host's own
-//! `gh` CLI — the same login the agent used to push the file. The server never
+//! `gh` CLI — the same login the agent pushed the file with. The server never
 //! sees the token: `gh` reads it from its own keyring, makes the request, and
 //! hands back bytes on stdout.
 //!
 //! # Why this does not widen anyone's access
 //!
-//! Every remote-hand user can already run agents with full shell access on this
+//! Every Droppen user can already run agents with full shell access on this
 //! host as the same OS user, and `gh api …` is one shell command away for any
 //! of them. This route exposes strictly less than that: one read-only endpoint
 //! (the contents API, `GET` only), on `github.com` only, answering only with

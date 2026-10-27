@@ -200,13 +200,12 @@ impl Recorder {
     /// `vt100::Parser::process` is third-party code handed, by definition,
     /// whatever the shell decided to print — which is whatever the program the
     /// user ran decided to print, i.e. arbitrary bytes. A terminal emulator has
-    /// to survive that, and when it does not the unwind used to go straight
-    /// through the reader thread *while it held this lock*. That killed the
-    /// shim twice over: nothing was left reading the pty, and the poisoned
-    /// mutex made every later client's `HELLO` panic before its reply went out.
-    /// One shim sat eighteen hours in that state, accepting connections and
-    /// never speaking. So the parse is caught here, where the recorder's own
-    /// invariants are the ones being put back.
+    /// to survive that, and when it does not, the unwind goes straight through
+    /// the reader thread *while it holds this lock*. That kills the shim twice
+    /// over: nothing is left reading the pty, and the poisoned mutex makes every
+    /// later client's `HELLO` panic before its reply goes out. So the parse is
+    /// caught here, where the recorder's own invariants are the ones being put
+    /// back.
     ///
     /// What the recorder holds afterwards is a deliberate choice of three:
     ///
@@ -402,9 +401,9 @@ mod tests {
         assert!(!snap.contains("INSERT"), "and the alternate screen's contents go with it: {snap:?}");
     }
 
-    /// The incident: a parse that panicked took the reader thread with it and
-    /// left the recorder's lock poisoned, which is what made the shim deaf. The
-    /// recorder has to come out of it usable — and honest about what it kept.
+    /// A parse that panics must cost the screen and nothing else: the bytes stay
+    /// in the ring at the offsets clients know, and the recorder comes out of it
+    /// usable and honest about what it kept.
     #[test]
     fn a_parse_that_panics_costs_the_screen_and_nothing_else() {
         let mut rec = Recorder::new(4, 20);

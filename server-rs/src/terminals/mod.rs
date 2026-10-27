@@ -1,8 +1,7 @@
 //! Web terminals: PTYs the browser drives over a websocket.
 //!
-//! Port of the former TypeScript server's `terminals.ts` (the engine) and the
-//! `/api/terminals/:id/ws` mount in its `index.ts` (the transport, which lives
-//! in [`routes`]).
+//! The engine lives here; the websocket and the four REST routes live in
+//! [`routes`].
 //!
 //! # Where the pty lives
 //!
@@ -12,29 +11,26 @@
 //! whole of "restart survival": the server can die and come back, and the only
 //! thing it has to rebuild is state it can read off the instance directory.
 //!
-//! What did *not* change is the wire the browser speaks — bare text frames of
-//! output out, `{"type":"input"|"resize"}` JSON in — nor any of the four REST
-//! routes. A client cannot tell the difference, with two deliberate exceptions:
-//! where output was genuinely lost it now sees a counted
-//! [`crate::pty_shim::gap_note`] rather than a seamless-looking splice, and
-//! where the link to a shim is down it is told so rather than being left typing
-//! into a screen frozen at whenever that link last worked.
+//! The wire the browser speaks is bare text frames of output out and
+//! `{"type":"input"|"resize"}` JSON in, plus the four REST routes, with two
+//! deliberate exceptions: where output was genuinely lost the client sees a
+//! counted [`crate::pty_shim::gap_note`] rather than a seamless-looking splice,
+//! and where the link to a shim is down it is told so rather than being left
+//! typing into a screen frozen at whenever that link last worked.
 //!
 //! # Shape
 //!
 //! * one tokio task per terminal (`run_link`) owning the link, the 16 ms output
 //!   coalescing, the exit note and the reaping timer;
-//! * everything that was "just a field" in the TypeScript record and is touched
-//!   from more than one place ([`Replay`], the listener set, the title) sits
-//!   behind its own small mutex;
+//! * everything touched from more than one place ([`Replay`], the listener set,
+//!   the title) sits behind its own small mutex;
 //! * keystrokes and resizes go out as frames on an unbounded channel, so a
 //!   handler never waits on a socket.
 //!
 //! Fan-out is a `Vec` of unbounded senders rather than a `tokio::sync::broadcast`,
 //! deliberately: a broadcast drops frames for a client that falls behind, and a
 //! terminal stream cannot be re-derived from a later frame the way the session
-//! feed's can. `Set<(chunk) => void>` in the TypeScript never drops, so neither
-//! does this.
+//! feed's can.
 
 mod routes;
 
@@ -91,9 +87,9 @@ const LISTENER_QUEUE_CAP: usize = 4 * 1024 * 1024;
 pub const SLOW_NOTE: &str = "\r\n[client too slow]\r\n";
 /// How many terminals may exist at once, exited-but-unreaped ones included.
 ///
-/// Each one costs a pty, a shim process and up to [`BUFFER_CAP`] of replay, none
-/// of which the TypeScript bounded either — but a client that loops on
-/// `POST /api/terminals` should hit a refusal rather than the fd limit.
+/// Each one costs a pty, a shim process and up to [`BUFFER_CAP`] of replay, so a
+/// client that loops on `POST /api/terminals` should hit a refusal rather than
+/// the fd limit.
 ///
 /// Public so the tests can pin the cap the create path and [`Registry::readopt_all`]
 /// share, rather than restating the number and drifting from it.
@@ -301,10 +297,10 @@ struct Listeners {
 /// One terminal: its shim, its replay buffer and its watchers.
 struct Entry {
     /// Creation order. A `HashMap` iterates arbitrarily and rehashes as it
-    /// grows, but the TypeScript's `Map` yields insertion order and the web
-    /// renders `terminals` unsorted (`web/src/features/terminals/terminals-view.tsx:98`),
-    /// so without this the user's tabs would reshuffle between polls — and after
-    /// a restart, which is why it is also in the meta file.
+    /// grows, while the web renders `terminals` unsorted
+    /// (`web/src/features/terminals/terminals-view.tsx:98`), so without this the
+    /// user's tabs would reshuffle between polls — and after a restart, which is
+    /// why it is also in the meta file.
     seq: u64,
     info: Mutex<TerminalInfo>,
     replay: Mutex<Replay>,
@@ -313,7 +309,7 @@ struct Entry {
     outbound: mpsc::UnboundedSender<Frame>,
     /// Whether the link task is holding a live link to the shim right now.
     ///
-    /// Nothing about a send says this, which is what made the failure so quiet:
+    /// Nothing about a send says this, and that is what makes the failure quiet:
     /// `outbound` is unbounded, so a keystroke is accepted just as cheerfully
     /// while the link task sits inside [`relink`] backing off with nobody
     /// draining the channel — and just as cheerfully after the task has returned
@@ -431,8 +427,7 @@ impl Entry {
     fn finish(&self, exit_code: i32) {
         let hook = self.on_exit.lock().expect("terminal exit hook poisoned").take();
         let Some(hook) = hook else { return };
-        // A wizard's bookkeeping must not take the terminal module down with it,
-        // matching the `try {} catch {}` around the TypeScript hook.
+        // A wizard's bookkeeping must not take the terminal module down with it.
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || hook(exit_code))).is_err() {
             tracing::error!("a terminal exit hook panicked");
         }
@@ -919,12 +914,10 @@ impl Registry {
 
     /// Let go of every terminal without killing anything, and return how many.
     ///
-    /// This is the point of the whole subsystem, so it is worth being explicit
-    /// about the inversion: the shutdown supervisor used to kill every pty here,
-    /// because an orphaned login shell with nobody reading it was a leak. Now
-    /// the shell belongs to a shim that is *supposed* to outlive this process,
-    /// and killing it would throw away exactly what the user restarted the
-    /// server to keep. So shutdown drops links and nothing else.
+    /// This is the point of the whole subsystem: the shell belongs to a shim
+    /// that is *supposed* to outlive this process, and killing it here would
+    /// throw away exactly what the user restarted the server to keep. So shutdown
+    /// drops links and nothing else.
     ///
     /// The cursor is deliberately not written on the way out either — see
     /// [`crate::pty_shim::CURSOR_FLUSH_EVERY`].
@@ -971,9 +964,9 @@ impl Registry {
     /// Resolve a requested path (expanding a leading `~`) and make sure it stays
     /// inside the home directory.
     ///
-    /// The rule is `resolveSafe` in the former TypeScript server's `files.ts`,
-    /// so the terminal and the file browser can never disagree about what is
-    /// inside the home directory; only the error type is this module's.
+    /// The terminal and the file browser must never disagree about what is
+    /// inside the home directory, so the rule is [`crate::files::resolve_safe`]'s;
+    /// only the error type is this module's.
     pub fn resolve_safe(&self, requested: &str) -> Result<String, TerminalError> {
         crate::files::resolve_safe(&self.paths, Some(requested))
             .map(|path| path.to_string_lossy().into_owned())
@@ -1075,7 +1068,7 @@ impl Attachment {
     /// listed, the shell is alive, and the link in between is not — so the
     /// keystroke is queued against a reconnect that may never come. A caller
     /// that ignores the answer is a pane that looks perfectly normal and does
-    /// nothing at all, which is exactly how this was reported.
+    /// nothing at all.
     pub fn write(&self, data: &str) -> bool {
         self.entry.tell(Frame::raw(proto::INPUT, data.as_bytes().to_vec()));
         self.entry.is_linked()
@@ -1095,9 +1088,9 @@ impl Attachment {
         self.entry.linked.subscribe()
     }
 
-    /// Tell the kernel the window resized, ignoring implausible sizes exactly as
-    /// the TypeScript does — and any size at all on a terminal whose width the
-    /// server pinned (see [`CreateSpec::size`]).
+    /// Tell the kernel the window resized, ignoring implausible sizes — and any
+    /// size at all on a terminal whose width the server pinned (see
+    /// [`CreateSpec::size`]).
     pub fn resize(&self, cols: u16, rows: u16) {
         if cols == 0 || rows == 0 || cols >= 1000 || rows >= 1000 || self.entry.size_locked.load(Ordering::SeqCst) {
             return;
@@ -1135,9 +1128,9 @@ async fn spawn_shim(sidecars: &Sidecars, program: &str, args: &[String], workdir
         command.arg("--cols").arg(cols.to_string()).arg("--rows").arg(rows.to_string());
     }
     command.arg("--").arg(program).args(args);
-    // A working directory that does not exist would fail the spawn outright,
-    // where the in-process engine quietly fell back to the home directory. The
-    // recorded `cwd` stays the requested one either way, as it always did.
+    // A working directory that does not exist would fail the spawn outright, so
+    // the shim inherits the server's own. The recorded `cwd` stays the requested
+    // one either way.
     if Path::new(workdir).is_dir() {
         command.current_dir(workdir);
     }
@@ -1147,11 +1140,11 @@ async fn spawn_shim(sidecars: &Sidecars, program: &str, args: &[String], workdir
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         // stderr is kept, where the other two are not, because it is where a
-        // panic goes. A shim that dies loudly is easy; a shim that loses one
-        // thread and keeps running is what actually happened, and with stderr
-        // pointed at `/dev/null` the message naming the line that panicked was
-        // simply gone. Best effort: a shim that cannot be given a log file is
-        // still worth starting, so this falls back to discarding it.
+        // panic goes. A shim that dies loudly is easy; one that loses a thread
+        // and keeps running is the failure worth a log, and with stderr pointed
+        // at `/dev/null` the message naming the line that panicked would be gone.
+        // Best effort: a shim that cannot be given a log file is still worth
+        // starting, so this falls back to discarding it.
         .stderr(
             std::fs::OpenOptions::new()
                 .create(true)
@@ -1521,8 +1514,8 @@ async fn reap_killed(registry: Weak<Registry>, entry: Arc<Entry>) {
     // The tombstone is the shim's first act on the way out, not its last: the
     // `x` frame follows it once the shim's reader has drained the pty
     // (`pty_shim::child::run`, steps 1 and 2). Cancelling `detach` as soon as
-    // the tombstone appeared used to beat that frame on a busy machine, and
-    // the link task, which checks `detach` first, stopped without noting the
+    // the tombstone appears would beat that frame on a busy machine, and the
+    // link task, which checks `detach` first, would stop without noting the
     // exit. So the link task is given time to carry the frame itself and is
     // only cut when it has not, and a cut on a killed terminal still notes
     // the exit (`Entry::cut`).
@@ -1551,8 +1544,7 @@ async fn deadline(deadline: Option<Instant>) {
 ///
 /// A pty read can land anywhere, including the middle of a UTF-8 sequence, and
 /// the frames going out are text — so a naive `from_utf8_lossy` per read would
-/// permanently corrupt any character unlucky enough to straddle two reads. This
-/// is what node's `StringDecoder` does for `pty.onData`.
+/// permanently corrupt any character unlucky enough to straddle two reads.
 fn take_utf8(carry: &mut Vec<u8>) -> String {
     let mut out = String::new();
     loop {
@@ -1583,9 +1575,8 @@ fn take_utf8(carry: &mut Vec<u8>) -> String {
 
 /// Keep the last `cap` bytes of `text`, cutting on a character boundary.
 ///
-/// The TypeScript slices UTF-16 code units (`buffer.slice(-BUFFER_CAP)`); this
-/// slices bytes, so a buffer holding wide characters keeps somewhat fewer of
-/// them. The cap is a memory bound, not part of the contract.
+/// This slices bytes, so a buffer holding wide characters keeps somewhat fewer
+/// than `cap` of them. The cap is a memory bound, not part of the contract.
 fn truncate_front(text: &mut String, cap: usize) {
     if text.len() <= cap {
         return;
@@ -1605,7 +1596,8 @@ fn default_title(title: Option<&str>, ordinal: usize) -> String {
     }
 }
 
-/// The user's login shell, with the same fallbacks the TypeScript uses.
+/// The user's login shell, falling back to zsh and then bash when `SHELL` is
+/// unset or empty.
 fn login_shell() -> String {
     match std::env::var("SHELL") {
         Ok(shell) if !shell.is_empty() => shell,
@@ -1813,10 +1805,10 @@ mod tests {
         assert_eq!(entry.cursor.load(Ordering::SeqCst), 5, "a repaint is not output");
     }
 
-    /// The bug this bookkeeping exists for: a terminal whose link is down is
-    /// indistinguishable from a healthy one at the sending end, because an
-    /// unbounded channel accepts a keystroke whether or not anything will ever
-    /// drain it. The link flag is the only thing that can tell a client apart.
+    /// A terminal whose link is down is indistinguishable from a healthy one at
+    /// the sending end, because an unbounded channel accepts a keystroke whether
+    /// or not anything will ever drain it. The link flag is the only thing that
+    /// can tell a client apart.
     #[tokio::test]
     async fn a_link_that_goes_down_stops_pretending_keystrokes_arrive() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1880,8 +1872,9 @@ mod tests {
     }
 
     /// A client that attaches while output waits out the coalescing interval
-    /// gets each byte exactly once. The replay used to include the pending
-    /// output, and the flush at the end of the interval then sent it again.
+    /// gets each byte exactly once: the pending output is flushed into the
+    /// replay at attach, and the flush at the end of the interval must not send
+    /// it a second time.
     #[tokio::test]
     async fn an_attach_mid_interval_gets_each_byte_once() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2066,11 +2059,10 @@ mod tests {
         seen
     }
 
-    /// The race that left a killed terminal's clients waiting forever: the shim
-    /// writes its tombstone, then drains the pty, then sends `x`. `reap_killed`
-    /// saw the tombstone and cut the link in between, and the link task left
-    /// without noting the exit. Here that gap is a fixed 300 ms, well past
-    /// the reaper's 25 ms poll.
+    /// The shim writes its tombstone, then drains the pty, then sends `x`. A
+    /// reaper that cuts the link on the tombstone would leave without noting the
+    /// exit, and the client would wait for a note that never comes; here that
+    /// gap is a fixed 300 ms, well past the reaper's 25 ms poll.
     #[tokio::test]
     async fn a_kill_waits_for_the_exit_frame_that_trails_the_tombstone() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -2136,13 +2128,12 @@ mod tests {
     }
 
     /// Closing a terminal that has already exited, within the [`REAP_AFTER`]
-    /// window its clients get to read the note in, used to start a reaper. The
-    /// reaper waited for a tombstone the link task had already swept, then
-    /// `SIGKILL`ed the dead shell's process group and `SIGTERM`ed the shim pid,
+    /// window its clients get to read the note in, must start no reaper: the
+    /// reaper would wait for a tombstone the link task has already swept, then
+    /// `SIGKILL` the dead shell's process group and `SIGTERM` the shim pid,
     /// either of which may by then belong to an unrelated process. Here both
-    /// pids name live bystanders. The reaper's signals went through
-    /// [`Entry::signal_directly`], as [`Registry::kill_all`]'s do, and that call
-    /// makes the old behaviour show at once instead of three seconds later.
+    /// pids name live bystanders, and [`Entry::signal_directly`] — which is what
+    /// [`Registry::kill_all`] uses — makes any signal show at once.
     #[tokio::test]
     async fn closing_a_terminal_that_already_exited_signals_nobody() {
         let home = tempfile::tempdir().expect("tempdir");
