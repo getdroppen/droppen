@@ -528,7 +528,7 @@ curl -sS -X POST http://127.0.0.1:8700/api/server/self-upgrade \
 本仓库的 [Releases](https://github.com/getdroppen/droppen/releases)，由 GitHub Actions 从本仓库构建并发布，
 每个文件都附构建来源证明（[`docs/releasing.md`](docs/releasing.md)）。新装和升级都可以直接（重）跑
 `curl -fsSL https://droppen.app/install.sh | sh`。二进制的版本号形如 `0.1.0+g<commit>`：构建时
-取环境变量 `DROPPEN_BUILD_REV`（旧名 `RH_BUILD_REV` 照样认），没有就用 `git rev-parse --short HEAD`
+取环境变量 `DROPPEN_BUILD_REV`，没有就用 `git rev-parse --short HEAD`
 （树里有未提交的改动时加 `-dirty`）。自我更新正是靠这个后缀区分同一个 crate 版本的两次构建，
 所以在没有 `.git` 的源码目录里构建时请自己传 `DROPPEN_BUILD_REV`，否则版本号只有光秃秃的 `0.1.0`。
 

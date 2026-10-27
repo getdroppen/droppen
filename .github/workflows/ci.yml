@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     # This job never builds the SPA, and none of the tests needs it.
     env:
-      RH_ALLOW_MISSING_WEB_DIST: "1"
+      DROPPEN_ALLOW_MISSING_WEB_DIST: "1"
       # Keep backtrace file/line data without full type/variable debug info.
       # Four links at a time on four cores; the 16 GiB is the bound.
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"

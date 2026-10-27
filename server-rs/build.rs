@@ -19,13 +19,13 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(web_dist_missing)");
     println!("cargo::rerun-if-changed=../web/dist/index.html");
 
-    // Watched always, read (and an old name warned about) only when needed.
-    rerun_if_changed(&["DROPPEN_ALLOW_MISSING_WEB_DIST", "RH_ALLOW_MISSING_WEB_DIST"]);
+    // Watched always, read only when needed.
+    rerun_if_changed(&["DROPPEN_ALLOW_MISSING_WEB_DIST"]);
     let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/dist/index.html");
     if dist.exists() {
         return;
     }
-    if build_env("DROPPEN_ALLOW_MISSING_WEB_DIST", "RH_ALLOW_MISSING_WEB_DIST").as_deref() != Some("1") {
+    if build_var("DROPPEN_ALLOW_MISSING_WEB_DIST").as_deref() != Some("1") {
         panic!(
             "web/dist/index.html is missing, so this binary would serve a placeholder page \
              instead of the SPA. Run `pnpm build:web` first, or set \
@@ -67,8 +67,8 @@ fn build_identity() {
         }
     }
 
-    rerun_if_changed(&["DROPPEN_BUILD_REV", "RH_BUILD_REV"]);
-    let rev = build_env("DROPPEN_BUILD_REV", "RH_BUILD_REV").unwrap_or_else(git_rev);
+    rerun_if_changed(&["DROPPEN_BUILD_REV"]);
+    let rev = build_var("DROPPEN_BUILD_REV").unwrap_or_else(git_rev);
     println!("cargo::rustc-env=DROPPEN_BUILD_REV={}", rev.trim());
 }
 
@@ -79,24 +79,12 @@ fn rerun_if_changed(names: &[&str]) {
     }
 }
 
-/// A build variable under its name since the rename to Droppen, else under
-/// `old`, the one it had before: trimmed, empty
-/// is unset, and the old name — or both set to different values, when the new
-/// one wins — is a build warning. The server's own reader, `crate::env`, does
-/// the same for the variables it reads when it runs.
-fn build_env(name: &str, old: &str) -> Option<String> {
-    let get = |n: &str| std::env::var(n).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    match (get(name), get(old)) {
-        (None, Some(was)) => {
-            println!("cargo::warning={old} is deprecated: rename it {name} (the old name is still read, for now)");
-            Some(was)
-        }
-        (Some(value), Some(was)) if was != value => {
-            println!("cargo::warning={name} and the deprecated {old} are both set, to different values: {name} is used; remove {old}");
-            Some(value)
-        }
-        (value, _) => value,
-    }
+/// A build variable from the environment: trimmed, and empty counts as unset.
+fn build_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// The short commit this tree is on, marked `-dirty` when it has been edited.
