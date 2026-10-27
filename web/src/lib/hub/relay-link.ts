@@ -19,8 +19,9 @@
  * (`relays.ts`) opens a connection when a channel needs one, and lets it go
  * two minutes after its last channel closed.
  */
-import { decodeFrame, encodeFrame, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
+import { decodeFrame, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
 import { LINK_LOST, type PresenceState } from "./link";
+import { SocketLink, type SocketLike } from "./socket-link";
 
 export type RelayLinkState = "connecting" | "open" | "closed";
 
@@ -35,17 +36,6 @@ const SILENCE_MS = 60_000;
  * app cost tens of seconds.
  */
 export const WAKE_PROBE_MS = 2_000;
-
-interface SocketLike {
-  binaryType: string;
-  readyState: number;
-  send(data: string | ArrayBufferLike | ArrayBufferView): void;
-  close(code?: number, reason?: string): void;
-  onopen: ((ev: unknown) => void) | null;
-  onmessage: ((ev: { data: unknown }) => void) | null;
-  onclose: ((ev: { code?: number; reason?: string }) => void) | null;
-  onerror: ((ev: unknown) => void) | null;
-}
 
 export interface RelayLinkOptions {
   relay: string;
@@ -67,8 +57,7 @@ export interface RelayLinkOptions {
 
 type Listener<T> = (value: T) => void;
 
-export class RelayLink {
-  state: RelayLinkState = "closed";
+export class RelayLink extends SocketLink<RelayLinkState> {
   /** The close code, when it closed. */
   lastClose: number | null = null;
   /** Why it closed or was refused, for the picker's "last failure". */
@@ -79,24 +68,17 @@ export class RelayLink {
   rttMs: number | null = null;
   readonly presence = new Map<string, PresenceState>();
 
-  private socket: SocketLike | null = null;
-  private nextCh = 1;
   private nonce = 0;
   private pings = new Map<number, number>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
-  private lastHeard = 0;
-  private lastBeat = 0;
-  /** The wake-up ping sent on coming back: unless answered, let the connection go. */
-  private probeTimer: ReturnType<typeof setTimeout> | null = null;
-  private probeAnswered = false;
-  private readonly routes = new Map<number, (frame: Frame) => void>();
-  private readonly stateListeners = new Set<Listener<RelayLinkState>>();
   private readonly presenceListeners = new Set<Listener<Map<string, PresenceState>>>();
   private readonly goawayListeners = new Set<Listener<{ retryMs: number; reason: string }>>();
   /** Resolves once signed in; rejects if the sign-in fails. */
   private opening: Promise<void> | null = null;
 
-  constructor(private readonly opts: RelayLinkOptions) {}
+  constructor(private readonly opts: RelayLinkOptions) {
+    super();
+  }
 
   get relay(): string {
     return this.opts.relay;
@@ -109,11 +91,6 @@ export class RelayLink {
   /** Channels open on this connection now. */
   get channels(): number {
     return this.routes.size;
-  }
-
-  onState(fn: Listener<RelayLinkState>): () => void {
-    this.stateListeners.add(fn);
-    return () => this.stateListeners.delete(fn);
   }
 
   onPresence(fn: Listener<Map<string, PresenceState>>): () => void {
@@ -142,22 +119,6 @@ export class RelayLink {
     return true;
   }
 
-  reserve(route: (frame: Frame) => void): number {
-    const ch = this.nextCh++;
-    this.routes.set(ch, route);
-    return ch;
-  }
-
-  release(ch: number): void {
-    this.routes.delete(ch);
-  }
-
-  send(frame: Frame): boolean {
-    if (this.state !== "open" || !this.socket) return false;
-    this.socket.send(encodeFrame(frame));
-    return true;
-  }
-
   /**
    * The page is back (in view, online again): one carrying no channel and
    * not heard from for a beat is let go at once — the page may have slept
@@ -176,10 +137,8 @@ export class RelayLink {
     if (this.probeTimer) return;
     this.beat();
     if (this.state !== "open") return;
-    this.probeAnswered = false;
-    this.probeTimer = setTimeout(() => {
-      this.probeTimer = null;
-      if (this.state !== "open" || this.probeAnswered) return;
+    this.startProbe(this.opts.probeMs ?? WAKE_PROBE_MS, () => {
+      if (this.state !== "open") return;
       const socket = this.socket;
       this.drop(4410, "the relay did not answer the wake-up ping");
       try {
@@ -187,13 +146,7 @@ export class RelayLink {
       } catch {
         // already gone
       }
-    }, this.opts.probeMs ?? WAKE_PROBE_MS);
-  }
-
-  /** The connection answered: no probe is pending. */
-  private answered(): void {
-    if (this.probeTimer) clearTimeout(this.probeTimer);
-    this.probeTimer = null;
+    });
   }
 
   close(): void {
@@ -206,13 +159,12 @@ export class RelayLink {
     }
   }
 
-  private setState(next: RelayLinkState): void {
-    if (this.state === next) return;
-    this.state = next;
+  /** Tell the state listeners over a copy: one may unsubscribe as it hears. */
+  protected notifyState(next: RelayLinkState): void {
     for (const fn of [...this.stateListeners]) fn(next);
   }
 
-  private now(): number {
+  protected now(): number {
     return (this.opts.now ?? Date.now)();
   }
 
@@ -250,10 +202,7 @@ export class RelayLink {
         this.drop(4408, "timeout");
       }, timeoutMs);
       socket.onmessage = (ev) => {
-        if (this.socket !== socket) return;
-        this.lastHeard = this.now();
-        this.probeAnswered = true;
-        this.answered();
+        if (!this.heard(socket)) return;
         if (typeof ev.data === "string") {
           void this.onText(socket, ev.data, () => {
             if (settled) return;
@@ -331,14 +280,11 @@ export class RelayLink {
     if (this.state !== "open") return;
     const heartbeat = this.opts.heartbeatMs ?? HEARTBEAT_MS;
     const silence = this.opts.silenceMs ?? SILENCE_MS;
-    const now = this.now();
     // As on the hub link: a beat far later than due means this page's timers
     // were held (a background tab, a phone asleep) — what was not heard
     // meanwhile says nothing about the relay, so it gets one more interval.
-    const late = now - this.lastBeat > heartbeat * 1.5;
-    this.lastBeat = now;
-    if (late) this.lastHeard = Math.max(this.lastHeard, now - silence + heartbeat);
-    else if (this.lastHeard && now - this.lastHeard >= silence) {
+    const { now, late } = this.markBeat(heartbeat, silence);
+    if (!late && this.lastHeard && now - this.lastHeard >= silence) {
       const socket = this.socket;
       this.drop(4410, "the relay went silent");
       socket?.close(1000, "silent");
@@ -366,10 +312,7 @@ export class RelayLink {
       return;
     }
     if (!ROUTED.has(frame.type) || !("ch" in frame)) return;
-    const route = this.routes.get(frame.ch);
-    if (!route) return;
-    if (frame.type === "close") this.routes.delete(frame.ch);
-    route(frame);
+    this.route(frame);
   }
 
   /** Forget the connection: every channel on it is told it is gone. */

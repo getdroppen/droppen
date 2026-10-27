@@ -51,7 +51,8 @@
  * back (in view, online again): it reconnects at once rather than at the end
  * of a backoff that grew while it was away, or checks the connection now.
  */
-import { decodeFrame, encodeAttestation, encodeFrame, type Attestation, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
+import { decodeFrame, encodeAttestation, type Attestation, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
+import { SocketLink, type SocketLike } from "./socket-link";
 
 export type PresenceState = "online" | "offline" | "unknown";
 export type LinkState = "connecting" | "open" | "closed";
@@ -100,18 +101,6 @@ export const SIGN_IN_REFUSED = 4401;
 /** At most one session renewal per this long for refused sign-ins. */
 const RENEW_EVERY_MS = 30_000;
 
-/** The parts of a browser `WebSocket` this uses. */
-interface SocketLike {
-  binaryType: string;
-  readyState: number;
-  send(data: string | ArrayBufferLike | ArrayBufferView): void;
-  close(code?: number, reason?: string): void;
-  onopen: ((ev: unknown) => void) | null;
-  onmessage: ((ev: { data: unknown }) => void) | null;
-  onclose: ((ev: { code?: number; reason?: string }) => void) | null;
-  onerror: ((ev: unknown) => void) | null;
-}
-
 export interface LinkOptions {
   /** `wss://hub/v1/client`. */
   url: string;
@@ -138,8 +127,7 @@ export interface LinkOptions {
 
 type Listener<T> = (value: T) => void;
 
-export class HubLink {
-  state: LinkState = "closed";
+export class HubLink extends SocketLink<LinkState> {
   /** The last close code from the hub (4401: the sign-in was refused). */
   lastClose: number | null = null;
   readonly presence = new Map<string, MachinePresence>();
@@ -150,34 +138,26 @@ export class HubLink {
    */
   carriesChannels = true;
 
-  private socket: SocketLike | null = null;
   private stopped = true;
   private backoff = BACKOFF_MIN;
   private openedAt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
-  /** When the connection last brought anything, and when the last beat ran (the page's clock). */
-  private lastHeard = 0;
-  private lastBeat = 0;
   private nonce = 0;
-  private nextCh = 1;
   private lastRenewMs = 0;
   /** The hub said where the machines are on this connection. */
   private presenceHeard = false;
   /** A late beat: the page was away, and this connection may have died meanwhile — until it answers. */
   private doubted = false;
-  /** The wake-up ping sent on coming back, and when nothing has answered it: replace the socket. */
-  private probeTimer: ReturnType<typeof setTimeout> | null = null;
-  private probeAnswered = false;
   /** Those waiting for presence to be fresh ({@link waitPresence}). */
   private readonly freshWaiters = new Set<() => void>();
-  private readonly routes = new Map<number, (frame: Frame) => void>();
-  private readonly stateListeners = new Set<Listener<LinkState>>();
   private readonly presenceListeners = new Set<Listener<Map<string, MachinePresence>>>();
   private readonly controlListeners = new Set<Listener<Record<string, unknown>>>();
   private readonly chainListeners = new Set<Listener<Uint8Array[]>>();
 
-  constructor(private readonly opts: LinkOptions) {}
+  constructor(private readonly opts: LinkOptions) {
+    super();
+  }
 
   start(): void {
     if (!this.stopped) return;
@@ -191,11 +171,6 @@ export class HubLink {
     this.reconnectTimer = null;
     this.socket?.close(1000, "bye");
     this.dropConnection();
-  }
-
-  onState(fn: Listener<LinkState>): () => void {
-    this.stateListeners.add(fn);
-    return () => this.stateListeners.delete(fn);
   }
 
   onPresence(fn: Listener<Map<string, MachinePresence>>): () => void {
@@ -289,12 +264,8 @@ export class HubLink {
   /** The beat just sent is the probe: unless anything is heard back in `probeMs`, replace the connection at once. */
   private probe(socket: SocketLike): void {
     if (this.socket !== socket || this.state !== "open" || this.probeTimer) return;
-    this.probeAnswered = false;
-    this.probeTimer = setTimeout(() => {
-      this.probeTimer = null;
+    this.startProbe(this.opts.probeMs ?? WAKE_PROBE_MS, () => {
       if (this.socket !== socket || this.state !== "open") return;
-      // Anything at all from the hub since the probe was sent is an answer.
-      if (this.probeAnswered) return;
       this.lastClose = null;
       this.dropConnection();
       // A dead connection will not finish a closing handshake: let it go in its own time.
@@ -304,13 +275,7 @@ export class HubLink {
         // already gone
       }
       this.reconnectNow();
-    }, this.opts.probeMs ?? WAKE_PROBE_MS);
-  }
-
-  /** Drop the probe: the connection answered, or is gone. */
-  private answered(): void {
-    if (this.probeTimer) clearTimeout(this.probeTimer);
-    this.probeTimer = null;
+    });
   }
 
   /** The next connection now, not at the end of a backoff that was waiting for a socket this page has given up on. */
@@ -320,24 +285,6 @@ export class HubLink {
     this.reconnectTimer = null;
     this.backoff = BACKOFF_MIN;
     this.connect();
-  }
-
-  /** A fresh channel number on this page (never reused), and where its frames go. */
-  reserve(route: (frame: Frame) => void): number {
-    const ch = this.nextCh++;
-    this.routes.set(ch, route);
-    return ch;
-  }
-
-  release(ch: number): void {
-    this.routes.delete(ch);
-  }
-
-  /** Send a frame now; `false` when not signed in (the frame is dropped). */
-  send(frame: Frame): boolean {
-    if (this.state !== "open" || !this.socket) return false;
-    this.socket.send(encodeFrame(frame));
-    return true;
   }
 
   /** Send a control message (a text frame, `{t: …}`) now; `false` when not signed in. */
@@ -350,12 +297,6 @@ export class HubLink {
   /** Hand the hub this device's attestation; it relays it to the account's agents. */
   attest(attestation: Attestation): boolean {
     return this.send({ type: "attest", ch: 0, attestation: encodeAttestation(attestation) });
-  }
-
-  private setState(next: LinkState): void {
-    if (this.state === next) return;
-    this.state = next;
-    for (const fn of this.stateListeners) fn(next);
   }
 
   private connect(): void {
@@ -372,10 +313,7 @@ export class HubLink {
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     socket.onmessage = (ev) => {
-      if (this.socket !== socket) return;
-      this.lastHeard = this.clock();
-      this.probeAnswered = true;
-      this.answered();
+      if (!this.heard(socket)) return;
       if (this.doubted) {
         // It answered after the pause: it lived through it, and told this page every change meanwhile (before this).
         this.doubted = false;
@@ -431,7 +369,7 @@ export class HubLink {
         this.presenceHeard = false;
         this.doubted = false;
         this.openedAt = (this.opts.now ?? Date.now)();
-        this.lastHeard = this.lastBeat = this.clock();
+        this.lastHeard = this.lastBeat = this.now();
         this.heartbeat = setInterval(() => this.beat(socket), this.opts.heartbeatMs ?? HEARTBEAT_MS);
         this.setState("open");
         return;
@@ -470,13 +408,10 @@ export class HubLink {
     if (!ROUTED.has(frame.type) || !("ch" in frame)) return;
     // Remembered before the channel hears it, whoever asked.
     if (frame.type === "close" && frame.code === HUB_NO_CHANNELS) this.carriesChannels = false;
-    const route = this.routes.get(frame.ch);
-    if (!route) return;
-    if (frame.type === "close") this.routes.delete(frame.ch);
-    route(frame);
+    this.route(frame);
   }
 
-  private clock(): number {
+  protected now(): number {
     return (this.opts.now ?? Date.now)();
   }
 
@@ -485,13 +420,9 @@ export class HubLink {
     if (this.socket !== socket || this.state !== "open") return;
     const heartbeat = this.opts.heartbeatMs ?? HEARTBEAT_MS;
     const silence = this.opts.silenceMs ?? SILENCE_MS;
-    const now = this.clock();
-    const late = now - this.lastBeat > heartbeat * 1.5;
-    this.lastBeat = now;
+    const { now, late } = this.markBeat(heartbeat, silence);
     if (late) {
-      // This page's timers were held: one more interval, from now, to hear back.
-      this.lastHeard = Math.max(this.lastHeard, now - silence + heartbeat);
-      // Until it does, what it said of the machines may be from before a socket that died in the pause.
+      // Until it answers, what it said of the machines may be from before a socket that died in the pause.
       this.doubted = true;
     } else if (now - this.lastHeard >= silence) {
       this.lastClose = null;
