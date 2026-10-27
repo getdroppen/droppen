@@ -491,8 +491,9 @@ test("every diagram's cards stay inside it, at every width a pane can have, and 
 test("the tour shows the product: six tabs of real screenshots, each in its frame, in English for every reader and in both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
-  // The tabs, the first one shown.
+  // The tabs, the first one shown; not a carousel: nothing in the tour moves by itself.
   assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
+  assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
   for (const label of ["会话", "分屏", "终端", "云端", "手机", "安全"]) assert.ok(text(tour).includes(label), label);
   // Its picture in both themes, the light one described.

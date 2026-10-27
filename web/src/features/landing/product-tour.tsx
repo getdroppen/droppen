@@ -16,15 +16,11 @@ import { useReducedMotion } from "./motion";
  * The screenshots are made from the real app on a demo home with made-up
  * sessions (`scripts/landing-shots/`), never from anyone's account.
  *
- * The tabs advance by themselves while the tour is on screen, until the
- * reader picks one; under reduced motion they never do.
+ * Not a carousel: a tab changes only when the reader picks it.
  */
 
 export const TOUR_TABS = ["sessions", "split", "terminal", "cloud", "phone", "security"] as const;
 export type TourTab = (typeof TOUR_TABS)[number];
-
-/** How long a tab is shown before the next, while nobody has picked one. */
-export const TOUR_ADVANCE_MS = 7000;
 
 type FrameKind = "app" | "browser" | "phone";
 
@@ -144,10 +140,6 @@ export function ProductTour() {
   const id = useId();
   const reduced = useReducedMotion();
   const [active, setActive] = useState<TourTab>("sessions");
-  // Picked by the reader: the tour stops advancing by itself for good.
-  const [picked, setPicked] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
   const tabs = useRef<Partial<Record<TourTab, HTMLButtonElement | null>>>({});
 
   // Each tab says in one line what its picture shows, in the tab itself: the picture hangs straight off the tab row.
@@ -184,19 +176,6 @@ export function ProductTour() {
     },
   };
 
-  // Advance only while some of the tour is on screen.
-  useEffect(() => {
-    const el = root.current;
-    if (!el || typeof IntersectionObserver !== "function") return;
-    const io = new IntersectionObserver((entries) => setVisible(entries.some((e) => e.isIntersecting)), { threshold: 0.3 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-  useEffect(() => {
-    if (reduced || picked || !visible) return;
-    const timer = setTimeout(() => setActive((tab) => TOUR_TABS[(TOUR_TABS.indexOf(tab) + 1) % TOUR_TABS.length]!), TOUR_ADVANCE_MS);
-    return () => clearTimeout(timer);
-  }, [active, reduced, picked, visible]);
   // Under 1280px the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
   useEffect(() => {
     const tab = tabs.current[active];
@@ -206,7 +185,6 @@ export function ProductTour() {
   }, [active, reduced]);
 
   const pick = (tab: TourTab, focus = false) => {
-    setPicked(true);
     setActive(tab);
     if (focus) tabs.current[tab]?.focus();
   };
@@ -221,7 +199,7 @@ export function ProductTour() {
 
   const now = copy[active];
   return (
-    <div ref={root} data-testid="product-tour">
+    <div data-testid="product-tour">
       <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-xl:flex max-xl:overflow-x-auto max-xl:[scrollbar-width:none]">
         {TOUR_TABS.map((tab, i) => {
           const on = tab === active;
@@ -245,14 +223,8 @@ export function ProductTour() {
             >
               <span className={cn("text-sm leading-5 font-semibold", on ? "text-fg" : "text-muted group-hover:text-fg")}>{copy[tab].label}</span>
               <span className="text-[13px] leading-5 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{copy[tab].line}</span>
-              {/* The active tab's rule; while the tour advances by itself, it fills up to the next tab. */}
-              {on && (
-                <span
-                  key={`${tab}-${picked || reduced}`}
-                  className={cn("absolute inset-x-0 -bottom-px h-0.5 origin-left bg-fg", !picked && !reduced && visible && "animate-[tour-progress_linear_forwards]")}
-                  style={!picked && !reduced && visible ? { animationDuration: `${TOUR_ADVANCE_MS}ms` } : undefined}
-                />
-              )}
+              {/* The active tab's rule. */}
+              {on && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-fg" />}
             </button>
           );
         })}

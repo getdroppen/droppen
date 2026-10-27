@@ -398,16 +398,6 @@ body {
   animation: rh-search-flash 1.4s ease-out;
 }
 
-/* The landing page's product tour: the active tab's rule filling up to the next tab (features/landing/product-tour.tsx). */
-@keyframes tour-progress {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-
 /* Touch chrome. The grey flash mobile WebKit/Blink paint over every tapped
    element is the loudest "this is a web page" tell; it is inherited, so one
    declaration on the root covers the app. */
