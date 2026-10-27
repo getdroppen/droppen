@@ -1,16 +1,20 @@
 /*
  * The small pieces step 01's cards are built of: the status chip, a command
  * shown verbatim with its copy button, the method picker, the embedded
- * terminal of a running task, and the last lines of a failed one.
+ * terminal of a running task, the last lines of a failed one, and the card
+ * action primitives (the main button, the link-style button, the official
+ * guide link, the action row and the quota bar).
  */
-import { Check, Copy, SquareTerminal } from "lucide-react";
+import { ArrowUpRight, Check, Copy, SquareTerminal } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
 import { Button } from "@/components/ui/button";
+import type { QuotaWindow } from "@/features/accounts/use-accounts";
 import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
 import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
+import { formatResetAt } from "@/lib/format";
 import { elapsed } from "./tools-model";
 
 /** What a status chip says with its colour: only the state, never decoration. */
@@ -165,4 +169,81 @@ export function TailBlock({ lines }: { lines: string[] }) {
       {lines.join("\n")}
     </pre>
   );
+}
+
+/** A quota bar: how much of the window is gone, and when it starts over. */
+export function QuotaBar({ label, window }: { label: string; window: QuotaWindow }) {
+  const { t } = useTranslation();
+  const used = Math.max(0, Math.min(100, Math.round(window.usedPercent)));
+  const resets = formatResetAt(window.resetsAt);
+  return (
+    <div data-quota={label} className="min-w-0">
+      <div className="font-mono text-2xs leading-4 text-muted">{t(label)}</div>
+      <div className="mt-1 flex items-center gap-2">
+        <span className="h-1 w-14 shrink-0 overflow-hidden bg-border">
+          <span className={cn("block h-full", used >= 90 ? "bg-danger" : used >= 80 ? "bg-warn" : "bg-fg")} style={{ width: `${used}%` }} />
+        </span>
+        <span className="font-mono text-2xs whitespace-nowrap tabular-nums">{t("{{n}}% used", { n: used })}</span>
+      </div>
+      {resets && <div className="mt-0.5 font-mono text-[10px] leading-3.5 text-faint">{t("resets {{t}}", { t: resets })}</div>}
+    </div>
+  );
+}
+
+/** A text button that reads as a link (the secondary ways of a card). */
+export function LinkButton({ children, onClick, disabled, testId }: { children: ReactNode; onClick: () => void; disabled?: boolean; testId?: string }) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-7 items-center text-xs text-fg underline decoration-border-strong underline-offset-[3px] hover:decoration-fg disabled:pointer-events-none disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** An official page, opened outside the app. */
+export function DocsLink({ href, label, primary = false, className }: { href: string; label: string; primary?: boolean; className?: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-variant={primary ? "primary" : undefined}
+      data-guide-primary={primary ? "" : undefined}
+      className={cn(
+        primary
+          ? "inline-flex h-7 items-center gap-1 border border-fg bg-fg px-3 text-xs font-medium text-bg hover:bg-fg/85"
+          : "inline-flex h-7 items-center gap-0.5 text-xs text-fg underline decoration-border-strong underline-offset-[3px] hover:decoration-fg",
+        className,
+      )}
+    >
+      {label}
+      <ArrowUpRight className="size-3" aria-hidden="true" />
+    </a>
+  );
+}
+
+/** The card's main button: the page's primary when this card holds it. */
+export function MainButton({ primary, children, onClick, disabled, testId }: { primary: boolean; children: ReactNode; onClick: () => void; disabled?: boolean; testId?: string }) {
+  return (
+    <Button variant={primary ? "primary" : "secondary"} data-guide-primary={primary ? "" : undefined} data-testid={testId} disabled={disabled} onClick={onClick}>
+      {children}
+    </Button>
+  );
+}
+
+export function Actions({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-2", className)}>{children}</div>;
+}
+
+/** Why a button is grey (this page not the app's). */
+export function Blocked({ online, canInstall }: { online: boolean; canInstall: boolean }) {
+  const { t } = useTranslation();
+  if (!canInstall) return <p className="mt-2 text-2xs leading-4 text-muted">{t("These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.")}</p>;
+  if (!online) return <p className="mt-2 text-2xs leading-4 text-danger">{t("Offline. Installing, signing in and Droppen need the internet; everything else works.")}</p>;
+  return null;
 }
