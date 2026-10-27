@@ -226,7 +226,6 @@ export const welcomeJa: Record<string, string> = {
   "Run setup again": "もう一度実行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code にログインしました。Droppen に戻れます。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "Signing in from the app is coming soon": "アプリからのログインはまもなく対応します", // where.droppen.soon
   "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "この Mac は Droppen アカウントに残ります。外すには 設定 → アクセス → Droppen から。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "このウィンドウからはこのデバイスをサインインできません。設定 → アクセス → Droppen を見てください。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)

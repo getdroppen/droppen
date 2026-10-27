@@ -226,7 +226,6 @@ export const welcomeZhTW: Record<string, string> = {
   "Run setup again": "重新執行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登入，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "Signing in from the app is coming soon": "很快就能在應用程式裡登入", // where.droppen.soon
   "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "這台 Mac 仍在你的 Droppen 帳戶裡。要把它移出，請到 設定 → 存取 → Droppen。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "這個視窗不能讓這台裝置登入。請看 設定 → 存取 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)

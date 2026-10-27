@@ -226,7 +226,6 @@ export const welcomeZhCN: Record<string, string> = {
   "Run setup again": "重新运行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登录，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "Signing in from the app is coming soon": "很快就能在应用里登录", // where.droppen.soon
   "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台 Mac 仍在你的 Droppen 账户里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → 访问 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
