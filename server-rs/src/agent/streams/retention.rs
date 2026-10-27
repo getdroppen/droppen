@@ -153,11 +153,13 @@ pub fn evictions(mut candidates: Vec<Candidate>, usage: u64, limit: u64, now_ms:
     out
 }
 
-/// What a stream's copy is estimated to hold on the hub: its pages (as
-/// sealed, when known; else the state they hold) and its tail.
-pub fn stream_bytes(row: &Row) -> u64 {
-    let pages: u64 = row.pages.iter().map(|p| p.size).sum();
-    pages.max(row.state_bytes.max(0) as u64) + row.tail_bytes.max(0) as u64
+impl Row {
+    /// What a stream's copy is estimated to hold on the hub: its pages (as
+    /// sealed, when known; else the state they hold) and its tail.
+    pub fn stream_bytes(&self) -> u64 {
+        let pages: u64 = self.pages.iter().map(|p| p.size).sum();
+        pages.max(self.state_bytes.max(0) as u64) + self.tail_bytes.max(0) as u64
+    }
 }
 
 /// Where a copy kept to entries from `cutoff` on starts, given each item's
@@ -408,9 +410,9 @@ mod tests {
         let mut index = row.clone();
         index.kind = Kind::Index;
         assert!(!trim_due(&index, cutoff, 0, now));
-        assert_eq!(stream_bytes(&row), 200 + 10, "pages as sealed, and the tail");
+        assert_eq!(row.stream_bytes(), 200 + 10, "pages as sealed, and the tail");
         assert_eq!(
-            stream_bytes(&session_row(Vec::new(), None)),
+            session_row(Vec::new(), None).stream_bytes(),
             150 + 10,
             "or the state, when page sizes are unknown"
         );

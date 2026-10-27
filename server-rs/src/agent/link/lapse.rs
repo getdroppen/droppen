@@ -64,7 +64,7 @@ pub(in crate::agent) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, 
                     Gone::Paused
                 } else if chain.may_control(device, &st.machine).is_err() {
                     Gone::NotAccepted
-                } else if !holds_named_key(chain, device, key) {
+                } else if !chain.holds_named_key(device, key) {
                     Gone::Renewed
                 } else {
                     return None;
@@ -152,7 +152,7 @@ pub(in crate::agent) fn word_of(st: &AgentState, chain: &ChainState, att: &Attes
     Word::Counts(att.time_ms)
 }
 
-/// [`sole_admin_at`], worked out once per seq ([`AgentState::sole_admins`]).
+/// [`ChainStateExt::sole_admin_at`], worked out once per seq ([`AgentState::sole_admins`]).
 pub(in crate::agent) fn cached_sole_admin_at(st: &AgentState, chain: &ChainState, seq: u64) -> Option<String> {
     let hash = chain.hash_at(seq)?;
     let mut known = st.sole_admins.lock().expect("sole admins");
@@ -161,19 +161,34 @@ pub(in crate::agent) fn cached_sole_admin_at(st: &AgentState, chain: &ChainState
             return sole.clone();
         }
     }
-    let sole = sole_admin_at(chain, seq);
+    let sole = chain.sole_admin_at(seq);
     known.insert(seq, (hash, sole.clone()));
     sole
 }
 
-/// The account's only admin as of entry `seq` of `chain`, if it had exactly
-/// one then (this view's entries up to there, verified again).
-pub(in crate::agent) fn sole_admin_at(chain: &ChainState, seq: u64) -> Option<String> {
-    let upto = usize::try_from(seq).ok()?.checked_add(1)?;
-    let view = ChainState::verify(chain.entries().get(..upto)?, None, &mut ChainClock::history()).ok()?;
-    let mut admins = view.admins();
-    let only = admins.next()?;
-    admins.next().is_none().then(|| only.info.id.clone())
+/// The chain views the control rules judge.
+pub(in crate::agent) trait ChainStateExt {
+    /// The account's only admin as of entry `seq` of this chain, if it had
+    /// exactly one then (this view's entries up to there, verified again).
+    fn sole_admin_at(&self, seq: u64) -> Option<String>;
+
+    /// Whether `key` — the static key a channel of `device` was opened with — is
+    /// the DH key the chain names for `device` now.
+    fn holds_named_key(&self, device: &str, key: &[u8; 32]) -> bool;
+}
+
+impl ChainStateExt for ChainState {
+    fn sole_admin_at(&self, seq: u64) -> Option<String> {
+        let upto = usize::try_from(seq).ok()?.checked_add(1)?;
+        let view = ChainState::verify(self.entries().get(..upto)?, None, &mut ChainClock::history()).ok()?;
+        let mut admins = view.admins();
+        let only = admins.next()?;
+        admins.next().is_none().then(|| only.info.id.clone())
+    }
+
+    fn holds_named_key(&self, device: &str, key: &[u8; 32]) -> bool {
+        self.device_record(device).is_some_and(|d| d.info.dh_key == *key)
+    }
 }
 
 /// When an open channel's control lapses (local-aggregator §3.4):
@@ -301,10 +316,4 @@ pub(in crate::agent) enum Gone {
 /// The close reason of a channel whose control a renewal pause took away.
 pub(in crate::agent) const PAUSED_REASON: &str =
     "control is paused while identity keys are renewed: connect again once the renewal is done";
-
-/// Whether `key` — the static key a channel of `device` was opened with — is
-/// the DH key the chain names for `device` now.
-pub(in crate::agent) fn holds_named_key(chain: &rh_proto::chain::ChainState, device: &str, key: &[u8; 32]) -> bool {
-    chain.device_record(device).is_some_and(|d| d.info.dh_key == *key)
-}
 

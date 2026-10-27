@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use super::alerts::{alert_account_changes, raise_alarm};
 use super::bridge;
 use super::hub::now_ms;
-use super::lapse::{close_lapsed, drop_removed, holds_named_key, lapse_wait, on_removed, ChannelLapse};
+use super::lapse::{close_lapsed, drop_removed, lapse_wait, on_removed, ChainStateExt, ChannelLapse};
 use super::local::AgentLocal;
 use super::mail::retry_mail;
 use super::state::{self, AgentState};
@@ -25,11 +25,17 @@ use super::{Pending, Routes, Shared, AGENT_UNSAVED, CHANNEL_STALE, MAX_PENDING, 
 
 /// Whether a chain error is a conflict between two views — a fork, a
 /// rollback, another genesis or account key — rather than an entry refused.
-pub(in crate::agent) fn is_conflict(error: &ChainError) -> bool {
-    matches!(
-        error,
-        ChainError::Fork { .. } | ChainError::Rollback { .. } | ChainError::GenesisMismatch | ChainError::PinMismatch
-    )
+pub(in crate::agent) trait ChainErrorExt {
+    fn is_conflict(&self) -> bool;
+}
+
+impl ChainErrorExt for ChainError {
+    fn is_conflict(&self) -> bool {
+        matches!(
+            self,
+            ChainError::Fork { .. } | ChainError::Rollback { .. } | ChainError::GenesisMismatch | ChainError::PinMismatch
+        )
+    }
 }
 
 pub(in crate::agent) fn server_info(direct: bool) -> Vec<u8> {
@@ -336,7 +342,7 @@ pub(in crate::agent) fn on_frame(
             }
             match absorbed.error {
                 None => {}
-                Some(e) if is_conflict(&e) => {
+                Some(e) if e.is_conflict() => {
                     raise_alarm(
                         shared,
                         format!("the hub served a device chain that conflicts with this device's ({e}); refusing it"),
@@ -586,7 +592,7 @@ pub(in crate::agent) fn accept(
                         let current = st
                             .chain
                             .as_ref()
-                            .is_some_and(|c| c.may_control(&device, &st.machine).is_ok() && holds_named_key(c, &device, &key));
+                            .is_some_and(|c| c.may_control(&device, &st.machine).is_ok() && c.holds_named_key(&device, &key));
                         (current, lapse.lock().expect("channel lapse").holds(&st, now_ms()))
                     };
                     if !current {

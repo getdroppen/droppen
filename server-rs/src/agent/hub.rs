@@ -178,8 +178,14 @@ pub fn refusal(answer: &Value) -> LoginError {
 
 /// Whether the hub's `welcome` offers `feature` (a hub from before features
 /// offers none).
-pub fn offers(welcome: &Value, feature: &str) -> bool {
-    welcome["features"].as_array().is_some_and(|f| f.iter().any(|v| v == feature))
+pub(crate) trait WelcomeExt {
+    fn offers(&self, feature: &str) -> bool;
+}
+
+impl WelcomeExt for Value {
+    fn offers(&self, feature: &str) -> bool {
+        self["features"].as_array().is_some_and(|f| f.iter().any(|v| v == feature))
+    }
 }
 
 /// Sign in as an enrolled machine; `Ok` once the hub said `welcome`.
@@ -366,10 +372,10 @@ mod tests {
 
     #[test]
     fn a_welcome_offers_what_its_features_name() {
-        assert!(offers(&json!({"t": "welcome", "features": ["rotate/1"]}), "rotate/1"));
-        assert!(!offers(&json!({"t": "welcome", "features": []}), "rotate/1"));
-        assert!(!offers(&json!({"t": "welcome"}), "rotate/1"), "a hub from before features");
-        assert!(!offers(&json!({"t": "welcome", "features": "rotate/1"}), "rotate/1"));
+        assert!(json!({"t": "welcome", "features": ["rotate/1"]}).offers("rotate/1"));
+        assert!(!json!({"t": "welcome", "features": []}).offers("rotate/1"));
+        assert!(!json!({"t": "welcome"}).offers("rotate/1"), "a hub from before features");
+        assert!(!json!({"t": "welcome", "features": "rotate/1"}).offers("rotate/1"));
     }
 
     #[test]

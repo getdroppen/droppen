@@ -76,9 +76,11 @@ impl Scope {
     }
 }
 
-/// The key a row is filed under in the index: `source/id`.
-pub fn row_key(row: &SessionSummary) -> String {
-    format!("{}/{}", row.source.as_str(), row.id)
+impl SessionSummary {
+    /// The key a row is filed under in the index: `source/id`.
+    pub fn row_key(&self) -> String {
+        format!("{}/{}", self.source.as_str(), self.id)
+    }
 }
 
 // ------------------------------------------------------------------ sessions
@@ -136,19 +138,21 @@ pub enum Delta {
     Rebuild,
 }
 
-/// The newest position whose fingerprint the copy and the transcript agree
-/// on decides: from there to the end is the delta.
-pub fn session_delta(cursor: &SessionCursor, chain: &[Fp]) -> Delta {
-    let len = chain.len().saturating_sub(1);
-    for (at, fp) in cursor.fps.iter().rev() {
-        if chain.get(*at).is_some_and(|ours| encode_fp(ours) == *fp) {
-            if *at == cursor.end && len == cursor.end {
-                return Delta::None;
+impl SessionCursor {
+    /// The newest position whose fingerprint the copy and the transcript agree
+    /// on decides: from there to the end is the delta.
+    pub fn delta(&self, chain: &[Fp]) -> Delta {
+        let len = chain.len().saturating_sub(1);
+        for (at, fp) in self.fps.iter().rev() {
+            if chain.get(*at).is_some_and(|ours| encode_fp(ours) == *fp) {
+                if *at == self.end && len == self.end {
+                    return Delta::None;
+                }
+                return Delta::From(*at);
             }
-            return Delta::From(*at);
         }
+        Delta::Rebuild
     }
-    Delta::Rebuild
 }
 
 /// Cut `item` (an item's JSON) down to `max` bytes: halve its longest strings
@@ -297,7 +301,7 @@ pub fn window_body(base: usize, before: Option<u64>, chain: &[Fp]) -> Vec<u8> {
 pub fn index_rows(rows: &[SessionSummary], scope: &Scope, now_ms: u64) -> BTreeMap<String, String> {
     rows.iter()
         .filter(|r| scope.admits(r, now_ms))
-        .filter_map(|r| serde_json::to_string(r).ok().map(|json| (row_key(r), json)))
+        .filter_map(|r| serde_json::to_string(r).ok().map(|json| (r.row_key(), json)))
         .collect()
 }
 
@@ -435,10 +439,39 @@ pub fn status_body(
 
 /// A status body as JSON bytes, so adding a field is a step in the builder
 /// chain and the parse/set/re-encode lives in one place.
-trait StatusBodyExt {
+pub(crate) trait StatusBodyExt {
     /// `self` with `key` set to `value`; a body that does not parse, or a
     /// `None`, is left untouched.
     fn with_field(self, key: &str, value: Option<Value>) -> Self;
+
+    /// A status body with what this computer runs in it: `os` (`{name,
+    /// version, arch}`, [`crate::agent::system::os`]) and `agentVersion` (this
+    /// server's version). Older readers ignore both; the web app falls back to
+    /// `settings.platform` and `settings.serverVersion` without them.
+    fn with_system(self, os: &Value, agent_version: &str) -> Self;
+
+    /// A status body with the machine's chain alarms in it (`alarms`: `[{atMs,
+    /// what}]`, oldest first; left out when there are none). Every device of the
+    /// account reads the status stream, so this is how a fork this machine saw
+    /// reaches all of them — the hub can withhold the record, but not forge or
+    /// alter it, and the machine-signed head says when it is behind.
+    fn with_alarms(self, alarms: &[crate::agent::state::Alarm]) -> Self;
+
+    /// A status body with the account changes this machine saw in it
+    /// (`changes`: `[{atMs, what}]`, oldest first, at most
+    /// [`crate::agent::state::MAX_CHANGES`]; left out when there are none):
+    /// machines and devices added or removed, recovery joins — every device of
+    /// the account reads them, whoever made the change.
+    fn with_changes(self, changes: &[crate::agent::state::Alarm]) -> Self;
+
+    /// A status body with which devices ever opened a channel to this machine in
+    /// it (`controllers`: `{from, fromMs, seq, devices: [{id, firstMs}]}`,
+    /// [`crate::agent::state::Controllers`]), always — an empty list included,
+    /// `null` before the agent has a chain; a body without the field is from an
+    /// agent that does not keep the record. When a device that could control
+    /// this machine no longer can, the page says whether it ever connected. A
+    /// new device, or the chain moving on, is a new record.
+    fn with_controllers(self, controllers: Option<&crate::agent::state::Controllers>) -> Self;
 }
 
 impl StatusBodyExt for Vec<u8> {
@@ -452,51 +485,30 @@ impl StatusBodyExt for Vec<u8> {
         v[key] = value;
         serde_json::to_vec(&v).unwrap_or(self)
     }
-}
 
-/// A status body with what this computer runs in it: `os` (`{name,
-/// version, arch}`, [`crate::agent::system::os`]) and `agentVersion` (this
-/// server's version). Older readers ignore both; the web app falls back to
-/// `settings.platform` and `settings.serverVersion` without them.
-pub fn with_system(body: Vec<u8>, os: &Value, agent_version: &str) -> Vec<u8> {
-    body.with_field("os", Some(os.clone()))
-        .with_field("agentVersion", Some(Value::String(agent_version.to_string())))
-}
+    fn with_system(self, os: &Value, agent_version: &str) -> Self {
+        self.with_field("os", Some(os.clone()))
+            .with_field("agentVersion", Some(Value::String(agent_version.to_string())))
+    }
 
-/// A status body with the machine's chain alarms in it (`alarms`: `[{atMs,
-/// what}]`, oldest first; left out when there are none). Every device of the
-/// account reads the status stream, so this is how a fork this machine saw
-/// reaches all of them — the hub can withhold the record, but not forge or
-/// alter it, and the machine-signed head says when it is behind.
-pub fn with_alarms(body: Vec<u8>, alarms: &[crate::agent::state::Alarm]) -> Vec<u8> {
-    body.with_field(
-        "alarms",
-        (!alarms.is_empty()).then(|| serde_json::to_value(alarms).unwrap_or(Value::Null)),
-    )
-}
+    fn with_alarms(self, alarms: &[crate::agent::state::Alarm]) -> Self {
+        self.with_field(
+            "alarms",
+            (!alarms.is_empty()).then(|| serde_json::to_value(alarms).unwrap_or(Value::Null)),
+        )
+    }
 
-/// A status body with the account changes this machine saw in it
-/// (`changes`: `[{atMs, what}]`, oldest first, at most
-/// [`crate::agent::state::MAX_CHANGES`]; left out when there are none):
-/// machines and devices added or removed, recovery joins — every device of
-/// the account reads them, whoever made the change.
-pub fn with_changes(body: Vec<u8>, changes: &[crate::agent::state::Alarm]) -> Vec<u8> {
-    body.with_field(
-        "changes",
-        (!changes.is_empty()).then(|| serde_json::to_value(changes).unwrap_or(Value::Null)),
-    )
-}
+    fn with_changes(self, changes: &[crate::agent::state::Alarm]) -> Self {
+        self.with_field(
+            "changes",
+            (!changes.is_empty()).then(|| serde_json::to_value(changes).unwrap_or(Value::Null)),
+        )
+    }
 
-/// A status body with which devices ever opened a channel to this machine in
-/// it (`controllers`: `{from, fromMs, seq, devices: [{id, firstMs}]}`,
-/// [`crate::agent::state::Controllers`]), always — an empty list included,
-/// `null` before the agent has a chain; a body without the field is from an
-/// agent that does not keep the record. When a device that could control
-/// this machine no longer can, the page says whether it ever connected. A
-/// new device, or the chain moving on, is a new record.
-pub fn with_controllers(body: Vec<u8>, controllers: Option<&crate::agent::state::Controllers>) -> Vec<u8> {
-    let value = controllers.and_then(|c| serde_json::to_value(c).ok()).unwrap_or(Value::Null);
-    body.with_field("controllers", Some(value))
+    fn with_controllers(self, controllers: Option<&crate::agent::state::Controllers>) -> Self {
+        let value = controllers.and_then(|c| serde_json::to_value(c).ok()).unwrap_or(Value::Null);
+        self.with_field("controllers", Some(value))
+    }
 }
 
 /// The part of a status body that changing means a new record (not `asOf`).
@@ -535,22 +547,22 @@ mod tests {
         let mut list = items(10, 5);
         let chain = fingerprint_chain(path, &list);
         let cursor = SessionCursor::at(0, 10, &chain, "s");
-        assert_eq!(session_delta(&cursor, &chain), Delta::None);
+        assert_eq!(cursor.delta(&chain), Delta::None);
         list.extend(items(2, 7));
         let grown = fingerprint_chain(path, &list);
-        assert_eq!(session_delta(&cursor, &grown), Delta::From(10), "appended: from the old end");
+        assert_eq!(cursor.delta(&grown), Delta::From(10), "appended: from the old end");
         // The last item rewritten in place (a tool result attaching).
         let mut rewritten = items(10, 5);
         rewritten[9].text = "changed".into();
         let chain2 = fingerprint_chain(path, &rewritten);
-        assert_eq!(session_delta(&cursor, &chain2), Delta::From(9));
+        assert_eq!(cursor.delta(&chain2), Delta::From(9));
         // Rewritten further back than the cursor remembers: rebuild.
         let mut early = items(10, 5);
         early[0].text = "changed".into();
-        assert_eq!(session_delta(&cursor, &fingerprint_chain(path, &early)), Delta::Rebuild);
+        assert_eq!(cursor.delta(&fingerprint_chain(path, &early)), Delta::Rebuild);
         // Another file entirely.
         assert_eq!(
-            session_delta(&cursor, &fingerprint_chain(std::path::Path::new("/tmp/other"), &list)),
+            cursor.delta(&fingerprint_chain(std::path::Path::new("/tmp/other"), &list)),
             Delta::Rebuild
         );
     }
@@ -776,7 +788,7 @@ mod tests {
     fn the_status_says_what_the_computer_runs() {
         let body = status_body(1, Some("box".into()), Some(0), None, None, None, Value::Null);
         let os = serde_json::json!({"name": "macos", "version": "15.3", "arch": "aarch64"});
-        let with = with_system(body.clone(), &os, "0.2.122");
+        let with = body.clone().with_system(&os, "0.2.122");
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!((v["os"]["name"].as_str(), v["agentVersion"].as_str()), (Some("macos"), Some("0.2.122")));
         assert_eq!(v["displayName"], "box", "the rest is as it was");
@@ -785,19 +797,19 @@ mod tests {
             status_fingerprint(&with),
             "an upgrade is a change worth writing"
         );
-        assert_eq!(with_system(b"not json".to_vec(), &os, "x"), b"not json".to_vec());
+        assert_eq!(b"not json".to_vec().with_system(&os, "x"), b"not json".to_vec());
     }
 
     #[test]
     fn account_changes_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
         let body = status_body(1, Some("box".into()), Some(0), None, None, None, Value::Null);
-        assert_eq!(with_changes(body.clone(), &[]), body, "no changes, no field");
+        assert_eq!(body.clone().with_changes(&[]), body, "no changes, no field");
         let changes = [Alarm {
             at_ms: 7,
             what: "device m-2 (runs AI) was added by d-1".into(),
         }];
-        let with = with_changes(body.clone(), &changes);
+        let with = body.clone().with_changes(&changes);
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!(v["changes"][0]["atMs"], 7);
         assert_eq!(v["changes"][0]["what"], "device m-2 (runs AI) was added by d-1");
@@ -814,7 +826,7 @@ mod tests {
             seq: 4,
             devices: Vec::new(),
         };
-        let empty = with_controllers(body.clone(), Some(&nobody));
+        let empty = body.clone().with_controllers(Some(&nobody));
         let v: Value = serde_json::from_slice(&empty).unwrap();
         assert_eq!(
             v["controllers"],
@@ -830,31 +842,31 @@ mod tests {
             }],
             ..nobody.clone()
         };
-        let named: Value = serde_json::from_slice(&with_controllers(body.clone(), Some(&one))).unwrap();
+        let named: Value = serde_json::from_slice(&body.clone().with_controllers(Some(&one))).unwrap();
         assert_eq!(named["controllers"]["devices"], serde_json::json!([{"id": "d-1", "firstMs": 2_000}]));
-        let with_one = with_controllers(body.clone(), Some(&one));
+        let with_one = body.clone().with_controllers(Some(&one));
         assert_ne!(status_fingerprint(&with_one), status_fingerprint(&empty), "a device that opened a channel is a new record");
         let moved = Controllers { seq: 5, ..nobody };
         assert_ne!(
-            status_fingerprint(&with_controllers(body.clone(), Some(&moved))),
+            status_fingerprint(&body.clone().with_controllers(Some(&moved))),
             status_fingerprint(&empty),
             "and so is the chain moving on"
         );
-        let unknown: Value = serde_json::from_slice(&with_controllers(body.clone(), None)).unwrap();
+        let unknown: Value = serde_json::from_slice(&body.clone().with_controllers(None)).unwrap();
         assert_eq!(unknown["controllers"], Value::Null, "no chain yet: nothing to say");
-        assert_eq!(with_controllers(b"not json".to_vec(), Some(&one)), b"not json".to_vec());
+        assert_eq!(b"not json".to_vec().with_controllers(Some(&one)), b"not json".to_vec());
     }
 
     #[test]
     fn alarms_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
         let body = status_body(5, Some("studio".into()), Some(0), None, None, None, Value::Null);
-        assert_eq!(with_alarms(body.clone(), &[]), body, "no alarms, no field");
+        assert_eq!(body.clone().with_alarms(&[]), body, "no alarms, no field");
         let alarms = [Alarm {
             at_ms: 4,
             what: "the hub served a device chain that conflicts with this device's".into(),
         }];
-        let with = with_alarms(body.clone(), &alarms);
+        let with = body.clone().with_alarms(&alarms);
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!(v["alarms"][0]["atMs"], 4);
         assert!(v["alarms"][0]["what"].as_str().unwrap().contains("conflicts"));

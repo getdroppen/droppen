@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use super::admit::{expire_pending, on_frame};
 use super::alerts::ask_again_for_held;
 use super::bridge::Loopback;
-use super::hub::{self, now_ms, Backoff, HEARTBEAT, SILENCE};
+use super::hub::{self, now_ms, Backoff, WelcomeExt, HEARTBEAT, SILENCE};
 use super::lapse::{drop_ended, drop_removed};
 use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
@@ -568,7 +568,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         }
     }
     let session = super::rotation::HubSession {
-        offered: hub::offers(&welcome, super::ROTATE_FEATURE),
+        offered: welcome.offers(super::ROTATE_FEATURE),
         nonce,
         staged_key: staged_key.is_some(),
         since_ms: since,

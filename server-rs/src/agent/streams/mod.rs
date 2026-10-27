@@ -61,7 +61,7 @@ use tokio_util::sync::CancellationToken;
 use crate::drive::Drive;
 use crate::feed::{encode_fp, Transcript};
 use crate::sessions::{Paths, SessionSummary, Source};
-use content::{Delta, Scope, SessionCursor};
+use content::{Delta, Scope, SessionCursor, StatusBodyExt};
 use retention::HubPlan;
 use store::{IndexDiff, Kind, PageRef, Row, Store};
 use writer::{Answer, PageSpec, Plan, Step, Writer};
@@ -994,7 +994,7 @@ impl Sync {
         };
         let rows = self.list().await;
         let now = now_ms();
-        let listed: HashMap<String, &SessionSummary> = rows.iter().map(|r| (content::row_key(r), r)).collect();
+        let listed: HashMap<String, &SessionSummary> = rows.iter().map(|r| (r.row_key(), r)).collect();
         // Space first: what it deletes leaves the index in this same round.
         self.space_round(&listed, now);
         let held_out = self.held_out(&listed, now);
@@ -1051,13 +1051,13 @@ impl Sync {
         let sessions = naming::by_session(&all);
         let in_scope: Vec<&SessionSummary> = rows
             .iter()
-            .filter(|r| scope.admits(r, now) && !held_out.contains(&content::row_key(r)))
+            .filter(|r| scope.admits(r, now) && !held_out.contains(&r.row_key()))
             .collect();
         for summary in in_scope {
             if self.writer.in_flight() >= MAX_IN_FLIGHT || !self.budget.available() {
                 break;
             }
-            let group = sessions.get(&content::row_key(summary)).map_or(&[][..], Vec::as_slice);
+            let group = sessions.get(&summary.row_key()).map_or(&[][..], Vec::as_slice);
             let row = match naming::current(group, first) {
                 Some(row) => row.clone(),
                 None => {
@@ -1258,7 +1258,7 @@ impl Sync {
             candidates.push(retention::Candidate {
                 stream: row.stream,
                 updated_ms,
-                bytes: retention::stream_bytes(&row),
+                bytes: row.stream_bytes(),
             });
             names.insert(row.stream, (key, updated_at.unwrap_or_else(|| ms_iso(row.updated_ms))));
         }
@@ -1352,7 +1352,7 @@ impl Sync {
             return Ok(());
         }
         let cursor = SessionCursor::parse(&row.cursor).unwrap_or_default();
-        match content::session_delta(&cursor, &chain) {
+        match cursor.delta(&chain) {
             Delta::None => {}
             Delta::From(from) if from >= cursor.start => {
                 let bytes: usize = transcript.items[from..]
@@ -1526,20 +1526,11 @@ impl Sync {
         // The machine key epoch it writes under: a device compares it with the
         // chain's newest and hands the key over again if this machine lags.
         let mk_epoch = self.mk().map(|(e, _)| e);
-        content::with_controllers(
-            content::with_changes(
-                content::with_alarms(
-                    content::with_system(
-                        content::status_body(now_ms(), name, mk_epoch, settings, accounts, quota, cli),
-                        crate::agent::system::os(),
-                        crate::api::SERVER_VERSION,
-                    ),
-                    &self.alarms,
-                ),
-                &self.changes,
-            ),
-            (self.controllers)().as_ref(),
-        )
+        content::status_body(now_ms(), name, mk_epoch, settings, accounts, quota, cli)
+            .with_system(crate::agent::system::os(), crate::api::SERVER_VERSION)
+            .with_alarms(&self.alarms)
+            .with_changes(&self.changes)
+            .with_controllers((self.controllers)().as_ref())
     }
 
     async fn cli_versions(&mut self) -> Value {
