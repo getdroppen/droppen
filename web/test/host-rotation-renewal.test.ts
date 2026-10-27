@@ -21,7 +21,7 @@ import { type AccountView, hostDispute, HubApiError, MAIL_HOST_KEY, rotationPush
 import { ABANDONED_MS, checkRetiredLogin, checkStatement, isolatedHosts, RenewalRunner, renewalOrder } from "../src/lib/hub/renewal.js";
 import { enablePush, followPushRenewals, followRenewedKey, type PushEnv, pushRenewalNeeded, readPushRecord } from "../src/lib/push.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
-import { browserOf, browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
+import { browserOf, browserStorage, createV2Genesis, FakeAgents, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 import type { RotateRequest } from "../src/lib/hub/deliver.js";
 
 const rotated = (a: CloudAccount): string[] =>
@@ -36,31 +36,6 @@ const renewal = (kind: RenewalError["kind"], detail?: string) => (e: unknown) =>
 const quick = { pollMs: 1, hostKeysWait: { forMs: 0, everyMs: 1 } };
 
 /** A new browser paired from `a` (QR), as an admin or not. */
-async function pairAs(hub: FakeKeysHub, a: CloudAccount, opts: { admin: boolean }): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await a.pairDevice(c, opts);
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
-  } finally {
-    r.stop();
-  }
-  await b.sync();
-  return b;
-}
-
 /**
  * A v3 account: admin `a`, hosts m-1, m-2 and m-3 (each declared `rotate/1`),
  * the agents that answer for them, and browser X (not an admin) that m-1 lets
@@ -81,7 +56,7 @@ async function account(opts: { chain?: boolean; policy?: boolean } = {}) {
     hub.rotates.add(h.id);
   }
   if (opts.policy !== false) await a.setRenewalPolicy(false);
-  const x = await pairAs(hub, a, { admin: false });
+  const x = await pairBrowser(hub, a, { admin: false });
   await a.setAccept("m-1", { type: "devices", ids: [x.deviceId] });
   if (opts.chain !== false) await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
   return { hub, a, agents, x, h1, h2, h3 };
@@ -236,7 +211,7 @@ test("a renewal clears that host only; what it let in stays exposed until each r
 
 test("after its renewal a host is exposed again only by a new loss, or an exposed host added to its list afterwards (§4.1)", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const y = await pairAs(hub, a, { admin: false });
+  const y = await pairBrowser(hub, a, { admin: false });
   await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, y.deviceId] });
   await a.removeDevice(x.deviceId, new FakeCourier());
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -504,7 +479,7 @@ test("§4.1 a cycle inside an acyclic part: only the cycle is narrowed; the host
 
 test("§4.1 another admin page joining mid-group reads the chain: it does not narrow again, and restores once, after the last renewal", async () => {
   const { hub, a, agents, x } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const removedAt = a.chain!.seq;
@@ -556,7 +531,7 @@ test("§4.1 a narrowing made by hand is never restored: one list, or lists split
   // Two lists, narrowed by two admins: two runs, two signers — neither restored.
   {
     const { hub, a, agents, x } = await account();
-    const b = await pairAs(hub, a, { admin: true });
+    const b = await pairBrowser(hub, a, { admin: true });
     await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, "m-2"] });
     await a.removeDevice(x.deviceId, new FakeCourier());
     await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
@@ -1265,7 +1240,7 @@ test("what this browser kept of an attempt the hub no longer has (withdrawn by a
 
 test("a renewal the hub committed that this page's chain lacks: synced first, the host never marked again", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   await b.sync();
   await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
@@ -1287,7 +1262,7 @@ test("a renewal the hub committed that this page's chain lacks: synced first, th
 
 test("a row pending at the hub for a host nothing exposes any more is withdrawn — judged on the hub's head read just then, never on a lagging chain", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   const pending = () => ({ host: "m-2", state: "pending", assurance: 0, requested_ms: Date.now(), requested_by: a.deviceId, needs_assurance: false, isolated: false, failure: null });
   // Another page marked m-2 for an exposure b has not seen: X, which m-2 lets control it, removed after b last synced.
   await a.setAccept("m-2", { type: "devices", ids: [x.deviceId] });
@@ -1889,7 +1864,7 @@ test("this device's own guard — on it, no automatic renewal is signed here, wh
   await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("needsAssurance", "local"));
   // Kept in this browser: a reload holds to it; another browser of the account does not.
   assert.equal((await hub.reload(a)).localAssured(), true);
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   assert.equal(b.localAssured(), false);
   // The runner here waits for the code, and marks the host as a renewal confirmed on the device.
   const link = new FakeLink();
@@ -2086,7 +2061,7 @@ test("Codex 3: a 409 and a newer head never let a renewal ahead of an exposed ho
 
 test("Codex 4: a loss after the view a renewal was staged on is not remedied by it — the page starts again with a fresh nonce and seed; an entry an older page wrote leaves it exposed", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const y = await pairAs(hub, a, { admin: false });
+  const y = await pairBrowser(hub, a, { admin: false });
   await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, y.deviceId] });
   await a.removeDevice(x.deviceId, new FakeCourier());
   hub.windowRefusals = [Date.now() + 30];
@@ -2108,7 +2083,7 @@ test("Codex 4: a loss after the view a renewal was staged on is not remedied by 
 
   // An older page wrote a renewal staged before a loss (it did not check): that loss stays — the host is still exposed by it.
   const old = await account({ chain: false });
-  const z = await pairAs(old.hub, old.a, { admin: false });
+  const z = await pairBrowser(old.hub, old.a, { admin: false });
   await old.a.setAccept("m-1", { type: "devices", ids: [old.x.deviceId, z.deviceId] });
   await old.a.removeDevice(old.x.deviceId, new FakeCourier());
   (old.a as unknown as { checkRenewalOn: () => void }).checkRenewalOn = () => undefined;
@@ -2328,7 +2303,7 @@ test("Codex 5: this device's guard, or a dispute verified, while the batch is be
 
 test("Codex 4 cap: a renewal superseded on every try is started again at most 3 times in all, then it says so", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const ys = [await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false })];
+  const ys = [await pairBrowser(hub, a, { admin: false }), await pairBrowser(hub, a, { admin: false }), await pairBrowser(hub, a, { admin: false })];
   await a.setAccept("m-1", { type: "devices", ids: [x.deviceId, ...ys.map((y) => y.deviceId)] });
   await a.removeDevice(x.deviceId, new FakeCourier());
   hub.windowRefusals = [Date.now() + 30, Date.now() + 30, Date.now() + 30, Date.now() + 30];
@@ -2539,7 +2514,7 @@ test("M7: 「结束暂停」 is bound to the exact control it showed — a 409 t
 
 test("M7: a pause whose starter no longer manages the account is never ended on its own — only by a person, and its row says so", async () => {
   const { hub, a, agents, x } = await account({ chain: false });
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.sync();
   const op = crypto.getRandomValues(new Uint8Array(16));
   assert.ok(await b.writePause(() => [{ type: "renewalPause", op, phase: 0, removals: [{ host: "m-1", ids: [x.deviceId] }] }]));
@@ -2607,7 +2582,7 @@ test("M6: a cycle too large for one RenewalPause is paused by several, each with
     hub.rotates.add(h.id);
   }
   await a.setRenewalPolicy(false);
-  const x = await pairAs(hub, a, { admin: false });
+  const x = await pairBrowser(hub, a, { admin: false });
   for (const id of ids) await a.setAccept(id, { type: "devices", ids: [...(id === ids[0] ? [x.deviceId] : []), ...ids.filter((o) => o !== id)] });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const removedAt = a.chain!.seq;
@@ -2699,7 +2674,7 @@ function steppedClock(): { now: () => number; sleep: (ms: number) => Promise<voi
 
 test("412 stale (the reported 「found no recent word on its chain head」): asked right after this page changed the account, a renewal waits for another full device's word on the new head — its own does not count — and says whose", async () => {
   const { hub, a, agents, x } = await account({ chain: false, policy: false });
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const host = new VouchingHost(hub, a, agents);
   // Both full devices' pages vouched for the account as it stood.
@@ -2731,7 +2706,7 @@ test("412 stale: the word on the new head that counts, arriving within the grace
   // Another full device's page vouches a moment later (it saw the entry by the hub's push).
   {
     const { hub, a, agents, x } = await account({ chain: false, policy: false });
-    const b = await pairAs(hub, a, { admin: true });
+    const b = await pairBrowser(hub, a, { admin: true });
     await a.removeDevice(x.deviceId, new FakeCourier());
     const host = new VouchingHost(hub, a, agents);
     await a.setRenewalPolicy(false);
@@ -2794,7 +2769,7 @@ test("412 stale as the sole full device: a word that never left (the link down) 
 
 test("the runner: an automatic renewal the host refuses as `unconfirmed` is tried again, saying whose word it waits for; a fork asks the person at once", async () => {
   const { hub, a, agents, x } = await account({ chain: false, policy: false });
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const host = new VouchingHost(hub, a, agents);
   const link = new FakeLink();

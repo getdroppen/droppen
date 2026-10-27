@@ -20,43 +20,7 @@ import { HubApiError, knownMailPurpose, MAIL_KEY_REQUEST, MAIL_MACHINE_KEY, MAIL
 import { keyName, Keyring, parseKeyName, rewrapTargets } from "../src/lib/hub/keyring.js";
 import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
 import { limitOf } from "../src/lib/hub/plan.js";
-import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
-
-async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await completePairing(
-      {
-        api: a.api,
-        token: a.session.token,
-        device: a.deviceId,
-        signPublic: a.keys.signPublic,
-        noise: a.noiseKeys,
-        chain: () => a.chain!,
-        append: (action) => a.append(action),
-        withUserKeys: (use) => a.withUserKeys(use),
-      },
-      c,
-    );
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-  } finally {
-    r.stop();
-  }
-  assert.equal(r.state.kind, "paired");
-  return b;
-}
+import { createV2Genesis, FakeCourier, FakeKeysHub, pairBrowser } from "./fake-keys-hub.js";
 
 async function setup(withRecovery = true) {
   const hub = new FakeKeysHub();
@@ -66,7 +30,7 @@ async function setup(withRecovery = true) {
   await a.handOverMachineKey(m1.id, new FakeCourier());
   const m2 = await hub.enroll(a, "m-2");
   await a.handOverMachineKey(m2.id, new FakeCourier());
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   return { hub, a, b, m1, m2 };
 }
 
@@ -171,7 +135,7 @@ test("recovery packages: a rotation writes its own for every epoch; the settle s
   assert.equal(await b.ensureRecoveryPackages("any"), 0);
   assert.ok(!own(b, 0));
   // A rotation by b: its own package for every epoch it holds.
-  const c = await pair(hub, a);
+  const c = await pairBrowser(hub, a, { rawComplete: true });
   await b.sync();
   await b.removeDevice(c.deviceId, new FakeCourier());
   assert.ok(own(b, 0) && own(b, 1), "the rotating device's own, for every epoch");

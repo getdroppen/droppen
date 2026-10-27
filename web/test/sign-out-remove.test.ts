@@ -13,56 +13,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { CloudAccount, userKeyStale, WipeError } from "../src/lib/hub/account.js";
-import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { setHubShell } from "../src/features/machines/shells.js";
 import { SIGN_OUT_FAILURES_KEY, SIGN_OUT_STILL_LISTED_KEY, signOut, takeSignOutFailures, takeStillListed } from "../src/features/cloud/sign-out.js";
-import { browserStorage, createV2Genesis, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
-
-class FakeStorage {
-  readonly values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
+import { browserStorage, createV2Genesis, FakeKeysHub, pairBrowser } from "./fake-keys-hub.js";
+import { MemoryStorage } from "./storage.js";
 
 const g = globalThis as { sessionStorage?: unknown; location?: unknown };
-const tab = new FakeStorage();
+const tab = new MemoryStorage();
 g.sessionStorage = tab;
 const replaced: string[] = [];
 g.location = { replace: (url: string) => void replaced.push(url) };
 
 /** A new browser paired from `a` (QR), as a full device or not. */
-async function pairAs(hub: FakeKeysHub, a: CloudAccount, opts: { admin: boolean }): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await a.pairDevice(c, opts);
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
-  } finally {
-    r.stop();
-  }
-  await b.sync();
-  return b;
-}
-
 /** A v3 account founded by `a` (with recovery words, which `a` then knows), and a host. */
 async function account() {
   const hub = new FakeKeysHub();
@@ -82,8 +44,8 @@ async function kept(b: CloudAccount): Promise<{ keys: boolean; id: boolean }> {
 test("whether a device may take itself off the account: only an admin that is not the last, and that set no recovery words or passkeys", async () => {
   const { hub, a } = await account();
   assert.equal(a.selfRemoval(), "lastAdmin", "the account's only full device stays one");
-  const c = await pairAs(hub, a, { admin: true });
-  const d = await pairAs(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: true });
+  const d = await pairBrowser(hub, a, { admin: false });
   await a.sync();
   assert.equal(c.selfRemoval(), "removable");
   assert.equal(d.selfRemoval(), "notAdmin", "a device that signs nothing cannot sign its own removal");
@@ -108,7 +70,7 @@ test("whether a device may take itself off the account: only an admin that is no
 
 test("“sign out” keeps this browser a device: its keys and id stay, the session ends, notifications stop", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   setHubShell(null);
   let pushes = 0;
   replaced.length = 0;
@@ -127,7 +89,7 @@ test("“sign out” keeps this browser a device: its keys and id stay, the sess
 
 test("“sign out and remove this browser” takes it off the account and forgets its keys", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   setHubShell(null);
   let pushes = 0;
   replaced.length = 0;
@@ -146,7 +108,7 @@ test("“sign out and remove this browser” takes it off the account and forget
 
 test("a device that cannot take itself off is wiped all the same, and the sign-in screen says it is still listed", async () => {
   const { hub, a } = await account();
-  const d = await pairAs(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   setHubShell(null);
   await signOut(d, undefined, { removeBrowser: true, dropPush: async () => undefined });
   assert.deepEqual(await kept(d), { keys: false, id: false });
@@ -171,7 +133,7 @@ test("a device that cannot take itself off is wiped all the same, and the sign-i
 
 test("a sign-out told where to go (the move notice on the hub's origin) hands over what it would keep for the sign-in screen, and stays", async () => {
   const { hub, a } = await account();
-  const d = await pairAs(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   setHubShell(null);
   replaced.length = 0;
   tab.values.clear();
@@ -185,7 +147,7 @@ test("a sign-out told where to go (the move notice on the hub's origin) hands ov
 
 test("a hub that does not answer cannot keep the keys here: the wipe follows the removal at once, and each hub call is capped", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   setHubShell(null);
   const never = () => new Promise<never>(() => undefined);
   // The hub takes the request and never answers: neither the removal nor the logout.
@@ -204,7 +166,7 @@ test("a hub that does not answer cannot keep the keys here: the wipe follows the
 
 test("a wipe tries every step and says each that failed", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   // The key store will not delete the device keys; every later step still runs.
   const store = c.store as unknown as { delete(name: string): Promise<void> };
   const del = store.delete.bind(store);
@@ -230,7 +192,7 @@ test("a wipe tries every step and says each that failed", async () => {
 
 test("a screen that could not open the account removes the browser as a local wipe", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   const ended: string[] = [];
   setHubShell(null);
   replaced.length = 0;
@@ -252,7 +214,7 @@ test("a screen that could not open the account removes the browser as a local wi
   assert.deepEqual(await kept(c), { keys: false, id: false });
   assert.equal(takeStillListed(), "unopened");
   // Without "remove", the same screen keeps them.
-  const d = await pairAs(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   await signOut(undefined, { api: { logout: async () => undefined }, token: d.session.token, account: d.account, store: d.store }, { dropPush: async () => undefined });
   assert.deepEqual(await kept(d), { keys: true, id: true });
   assert.equal(takeStillListed(), null);

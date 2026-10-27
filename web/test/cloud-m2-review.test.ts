@@ -48,45 +48,9 @@ import { keyName, wrapMachineKey } from "../src/lib/hub/keyring.js";
 import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
 import { recoverySecret } from "../src/lib/hub/recovery-words.js";
 import { localStorageSeenStore, type MemorySeenStore, type SeenStore, SeenStoreError } from "../src/lib/hub/seen-store.js";
-import { browserSeen, browserStorage, createV2Genesis, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore } from "./fake-keys-hub.js";
+import { browserSeen, browserStorage, createV2Genesis, FakeCourier, FakeKeysHub, HUB_ORIGIN, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 
 const DAY = 24 * 60 * 60 * 1000;
-
-async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await completePairing(
-      {
-        api: a.api,
-        token: a.session.token,
-        device: a.deviceId,
-        signPublic: a.keys.signPublic,
-        noise: a.noiseKeys,
-        chain: () => a.chain!,
-        append: (action) => a.append(action),
-        withUserKeys: (use) => a.withUserKeys(use),
-      },
-      c,
-    );
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-  } finally {
-    r.stop();
-  }
-  assert.equal(r.state.kind, "paired");
-  return b;
-}
 
 /** Postgres lists the keyring `ORDER BY name` (rh-hub's `key_wraps`). */
 function sortByName(hub: FakeKeysHub) {
@@ -99,7 +63,7 @@ async function setup() {
   const words = (await createV2Genesis(a, true))!;
   const machine = await hub.enroll(a);
   await a.handOverMachineKey(machine.id, new FakeCourier());
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   return { hub, a, b, words, machine };
 }
 
@@ -794,7 +758,7 @@ test("M1: every device change another device made is an alert until this device 
   assert.deepEqual(a.alerts(), [], "its own changes are not alerts");
   assert.deepEqual(b.alerts(), [], "what happened before it joined is history to it");
   // b adds c, sets new words, and removes c.
-  const c = await pair(hub, b);
+  const c = await pairBrowser(hub, b, { rawComplete: true });
   await b.setRecoveryWords();
   await b.removeDevice(c.deviceId, new FakeCourier());
   await a.sync();

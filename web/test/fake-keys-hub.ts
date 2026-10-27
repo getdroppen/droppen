@@ -6,6 +6,7 @@
 // the recipient's own mail only, the caps), the write-once keyring (full
 // devices only), and the numeric-code pairing rendezvous (who may do what).
 // JSON both ways, binary as lower-case hex, as the real one.
+import assert from "node:assert/strict";
 import {
   type Action,
   CHAIN_VERSION,
@@ -42,6 +43,7 @@ import {
 import { type AccountStorage, CloudAccount, verifyBatch } from "../src/lib/hub/account.js";
 import { HubApi } from "../src/lib/hub/api.js";
 import type { MachineKeyCourier, RenewalCourier, RotateRequest } from "../src/lib/hub/deliver.js";
+import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
 import { MemorySeenStore } from "../src/lib/hub/seen-store.js";
 
 /** The hub origin the tests' pages dialled (what device-session signatures name). */
@@ -945,6 +947,61 @@ export class RecordingKeyStore extends MemoryKeyStore {
     this.puts.push({ name, value });
     return super.put(name, value);
   }
+}
+
+/**
+ * A new browser paired from `admin` by its QR code, with both ends run: the
+ * responder polls until it is paired and the account is returned. By default
+ * `admin.pairDevice` approves it as an admin and the new browser syncs before
+ * it is returned. `rawComplete` pairs through `completePairing` with the
+ * admin's own fields, as a page that drives pairing by hand does, and leaves
+ * the sync to the caller.
+ */
+export async function pairBrowser(
+  hub: FakeKeysHub,
+  admin: CloudAccount,
+  opts: { admin?: boolean; store?: KeyStore; rawComplete?: boolean; sync?: boolean } = {},
+): Promise<CloudAccount> {
+  const b = await hub.device("tok", opts.store ?? new RecordingKeyStore());
+  const r = new PairingResponder({
+    api: b.api,
+    token: b.session.token,
+    account: b.account,
+    device: b.deviceId,
+    signPublic: b.keys.signPublic,
+    noise: b.noiseKeys,
+    chain: async () => (await b.sync(), b.chain),
+    storeUserKeys: (keys) => b.storeUserKeys(keys),
+    pollMs: 1,
+  });
+  try {
+    const c = await candidateFromOffer(await r.startOffer(), admin.chain!);
+    if (opts.rawComplete) {
+      await completePairing(
+        {
+          api: admin.api,
+          token: admin.session.token,
+          device: admin.deviceId,
+          signPublic: admin.keys.signPublic,
+          noise: admin.noiseKeys,
+          chain: () => admin.chain!,
+          append: (action) => admin.append(action),
+          withUserKeys: (use) => admin.withUserKeys(use),
+        },
+        c,
+      );
+    } else {
+      await admin.pairDevice(c, { admin: opts.admin ?? true });
+    }
+    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
+    // The message is diagnostic only (the four raw-complete copies asserted
+    // without one); the condition is the same for every caller.
+    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
+  } finally {
+    r.stop();
+  }
+  if (opts.sync ?? !opts.rawComplete) await b.sync();
+  return b;
 }
 
 /** A host's identity as its agent holds it: the sign key that signs, and both public keys. */

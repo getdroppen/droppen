@@ -52,7 +52,7 @@ import { legacyMachineKeyName } from "../src/lib/hub/keyring.js";
 import { HubApiError, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_USER_KEY } from "../src/lib/hub/api.js";
 import type { ControllersRecord } from "../src/lib/hub/streams.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
-import { addPasskeySlot, browserStorage, containsBytes, createV2Genesis, FakeCourier, FakeKeysHub, passkeyActivateEarly, passkeyJoin, postAsPasskey, RecordingKeyStore } from "./fake-keys-hub.js";
+import { addPasskeySlot, browserStorage, containsBytes, createV2Genesis, FakeCourier, FakeKeysHub, passkeyActivateEarly, passkeyJoin, postAsPasskey, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 import { cloudDevicesZhCN } from "../src/i18n/cloud-devices.js";
 
 const keys = (id: string) => ({ id, signKey: new Uint8Array(32).fill(1), dhKey: new Uint8Array(32).fill(2) });
@@ -76,31 +76,6 @@ const invalid = (rule: string) => (e: unknown) => {
 const kindIs = (kind: AccountError["kind"]) => (e: unknown) => e instanceof AccountError && e.kind === kind;
 
 /** A new browser paired from `a` (QR), as an admin or not. */
-async function pairAs(hub: FakeKeysHub, a: CloudAccount, opts: { admin: boolean }): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await a.pairDevice(c, opts);
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
-  } finally {
-    r.stop();
-  }
-  await b.sync();
-  return b;
-}
-
 /** An admin browser with a host (m-1) enrolled the v2 way, and the hub as asked: a v2 chain. */
 async function v2Account(mode: "read" | "write" = "write") {
   const hub = new FakeKeysHub();
@@ -162,9 +137,9 @@ test("write selection follows the chain: v3 only on a v3 chain, v2's otherwise �
 test("D4: a v2 account stays v2 even while the hub takes v3 entries — every ordinary flow writes v2, and what only v3 says waits for the upgrade", async () => {
   const { hub, a } = await v2Account("write");
   const before = a.chain!.seq + 1;
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await hub.enroll(a, "m-2", { writable: true });
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   const courier = new FakeCourier();
   await a.removeDevice(c.deviceId, courier);
   await a.rotate(courier);
@@ -189,7 +164,7 @@ test("D4: a v2 account stays v2 even while the hub takes v3 entries — every or
 
 test("D4: the upgrade is its own step — from an admin, while the hub takes v3 entries — and writes one v3 entry, a new user key", async () => {
   const { hub, a } = await v2Account("read");
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
   assert.deepEqual(a.upgradePlan(), { version: 3, ukEpoch: 1, machines: 0 }, "what the page shows before the person confirms");
   // The hub does not take v3 entries: not offered, and refused if tried.
@@ -226,7 +201,7 @@ test("D4: the upgrade is its own step — from an admin, while the hub takes v3 
 test("pairing a device that does not manage the account (a v3 chain): addDevice3{admin: false}, no user key ever, a host's keys by purpose 5 once it accepts the device", async () => {
   const { hub, a } = await account();
   const before = a.chain!.seq + 1;
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   assert.deepEqual(kinds(a, before), ["addDevice3"]);
   const added = a.chain!.allEntries().at(-1)!.draft.action;
   assert.ok(added.type === "addDevice3" && !added.device.flags.admin && !added.device.flags.host);
@@ -251,7 +226,7 @@ test("pairing a device that does not manage the account (a v3 chain): addDevice3
 test("a device that does not manage the account moves raw machine keys from before the keyring into its sealed vault — every one the chain committed, past a gap too; one it did not commit is left", async () => {
   const { hub, a } = await account();
   await hub.enroll(a, "m-2", { writable: true });
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   await a.rotate(new FakeCourier());
   // What an admin mailed it is not what this is about: as if it never came.
@@ -287,7 +262,7 @@ test("a device that does not manage the account moves raw machine keys from befo
 
 test("a raw machine key from before the keyring stays while another page is moving them, or while its sealed copy does not open to it", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
   await b.sync();
@@ -331,7 +306,7 @@ test("enrollment on a v3 chain: [addDevice3{host}, keyEpochs] in one append — 
   assert.equal(hub.chainPosts, posts);
   // Never an admin, by any way in.
   await assert.rejects(a.setAdmin("m-2", true), invalid(RULES.hostNotAdmin));
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await assert.rejects(a.setHost(b.deviceId, true, new FakeCourier(), { writable: true }), invalid(RULES.hostNotAdmin));
   assert.equal(hub.chainPosts, posts + 1, "only the pairing reached the hub");
 });
@@ -391,13 +366,13 @@ test("13: a batch the chain would refuse is refused here, by its rule, before an
 test("removal follows the chain, never the hub's say (D4): v2 on a v2 chain the hub would take v3 for, v3 on a v3 chain the hub reads only", async () => {
   const { hub, a } = await v2Account("write");
   const courier = new FakeCourier();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   const at = a.chain!.seq + 1;
   await a.removeDevice(c.deviceId, courier);
   assert.deepEqual(kinds(a, at), ["removeDevice", "keyEpochs"]);
   assert.deepEqual(versions(a, at), [2, 2]);
   const v3 = await account("read");
-  const d = await pairAs(v3.hub, v3.a, { admin: true });
+  const d = await pairBrowser(v3.hub, v3.a, { admin: true });
   const at3 = v3.a.chain!.seq + 1;
   await v3.a.removeDevice(d.deviceId, courier);
   assert.deepEqual(kinds(v3.a, at3), ["removeDevice3", "keyEpochs"]);
@@ -434,8 +409,8 @@ test("D4: the recovery words on a v3 chain — a v3 join (an admin, never a host
 
 test("a key request: an admin asking gets user keys; a device that is not one gets the keys of the hosts that accept it — never a user key", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const c = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
   await admit(a, "m-1", b.deviceId);
   // b lost its mail (say): it asks the admins.
@@ -471,14 +446,14 @@ test("a key request: an admin asking gets user keys; a device that is not one ge
 
 test("9: key requests go to admins only — never to a device that does not manage the account, nor to a host", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const d = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   await a.sync();
   const asking = (who: CloudAccount) => hub.mailAttempts.filter((m) => m.startsWith(`${who.deviceId} `) && m.endsWith(` ${MAIL_KEY_REQUEST}`)).map((m) => m.split(" ")[1]);
   await b.sync();
   await b.requestHostKeys(true);
   assert.deepEqual(asking(b), [a.deviceId], "b asks a, and only a");
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
   assert.deepEqual(await c.requestUserKeys(0, true), [a.deviceId], "an admin asks the other admins only");
   assert.deepEqual(asking(c), [a.deviceId], "not b, d, nor m-1");
@@ -487,7 +462,7 @@ test("9: key requests go to admins only — never to a device that does not mana
 
 test("a device that is not an admin asks for a missing host key at most once per 10 minutes, and only admins", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   await b.sync();
   hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
@@ -511,8 +486,8 @@ test("a device that is not an admin asks for a missing host key at most once per
 
 test("host keys: taken only from a current admin, addressed to this device, for the host and epoch the chain committed", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const d = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   await hub.enroll(a, "m-2", { writable: true });
   hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
   await b.sync();
@@ -547,7 +522,7 @@ test("host keys: taken only from a current admin, addressed to this device, for 
 
 test("setAdmin, setHost and setAccept write v3 entries; granting manage mails the user keys", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await assert.rejects(a.setAdmin(a.deviceId, false), kindIs("lastAdmin"));
   await a.setAdmin(b.deviceId, true);
   assert.ok(a.chain!.admin(b.deviceId));
@@ -576,7 +551,7 @@ test("setAdmin, setHost and setAccept write v3 entries; granting manage mails th
   assert.equal(courier.posted.at(-1)?.epoch, again?.mkEpoch);
   await assert.rejects(a.setHost(b.deviceId, true, courier, { writable: true }), (e: unknown) => e instanceof AccountError, "an admin never runs AI (and it never did)");
   // Whom a host accepts.
-  const c = await pairAs(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: false });
   await a.setAccept("m-1", { type: "devices", ids: [c.deviceId, c.deviceId, "m-1"] });
   assert.deepEqual(a.chain!.acceptPolicy("m-1"), { type: "devices", ids: [c.deviceId] });
   await a.setAccept("m-1", { type: "devices", ids: [] }, courier);
@@ -603,7 +578,7 @@ test("a limited device is a current browser or phone that is not a full device; 
 
 test("“make it a full device” writes setAdmin true and mails its user keys — and says so when the mail did not go, the entry written all the same", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   // The hub does not take the mail: the entry stands, and the reason comes back (not only a console line).
   hub.failMail = 1;
   const failed = await a.promote(b.deviceId);
@@ -614,7 +589,7 @@ test("“make it a full device” writes setAdmin true and mails its user keys �
   assert.ok((await a.resendKeys(b.deviceId)) > 0);
   assert.ok(mailTo(hub, b.deviceId).some((m) => m.purpose === MAIL_USER_KEY));
   // Mailed: nothing to say. Already one: nothing written, nothing to say.
-  const c = await pairAs(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: false });
   assert.deepEqual(await a.promote(c.deviceId), { keysFailed: null });
   assert.ok(mailTo(hub, c.deviceId).some((m) => m.purpose === MAIL_USER_KEY), "its keys wait in its mailbox: it need not be online");
   const seq = a.chain!.seq;
@@ -626,9 +601,9 @@ test("“make it a full device” writes setAdmin true and mails its user keys �
 
 test("alerts name chain v3's changes, with the flags in words for an addition and setAdmin true as its own kind", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await hub.enroll(a, "m-2", { writable: true });
   await a.setAdmin(b.deviceId, true);
   await a.setHost("m-2", false, new FakeCourier());
@@ -649,9 +624,9 @@ test("alerts name chain v3's changes, with the flags in words for an addition an
 
 test("a renewal pause's alerts — its start names what it pauses; its completion only the control that comes back", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const [b, d] = [await pairAs(hub, a, { admin: false }), await pairAs(hub, a, { admin: false })];
+  const [b, d] = [await pairBrowser(hub, a, { admin: false }), await pairBrowser(hub, a, { admin: false })];
   const ids = [b.deviceId, d.deviceId].sort();
   await a.setAccept("m-1", { type: "devices", ids });
   const op = new Uint8Array(16).fill(5);
@@ -675,8 +650,8 @@ const attemptsTo = (hub: FakeKeysHub, id: string, purpose: number) => hub.mailAt
 test("D2: a host's keys go only to the devices it accepts — on a rotation, an enrollment, a request — never to the others", async () => {
   const { hub, a } = await account();
   await hub.enroll(a, "m-2", { writable: true });
-  const b = await pairAs(hub, a, { admin: false });
-  const d = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   const courier = new FakeCourier();
   const report = await a.rotate(courier);
@@ -700,8 +675,8 @@ test("D2: a host's keys go only to the devices it accepts — on a rotation, an 
 
 test("D2: a narrowed accept list writes the host's next key epoch in the same call, hands it to the agent, and seals it to those still let in", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const d = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId, d.deviceId);
   const courier = new FakeCourier();
   const posts = hub.chainPosts;
@@ -728,9 +703,9 @@ test("D2: a narrowed accept list writes the host's next key epoch in the same ca
 
 test("D2: removing a device a host accepts rotates that host's key even when asked not to; the new key reaches only those still let in", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const d = await pairAs(hub, a, { admin: false });
-  const e = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const d = await pairBrowser(hub, a, { admin: false });
+  const e = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId, d.deviceId);
   assert.equal(a.reEnrollDue().size, 0);
   const at = a.chain!.seq + 1;
@@ -748,7 +723,7 @@ test("D2: removing a device a host accepts rotates that host's key even when ask
 
 test("D3: a host to re-enroll is one a device that could control it no longer can — an admin removed — until it is enrolled again", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   assert.deepEqual([...a.reEnrollDue()], []);
   await a.removeDevice(c.deviceId, new FakeCourier());
   assert.deepEqual([...a.reEnrollDue()], ["m-1"], "an admin could control every host");
@@ -778,7 +753,7 @@ const seqOf = (a: CloudAccount, what: (action: Action) => boolean) =>
 
 test("D3: what a host's own record says of a device it should be re-enrolled for — evidence shown, never a reason to drop the warning", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(c.deviceId, new FakeCourier());
   const added = seqOf(a, (x) => x.type === "addDevice3" && x.device.id === c.deviceId);
   const lostSeq = seqOf(a, (x) => x.type === "removeDevice3" && x.id === c.deviceId);
@@ -804,8 +779,8 @@ test("D3: what a host's own record says of a device it should be re-enrolled for
 
 test("D3: a person can say a device never connected — two phones removed before any record — kept, shown quietly, undone", async () => {
   const { hub, a } = await account();
-  const p1 = await pairAs(hub, a, { admin: true });
-  const p2 = await pairAs(hub, a, { admin: true });
+  const p1 = await pairBrowser(hub, a, { admin: true });
+  const p2 = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(p1.deviceId, new FakeCourier());
   await a.removeDevice(p2.deviceId, new FakeCourier());
   assert.deepEqual([...a.reEnrollDue()], ["m-1"]);
@@ -851,7 +826,7 @@ test("D3: a person can say a device never connected — two phones removed befor
 
 test("D3: a record padded with made-up ids cannot push a device it once named out of what this browser keeps", async () => {
   const { hub, a } = await account();
-  const x = await pairAs(hub, a, { admin: true });
+  const x = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const evidence = (record: ControllersRecord) => a.reEnrollWarnings(() => record).get("m-1")!.find((l) => l.device === x.deviceId)!;
   assert.equal(evidence(controllers(a, { [x.deviceId]: 1_000 })).evidence.kind, "connected", "m-1's record named it once");
@@ -867,7 +842,7 @@ test("D3: a record padded with made-up ids cannot push a device it once named ou
 
 test("D3: what a tab whose chain is behind cannot place is ignored, never deleted — the tabs share it", async () => {
   const { hub, a } = await account();
-  const x = await pairAs(hub, a, { admin: true });
+  const x = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const key = `rh.hub.reenroll.connected.${a.account}`;
   const storage = browserStorage(a.store);
@@ -889,7 +864,7 @@ test("D3: what a tab whose chain is behind cannot place is ignored, never delete
 
 test("D3: a record that names nobody new writes nothing — renders do not rewrite the list", async () => {
   const { hub, a } = await account();
-  const x = await pairAs(hub, a, { admin: true });
+  const x = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const key = `rh.hub.reenroll.connected.${a.account}`;
   const storage = browserStorage(a.store);
@@ -914,7 +889,7 @@ test("D3: a record that names nobody new writes nothing — renders do not rewri
 
 test("D3: a computer that stops running AI keeps what its record named; only its removal from the account forgets it", async () => {
   const { hub, a } = await account();
-  const x = await pairAs(hub, a, { admin: true });
+  const x = await pairBrowser(hub, a, { admin: true });
   await hub.enroll(a, "m-2", { writable: true });
   await a.removeDevice(x.deviceId, new FakeCourier());
   const key = `rh.hub.reenroll.connected.${a.account}`;
@@ -932,7 +907,7 @@ test("D3: a computer that stops running AI keeps what its record named; only its
 
 test("D3: the live record goes with the banner's question too — a dismissed device a host's status names warns again", async () => {
   const { hub, a } = await account();
-  const p = await pairAs(hub, a, { admin: true });
+  const p = await pairBrowser(hub, a, { admin: true });
   await a.removeDevice(p.deviceId, new FakeCourier());
   dismiss(a, "m-1", p.deviceId);
   assert.deepEqual([...a.reEnrollDue()], []);
@@ -942,7 +917,7 @@ test("D3: the live record goes with the banner's question too — a dismissed de
 
 test("D3: a dismissal is for the loss it was made for — the same device shut out again warns again", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
   assert.deepEqual([...a.reEnrollDue()], ["m-1"], "shut out: due");
@@ -956,7 +931,7 @@ test("D3: a dismissal is for the loss it was made for — the same device shut o
 
 test("D3: a device let back in is not lost any more — it may connect then — and a later loss is a new warning, with what it did", async () => {
   const { hub, a } = await account();
-  const p = await pairAs(hub, a, { admin: false });
+  const p = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", p.deviceId);
   await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
   dismiss(a, "m-1", p.deviceId);
@@ -973,7 +948,7 @@ test("D3: a device let back in is not lost any more — it may connect then — 
 
 test("D3: a dismissal covers the loss the person was shown, not one that came while they read it", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
   const shown = a.reEnrollWarnings().get("m-1")!.find((l) => l.device === b.deviceId)!.lostSeq;
@@ -986,8 +961,8 @@ test("D3: a dismissal covers the loss the person was shown, not one that came wh
 
 test("1: the user key goes with any device that ever held it — demoted, then removed — and a demotion retires it too", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
-  const b = await pairAs(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: false });
   assert.equal(heldUserKey(a.chain!, c.deviceId), true);
   assert.equal(heldUserKey(a.chain!, b.deviceId), false);
   // Demoted without a courier: the rotation is left due, and said so.
@@ -1018,7 +993,7 @@ test("1: the user key goes with any device that ever held it — demoted, then r
   assert.equal(attemptsTo(hub, b.deviceId, MAIL_USER_KEY).length, asAdmin, "only those it got as an admin");
   assert.equal(a.rotationDue, false);
   // Its own demotion: it may sign nothing after it, so the rotation is left due for another admin.
-  const d = await pairAs(hub, a, { admin: true });
+  const d = await pairBrowser(hub, a, { admin: true });
   await d.receiveMail();
   await d.setAdmin(d.deviceId, false);
   await a.sync();
@@ -1027,8 +1002,8 @@ test("1: the user key goes with any device that ever held it — demoted, then r
 
 test("9: a rotation seals the user key to the admins only; a passkey's pending device is not approved by its id, and gets no user key", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
-  const c = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const c = await pairBrowser(hub, a, { admin: true });
   const report = await a.rotate(new FakeCourier());
   assert.deepEqual(report.sealedTo, [c.deviceId]);
   assert.deepEqual(report.failedTo, []);
@@ -1058,7 +1033,7 @@ test("9: a rotation seals the user key to the admins only; a passkey's pending d
 
 test("9: only a device that manages the account vouches for the chain head (the follower's attestations)", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   const attested: number[] = [];
   const link = {
     onState: () => () => undefined,
@@ -1085,9 +1060,9 @@ test("9: only a device that manages the account vouches for the chain head (the 
  */
 async function demotedAccount() {
   const { hub, a, words } = await account();
-  const d = await pairAs(hub, a, { admin: true });
+  const d = await pairBrowser(hub, a, { admin: true });
   await d.receiveMail();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
   await c.setAdmin(c.deviceId, false);
   await a.sync();
@@ -1172,8 +1147,8 @@ test("re-review 1: running AI again on a host while the user key is stale carrie
 test("re-review 1: narrowing a host's accept list while the user key is stale carries a new user key with the host's next epoch", async () => {
   const t = await demotedAccount();
   const { hub, a, c } = t;
-  const b = await pairAs(hub, a, { admin: false });
-  const e = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const e = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId, e.deviceId);
   assert.equal(a.userKeyStale, true, "letting devices in issues no key");
   const ucBefore = attemptsTo(hub, c.deviceId, MAIL_USER_KEY).length;
@@ -1192,7 +1167,7 @@ test("re-review 1: narrowing a host's accept list while the user key is stale ca
 test("re-review 1: removing a device that held no user key, while the user key is stale, rotates the user key too", async () => {
   const t = await demotedAccount();
   const { hub, a, c } = t;
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   const ucBefore = attemptsTo(hub, c.deviceId, MAIL_USER_KEY).length;
   const at = a.chain!.seq + 1;
@@ -1206,7 +1181,7 @@ test("re-review 1: removing a device that held no user key, while the user key i
 
 test("re-review 1: with no stale user key, those batches carry none (the machine keys go under the newest)", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   assert.equal(userKeyStale(a.chain!), false);
   const uk = a.chain!.latestUserEpoch();
@@ -1232,11 +1207,11 @@ function demoteBeforeNextPost(a: CloudAccount, c: CloudAccount): { landed: () =>
 
 test("re-review 1: a demotion that lands while a batch is on its way is seen when it is built again — the batch then carries a new user key", async () => {
   const { hub, a } = await account();
-  const d = await pairAs(hub, a, { admin: true });
+  const d = await pairBrowser(hub, a, { admin: true });
   await d.receiveMail();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   assert.equal(a.userKeyStale, false, "nothing stale when the batch is planned");
   const stale = a.chain!.latestUserEpoch()!;
@@ -1248,7 +1223,7 @@ test("re-review 1: a demotion that lands while a batch is on its way is seen whe
   assert.equal(hub.keysAt(`mk/m-1/${report.machines[0]!.mkEpoch}/${stale}`).length, 0);
   assert.equal(await opens(c, "m-1", report.machines[0]!.mkEpoch!), false);
   // And a machine key on its own (the same, through `commitHostKey`).
-  const e = await pairAs(hub, a, { admin: true });
+  const e = await pairBrowser(hub, a, { admin: true });
   await e.receiveMail();
   await a.rotate(new FakeCourier());
   assert.equal(a.userKeyStale, false);
@@ -1265,9 +1240,9 @@ test("re-review 1: a demotion that lands while a batch is on its way is seen whe
 
 test("re-review 1: an admin that never got the stale newest user key still issues machine keys — under the new one it carries", async () => {
   const { hub, a } = await account();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", b.deviceId);
   // c rotates; its mail to a is lost; then c turns its own 「可管理账号」 off.
   await c.sync();
@@ -1285,7 +1260,7 @@ test("re-review 1: an admin that never got the stale newest user key still issue
   assert.equal(await opens(c, "m-2", 0), false);
   assert.equal(a.userKeyStale, false, "fresh now");
   // Again — another admin rotates, a misses it, it leaves — and a removal that would rotate machine keys alone:
-  const d = await pairAs(hub, a, { admin: true });
+  const d = await pairBrowser(hub, a, { admin: true });
   await d.receiveMail();
   await d.rotate(new FakeCourier());
   hub.mail = hub.mail.filter((m) => m.recipient !== a.deviceId);
@@ -1333,7 +1308,7 @@ test("D1 extended: a device that ever ran AI is never made an admin — refused 
   assert.equal(limitedDevice({ viewer: a.deviceId, viewerAdmin: true, device: rec, upgraded: true, ranAi: hasRunAi(a.chain!, rec) }), null);
   assert.equal(limitedDevice({ viewer: a.deviceId, viewerAdmin: true, device: rec, upgraded: true }), null, "by its record alone too");
   // A device that never ran AI still may be.
-  const b = await pairAs(hub, a, { admin: false });
+  const b = await pairBrowser(hub, a, { admin: false });
   assert.equal(hasRunAi(a.chain!, a.chain!.device(b.deviceId)!), false);
   await a.setAdmin(b.deviceId, true);
   assert.ok(a.chain!.admin(b.deviceId));
@@ -1394,11 +1369,11 @@ test("13: a new account's genesis is checked with the chain's own verifier befor
 
 test("write gate: a narrowing built on a view from before another admin's removal is built again on the new head — and its machine key never goes under the user key the removed admin holds", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.receiveMail();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const e = await pairAs(hub, a, { admin: false });
+  const e = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", e.deviceId);
   // a syncs; then b removes c — a whole rotation, a new user key c never had.
   await a.sync();
@@ -1453,11 +1428,11 @@ function removeBeforeNextPost(a: CloudAccount, b: CloudAccount, c: CloudAccount)
 
 test("write gate: a rotation of machine keys alone, built before another admin's removal lands, is built again with a new user key — never under the one the removed admin holds", async () => {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.receiveMail();
-  const c = await pairAs(hub, a, { admin: true });
+  const c = await pairBrowser(hub, a, { admin: true });
   await c.receiveMail();
-  const e = await pairAs(hub, a, { admin: false });
+  const e = await pairBrowser(hub, a, { admin: false });
   await admit(a, "m-1", e.deviceId);
   const held = a.chain!.latestUserEpoch()!;
   assert.ok(await c.vault.has(held));
@@ -1476,7 +1451,7 @@ test("write gate: a rotation of machine keys alone, built before another admin's
 /** `account()` with another admin (b) and a passkey slot a set; p joins through it, and a hub whose clock is a day ahead takes p's self-activation at once. */
 async function heldPasskeyAccount() {
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.receiveMail();
   const slot = await addPasskeySlot(a);
   await b.sync();
@@ -1525,7 +1500,7 @@ test("write gate: vetoing a held passkey activation takes out what came in throu
   const t0 = Date.now();
   t.mock.timers.enable({ apis: ["Date"], now: t0 });
   const { hub, a } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.receiveMail();
   const slot = await addPasskeySlot(a);
   const other = await addPasskeySlot(a, "p-testslot0002");
@@ -1572,7 +1547,7 @@ test("N1 (#17) on a v3 chain: asked, the veto takes out a device that runs AI a 
   const t0 = Date.now();
   t.mock.timers.enable({ apis: ["Date"], now: t0 });
   const { hub, a, words } = await account();
-  const b = await pairAs(hub, a, { admin: true });
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.receiveMail();
   await a.sync();
   // z comes back with the words; b, open all along, sees the join and takes the activation a day later.
@@ -1584,7 +1559,7 @@ test("N1 (#17) on a v3 chain: asked, the veto takes out a device that runs AI a 
   await b.sync();
   assert.equal(b.heldBack, null);
   // Meanwhile b adds c, an admin, which makes new recovery words; and b enrolls m-9.
-  const c = await pairAs(hub, b, { admin: true });
+  const c = await pairBrowser(hub, b, { admin: true });
   await c.receiveMail();
   await c.setRecoveryWords();
   await b.sync();

@@ -21,8 +21,8 @@ import { AccountError, type CloudAccount, MAX_APPEND_ENTRIES, requestedFirst } f
 import { MAIL_KEY_REQUEST, MAIL_USER_KEY } from "../src/lib/hub/api.js";
 import { flushPendingReencrypts, forgetPendingReencrypts, notePendingReencrypt, pendingReencrypts, reencryptSettled } from "../src/lib/hub/deliver.js";
 import { keyName, wrapMachineKey } from "../src/lib/hub/keyring.js";
-import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
-import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
+import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
+import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -143,42 +143,6 @@ test("a removal is confirmed only on a chain that keeps the head this device saw
 
 // ---------------------------------------------------------------- the rotation's key mail and keyring names
 
-async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await completePairing(
-      {
-        api: a.api,
-        token: a.session.token,
-        device: a.deviceId,
-        signPublic: a.keys.signPublic,
-        noise: a.noiseKeys,
-        chain: () => a.chain!,
-        append: (action) => a.append(action),
-        withUserKeys: (use) => a.withUserKeys(use),
-      },
-      c,
-    );
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-  } finally {
-    r.stop();
-  }
-  assert.equal(r.state.kind, "paired");
-  return b;
-}
-
 /** A (genesis with words, machine m-1 with its key), B and D paired. */
 async function threeDevices() {
   const hub = new FakeKeysHub();
@@ -186,8 +150,8 @@ async function threeDevices() {
   await createV2Genesis(a, true);
   const m = await hub.enroll(a);
   await a.handOverMachineKey(m.id, new FakeCourier());
-  const b = await pair(hub, a);
-  const d = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
+  const d = await pairBrowser(hub, a, { rawComplete: true });
   await b.sync();
   await d.sync();
   return { hub, a, b, d, m };
@@ -226,7 +190,7 @@ test("PoC B2: a rotation that died after its commit leaves no device wrapping un
   await createV2Genesis(a, true);
   const m = await hub.enroll(a);
   await a.handOverMachineKey(m.id, new FakeCourier());
-  const d = await pair(hub, a);
+  const d = await pairBrowser(hub, a, { rawComplete: true });
   await d.sync();
   let once = true;
   hub.afterAppend = async () => {

@@ -26,34 +26,9 @@ import type { CloudAccount } from "../src/lib/hub/account.js";
 import { keyName, openRecoveryPackage, parseKeyName, wrapMachineKey } from "../src/lib/hub/keyring.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
 import { recoverySecret } from "../src/lib/hub/recovery-words.js";
-import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
+import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 
 /** A new browser paired from `a` (QR), as an admin. */
-async function pairAdmin(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await a.pairDevice(c, { admin: true });
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
-  } finally {
-    r.stop();
-  }
-  await b.sync();
-  return b;
-}
-
 const rawUk = (who: CloudAccount, epoch: number) => who.vault.withRaw(epoch, async (raw) => raw.slice());
 const wrapKind = (kind: WrapError["kind"]) => (e: unknown) => e instanceof WrapError && e.kind === kind;
 
@@ -66,7 +41,7 @@ test("v2: a removed device's recovery package is the way back in for its epoch â
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   const words = (await createV2Genesis(a, true))!;
-  const b = await pairAdmin(hub, a);
+  const b = await pairBrowser(hub, a, { admin: true });
   await b.ensureRecoveryPackages("own");
   const rsk = a.chain!.currentRecoveryKey!;
   const tag = hex(rsk.slice(0, 8));
@@ -112,7 +87,7 @@ test("v3: a demoted admin's package and machine-key copy are tried, and taken on
   const m = await hub.enroll(a, "m-1");
   await a.handOverMachineKey(m.id, new FakeCourier());
   await a.upgradeToV3({ writable: true });
-  const b = await pairAdmin(hub, a);
+  const b = await pairBrowser(hub, a, { admin: true });
   assert.equal(b.isAdmin, true);
   assert.deepEqual(await b.vault.epochs(), [0, 1]);
   // b's own package for every epoch, and its own copy of MK_0 under UK_1.

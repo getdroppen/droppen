@@ -14,7 +14,7 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { AccountError, type CloudAccount } from "../src/lib/hub/account.js";
 import { chainV3Writable, type HubApi, MAIL_USER_KEY } from "../src/lib/hub/api.js";
 import { candidateFromOffer, PairingResponder } from "../src/lib/hub/pairing.js";
-import { createV2Genesis, FakeCourier, FakeKeysHub } from "./fake-keys-hub.js";
+import { createV2Genesis, FakeCourier, FakeKeysHub, pairBrowser } from "./fake-keys-hub.js";
 
 const kinds = (a: CloudAccount, from = 0) =>
   a
@@ -38,30 +38,6 @@ const noNewAccounts = (e: unknown) => {
 const writable = async (a: CloudAccount) => chainV3Writable(await a.api.me(a.session.token));
 
 /** A new browser paired from `a` by QR, as a full device (every browser is one: local-aggregator §3.1). */
-async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok");
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    await a.pairDevice(await candidateFromOffer(await r.startOffer(), a.chain!), { admin: true });
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-    assert.equal(r.state.kind, "paired", JSON.stringify(r.state));
-  } finally {
-    r.stop();
-  }
-  await b.sync();
-  return b;
-}
-
 test("a new account is chain v3 from its genesis: genesis3 names this browser its first admin, user key 0 goes as v3 — nothing is left to upgrade", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
@@ -144,7 +120,7 @@ test("on an account made on v3, a computer, a paired browser, the recovery words
   assert.ok(a.chain!.machine("m-1"));
   // A browser, paired: a full device, with the user key.
   at = a.chain!.seq + 1;
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a);
   assert.deepEqual(kinds(a, at), ["addDevice3"]);
   assert.ok(b.isAdmin && b.standing === "active");
   assert.deepEqual(await b.vault.epochs(), [0]);

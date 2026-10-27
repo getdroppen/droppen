@@ -21,52 +21,11 @@ import { ChainFollower, type FollowLink } from "../src/lib/hub/follow.js";
 import { keyName } from "../src/lib/hub/keyring.js";
 import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
 import { challengeAnswers, challengePassed, checkPhrase, pickChallenge } from "../src/lib/hub/recovery-words.js";
-import { browserStorage, createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
+import { browserStorage, createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore, pairBrowser } from "./fake-keys-hub.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
 /** Pair a new browser into `a`'s account by QR text, as the screens do. */
-async function pair(hub: FakeKeysHub, a: CloudAccount, store = new RecordingKeyStore()): Promise<CloudAccount> {
-  const b = await hub.device("tok", store);
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => {
-      await b.sync();
-      return b.chain;
-    },
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const text = await r.startOffer();
-    const c = await candidateFromOffer(text, a.chain!);
-    await completePairing(
-      {
-        api: a.api,
-        token: a.session.token,
-        device: a.deviceId,
-        signPublic: a.keys.signPublic,
-        noise: a.noiseKeys,
-        chain: () => a.chain!,
-        append: (action) => a.append(action),
-        withUserKeys: (use) => a.withUserKeys(use),
-      },
-      c,
-    );
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-  } finally {
-    // Its poll loop would otherwise keep the test process alive.
-    r.stop();
-  }
-  assert.equal(r.state.kind, "paired");
-  return b;
-}
-
 async function account(withWords = true) {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
@@ -141,7 +100,7 @@ test("recover → pending → another device approves → active, with every use
   await a.sync();
   assert.deepEqual(a.chain!.pendingRecoveries().map((p) => p.id), [c.deviceId]);
   // Meanwhile a rotation (another removal) made epoch 1: approval mails it too.
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   await a.removeDevice(b.deviceId, courier);
   assert.deepEqual(await a.vault.epochs(), [0, 1]);
   await a.approveDevice(c.deviceId);
@@ -202,8 +161,8 @@ test("vetoing a pending recovery clears the recovery key; new words replace it a
 
 test("removing a device rotates: a new UK only to the remaining full devices, a new MK to the agent", async () => {
   const { hub, a, machine } = await account();
-  const b = await pair(hub, a);
-  const c = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
+  const c = await pairBrowser(hub, a, { rawComplete: true });
   await assert.rejects(a.removeDevice(a.deviceId, new FakeCourier()), (e: unknown) => e instanceof AccountError && e.kind === "self");
   const courier = new FakeCourier();
   const before = hub.mailLog.length;
@@ -275,8 +234,8 @@ test("removing a device rotates: a new UK only to the remaining full devices, a 
 
 test("an entry signed on a stale view is re-signed once on the hub's head", async () => {
   const { hub, a } = await account(false);
-  const b = await pair(hub, a);
-  const c = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
+  const c = await pairBrowser(hub, a, { rawComplete: true });
   await b.sync();
   await b.removeDevice(c.deviceId, new FakeCourier());
   assert.ok(a.chain!.seq < hub.chain.length - 1, "a has not seen the removal");
@@ -292,8 +251,8 @@ test("an entry signed on a stale view is re-signed once on the hub's head", asyn
 
 test("a device that pinned the account takes the keys it missed when another device re-sends them; one that never pinned does not", async () => {
   const { hub, a, machine, courier } = await account(false);
-  const b = await pair(hub, a);
-  const c = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
+  const c = await pairBrowser(hub, a, { rawComplete: true });
   // A rotation whose mail to b is lost.
   await a.removeDevice(c.deviceId, courier);
   hub.mail = hub.mail.filter((m) => m.recipient !== b.deviceId);
@@ -404,7 +363,7 @@ function startFollower(t: { after: (fn: () => void) => void }, link: FakeLink, a
 
 test("the follower subscribes from its head, merges pushed entries, attests each change, and takes mail", async (t) => {
   const { hub, a, courier } = await account(false);
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   const link = new FakeLink();
   const removed: string[] = [];
   const follower = startFollower(t, link, b, removed);
@@ -413,7 +372,7 @@ test("the follower subscribes from its head, merges pushed entries, attests each
   assert.deepEqual(link.attested, [b.chain!.seq]);
 
   // `a` removes a third device: the entry is pushed, merged, attested; the new key arrives by mail.
-  const c = await pair(hub, a);
+  const c = await pairBrowser(hub, a, { rawComplete: true });
   await a.removeDevice(c.deviceId, courier);
   link.chain(hub.chain.slice(b.chain!.seq + 1).map((e) => fromHex(e)));
   await until(async () => (await b.vault.epochs()).length === 2 && link.attested.at(-1) === hub.chain.length - 1);
@@ -439,7 +398,7 @@ test("the follower subscribes from its head, merges pushed entries, attests each
 
 test("a 4403 close is confirmed against the chain before the device counts as removed", async (t) => {
   const { hub, a, courier } = await account(false);
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   const link = new FakeLink();
   const removed: string[] = [];
   const refused: string[] = [];
@@ -468,7 +427,7 @@ test("a 4403 close is confirmed against the chain before the device counts as re
 
 test("a hub that calls a device removed when the chain does not is not believed", async () => {
   const { hub, a } = await account(false);
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   hub.claimRemoved.add(b.deviceId);
   hub.sessions.clear();
   const back = await hub.device("tok", b.store);
@@ -479,7 +438,7 @@ test("a hub that calls a device removed when the chain does not is not believed"
 
 test("a removal pushed over the link is noticed at once", async (t) => {
   const { hub, a, courier } = await account(false);
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   const link = new FakeLink();
   const removed: string[] = [];
   const follower = startFollower(t, link, b, removed);

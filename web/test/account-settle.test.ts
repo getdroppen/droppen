@@ -7,51 +7,13 @@
 // again and find the key: the new device's sessions show without a reload.
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { CloudAccount } from "../src/lib/hub/account.js";
-import { candidateFromOffer, completePairing, PairingResponder } from "../src/lib/hub/pairing.js";
-import { createV2Genesis, FakeCourier, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
-
-async function pair(hub: FakeKeysHub, a: CloudAccount): Promise<CloudAccount> {
-  const b = await hub.device("tok", new RecordingKeyStore());
-  const r = new PairingResponder({
-    api: b.api,
-    token: b.session.token,
-    account: b.account,
-    device: b.deviceId,
-    signPublic: b.keys.signPublic,
-    noise: b.noiseKeys,
-    chain: async () => (await b.sync(), b.chain),
-    storeUserKeys: (keys) => b.storeUserKeys(keys),
-    pollMs: 1,
-  });
-  try {
-    const c = await candidateFromOffer(await r.startOffer(), a.chain!);
-    await completePairing(
-      {
-        api: a.api,
-        token: a.session.token,
-        device: a.deviceId,
-        signPublic: a.keys.signPublic,
-        noise: a.noiseKeys,
-        chain: () => a.chain!,
-        append: (action) => a.append(action),
-        withUserKeys: (use) => a.withUserKeys(use),
-      },
-      c,
-    );
-    for (let i = 0; i < 10 && r.state.kind !== "paired"; i++) await r.tick();
-  } finally {
-    r.stop();
-  }
-  assert.equal(r.state.kind, "paired");
-  return b;
-}
+import { createV2Genesis, FakeCourier, FakeKeysHub, pairBrowser } from "./fake-keys-hub.js";
 
 test("a machine whose key is put after its chain entry: the page following the chain hears of it once it settles, and reads the key then", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");
   await createV2Genesis(a, true);
-  const b = await pair(hub, a);
+  const b = await pairBrowser(hub, a, { rawComplete: true });
   await b.sync();
   await b.settle();
   // Another page (a) adds the machine: the chain first…
