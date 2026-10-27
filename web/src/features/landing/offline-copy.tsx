@@ -244,7 +244,7 @@ export function OfflineCopy() {
                 {onlineRow}
               </span>
               <span ref={offRow} hidden data-signal="offline" className="text-danger">
-                {t("computer off · {{time}}", { time: "14:00" })}
+                {t("offline since {{time}}", { time: "14:00" })}
               </span>
             </span>,
           ]}
@@ -264,7 +264,7 @@ export function OfflineCopy() {
           rows={[
             // What it does with a page: passes it on, sealed as it came.
             <span key="p" className="opacity-80">
-              {t("passes the copy on")}
+              {t("hands the copy to your phone")}
             </span>,
           ]}
         />
@@ -278,7 +278,7 @@ export function OfflineCopy() {
         }
         rows={[
           <span key="c" className="text-fg">
-            {t("Droppen can't read it")}
+            {t("Droppen can't decrypt it")}
           </span>,
         ]}
       />

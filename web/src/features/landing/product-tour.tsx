@@ -9,9 +9,9 @@ import { useReducedMotion } from "./motion";
  * sessions, split screen, terminal, the cloud's every-device page, the phone,
  * letting a device in. Each picture sits in the frame it is seen in (the Mac
  * app's window, a browser at my.droppen.app, a phone), drawn here in HTML so
- * the frames follow the theme; the pictures themselves are per theme
- * (`tourShot`), and in English whatever the page's language: the product is
- * the same, and one set keeps the page light.
+ * the frames follow the theme; the pictures themselves are per language and
+ * theme (`tourShot`): Chinese pages show the app in Chinese, every other page
+ * in English.
  *
  * The screenshots are made from the real app on a demo home with made-up
  * sessions (`scripts/landing-shots/`), never from anyone's account.
@@ -34,18 +34,24 @@ export const TOUR_SHOTS: Record<TourTab, { frame: FrameKind; shots: string[] }> 
   security: { frame: "phone", shots: ["security-pair"] },
 };
 
-/** Where a screenshot is, for a theme. */
-export function tourShot(shot: string, theme: "light" | "dark"): string {
-  return `/tour/${shot}-${theme}.webp`;
+/** The screenshots' languages: Chinese pages get the Chinese ones, every other the English. */
+export function tourLanguage(language: string): "zh-CN" | "en" {
+  return language.startsWith("zh") ? "zh-CN" : "en";
+}
+
+/** Where a screenshot is, for a language and a theme. */
+export function tourShot(shot: string, language: string, theme: "light" | "dark"): string {
+  return `/tour/${shot}-${tourLanguage(language)}-${theme}.webp`;
 }
 
 /** One screenshot in both themes: the page's theme (the `dark` class) shows one of them. */
 function Shot({ shot, alt, className, eager }: { shot: string; alt: string; className?: string; eager?: boolean }) {
+  const { i18n } = useTranslation();
   const loading = eager ? "eager" : "lazy";
   return (
     <>
-      <img src={tourShot(shot, "light")} alt={alt} loading={loading} decoding="async" className={cn("block w-full dark:hidden", className)} />
-      <img src={tourShot(shot, "dark")} alt="" aria-hidden="true" loading={loading} decoding="async" className={cn("hidden w-full dark:block", className)} />
+      <img src={tourShot(shot, i18n.language, "light")} alt={alt} loading={loading} decoding="async" className={cn("block w-full dark:hidden", className)} />
+      <img src={tourShot(shot, i18n.language, "dark")} alt="" aria-hidden="true" loading={loading} decoding="async" className={cn("hidden w-full dark:block", className)} />
     </>
   );
 }
@@ -145,11 +151,11 @@ export function ProductTour() {
   // A tab is its name: the picture under it says the rest (and its alt text, to a screen reader).
   const copy: Record<TourTab, { label: string; alt: string }> = {
     sessions: { label: t("Sessions"), alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer") },
-    split: { label: t("Split screen"), alt: t("Droppen with three panes: two sessions and a terminal") },
+    split: { label: t("Side by side"), alt: t("Droppen with three panes: two sessions and a terminal") },
     terminal: { label: t("Terminal"), alt: t("A terminal in Droppen") },
-    cloud: { label: t("Cloud"), alt: t("my.droppen.app: three computers and the list of what needs you") },
+    cloud: { label: t("My devices"), alt: t("my.droppen.app in a browser: three computers and the list of what needs you") },
     phone: { label: t("Phone"), alt: t("Droppen on a phone: what needs you, and a session's question") },
-    security: { label: t("Security"), alt: t("Letting a new device in with a QR code") },
+    security: { label: t("Add a device"), alt: t("A new device shows a QR code, and a device you already have approves it") },
   };
 
   // On a phone the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.

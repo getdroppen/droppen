@@ -82,7 +82,7 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
   return (
     <>
       <a {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)} {...first}>
-        {closed ? t("Join the waitlist") : t("Start for free")}
+        {closed ? t("Join the waitlist") : t("Create a free account")}
       </a>
     </>
   );
@@ -130,7 +130,7 @@ export function HeroGet({
           <p className={small}>
             {release && dmg && <span data-testid="hero-file-facts">{fileFacts(release, dmg)} · </span>}
             {/* The checksums and the release's other files are the download page's, one click away. */}
-            {t("macOS 13 or later · Apple silicon and Intel")} · <TabLink label={t("other systems")} testId="hero-other-systems" />
+            {t("macOS 13 or later · Apple silicon and Intel")} · <TabLink label={t("Linux and other platforms")} testId="hero-other-systems" />
           </p>
         </>
       )}

@@ -175,7 +175,7 @@ export const downloadZhCN: Bundle = {
 
   // The home page's hero: the way onto the device reading it (hero-get.tsx)
   "Download for Mac": "下载 Mac 版",
-  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 及以上 · Apple 芯片和 Intel 都能用",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 及以上 · 支持 Apple 芯片和 Intel",
   "other systems": "其他系统",
   "checksums and other files": "校验值和其他文件",
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在这台设备的终端里粘贴运行：Droppen 会自动安装、启动，并打开它的页面。",
@@ -335,7 +335,7 @@ export const downloadZhTW: Bundle = {
 
   // The home page's hero: the way onto the device reading it (hero-get.tsx)
   "Download for Mac": "下載 Mac 版",
-  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 以上 · Apple 晶片和 Intel 都能用",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 以上 · 支援 Apple 晶片和 Intel",
   "other systems": "其他系統",
   "checksums and other files": "校驗值和其他檔案",
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在這台裝置的終端機裡貼上執行：Droppen 會自動安裝、啟動，並打開它的頁面。",

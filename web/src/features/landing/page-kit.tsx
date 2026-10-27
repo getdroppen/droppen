@@ -185,11 +185,11 @@ export function FooterLine() {
         <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <a href={SOURCE_URL} data-testid="footer-source" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Source code")}
+          {t("Client source code")}
         </a>
         {/* Every build writes it (web/build/third-party-notices.mjs): the licences of the packages in this page. */}
         <a href={NOTICES_PATH} data-testid="footer-licences" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Third-party licences")}
+          {t("Third-party notices")}
         </a>
       </div>
     </Section>

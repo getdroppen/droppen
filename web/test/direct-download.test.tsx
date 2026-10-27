@@ -463,7 +463,7 @@ test("the hero on a Mac: 「Download for Mac」 is the one primary action, the f
   assert.doesNotMatch(h, /data-testid="hero-release-link"/);
   assert.match(h, /<a href="\/download" data-testid="hero-other-systems"/);
   // Sign-up stays, as the secondary; signing in is the header's and the footer's.
-  assert.match(h, /<a href="\/signup" class="[^"]*">Start for free<\/a>/);
+  assert.match(h, /<a href="\/signup" class="[^"]*">Create a free account<\/a>/);
   assert.doesNotMatch(h, /href="\/signin"/);
   assert.doesNotMatch(h, /data-testid="hero-install-command"/);
   // Signed in: the download, and back into the app.
@@ -498,7 +498,7 @@ test("the hero on Windows and on a phone: droppen.app in the browser is the prim
   const w = hero(windows);
   assert.match(w, /data-offer="windows"/);
   assert.ok(text(w).includes("No Windows app yet. Droppen works in this browser"));
-  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Start for free<\/a>/);
+  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Create a free account<\/a>/);
   assert.match(w, /<a href="\/download\?os=macos-app" data-testid="hero-mac-tab"/);
   assert.match(w, /<a href="\/download\?os=linux" data-testid="hero-linux-tab"/);
   assert.doesNotMatch(w, /Droppen-0\.2\.129\.dmg|github\.com/, "no Mac file for a Windows device");
@@ -532,15 +532,15 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["No Windows app yet."], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "其他系统"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
-    "zh-TW": { mac: ["下載 Mac 版", "其他系統"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Windows 版 App 還沒有。"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
-    ja: { mac: ["Mac 版をダウンロード", "ほかの OS"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Windows 版アプリはまだありません。"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
+    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Windows 版 App 還沒有。"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
+    ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Windows 版アプリはまだありません。"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
   };
   for (const [lng, devices] of Object.entries(said)) {
     for (const [device, lines] of Object.entries(devices)) {
       const words = text(hero(landing(lng, { hints: HINTS[device as keyof typeof HINTS] })));
       for (const line of lines) assert.ok(words.includes(line), `${lng} ${device}: ${line}`);
-      if (lng !== "en") assert.doesNotMatch(words, /Download for Mac|No Windows app yet|Paste it into|Get Droppen:|other systems|Or download it/, `${lng} ${device}`);
+      if (lng !== "en") assert.doesNotMatch(words, /Download for Mac|No Windows app yet|Paste it into|Get Droppen:|other platforms|Or download it/, `${lng} ${device}`);
       assert.doesNotMatch(words, /Hub|relay|中继|中繼|中継|NAT|STUN|p50|ciphertext|密文|暗号文/, `${lng} ${device}`);
     }
   }

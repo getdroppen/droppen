@@ -105,7 +105,7 @@ test("every public page links it: the footer everywhere, the landing page's secu
   for (const [name, element] of Object.entries(pages)) {
     assert.match(render(element, "en"), /<a href="\/security"[^>]*data-testid="footer-security"[^>]*>Security<\/a>/, `${name}: the footer`);
   }
-  assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works, in detail<\/a>/);
+  assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works<\/a>/);
   assert.match(render(<PrivacyPage />, "en"), /<a href="\/security"[^>]*data-testid="privacy-security"[^>]*>How the encryption works, in detail<\/a>/);
   assert.match(render(<PrivacyPage />, "zh-CN"), /data-testid="privacy-security"[^>]*>加密是怎么做的：详细说明<\/a>/);
   // On its own page the footer link says where you are.

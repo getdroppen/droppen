@@ -253,7 +253,7 @@ export function DirectPath() {
   const packets = useRef<(SVGGElement | null)[]>([]);
 
   const directLive = t("direct path up");
-  const directLost = t("direct path lost: back on the Droppen relay, unconfirmed keys sent again in order");
+  const directLost = t("direct path lost: switched to the Droppen relay, resending unconfirmed keys in order");
   const directBack = t("network back: direct again");
   const lostWord = t("lost");
 
@@ -324,10 +324,10 @@ export function DirectPath() {
     setAttr(hubBox.current, "data-active", phase === "hub" ? "true" : "false");
     setText(status.current, phase === "direct" ? directLive : phase === "hub" ? directLost : directBack);
     setAttr(status.current, "data-tone", phase === "hub" ? "danger" : "ok");
-    setText(counts.current, t("keys {{sent}} · delivered {{delivered}} · lost 0", { sent, delivered }));
-    // The device's own path tag (the path and its round trip), and what Droppen is doing.
+    setText(counts.current, t("keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0", { sent, delivered, flight: sent - delivered }));
+    // The device's own path tag (the path it is on; the round trip is the wire's readout), and what Droppen is doing.
     const activeMs = phase === "hub" ? hubMs : (directMs ?? hubMs);
-    setText(devPath.current, `${phase === "hub" ? t("relay") : t("direct")} ${fmt(activeMs)}`);
+    setText(devPath.current, phase === "hub" ? t("relay") : t("direct"));
     setAttr(devPath.current, "data-latency", tone(activeMs));
     setAttr(hubCard.current, "data-dim", phase === "hub" ? "false" : "true");
   };
@@ -338,11 +338,11 @@ export function DirectPath() {
     {
       frame: show,
       still: () => {
-        // The steady state, annotated: the direct path live, the relay dashed beside it.
+        // The steady state: the direct path live, the relay dashed beside it.
         show(DROP - 0.6);
         keys.forEach((_, i) => place(packets.current[i], null));
         place(packets.current[0], pointAt(L.direct, 0.5));
-        setText(status.current, t("if the direct path drops, the Droppen relay takes over within 1.5 s and no keystroke is lost"));
+        setText(status.current, directLive);
         setAttr(status.current, "data-tone", "ok");
       },
     },
@@ -354,8 +354,8 @@ export function DirectPath() {
     "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 font-mono text-[11px] whitespace-nowrap tabular-nums data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
   const value = "data-[latency=ok]:text-ok data-[latency=warn]:text-warn-fg data-[latency=danger]:text-danger";
   const scenarios: { id: Scenario; label: string }[] = [
-    { id: "phone", label: t("on 4G") },
-    { id: "same", label: t("same computer") },
+    { id: "phone", label: t("phone on 4G") },
+    { id: "same", label: t("browser on the same computer") },
   ];
   return (
     <div ref={root} data-path="direct" className="flex h-full flex-col">
@@ -378,7 +378,7 @@ export function DirectPath() {
           ))}
         </div>
         <span className="font-mono text-2xs text-faint tabular-nums">
-          {t("measured p50 round trip · direct {{d}} · via a Droppen relay {{h}}", {
+          {t("measured median round trip · direct {{d}} · via a Droppen relay {{h}}", {
             d: `${m.direct[0]}–${m.direct[1]} ms`,
             h: `${m.hub[0]}–${m.hub[1]} ms`,
           })}

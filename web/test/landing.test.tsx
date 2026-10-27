@@ -21,7 +21,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { TOUR_SHOTS, TOUR_TABS, tourShot } from "../src/features/landing/product-tour.js";
+import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
 import LandingPage from "../src/features/landing/landing.js";
@@ -67,15 +67,15 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   for (const line of [
     // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
     "电脑上的 AI，手机上接着用。",
-    "Claude Code 和 Codex 照常在你自己的电脑上跑。",
-    "三步装好，走到哪都能接手。",
-    "本来要走回工位才能做的事，手机上都能做。",
-    "所有会话，一个列表",
-    "你的代码，只有你看得到。",
+    "Claude Code 和 Codex 仍在你自己的电脑上运行。",
+    "三步完成设置，离开电脑也能继续。",
+    "不在电脑前，这些事也能在手机上处理。",
+    "所有电脑，一个列表",
+    "你的代码，Droppen 无法读取。",
     // The deep sections, each headed by what it gets you.
-    "在手机上打字，照样跟手。",
-    "电脑合上了，会话照样能看。",
-    "免费开始",
+    "在手机上输入，响应及时。",
+    "电脑离线时，会话仍可查看。",
+    "免费注册",
     "登录",
     "公开测试版",
   ]) {
@@ -109,11 +109,11 @@ test("one primary action, and the calls to action go to sign-up and sign-in", ()
   const html = draw("en");
   const primaries = html.match(/data-variant="primary"/g) ?? [];
   assert.equal(primaries.length, 1, "one primary per page (docs/ui-spec.md V10)");
-  assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Start for free<\/a>/);
+  assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Create a free account<\/a>/);
   // Signing in is the header's and the end's; the hero does not offer it a second time.
   assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 2, "sign-in in the header and at the end");
   // The page ends on the same call to action, as a secondary.
-  assert.equal((html.match(/<a href="\/signup"[^>]*>Start for free<\/a>/g) ?? []).length, 2, "start for free in the hero and at the end");
+  assert.equal((html.match(/<a href="\/signup"[^>]*>Create a free account<\/a>/g) ?? []).length, 2, "sign-up in the hero and at the end");
 });
 
 test("signed in, the landing page is still the landing page, with a way back into the app instead of sign-in and sign-up", () => {
@@ -137,9 +137,9 @@ test("signed in, the landing page is still the landing page, with a way back int
     for (const id of ["tour", "how", "features", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
   }
   const words = text(draw("zh-CN", { signedIn: true }));
-  for (const gone of ["台电脑以内免费。", "免费开始", "AI 接着干活，你在哪都能接手。"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
+  for (const gone of ["台运行 AI 的电脑免费", "免费注册", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
   assert.ok(!text(draw("zh-CN", { signedIn: true, signup: "invite" })).includes("注册需要邀请码。"), "by invite too");
-  assert.ok(text(draw("zh-CN")).includes("台电脑以内免费。"), "signed out keeps the sign-up prompt");
+  assert.ok(text(draw("zh-CN")).includes("台运行 AI 的电脑免费"), "signed out keeps the sign-up prompt");
 });
 
 test("routing: `/` is the landing page signed in or not; the app keeps its own routes and starts at its start", () => {
@@ -176,24 +176,26 @@ test("routing: `/` is the landing page signed in or not; the app keeps its own r
 
 test("the numbers are the measured ones, and nothing claims more than the build does", () => {
   const words = text(draw("en"));
-  for (const n of ["63–73 ms", "215–227 ms", "1.5 s", "30 days"]) assert.ok(words.includes(n), `missing: ${n}`);
+  for (const n of ["63–73 ms", "215–227 ms", "1.5 s"]) assert.ok(words.includes(n), `missing: ${n}`);
+  // What a phone can read while the computer is off: the plan's window (the agent syncs min(30 days, the plan's retention)).
+  assert.ok(words.includes(`the last ${PLAN_NUMBERS.free.retentionDays} days (${PLAN_NUMBERS.pro.retentionDays} on Pro)`));
   assert.match(words, /internal security reviews, not an external audit/);
-  assert.match(words, /Droppen is in beta\./);
+  assert.match(words, /Droppen is in beta[.:]/);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
   // The free plan's computers, as the pricing page has them.
-  assert.ok(words.includes(`free for ${PLAN_NUMBERS.free.hosts} computers`));
+  assert.ok(words.includes(`Free for up to ${PLAN_NUMBERS.free.hosts} computers that run AI`));
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
 test("only the client is called open source: the hub never is, and nothing says all of Droppen is", () => {
   const en = text(draw("en"));
-  assert.match(en, /open-source client/);
+  assert.match(en, /open-source client/i);
   assert.match(en, /Droppen Hub is not open source/);
   // Every mention is the client's, or says the hub is not.
   for (const mention of en.match(/[^.:;]*open[- ]source[^.:;]*/gi) ?? []) {
-    assert.match(mention, /client|program on your computers|Droppen Hub is not/i, mention);
+    assert.match(mention, /client|command-line program|Droppen Hub is not/i, mention);
   }
   assert.doesNotMatch(en, /Droppen is open[- ]source|open[- ]source (service|platform)/i);
   for (const [lng, client, all] of [
@@ -215,15 +217,15 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     const html = draw("en", { signup });
     const words = text(html);
     assert.doesNotMatch(words, /invite/i, `${signup}: no invite`);
-    assert.ok(words.includes(`Public beta: free for ${PLAN_NUMBERS.free.hosts} computers.`));
-    assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
+    assert.ok(words.includes(`Public beta · Free for up to ${PLAN_NUMBERS.free.hosts} computers that run AI`));
+    assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See pricing<\/a>/);
     assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
-    assert.match(html, /<a href="\/signup"[^>]*>Start for free<\/a>/);
+    assert.match(html, /<a href="\/signup"[^>]*>Create a free account<\/a>/);
   }
   for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
     assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
   }
-  assert.ok(text(draw("zh-CN")).includes(`公开测试版，${PLAN_NUMBERS.free.hosts} 台电脑以内免费。`));
+  assert.ok(text(draw("zh-CN")).includes(`公开测试版 · 最多 ${PLAN_NUMBERS.free.hosts} 台运行 AI 的电脑免费`));
   // By invite: as before — the code, and the waitlist for those without one.
   const invited = draw("en", { signup: "invite" });
   assert.ok(text(invited).includes("Invite-only for now: sign-up needs an invite code."));
@@ -235,10 +237,10 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>Join the waitlist<\/a>/);
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
-  assert.doesNotMatch(closed, /href="\/signup"|Start for free/);
+  assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
   assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>Join the waitlist<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
   assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
-  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Start for free<\/a>/, signup);
+  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Create a free account<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
     assert.ok(words.includes(line), `${lng}: ${line}`);
@@ -293,15 +295,15 @@ test("the home page's words are its own: no key it draws is one the app translat
 test("the page reads in zh-TW and ja", () => {
   const tw = text(draw("zh-TW"));
   assert.ok(tw.includes("電腦上的 AI，手機上接著用。"));
-  assert.ok(tw.includes("你的程式碼，只有你看得到。"));
-  assert.ok(tw.includes("所有工作階段，一個清單"));
+  assert.ok(tw.includes("你的程式碼，Droppen 無法讀取。"));
+  assert.ok(tw.includes("所有電腦，一個清單"));
   assert.ok(tw.includes("登入"));
   const jp = text(draw("ja"));
   assert.ok(jp.includes("コンピュータの AI を、スマホで続きから。"));
-  assert.ok(jp.includes("あなたのコードは、あなたにしか見えない。"));
-  assert.ok(jp.includes("すべてのセッションを、ひとつのリストで"));
-  assert.ok(jp.includes("はじめる"));
-  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Your code, for your eyes only|Lid closed|Three steps|Run the migration/);
+  assert.ok(jp.includes("あなたのコードを、Droppen は読めません。"));
+  assert.ok(jp.includes("すべてのコンピュータを、ひとつのリストで"));
+  assert.ok(jp.includes("無料で登録"));
+  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Droppen can't read your code|stay readable|Three steps|Run the migration/);
 });
 
 test("the hero sells before it explains: no Hub, relay, NAT, STUN, p50 or ciphertext in its words", () => {
@@ -484,24 +486,27 @@ test("every diagram's cards stay inside it, at every width a pane can have, and 
   }
 });
 
-test("the tour shows the product: six tabs of real screenshots, each in its frame, in English for every reader and in both themes", () => {
+test("the tour shows the product: six tabs of real screenshots, each in its frame, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
   // The tabs, the first one shown; not a carousel: nothing in the tour moves by itself.
   assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
   assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
-  for (const label of ["会话", "分屏", "终端", "云端", "手机", "安全"]) assert.ok(text(tour).includes(label), label);
+  for (const label of ["会话", "多栏", "终端", "我的设备", "手机", "添加设备"]) assert.ok(text(tour).includes(label), label);
   // Its picture in both themes, the light one described.
-  assert.match(tour, /<img src="\/tour\/app-session-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
-  assert.match(tour, /<img src="\/tour\/app-session-dark\.webp" alt="" aria-hidden="true"/);
-  // Every reader sees the same English screenshots; only the description is in their language.
-  assert.match(draw("en"), /<img src="\/tour\/app-session-light\.webp" alt="Droppen on a Mac[^"]*"/);
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);
+  // Chinese pages show the app in Chinese, every other page in English.
+  assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
+  assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
 });
 
-test("every screenshot the tour can show is in the build, in both themes, and nothing it cannot", () => {
+test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {
   const files = readdirSync(new URL("../public/tour/", import.meta.url)).sort();
-  const shown = TOUR_TABS.flatMap((tab) => TOUR_SHOTS[tab].shots.flatMap((shot) => (["light", "dark"] as const).map((theme) => tourShot(shot, theme).replace("/tour/", ""))));
+  const shown = TOUR_TABS.flatMap((tab) =>
+    TOUR_SHOTS[tab].shots.flatMap((shot) => ["zh-CN", "en"].flatMap((lng) => (["light", "dark"] as const).map((theme) => tourShot(shot, lng, theme).replace("/tour/", "")))),
+  );
   assert.deepEqual(files, [...new Set(shown)].sort());
 });
 
@@ -516,7 +521,7 @@ test("the diagrams that carry content mark what is encrypted where: a padlock on
   assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
   // The speed figure opens on the phone on 4G, the case its headline is about.
   const direct = html.slice(html.indexOf('data-diagram="direct"') - 3000, html.indexOf('data-diagram="direct"'));
-  assert.match(direct, /aria-selected="true"[^>]*>4G 网络</);
+  assert.match(direct, /aria-selected="true"[^>]*>手机 · 4G 网络</);
 });
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {
@@ -535,15 +540,17 @@ test("no region is named anywhere on the page: the relay is Droppen's, wherever 
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), region, lng);
   assert.doesNotMatch(readFileSync(new URL("../index.html", import.meta.url), "utf8"), region);
   // The encryption card draws the line between them: Droppen Hub keeps the encrypted copies, Droppen relays pass ciphertext on.
-  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 只保管加密副本，Droppen 中继只转发密文"));
-  assert.ok(text(draw("en")).includes("Droppen Hub only keeps encrypted copies and Droppen relays only pass ciphertext on"));
+  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 保存的只是加密副本，Droppen 中继转发的只是加密数据"));
+  assert.ok(text(draw("en")).includes("Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext"));
 });
 
 test("the diagrams show product properties, not implementation trivia, and call the relay a Droppen relay", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
-    const words = text(draw(lng));
-    // No versions, fingerprints, ids, session counts, unread counts or page hashes on the cards.
-    assert.doesNotMatch(words, /agent 0\.|m-5vln|d-7c1e|fingerprint|指纹|指紋|unread|未读|未讀|未読|page #/, lng);
+    const html = draw(lng);
+    const words = text(html);
+    // No versions, fingerprints, ids, session counts, unread counts or page hashes on the diagrams' cards.
+    const diagrams = text(html.slice(html.indexOf('id="direct"'), html.indexOf('id="security"')));
+    assert.doesNotMatch(diagrams, /agent 0\.|m-5vln|d-7c1e|fingerprint|指纹|指紋|unread|未读|未讀|未読|page #/, lng);
     // Never a lower-case "hub"; Droppen Hub is still there, for the sealed pages it keeps.
     assert.doesNotMatch(words, /(?<![A-Za-z])hub(?![A-Za-z])/, `${lng}: lower-case hub`);
     assert.doesNotMatch(words, /Japan(?!ese)|日本(?!語)/, `${lng}: a country`);
