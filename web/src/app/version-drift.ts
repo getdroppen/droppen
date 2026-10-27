@@ -16,6 +16,20 @@ export interface VersionDriftState {
 export const NO_DRIFT: VersionDriftState = { seen: null, drifted: false };
 
 /**
+ * The build a `settings` frame says the page is talking to: none for one
+ * played from the machine's offline copy (`offline-transport.ts`). That is the
+ * build the machine ran when it last wrote its status, any number of updates
+ * ago, and a cloud page starts on the copy until the machine's channel opens:
+ * taken as the baseline, it made the live build drift on every load, so no
+ * reload could clear the banner.
+ */
+export function liveVersion(
+  settings: { serverVersion?: string; fromCopy?: boolean } | null | undefined,
+): string | undefined {
+  return settings?.fromCopy ? undefined : settings?.serverVersion;
+}
+
+/**
  * Folds one observed serverVersion into the drift state. An absent version on
  * either side means "cannot tell" and is ignored, so an older server that does
  * not report a version never trips the banner. Idempotent for a repeated

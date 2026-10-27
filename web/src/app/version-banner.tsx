@@ -2,7 +2,7 @@ import { RefreshCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFeedSettings } from "./global-feed";
-import { NO_DRIFT, observeVersion, type VersionDriftState } from "./version-drift";
+import { liveVersion, NO_DRIFT, observeVersion, type VersionDriftState } from "./version-drift";
 import { checkForSwUpdate } from "@/lib/sw-update";
 
 /**
@@ -12,8 +12,7 @@ import { checkForSwUpdate } from "@/lib/sw-update";
  * which is how a self-restarted server announces its new build.
  */
 export function useServerVersionDrift(): boolean {
-  const settings = useFeedSettings();
-  const version = settings?.serverVersion;
+  const version = liveVersion(useFeedSettings());
   const [state, setState] = useState<VersionDriftState>(NO_DRIFT);
   useEffect(() => {
     setState((s) => observeVersion(s, version));

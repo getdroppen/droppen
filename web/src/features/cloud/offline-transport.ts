@@ -15,12 +15,12 @@
  * - Everything else — sending, terminals, files, writes of any kind — is a
  *   `503 {error: "machine_offline", message, hint}`; `hint` is what the app's
  *   `errorText` shows.
- * - `/api/events?v=2` is a socket played here: `hello`, `settings`,
- *   `sessions:snapshot`, then session feeds on `sub` (a snapshot built like the
- *   server's, or — when the window the page holds is this copy's — a resume),
- *   `resync`, `ping`; and whatever the copy learns from the hub afterwards
- *   (records the machine wrote just before it went) goes out as
- *   `sessions:delta`, feed deltas and `state` frames.
+ * - `/api/events?v=2` is a socket played here: `hello`, `settings` (marked
+ *   `fromCopy`), `sessions:snapshot`, then session feeds on `sub` (a snapshot
+ *   built like the server's, or — when the window the page holds is this
+ *   copy's — a resume), `resync`, `ping`; and whatever the copy learns from
+ *   the hub afterwards (records the machine wrote just before it went) goes
+ *   out as `sessions:delta`, feed deltas and `state` frames.
  * - Terminal sockets close at once: they need the machine.
  *
  * Fingerprints: the copy holds the agent's `fp` (of every item it has) and
@@ -417,7 +417,9 @@ export class OfflineMuxSocket implements SocketLike {
     const text = JSON.stringify(settings);
     if (text === this.settingsJson) return;
     this.settingsJson = text;
-    this.emit({ ...settings, type: "settings" });
+    // Marked: its `serverVersion` is the build the machine ran when it last
+    // wrote its status, not one this page is talking to (`version-drift.ts`).
+    this.emit({ ...settings, fromCopy: true, type: "settings" });
   }
 
   send(data: string): void {

@@ -200,6 +200,7 @@ test("the feed socket: hello first, then settings and the list; a sub is a read-
   assert.deepEqual(m.frames[0], { type: "hello", features: ["sub", "ping"], compress: null });
   assert.equal(m.frames[1]!.type, "settings");
   assert.equal(m.frames[1]!.hostname, "mac");
+  assert.equal(m.frames[1]!.fromCopy, true, "marked, so its version is not taken for the machine's build");
   assert.equal(m.frames[2]!.type, "sessions:snapshot");
   assert.deepEqual(m.frames[2]!.sessions.map((s: SessionSummary) => s.id), ["a", "b", "x"]);
 
