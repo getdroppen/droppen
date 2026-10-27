@@ -1281,14 +1281,7 @@ impl RotationLog {
     /// binding: the binding table lives in the configuration database, and
     /// this is only ever asked by this instance's drivers, beside its log.
     pub fn note_hand_binding(&self, session_id: &str, at_ms: i64) {
-        let written = self.db.write(|tx| {
-            tx.execute(
-                "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
-                 ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                (HAND_BINDING_SCOPE, session_id, at_ms.to_string()),
-            )?;
-            Ok(())
-        });
+        let written = self.db.write(|tx| crate::db::kv_set_in(tx, HAND_BINDING_SCOPE, session_id, &at_ms.to_string()));
         if let Err(error) = written {
             tracing::warn!(session = %session_id, %error, "cannot record a binding made by hand");
         }
@@ -1297,19 +1290,7 @@ impl RotationLog {
     /// When somebody last bound `session_id` to an account by hand, epoch
     /// milliseconds; see [`RotationLog::note_hand_binding`].
     pub fn bound_by_hand_ms(&self, session_id: &str) -> Option<i64> {
-        use rusqlite::OptionalExtension;
-        self.db
-            .read(|conn| {
-                conn.query_row(
-                    "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                    (HAND_BINDING_SCOPE, session_id),
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-            })
-            .ok()
-            .flatten()
-            .and_then(|raw| raw.parse::<i64>().ok())
+        self.db.kv_get(HAND_BINDING_SCOPE, session_id).and_then(|raw| raw.parse::<i64>().ok())
     }
 
     /// Whether a decision with this id is still in the log. Tests only.

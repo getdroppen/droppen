@@ -41,7 +41,6 @@ use std::sync::Arc;
 use gotcha::Schematic;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::limits::LimitClass;
 use super::rest::{AccountRest, LimitLog};
@@ -685,10 +684,7 @@ const MAX_BASE_URL_LENGTH: usize = 512;
 /// goes through [`normalize_secret`], and the shortest real one is far longer.
 const MIN_REDACTABLE_SECRET: usize = 8;
 
-fn sha256_hex(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
+use crate::text::sha256_hex;
 
 /// Whether `id` is a plain uuid. A directory is only ever named after one.
 pub fn is_uuid(id: &str) -> bool {
@@ -984,16 +980,7 @@ impl AccountsStore {
     /// rather than leaving the default unset (see [`LOCAL_DEFAULT`]).
     pub fn local_is_default(&self, provider: AccountProvider) -> bool {
         self.db
-            .read(|conn| {
-                conn.query_row(
-                    "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                    (SETTINGS_SCOPE, provider.default_key()),
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-            })
-            .ok()
-            .flatten()
+            .kv_get(SETTINGS_SCOPE, provider.default_key())
             .is_some_and(|value| value == LOCAL_DEFAULT)
     }
 
@@ -1261,11 +1248,7 @@ impl AccountsStore {
             .db
             .write(|tx| match id {
                 None => {
-                    tx.execute(
-                        "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
-                         ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                        (SETTINGS_SCOPE, key, LOCAL_DEFAULT),
-                    )?;
+                    crate::db::kv_set_in(tx, SETTINGS_SCOPE, key, LOCAL_DEFAULT)?;
                     Ok(Ok(true))
                 }
                 Some(id) => {
@@ -1281,11 +1264,7 @@ impl AccountsStore {
                             provider.label()
                         ))));
                     }
-                    tx.execute(
-                        "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
-                         ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                        (SETTINGS_SCOPE, key, id),
-                    )?;
+                    crate::db::kv_set_in(tx, SETTINGS_SCOPE, key, id)?;
                     Ok(Ok(true))
                 }
             })
@@ -1299,7 +1278,7 @@ impl AccountsStore {
     /// ([`super::rotation::start_choice`]).
     pub async fn clear_default(&self, provider: AccountProvider) -> Result<(), AccountError> {
         self.db
-            .write(|tx| tx.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", (SETTINGS_SCOPE, provider.default_key())))
+            .write(|tx| crate::db::kv_remove_in(tx, SETTINGS_SCOPE, provider.default_key()))
             .map_err(store_db)?;
         Ok(())
     }

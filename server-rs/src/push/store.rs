@@ -168,15 +168,8 @@ pub async fn vapid_key(paths: &Paths) -> std::io::Result<SigningKey> {
     // carries on: a key that was minted but not stored is a *different* key on
     // the next call, and the subscriptions minted against the first one would
     // never be delivered to again. The caller has to hear about that.
-    db.write(|tx| {
-        tx.execute(
-            "INSERT INTO kv (scope, key, value) VALUES (?1, ?2, ?3)
-             ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()",
-            (scope::PUSH, VAPID_PRIVATE, ece::b64url(&key.to_bytes())),
-        )?;
-        Ok(())
-    })
-    .map_err(std::io::Error::other)?;
+    db.write(|tx| crate::db::kv_set_in(tx, scope::PUSH, VAPID_PRIVATE, &ece::b64url(&key.to_bytes())))
+        .map_err(std::io::Error::other)?;
     Ok(key)
 }
 
