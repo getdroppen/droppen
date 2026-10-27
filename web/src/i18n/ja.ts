@@ -881,6 +881,10 @@ export const ja: Record<string, string> = {
   "uninstalling…": "アンインストール中…",
   "uninstall the {{name}} plugin? its documents are kept for a later install": "「{{name}}」プラグインをアンインストールしますか？ドキュメントは残り、後で再インストールできます。",
   "a plugin was installed, upgraded or uninstalled elsewhere: reload this page to finish": "プラグインのインストール、アップグレード、アンインストールが別の場所で行われました。このページを再読み込みすると反映されます",
+  "{{name}} does not work with this version of Droppen": "「{{name}}」はこのバージョンの Droppen では動作しません",
+  "Install a build of it made for this version, or switch it off.": "このバージョン向けのビルドをインストールするか、オフにしてください。",
+  "install {{file}}?": "{{file}} をインストールしますか？",
+  "A plugin runs inside this page with no sandbox, signed in as you: it can do anything you can do here, terminals included. Install only one you trust as much as a program you would run in this device's terminal.": "プラグインはサンドボックスなしでこのページ内で動き、あなたとしてサインインした状態になります。ターミナルを含め、ここであなたができることはすべてできます。このデバイスのターミナルで実行してもよいと思えるほど信頼できるものだけをインストールしてください。",
   // The new-session view (`features/sessions/new-session-view.tsx`).
   "starting the session in {{dir}}…": "{{dir}} でセッションを開始しています…",
   "could not start the session:": "セッションを開始できませんでした：",

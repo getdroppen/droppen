@@ -71,6 +71,7 @@ export function PluginPane({
   if (registry.loading.includes(content.plugin)) return <Spinner className="flex-1" />;
   const active = registry.active.find((p) => p.id === content.plugin);
   if (registry.errors[content.plugin]) return <Placeholder note={t("the {{name}} plugin could not start", { name })} onReset={onReset} />;
+  if (!status.compatible) return <Placeholder note={t("{{name}} does not work with this version of Droppen", { name })} onReset={onReset} />;
   if (!active) return <Placeholder note={t("the {{name}} plugin is not enabled", { name })} onReset={onReset} />;
   const pane = active.contributions.panes?.find((p) => p.id === content.pane);
   if (!pane) return <Placeholder note={t("{{name}} has no pane called {{pane}}", { name, pane: content.pane })} onReset={onReset} />;

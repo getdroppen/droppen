@@ -11,7 +11,7 @@
  * or off needs no reload.
  *
  * On a page a hub serves none of this happens: the registry is not mounted,
- * and both helpers answer nothing for `cloud` even if they were asked.
+ * and the helpers answer nothing for `cloud` even if they were asked.
  */
 import type { PluginStatus } from "./types";
 
@@ -45,6 +45,18 @@ export function runningStatuses(
     if (code.entry) running.push(code);
   }
   return running;
+}
+
+/**
+ * The plugins the user has switched on that this host cannot run — typically
+ * left behind by a host update (`docs/plugins/runtime.md` §3). They are not
+ * loaded, but the page names them (a rail entry, their page, their pane)
+ * rather than letting them vanish; switching one off puts it away (§6). From
+ * the live list, not the baseline: the switch needs no reload.
+ */
+export function strandedStatuses(statuses: readonly PluginStatus[] | null, cloud = false): PluginStatus[] {
+  if (cloud || !statuses) return [];
+  return statuses.filter((status) => status.switchedOn && !status.compatible);
 }
 
 /**

@@ -880,6 +880,10 @@ export const zhCN: Record<string, string> = {
   "uninstalling…": "正在卸载…",
   "uninstall the {{name}} plugin? its documents are kept for a later install": "卸载「{{name}}」插件？它的文档会保留，供以后重新安装。",
   "a plugin was installed, upgraded or uninstalled elsewhere: reload this page to finish": "插件的安装、升级或卸载发生在别处：刷新本页即可生效",
+  "{{name}} does not work with this version of Droppen": "「{{name}}」与当前版本的 Droppen 不兼容",
+  "Install a build of it made for this version, or switch it off.": "请安装为这个版本构建的插件，或把它关掉。",
+  "install {{file}}?": "安装 {{file}}？",
+  "A plugin runs inside this page with no sandbox, signed in as you: it can do anything you can do here, terminals included. Install only one you trust as much as a program you would run in this device's terminal.": "插件在本页内运行，没有沙箱，并以你的登录身份行事：你在这里能做的事它都能做，包括终端。只安装你信任到愿意在这台设备的终端里运行的插件。",
   // The new-session view (`features/sessions/new-session-view.tsx`).
   "starting the session in {{dir}}…": "正在 {{dir}} 中启动会话…",
   "could not start the session:": "会话没能启动：",

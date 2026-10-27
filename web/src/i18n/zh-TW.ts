@@ -880,6 +880,10 @@ export const zhTW: Record<string, string> = {
   "uninstalling…": "正在卸載…",
   "uninstall the {{name}} plugin? its documents are kept for a later install": "卸載「{{name}}」外掛程式？它的文件會保留，供日後重新安裝。",
   "a plugin was installed, upgraded or uninstalled elsewhere: reload this page to finish": "外掛程式的安裝、升級或卸載發生在別處：重新整理本頁即可生效",
+  "{{name}} does not work with this version of Droppen": "「{{name}}」與目前版本的 Droppen 不相容",
+  "Install a build of it made for this version, or switch it off.": "請安裝為這個版本建置的外掛程式，或將它關閉。",
+  "install {{file}}?": "安裝 {{file}}？",
+  "A plugin runs inside this page with no sandbox, signed in as you: it can do anything you can do here, terminals included. Install only one you trust as much as a program you would run in this device's terminal.": "外掛程式在本頁內執行，沒有沙箱，並以你的登入身分行事：你在這裡能做的事它都能做，包括終端機。只安裝你信任到願意在這台裝置的終端機裡執行的外掛程式。",
   // The new-session view (`features/sessions/new-session-view.tsx`).
   "starting the session in {{dir}}…": "正在 {{dir}} 中啟動工作階段…",
   "could not start the session:": "工作階段無法啟動：",

@@ -9,6 +9,11 @@
  * the plugin's data. Installing or uninstalling reloads the page: the plugin
  * list and the modules it loaded cannot change under a running page.
  *
+ * An install asks first, and says what it means: a plugin runs unsandboxed
+ * in this page, as the signed-in user (§8). A plugin switched on that this
+ * host cannot run shows its switch on and its problem as a warning; switching
+ * it off is how the user puts it away (§6).
+ *
  * A page a hub serves has no such section (§5).
  */
 import { localize } from "@droppen/plugin-sdk";
@@ -62,13 +67,15 @@ function PluginRow({ status }: { status: PluginStatus }) {
 
   const failure = registry.errors[status.id];
   const problem = uninstall.isError ? uninstall.error.message : toggle.isError ? toggle.error.message : null;
+  // Switched on and cannot run: not the user's choice, so it is a warning.
+  const stranded = status.switchedOn && !status.compatible;
   const notes = [
-    status && !status.compatible ? t("not compatible with this version of Droppen") : null,
-    status.reason ?? null,
-    status.notice ?? null,
-    failure ? t("could not start: {{error}}", { error: failure }) : null,
-    problem,
-  ].filter((note): note is string => !!note);
+    !status.compatible ? { text: t("not compatible with this version of Droppen"), signal: stranded ? "warn" : null } : null,
+    status.reason ? { text: status.reason, signal: stranded ? "warn" : null } : null,
+    status.notice ? { text: status.notice, signal: null } : null,
+    failure ? { text: t("could not start: {{error}}", { error: failure }), signal: "failed" } : null,
+    problem ? { text: problem, signal: "failed" } : null,
+  ].filter((note) => note !== null);
   return (
     <div className={cn(row, "mt-3 first:mt-0")} data-plugin-row={status.id}>
       <div className="min-w-0">
@@ -80,11 +87,11 @@ function PluginRow({ status }: { status: PluginStatus }) {
         </div>
         {notes.map((note) => (
           <div
-            key={note}
-            data-signal={failure || problem ? "failed" : undefined}
-            className={cn("text-2xs break-words", failure || problem ? "text-danger" : "text-faint")}
+            key={note.text}
+            data-signal={note.signal ?? undefined}
+            className={cn("text-2xs break-words", note.signal === "failed" ? "text-danger" : note.signal === "warn" ? "text-warn-fg" : "text-faint")}
           >
-            {note}
+            {note.text}
           </div>
         ))}
         {status.forced && <div className="text-2xs text-faint">{t("set by the server configuration")}</div>}
@@ -92,7 +99,7 @@ function PluginRow({ status }: { status: PluginStatus }) {
       <div className="flex max-w-full shrink-0 items-center gap-2">
         <Tabs
           className="max-w-full"
-          value={status.enabled ? "on" : "off"}
+          value={status.switchedOn ? "on" : "off"}
           onValueChange={(v) => {
             if (!status.forced && !toggle.isPending) toggle.mutate(v === "on");
           }}
@@ -132,7 +139,14 @@ export function PluginsSection() {
 
   const pickAndInstall = async () => {
     const file = await openFile([".tgz", "application/gzip", "application/x-gzip"]);
-    if (file) install.mutate(file);
+    if (!file) return;
+    const yes = await requestConfirm(
+      t(
+        "A plugin runs inside this page with no sandbox, signed in as you: it can do anything you can do here, terminals included. Install only one you trust as much as a program you would run in this device's terminal.",
+      ),
+      { title: t("install {{file}}?", { file: file.name }), confirmLabel: t("install") },
+    );
+    if (yes) install.mutate(file);
   };
 
   const settings = registry.active.flatMap((plugin) =>

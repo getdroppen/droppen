@@ -5,8 +5,9 @@
  * Which plugins exist is the instance's (`registry.statuses`, from its
  * statuses); the page keeps running the build it started with, so an upgrade
  * elsewhere shows its "Reload to finish" notice here until the page reloads.
- * A page a hub serves never gets this far (`app/router.tsx` sends `/p/…` to
- * the session list).
+ * A plugin this host cannot run says so, with the reason, whether or not it
+ * is switched on (`docs/plugins/runtime.md` §6). A page a hub serves never
+ * gets this far (`app/router.tsx` sends `/p/…` to the session list).
  */
 import { localize } from "@droppen/plugin-sdk";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
@@ -14,6 +15,7 @@ import { Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/cn";
 import { PluginBoundary } from "./boundary";
 import { hostLocale } from "./host";
 import { ReloadNotice } from "./reload-notice";
@@ -21,14 +23,23 @@ import { usePluginRegistry } from "./registry";
 import type { PluginStatus } from "./types";
 import { matchRoute } from "./routing";
 
-/** A plugin page that cannot be shown, and why. */
-export function PluginUnavailable({ message, detail }: { message: string; detail?: string }) {
+/**
+ * A plugin page that cannot be shown, and why. `hint` says what to do about
+ * it; `warn` marks a problem the user did not choose (a plugin they switched
+ * on that this host cannot run), not a plugin that is merely off.
+ */
+export function PluginUnavailable({ message, detail, hint, warn }: { message: string; detail?: string; hint?: string; warn?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div role="status" className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-      <Puzzle className="size-5 text-faint" strokeWidth={1.5} />
+    <div
+      role={warn ? "alert" : "status"}
+      data-signal={warn ? "warn" : undefined}
+      className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center"
+    >
+      <Puzzle className={cn("size-5", warn ? "text-warn-fg" : "text-faint")} strokeWidth={1.5} />
       <span className="text-xs text-fg">{message}</span>
       {detail && <span className="max-w-md font-mono text-2xs break-words text-faint">{detail}</span>}
+      {hint && <span className="max-w-md text-2xs text-muted">{hint}</span>}
       <Link
         to="/settings"
         search={{ section: "plugins" }}
@@ -70,16 +81,21 @@ export function PluginRoute() {
   const registry = usePluginRegistry();
   // A page that cannot be shown, with the reload prompt above it when the
   // reason may be a change made elsewhere (docs/plugins/runtime.md §6).
-  const unavailable = (message: string, detail?: string) => (
+  const unavailable = (message: string, detail?: string, more: { hint?: string; warn?: boolean } = {}) => (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {registry.reloadNeeded && <ReloadNotice className="m-3 mb-0" />}
-      <PluginUnavailable message={message} detail={detail} />
+      <PluginUnavailable message={message} detail={detail} {...more} />
     </div>
   );
   if (registry.statuses === null) return <Spinner className="flex-1" />;
   const status = registry.statuses.find((s) => s.id === id);
   if (!status) return unavailable(t("there is no plugin called {{id}} on this instance", { id }));
   const name = localize(status.name, hostLocale());
+  if (!status.compatible)
+    return unavailable(t("{{name}} does not work with this version of Droppen", { name }), status.reason ?? undefined, {
+      hint: t("Install a build of it made for this version, or switch it off."),
+      warn: status.switchedOn,
+    });
   if (registry.loading.includes(id)) return <Spinner className="flex-1" />;
   if (registry.errors[id]) return unavailable(t("the {{name}} plugin could not start", { name }), registry.errors[id]);
   const active = registry.active.find((p) => p.id === id);

@@ -1,14 +1,15 @@
 // What the page makes of the instance's plugin list (`plugins/statuses.ts`,
 // `plugins/aliases.ts`) and the two Settings › Plugins calls
-// (`plugins/install-api.ts`), without React: which statuses run, what needs a
-// reload, which old path redirects where, and what is sent to the server.
+// (`plugins/install-api.ts`), without React: which statuses run, which are
+// named though they cannot run, what needs a reload, which old path redirects
+// where, and what is sent to the server.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ApiClient } from "../src/api/client.js";
 import type { paths } from "../src/api/schema.js";
 import type { PluginStatus } from "../src/plugins/types.js";
 
-const { baselineOf, changedUnderPage, runningStatuses } = await import("../src/plugins/statuses.js");
+const { baselineOf, changedUnderPage, runningStatuses, strandedStatuses } = await import("../src/plugins/statuses.js");
 const { pluginAlias } = await import("../src/plugins/aliases.js");
 const { installPlugin, uninstallPlugin } = await import("../src/plugins/install-api.js");
 const { default: createClient } = await import("openapi-fetch");
@@ -24,6 +25,7 @@ function status(id: string, overrides: Partial<PluginStatus> = {}): PluginStatus
     version: "0.1.0",
     name: { en: id },
     enabled: true,
+    switchedOn: true,
     compatible: true,
     forced: false,
     reason: null,
@@ -40,26 +42,43 @@ function status(id: string, overrides: Partial<PluginStatus> = {}): PluginStatus
 test("the page runs every status with an entry, and skips one without", () => {
   const statuses = [
     status("tasks"),
-    status("notes", { enabled: false, entry: null }),
-    status("broken", { compatible: false, entry: null }),
+    status("notes", { enabled: false, switchedOn: false, entry: null }),
+    status("broken", { enabled: false, compatible: false, entry: null }),
     status("pinned"),
   ];
   assert.deepEqual(runningStatuses(statuses, baselineOf(statuses)).map((s) => s.id), ["tasks", "pinned"]);
   assert.deepEqual(runningStatuses(null, null), [], "nothing is known yet: nothing runs");
 });
 
+test("a plugin switched on that this host cannot run is named, not dropped; one switched off is not", () => {
+  const behind = status("tasks", { enabled: false, compatible: false, entry: null, reason: "needs Droppen plugin SDK ^0.2.0; this host implements 0.1.0", aliases: ["/tasks"] });
+  const statuses = [
+    behind,
+    status("notes", { enabled: false, switchedOn: false, compatible: false, entry: null }),
+    status("pinned-off", { enabled: false, switchedOn: false, forced: true, compatible: false, entry: null }),
+    status("fine"),
+    status("off", { enabled: false, switchedOn: false, entry: null }),
+  ];
+  assert.deepEqual(strandedStatuses(statuses).map((s) => s.id), ["tasks"], "the one the user still wants");
+  assert.deepEqual(runningStatuses(statuses, baselineOf(statuses)).map((s) => s.id), ["fine"], "and it is not loaded");
+  assert.equal(pluginAlias(statuses, "/tasks"), "tasks", "its old path still leads to its page, which says why");
+  assert.deepEqual(strandedStatuses([{ ...behind, switchedOn: false }]), [], "switched off: put away");
+  assert.deepEqual(strandedStatuses(null), [], "nothing is known yet");
+});
+
 test("a page a hub serves reads no list and runs nothing", () => {
-  const statuses = [status("tasks")];
+  const statuses = [status("tasks"), status("old", { enabled: false, compatible: false, entry: null })];
   assert.deepEqual(runningStatuses(statuses, baselineOf(statuses), true), []);
+  assert.deepEqual(strandedStatuses(statuses, true), []);
   assert.equal(pluginAlias(statuses, "/tasks", true), undefined);
 });
 
 test("an install, an upgrade or an uninstall elsewhere needs a reload; a switch does not", () => {
-  const before = [status("tasks"), status("notes", { enabled: false, entry: null })];
+  const before = [status("tasks"), status("notes", { enabled: false, switchedOn: false, entry: null })];
   const baseline = baselineOf(before);
   assert.equal(changedUnderPage(baseline, before), false, "the same list");
 
-  const switched = [status("tasks", { enabled: false, entry: null }), status("notes")];
+  const switched = [status("tasks", { enabled: false, switchedOn: false, entry: null }), status("notes")];
   assert.equal(changedUnderPage(baseline, switched), false, "turning plugins on and off leaves the code alone");
 
   const upgraded = [status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb" }), before[1]!];
@@ -79,7 +98,7 @@ test("the page keeps running the build it started with, and does not start a new
   const installedElsewhere = runningStatuses([first, status("new")], baseline);
   assert.deepEqual(installedElsewhere.map((s) => s.id), ["tasks"], "a plugin installed elsewhere waits for the reload");
 
-  const turnedOff = runningStatuses([status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb", enabled: false, entry: null })], baseline);
+  const turnedOff = runningStatuses([status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb", enabled: false, switchedOn: false, entry: null })], baseline);
   assert.deepEqual(turnedOff, [], "the current switch still wins");
 });
 
