@@ -65,13 +65,8 @@ pub fn origin(url: &str) -> Result<String, String> {
     Ok(format!("{}://{authority}", if secure { "wss" } else { "ws" }))
 }
 
-/// Milliseconds since the Unix epoch.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
+/// Milliseconds since the Unix epoch ([`super::now_ms`], one clock for the agent).
+pub use super::now_ms;
 
 /// Lower-case hex, as every binary field in the hub's control messages.
 pub fn hex(data: &[u8]) -> String {
