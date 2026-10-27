@@ -458,7 +458,7 @@ pub fn sdp_fingerprint(sdp: &str) -> Result<[u8; 32], PathError> {
 }
 
 /// `AB:CD:…` (32 colon-separated bytes) as bytes.
-pub fn parse_fingerprint_hex(text: &str) -> Option<[u8; 32]> {
+fn parse_fingerprint_hex(text: &str) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
     let mut n = 0;
     for part in text.split(':') {

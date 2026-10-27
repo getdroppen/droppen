@@ -947,6 +947,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "core-foundation 0.10.1",
+ "droppen-path",
  "getrandom 0.3.4",
  "libc",
  "log",
@@ -959,6 +960,10 @@ dependencies = [
  "ureq",
  "url",
 ]
+
+[[package]]
+name = "droppen-path"
+version = "0.1.0"
 
 [[package]]
 name = "dtoa"

@@ -80,6 +80,7 @@ use crate::drive::Drive;
 use crate::openapi_ext::Optional;
 use crate::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
+use crate::text::strip_ansi;
 
 use super::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
 use super::verify::{verify_secret, Verdict};
@@ -114,31 +115,6 @@ const MAX_WRAPS: usize = 6;
 /// (~330) reaches the margin. The rejoining below is the second defence, for a
 /// CLI that wraps to something narrower than its terminal.
 const WIZARD_SIZE: (u16, u16) = (400, 40);
-
-/// Every escape is replaced by a space, never deleted.
-///
-/// Deleting once spliced the trailing "Store this token…" hint onto the token
-/// itself and produced a silently unusable account, so the separator has to
-/// survive the strip.
-fn ansi_re() -> &'static regex::Regex {
-    static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    ANSI.get_or_init(|| {
-        regex::Regex::new(concat!(
-            r"[\x1b\u{9b}]",
-            r"(?:",
-            r"\[[0-?]*[ -/]*[@-~]",                  // CSI
-            r"|\][^\x07\x1b]{0,512}(?:\x07|\x1b\\)", // OSC, terminated by BEL or ST
-            r"|[@-Z\\-_]",                           // Fe, two bytes
-            r")",
-        ))
-        .expect("valid ANSI pattern")
-    })
-}
-
-/// Replace every ANSI escape sequence with a single space.
-pub fn strip_ansi(text: &str) -> String {
-    ansi_re().replace_all(text, " ").into_owned()
-}
 
 /// A character a token body is made of.
 fn is_token_char(c: char) -> bool {
@@ -1144,14 +1120,6 @@ mod tests {
             .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
             .collect::<Vec<_>>()
             .join("\r\r\n")
-    }
-
-    #[test]
-    fn strip_ansi_replaces_every_escape_with_a_space_instead_of_deleting_it() {
-        assert_eq!(strip_ansi(&format!("red{ESC}[31mgreen")), "red green");
-        assert_eq!(strip_ansi(&format!("{ESC}[2J{ESC}[Hplain")), "  plain");
-        // OSC title sequences end in BEL and must not swallow the text after them.
-        assert_eq!(strip_ansi(&format!("{ESC}]0;a title{BEL}after")), " after");
     }
 
     #[test]

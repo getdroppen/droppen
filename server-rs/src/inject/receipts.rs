@@ -36,7 +36,7 @@
 //! Every write here is synchronous and small, like every other state-database
 //! write in this server; a driver reports a message at most twice in its life.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use gotcha::Schematic;
 use rusqlite::OptionalExtension;
@@ -189,7 +189,7 @@ pub struct Receipts {
     /// process that is gone, and is finished by nothing.
     booted_ms: i64,
     /// When the last prune ran.
-    pruned_ms: Mutex<i64>,
+    prune_gate: crate::db::PruneGate,
 }
 
 impl Receipts {
@@ -198,7 +198,7 @@ impl Receipts {
         Self {
             db,
             booted_ms: now_ms(),
-            pruned_ms: Mutex::new(i64::MIN),
+            prune_gate: crate::db::PruneGate::new(PRUNE_EVERY_MS),
         }
     }
 
@@ -425,14 +425,9 @@ impl Receipts {
 
     /// [`Receipts::prune`], at most once every [`PRUNE_EVERY_MS`].
     fn prune_now_and_then(&self, now: i64) {
-        {
-            let mut last = self.pruned_ms.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if now.saturating_sub(*last) < PRUNE_EVERY_MS {
-                return;
-            }
-            *last = now;
+        if self.prune_gate.due(now) {
+            self.prune(now);
         }
-        self.prune(now);
     }
 }
 
@@ -447,9 +442,7 @@ fn receipt_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageReceipt> {
 }
 
 /// Epoch milliseconds, the clock every column here is kept in.
-pub fn now_ms() -> i64 {
-    crate::accounts::rest::now_ms()
-}
+pub use crate::time::now_ms;
 
 #[cfg(test)]
 mod tests {

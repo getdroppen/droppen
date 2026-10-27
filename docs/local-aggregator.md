@@ -767,7 +767,7 @@ agent 在桥接（`S/agent/bridge.rs`）里按请求方是否 admin 选策略，
 
 **存放**
 
-- 设备身份只有一个：`agent/machine-key.json`（0600，绑定实例 uuid，`SeedStore`）。
+- 设备身份只有一个：`agent/machine-key.json`（0600，绑定实例 uuid）。
 - 控制一侧的数据放在 `<实例>/aggregator/`（目录 0700，文件 0600）：
   - `keys.json`：其它 host 各轮的 `MK`；
   - `copies.db`：已验签、已解密的副本与流游标。

@@ -12,16 +12,8 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { register } from "node:module";
 import { installFakeDom, type FakeNode } from "./fake-dom.js";
 import { report, tool } from "./setup-fixtures.js";
-
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
-  )}`,
-);
 
 const container = installFakeDom();
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");

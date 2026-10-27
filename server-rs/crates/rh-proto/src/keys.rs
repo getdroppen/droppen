@@ -125,7 +125,8 @@ pub const X25519_PKCS8_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
 ];
 
-pub fn ed25519_pkcs8(seed: &[u8; 32]) -> Zeroizing<Vec<u8>> {
+#[cfg(test)]
+fn ed25519_pkcs8(seed: &[u8; 32]) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(48));
     out.extend_from_slice(&ED25519_PKCS8_PREFIX);
     out.extend_from_slice(seed);

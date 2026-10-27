@@ -57,6 +57,8 @@ E2E_LANGUAGE=${E2E_LANGUAGE:-zh-Hans}
 DESKTOP=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=e2e-identity.sh
 . "$DESKTOP/e2e-identity.sh"
+# shellcheck source=e2e-lib.sh
+. "$DESKTOP/e2e-lib.sh"
 for app in "$OLD" "$NEW"; do
   e2e_check_app "$app"
   LC_ALL=C grep -aqF DROPPEN_DESKTOP_UPDATE_ENDPOINT "$app/Contents/MacOS/Droppen" || { echo "$app is not an --e2e build with the updater" >&2; exit 2; }
@@ -99,11 +101,6 @@ HTTP_PID=""
 FAILED=0
 e2e_clean_bundle_dirs
 
-say() { printf '\n== %s\n' "$*"; }
-pass() { printf 'PASS %s\n' "$*"; }
-fail() { printf 'FAIL %s\n' "$*"; FAILED=1; }
-check() { if eval "$2"; then pass "$1"; else fail "$1"; fi; }
-alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 ours() { e2e_pids_in "$ROOT"; }
 
 cleanup() {
@@ -142,26 +139,6 @@ launch() { # the app at $BIN, window closed, with the update endpoint and the ru
   APP_PID=$!
 }
 
-# Send a command to the app and print its result line. Each command carries an
-# id of its own (testctl's `@<id> `) and its result is the line with that id: a
-# snapshot or a probe can answer after its wait gave up, and that late line is
-# never taken for a later command's. The command file is written whole and
-# renamed into place: the app, which polls for it, could otherwise read it
-# between its creation and its text, take it for empty and drop it.
-command() {
-  local id line deadline
-  id=$(uuidgen)
-  printf '@%s %s\n' "$id" "$1" >"$CTL/command.new"
-  mv -f "$CTL/command.new" "$CTL/command"
-  deadline=$((SECONDS + 20))
-  while [ $SECONDS -lt $deadline ]; do
-    line=$(grep -F "\"id\":\"$id\"" "$CTL/results.jsonl" 2>/dev/null | tail -1 || true)
-    if [ -n "$line" ]; then printf '%s\n' "$line"; return 0; fi
-    sleep 0.2
-  done
-  echo '{"timeout":true}'
-}
-
 # A field of a JSON object by dotted path; booleans as true/false, missing as "".
 jget() {
   python3 -c 'import json,sys
@@ -170,7 +147,6 @@ for k in sys.argv[2].split("."):
     v=v.get(k) if isinstance(v,dict) else None
 print("" if v is None else ("true" if v is True else "false" if v is False else v if isinstance(v,str) else json.dumps(v)))' "$1" "$2"
 }
-state() { command state; }
 field() { jget "$(state)" "$1"; }
 menu_text() { field updateMenu.text; }
 
@@ -184,29 +160,7 @@ wait_for() { # description, condition, seconds
   echo "  log: $(tail -3 "$LOG" 2>/dev/null | tr '\n' ' ')" >&2
   return 1
 }
-count() { local n; n=$(grep -c -- "$1" "$LOG" 2>/dev/null) || true; echo "${n:-0}"; }
-probes() { count ' probe: '; }
-last_probe() { grep ' probe: ' "$LOG" | tail -1 | sed 's/.* probe: //'; }
-probe_field() { python3 -c 'import json,sys; v=json.loads(json.loads(sys.argv[1])); print(v.get(sys.argv[2]))' "$(last_probe)" "$1"; }
-# One reading of the page, as the probe's JSON (fields: `jget "$P" path`): now,
-# without a page load (testctl's `probe`), or as the last page load left it
-# (the log's). A probe that failed fails here: it is no reading, never a page
-# without what is looked for. A check takes one reading and reads every field
-# from it.
-read_page() {
-  python3 -c 'import json,sys
-r = json.loads(sys.argv[1])
-if r.get("ok") is not True or not isinstance(r.get("probe"), dict): sys.exit(1)
-print(json.dumps(r["probe"]))' "$(command probe)" 2>/dev/null
-}
-loaded_page() {
-  python3 -c 'import json,sys
-v = json.loads(json.loads(sys.argv[1]))
-if not isinstance(v, dict): sys.exit(1)
-print(json.dumps(v))' "$(last_probe)" 2>/dev/null
-}
 guide_at() { local page; page=$(read_page) && [ "$(jget "$page" guide)" = "$1" ]; }
-press() { command "js document.querySelector(\"$1\").click()" >/dev/null; } # selector: a click on it, as a person's
 # Through the first-run guide as e2e-macos.sh goes (which checks and
 # photographs each step): Get started, step 01 on, "Only on this Mac", step
 # 03 skipped, Finish — onto the session list.
@@ -224,8 +178,6 @@ finish_guide() {
   press "[data-testid=step-action]"
   wait_for "the session list" 'P=$(read_page) && [ "$(jget "$P" path)" = /sessions ]' 20
 }
-password() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["password"])' "$SUPPORT/credentials.json"; }
-username() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["username"])' "$SUPPORT/credentials.json"; }
 api_login() { # port -> a token
   curl -fsS -H 'Content-Type: application/json' -d "{\"username\":\"$(username)\",\"password\":\"$(password)\"}" \
     "http://127.0.0.1:$1/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'

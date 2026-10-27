@@ -60,9 +60,11 @@
 #   DROPPEN_RELEASE_REPO   the repository releases are published in (getdroppen/droppen)
 set -euo pipefail
 
-usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
-die() { printf 'desktop/updater-artifacts.sh: %s\n' "$*" >&2; exit 1; }
-say() { printf '\n== %s\n' "$*"; }
+RELEASE_DIE_NAME='desktop/updater-artifacts.sh'
+# shellcheck source=../scripts/release-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/../scripts/release-lib.sh"
+
+usage() { release_usage '/^set -euo/'; }
 
 # The signing secrets, read once and taken out of the environment: nothing
 # this runs inherits them (cargo, codesign, the manifest tool) but the signer,

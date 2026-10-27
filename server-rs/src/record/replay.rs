@@ -385,44 +385,9 @@ fn span(ms: i64) -> String {
 
 /// Milliseconds since the epoch, for a stamp [`crate::sessions::iso8601`] wrote.
 ///
-/// The inverse of that function and no more: this reads `YYYY-MM-DDTHH:MM:SS`
-/// with an optional fractional part and an optional `Z`, which is the only
-/// shape a recording can contain. Hand-rolled for the reason the forward
-/// direction is — this crate has no date dependency, and one timestamp format
-/// does not justify acquiring one.
-pub fn parse_iso8601(text: &str) -> Option<i64> {
-    let bytes = text.as_bytes();
-    if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' || (bytes[10] != b'T' && bytes[10] != b' ') {
-        return None;
-    }
-    let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
-    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
-    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
-        return None;
-    }
-    let millis = match text.get(19..20) {
-        Some(".") => {
-            let digits: String = text[20..].chars().take_while(char::is_ascii_digit).collect();
-            // `.5` is half a second, `.5000` is still half a second: pad rather
-            // than parse, so a stamp from another writer reads correctly.
-            let padded = format!("{digits:0<3}");
-            padded.get(..3)?.parse::<i64>().ok()?
-        }
-        _ => 0,
-    };
-
-    // Days-from-civil (Howard Hinnant), the inverse of the civil-from-days in
-    // `iso8601`.
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let month_offset = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * month_offset + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000) + millis)
-}
+/// Re-exported under the name this module introduced; the parser itself lives
+/// in [`crate::time::parse_iso_ms`], beside the clock every other caller uses.
+pub use crate::time::parse_iso_ms as parse_iso8601;
 
 #[cfg(test)]
 mod tests {

@@ -2,12 +2,18 @@
 //! challenge, and the signed answers to it (`rh_proto::sig::HubLogin`). The
 //! messages are in `docs/hub-api/websocket.md` (`/v1/agent`).
 
+use std::time::Duration;
+
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use rand::Rng;
+use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
 use rh_proto::sig::{HubLogin, LoginRole};
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -18,8 +24,18 @@ pub type Sink = SplitSink<Socket, Message>;
 /// Its receiving half.
 pub type Source = SplitStream<Socket>;
 
-/// How long the hub has to say anything during sign-in.
-const STEP: std::time::Duration = std::time::Duration::from_secs(15);
+/// How long a peer has to say anything during sign-in.
+pub(super) const STEP: Duration = Duration::from_secs(15);
+/// The heartbeat on the hub's and a relay's connection (architecture doc §5).
+pub(super) const HEARTBEAT: Duration = Duration::from_secs(20);
+/// Silence from the hub or a relay after which the connection is presumed dead.
+pub(super) const SILENCE: Duration = Duration::from_secs(60);
+/// The first wait before reconnecting.
+pub(super) const BACKOFF_MIN: Duration = Duration::from_millis(500);
+/// The longest wait between reconnects.
+pub(super) const BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// A connection that lasted this long resets the backoff.
+pub(super) const STABLE: Duration = Duration::from_secs(60);
 
 /// `wss://host[:port]` — what sign-in signatures name — from whatever URL the
 /// user typed (`https://`, `wss://…/v1/agent`, …). Plain `ws://`/`http://`
@@ -49,13 +65,8 @@ pub fn origin(url: &str) -> Result<String, String> {
     Ok(format!("{}://{authority}", if secure { "wss" } else { "ws" }))
 }
 
-/// Milliseconds since the Unix epoch.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
+/// Milliseconds since the Unix epoch ([`super::now_ms`], one clock for the agent).
+pub use super::now_ms;
 
 /// Lower-case hex, as every binary field in the hub's control messages.
 pub fn hex(data: &[u8]) -> String {
@@ -200,25 +211,139 @@ pub async fn send_json(sink: &mut Sink, value: &Value) -> Result<(), String> {
     sink.send(Message::Text(value.to_string().into())).await.map_err(|e| e.to_string())
 }
 
+/// Whose socket a JSON control message is read from: the hub's `/v1/agent`
+/// and a relay's `/v1/connect` differ in what may arrive before sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Peer {
+    /// Nothing binary comes before sign-in; a close names its reason.
+    Hub,
+    /// Messages that are not text are skipped; a close names its code, which
+    /// [`super::relays`] reads a revocation from.
+    Relay,
+}
+
+impl Peer {
+    /// How a peer is named in errors.
+    fn name(self) -> &'static str {
+        match self {
+            Peer::Hub => "the hub",
+            Peer::Relay => "the relay",
+        }
+    }
+
+    /// The traffic capture's transform for this peer's control text.
+    fn transform(self, text: &str) -> &str {
+        match self {
+            Peer::Hub => super::traffic::agent_in(text),
+            Peer::Relay => super::traffic::relay_in(text),
+        }
+    }
+}
+
 /// The next text message, as JSON (binary messages before it are an error:
 /// nothing binary comes before sign-in).
 pub async fn next_json(source: &mut Source) -> Result<Value, String> {
+    read_json(source, Peer::Hub).await
+}
+
+/// The next text control message, as JSON, from `peer`'s socket (up to
+/// [`STEP`]). The hub's rule — nothing binary before sign-in — and a relay's
+/// leniency are [`Peer`]'s; so are each one's close and silence errors.
+pub(super) async fn read_json<S>(source: &mut S, peer: Peer) -> Result<Value, String>
+where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
     loop {
         match tokio::time::timeout(STEP, source.next()).await {
-            Ok(Some(Ok(Message::Text(t)))) => return serde_json::from_str(super::traffic::agent_in(t.as_str())).map_err(|e| e.to_string()),
-            Ok(Some(Ok(Message::Close(frame)))) => {
-                return Err(format!(
-                    "the hub closed the connection: {}",
-                    frame.map(|f| f.reason.to_string()).unwrap_or_default()
-                ))
+            Ok(Some(Ok(Message::Text(t)))) => {
+                return serde_json::from_str(peer.transform(t.as_str())).map_err(|e| e.to_string())
             }
-            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_)))) => continue,
-            Ok(Some(Ok(_))) => return Err("unexpected binary message before sign-in".into()),
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                return Err(match peer {
+                    Peer::Hub => format!(
+                        "the hub closed the connection: {}",
+                        frame.map(|f| f.reason.to_string()).unwrap_or_default()
+                    ),
+                    Peer::Relay => format!(
+                        "the relay closed the connection: {}",
+                        frame.map(|f| format!("{} {}", u16::from(f.code), f.reason)).unwrap_or_default()
+                    ),
+                })
+            }
+            // The hub: nothing binary (or unknown) comes before sign-in.
+            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_)))) if peer == Peer::Hub => continue,
+            Ok(Some(Ok(_))) if peer == Peer::Hub => return Err("unexpected binary message before sign-in".into()),
+            // A relay: anything that is not text is skipped.
+            Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(e))) => return Err(e.to_string()),
-            Ok(None) => return Err("the hub closed the connection".into()),
-            Err(_) => return Err("the hub did not answer in time".into()),
+            Ok(None) => return Err(format!("{} closed the connection", peer.name())),
+            Err(_) => return Err(format!("{} did not answer in time", peer.name())),
         }
     }
+}
+
+/// Exponential backoff with full jitter: each wait is drawn from
+/// `0..=current` and the ceiling doubles, up to `max`. A connection that
+/// lasted at least `stable` starts over.
+pub(super) struct Backoff {
+    min: Duration,
+    max: Duration,
+    stable: Duration,
+    current: Duration,
+}
+
+impl Backoff {
+    pub(super) fn new(min: Duration, max: Duration, stable: Duration) -> Self {
+        Self {
+            min,
+            max,
+            stable,
+            current: min,
+        }
+    }
+
+    /// The wait before the next try, after one that lasted `lasted`.
+    pub(super) fn after(&mut self, lasted: Duration) -> Duration {
+        if lasted > self.stable {
+            self.current = self.min;
+        }
+        let wait = rand::thread_rng().gen_range(Duration::ZERO..=self.current);
+        self.current = (self.current * 2).min(self.max);
+        wait
+    }
+}
+
+/// The one writer a socket has: frames from every channel, control text, and
+/// a heartbeat ping — the hub's connection and a relay's alike, the text
+/// transform being the only difference.
+pub(super) fn spawn_writer(
+    mut sink: Sink,
+    mut frames: mpsc::UnboundedReceiver<Frame>,
+    mut text: mpsc::UnboundedReceiver<String>,
+    heartbeat: Duration,
+    wrap: fn(String) -> String,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut beat = tokio::time::interval(heartbeat);
+        let mut nonce = 0u64;
+        loop {
+            let message = tokio::select! {
+                f = frames.recv() => match f {
+                    Some(f) => match f.encode() { Ok(b) => Message::Binary(b.into()), Err(_) => continue },
+                    None => break,
+                },
+                t = text.recv() => match t { Some(t) => Message::Text(wrap(t).into()), None => break },
+                _ = beat.tick() => {
+                    nonce += 1;
+                    Message::Binary(Frame::Ping { nonce }.encode().expect("a ping encodes").into())
+                }
+            };
+            if sink.send(message).await.is_err() {
+                break;
+            }
+        }
+        let _ = sink.close().await;
+    })
 }
 
 #[cfg(test)]

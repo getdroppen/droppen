@@ -3203,7 +3203,7 @@ impl Driver {
         // Whether or not a turn is in flight here: a `result` is claude saying
         // nothing more is coming, which is what closes the draft — no think is
         // in flight after it. See `drafts`.
-        self.draft.close();
+        self.draft.end();
         // A question cannot outlive the turn that asked it. One still open here
         // ended without an answer — a stop, most likely, whose cancel this
         // driver did not see — and nobody may answer it into the next turn.
@@ -5311,7 +5311,7 @@ impl Driver {
         self.close_questions(QuestionState::Expired, "the process that asked it is being replaced");
         // Whatever the outgoing process was thinking, it is not thinking it
         // any more.
-        self.draft.clear();
+        self.draft.end();
         // The backlog moves to the new record with the process it is waiting
         // for, so a crash between the two spawns leaves the messages attached to
         // whichever record survives rather than to neither.
@@ -5532,7 +5532,7 @@ impl Driver {
         // ordinary message to whatever comes back.
         self.close_questions(QuestionState::Expired, "the process that asked it is gone");
         // Its draft goes with it: a process that is gone is not thinking.
-        self.draft.clear();
+        self.draft.end();
         // Before anything decides whether there is work left: a message steered
         // into the process that just died went into a pipe nothing will ever
         // read, so it is undelivered again — and it has to be back in the queue
@@ -5699,7 +5699,7 @@ impl Driver {
         // the right answer for that too. The same for the questions.
         self.requeue_delivered();
         self.close_questions(QuestionState::Expired, "the process that asked it is gone");
-        self.draft.clear();
+        self.draft.end();
         let gave_up = self.fatal.is_some();
         let detailed = match self.fatal.take() {
             Some(fatal) => fatal,
@@ -5863,7 +5863,7 @@ impl Driver {
         // the same point and for the same reason, and so is the draft closed —
         // a no-op after the `result` that has already done it.
         self.note_progress(None);
-        self.draft.close();
+        self.draft.end();
         self.recorder.lifecycle(
             Stage::Result,
             Some(&match (&error, outcome) {

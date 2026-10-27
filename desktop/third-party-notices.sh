@@ -11,8 +11,7 @@
 #
 # <src-dir> is a source tree of the commit with
 # `pnpm install --frozen-lockfile --filter "@remote-hand/web..."` done. Needs
-# cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH, and
-# DROPPEN_DISTRIBUTION unset.
+# cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH.
 set -euo pipefail
 
 SRC=${1:?usage: third-party-notices.sh <src-dir> <out-file> <app version> <server version> <rev>}
@@ -26,7 +25,6 @@ die() { printf 'desktop/third-party-notices: %s\n' "$*" >&2; exit 1; }
 ABOUT_VERSION=$(sed -n 's/^ABOUT_VERSION=//p' "$REPO/scripts/release-public.sh")
 [ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
   || die "needs cargo-about $ABOUT_VERSION: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
-[ -z "${DROPPEN_DISTRIBUTION:-}" ] || die "DROPPEN_DISTRIBUTION is set: these notices are the public build's"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/desktop-notices.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT

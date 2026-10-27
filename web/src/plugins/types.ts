@@ -1,32 +1,10 @@
-import type { LocalizedText } from "@droppen/plugin-sdk";
-
 /**
- * A plugin as this instance sees it (`GET /api/plugins`, the `settings` frame).
- * See `docs/plugins/storage-protocol.md`.
+ * A plugin as this instance sees it: the server's own `PluginStatus`
+ * (`docs/plugins/runtime.md` §4), read from the generated OpenAPI schema so
+ * the page and the server cannot drift. `GET /api/plugins`, the feed's
+ * `settings` and `plugins` frames and Settings › Plugins all use this shape.
  */
-export interface PluginStatus {
-  id: string;
-  version: string;
-  name: LocalizedText;
-  /** On for this instance, and compatible. */
-  enabled: boolean;
-  compatible: boolean;
-  /** The configuration pins it; the switch is read-only. */
-  forced: boolean;
-  reason: string | null;
-  /** Every notice's text, joined; `notices` has them one by one. */
-  notice: string | null;
-  /** Oldest first. Absent from servers before notices were listed. */
-  notices?: PluginNotice[];
-}
+import type { components } from "@/api/schema";
 
-/** One thing the host wants the user to see about a plugin. */
-export interface PluginNotice {
-  id: string;
-  /** `storeReset`. */
-  kind: string;
-  text: string;
-  at: string;
-  /** A store reset is not: it goes when the user clears its file. */
-  dismissible: boolean;
-}
+export type PluginStatus = components["schemas"]["PluginStatus"];
+export type PluginNotice = components["schemas"]["PluginNotice"];

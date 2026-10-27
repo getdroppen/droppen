@@ -499,7 +499,6 @@ impl Control {
     /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
     pub async fn renew_retired_seed(&self) -> Result<bool, ControlError> {
         let _gate = self.gate.lock().await;
-        use super::SeedStore as _;
         let current = match super::FileSeedStore::for_instance(&self.paths).load() {
             Ok(Some(seed)) => MachineIdentity::from_seed(&seed.seed),
             Ok(None) => return Ok(false),
@@ -889,7 +888,7 @@ mod tests {
     /// its AI sessions and terminals live under) is never touched.
     #[tokio::test]
     async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alone() {
-        use crate::agent::{FileSeedStore, SeedStore, StagedSeed};
+        use crate::agent::{FileSeedStore, StagedSeed};
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlrestart");
         let control = Control::new(paths.clone());

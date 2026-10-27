@@ -1,13 +1,15 @@
 /**
- * The browser's `PluginHost`: what a plugin gets in a local tab and on
- * droppen.app (the desktop shell will swap the file, print and clipboard
- * parts). One per plugin per page, made by the registry.
+ * The browser's `PluginHost`: what a plugin gets in the desktop app's window
+ * and in a browser on the server's own page (the desktop shell will swap the
+ * file, print and clipboard parts). One per plugin per page, made by the
+ * registry; a page a hub serves has no plugin host at all
+ * (`docs/plugins/runtime.md` §5).
  *
  * Storage speaks `docs/plugins/storage-protocol.md` through the typed API
  * client of the machine the plugin's documents live on — the home machine
  * (`lib/machines/registry.ts`) — so it travels whichever way that machine's
- * API does (loopback here, the end-to-end bridge on droppen.app). Hosted-service failures are translated
- * to the SDK's generic codes here — a plugin never sees a relay or a plan.
+ * API does. Hosted-service failures are translated to the SDK's generic codes
+ * here — a plugin never sees a relay or a plan.
  */
 import {
   localize,
@@ -203,6 +205,12 @@ export interface HostDeps {
   storage?: PluginStorage;
 }
 
+/** Whether this page is the desktop app's own window (its init script defines `window.__droppenDesktop`). */
+function desktopWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as { __droppenDesktop?: unknown }).__droppenDesktop !== undefined;
+}
+
 /** Build the host one plugin gets for the life of the page. */
 export function createPluginHost(id: string, deps: HostDeps): PluginHost {
   const ns = pluginNamespace(id);
@@ -240,7 +248,11 @@ export function createPluginHost(id: string, deps: HostDeps): PluginHost {
       },
     },
     capabilities: {
-      print: typeof window !== "undefined" && typeof window.print === "function",
+      // wry 0.57's WKWebView UI delegate implements no print callback, so
+      // window.print() silently does nothing in the app's window. A browser
+      // on the same server prints — `isDesktopApp()` is true there too, which
+      // is why the app's own marker decides instead.
+      print: typeof window !== "undefined" && typeof window.print === "function" && !desktopWindow(),
       clipboard: typeof navigator !== "undefined" && !!navigator.clipboard?.writeText && window.isSecureContext,
     },
     files: { save: saveFile, open: openFile },

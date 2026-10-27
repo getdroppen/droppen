@@ -13,8 +13,8 @@ use serde_json::{Map, Value};
 
 use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
 use super::util::{
-    clip, first_line_of, make_item, make_tool_item, parse_attachment_suffix, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay,
-    TranscriptItem, DETAIL_LIMIT,
+    clip, first_line_of, is_image_ext, make_item, make_tool_item, parse_attachment_suffix, try_parse, ItemKind, LossyLines, PatchHunk, Role,
+    ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
 use crate::openapi_ext::Nullable;
 
@@ -733,14 +733,10 @@ fn result_images(
 /// the `[N images]` line it replaced, so the extension has to agree before a
 /// path is offered.
 ///
-/// An allowlist rather than a "not pdf" test, because the failure mode is a
-/// broken picture on the page and the next format the CLI learns to rasterise
-/// should default to the working fallback, not to the broken one.
+/// The extraction is `Path::extension`, which has no extension for a dotfile
+/// (`.png`); the allowlist is shared with the other image sites.
 pub(super) fn is_renderable_image(path: &Path) -> bool {
-    const RENDERABLE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| RENDERABLE.contains(&ext.to_ascii_lowercase().as_str()))
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(is_image_ext)
 }
 
 /// The metas describing the children of the transcript being parsed.
@@ -1032,6 +1028,15 @@ pub fn title_line(text: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// A path's extension, not its name's tail: `.png` is a dotfile.
+    #[test]
+    fn a_dotfile_is_not_a_renderable_image() {
+        assert!(is_renderable_image(Path::new("photo.png")));
+        assert!(is_renderable_image(Path::new("photo.PNG")));
+        assert!(!is_renderable_image(Path::new(".png")), "Path::extension has none for a dotfile");
+        assert!(!is_renderable_image(Path::new("notes.txt")));
+    }
 
     fn write_jsonl(lines: &[&str]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");

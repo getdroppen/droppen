@@ -15,7 +15,7 @@ import { AccessSection } from "@/features/settings/access-section";
 import { SettingsUpdatesRow } from "@/features/updates/updates-row";
 import { AccountsSection } from "@/features/settings/accounts-section";
 import { ScheduleSection } from "@/features/settings/schedule-section";
-import { ALL_SECTIONS, askedSection, type SectionId } from "@/features/settings/sections";
+import { askedSection, sectionsFor, type SectionId } from "@/features/settings/sections";
 import {
   PREFERENCE_ROW,
   ROW_HINT,
@@ -28,6 +28,7 @@ import {
 } from "@/features/settings/layout";
 import { SetupSection } from "@/features/setup/settings-section";
 import { cn } from "@/lib/cn";
+import { isCloud } from "@/lib/hub/config";
 import { formatTime } from "@/lib/format";
 import {
   installPromptAvailable,
@@ -747,7 +748,11 @@ export function SettingsView() {
   // `?section=plugins` opens one directly (a disabled plugin's page links here).
   const search = useSearch({ strict: false }) as { section?: string };
   const navigate = useMachineNavigate();
-  const asked = askedSection(search.section);
+  // A page a hub serves offers no Plugins tab, and an old link to one opens
+  // the general tab instead (docs/plugins/runtime.md §5).
+  const cloud = isCloud();
+  const sections = sectionsFor(cloud);
+  const asked = askedSection(search.section, cloud);
   // Whose settings these are: the address's device (`/m/<device>/settings`,
   // else the home). With more than one device, the header can go to another's.
   const machine = useMachine();
@@ -766,7 +771,7 @@ export function SettingsView() {
       <Panel className="max-md:hidden">
         <PanelHeader title={t("Settings")} />
         <div className="flex flex-col">
-          {ALL_SECTIONS.map((id) => (
+          {sections.map((id) => (
             <button
               key={id}
               type="button"
@@ -798,7 +803,7 @@ export function SettingsView() {
               {/* Phone category strip: 36px, one scrolling row, labels never
                   wrap or shrink (docs/ui-spec.md §4). */}
               <TabsList className="h-9 w-max min-w-full">
-                {ALL_SECTIONS.map((id) => (
+                {sections.map((id) => (
                   <TabsTab key={id} value={id} className="shrink-0 whitespace-nowrap">
                     {t(id)}
                   </TabsTab>
@@ -815,7 +820,7 @@ export function SettingsView() {
             <AccountsSection />
           ) : section === "access" ? (
             <AccessSection />
-          ) : section === "plugins" ? (
+          ) : !cloud && section === "plugins" ? (
             <Sheet>
               <PluginsSection />
             </Sheet>

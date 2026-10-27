@@ -2,9 +2,8 @@
 //!
 //! Three questions with filesystem answers and no processes:
 //!
-//! * **The `PATH`.** [`base_dirs`] and [`build`] are the desktop app's own
-//!   (`desktop/core/src/env_path.rs`), copied rather than shared because the
-//!   app's crate is not a dependency of this one and the rule is short; the
+//! * **The `PATH`.** [`base_dirs`] and [`build`] come from `droppen-path`, the
+//!   one rule the desktop app (`desktop/core/src/env_path.rs`) uses too; the
 //!   command-line installer's launchd agent gets the same (`scripts/install.sh`
 //!   `service_path`): the login shell's `PATH` first, then the base
 //!   directories. The app builds its server's `PATH` this way at launch; the
@@ -25,60 +24,8 @@ use std::path::{Path, PathBuf};
 use super::{FoundVia, InstallMethod, ToolFound, ToolId};
 use crate::process_env::{resolve_on_path, Env};
 
-/// The directories every `PATH` has, after the login shell's, in order: the
-/// user's own tool directories, then Homebrew (Apple silicon, Intel), then the
-/// system.
-///
-/// Included whether or not they exist yet, which is the whole trick: the
-/// official installers put their CLI in `~/.local/bin` and Homebrew in
-/// `/opt/homebrew/bin`, so a tool installed while the server runs is found on
-/// the next spawn with no re-read at all.
-///
-/// Absolute only: with no home (or a relative one, `HOME` unset) the user's own
-/// directories are left out rather than put on the `PATH` relative to wherever a
-/// child happens to run.
-pub fn base_dirs(home: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = [".local/bin", ".npm-global/bin", ".cargo/bin", ".bun/bin", ".volta/bin"]
-        .iter()
-        .map(|dir| home.join(dir))
-        .collect();
-    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    dirs.retain(|dir| dir.is_absolute());
-    dirs
-}
-
-/// The `PATH`: each directory of `shell` (the login shell's `PATH`) that is
-/// absolute and exists, in the shell's order, then each of [`base_dirs`];
-/// every directory once, where it first appears.
-///
-/// The shell first, so a session runs the `node` and `claude` the user's
-/// terminal runs — nvm's, say, rather than Homebrew's; the base is the
-/// fallback for what the shell did not say.
-///
-/// A session's own bin directory (`…/remote-hand/instances/<name>/session-bin`)
-/// is dropped wherever it came from: it belongs to one server and names that
-/// server's binary, and a `PATH` copied from a shell running inside a session
-/// would otherwise hand it to this one.
-pub fn build(home: &Path, shell: Option<&str>) -> String {
-    let mut seen = HashSet::new();
-    let mut out: Vec<String> = Vec::new();
-    for dir in shell.unwrap_or_default().split(':') {
-        if !dir.starts_with('/') || dir.contains("/remote-hand/instances/") || seen.contains(dir) {
-            continue;
-        }
-        if Path::new(dir).is_dir() {
-            seen.insert(dir.to_string());
-            out.push(dir.to_string());
-        }
-    }
-    for dir in base_dirs(home) {
-        let dir = dir.to_string_lossy().into_owned();
-        if seen.insert(dir.clone()) {
-            out.push(dir);
-        }
-    }
-    out.join(":")
-}
+// The PATH rule itself lives in `droppen-path`, shared with the desktop app.
+pub use droppen_path::{base_dirs, build};
 
 /// `path` followed by each directory of `more` it does not have yet, whether
 /// or not it exists.
@@ -256,8 +203,11 @@ mod tests {
         [("PATH".to_string(), path.to_string())].into_iter().collect()
     }
 
-    // The tests below are the desktop app's (`env_path.rs`), kept with the
-    // copy so the two cannot drift apart unnoticed.
+    // The PATH rule's contract, pinned where the server uses it: the fixed
+    // directories and their order decide which `node` and `claude` a session
+    // runs, and the login shell's entries and the session-bin filter decide the
+    // rest. `env_path.rs` pins the same contract from the app's side, so a
+    // change to the rule or to an expectation is deliberate on both.
 
     #[test]
     fn without_the_login_shell_the_base_is_the_path() {

@@ -81,6 +81,3 @@ pub(crate) mod testing;
 mod v3_regressions;
 #[cfg(test)]
 mod vectors;
-
-/// The protocol generation, as it appears in labels and the hub's URL paths.
-pub const PROTOCOL: &str = "rh/v1";

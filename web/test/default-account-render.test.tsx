@@ -14,16 +14,7 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { register } from "node:module";
 import { FakeNode, installFakeDom } from "./fake-dom.js";
-
-// The build's plugin list (`virtual:droppen/bundled-plugins`, made by Vite).
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
-  )}`,
-);
 
 const container = installFakeDom();
 // The schedule form's controls ask an element whether it matches a selector;

@@ -34,21 +34,22 @@
 //! `preflight` is a subcommand this phase introduced, so a binary older than it
 //! fails the health check and is refused. That is the honest behaviour rather
 //! than a bug: this route cannot verify a binary that predates the contract it
-//! verifies against. Rolling further back is a `docker run` with an older image,
-//! or deleting `<data>/bin/remote-hand-server` so the baked binary seeds again.
+//! verifies against. Rolling further back means restoring an older binary by
+//! hand, or deleting `<data>/bin/remote-hand-server` so the one baked into the
+//! running program seeds again.
 //!
 //! # Privilege
 //!
-//! This route replaces the program the machine will run. It is exactly as
-//! privileged as everything else on this port, and that is the point worth being
-//! explicit about: the API has **no authentication**, so anyone who can reach
-//! the port can already read every file under the home directory, open a shell
-//! through `POST /api/terminals`, and run arbitrary commands as this user. A
-//! route that swaps the binary adds persistence to that, not a new capability —
-//! but persistence is a meaningful escalation, and the answer is the same as it
-//! has always been: the port belongs behind an authenticated reverse proxy, an
-//! SSH tunnel or a private network. Same-origin checks (`crate::origin`) apply
-//! here as to every other route, so a web page the user visits cannot post to it.
+//! This route replaces the program the machine will run, which makes it the most
+//! privileged route this server has. It is reached like every other one: through
+//! [`crate::auth`]'s layer, so only a signed-in account on this instance may post
+//! to it. Anyone who *is* signed in can already read every file under the home
+//! directory, open a shell through `POST /api/terminals`, and run arbitrary
+//! commands as this user; a route that swaps the binary adds persistence to
+//! that, not a new capability. Persistence is still a meaningful escalation, so
+//! the port itself belongs behind an SSH tunnel or a private network. Same-origin
+//! checks (`crate::origin`) apply here as to every other route, so a web page the
+//! user visits cannot post to it.
 
 pub mod store;
 
@@ -58,6 +59,8 @@ use std::time::Duration;
 use gotcha::{api, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::text::hex;
 use tokio::io::AsyncWriteExt;
 
 use crate::api::error::ApiError;
@@ -511,11 +514,6 @@ async fn capped(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
         }
     }
     String::from_utf8_lossy(&kept).into_owned()
-}
-
-/// Lowercase hex, the form every `sha256sum` prints.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Seed `<data>/bin` from the running binary, so a supervisor has one to run.

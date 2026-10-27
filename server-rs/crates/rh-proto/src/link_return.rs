@@ -123,7 +123,7 @@ pub fn seal<R: RngCore + CryptoRng>(
 }
 
 /// [`seal`] with a given one-off key and nonce (test vectors).
-pub fn seal_with(
+fn seal_with(
     ephemeral: &DhKeypair,
     nonce: [u8; 12],
     recipient: &[u8; 32],

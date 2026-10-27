@@ -89,15 +89,15 @@ test("an address names its device under /m/, and the home's addresses stay as th
   assert.equal(plainHomeAddress("/terminals", "", "d-a"), null);
 });
 
-test("the router answers every section of another device under /m/$machine, and /m is reserved for it", async () => {
+test("the router answers every section of another device under /m/$machine", async () => {
   const { readFileSync } = await import("node:fs");
   const router = readFileSync(new URL("../src/app/router.tsx", import.meta.url), "utf8");
   assert.match(router, /path: "m\/\$machine"/);
   for (const section of ["sessions", "chat", "terminals", "files", "settings", "stats"]) {
     assert.match(router, new RegExp(`getParentRoute: \\(\\) => machineRoute,\\s*path: "${section}"`), section);
   }
-  const { RESERVED_PATHS } = await import("../build/droppen-plugins.js");
-  assert.ok(RESERVED_PATHS.has("m"), "no plugin alias may take /m");
+  // That /m is one of the reserved top-level paths, which no plugin alias may
+  // take, is checked against the server's list in plugin-reserved-paths.test.ts.
 });
 
 test("pane content names its device only off the home, and content from before reads as the home's", () => {

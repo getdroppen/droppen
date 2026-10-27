@@ -15,7 +15,6 @@
 //! in this module may reach for `$HOME` or `dirs::home_dir()` directly: doing so
 //! would step straight out of the sandbox the tests set up.
 
-use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -23,9 +22,7 @@ use gotcha::axum::body::Body;
 use gotcha::axum::http::header::{CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::oas::Schema;
 use gotcha::{api, Json, Multipart, Schematic, State};
-use gotcha_core::EnhancedSchema;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
@@ -65,8 +62,10 @@ const PRIVATE_TO_THIS_COMPUTER: &str = "this device's Droppen data and settings 
 
 /// Extensions the download route is willing to serve inline, and their mime types.
 ///
-/// Narrower than [`IMAGE_EXT`] — this list decides what the browser is invited
-/// to render in place rather than save — but note what it still contains: an
+/// Narrower than the allowlist behind
+/// [`is_image_ext`](crate::sessions::util::is_image_ext) — this list decides
+/// what the browser is invited to render in place rather than save — but note
+/// what it still contains: an
 /// `svg` served as `image/svg+xml` with `Content-Disposition: inline` is a
 /// *document*, and a script inside it would otherwise run on this server's
 /// origin. That was survivable while the API had no credentials to steal; with
@@ -84,10 +83,6 @@ const INLINE_IMAGE_MIME: &[(&str, &str)] = &[
     ("webp", "image/webp"),
     ("svg", "image/svg+xml"),
 ];
-
-/// Extensions an attachment is flagged as an image for. Only drives whether the
-/// composer draws a thumbnail, so it can be broader than [`INLINE_IMAGE_MIME`].
-const IMAGE_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
 
 /// What every inline response carries, so that "render this in place" cannot
 /// mean "run this in place".
@@ -121,38 +116,9 @@ pub enum FsKind {
     Other,
 }
 
-/// Hand-written rather than derived so the enum stays *inline* in `FsEntry`.
-///
-/// The derive registers a named component and refers to it by `$ref`, which
-/// would add an `FsKind` schema the zod contract does not have (`kind` is an
-/// inline string enum there). Inlining keeps `openapi/openapi.json` unchanged.
-impl Schematic for FsKind {
-    fn name() -> &'static str {
-        "FsKind"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["file", "dir", "symlink", "other"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+// Inline in `FsEntry`: the contract spells `kind` as an inline string enum,
+// not a named component.
+crate::inline_string_enum!(FsKind, ["file", "dir", "symlink", "other"]);
 
 /// One row of a directory listing.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -948,11 +914,13 @@ async fn save_attachment(paths: &Paths, file: &UploadedFile) -> Result<Attachmen
     let target = dir.join(&name);
     tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
 
+    // This route's own extraction: `extension()` is `split('.').last()`, so a
+    // name with no dot is its own extension (and "png" is an image here).
     let extension = extension(&name);
     Ok(Attachment {
         path: target.to_string_lossy().into_owned(),
         size_bytes: size as i64,
-        is_image: IMAGE_EXT.contains(&extension.as_str()),
+        is_image: crate::sessions::util::is_image_ext(&extension),
         name,
     })
 }
@@ -1244,6 +1212,14 @@ mod tests {
         assert_eq!(extension(".png"), "png");
         // No dot at all: `split(".").pop()` returns the whole name, not "".
         assert_eq!(extension("file"), "file");
+    }
+
+    /// The upload route's extraction: a name with no dot is its own extension.
+    #[test]
+    fn an_upload_whose_whole_name_is_an_extension_counts_as_an_image() {
+        assert!(crate::sessions::util::is_image_ext(&extension("png")));
+        assert!(crate::sessions::util::is_image_ext(&extension("JPG")));
+        assert!(!crate::sessions::util::is_image_ext(&extension("notes")));
     }
 
     #[test]

@@ -145,9 +145,7 @@ struct PayloadEnrolled {
     i: String,
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
+use crate::text::hex;
 
 impl Handoff {
     /// New material for `attempt` (expiring at `expires_ms`), answered at `origin`.

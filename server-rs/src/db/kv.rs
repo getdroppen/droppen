@@ -132,10 +132,7 @@ impl Db {
 
     /// Forget one key. Forgetting what is not there is not an error.
     pub fn kv_remove(&self, scope: &str, key: &str) {
-        self.commit("a removal", |tx| {
-            tx.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", (scope, key))?;
-            Ok(())
-        });
+        self.commit("a removal", |tx| kv_remove_in(tx, scope, key));
     }
 
     /// Replace a whole scope with `entries`, in one transaction.
@@ -215,12 +212,19 @@ impl Db {
     }
 }
 
-fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, value: &str) -> rusqlite::Result<()> {
+/// [`Db::kv_set`]'s statement, for a caller already inside a transaction.
+pub(crate) fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, value: &str) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
          ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         (scope, key, value),
     )?;
+    Ok(())
+}
+
+/// [`Db::kv_remove`]'s statement, for a caller already inside a transaction.
+pub(crate) fn kv_remove_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str) -> rusqlite::Result<()> {
+    tx.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", (scope, key))?;
     Ok(())
 }
 

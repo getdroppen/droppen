@@ -60,12 +60,22 @@ const PS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Whether a process is still there.
 ///
-/// `crate::pty_shim::client::process_alive` asks exactly this question for
-/// shims, including the `EPERM`-counts-as-alive rule, so it is reused rather
-/// than written twice: `kill(pid, 0)` performs the existence and permission
-/// checks and delivers nothing.
+/// `kill(pid, 0)` performs the permission and existence checks and delivers
+/// nothing, which is exactly the question a corpse guard asks. `EPERM` counts as
+/// alive: the process exists, it simply is not ours — which is the case for a
+/// shim adopted across a user switch, and refusing to attach then would be a
+/// false negative.
+///
+/// Pids 0 and 1 are refused: `kill(0, …)` addresses this process's own group
+/// and `kill(1, …)` init, and neither is ever a child this server is tracking.
 pub fn alive(pid: u32) -> bool {
-    crate::pty_shim::client::process_alive(pid)
+    if pid <= 1 {
+        return false;
+    }
+    // SAFETY: signal 0 is the existence probe; it delivers nothing and touches
+    // no memory.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// Whether `pid` is alive *and* is still the process `token` was taken from.
@@ -274,6 +284,16 @@ mod tests {
         assert!(!alive(absent));
         assert!(command_line(absent).await.is_none(), "ps has nothing to say about it");
         assert!(!is_running(absent, "code-server").await);
+    }
+
+    #[test]
+    fn liveness_is_a_signal_probe_and_never_a_wildcard() {
+        assert!(alive(std::process::id()), "this process is alive");
+        assert!(!alive(0), "pid 0 is `my own process group`, not a process");
+        assert!(!alive(1), "pid 1 is never a shell of ours");
+        // A pid that cannot exist: the reserved maximum on every platform this
+        // runs on is well below it.
+        assert!(!alive(u32::MAX - 1));
     }
 
     #[test]

@@ -202,21 +202,17 @@ fn respond_to(path: &str, query: Option<&str>, if_none_match: Option<&str>) -> R
 /// of their SHA-256 into the links). Never the shell: `/index.html?v=x` must
 /// not make the next deploy invisible for a year.
 fn content_versioned(path: &str, body: &[u8], version: &str) -> bool {
-    use sha2::{Digest, Sha256};
     let image = [".png", ".ico", ".svg", ".webp", ".jpg"].iter().any(|ext| path.ends_with(ext));
     if !image || version.len() < 8 || !version.chars().all(|c| c.is_ascii_hexdigit()) {
         return false;
     }
-    let hex: String = Sha256::digest(body).iter().map(|byte| format!("{byte:02x}")).collect();
-    hex.starts_with(&version.to_ascii_lowercase())
+    crate::text::sha256_hex(body).starts_with(&version.to_ascii_lowercase())
 }
 
 /// A strong validator for a file's bytes: 128 bits of SHA-256, quoted.
 fn etag_of(body: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(body);
-    let hex: String = digest[..16].iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("\"{hex}\"")
+    let hex = crate::text::sha256_hex(body);
+    format!("\"{}\"", &hex[..32])
 }
 
 /// Whether an `If-None-Match` names `etag`. Weakly: a proxy that compressed

@@ -47,7 +47,7 @@ const SYM_SALT: &[u8] = b"rh/v1 wrap-sym";
 const SEAL_LABEL: &[u8] = b"rh/v1 seal\0";
 const PAIR_LABEL: &[u8] = b"rh/v1 pair\0";
 /// The largest secret worth wrapping; anything bigger is not a key.
-pub const MAX_SECRET: usize = 1024;
+const MAX_SECRET: usize = 1024;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum WrapError {

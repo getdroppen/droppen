@@ -7,14 +7,24 @@ export const ALL_SECTIONS = ["general", "accounts", "access", "plugins", "schedu
 export type SectionId = (typeof ALL_SECTIONS)[number];
 
 /**
+ * The tabs a page offers. Plugins belong to the instance the page is served
+ * by, and a page a hub serves (cloud mode) has none — no list, no settings
+ * block and no such tab (`docs/plugins/runtime.md` §5).
+ */
+export function sectionsFor(cloud: boolean): readonly SectionId[] {
+  return cloud ? ALL_SECTIONS.filter((id) => id !== "plugins") : ALL_SECTIONS;
+}
+
+/**
  * The two old ids, both of which now open `access`: `?section=security` from a
  * page saved before the merge, and `?section=Droppen` from a link made while
  * the two tabs were apart.
  */
 const LEGACY_SECTIONS: Record<string, SectionId> = { security: "access", Droppen: "access" };
 
-/** The section a `?section=` asks for — old ids included; anything else is no answer. */
-export function askedSection(section: string | undefined): SectionId | undefined {
+/** The section a `?section=` asks for — old ids included; `plugins` on a hub's page is no answer. */
+export function askedSection(section: string | undefined, cloud = false): SectionId | undefined {
   if (!section) return undefined;
-  return ALL_SECTIONS.find((id) => id === section) ?? LEGACY_SECTIONS[section];
+  const id = ALL_SECTIONS.find((id) => id === section) ?? LEGACY_SECTIONS[section];
+  return id === "plugins" && cloud ? undefined : id;
 }

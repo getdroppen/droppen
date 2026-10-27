@@ -665,7 +665,7 @@ fn free_port() -> u16 {
 }
 
 fn alive(pid: u32) -> bool {
-    remote_hand_server::pty_shim::client::process_alive(pid)
+    remote_hand_server::procs::alive(pid)
 }
 
 /// `SIGKILL` a whole process group, for a test's own cleanup.

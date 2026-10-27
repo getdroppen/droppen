@@ -102,9 +102,11 @@
 # Tested by scripts/publish-release.test.mjs, against a stand-in gh.
 set -euo pipefail
 
-usage() { sed -n '2,/^# Needs:/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
-die() { printf 'publish-release: %s\n' "$*" >&2; exit 1; }
-say() { printf '\n== %s\n' "$*"; }
+RELEASE_DIE_NAME='publish-release'
+# shellcheck source=release-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/release-lib.sh"
+
+usage() { release_usage '/^# Needs:/'; }
 
 VERSION=""
 SERVER=""

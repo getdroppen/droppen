@@ -1,0 +1,12 @@
+[package]
+name = "droppen-path"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The PATH the Droppen server runs with: the login shell's directories first, then the usual install locations, once each"
+
+# Deliberately dependency-free: the server, the desktop app and the
+# command-line installer's test all follow this one rule, so it must not pull
+# either workspace's graph into the other.
+[dependencies]

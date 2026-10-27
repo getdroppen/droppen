@@ -33,7 +33,6 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 
 use super::proto::{Meta, Tombstone};
 
@@ -59,13 +58,7 @@ fn socket_stem(id: &str) -> String {
 
 /// The first `chars` hex characters of a sha-256 digest.
 fn hex_digest(bytes: &[u8], chars: usize) -> String {
-    let digest = Sha256::digest(bytes);
-    digest
-        .iter()
-        .flat_map(|byte| [byte >> 4, byte & 0xf])
-        .take(chars)
-        .map(|nibble| char::from_digit(u32::from(nibble), 16).unwrap_or('0'))
-        .collect()
+    crate::text::sha256_hex(bytes).chars().take(chars).collect()
 }
 
 /// Where a terminal's socket goes: beside its other sidecars if that address

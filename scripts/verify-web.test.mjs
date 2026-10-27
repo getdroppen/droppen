@@ -240,7 +240,7 @@ function makeBuild(name, table = (assets, shell, scripts) => ({ assets, shell, s
       : `const CACHE = "x";\nconst PRECACHE = [];\nconst INTEGRITY = ${JSON.stringify(t.assets)};\nconst SHELL_SHA256 = ${JSON.stringify(t.shell)};\nconst SHELL_SCRIPTS = ${JSON.stringify(t.scripts ?? [INLINE_HASH])};\n`,
   );
   const files = filesOf(dist);
-  const manifest = { format: FORMAT, commit: "0123abc", ref: "refs/tags/v9.9.9", distribution: "public", digest: digestOf(files), files };
+  const manifest = { format: FORMAT, commit: "0123abc", ref: "refs/tags/v9.9.9", digest: digestOf(files), files };
   const manifestFile = join(root, `${name}.json`);
   writeFileSync(manifestFile, JSON.stringify(manifest));
   return { dist, files, manifest, manifestFile };
@@ -473,8 +473,6 @@ describe("verify-web.mjs against a hub", () => {
 
   test("web-manifest.mjs writes no manifest for such a build, and --check reports it", async () => {
     const odd = makeBuild("odd-shell", (assets) => ({ assets, shell: "f".repeat(64) }));
-    mkdirSync(join(odd.dist, "plugins"));
-    writeFileSync(join(odd.dist, "plugins", "manifest.json"), JSON.stringify({ distribution: "public", plugins: [] }));
     const run = (args) =>
       new Promise((resolve) => execFile(process.execPath, [manifestScript, ...args], (error, stdout, stderr) => resolve({ code: error ? error.code : 0, out: stdout + stderr })));
     const write = await run([odd.dist]);

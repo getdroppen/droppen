@@ -798,7 +798,7 @@ impl Registry {
         // The guards run *after* the hello, because one of them needs what
         // the hello carries, and the other can only have become true during
         // it.
-        if sidecars.tombstoned() || !client::process_alive(link.shell_pid) {
+        if sidecars.tombstoned() || !crate::procs::alive(link.shell_pid) {
             tracing::warn!(%id, shell_pid = link.shell_pid, "refusing to adopt a shim minding a dead shell");
             drop(link);
             sidecars.remove_all();
@@ -1481,7 +1481,7 @@ async fn relink(entry: &Arc<Entry>) -> Relinked {
             return Relinked::Exited(tombstone.exit_code);
         }
         let shell = entry.shell_pid.load(Ordering::SeqCst);
-        if shell > 1 && !client::process_alive(shell) {
+        if shell > 1 && !crate::procs::alive(shell) {
             tracing::warn!(shell_pid = shell, "a terminal's shell is gone and its shim left no exit file");
             return Relinked::Exited(-1);
         }

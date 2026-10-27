@@ -42,7 +42,6 @@ use base64::Engine;
 use rand::RngCore;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::db::{self, Db};
@@ -383,8 +382,7 @@ fn new_token() -> String {
 
 /// `sha256(token)` as lower-case hex — the only form of a token this server keeps.
 pub fn digest_of(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    crate::text::sha256_hex(token)
 }
 
 #[cfg(test)]

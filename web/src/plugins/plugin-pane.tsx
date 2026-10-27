@@ -5,6 +5,7 @@ import { localize, type PaneContribution, type PaneState } from "@droppen/plugin
 import { useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
+import { isCloud } from "@/lib/hub/config";
 import { PluginBoundary } from "./boundary";
 import { hostLocale } from "./host";
 import { validPaneState, type PluginPaneContent } from "./pane-content";
@@ -23,8 +24,8 @@ export function usePluginPaneTitle(content: PluginPaneContent): string {
   const active = registry.active.find((p) => p.id === content.plugin);
   const pane = active?.contributions.panes?.find((p) => p.id === content.pane);
   if (pane) return localize(pane.label, locale);
-  const bundled = registry.bundled.find((b) => b.id === content.plugin);
-  return bundled ? localize(bundled.manifest.name, locale) : content.plugin;
+  const status = registry.statuses?.find((s) => s.id === content.plugin);
+  return status ? localize(status.name, locale) : content.plugin;
 }
 
 function Placeholder({ note, onReset }: { note: string; onReset: () => void }) {
@@ -60,12 +61,17 @@ export function PluginPane({
   const { t } = useTranslation();
   const router = useRouter();
   const registry = usePluginRegistry();
-  const bundled = registry.bundled.find((b) => b.id === content.plugin);
-  if (!bundled) return <Placeholder note={t("this pane's plugin is not part of this build")} onReset={onReset} />;
-  const name = localize(bundled.manifest.name, hostLocale());
-  if (registry.statuses === null || registry.loading.includes(content.plugin)) return <Spinner className="flex-1" />;
+  // A page a hub serves shows no plugin content at all (§5): a layout may
+  // have been mirrored from the machine with a plugin pane in it.
+  if (isCloud()) return null;
+  if (registry.statuses === null) return <Spinner className="flex-1" />;
+  const status = registry.statuses.find((s) => s.id === content.plugin);
+  if (!status) return <Placeholder note={t("this pane's plugin is not installed on this instance")} onReset={onReset} />;
+  const name = localize(status.name, hostLocale());
+  if (registry.loading.includes(content.plugin)) return <Spinner className="flex-1" />;
   const active = registry.active.find((p) => p.id === content.plugin);
   if (registry.errors[content.plugin]) return <Placeholder note={t("the {{name}} plugin could not start", { name })} onReset={onReset} />;
+  if (!status.compatible) return <Placeholder note={t("{{name}} does not work with this version of Droppen", { name })} onReset={onReset} />;
   if (!active) return <Placeholder note={t("the {{name}} plugin is not enabled", { name })} onReset={onReset} />;
   const pane = active.contributions.panes?.find((p) => p.id === content.pane);
   if (!pane) return <Placeholder note={t("{{name}} has no pane called {{pane}}", { name, pane: content.pane })} onReset={onReset} />;

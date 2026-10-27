@@ -123,8 +123,16 @@ fn emit(event: Event<'_>) {
         tap.record(event);
         return;
     }
+    record("client", event);
+}
+
+/// Append one record built by [`line`] to the default capture file, as a
+/// line: for a caller that writes the same file but is not this crate's
+/// traffic (the headless device says `"src": "devkit"`). Nothing when no
+/// capture file is configured.
+pub fn record(src: &str, event: Event<'_>) {
     let Some(file) = file() else { return };
-    let mut text = line("client", event).to_string();
+    let mut text = line(src, event).to_string();
     text.push('\n');
     if let Ok(mut file) = file.lock() {
         let _ = file.write_all(text.as_bytes());
@@ -187,6 +195,39 @@ pub fn got<'a>(socket: &str, text: &'a str) -> &'a str {
         }
     }
     text
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::{line, Event};
+    use serde_json::json;
+
+    /// The line's exact bytes: one record, keys sorted (no feature turns
+    /// insertion order on), the URL split into path and query. Every writer
+    /// of the file — this crate's own, the devkit's, the agent's — builds it
+    /// here, so the contract check reads one shape.
+    #[test]
+    fn a_capture_line_has_the_documented_shape() {
+        let body = json!({"t": "welcome", "b": 1});
+        assert_eq!(
+            line("devkit", Event::Ws { socket: "/v1/client", dir: "out", body: &body }).to_string(),
+            r#"{"body":{"b":1,"t":"welcome"},"dir":"out","kind":"ws","socket":"/v1/client","src":"devkit"}"#
+        );
+        assert_eq!(
+            line(
+                "agent",
+                Event::Http {
+                    dir: "in",
+                    method: "GET",
+                    url: "https://hub.example/v1/me?x=1",
+                    status: Some(200),
+                    body: &body,
+                }
+            )
+            .to_string(),
+            r#"{"body":{"b":1,"t":"welcome"},"dir":"in","kind":"http","method":"GET","path":"/v1/me","query":"x=1","src":"agent","status":200}"#
+        );
+    }
 }
 
 #[cfg(test)]

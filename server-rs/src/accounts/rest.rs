@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use gotcha::Schematic;
 use rusqlite::OptionalExtension;
@@ -195,12 +195,7 @@ pub struct LimitLog {
 }
 
 /// Milliseconds since the epoch, now.
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_millis() as i64)
-        .unwrap_or_default()
-}
+pub use crate::time::now_ms;
 
 /// Epoch milliseconds as the ISO-8601 the rest of the API speaks.
 pub fn iso_ms(ms: i64) -> String {

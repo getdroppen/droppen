@@ -71,7 +71,7 @@ pub struct InjectLock {
     path: PathBuf,
     /// What the path resolved to when the lock was taken, so cleanup can prove
     /// it is removing its own file and not a successor's.
-    identity: Option<(u64, u64)>,
+    identity: Option<(u64, u64, i64, i64)>,
 }
 
 impl Drop for InjectLock {
@@ -79,18 +79,18 @@ impl Drop for InjectLock {
     ///
     /// Unlinking keeps `inject-locks/` from accumulating one file per session
     /// ever driven. The guard is the same one
-    /// `crate::pty_shim::child::unlink_if_ours` applies to sockets: compare
-    /// device and inode against what was locked, and leave anything else
-    /// alone. Without it, a slow drop could delete the file a *successor* has
-    /// already created and locked, and the session would lose its exclusion
-    /// silently.
+    /// `crate::pty_shim::child::unlink_if_ours` applies to sockets: compare the
+    /// path's identity — device, inode and the ctime that pins it to one
+    /// creation — against what was locked, and leave anything else alone.
+    /// Without it, a slow drop could delete the file a *successor* has already
+    /// created and locked, and the session would lose its exclusion silently.
     ///
     /// The unlink deliberately happens before the descriptor closes. A process
     /// that opens the path in the window between the two creates a fresh file
     /// and claims it — which is correct, because this run is over.
     fn drop(&mut self) {
         let Some(identity) = self.identity else { return };
-        if path_identity(&self.path) == Some(identity) {
+        if crate::pty_shim::child::path_identity(&self.path) == Some(identity) {
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -126,7 +126,7 @@ pub fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<
     let _ = file.flush();
 
     Ok(Outcome::Acquired(InjectLock {
-        identity: path_identity(&path),
+        identity: crate::pty_shim::child::path_identity(&path),
         _file: file,
         path,
     }))
@@ -137,12 +137,6 @@ pub fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<
 // must *not* carry the server: this directory is shared by every instance on
 // the machine so that a second one is refused a session the first is driving,
 // and a server-scoped name would hand each of them their own file.
-
-/// A path's `(device, inode)`, or `None` if it does not exist.
-fn path_identity(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path).ok().map(|meta| (meta.dev(), meta.ino()))
-}
 
 /// The pid the holder wrote, if it wrote one yet.
 fn read_holder(file: &mut File) -> Option<u32> {

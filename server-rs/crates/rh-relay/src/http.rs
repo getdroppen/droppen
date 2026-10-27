@@ -33,7 +33,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::config::{hex, unhex, TrustProxy};
-use crate::limit::{address_key, Keyed};
+use crate::limit::{address_key, Keyed, FORGET_AFTER};
 use crate::server::Server;
 
 /// The per-address limits on what anyone may ask before signing in.
@@ -56,7 +56,7 @@ impl UnauthLimits {
     /// Forget the addresses there is nothing more to count against
     /// ([`Keyed::forget_old`]): how many went.
     pub fn forget_old(&self, now: Instant) -> usize {
-        self.ping.forget_old(now) + self.upgrades.forget_old(now)
+        self.ping.forget_old(now, FORGET_AFTER) + self.upgrades.forget_old(now, FORGET_AFTER)
     }
 }
 
@@ -83,7 +83,7 @@ async fn no_webauthn(mut response: Response) -> Response {
 }
 
 /// The client's address: the socket's, or the trusted proxy's header.
-pub fn client_ip(trust: TrustProxy, headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
+fn client_ip(trust: TrustProxy, headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
     let header = match trust {
         TrustProxy::None => None,
         TrustProxy::Fly => Some("fly-client-ip"),

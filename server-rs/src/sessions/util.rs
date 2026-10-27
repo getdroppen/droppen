@@ -289,12 +289,30 @@ pub fn make_tool_item(role: Role, kind: ItemKind, display: ToolDisplay, timestam
     }
 }
 
+/// Extensions a browser draws in an `<img>`, and so the ones that may render as
+/// a thumbnail rather than a download chip.
+///
+/// An allowlist rather than a "not pdf" test, because the failure mode is a
+/// broken picture on the page and the next format the CLI learns to rasterise
+/// (`Read` answers a PDF with page images) should default to the working
+/// fallback, not to the broken one.
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
 
-/// Whether a path/name looks like an image, so it renders as a thumbnail vs a download chip.
+/// Whether an extension, without the dot, is one a browser draws.
+///
+/// The three call sites keep their own way of finding the extension — a name's
+/// tail, a `Path::extension`, an upload name — because those disagree at the
+/// edges (a dotfile, a name with no dot) and each disagreement is pinned by a
+/// test at the site. This is only the list.
+pub fn is_image_ext(ext: &str) -> bool {
+    IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+/// Whether a name looks like an image: the tail after its last `.`, as
+/// `name.rsplit('.')` finds it, so a name with no dot is not one.
 pub fn is_image_name(name: &str) -> bool {
     match name.rsplit('.').next() {
-        Some(ext) if name.contains('.') => IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str()),
+        Some(ext) if name.contains('.') => is_image_ext(ext),
         _ => false,
     }
 }
@@ -639,6 +657,20 @@ mod tests {
 
         let (lines, _) = backwards(b"a\n\n\nb\n", u64::MAX).await;
         assert_eq!(lines, vec!["b", "a"], "blank lines are skipped like the tail reader's");
+    }
+
+    /// The transcript splitter's extraction is the tail after the last dot.
+    #[test]
+    fn an_image_name_keeps_its_own_extraction() {
+        assert!(is_image_name("photo.PNG"));
+        assert!(is_image_name("dir/photo.png"));
+        assert!(is_image_name(".png"), "the tail after the last dot is png");
+        // No dot: not an image here. (The upload route extracts differently and
+        // does count a name that is only an extension.)
+        assert!(!is_image_name("png"));
+        // A trailing separator, or `/.`, leaves a tail that is not an extension.
+        assert!(!is_image_name("dir/"));
+        assert!(!is_image_name("dir/."));
     }
 
     /// The budget stops the walk without pretending the file ended.

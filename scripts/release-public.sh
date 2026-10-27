@@ -46,17 +46,17 @@
 # What it does (with --prebuilt, steps 3's builds are release.yml's jobs):
 #
 #   1. exports the ref to a scratch directory under /tmp;
-#   2. builds the web app as the PUBLIC distribution — DROPPEN_DISTRIBUTION is
-#      unset, so `distribution.json` (no plugins) is what gets embedded — and
-#      writes its web-manifest.json;
+#   2. builds the web app (which ships no plugin code: plugins are installed
+#      per instance at runtime, docs/plugins/runtime.md) and writes its
+#      web-manifest.json;
 #   3. builds aarch64-apple-darwin and x86_64-apple-darwin (adding the rustup
 #      targets if missing), with the builder's paths remapped out of the binary,
 #      and meanwhile x86_64 and aarch64 Linux (glibc 2.28) in a throwaway pod
 #      (scripts/build-linux.sh);
 #   4. checks the binaries (on the programs unpacked from the tarballs, step
-#      8, which are byte for byte these): the version names the commit, the
-#      only distribution marker is "public", no plugin is bundled, no path
-#      under $HOME is left, and nothing names the private source repository;
+#      8, which are byte for byte these): the version names the commit, no
+#      path under $HOME is left, and nothing names the private source
+#      repository;
 #   5. writes THIRD_PARTY_NOTICES: every Rust crate compiled in (cargo-about,
 #      `about.toml`) and every npm package bundled into the web app
 #      (scripts/notices/web-notices.mjs), each licence in full, and fails on a
@@ -126,7 +126,11 @@
 # at least OLD_ASSETS_UNTIL below.
 set -euo pipefail
 
-usage() { sed -n '2,/^# Needs:/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
+RELEASE_DIE_NAME='release-public'
+# shellcheck source=release-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/release-lib.sh"
+
+usage() { release_usage '/^# Needs:/'; }
 
 VERSION=""
 REF=""
@@ -176,9 +180,6 @@ ABOUT_VERSION=0.9.2
 # Strings no public binary may contain: the private repositories' names (the
 # source as it is today, and the closed Hub's repository after the split).
 FORBIDDEN=("Kilerd/remote-hand" "getdroppen/hub")
-
-say() { printf '\n== %s\n' "$*"; }
-die() { printf 'release-public: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)" = Darwin ] || die "this builds macOS binaries and needs a Mac"
 for tool in git cargo rustup lipo shasum tar node npx file; do
@@ -239,7 +240,6 @@ fi
 release_text_allow_ok \
   || die "DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped"
 
-free_gb() { df -Pk "$1" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 mkdir -p "$(dirname "$WORK")"
 FREE=$(free_gb "$(dirname "$WORK")")
 # The build needs roughly 4 GB (two release targets' intermediates and
@@ -253,47 +253,14 @@ if [ "$NODE_VERSION" != "$NVMRC" ] && [ "${DROPPEN_ALLOW_NODE_MISMATCH:-}" != 1 
   die "node is $NODE_VERSION but .nvmrc says $NVMRC: put Node $NVMRC first on PATH (the public web build is reproducible only with it), or set DROPPEN_ALLOW_NODE_MISMATCH=1"
 fi
 
-cleanup() {
-  local status=$?
-  # Each long step runs in a process group of its own (set -m): stop the
-  # group, by its id, so nothing it started lingers. The cargo step first, on
-  # its own; then the Linux build, whose trap deletes its pod as it ends.
-  if [ -n "${WATCHED:-}" ] && kill -0 "$WATCHED" 2>/dev/null; then kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true; fi
-  if [ -n "${LINUX_PID:-}" ] && kill -0 "$LINUX_PID" 2>/dev/null; then
-    kill -TERM -- "-$LINUX_PID" 2>/dev/null || kill -TERM "$LINUX_PID" 2>/dev/null || true
-    wait "$LINUX_PID" 2>/dev/null || true
-  fi
-  if [ "$KEEP_WORK" = 1 ]; then
-    echo "kept the build directory: $WORK" >&2
-  else
-    rm -rf "$WORK"
-  fi
-  exit "$status"
-}
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-# Run a long step in its own process group, and stop that group (by its id)
-# if the volume falls under the floor: other builds share this disk.
+# Each long step runs in a process group of its own (set -m): stop the group,
+# by its id, so nothing it started lingers. The cargo step first, on its own;
+# then the Linux build, whose trap deletes its pod as it ends (release-lib.sh
+# cleanup, run_watched).
 set -m
-run_watched() {
-  "$@" &
-  WATCHED=$!
-  while kill -0 "$WATCHED" 2>/dev/null; do
-    if [ "$(free_gb "$WORK")" -lt "$MIN_FREE_GB" ]; then
-      echo "free space fell below ${MIN_FREE_GB} GB; stopping this step (process group $WATCHED)" >&2
-      kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true
-      wait "$WATCHED" 2>/dev/null || true
-      WATCHED=
-      return 1
-    fi
-    sleep 5
-  done
-  local status=0
-  wait "$WATCHED" || status=$?
-  WATCHED=
-  return "$status"
-}
 
 say "$VERSION from $SHA (rev $REV), ${FREE} GB free, work in $WORK"
 rm -rf "$WORK"
@@ -305,23 +272,11 @@ git -C "$REPO" archive --format=tar "$SHA" | tar -x -C "$WORK/src"
 SRC=$WORK/src
 
 if [ -z "$PREBUILT" ]; then
-  say "rust targets"
-  installed=$(rustup target list --installed)
-  for target in "${TARGETS[@]}"; do
-    grep -qx "$target" <<<"$installed" || rustup target add "$target"
-  done
+  install_rust_targets "${TARGETS[@]}"
 fi
 
-say "web app: the public distribution"
-PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
-mkdir -p "$WORK/shims"
-if ! command -v pnpm >/dev/null || [ "$(pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
-  # Package scripts call `pnpm`; give them the pinned one.
-  printf '#!/bin/sh\nexec npx -y pnpm@%s "$@"\n' "$PNPM_VERSION" > "$WORK/shims/pnpm"
-  chmod +x "$WORK/shims/pnpm"
-fi
-# No DROPPEN_DISTRIBUTION: the build then reads `distribution.json`, the public one.
-web_env=(env -u DROPPEN_DISTRIBUTION PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
+say "web app"
+pnpm_web_env "$SRC"
 if [ -n "$WEB_DIST" ]; then
   # Built once, elsewhere: the very bytes the binaries embed. (CI's
   # web-reproducible jobs keep checking that a build is reproducible.)
@@ -334,12 +289,6 @@ else
   run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
   run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
 fi
-# The public distribution, and nothing else.
-node -e '
-  const m = require(process.argv[1]);
-  if (m.distribution !== undefined && m.distribution !== "public") { console.error("distribution is", m.distribution); process.exit(1); }
-  if ((m.plugins || []).length) { console.error("the public build bundles plugins:", m.plugins.map((p) => p.id)); process.exit(1); }
-' "$SRC/web/dist/plugins/manifest.json" || die "web/dist is not the public distribution"
 # No fact only the owner can supply left unfilled on droppen.app's pages: the
 # placeholders show marked there and main's tests pass with them, but a
 # release ships none (web/owner-placeholders.txt, release_text_owner_placeholders).
@@ -406,12 +355,7 @@ fi
 # every tarball, below ("tarball checks"): byte for byte these.
 bin_of() { echo "$WORK/target/$1/release/$BIN_NAME"; }
 check_binary() { # path
-  local bin=$1 markers kind
-  markers=$(LC_ALL=C grep -ao '"distribution": "[^"]*"' "$bin" | sort -u)
-  [ "$markers" = '"distribution": "public"' ] || die "$bin: distribution markers are [$markers], not exactly \"public\""
-  for needle in '"id": "tasks"' 'plugin-tasks' '.droppen-plugins/'; do
-    if LC_ALL=C grep -aqF "$needle" "$bin"; then die "$bin: contains $needle (a bundled plugin)"; fi
-  done
+  local bin=$1 kind
   if LC_ALL=C grep -aqF "$HOME/" "$bin"; then
     die "$bin: still names paths under $HOME ($(LC_ALL=C grep -aoF "$HOME/" "$bin" | wc -l | tr -d ' ') times)"
   fi
@@ -430,7 +374,7 @@ check_binary() { # path
       kind="$(printf '%s' "$kind" | cut -d, -f2 | sed 's/^ //'), needs ${glibc:-no versioned glibc}" ;;
     *) kind=$(lipo -archs "$bin") ;;
   esac
-  echo "ok: $kind $bin: distribution public, no plugins, no \$HOME paths, no ${FORBIDDEN[*]}"
+  echo "ok: $kind $bin: no \$HOME paths, no ${FORBIDDEN[*]}"
 }
 check_linux_arch() { # path, arch
   case "$(file -b "$1")" in

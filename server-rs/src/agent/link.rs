@@ -41,14 +41,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rand::Rng;
 use rh_proto::bridge::{RequestHead, ResponseHead};
 use rh_proto::chain::{Action, Attestation, ChainClock, ChainError, ChainState, Entry, Signer};
 use rh_proto::channel::{PathOptions, Session};
 use rh_proto::direct::{Admission, Admit, AgentDirect};
 use rh_proto::driver::{Channel, Incoming};
 use rh_proto::frame::Frame;
-use rh_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
+use rh_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
 use rh_proto::identity::MachineIdentity;
 use rh_proto::mux::Role;
 use rh_proto::mux::StreamClass;
@@ -62,14 +61,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 use super::bridge::{self, Loopback};
-use super::hub::{self, now_ms};
+use super::hub::{self, now_ms, Backoff, HEARTBEAT, SILENCE};
 use super::state::{self, AgentState};
 use crate::sessions::Paths;
 
-const BACKOFF_MIN: Duration = Duration::from_millis(500);
-const BACKOFF_MAX: Duration = Duration::from_secs(30);
-/// A connection that lasted this long resets the backoff.
-const STABLE: Duration = Duration::from_secs(60);
 /// The close of a handshake this agent took but could not save the device
 /// of (review D3: a device not on its record yet is let in only once it is):
 /// the page says the computer cannot save, rather than retrying blind.
@@ -84,11 +79,6 @@ const LAPSE_POLL: Duration = Duration::from_secs(10 * 60);
 /// The hub's close once it committed a renewal of this device's identity key
 /// (`docs/host-identity-rotation.md` §3.5): sign in with the new key.
 pub const ROTATED: u16 = 4005;
-/// The heartbeat (architecture doc §5).
-const HEARTBEAT: Duration = Duration::from_secs(20);
-/// Silence from the hub after which the connection is presumed dead.
-const SILENCE: Duration = Duration::from_secs(60);
-
 pub(super) struct Shared {
     pub(super) paths: Paths,
     /// Mailed machine keys this agent could not judge yet (the chain had not
@@ -508,7 +498,7 @@ fn controllers_view(state: Arc<Mutex<AgentState>>) -> super::streams::Controller
 }
 
 pub(super) async fn run(shared: Arc<Shared>) {
-    let mut backoff = BACKOFF_MIN;
+    let mut backoff = Backoff::new(hub::BACKOFF_MIN, hub::BACKOFF_MAX, hub::STABLE);
     loop {
         let started = Instant::now();
         let result = tokio::select! {
@@ -538,11 +528,7 @@ pub(super) async fn run(shared: Arc<Shared>) {
         if shared.rotation.take_again() {
             continue;
         }
-        if started.elapsed() > STABLE {
-            backoff = BACKOFF_MIN;
-        }
-        let wait = rand::thread_rng().gen_range(Duration::ZERO..=backoff);
-        backoff = (backoff * 2).min(BACKOFF_MAX);
+        let wait = backoff.after(started.elapsed());
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
             () = shared.cancel.cancelled() => return,
@@ -797,29 +783,9 @@ async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     shared.set_health(true, None);
 
     // One writer for the socket: frames from every channel, and control text.
-    let (frames_tx, mut frames_rx) = mpsc::unbounded_channel::<Frame>();
-    let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(async move {
-        let mut beat = tokio::time::interval(HEARTBEAT);
-        let mut nonce = 0u64;
-        loop {
-            let message = tokio::select! {
-                f = frames_rx.recv() => match f {
-                    Some(f) => match f.encode() { Ok(b) => Message::Binary(b.into()), Err(_) => continue },
-                    None => break,
-                },
-                t = text_rx.recv() => match t { Some(t) => Message::Text(super::traffic::agent_out(t).into()), None => break },
-                _ = beat.tick() => {
-                    nonce += 1;
-                    Message::Binary(Frame::Ping { nonce }.encode().expect("a ping encodes").into())
-                }
-            };
-            if sink.send(message).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
+    let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, super::traffic::agent_out);
 
     // The streams' writer has this connection only while this machine runs
     // AI in its account (and is told again whenever the chain changes that).
@@ -938,23 +904,50 @@ async fn rotated_sync(shared: &Arc<Shared>, sink: &mut hub::Sink, source: &mut h
     if hub::send_json(sink, &json!({"t": "chain_sub", "from": from})).await.is_err() {
         return;
     }
+    read_chain_until(shared, source, tokio::time::Instant::now() + ROTATED_SYNC, || false).await;
+}
+
+/// How a [`read_chain_until`] ended.
+enum ChainRead {
+    /// The link was cancelled.
+    Cancelled,
+    /// The peer closed the connection (or it failed).
+    Closed,
+    /// The deadline passed.
+    Deadline,
+    /// `on_chain` asked to stop after a chain frame.
+    Stopped,
+}
+
+/// Read only `Chain` frames from `source` until `deadline`, the link's
+/// cancellation, or the peer closing — acting on each as any chain frame
+/// ([`on_frame`]) with frames going nowhere: nothing else happens on this
+/// socket. `on_chain` runs after each one and stops the read when it says so.
+async fn read_chain_until(
+    shared: &Arc<Shared>,
+    source: &mut hub::Source,
+    deadline: tokio::time::Instant,
+    mut on_chain: impl FnMut() -> bool,
+) -> ChainRead {
     // Frames go nowhere: nothing else happens on this socket.
     let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
     let (text, _text_rx) = mpsc::unbounded_channel::<String>();
-    let deadline = tokio::time::Instant::now() + ROTATED_SYNC;
     loop {
         let message = tokio::select! {
             m = source.next() => m,
-            () = tokio::time::sleep_until(deadline) => return,
-            () = shared.cancel.cancelled() => return,
+            () = tokio::time::sleep_until(deadline) => return ChainRead::Deadline,
+            () = shared.cancel.cancelled() => return ChainRead::Cancelled,
         };
         match message {
             Some(Ok(Message::Binary(bytes))) => {
                 if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
                     on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
+                    if on_chain() {
+                        return ChainRead::Stopped;
+                    }
                 }
             }
-            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return ChainRead::Closed,
             Some(Ok(_)) => {}
         }
     }
@@ -996,28 +989,10 @@ async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source, s
     if promoted() {
         return Ok(());
     }
-    // Frames go nowhere: nothing is sent on this connection.
-    let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
-    let (text, _text_rx) = mpsc::unbounded_channel::<String>();
     let deadline = tokio::time::Instant::now() + super::rotation::NEW_KEY_GRACE;
-    loop {
-        let message = tokio::select! {
-            m = source.next() => m,
-            () = tokio::time::sleep_until(deadline) => break,
-            () = shared.cancel.cancelled() => return Ok(()),
-        };
-        match message {
-            Some(Ok(Message::Binary(bytes))) => {
-                if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
-                    on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
-                    if shared.cancel.is_cancelled() || promoted() {
-                        return Ok(());
-                    }
-                }
-            }
-            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
-            Some(Ok(_)) => {}
-        }
+    match read_chain_until(shared, source, deadline, || shared.cancel.is_cancelled() || promoted()).await {
+        ChainRead::Cancelled | ChainRead::Stopped => return Ok(()),
+        ChainRead::Closed | ChainRead::Deadline => {}
     }
     // The hub took the staged key, so it holds a renewal to it: the key in
     // use is not tried — the staged key signs in (and reads the chain) again
@@ -1964,6 +1939,78 @@ fn now_us() -> u64 {
         .unwrap_or(0)
 }
 
+/// The first message of a channel: on the hub or a relay, or on a direct
+/// path (which names its binding too).
+enum Hello<'a> {
+    /// `Frame::Data` on a hub or relay connection.
+    Channel(&'a [u8]),
+    /// A direct path's hello, over `device`'s binding.
+    Direct(&'a DirectBinding, &'a [u8]),
+}
+
+/// The admission step's refusal with no verified chain to admit against.
+struct NoChain;
+
+/// The step every admission — a channel on the hub or a relay, a direct
+/// path — shares: this agent's live chain and clock, the freshness gate and
+/// the replay guard, under the state lock, with the guard and the device's
+/// record saved before the reply leaves.
+///
+/// `after_open` runs in that same critical section, on the opened channel's
+/// behalf: the channel admission registers its control lapse there, so no
+/// attestation can arrive between a channel being admitted and its lapse
+/// being registered ([`take_attestation`] reads the lapses under this lock).
+/// It gets the accepted state the lock still holds, and must not lock it
+/// again. Entries a hello teaches are returned for the caller to act on as
+/// on any chain change.
+fn admit<R>(
+    shared: &Arc<Shared>,
+    device: &str,
+    hello: Hello<'_>,
+    now: u64,
+    after_open: impl FnOnce(&mut AgentState, &Accepted) -> R,
+) -> Result<(Result<Accepted, HandshakeError>, Vec<Entry>, Option<state::Recorded>, Option<R>), NoChain> {
+    let mut st = shared.state.lock().expect("agent state");
+    let st = &mut *st;
+    let attestations = st.attestation_list();
+    let Some(chain) = st.chain.as_mut() else {
+        return Err(NoChain);
+    };
+    let before = chain.seq();
+    let mut guard = shared.guard.lock().expect("replay guard");
+    let side = AgentSide {
+        chain,
+        clock: &mut st.clock,
+        guard: &mut guard,
+        key: shared.identity.dh(),
+        machine: &st.machine,
+        policy: RekeyPolicy::default(),
+        server_info: &server_info(shared.direct),
+        attestations: &attestations,
+        freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
+    };
+    let outcome = match hello {
+        Hello::Channel(message) => handshake::accept(side, device, message, now),
+        Hello::Direct(bind, message) => handshake::accept_direct(side, device, bind, message, now),
+    };
+    let mut recorded = None;
+    let mut opened = None;
+    if let Ok(accepted) = &outcome {
+        if matches!(accepted, Accepted::Open { .. }) {
+            st.save_guard(&guard);
+            // Who ever opened a channel (review D3), recorded as it opens and
+            // saved with the guard (and any entries the hello taught) before
+            // the reply leaves — in this one step under the lock.
+            recorded = Some(st.record_controller(&shared.paths, device, now));
+            opened = Some(after_open(st, accepted));
+        }
+    }
+    // Whatever the hello taught took effect, refused or not (M2 re-review:
+    // a hello whose later entry failed lost the earlier ones).
+    let learnt = st.entries_after(Some(before));
+    Ok((outcome, learnt, recorded, opened))
+}
+
 /// Direct hellos admitted by exactly the rules of [`accept`]: this agent's
 /// live chain and clock, the freshness gate, the replay guard (persisted
 /// before the reply leaves). Entries a hello teaches go to the connection,
@@ -1976,40 +2023,14 @@ impl Admit for LinkAdmit {
     fn admit(&self, device: &str, bind: &DirectBinding, hello: &[u8]) -> Admission {
         let shared = &self.shared;
         let now = now_ms();
-        let (outcome, learnt, recorded) = {
-            let mut st = shared.state.lock().expect("agent state");
-            let st = &mut *st;
-            let attestations = st.attestation_list();
-            let Some(chain) = st.chain.as_mut() else {
+        let (outcome, learnt, recorded, _) = match admit(shared, device, Hello::Direct(bind, hello), now, |_, _| ()) {
+            Ok(admitted) => admitted,
+            Err(NoChain) => {
                 return Admission::Refused {
                     reply: None,
                     why: "no chain".into(),
-                };
-            };
-            let before = chain.seq();
-            let mut guard = shared.guard.lock().expect("replay guard");
-            let side = AgentSide {
-                chain,
-                clock: &mut st.clock,
-                guard: &mut guard,
-                key: shared.identity.dh(),
-                machine: &st.machine,
-                policy: RekeyPolicy::default(),
-                server_info: &server_info(shared.direct),
-                attestations: &attestations,
-                freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
-            };
-            let outcome = handshake::accept_direct(side, device, bind, hello, now);
-            let mut recorded = None;
-            if matches!(outcome, Ok(Accepted::Open { .. })) {
-                st.save_guard(&guard);
-                // The guard, any entries and the device, saved before the
-                // reply leaves — in this one step under the lock.
-                recorded = Some(st.record_controller(&shared.paths, device, now));
+                }
             }
-            // Whatever the hello taught took effect, refused or not (M2
-            // re-review: a hello whose later entry failed lost the earlier ones).
-            (outcome, st.entries_after(Some(before)), recorded)
         };
         if recorded.is_none() {
             shared.save();
@@ -2332,49 +2353,19 @@ fn accept(
     text: &mpsc::UnboundedSender<String>,
 ) {
     let now = now_ms();
-    let (outcome, learnt, recorded, lapse) = {
-        let mut st = shared.state.lock().expect("agent state");
-        let st = &mut *st;
-        let attestations = st.attestation_list();
-        let Some(chain) = st.chain.as_mut() else {
-            return refuse(out, ch, 4503, "this device has not been added to the account yet");
-        };
-        let before = chain.seq();
-        let mut guard = shared.guard.lock().expect("replay guard");
-        let side = AgentSide {
-            chain,
-            clock: &mut st.clock,
-            guard: &mut guard,
-            key: shared.identity.dh(),
-            machine: &st.machine,
-            policy: RekeyPolicy::default(),
-            server_info: &server_info(shared.direct),
-            attestations: &attestations,
-            freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
-        };
-        let outcome = handshake::accept(side, &device, message, now);
-        let mut recorded = None;
-        if matches!(outcome, Ok(Accepted::Open { .. })) {
-            st.save_guard(&guard);
-            // Who ever opened a channel (review D3), recorded as it opens and
-            // saved with the guard (and any entries the hello taught) before
-            // the reply leaves — in this one step under the lock.
-            recorded = Some(st.record_controller(&shared.paths, &device, now));
-        }
+    let (outcome, learnt, recorded, lapse) = match admit(shared, &device, Hello::Channel(message), now, |st, _| {
         // The channel's control lapse, seeded and registered while the state
         // is still this admission's: an attestation arriving from here on
         // reaches it ([`take_attestation`]), and none can come in between.
-        let lapse = matches!(outcome, Ok(Accepted::Open { .. })).then(|| {
-            let lapse = Arc::new(Mutex::new(ChannelLapse::new(&device)));
-            lapse.lock().expect("channel lapse").update(st, now);
-            let mut lapses = shared.lapses.lock().expect("lapses");
-            lapses.retain(|weak| weak.strong_count() > 0);
-            lapses.push(Arc::downgrade(&lapse));
-            lapse
-        });
-        // Entries a hello taught count as much as the hub's — every one that
-        // took effect, whether or not the handshake then failed (M2 re-review).
-        (outcome, st.entries_after(Some(before)), recorded, lapse)
+        let lapse = Arc::new(Mutex::new(ChannelLapse::new(&device)));
+        lapse.lock().expect("channel lapse").update(st, now);
+        let mut lapses = shared.lapses.lock().expect("lapses");
+        lapses.retain(|weak| weak.strong_count() > 0);
+        lapses.push(Arc::downgrade(&lapse));
+        lapse
+    }) {
+        Ok(admitted) => admitted,
+        Err(NoChain) => return refuse(out, ch, 4503, "this device has not been added to the account yet"),
     };
     #[cfg(test)]
     if let Some(hook) = shared.after_admission.lock().expect("hook").take() {

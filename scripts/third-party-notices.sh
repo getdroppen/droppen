@@ -12,8 +12,7 @@
 # <src-dir> is a source tree of the release's commit with
 # `pnpm install --frozen-lockfile --filter "@remote-hand/web..."` done
 # (web-notices.mjs builds the web app once more, to see what it bundles).
-# Needs cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH;
-# DROPPEN_DISTRIBUTION unset (the notices are the public build's).
+# Needs cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH.
 set -euo pipefail
 
 SRC=${1:?usage: third-party-notices.sh <src-dir> <out-file> <version> <server version> <rev>}
@@ -27,7 +26,6 @@ die() { printf 'third-party-notices: %s\n' "$*" >&2; exit 1; }
 ABOUT_VERSION=$(sed -n 's/^ABOUT_VERSION=//p' "$REPO/scripts/release-public.sh")
 [ "$(cargo about --version 2>/dev/null)" = "cargo-about $ABOUT_VERSION" ] \
   || die "needs cargo-about $ABOUT_VERSION: cargo install --locked cargo-about@$ABOUT_VERSION --features cli"
-[ -z "${DROPPEN_DISTRIBUTION:-}" ] || die "DROPPEN_DISTRIBUTION is set: these notices are the public build's"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/third-party-notices.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT

@@ -15,7 +15,6 @@ use std::path::PathBuf;
 
 use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::{GotchaError, GotchaResult};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Fetch `/openapi.json` from a throwaway in-process server and write it out.
 pub async fn export_openapi(out: Option<PathBuf>) -> GotchaResult<()> {
@@ -56,7 +55,26 @@ pub async fn export_openapi(out: Option<PathBuf>) -> GotchaResult<()> {
 }
 
 async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
-    let body = http_get(addr, "/openapi.json").await?;
+    let url = format!("http://{addr}/openapi.json");
+    // Loopback, in this process. A client that honoured `HTTP_PROXY`/`ALL_PROXY`
+    // would send the request to whatever the environment names instead, and a
+    // redirect would take the spec somewhere else; neither is something the
+    // export means, so both are off. The same client shape the other loopback
+    // callers use (`static_files`, `aggregator::hub`, `aggregator::copies`).
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("connect: {e}"))?;
+    let response = client.get(&url).send().await.map_err(|e| format!("connect: {e}"))?;
+    let status = response.status();
+    // Exactly `200`, as the raw HTTP/1.1 reader this replaced accepted: a
+    // redirect is an answer to report, not one to follow.
+    if status != reqwest::StatusCode::OK {
+        return Err(format!("GET /openapi.json -> {:?} {status}", response.version()));
+    }
+    let raw = response.bytes().await.map_err(|e| format!("read: {e}"))?;
+    let body = String::from_utf8(raw.to_vec()).map_err(|e| format!("non-utf8 response: {e}"))?;
     let value: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("/openapi.json is not JSON: {e}"))?;
     // Re-serialize rather than passing the response through: `serde_json`'s map
     // is a `BTreeMap`, so this both pretty-prints and gives a stable key order,
@@ -66,23 +84,36 @@ async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
     Ok(pretty)
 }
 
-/// A one-shot HTTP/1.1 GET.
-///
-/// A full client (reqwest and its TLS stack) would be a large dependency for a
-/// single plaintext request to a loopback port this process just opened.
-async fn http_get(addr: std::net::SocketAddr, path: &str) -> Result<String, String> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.map_err(|e| format!("connect: {e}"))?;
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAccept: application/json\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.map_err(|e| format!("write: {e}"))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.map_err(|e| format!("read: {e}"))?;
-    let text = String::from_utf8(raw).map_err(|e| format!("non-utf8 response: {e}"))?;
-
-    let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| "malformed HTTP response".to_string())?;
-    let status = head.lines().next().unwrap_or_default();
-    if !status.contains(" 200 ") {
-        return Err(format!("GET {path} -> {status}"));
+    /// The export is a request to a port this process just opened, so the
+    /// environment's proxy is not part of it. With `HTTP_PROXY`/`ALL_PROXY`
+    /// pointed at a closed port, only a client built with `no_proxy()` reaches
+    /// the server and writes the spec.
+    ///
+    /// The variables are set for the whole process, which is safe under the
+    /// suite's process-per-test runner (see `server-rs/.config/nextest.toml`).
+    #[tokio::test]
+    async fn a_proxy_in_the_environment_does_not_capture_the_export() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("openapi.json");
+        let set = |name: &str, value: &str| std::env::set_var(name, value);
+        // Keep the throwaway server's paths inside the test's own directory.
+        set("DROPPEN_CONFIG_DIR", dir.path().join("config").to_str().expect("utf-8"));
+        set("DROPPEN_DATA_DIR", dir.path().join("data").to_str().expect("utf-8"));
+        set("APP_HOME_DIR", dir.path().join("home").to_str().expect("utf-8"));
+        set("APP_INSTANCE", "openapi-export");
+        set("HTTP_PROXY", "http://127.0.0.1:1");
+        set("ALL_PROXY", "http://127.0.0.1:1");
+        set("NO_PROXY", "");
+        let exported = export_openapi(Some(out.clone())).await;
+        for name in ["DROPPEN_CONFIG_DIR", "DROPPEN_DATA_DIR", "APP_HOME_DIR", "APP_INSTANCE", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"] {
+            std::env::remove_var(name);
+        }
+        exported.expect("the export must ignore the environment's proxy");
+        let spec = std::fs::read_to_string(&out).expect("the written spec");
+        assert!(spec.contains("\"openapi\""), "the file is the spec, not a proxy error page");
     }
-    Ok(body.to_string())
 }

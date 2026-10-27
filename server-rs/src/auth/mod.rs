@@ -299,7 +299,7 @@ impl Auth {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
                 rand::rngs::OsRng.fill_bytes(&mut bytes);
-                bytes.iter().map(|b| format!("{b:02x}")).collect()
+                crate::text::hex(&bytes)
             },
         })
     }

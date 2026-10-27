@@ -253,7 +253,7 @@ impl DraftWriter {
     /// empty on purpose (see the module docs).
     pub(super) fn new(channel: Arc<watch::Sender<Draft>>) -> Self {
         let writer = Self { channel };
-        writer.clear();
+        writer.end();
         writer
     }
 
@@ -264,22 +264,17 @@ impl DraftWriter {
         }
     }
 
-    /// The turn ended.
-    pub(super) fn close(&self) {
-        modify(&self.channel, end);
-    }
-
-    /// The process is gone, or going.
-    pub(super) fn clear(&self) {
+    /// Nothing more is coming: the turn ended, or the process is gone.
+    pub(super) fn end(&self) {
         modify(&self.channel, end);
     }
 
     /// Follow the session to another id: claude forked it. The old id's draft
     /// is emptied, since nothing will ever move it there again.
     pub(super) fn retarget(&mut self, channel: Arc<watch::Sender<Draft>>) {
-        self.clear();
+        self.end();
         self.channel = channel;
-        self.clear();
+        self.end();
     }
 }
 
@@ -426,12 +421,12 @@ mod tests {
         writer.observe(&tokens(40));
         assert!(!rx.has_changed().expect("open"), "a line that changes nothing publishes nothing");
 
-        writer.close();
+        writer.end();
         assert!(rx.has_changed().expect("open"));
         let closed = rx.borrow_and_update().clone();
         assert!(closed.is_empty() && !closed.open);
         assert!(closed.v > seen.v);
-        writer.clear();
+        writer.end();
         assert!(!rx.has_changed().expect("open"), "nothing left to clear is no frame");
     }
 

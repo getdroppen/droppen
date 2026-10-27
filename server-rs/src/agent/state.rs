@@ -24,6 +24,8 @@ use rh_proto::noise::ReplayGuard;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::hub::hex;
+use super::link::unhex;
 use crate::sessions::Paths;
 
 const VERSION: u32 = 1;
@@ -283,20 +285,6 @@ pub struct AgentState {
     /// see in between, if anything.
     #[cfg(test)]
     pub(crate) between_note_and_save: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-}
-
-fn hex(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
-        .collect()
 }
 
 impl AgentState {
@@ -1215,7 +1203,7 @@ mod tests {
 
     #[test]
     fn hex_round_trips() {
-        assert_eq!(unhex(&hex(&[1, 2, 0xfe])).unwrap(), vec![1, 2, 0xfe]);
-        assert!(unhex("0").is_none());
+        assert_eq!(super::unhex(&super::hex(&[1, 2, 0xfe])).unwrap(), vec![1, 2, 0xfe]);
+        assert!(super::unhex("0").is_none());
     }
 }

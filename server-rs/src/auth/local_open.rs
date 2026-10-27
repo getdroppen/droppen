@@ -60,7 +60,6 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
@@ -113,7 +112,7 @@ impl std::fmt::Debug for LocalOpen {
 }
 
 fn digest(token: &str) -> String {
-    Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    crate::text::sha256_hex(token)
 }
 
 impl LocalOpen {
@@ -344,7 +343,7 @@ async fn open(auth: &Auth, page: &str, dir: &Path) -> OpenAnswer {
     let url = format!("{page}#{FRAGMENT_KEY}={token}");
     let mut name = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut name);
-    let file = dir.join(format!("open-{}.html", name.iter().map(|b| format!("{b:02x}")).collect::<String>()));
+    let file = dir.join(format!("open-{}.html", crate::text::hex(&name)));
     match write_redirect(&file, &url) {
         Ok(()) => {
             auth.local_open.attach_page(&token, file.clone());

@@ -51,16 +51,14 @@ use std::collections::HashMap;
 use snow::{Builder, HandshakeState, TransportState};
 use thiserror::Error;
 
-use crate::codec::put_str16;
+use crate::codec::{put_str16, MAX_ID_LEN};
 use crate::frame::MAX_PAYLOAD_LEN;
 use crate::keys::{x25519_is_low_order, DhKeypair};
 
 /// The Noise protocol name.
 pub const PATTERN: &str = "Noise_IK_25519_AESGCM_SHA256";
 /// The prologue's leading label.
-pub const PROLOGUE_LABEL: &[u8] = b"rh/v1\0";
-/// The longest account, device or machine id a binding carries.
-pub const MAX_ID_LEN: usize = 64;
+const PROLOGUE_LABEL: &[u8] = b"rh/v1\0";
 /// The AEAD tag.
 pub const TAG_LEN: usize = 16;
 /// The flags byte of a transport plaintext.

@@ -719,7 +719,7 @@ impl UsersStore {
                 if tx.execute("DELETE FROM users WHERE name = ?1", (&name,))? == 0 {
                     return Ok(Err(UserError::NotFound(name.clone())));
                 }
-                tx.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", (STAMPS_SCOPE, &name))?;
+                crate::db::kv_remove_in(tx, STAMPS_SCOPE, &name)?;
                 Ok(Ok(()))
             })
             .map_err(store_error)??;
@@ -805,12 +805,7 @@ fn epoch_seconds(stamp: &str) -> i64 {
 
 fn write_stamps(tx: &rusqlite::Transaction<'_>, name: &str, stamps: &Stamps) -> rusqlite::Result<()> {
     let value = serde_json::to_string(stamps).unwrap_or_else(|_| "{}".to_string());
-    tx.execute(
-        "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
-         ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        (STAMPS_SCOPE, name, value),
-    )?;
-    Ok(())
+    crate::db::kv_set_in(tx, STAMPS_SCOPE, name, &value)
 }
 
 /// One row, plus whatever of its payload survived, as the file's shape.

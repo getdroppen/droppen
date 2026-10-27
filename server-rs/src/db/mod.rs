@@ -68,6 +68,7 @@ pub mod index;
 mod kv;
 mod migrations;
 
+pub(crate) use kv::{kv_remove_in, kv_set_in};
 pub use kv::scope;
 pub use migrations::SCHEMA;
 
@@ -340,6 +341,37 @@ pub fn forget(path: &Path) -> bool {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     open.remove(path).is_some()
+}
+
+/// The "at most once every N" guard a store puts in front of a periodic prune.
+///
+/// Two stores kept the same `Mutex<i64>` plus interval check by hand; this is
+/// that check, once. Each store owns one and asks [`PruneGate::due`] before its
+/// delete, so a burst of writes pays for one prune per interval, not one each.
+#[derive(Debug)]
+pub struct PruneGate {
+    every_ms: i64,
+    last: Mutex<i64>,
+}
+
+impl PruneGate {
+    /// A gate that opens at most once every `every_ms` milliseconds.
+    pub const fn new(every_ms: i64) -> Self {
+        Self {
+            every_ms,
+            last: Mutex::new(i64::MIN),
+        }
+    }
+
+    /// Whether a prune is due now; records `now` when it says yes.
+    pub fn due(&self, now: i64) -> bool {
+        let mut last = self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if now.saturating_sub(*last) < self.every_ms {
+            return false;
+        }
+        *last = now;
+        true
+    }
 }
 
 #[cfg(test)]

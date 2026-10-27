@@ -1,7 +1,8 @@
 # The Droppen desktop app: its own workspace, so `server-rs` builds (and the
 # CI that runs them) never compile Tauri, and this one never compiles the
-# server. The server reaches the app as a prebuilt sidecar binary placed by
-# `build.sh`.
+# server binary: the server reaches the app as a prebuilt sidecar placed by
+# `build.sh`. The only server-side crate it builds is `droppen-path`, the
+# dependency-free PATH rule both sides must agree on.
 [workspace]
 resolver = "2"
 members = ["core", "src-tauri"]

@@ -41,13 +41,10 @@
 //! No continuation prompt: nothing failed, so there is nothing to carry on.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, TimeZone};
-use gotcha::oas::Schema;
 use gotcha::Schematic;
-use gotcha_core::EnhancedSchema;
 use serde::{Deserialize, Serialize};
 
 use super::limits::{LimitClass, SCOPE_ALL};
@@ -997,36 +994,10 @@ impl RotationOutcome {
     }
 }
 
-/// Hand-written so the enum stays *inline* in `SessionRotation`, the way the
-/// contract spells `outcome`, rather than becoming a schema of its own. See
-/// `crate::files::FsKind` for the same arrangement.
-impl Schematic for RotationOutcome {
-    fn name() -> &'static str {
-        "RotationOutcome"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["switched", "no_candidate", "cap_reached"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+// Inline in `SessionRotation`, the way the contract spells `outcome`, rather
+// than a schema of its own. (`///` here would be an unused doc comment: rustdoc
+// does not document macro invocations.)
+crate::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
 
 /// What set a rotation off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1059,34 +1030,8 @@ impl RotationTrigger {
     }
 }
 
-/// Inline in `SessionRotation`, like [`RotationOutcome`].
-impl Schematic for RotationTrigger {
-    fn name() -> &'static str {
-        "RotationTrigger"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn generate_schema() -> EnhancedSchema {
-        let variants = serde_json::json!(["limit", "ahead"]);
-        EnhancedSchema {
-            schema: Schema {
-                _type: Some("string".to_string()),
-                format: None,
-                nullable: None,
-                description: None,
-                extras: BTreeMap::from([("enum".to_string(), variants)]),
-            },
-            required: true,
-        }
-    }
-}
+// Inline in `SessionRotation`, like `RotationOutcome`.
+crate::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
 
 /// One automatic account rotation of a session, as `SessionDetail.rotation`
 /// reports it.
@@ -1281,14 +1226,7 @@ impl RotationLog {
     /// binding: the binding table lives in the configuration database, and
     /// this is only ever asked by this instance's drivers, beside its log.
     pub fn note_hand_binding(&self, session_id: &str, at_ms: i64) {
-        let written = self.db.write(|tx| {
-            tx.execute(
-                "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
-                 ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                (HAND_BINDING_SCOPE, session_id, at_ms.to_string()),
-            )?;
-            Ok(())
-        });
+        let written = self.db.write(|tx| crate::db::kv_set_in(tx, HAND_BINDING_SCOPE, session_id, &at_ms.to_string()));
         if let Err(error) = written {
             tracing::warn!(session = %session_id, %error, "cannot record a binding made by hand");
         }
@@ -1297,19 +1235,7 @@ impl RotationLog {
     /// When somebody last bound `session_id` to an account by hand, epoch
     /// milliseconds; see [`RotationLog::note_hand_binding`].
     pub fn bound_by_hand_ms(&self, session_id: &str) -> Option<i64> {
-        use rusqlite::OptionalExtension;
-        self.db
-            .read(|conn| {
-                conn.query_row(
-                    "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                    (HAND_BINDING_SCOPE, session_id),
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-            })
-            .ok()
-            .flatten()
-            .and_then(|raw| raw.parse::<i64>().ok())
+        self.db.kv_get(HAND_BINDING_SCOPE, session_id).and_then(|raw| raw.parse::<i64>().ok())
     }
 
     /// Whether a decision with this id is still in the log. Tests only.

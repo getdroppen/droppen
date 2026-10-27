@@ -15,60 +15,20 @@
 //! The shell first, so the server runs the `node` and `claude` the user's
 //! terminal runs: nvm's, say, rather than Homebrew's. The server appends the
 //! folders adopted in Settings after all of it (`server-rs/src/setup`).
+//!
+//! The rule itself ([`base_dirs`], [`build`]) lives in the dependency-free
+//! `droppen-path` crate, shared with the server
+//! (`server-rs/src/setup/locate.rs`), so the two cannot drift apart.
 
-use std::collections::HashSet;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// The directories every PATH has, after the login shell's, in order: the
-/// user's own tool directories, then Homebrew (Apple silicon, Intel), then the
-/// system. Whether or not they exist yet, so a tool installed there while the
-/// server runs is found on the next spawn.
-///
-/// Absolute only: with no home (or a relative one, `HOME` unset) the user's own
-/// directories are left out rather than put on the PATH relative to wherever a
-/// child happens to run.
-pub fn base_dirs(home: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = [".local/bin", ".npm-global/bin", ".cargo/bin", ".bun/bin", ".volta/bin"]
-        .iter()
-        .map(|dir| home.join(dir))
-        .collect();
-    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    dirs.retain(|dir| dir.is_absolute());
-    dirs
-}
-
-/// The PATH: each directory of `shell` (the login shell's PATH) that is
-/// absolute and exists, in the shell's order, then each of [`base_dirs`];
-/// every directory once, where it first appears.
-///
-/// A session's own bin directory (`…/remote-hand/instances/<name>/session-bin`)
-/// is dropped wherever it came from: it belongs to one server and names that
-/// server's binary, and a PATH copied from a shell running inside a session
-/// would otherwise hand it to this one.
-pub fn build(home: &Path, shell: Option<&str>) -> String {
-    let mut seen = HashSet::new();
-    let mut out: Vec<String> = Vec::new();
-    for dir in shell.unwrap_or_default().split(':') {
-        if !dir.starts_with('/') || dir.contains("/remote-hand/instances/") || seen.contains(dir) {
-            continue;
-        }
-        if Path::new(dir).is_dir() {
-            seen.insert(dir.to_string());
-            out.push(dir.to_string());
-        }
-    }
-    for dir in base_dirs(home) {
-        let dir = dir.to_string_lossy().into_owned();
-        if seen.insert(dir.clone()) {
-            out.push(dir);
-        }
-    }
-    out.join(":")
-}
+// The PATH rule itself lives in `droppen-path`, shared with the server's
+// setup guide (`server-rs/src/setup/locate.rs`).
+pub use droppen_path::{base_dirs, build};
 
 /// What `$SHELL -ilc` says `PATH` is, or `None` if it would not say in time.
 ///

@@ -29,7 +29,7 @@
 //! the tag [`notes_api_url`], the same notes the release page carries.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -472,7 +472,7 @@ impl Updates {
             current: self.current.clone(),
             state: self.state.clone(),
             place: self.place,
-            last_checked: self.last_checked.map(rfc3339),
+            last_checked: self.last_checked.map(crate::logging::timestamp),
             problem: match self.outcome {
                 Some(Outcome::Failed(problem)) => Some(problem),
                 _ => None,
@@ -773,7 +773,7 @@ impl Manifest {
         Self {
             version: version.to_string(),
             notes: notes.to_string(),
-            pub_date: rfc3339(published),
+            pub_date: crate::logging::timestamp(published),
             platforms: TARGETS.iter().map(|target| (target.to_string(), platform.clone())).collect(),
         }
     }
@@ -915,28 +915,6 @@ pub fn check_signature(signature: &str, pubkey: &str, version: &str, archive: Op
     }
 }
 
-/// `at` as `YYYY-MM-DDTHH:MM:SSZ`.
-pub fn rfc3339(at: SystemTime) -> String {
-    let seconds = at.duration_since(UNIX_EPOCH).map(|since| since.as_secs()).unwrap_or(0);
-    let (days, rest) = (seconds / 86_400, seconds % 86_400);
-    // Howard Hinnant's civil-from-days, for days since 1970-01-01.
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rest / 3_600,
-        rest % 3_600 / 60,
-        rest % 60
-    )
-}
-
 fn is_rfc3339(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 20
@@ -952,6 +930,7 @@ fn is_rfc3339(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::UNIX_EPOCH;
 
     fn release(version: &str) -> Release {
         Release {
@@ -1283,10 +1262,9 @@ mod tests {
     }
 
     #[test]
-    fn dates_are_rfc3339_utc() {
-        assert_eq!(rfc3339(UNIX_EPOCH), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(at(951_782_400)), "2000-02-29T00:00:00Z");
-        assert_eq!(rfc3339(at(1_792_396_800 + 3_723)), "2026-10-19T09:02:03Z");
+    fn dates_parse_as_rfc3339_utc() {
+        // The format itself is pinned by `logging`'s own tests; here it is the
+        // check a manifest's `pub_date` goes through.
         assert!(is_rfc3339("2026-10-19T09:02:03Z"));
         assert!(!is_rfc3339("2026-10-19 09:02:03Z"));
         assert!(!is_rfc3339("2026-10-19T09:02:03+00:00"));

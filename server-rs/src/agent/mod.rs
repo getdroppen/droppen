@@ -29,8 +29,8 @@
 //! # The identity seed
 //!
 //! One random 32-byte seed; the Ed25519 and X25519 keys are expanded from it
-//! ([`rh_proto::identity::MachineIdentity`]). It is kept by a [`SeedStore`]:
-//! today [`FileSeedStore`], `<instance dir>/agent/machine-key.json`, mode 0600
+//! ([`rh_proto::identity::MachineIdentity`]). It is kept by [`FileSeedStore`],
+//! `<instance dir>/agent/machine-key.json`, mode 0600
 //! in a 0700 directory, next to the instance identity uuid ([`crate::identity`])
 //! it belongs to. A key file that names another instance, or that anyone but
 //! the owner can read, is refused rather than used.
@@ -44,7 +44,7 @@
 //! transport message needs the device's own key. The macOS Keychain would
 //! narrow who can read the seed to this binary's code identity — at the cost
 //! of a prompt after every self-upgrade unless releases are signed with a
-//! stable identity — which is why it is a [`SeedStore`] seam and not done yet.
+//! stable identity — which is why the store is a seam and not done yet.
 
 /// What this agent declares (`agent_info.features`, and its handshake
 /// reply's `features`) once it reads chain v3 (local-aggregator §3.5): the
@@ -168,7 +168,10 @@ fn parse(args: &[String]) -> Result<Invocation, String> {
 
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> u64 {
-    hub::now_ms()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// The key file's contents.
@@ -217,7 +220,7 @@ pub struct StoredSeed {
 
 /// A seed staged for an identity renewal: made on `POST /rh/rotate`, kept
 /// beside the current one until the chain names its keys
-/// ([`SeedStore::promote`]) or its staging can no longer be committed.
+/// ([`FileSeedStore::promote`]) or its staging can no longer be committed.
 #[derive(Clone)]
 pub struct StagedSeed {
     /// The instance identity the seed was created for.
@@ -245,43 +248,16 @@ impl StagedSeed {
     }
 }
 
-/// Where an agent keeps its machine seed. Tests use the file store under a
-/// temporary home; nothing here touches a real keychain.
+/// The seed in a 0600 file in the instance directory. Tests use the file
+/// store under a temporary home; nothing here touches a real keychain.
 ///
 /// An identity renewal (`docs/host-identity-rotation.md` §3.5) never writes
 /// over the seed in use: each new one is staged beside it
-/// ([`SeedStore::stage`]) — several may wait, every one the hub took being
-/// one a renewal may still name — and the one the chain names takes its
-/// place in one atomic step ([`SeedStore::promote`]). A crash at any point
-/// leaves the old seed (alone, or with staged ones) or the new seed (with,
-/// at worst, staged ones left over that are never used).
-pub trait SeedStore {
-    /// Where, for a person reading the output.
-    fn describe(&self) -> String;
-    /// The stored seed, if there is one.
-    fn load(&self) -> Result<Option<StoredSeed>, String>;
-    /// Store a new seed; refuses to replace one.
-    fn create(&self, seed: &StoredSeed) -> Result<(), String>;
-    /// Stage a seed for a renewal, by its nonce: the same nonce again is
-    /// written anew, every other staging stays. The seed in use is not touched.
-    fn stage(&self, staged: &StagedSeed) -> Result<(), String>;
-    /// Every staged seed that reads, oldest first. One that does not read —
-    /// or that others can read — is left out (and said in the log): never used.
-    fn stagings(&self) -> Result<Vec<StagedSeed>, String>;
-    /// Make the staging of `nonce` the seed in use, atomically: the old seed
-    /// is gone once this returns, and the other stagings after it.
-    fn promote(&self, nonce: &[u8; 16]) -> Result<(), String>;
-    /// Forget the staging of `nonce` (no-op when there is none).
-    fn discard_staged(&self, nonce: &[u8; 16]) -> Result<(), String>;
-    /// Forget every staging, readable or not.
-    fn discard_all_staged(&self) -> Result<(), String>;
-    /// The newest staging, if any.
-    fn staged(&self) -> Result<Option<StagedSeed>, String> {
-        Ok(self.stagings()?.into_iter().max_by_key(|s| s.created_ms))
-    }
-}
-
-/// The seed in a 0600 file in the instance directory.
+/// ([`FileSeedStore::stage`]) — several may wait, every one the hub took
+/// being one a renewal may still name — and the one the chain names takes
+/// its place in one atomic step ([`FileSeedStore::promote`]). A crash at any
+/// point leaves the old seed (alone, or with staged ones) or the new seed
+/// (with, at worst, staged ones left over that are never used).
 pub struct FileSeedStore {
     path: PathBuf,
 }
@@ -396,7 +372,7 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(bad(&format!("unsupported key file version {}", file.version)));
         }
-        let seed = decode_seed(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let seed = hub::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
         let nonce = link::unhex(&file.nonce)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
@@ -426,12 +402,14 @@ impl FileSeedStore {
     }
 }
 
-impl SeedStore for FileSeedStore {
-    fn describe(&self) -> String {
+impl FileSeedStore {
+    /// Where, for a person reading the output.
+    pub fn describe(&self) -> String {
         self.path.display().to_string()
     }
 
-    fn load(&self) -> Result<Option<StoredSeed>, String> {
+    /// The stored seed, if there is one.
+    pub fn load(&self) -> Result<Option<StoredSeed>, String> {
         let path = &self.path;
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
@@ -443,14 +421,15 @@ impl SeedStore for FileSeedStore {
         if file.version != 1 {
             return Err(format!("{}: unsupported key file version {}", path.display(), file.version));
         }
-        let seed = decode_seed(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
+        let seed = hub::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
         Ok(Some(StoredSeed {
             uuid: file.uuid,
             seed: Zeroizing::new(seed),
         }))
     }
 
-    fn create(&self, seed: &StoredSeed) -> Result<(), String> {
+    /// Store a new seed; refuses to replace one.
+    pub fn create(&self, seed: &StoredSeed) -> Result<(), String> {
         let file = Zeroizing::new(
             serde_json::to_vec_pretty(&KeyFile {
                 version: 1,
@@ -462,7 +441,9 @@ impl SeedStore for FileSeedStore {
         write_private(&self.path, &file)
     }
 
-    fn stage(&self, staged: &StagedSeed) -> Result<(), String> {
+    /// Stage a seed for a renewal, by its nonce: the same nonce again is
+    /// written anew, every other staging stays. The seed in use is not touched.
+    pub fn stage(&self, staged: &StagedSeed) -> Result<(), String> {
         let file = Zeroizing::new(
             serde_json::to_vec_pretty(&NextKeyFile {
                 version: 1,
@@ -487,7 +468,9 @@ impl SeedStore for FileSeedStore {
         Ok(())
     }
 
-    fn stagings(&self) -> Result<Vec<StagedSeed>, String> {
+    /// Every staged seed that reads, oldest first. One that does not read —
+    /// or that others can read — is left out (and said in the log): never used.
+    pub fn stagings(&self) -> Result<Vec<StagedSeed>, String> {
         let mut out: Vec<StagedSeed> = self
             .staging_files()
             .iter()
@@ -503,7 +486,14 @@ impl SeedStore for FileSeedStore {
         Ok(out)
     }
 
-    fn promote(&self, nonce: &[u8; 16]) -> Result<(), String> {
+    /// The newest staging, if any.
+    pub fn staged(&self) -> Result<Option<StagedSeed>, String> {
+        Ok(self.stagings()?.into_iter().max_by_key(|s| s.created_ms))
+    }
+
+    /// Make the staging of `nonce` the seed in use, atomically: the old seed
+    /// is gone once this returns, and the other stagings after it.
+    pub fn promote(&self, nonce: &[u8; 16]) -> Result<(), String> {
         let next = self.staging_path(nonce);
         // Only a staged seed that reads as one (and is private) takes the place.
         Self::read_staging(&next)?;
@@ -520,11 +510,13 @@ impl SeedStore for FileSeedStore {
         Ok(())
     }
 
-    fn discard_staged(&self, nonce: &[u8; 16]) -> Result<(), String> {
+    /// Forget the staging of `nonce` (no-op when there is none).
+    pub fn discard_staged(&self, nonce: &[u8; 16]) -> Result<(), String> {
         Self::remove(&self.staging_path(nonce))
     }
 
-    fn discard_all_staged(&self) -> Result<(), String> {
+    /// Forget every staging, readable or not.
+    pub fn discard_all_staged(&self) -> Result<(), String> {
         self.staging_files()
             .iter()
             .chain(&self.expired_files())
@@ -625,8 +617,8 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
     Ok((identity, created))
 }
 
-/// The same against any [`SeedStore`], for instance identity `uuid`.
-pub fn load_or_create_in(store: &dyn SeedStore, uuid: &str) -> Result<(MachineIdentity, bool), String> {
+/// The same against `store`, for instance identity `uuid`.
+pub fn load_or_create_in(store: &FileSeedStore, uuid: &str) -> Result<(MachineIdentity, bool), String> {
     if let Some(stored) = store.load()? {
         if stored.uuid != uuid {
             return Err(format!(
@@ -644,17 +636,6 @@ pub fn load_or_create_in(store: &dyn SeedStore, uuid: &str) -> Result<(MachineId
         seed: seed.clone(),
     })?;
     Ok((MachineIdentity::from_seed(&seed), true))
-}
-
-fn decode_seed(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }
 
 #[cfg(unix)]

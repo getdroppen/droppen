@@ -1,9 +1,10 @@
 /* Droppen service worker (PWA). Deliberately conservative:
  *
- * - the live surfaces (`/api/**`, which carries the websockets too, and the
- *   `/embed/**` app iframes) NEVER enter the fetch handler — not calling
- *   respondWith leaves the browser's own networking untouched, which is the
- *   only safe thing to do with streaming and upgrade requests;
+ * - the live surfaces (`/api/**`, which carries the websockets too, the
+ *   `/embed/**` app iframes, and `/plugins/**`, the instance's plugin code)
+ *   NEVER enter the fetch handler — not calling respondWith leaves the
+ *   browser's own networking untouched, which is the only safe thing to do
+ *   with streaming and upgrade requests;
  * - SPA navigations are network-first: online you always get the server's
  *   current index.html (a stale shell against a fresh API is an outage), and
  *   offline you get the last cached shell instead of the browser error page;
@@ -352,6 +353,10 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
   // `/v1/` is a Droppen hub's own API (cloud mode): never cached either.
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/embed") || url.pathname.startsWith("/v1/")) return;
+  // Plugin code is served by the instance under `/plugins/**`, at a build id in
+  // the URL and never through this worker: it is not part of the shell this
+  // build hashed, and must not be answered offline (docs/plugins/runtime.md §2).
+  if (url.pathname === "/plugins" || url.pathname.startsWith("/plugins/")) return;
 
   if (req.mode === "navigate") {
     if (!SPA_ROUTE.test(url.pathname)) return;
