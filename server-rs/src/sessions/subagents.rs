@@ -195,8 +195,7 @@ async fn claude_children(session: &SessionSummary, marks: &BTreeMap<String, Stri
     let mut flat: Vec<(Option<String>, SessionChild)> = Vec::with_capacity(agents.len());
     for agent in &agents {
         let updated_at = agent.updated_at.clone().unwrap_or_default();
-        let path = transcript::find_subagent_file(file, &agent.agent_id).await;
-        let status = claude_status(path.as_deref(), &updated_at, parent_working).await;
+        let status = claude_status(agent.transcript_path.as_deref(), &updated_at, parent_working).await;
         let name = agent
             .description
             .clone()

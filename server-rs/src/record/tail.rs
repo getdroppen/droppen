@@ -68,6 +68,7 @@ use tokio::sync::mpsc;
 use super::{Event, Line, Stop, SCHEMA};
 use crate::claude_roots::ClaudeRoot;
 use crate::feed::watch::{self, FileEvents};
+use crate::sessions::transcript::{subagent_files, SubagentFileKind};
 use crate::sessions::{iso8601, mtime_ms, Paths};
 
 /// How often the files are looked at when the watcher says nothing.
@@ -234,16 +235,19 @@ impl State {
 
         // The subagent directory: one transcript and one meta per child agent,
         // and both matter — the transcript is what the drill-down renders, the
-        // meta is what links it to the `Task` call it hangs off.
-        let subagents = crate::sessions::transcript::subagent_dir(&transcript);
-        for entry in list(&subagents).await {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(agent) = name.strip_prefix("agent-").and_then(|rest| rest.strip_suffix(".jsonl")) {
-                let label = format!("agent:{agent}");
-                self.follow_lines(root, &entry.path(), &label).await?;
-            } else if let Some(agent) = name.strip_prefix("agent-").and_then(|rest| rest.strip_suffix(".meta.json")) {
-                let label = format!("agent-meta:{agent}");
-                self.snapshot(root, &entry.path(), &label).await?;
+        // meta is what links it to the `Task` call it hangs off. The walk is the
+        // one the session page uses, so a workflow's agents (one level down)
+        // are recorded too rather than silently skipped.
+        for file in subagent_files(&transcript).await {
+            match file.kind {
+                SubagentFileKind::Transcript => {
+                    let label = format!("agent:{}", file.agent_id);
+                    self.follow_lines(root, &file.path, &label).await?;
+                }
+                SubagentFileKind::Meta => {
+                    let label = format!("agent-meta:{}", file.agent_id);
+                    self.snapshot(root, &file.path, &label).await?;
+                }
             }
         }
 
@@ -557,7 +561,7 @@ async fn list(dir: &Path) -> Vec<tokio::fs::DirEntry> {
 mod tests {
     use super::*;
     use crate::record::{read_log, Recorders};
-    use crate::sessions::transcript::subagent_path;
+    use crate::sessions::transcript::{subagent_dir, subagent_path};
     use std::io::Write;
 
     /// A session tree under a temporary home, as the CLI would leave it.
@@ -668,6 +672,23 @@ mod tests {
             "paths are relative to the config root: {}",
             meta.1
         );
+
+        // An agent a workflow filed one level down is followed too: the
+        // recorder walks the directory exactly as the session page does.
+        let nested = subagent_dir(&session.transcript).join("workflows").join("agent-wf1.jsonl");
+        std::fs::create_dir_all(nested.parent().expect("workflows dir")).expect("mkdir");
+        std::fs::write(&nested, "{\"type\":\"assistant\",\"workflow\":true}\n").expect("nested transcript");
+        std::fs::write(nested.with_file_name("agent-wf1.meta.json"), br#"{"agentType":"Explore"}"#).expect("nested meta");
+        until("the nested agent's transcript and meta", || {
+            let events = session.recorded();
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Transcript { file, .. } if file == "agent:wf1"))
+                && events
+                    .iter()
+                    .any(|event| matches!(event, Event::Sidecar { file, .. } if file == "agent-meta:wf1"))
+        })
+        .await;
 
         // A line the CLI has not finished writing is not recorded in half.
         let before = session.recorded().len();

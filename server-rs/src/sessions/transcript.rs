@@ -543,6 +543,72 @@ pub fn subagent_path(session_file: &Path, agent_id: &str) -> PathBuf {
     subagent_dir(session_file).join(format!("agent-{agent_id}.jsonl"))
 }
 
+/// What one file under a session's `subagents/` directory is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentFileKind {
+    /// `agent-<id>.jsonl`, the agent's own transcript.
+    Transcript,
+    /// `agent-<id>.meta.json`, the sidecar naming its parent and spawn call.
+    Meta,
+}
+
+/// One file the CLI wrote under a session's `subagents/` directory.
+#[derive(Debug, Clone)]
+pub struct SubagentFile {
+    /// The agent's id, taken from the file name.
+    pub agent_id: String,
+    /// Which of the agent's two files this is.
+    pub kind: SubagentFileKind,
+    /// Where it is.
+    pub path: PathBuf,
+}
+
+/// `agent-<id>.jsonl` / `agent-<id>.meta.json` -> the id and the kind.
+fn agent_file_name(name: &str) -> Option<(String, SubagentFileKind)> {
+    let rest = name.strip_prefix("agent-")?;
+    if let Some(id) = rest.strip_suffix(".jsonl") {
+        return Some((id.to_string(), SubagentFileKind::Transcript));
+    }
+    let id = rest.strip_suffix(".meta.json")?;
+    Some((id.to_string(), SubagentFileKind::Meta))
+}
+
+/// Every file under a session's `subagents/` directory, in a stable order.
+///
+/// An ordinary subagent is written at the top level, but the CLI files an agent
+/// spawned by a workflow one level down (`subagents/workflows/agent-<id>.jsonl`),
+/// so one level of subdirectory is searched too — the same depth
+/// [`find_subagent_file`] has always looked at. Every reader of this directory
+/// walks it here, so none can miss a class of agent that another one sees.
+pub async fn subagent_files(session_file: &Path) -> Vec<SubagentFile> {
+    let dir = subagent_dir(session_file);
+    let mut dirs = vec![dir.clone()];
+    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.file_type().await.map(|kind| kind.is_dir()).unwrap_or(false) {
+                dirs.push(entry.path());
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for dir in dirs {
+        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some((agent_id, kind)) = agent_file_name(&name) else { continue };
+            files.push(SubagentFile {
+                agent_id,
+                kind,
+                path: entry.path(),
+            });
+        }
+    }
+    // Stable order, so a sweep that finds two agents replays the same way on
+    // every machine.
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
 /// The transcript of one agent, wherever under `subagents/` it was written.
 ///
 /// Normally that is the directory itself, but the CLI also files an agent under
@@ -551,30 +617,38 @@ pub fn subagent_path(session_file: &Path, agent_id: &str) -> PathBuf {
 /// "no such agent" for work that is sitting right there, silently skipping a
 /// whole class of children. One level of subdirectory is what the CLI uses and what this searches.
 pub async fn find_subagent_file(session_file: &Path, agent_id: &str) -> Option<PathBuf> {
-    let name = format!("agent-{agent_id}.jsonl");
-    let dir = subagent_dir(session_file);
-    let direct = dir.join(&name);
-    if tokio::fs::metadata(&direct).await.is_ok() {
-        return Some(direct);
-    }
-    let mut entries = tokio::fs::read_dir(&dir).await.ok()?;
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_type().await.map(|kind| kind.is_dir()).unwrap_or(false) {
-            let nested = entry.path().join(&name);
-            if tokio::fs::metadata(&nested).await.is_ok() {
-                return Some(nested);
-            }
-        }
-    }
-    None
+    subagent_files(session_file)
+        .await
+        .into_iter()
+        .find(|file| file.kind == SubagentFileKind::Transcript && file.agent_id == agent_id)
+        .map(|file| file.path)
+}
+
+/// Read one agent's meta sidecar.
+///
+/// Split out from [`list_agent_metas`] because a *subagent's* children are
+/// metas in the same directory as the subagent itself — they name it in
+/// `parentAgentId` rather than living under a directory of their own — so
+/// tagging a subagent's transcript reads the same folder from a different file.
+async fn read_agent_meta(path: &Path, agent_id: String) -> Option<SubagentMeta> {
+    // Half-written meta: the next parse picks it up.
+    let raw = tokio::fs::read_to_string(path).await.ok()?;
+    let Value::Object(meta) = serde_json::from_str::<Value>(&raw).ok()? else {
+        return None;
+    };
+    let string = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
+    Some(SubagentMeta {
+        agent_id,
+        tool_use_id: string("toolUseId"),
+        description: string("description"),
+        agent_type: string("agentType"),
+        spawn_depth: meta.get("spawnDepth").and_then(Value::as_u64).map(|depth| depth as u32),
+        parent_agent_id: string("parentAgentId"),
+        model: string("model"),
+    })
 }
 
 /// Read the agent metas in one directory.
-///
-/// Split out from [`list_subagents`] because a *subagent's* children are metas
-/// in the same directory as the subagent itself — they name it in
-/// `parentAgentId` rather than living under a directory of their own — so
-/// tagging a subagent's transcript reads the same folder from a different file.
 pub async fn list_agent_metas(dir: &Path) -> Vec<SubagentMeta> {
     let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return vec![];
@@ -582,33 +656,28 @@ pub async fn list_agent_metas(dir: &Path) -> Vec<SubagentMeta> {
     let mut metas = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(agent_id) = name.strip_prefix("agent-").and_then(|n| n.strip_suffix(".meta.json")) else {
+        let Some((agent_id, SubagentFileKind::Meta)) = agent_file_name(&name) else {
             continue;
         };
-        // Half-written meta: the next parse picks it up.
-        let Ok(raw) = tokio::fs::read_to_string(entry.path()).await else {
-            continue;
-        };
-        let Ok(Value::Object(meta)) = serde_json::from_str::<Value>(&raw) else {
-            continue;
-        };
-        let string = |key: &str| meta.get(key).and_then(Value::as_str).map(str::to_owned);
-        metas.push(SubagentMeta {
-            agent_id: agent_id.to_string(),
-            tool_use_id: string("toolUseId"),
-            description: string("description"),
-            agent_type: string("agentType"),
-            spawn_depth: meta.get("spawnDepth").and_then(Value::as_u64).map(|depth| depth as u32),
-            parent_agent_id: string("parentAgentId"),
-            model: string("model"),
-        });
+        if let Some(meta) = read_agent_meta(&entry.path(), agent_id).await {
+            metas.push(meta);
+        }
     }
     metas
 }
 
 /// Read the subagent metas that sit beside a session file.
 pub async fn list_subagents(session_file: &Path) -> Vec<SubagentMeta> {
-    list_agent_metas(&subagent_dir(session_file)).await
+    let mut metas = Vec::new();
+    for SubagentFile { agent_id, kind, path } in subagent_files(session_file).await {
+        if kind != SubagentFileKind::Meta {
+            continue;
+        }
+        if let Some(meta) = read_agent_meta(&path, agent_id).await {
+            metas.push(meta);
+        }
+    }
+    metas
 }
 
 /// Every agent that ever wrote under a session, however deep and however filed.
@@ -629,33 +698,22 @@ pub async fn list_subagents(session_file: &Path) -> Vec<SubagentMeta> {
 /// per agent, no transcript parsing — because it is the index a client opens
 /// before deciding which child is worth loading.
 pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
-    let dir = subagent_dir(session_file);
     let mut found: HashMap<String, AgentEntry> = HashMap::new();
-    let mut dirs = vec![dir.clone()];
-    // One level down: `subagents/workflows/agent-*.jsonl` and its like.
-    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_type().await.map(|kind| kind.is_dir()).unwrap_or(false) {
-                dirs.push(entry.path());
+    for SubagentFile { agent_id, kind, path } in subagent_files(session_file).await {
+        match kind {
+            SubagentFileKind::Meta => {
+                let Some(meta) = read_agent_meta(&path, agent_id).await else { continue };
+                let entry = found.entry(meta.agent_id.clone()).or_insert_with(|| AgentEntry::new(&meta.agent_id));
+                entry.absorb(meta);
             }
-        }
-    }
-    for dir in dirs {
-        for meta in list_agent_metas(&dir).await {
-            let entry = found.entry(meta.agent_id.clone()).or_insert_with(|| AgentEntry::new(&meta.agent_id));
-            entry.absorb(meta);
-        }
-        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(agent_id) = name.strip_prefix("agent-").and_then(|n| n.strip_suffix(".jsonl")) else {
-                continue;
-            };
-            let stat = entry.metadata().await.ok();
-            let found = found.entry(agent_id.to_string()).or_insert_with(|| AgentEntry::new(agent_id));
-            found.has_transcript = true;
-            found.bytes = stat.as_ref().map(std::fs::Metadata::len).unwrap_or(0);
-            found.updated_at = stat.and_then(|stat| stat.modified().ok()).map(crate::sessions::iso8601);
+            SubagentFileKind::Transcript => {
+                let stat = tokio::fs::metadata(&path).await.ok();
+                let entry = found.entry(agent_id.clone()).or_insert_with(|| AgentEntry::new(&agent_id));
+                entry.has_transcript = true;
+                entry.transcript_path = Some(path);
+                entry.bytes = stat.as_ref().map(std::fs::Metadata::len).unwrap_or(0);
+                entry.updated_at = stat.and_then(|stat| stat.modified().ok()).map(crate::sessions::iso8601);
+            }
         }
     }
     let mut agents: Vec<AgentEntry> = found.into_values().collect();
@@ -683,6 +741,8 @@ pub struct AgentEntry {
     pub model: Option<String>,
     /// Whether a transcript file exists beside the meta.
     pub has_transcript: bool,
+    /// Where that transcript is, when it exists.
+    pub transcript_path: Option<PathBuf>,
     /// Size of that transcript, in bytes.
     pub bytes: u64,
     /// When it was last written, by the filesystem's clock.
