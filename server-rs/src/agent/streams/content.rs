@@ -433,17 +433,25 @@ pub fn status_body(
     serde_json::to_vec(&body).unwrap_or_default()
 }
 
-/// `body` with `key` set to `value`; a body that does not parse, or `None`,
-/// is left untouched.
-fn with_field(body: Vec<u8>, key: &str, value: Option<Value>) -> Vec<u8> {
-    let Some(value) = value else {
-        return body;
-    };
-    let Ok(mut v) = serde_json::from_slice::<Value>(&body) else {
-        return body;
-    };
-    v[key] = value;
-    serde_json::to_vec(&v).unwrap_or(body)
+/// A status body as JSON bytes, so adding a field is a step in the builder
+/// chain and the parse/set/re-encode lives in one place.
+trait StatusBodyExt {
+    /// `self` with `key` set to `value`; a body that does not parse, or a
+    /// `None`, is left untouched.
+    fn with_field(self, key: &str, value: Option<Value>) -> Self;
+}
+
+impl StatusBodyExt for Vec<u8> {
+    fn with_field(self, key: &str, value: Option<Value>) -> Self {
+        let Some(value) = value else {
+            return self;
+        };
+        let Ok(mut v) = serde_json::from_slice::<Value>(&self) else {
+            return self;
+        };
+        v[key] = value;
+        serde_json::to_vec(&v).unwrap_or(self)
+    }
 }
 
 /// A status body with what this computer runs in it (S1-5): `os` (`{name,
@@ -451,8 +459,8 @@ fn with_field(body: Vec<u8>, key: &str, value: Option<Value>) -> Vec<u8> {
 /// server's version). Older readers ignore both; the web app falls back to
 /// `settings.platform` and `settings.serverVersion` without them.
 pub fn with_system(body: Vec<u8>, os: &Value, agent_version: &str) -> Vec<u8> {
-    let body = with_field(body, "os", Some(os.clone()));
-    with_field(body, "agentVersion", Some(Value::String(agent_version.to_string())))
+    body.with_field("os", Some(os.clone()))
+        .with_field("agentVersion", Some(Value::String(agent_version.to_string())))
 }
 
 /// A status body with the machine's chain alarms in it (`alarms`: `[{atMs,
@@ -461,8 +469,7 @@ pub fn with_system(body: Vec<u8>, os: &Value, agent_version: &str) -> Vec<u8> {
 /// reaches all of them — the hub can withhold the record, but not forge or
 /// alter it, and the machine-signed head says when it is behind.
 pub fn with_alarms(body: Vec<u8>, alarms: &[crate::agent::state::Alarm]) -> Vec<u8> {
-    with_field(
-        body,
+    body.with_field(
         "alarms",
         (!alarms.is_empty()).then(|| serde_json::to_value(alarms).unwrap_or(Value::Null)),
     )
@@ -474,8 +481,7 @@ pub fn with_alarms(body: Vec<u8>, alarms: &[crate::agent::state::Alarm]) -> Vec<
 /// machines and devices added or removed, recovery joins — every device of
 /// the account reads them, whoever made the change.
 pub fn with_changes(body: Vec<u8>, changes: &[crate::agent::state::Alarm]) -> Vec<u8> {
-    with_field(
-        body,
+    body.with_field(
         "changes",
         (!changes.is_empty()).then(|| serde_json::to_value(changes).unwrap_or(Value::Null)),
     )
@@ -490,7 +496,7 @@ pub fn with_changes(body: Vec<u8>, changes: &[crate::agent::state::Alarm]) -> Ve
 /// (review D3). A new device, or the chain moving on, is a new record.
 pub fn with_controllers(body: Vec<u8>, controllers: Option<&crate::agent::state::Controllers>) -> Vec<u8> {
     let value = controllers.and_then(|c| serde_json::to_value(c).ok()).unwrap_or(Value::Null);
-    with_field(body, "controllers", Some(value))
+    body.with_field("controllers", Some(value))
 }
 
 /// The part of a status body that changing means a new record (not `asOf`).
