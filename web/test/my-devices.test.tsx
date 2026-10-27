@@ -128,7 +128,7 @@ test("the bar names the account by its e-mail once /v1/me says it, its id until 
 
 test("“change relay…” opens 「我的设备」 at the relay picker, under 「这台设备」, unfolded", () => {
   const selected: (string | null)[] = [];
-  setHubShell({ select: (key: string | null) => void selected.push(key) } as never);
+  setHubShell({ kind: "hub", select: (key: string | null) => void selected.push(key) } as never);
   try {
     openRelayPicker();
     assert.deepEqual(selected, [null], "out of the app, onto the page");
@@ -169,6 +169,7 @@ test("the relay picker on 「我的设备」 is about the device the app last sh
   const relays = { directory: null, refresh: async () => undefined, measure: async () => undefined, onChange: () => () => undefined, manual: null };
   const channel = { status: "open" };
   setHubShell({
+    kind: "hub",
     focus: constantStore(null),
     lastShown: "m-0",
     relays,

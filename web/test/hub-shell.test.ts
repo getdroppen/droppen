@@ -1091,7 +1091,7 @@ test("a choice the hub could not take now is sent again a little later, without 
 
 test("leaving the account ends the shell, its slot and the renewal runner together (a fork included)", () => {
   const stopped: string[] = [];
-  setHubShell({ stop: () => void stopped.push("shell") } as never);
+  setHubShell({ kind: "hub", stop: () => void stopped.push("shell") } as never);
   setRenewalRunner({ stop: () => void stopped.push("renewals") } as never);
   try {
     endHubShell();

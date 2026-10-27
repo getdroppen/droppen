@@ -187,6 +187,7 @@ test("sign-out keeps what it could not clear for the sign-in screen, and replace
   })();
   // droppen.app's shell: every machine's copy stops with it.
   const shell = {
+    kind: "hub",
     api: { logout: async () => void calls.push("logout") },
     account: { session: { token: "t" }, store },
     link: { stop: () => void calls.push("link.stop") },

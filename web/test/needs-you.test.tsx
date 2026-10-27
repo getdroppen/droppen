@@ -364,7 +364,7 @@ function listShell(lists: DeviceSessions[]) {
   const infos = lists.map((l) => ({ key: l.machine, name: l.machine, state: "online" as const, since: 0, canManage: true, live: "copy" as const }));
   const machines = constantStore(infos);
   const held = new Map(lists.map((l) => [l.machine, { sessions: constantStore(l) }]));
-  return { machines: () => machines, machine: (key: string) => held.get(key) ?? null } as never;
+  return { kind: "hub", machines: () => machines, machine: (key: string) => held.get(key) ?? null } as never;
 }
 
 /** What `useDeviceSessions(live)` gives, rendered once. */

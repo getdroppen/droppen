@@ -14,9 +14,12 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
-import { type Store, useStore } from "@/lib/machines/store";
-import { gatewayShell, gatewayShellStore, hubShell, useGatewayMachines, useShellMachines } from "./shells";
+import { currentShell, currentShellStore } from "@/lib/machines/registry";
+import { constantStore, type Store, useStore } from "@/lib/machines/store";
 import type { DeviceSessions } from "./needs-you";
+
+const NONE: readonly MachineInfo[] = [];
+const NO_DEVICES = constantStore(NONE);
 
 /**
  * A device's list in the page's shell: droppen.app's machines' copies, or —
@@ -24,7 +27,7 @@ import type { DeviceSessions } from "./needs-you";
  * `local`, whose list is its feed).
  */
 function shellSessions(machine: MachineKey): Store<DeviceSessions> | null {
-  return hubShell()?.machine(machine)?.sessions ?? gatewayShell()?.machine(machine)?.sessions ?? null;
+  return currentShell()?.machine(machine)?.sessions ?? null;
 }
 
 /**
@@ -33,12 +36,9 @@ function shellSessions(machine: MachineKey): Store<DeviceSessions> | null {
  * empty in the local app alone.
  */
 export function useShellDevices(): readonly MachineInfo[] {
-  const hub = useShellMachines();
-  const gateway = useGatewayMachines();
-  return hubShell() ? hub : gateway;
+  const shell = useStore(currentShellStore());
+  return useStore(shell?.machines() ?? NO_DEVICES);
 }
-
-const NONE: readonly MachineInfo[] = [];
 
 /** The same array as before when every list in it is the same one. */
 function sameLists(a: readonly DeviceSessions[], b: readonly DeviceSessions[]): boolean {
@@ -58,8 +58,7 @@ export function useDeviceSessions(live: DeviceSessions | null = null, enabled = 
   // other device's change re-renders the page.
   const all = useShellDevices();
   const machines = enabled ? all : NONE;
-  const gateway = useStore(gatewayShellStore());
-  const shell = hubShell() ?? gateway;
+  const shell = useStore(currentShellStore());
   const keys = machines.map((m) => m.key);
   // The stores as the shell has them now: a machine closed and opened again
   // has a new store under the same key, so they are compared one by one.

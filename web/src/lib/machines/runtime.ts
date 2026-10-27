@@ -11,7 +11,9 @@
  * (`shells/`) makes the runtimes and registers them (`registry.ts`).
  */
 import type { ApiClient } from "@/api/client";
+import type { MachineMirror } from "@/lib/hub/mirror";
 import type { Transport } from "@/lib/transport/types";
+import type { DeviceSessions } from "@/features/machines/needs-you";
 import type { MachineKey } from "./key";
 import { shallowEqual, type Store } from "./store";
 
@@ -97,6 +99,12 @@ export interface MachineRuntime {
  */
 export type ShellKind = "local" | "gateway" | "hub";
 
+/** What a shell holds of one machine that the views every mode shares read: its sessions and its copy. */
+export interface ShellMachine {
+  readonly sessions: Store<DeviceSessions>;
+  readonly mirror: MachineMirror;
+}
+
 /** The machines a page has, and which one is its home (§6.1). */
 export interface AppShell {
   readonly kind: ShellKind;
@@ -105,4 +113,6 @@ export interface AppShell {
   runtime(key: MachineKey): MachineRuntime;
   /** Where the person's own things are kept (the screens' layout, plugin documents). */
   readonly home: MachineKey;
+  /** The shell's own machine `key` (its sessions and copy), or `null` when it does not hold it. */
+  machine(key: MachineKey | null | undefined): ShellMachine | null;
 }

@@ -96,6 +96,7 @@ function shell(machines: MachineInfo[], acct = account(machines.map((m) => m.key
   return {
     asked,
     shell: {
+      kind: "hub",
       account: acct,
       home,
       lastShown: null,
@@ -460,7 +461,7 @@ test("with two devices, the side-by-side tip once: a line of its own (never over
 
 test("the hints' way in: 「我的设备」 with the guide open", () => {
   const selected: (string | null)[] = [];
-  setHubShell({ select: (key: string | null) => void selected.push(key) } as never);
+  setHubShell({ kind: "hub", select: (key: string | null) => void selected.push(key) } as never);
   try {
     openAddDevice();
     assert.equal(addAsked.get(), true);
