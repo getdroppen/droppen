@@ -9,6 +9,7 @@
  */
 import { useMemo, useSyncExternalStore } from "react";
 import { type AgentKeyState, agentKeyState, onAgentKeyState } from "@/lib/hub/deliver";
+import type { CloudAccount } from "@/lib/hub/account";
 import type { HubLink, LinkState, PresenceState } from "@/lib/hub/link";
 import type { MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { MachineMirror } from "@/lib/hub/mirror";
@@ -135,5 +136,22 @@ export function useAgentKeyState(machine: string | null | undefined): AgentKeySt
     (notify) => onAgentKeyState(notify),
     () => (machine ? agentKeyState(machine) : undefined),
     () => undefined,
+  );
+}
+
+const versions = new WeakMap<CloudAccount, number>();
+
+/** Re-render when the account's chain or keys change. */
+export function useAccountVersion(account: CloudAccount | null | undefined): number {
+  return useSyncExternalStore(
+    (notify) =>
+      account
+        ? account.onChange(() => {
+            versions.set(account, (versions.get(account) ?? 0) + 1);
+            notify();
+          })
+        : () => undefined,
+    () => (account ? (versions.get(account) ?? 0) : 0),
+    () => 0,
   );
 }
