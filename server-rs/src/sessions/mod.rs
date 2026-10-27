@@ -918,12 +918,6 @@ impl Paths {
         self.instance_dir().join("owned-sessions.json")
     }
 
-    /// The codex-only registry the first version of this file wrote, read under
-    /// its old name until something is recorded.
-    pub fn legacy_owned_codex_file(&self) -> PathBuf {
-        self.instance_dir().join("owned-codex.json")
-    }
-
     /// `<data>/claude` — the managed root as it was before it became per-instance.
     ///
     /// Only [`claude_roots::migrate_legacy_managed_root`] reads this: it is where
@@ -1027,29 +1021,11 @@ impl Paths {
         self.config_dir().join("prefs.json")
     }
 
-    /// `<data>/instances/<name>/screens.json` — saved pane layouts.
-    ///
-    /// Instance-scoped, unlike the sidecars around it: a screen's leaves name
-    /// terminal ids and resident session ids that only the server that made them
-    /// can resolve, so a layout inherited from a sibling instance is a screen
-    /// full of dead panes — and one shared file means the last writer wins.
-    /// [`crate::instance::migrate_shared_sidecars`] copies the pre-instance file
-    /// in once.
-    pub fn screens_file(&self) -> PathBuf {
-        self.instance_dir().join("screens.json")
-    }
-
-    /// `~/.config/remote-hand/screens.json` — where layouts lived before they
-    /// became instance-scoped. Only the migration reads it.
-    pub fn legacy_screens_file(&self) -> PathBuf {
-        self.config_dir().join("screens.json")
-    }
-
     /// `<data>/instances/<name>/scheduled-tasks.json` — the cron tasks this
     /// server runs.
     ///
-    /// Instance-scoped, and for a sharper version of [`Paths::screens_file`]'s
-    /// reason. A layout shared by two instances is confusing; a *task list*
+    /// Instance-scoped, like the sidecars around it, and for a sharper reason
+    /// than theirs. A layout shared by two instances is confusing; a *task list*
     /// shared by two instances is acted on twice — every server on the machine
     /// would read the same schedule and every one of them would start its own
     /// session for it. See [`crate::schedule`].
@@ -1074,19 +1050,11 @@ impl Paths {
     /// key is that origin's identity to the push service. A second instance
     /// sharing the file would sign its own notifications with the first one's
     /// key and deliver them to the first one's devices.
-    /// [`crate::instance::migrate_shared_sidecars`] copies the pre-instance file
-    /// in once, mode and all.
     ///
-    /// It holds a private key, so [`crate::push::store`] writes it `0600` — the
-    /// only sidecar that does.
+    /// It holds a private key, which is why it was written `0600` — the only
+    /// sidecar that was.
     pub fn push_file(&self) -> PathBuf {
         self.instance_dir().join("push.json")
-    }
-
-    /// `~/.config/remote-hand/push.json` — where subscriptions lived before they
-    /// became instance-scoped. Only the migration reads it.
-    pub fn legacy_push_file(&self) -> PathBuf {
-        self.config_dir().join("push.json")
     }
 
     /// The optional per-model price table that overrides the built-in rates.
