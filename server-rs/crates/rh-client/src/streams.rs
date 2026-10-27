@@ -7,11 +7,12 @@
 use std::time::Duration;
 
 use rh_proto::frame::Frame;
-use rh_proto::record::{LogReader, SealedRecord, SignedHead, StreamId};
-use rh_proto::stream::{open_page, page_hash, reader_from_manifest, Manifest, SealedPage, MAX_PAGE_LEN};
+use rh_proto::record::StreamId;
+use rh_proto::stream::MAX_PAGE_LEN;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::follow::{Follower, Step};
 use crate::link::Link;
 pub use crate::link::CONTROL_FRAME;
 use crate::{err, hex, HubUrl, Result};
@@ -89,6 +90,11 @@ pub async fn read_stream(
     result
 }
 
+/// Drive one subscription to its end over a [`Follower`] — the reader the
+/// local install follows with — so a read is checked by the same rules as
+/// production: only what a machine-signed head covers is released, a
+/// checkpoint or head behind what the copy already holds is refused, and a
+/// `GONE` before where the reader stands is not taken.
 async fn follow(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<Frame>,
     pages: Pages<'_>,
@@ -98,24 +104,14 @@ async fn follow(
     timeout: Duration,
 ) -> Result<StreamCopy> {
     let deadline = tokio::time::Instant::now() + timeout;
-    let add_keys = |r: &mut LogReader| {
-        for (epoch, mk) in keys {
-            r.add_epoch(*epoch, mk);
-        }
-    };
-    let fresh = || {
-        let mut r = LogReader::new(stream, machine_key);
-        add_keys(&mut r);
-        r
-    };
-    let mut reader = fresh();
+    let mut follower = Follower::new(stream, machine_key, keys);
     let mut copy = StreamCopy::default();
     let mut received = 0u64;
     let mut synced = false;
     loop {
-        if synced && received == reader.confirmed_next() {
-            copy.confirmed = reader.confirmed_next();
-            copy.freshest_ms = reader.freshest_ms();
+        if synced && received == follower.from_seq() {
+            copy.confirmed = follower.from_seq();
+            copy.freshest_ms = follower.freshest_ms();
             return Ok(copy);
         }
         let left = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -125,82 +121,58 @@ async fn follow(
             Err(_) => {
                 return Err(format!(
                     "the stream did not settle in time (synced {synced}, received {received}, confirmed {})",
-                    reader.confirmed_next()
+                    follower.from_seq()
                 ))
             }
         };
-        match frame {
-            Frame::Unknown {
-                ty: CONTROL_FRAME, payload, ..
-            } => {
-                let v: Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
-                match v["t"].as_str() {
-                    Some("stream_synced") => {
-                        synced = true;
-                        copy.exists = v["exists"].as_bool().unwrap_or(false);
-                        if !copy.exists {
-                            return Ok(copy);
-                        }
-                    }
-                    Some("stream_refused") => return Err(format!("the hub refused the subscription: {v}")),
-                    _ => {}
+        // Every sealed byte string read, before the frame is folded: what
+        // the hub's database must hold none of.
+        if let Frame::Recs { records, .. } = &frame {
+            for record in records {
+                copy.sealed.push(record.ct.clone());
+                received = record.seq + 1;
+            }
+        }
+        let gone = matches!(frame, Frame::Gone { .. });
+        match follower.on_frame(frame).map_err(|e| e.to_string())? {
+            Step::Nothing => {
+                if gone {
+                    // Everything starts again; the next bodies released
+                    // replace what was folded.
+                    copy.bodies.clear();
+                    received = 0;
                 }
             }
-            Frame::Gone { .. } => {
-                reader = fresh();
-                copy.bodies.clear();
-                received = 0;
+            Step::Missing => {
+                copy.exists = false;
+                return Ok(copy);
             }
-            Frame::Checkpoint { manifest, upto_seq, .. } => {
-                let manifest = Manifest::decode(&manifest).map_err(|e| e.to_string())?;
-                if manifest.upto_seq() != upto_seq {
-                    return Err("a checkpoint frame whose manifest stands elsewhere".into());
-                }
-                if reader.confirmed_next() >= upto_seq && copy.manifest_upto.is_some() {
-                    continue;
-                }
-                let mut r = reader_from_manifest(machine_key, &manifest).map_err(|e| e.to_string())?;
-                add_keys(&mut r);
-                let mut bodies = Vec::with_capacity(manifest.pages.len());
+            Step::Synced => {
+                copy.exists = true;
+                synced = true;
+            }
+            Step::Checkpoint(manifest) => {
+                let mut fetched = Vec::with_capacity(manifest.pages.len());
                 for hash in &manifest.pages {
                     let data = pages.fetch(&stream, hash).await?;
                     copy.sealed.push(data.clone());
-                    if page_hash(&data) != *hash {
-                        return Err("a page that is not the one the manifest names".into());
+                    fetched.push(data);
+                }
+                match follower.checkpoint(&manifest, &fetched).map_err(|e| e.to_string())? {
+                    Step::Released { bodies, .. } => {
+                        copy.bodies = bodies;
+                        copy.manifest_upto = Some(manifest.upto_seq());
+                        received = manifest.upto_seq();
                     }
-                    let page = SealedPage::decode(&data).map_err(|e| e.to_string())?;
-                    let mk = keys
-                        .iter()
-                        .find(|(e, _)| *e == page.epoch)
-                        .map(|(_, k)| k)
-                        .ok_or_else(|| format!("no key for epoch {}", page.epoch))?;
-                    let key = rh_proto::record::stream_key(mk, &stream);
-                    let opened = open_page(&key, &stream, &page).map_err(|e| e.to_string())?;
-                    bodies.push((opened.fmt, opened.body));
-                }
-                copy.bodies = bodies;
-                copy.manifest_upto = Some(upto_seq);
-                received = upto_seq;
-                reader = r;
-            }
-            Frame::Recs { records, .. } => {
-                for record in records {
-                    copy.sealed.push(record.ct.clone());
-                    push(&mut reader, &record)?;
-                    received = record.seq + 1;
+                    _ => return Err("a checkpoint that released nothing".into()),
                 }
             }
-            Frame::Head { head, .. } => {
-                let head = SignedHead::decode(&head).map_err(|e| e.to_string())?;
-                match reader.confirm(&head) {
-                    Ok(released) => copy.bodies.extend(released.into_iter().map(|o| (o.fmt, o.body))),
-                    Err(rh_proto::record::RecordError::Incomplete { .. }) => {
-                        return Err("the hub's head covers records it did not send".into());
-                    }
-                    Err(e) => return Err(format!("a head the records do not match: {e}")),
+            Step::Released { reset, bodies } => {
+                if reset {
+                    copy.bodies.clear();
                 }
+                copy.bodies.extend(bodies);
             }
-            _ => {}
         }
     }
 }
@@ -467,10 +439,6 @@ impl StreamCopy {
         }
         Ok(copy)
     }
-}
-
-fn push(reader: &mut LogReader, record: &SealedRecord) -> Result<()> {
-    reader.push(record).map_err(|e| format!("record {}: {e}", record.seq))
 }
 
 #[cfg(test)]
