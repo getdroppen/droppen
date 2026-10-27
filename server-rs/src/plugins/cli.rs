@@ -14,6 +14,7 @@
 
 use std::path::Path;
 
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
 
 use super::{DecisionReason, PluginError, Plugins, StoreError};
@@ -62,48 +63,148 @@ enum Action {
 
 fn parse(args: &[String]) -> Result<Action, String> {
     let usage = || USAGE.to_string();
-    let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let id = |word: Option<&&str>| -> Result<String, String> {
-        let id = word.ok_or_else(usage)?;
-        if valid_id(id) {
-            Ok(id.to_string())
-        } else {
-            Err(format!(
-                "{id:?} is not a plugin id: 2-32 characters of a-z, 0-9 or '-', starting with a letter"
-            ))
+    // clap reserves `--` as a terminator; this grammar treats it as a word, and
+    // every shape refuses one except as the value after `--out`.
+    if refuses_separator(args) {
+        return Err(usage());
+    }
+    let cli = plugin_command()
+        .try_get_matches_from(std::iter::once("plugin".to_string()).chain(args.iter().cloned()))
+        .map_err(|_| usage())?;
+    let cli = PluginCli::from_arg_matches(&cli).map_err(|_| usage())?;
+    match cli.command {
+        Some(PluginCommand::List) => Ok(Action::List),
+        Some(PluginCommand::Install { file }) => {
+            // A file that starts with `--` was never the install shape; it fell
+            // through to the usage.
+            if file.starts_with("--") {
+                return Err(usage());
+            }
+            Ok(Action::Install(file))
         }
-    };
-    match words.as_slice() {
-        ["list"] => Ok(Action::List),
-        ["install", file] if !file.starts_with("--") => Ok(Action::Install(file.to_string())),
-        ["uninstall", _] => Ok(Action::Uninstall(id(words.get(1))?)),
-        ["enable", _] => Ok(Action::Enable(id(words.get(1))?)),
-        ["disable", _] => Ok(Action::Disable(id(words.get(1))?)),
-        ["export", _] => Ok(Action::Export {
-            id: id(words.get(1))?,
-            out: None,
-        }),
-        ["export", _, "--out", out] => Ok(Action::Export {
-            id: id(words.get(1))?,
-            out: Some(out.to_string()),
-        }),
-        ["import", _, rest @ ..] => {
-            let replace = rest.contains(&"--replace");
-            let files: Vec<&&str> = rest.iter().filter(|word| **word != "--replace").collect();
+        Some(PluginCommand::Uninstall { id }) => Ok(Action::Uninstall(checked_id(id)?)),
+        Some(PluginCommand::Enable { id }) => Ok(Action::Enable(checked_id(id)?)),
+        Some(PluginCommand::Disable { id }) => Ok(Action::Disable(checked_id(id)?)),
+        Some(PluginCommand::Export { id, rest }) => {
+            let out = match rest.as_slice() {
+                [] => None,
+                [flag, out] if flag == "--out" => Some(out.clone()),
+                // `--out` without a value, or anything that is not that one shape.
+                _ => return Err(usage()),
+            };
+            Ok(Action::Export { id: checked_id(id)?, out })
+        }
+        Some(PluginCommand::Import { id, rest }) => {
+            let replace = rest.iter().any(|word| word == "--replace");
+            let files: Vec<&String> = rest.iter().filter(|word| *word != "--replace").collect();
             match files.as_slice() {
                 [file] if !file.starts_with("--") => Ok(Action::Import {
-                    id: id(words.get(1))?,
-                    file: file.to_string(),
+                    id: checked_id(id)?,
+                    file: (*file).clone(),
                     replace,
                 }),
                 _ => Err(usage()),
             }
         }
-        ["verify", _] => Ok(Action::Verify(id(words.get(1))?)),
-        ["purge", _, "--yes"] => Ok(Action::Purge(id(words.get(1))?)),
-        ["purge", _] => Err("purge moves the plugin's data aside; say --yes to mean it".to_string()),
-        _ => Err(usage()),
+        Some(PluginCommand::Verify { id }) => Ok(Action::Verify(checked_id(id)?)),
+        Some(PluginCommand::Purge { id, rest }) => match rest.as_slice() {
+            [] => Err("purge moves the plugin's data aside; say --yes to mean it".to_string()),
+            [flag] if flag == "--yes" => Ok(Action::Purge(checked_id(id)?)),
+            _ => Err(usage()),
+        },
+        None => Err(usage()),
     }
+}
+
+/// `plugin`'s command tree, shown under the name this binary was run as.
+fn plugin_command() -> clap::Command {
+    let name = crate::program::Name::invoked();
+    PluginCli::command()
+        .bin_name(format!("{} plugin", name.command()))
+        .after_long_help(name.rewrite(USAGE).into_owned())
+}
+
+/// A plugin id, checked by the same rule every shape used.
+fn checked_id(raw: String) -> Result<String, String> {
+    if valid_id(&raw) {
+        Ok(raw)
+    } else {
+        Err(format!(
+            "{raw:?} is not a plugin id: 2-32 characters of a-z, 0-9 or '-', starting with a letter"
+        ))
+    }
+}
+
+/// Whether `args` holds a bare `--` in a place the grammar never accepted it.
+/// `export <id> --out --` is the one shape where `--` is a value (the file name
+/// to write), so there it is allowed at the one position the value can take.
+fn refuses_separator(args: &[String]) -> bool {
+    match args.first().map(String::as_str) {
+        Some("export") => args.iter().enumerate().any(|(index, word)| word == "--" && index != 3),
+        _ => args.iter().any(|word| word == "--"),
+    }
+}
+
+/// `plugin`'s subcommands. `export`'s `--out` and `purge`'s `--yes` are word
+/// lists rather than options: the grammar accepts them only in one exact place,
+/// and clap would otherwise take them before or after the id. `import` is one
+/// word list too because its file and `--replace` come in any order.
+#[derive(Debug, Parser)]
+#[command(
+    name = "plugin",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct PluginCli {
+    #[command(subcommand)]
+    command: Option<PluginCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginCommand {
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    List,
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Install {
+        #[arg(allow_hyphen_values = true)]
+        file: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Uninstall {
+        id: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Enable {
+        id: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Disable {
+        id: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Export {
+        id: String,
+        #[arg(allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Import {
+        id: String,
+        #[arg(allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Verify {
+        id: String,
+    },
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Purge {
+        id: String,
+        #[arg(allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
 }
 
 /// Run a `plugin` subcommand. `args` is everything after `plugin`.
@@ -472,4 +573,76 @@ mod tests {
             "an empty store takes the export as it is"
         );
     }
+    /// The plugin command lines, including the two literal flag words and the
+    /// `--` this grammar treats as a word.
+    #[test]
+    fn the_plugin_argument_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let accepted: Vec<Vec<String>> = [
+            &["list"][..],
+            &["install", "/tmp/tasks.tgz"],
+            &["install", "-x"],
+            &["install", "-"],
+            &["uninstall", "tasks"],
+            &["enable", "tasks"],
+            &["disable", "tasks"],
+            &["verify", "tasks"],
+            &["export", "tasks"],
+            &["export", "tasks", "--out", "/tmp/x.json"],
+            &["export", "tasks", "--out", "--"],
+            &["export", "tasks", "--out", "--out"],
+            &["import", "tasks", "backup.json"],
+            &["import", "tasks", "backup.json", "--replace"],
+            &["import", "tasks", "--replace", "backup.json"],
+            &["import", "tasks", "--replace", "--replace", "backup.json"],
+            &["import", "tasks", "-x"],
+            &["purge", "tasks", "--yes"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &accepted {
+            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        }
+
+        let refused: Vec<Vec<String>> = [
+            &[][..],
+            &["list", "extra"],
+            &["install"],
+            &["install", "--force"],
+            &["install", "--foo"],
+            &["uninstall"],
+            &["uninstall", "../x"],
+            &["enable"],
+            &["disable"],
+            &["verify"],
+            &["import", "tasks"],
+            &["import", "tasks", "a", "b"],
+            &["import", "tasks", "--replace"],
+            &["import", "tasks", "--force"],
+            &["import", "tasks", "f", "--replace=x"],
+            &["export", "tasks", "--out"],
+            &["export", "tasks", "--out="],
+            &["export", "tasks", "f"],
+            &["export", "--out", "f", "tasks"],
+            &["purge", "tasks", "--yes", "--yes"],
+            &["purge", "--yes", "tasks"],
+            &["purge", "tasks", "--yes=x"],
+            &["--", "list"],
+            &["install", "--", "file"],
+            &["uninstall", "--", "tasks"],
+            &["import", "--", "tasks", "f"],
+            &["purge", "--", "tasks", "--yes"],
+            &["export", "--", "tasks"],
+            &["export", "tasks", "--", "--out", "f"],
+            &["--help"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &refused {
+            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
 }

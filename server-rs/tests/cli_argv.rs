@@ -305,6 +305,83 @@ fn auth_argv_keeps_its_shape() {
     }
 }
 
+/// `plugin` keeps its literal `--out`/`--yes` places and its `--` as a word; `notify` keeps its
+/// two-word option spelling and its own help answer.
+#[test]
+fn plugin_and_notify_argv_keep_their_shape() {
+    let invocation = Invocation::new();
+
+    let output = invocation.run(&["plugin", "list"]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+
+    // Every --instance is validated before anything else.
+    let fresh = Invocation::new();
+    for argv in [
+        vec!["plugin", "list", "--instance", "Bad", "--instance", "probe"],
+        vec!["plugin", "list", "--instance=Bad", "--instance=probe"],
+    ] {
+        let output = fresh.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stderr(&output).contains("must be 1-32 characters"), "{argv:?}: {}", stderr(&output));
+    }
+    assert!(!fresh.home.path().join("data/instances/probe/state.db").exists());
+
+    // `--` is a word here: every shape refuses a bare one (clap would drop it and run the command).
+    for argv in [vec!["plugin", "--", "list"], vec!["plugin", "install", "--", "file"], vec!["plugin", "purge", "--", "tasks", "--yes"]] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}");
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+
+    // A bare `--` is an `--out` value, and reaches the store (which does not exist here).
+    let output = invocation.run(&["plugin", "export", "tasks", "--out", "--"]);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("no store"), "{}", stderr(&output));
+
+    for argv in [
+        vec!["plugin", "export", "tasks", "--out=x"],
+        vec!["plugin", "export", "tasks", "--out"],
+        vec!["plugin", "purge", "tasks", "--yes", "--yes"],
+        vec!["plugin", "purge", "--yes", "tasks"],
+        vec!["plugin", "import", "tasks", "--replace"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+    let output = invocation.run(&["plugin", "purge", "tasks"]);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("--yes"), "{}", stderr(&output));
+
+    // notify reaches the missing channel only when the argv parsed.
+    for argv in [
+        vec!["notify", "T"],
+        vec!["notify", "T", "--level", "active"],
+        vec!["notify", "--", "--level=active"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stderr(&output).contains("no channel was configured"), "{argv:?}: {}", stderr(&output));
+    }
+    // The token after a value-taking flag is its value, even when it looks like help.
+    let output = invocation.run(&["notify", "T", "--level", "--help"]);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("unknown level"), "{}", stderr(&output));
+
+    for argv in [
+        vec!["notify", "T", "--level=active"],
+        vec!["notify", "T", "-lpassive"],
+        vec!["notify", "T", "--help"],
+        vec!["notify", "T", "-h"],
+        vec!["notify", "T", "--nope"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(!stderr(&output).contains("no channel"), "{argv:?} was parsed: {}", stderr(&output));
+    }
+}
+
 /// The unconverted commands still receive their exact tail, including a `--help` that their own parser
 /// refuses, and the two whose tails are ignored stay permissive.
 #[test]
@@ -319,6 +396,18 @@ fn the_legacy_tails_are_untouched() {
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     let output = invocation.run(&["plugin", "list"]);
     assert_eq!(code(&output), 0, "{}", stderr(&output));
+
+    // Every --instance is validated before anything else.
+    let fresh = Invocation::new();
+    for argv in [
+        vec!["plugin", "list", "--instance", "Bad", "--instance", "probe"],
+        vec!["plugin", "list", "--instance=Bad", "--instance=probe"],
+    ] {
+        let output = fresh.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stderr(&output).contains("must be 1-32 characters"), "{argv:?}: {}", stderr(&output));
+    }
+    assert!(!fresh.home.path().join("data/instances/probe/state.db").exists());
 
     // Accepted by the notify parser, refused by its behaviour (no channel in this environment).
     let output = invocation.run(&["notify", "T", "B", "--level", "active"]);

@@ -31,6 +31,7 @@
 
 use std::time::Duration;
 
+use clap::{CommandFactory, FromArgMatches, Parser};
 use serde_json::json;
 
 /// Where `POST /api/notify` is, injected at spawn.
@@ -89,52 +90,96 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 /// The flags exist for the two things there is no natural position for.
 pub fn parse_as(args: &[String], name: &str) -> Result<Options, String> {
     let help = || usage(name);
-    let mut options = Options::default();
-    let mut positional: Vec<&str> = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let arg = args[index].as_str();
-        match arg {
-            "--level" | "-l" | "--group" | "-g" | "--title" | "-t" | "--body" | "-b" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(format!("{arg} needs a value\n\n{}", help()));
-                };
-                match arg {
-                    "--level" | "-l" => options.level = Some(value.clone()),
-                    "--group" | "-g" => options.group = Some(value.clone()),
-                    "--title" | "-t" => options.title = value.clone(),
-                    _ => options.body = value.clone(),
-                }
-                index += 2;
-            }
-            "--help" | "-h" => return Err(help()),
-            // Everything after `--` is text, however much it looks like a flag:
-            // a title that starts with a dash is a title.
-            "--" => {
-                positional.extend(args[index + 1..].iter().map(String::as_str));
-                index = args.len();
-            }
-            other if other.starts_with('-') && other.len() > 1 => {
-                return Err(format!("unknown option {other}\n\n{}", help()));
-            }
-            other => {
-                positional.push(other);
-                index += 1;
-            }
-        }
-    }
+    scan_reserved(args, name)?;
+    let cli = notify_command(name)
+        .try_get_matches_from(std::iter::once("droppen-notify".to_string()).chain(args.iter().cloned()))
+        .map_err(|error| format!("{error}\n\n{}", help()))?;
+    let cli = NotifyCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{}", help()))?;
+    let mut options = Options {
+        title: cli.title.unwrap_or_default(),
+        body: cli.body.unwrap_or_default(),
+        level: cli.level,
+        group: cli.group,
+    };
     // The flags win over the positions, so `--title` can override the first
     // word of a shell-mangled command line rather than fighting with it.
     if options.title.is_empty() {
-        options.title = positional.first().copied().unwrap_or_default().to_string();
+        options.title = cli.words.first().cloned().unwrap_or_default();
     }
-    if options.body.is_empty() && positional.len() > 1 {
-        options.body = positional[1..].join(" ");
+    if options.body.is_empty() && cli.words.len() > 1 {
+        options.body = cli.words[1..].join(" ");
     }
     if options.title.trim().is_empty() {
         return Err(format!("a notification needs a title\n\n{}", help()));
     }
     Ok(options)
+}
+
+/// The spellings this command refuses before clap sees them, and the help
+/// tokens it answers itself.
+///
+/// The hand parser accepted an option only as a flag and a separate value word,
+/// so `--level=active` and `-lpassive` were unknown options (clap takes both),
+/// and `--help` was this command's usage as an error (clap would call it an
+/// unknown flag). A value-taking flag's next token is skipped: the old parser
+/// consumed it as the value, whatever it looked like, so `--title --help` is a
+/// title and `--group --level=x` is a group.
+fn scan_reserved(args: &[String], name: &str) -> Result<(), String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--level" | "-l" | "--group" | "-g" | "--title" | "-t" | "--body" | "-b" => {
+                if iter.next().is_none() {
+                    return Err(format!("{arg} needs a value\n\n{}", usage(name)));
+                }
+            }
+            "--help" | "-h" => return Err(usage(name)),
+            // Everything after `--` is text, however much it looks like a flag:
+            // a title that starts with a dash is a title.
+            "--" => return Ok(()),
+            other if is_attached_option(other) => return Err(format!("unknown option {other}\n\n{}", usage(name))),
+            other if other.starts_with('-') && other.len() > 1 => {
+                return Err(format!("unknown option {other}\n\n{}", usage(name)));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `--level=active` or `-lpassive`: an option and its value in one word.
+fn is_attached_option(arg: &str) -> bool {
+    ["--level=", "--group=", "--title=", "--body="].iter().any(|prefix| arg.starts_with(prefix))
+        || ["-l", "-g", "-t", "-b"].iter().any(|short| arg.len() > short.len() && arg.starts_with(short))
+}
+
+/// `droppen-notify`'s command tree, shown under the name the agent ran it as.
+fn notify_command(name: &str) -> clap::Command {
+    NotifyCli::command().bin_name(name).after_long_help(usage(name))
+}
+
+/// `droppen-notify`'s command line. Positional-first on purpose: the title and
+/// body are what a model writes when it has read one example. The flags are for
+/// the two things there is no natural position for.
+#[derive(Debug, Parser)]
+#[command(
+    name = "droppen-notify",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct NotifyCli {
+    #[arg(long, short = 'l', allow_hyphen_values = true)]
+    level: Option<String>,
+    #[arg(long, short = 'g', allow_hyphen_values = true)]
+    group: Option<String>,
+    #[arg(long, short = 't', allow_hyphen_values = true)]
+    title: Option<String>,
+    #[arg(long, short = 'b', allow_hyphen_values = true)]
+    body: Option<String>,
+    #[arg(value_name = "title")]
+    words: Vec<String>,
 }
 
 /// The level names this accepts, mapped onto the ones the API takes.
@@ -325,4 +370,58 @@ mod tests {
         .expect_err("refused");
         assert!(error.contains("passive, active or time-sensitive"), "{error}");
     }
+    #[test]
+    fn the_notify_argument_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let accepted: Vec<Vec<String>> = [
+            &["T"][..],
+            &["T", "B"],
+            &["T", "B", "C"],
+            &["--title", "T", "--body", "B"],
+            &["T", "B", "--level", "active"],
+            &["T", "--level", "passive", "--group", "deploy"],
+            &["T", "--", "--not-a-flag"],
+            &["--", "--not-a-flag", "body"],
+            &["-"],
+            &["T", "-"],
+            &["T", "--level", "--help"],
+            &["T", "--group", "--level=x"],
+            &["--title", "-h"],
+            &["T", "--title", "U"],
+            &["--level", "active", "T", "B"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &accepted {
+            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        }
+
+        let refused: Vec<Vec<String>> = [
+            &[][..],
+            &["  "],
+            &["T", "--level"],
+            &["T", "--nope"],
+            &["T", "--level=active"],
+            &["T", "--group=deploy"],
+            &["T", "--title=U"],
+            &["T", "--body=B"],
+            &["T", "-lactive"],
+            &["T", "-gdeploy"],
+            &["T", "-tU"],
+            &["T", "-bB"],
+            &["--help"],
+            &["-h"],
+            &["T", "--help"],
+            &["T", "-h"],
+            &["-x"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &refused {
+            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
 }
