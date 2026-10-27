@@ -5,7 +5,8 @@
 //! blanket `impl<T: Schematic> Responsible for T` that a downstream crate cannot
 //! add to. So [`Created`] borrows `T`'s schema — the derived response is right
 //! about the *body*, wrong only about the status — and
-//! [`crate::openapi_ext::restatus`] moves the entry to `201`. At runtime the
+//! [`ExtraResponses::restatus`](crate::openapi_ext::ExtraResponses::restatus)
+//! moves the entry to `201`. At runtime the
 //! [`IntoResponse`] impl below sends the real status.
 
 use gotcha::axum::http::StatusCode;
@@ -25,7 +26,8 @@ impl<T: Serialize> IntoResponse for Created<T> {
 }
 
 /// Delegates to `T`, so the generated body schema is `T`'s and the `201` entry
-/// [`crate::openapi_ext::restatus`] moves it into needs no schema of its own.
+/// [`ExtraResponses::restatus`](crate::openapi_ext::ExtraResponses::restatus)
+/// moves it into needs no schema of its own.
 impl<T: Schematic> Schematic for Created<T> {
     fn name() -> &'static str {
         T::name()
