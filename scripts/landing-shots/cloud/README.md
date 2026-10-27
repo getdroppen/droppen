@@ -20,11 +20,12 @@ once). The pages use the system fonts (`--font-sans`, `--font-mono` in
 take them on a Mac for SF and PingFang.
 
 Options: `--out <dir>` (default `/tmp/droppen-tour/shots/cloud`),
-`--shot <name>`, `--lang en|zh-CN`, `--theme light|dark`.
+`--shot <name>`, `--lang en|zh-CN|both` (default `en`), `--theme light|dark`.
 
 ## Shots
 
-Each in `zh-CN` and `en`, light and dark: `<shot>-<lang>-<theme>.png`.
+Each in English, light and dark: `<shot>-en-<theme>.png`. The homepage shows
+the English shots whatever the page's language.
 
 | shot | viewport | what |
 |---|---|---|

@@ -16,8 +16,10 @@ It uses kubectl's current context and namespace (`KUBE_CONTEXT`,
 about five minutes in a fresh pod, and deletes the pod when it is done. Nothing
 runs on the machine you start it from.
 
-Out come 28 files, `<shot>-<lang>-<theme>.png` with `lang` `en` | `zh-CN` and
-`theme` `light` | `dark`:
+Out come 14 files, `<shot>-en-<theme>.png` with `theme` `light` | `dark`. The
+homepage shows the English shots whatever the page's language. The scenario is
+also written in Chinese: `shoot.sh lang zh-CN` in a pod kept with `KEEP_POD=1`
+shoots that.
 
 | shot | device | what it shows |
 | ---- | ------ | ------------- |
@@ -29,8 +31,9 @@ Out come 28 files, `<shot>-<lang>-<theme>.png` with `lang` `en` | `zh-CN` and
 | `phone-session` | phone | the question card and the composer on a phone |
 | `phone-list` | phone | the session list on a phone |
 
-Desktop is 1120×700 CSS px at 2×, phone 390×844 at 3× (mobile emulation). No
-browser chrome: the homepage draws the frames.
+Desktop is 1280×800 CSS px at 2×, about the width the homepage frames it at,
+phone 390×844 at 3× (mobile emulation). No browser chrome: the homepage draws
+the frames.
 
 ## What is real and what is scripted
 

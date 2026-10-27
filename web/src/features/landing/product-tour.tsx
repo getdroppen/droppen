@@ -9,8 +9,9 @@ import { useReducedMotion } from "./motion";
  * sessions, split screen, terminal, the cloud's every-device page, the phone,
  * letting a device in. Each picture sits in the frame it is seen in (the Mac
  * app's window, a browser at my.droppen.app, a phone), drawn here in HTML so
- * the frames follow the theme; the pictures themselves are per language and
- * theme (`tourShot`).
+ * the frames follow the theme; the pictures themselves are per theme
+ * (`tourShot`), and in English whatever the page's language: the product is
+ * the same, and one set keeps the page light.
  *
  * The screenshots are made from the real app on a demo home with made-up
  * sessions (`scripts/landing-shots/`), never from anyone's account.
@@ -37,24 +38,18 @@ export const TOUR_SHOTS: Record<TourTab, { frame: FrameKind; shots: string[] }> 
   security: { frame: "phone", shots: ["security-pair"] },
 };
 
-/** The screenshots' languages: Chinese pages get the Chinese ones, every other the English. */
-export function tourLanguage(language: string): "zh-CN" | "en" {
-  return language.startsWith("zh") ? "zh-CN" : "en";
-}
-
-/** Where a screenshot is, for a language and a theme. */
-export function tourShot(shot: string, language: string, theme: "light" | "dark"): string {
-  return `/tour/${shot}-${tourLanguage(language)}-${theme}.webp`;
+/** Where a screenshot is, for a theme. */
+export function tourShot(shot: string, theme: "light" | "dark"): string {
+  return `/tour/${shot}-${theme}.webp`;
 }
 
 /** One screenshot in both themes: the page's theme (the `dark` class) shows one of them. */
 function Shot({ shot, alt, className, eager }: { shot: string; alt: string; className?: string; eager?: boolean }) {
-  const { i18n } = useTranslation();
   const loading = eager ? "eager" : "lazy";
   return (
     <>
-      <img src={tourShot(shot, i18n.language, "light")} alt={alt} loading={loading} decoding="async" className={cn("block w-full dark:hidden", className)} />
-      <img src={tourShot(shot, i18n.language, "dark")} alt="" aria-hidden="true" loading={loading} decoding="async" className={cn("hidden w-full dark:block", className)} />
+      <img src={tourShot(shot, "light")} alt={alt} loading={loading} decoding="async" className={cn("block w-full dark:hidden", className)} />
+      <img src={tourShot(shot, "dark")} alt="" aria-hidden="true" loading={loading} decoding="async" className={cn("hidden w-full dark:block", className)} />
     </>
   );
 }

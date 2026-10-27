@@ -21,7 +21,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
+import { TOUR_SHOTS, TOUR_TABS, tourShot } from "../src/features/landing/product-tour.js";
 import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
 import LandingPage from "../src/features/landing/landing.js";
@@ -467,7 +467,7 @@ test("every diagram is right-angled: each wire straight or a single L, through n
   }
 });
 
-test("the tour shows the product: six tabs of real screenshots, each in its frame, in the reader's language and both themes", () => {
+test("the tour shows the product: six tabs of real screenshots, each in its frame, in English for every reader and in both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
   // The tabs, the first one shown.
@@ -475,23 +475,16 @@ test("the tour shows the product: six tabs of real screenshots, each in its fram
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
   for (const label of ["会话", "分屏", "终端", "云端", "手机", "安全"]) assert.ok(text(tour).includes(label), label);
   // Its picture in both themes, the light one described.
-  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
-  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);
-  // Chinese readers get the Chinese screenshots, every other reader the English ones.
-  assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
-  assert.equal(tourShot("phone-session", "ja", "dark"), "/tour/phone-session-en-dark.webp");
+  assert.match(tour, /<img src="\/tour\/app-session-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
+  assert.match(tour, /<img src="\/tour\/app-session-dark\.webp" alt="" aria-hidden="true"/);
+  // Every reader sees the same English screenshots; only the description is in their language.
+  assert.match(draw("en"), /<img src="\/tour\/app-session-light\.webp" alt="Droppen on a Mac[^"]*"/);
 });
 
-test("every screenshot the tour can show is in the build, in both languages and both themes", () => {
-  const files = new Set(readdirSync(new URL("../public/tour/", import.meta.url)));
-  for (const tab of TOUR_TABS) {
-    for (const shot of TOUR_SHOTS[tab].shots) {
-      for (const lng of ["zh-CN", "en"]) for (const theme of ["light", "dark"] as const) {
-        const file = tourShot(shot, lng, theme).replace("/tour/", "");
-        assert.ok(files.has(file), `missing: ${file}`);
-      }
-    }
-  }
+test("every screenshot the tour can show is in the build, in both themes, and nothing it cannot", () => {
+  const files = readdirSync(new URL("../public/tour/", import.meta.url)).sort();
+  const shown = TOUR_TABS.flatMap((tab) => TOUR_SHOTS[tab].shots.flatMap((shot) => (["light", "dark"] as const).map((theme) => tourShot(shot, theme).replace("/tour/", ""))));
+  assert.deepEqual(files, [...new Set(shown)].sort());
 });
 
 test("the diagrams that carry content mark what is encrypted where: a padlock on every wire leaving the sender", () => {

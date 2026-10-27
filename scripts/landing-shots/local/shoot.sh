@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Inside a throwaway Debian container (bookworm, with Rust), as root: build the
-# server and the web app from this checkout, then for each language seed a demo
-# home, serve it, stage the live sessions and capture the tour screenshots.
+# server and the web app from this checkout, then seed a demo home, serve it,
+# stage the live sessions and capture the tour screenshots, in English (the
+# homepage shows the English ones in every language; `lang zh-CN` shoots the
+# Chinese scenario).
 #
 #   shoot.sh [all | setup | lang <en|zh-CN>]   (default: all)
 #
@@ -142,7 +144,7 @@ case "${1:-all}" in
     [ -n "${SHOOT_UNDER_TINI:-}" ] || setup
     under_tini "$@"
     mkdir -p "$OUT"
-    for lang in en zh-CN; do shoot_lang "$lang"; done
+    shoot_lang en
     ls -1 "$OUT"
     ;;
   *) echo "usage: shoot.sh [all | setup | lang <en|zh-CN>]" >&2; exit 2 ;;

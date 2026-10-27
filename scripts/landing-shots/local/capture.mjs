@@ -32,9 +32,9 @@ const staged = JSON.parse(fs.readFileSync(path.join(opts.state, "staged.json"), 
 const only = opts.only ? new Set(opts.only.split(",")) : null;
 fs.mkdirSync(out, { recursive: true });
 
-// The homepage frames the desktop shots about 1070 px wide: at 1120 the app's
-// text stays close to its real size there.
-const DESKTOP = { viewport: { width: 1120, height: 700 }, deviceScaleFactor: 2 };
+// The homepage frames the desktop shots about 1280 px wide: at 1280 the app's
+// text is at its real size there.
+const DESKTOP = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
 const PHONE = {
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 3,

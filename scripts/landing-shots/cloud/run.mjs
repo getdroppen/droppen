@@ -4,8 +4,9 @@
  *
  * Renders the fixture in `web/tour/` — the real components in their real
  * composition, with made-up data and no hub — through the app's own
- * Vite/Tailwind setup, and captures each shot in every language and theme
- * with Playwright: `<shot>-<lang>-<theme>.png`, no browser chrome, no
+ * Vite/Tailwind setup, and captures each shot in English (the homepage shows
+ * those in every language) and both themes with Playwright:
+ * `<shot>-<lang>-<theme>.png`, no browser chrome, no
  * scrollbars, nothing moving.
  *
  *   node scripts/landing-shots/cloud/run.mjs
@@ -13,7 +14,7 @@
  * Options:
  *   --out <dir>        where the PNGs go (default /tmp/droppen-tour/shots/cloud)
  *   --shot <name>      cloud-devices | phone-needs-you | security-pair (default: all)
- *   --lang <l>         en | zh-CN (default: both)
+ *   --lang <l>         en | zh-CN | both (default: en)
  *   --theme <t>        light | dark (default: both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
  */
@@ -55,7 +56,7 @@ const out = path.resolve(flag("out", "/tmp/droppen-tour/shots/cloud"));
 const only = flag("shot", "all");
 const shots = only === "all" ? Object.keys(SHOTS) : [only];
 for (const name of shots) if (!SHOTS[name]) throw new Error(`unknown shot ${name}: one of ${Object.keys(SHOTS).join(", ")}`);
-const langs = flag("lang", "both") === "both" ? ["zh-CN", "en"] : [flag("lang")];
+const langs = flag("lang", "en") === "both" ? ["zh-CN", "en"] : [flag("lang", "en")];
 const themes = flag("theme", "both") === "both" ? ["light", "dark"] : [flag("theme")];
 const channel = flag("channel", process.env.LANDING_SHOTS_CHANNEL ?? "");
 
