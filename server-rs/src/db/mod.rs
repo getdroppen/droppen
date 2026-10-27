@@ -158,8 +158,9 @@ impl Db {
     /// `0600` on the database and its two sidecars.
     ///
     /// Not housekeeping: this file absorbs `accounts.json`, `users.json`,
-    /// `push.json` and `notify.json`, every one of which is written `0600` today
-    /// because it holds an OAuth token, an argon2 hash or a VAPID private key.
+    /// `push.json` and `notify.json`, and holds the bearer-token digests the
+    /// auth sessions mint. Each of those is kept `0600` because it holds an
+    /// OAuth token, an argon2 hash, a VAPID private key or a bearer digest.
     /// Merging them into one file merges their permissions too, and the merge
     /// is only safe if it takes the *strictest* of them. WAL means there are
     /// three files, and the `-wal` one holds committed rows that have not been
