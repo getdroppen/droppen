@@ -644,7 +644,7 @@ export default function DownloadPage({
     <div data-testid="download" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
             <CapsLabel>{t("Download")}</CapsLabel>
             <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">

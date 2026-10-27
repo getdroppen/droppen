@@ -13,7 +13,7 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
 
 /*
  * The public pages' frame, in the landing page's drafting-sheet language: a
- * sticky header over a 1152px framed column, hairline
+ * sticky header over a 1360px framed column, hairline
  * sections with registration marks at their seams, and the one-line footer.
  * The landing page (`landing.tsx`), the download page (`download.tsx`), the
  * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`), the
@@ -116,7 +116,7 @@ export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: 
   const { t } = useTranslation();
   return (
     <header className="sticky top-0 z-40 h-14 shrink-0 border-b border-border bg-bg md:px-8">
-      <div className="relative mx-auto flex h-full max-w-[1152px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
+      <div className="relative mx-auto flex h-full max-w-[1360px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
         <a {...publicLink("/")} className="flex items-center gap-3" aria-label="Droppen">
           <BrandMark size={20} />
           <span className="font-mono text-sm font-medium text-fg">Droppen</span>

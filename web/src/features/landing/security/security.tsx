@@ -992,7 +992,7 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
     <div data-testid="security" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <FormulaProvider>
             <Hero />
             <Definitions />

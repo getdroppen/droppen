@@ -31,7 +31,7 @@ import { APP_PATH, PRICING_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_U
  * with the lid closed, and only then, in one section, that it is end-to-end
  * encrypted and the client open source; the full account is /security's.
  *
- * Drafting-sheet language throughout: a 1152px framed column of hairline
+ * Drafting-sheet language throughout: a 1360px framed column of hairline
  * sections with registration marks at their seams, one ink primary action
  * (the hero's, for the device reading it: `hero-get.tsx` — the Mac App's
  * download on a Mac, the install command on Linux, else "start for free"),
@@ -344,7 +344,7 @@ export default function LandingPage({
     <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <Header signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="tour">
             <ProductTour />
