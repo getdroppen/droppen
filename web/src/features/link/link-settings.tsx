@@ -32,6 +32,8 @@ import { Switch } from "@/components/ui/switch";
  */
 
 type CloudStatus = components["schemas"]["CloudStatus"];
+/** How this device's identity key renewal stands (`GET /api/cloud`'s `link.rotation`). */
+export type CloudRotation = components["schemas"]["CloudRotation"];
 
 export { cloudKey };
 
@@ -137,9 +139,7 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
   // 「只剩退役钥时」): its key put aside for good, a fresh one made, and it signs in again under a new id.
   const fresh = useMutation({
     mutationFn: async () => {
-      // Read as R3's agent serves it until the generated API types name it.
-      const post = api as unknown as { POST(path: string, init: { body: unknown }): Promise<{ data?: unknown; error?: unknown; response: Response }> };
-      const res = await post.POST("/api/cloud/re-enroll-fresh", { body: {} });
+      const res = await api.POST("/api/cloud/re-enroll-fresh");
       if (!res.data) throw await failure(res);
       return res.data;
     },
@@ -204,9 +204,9 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
               onSignIn={signIn}
             />
           )}
-          {linkRotation(status) && (
+          {status.link?.rotation && (
             <RotationNote
-              rotation={linkRotation(status)!}
+              rotation={status.link.rotation}
               canManage={status.canManage}
               busy={fresh.isPending}
               error={fresh.isError ? fresh.error.message : null}
@@ -628,31 +628,6 @@ export function AggregatorLine({
 }
 
 /**
- * `GET /api/cloud`'s `link.rotation` (the agent, R3; docs/host-identity-rotation.md
- * §3.5, §3.7, §3.8): `staged` with the code a renewal
- * confirmed on the device shows while it lasts, `renewed` after one, `foreign`
- * once a verified renewal of its own id names keys it never made (`reason`
- * `renewed_elsewhere`: its own backup from before a renewal looks the same), and
- * `refused` while the hub refuses its sign-in and it syncs the chain to see why.
- * Read as the agent serves it until the generated API types name it.
- */
-export interface LinkRotation {
-  state: "idle" | "staged" | "renewed" | "foreign" | "refused";
-  code?: string | null;
-  codeExpiresMs?: number | null;
-  renewedMs?: number | null;
-  previousFingerprint?: string | null;
-  reason?: string | null;
-}
-
-/** This device's renewal as its link reports it, when there is anything to say. */
-export function linkRotation(status: Pick<CloudStatus, "link">): LinkRotation | null {
-  const r = (status.link as { rotation?: unknown } | null | undefined)?.rotation as Partial<LinkRotation> | null | undefined;
-  if (!r || typeof r !== "object" || (r.state !== "staged" && r.state !== "renewed" && r.state !== "foreign" && r.state !== "refused")) return null;
-  return r as LinkRotation;
-}
-
-/**
  * This device's identity key renewal, on its own Droppen settings: the code to
  * type on the device that asked (a renewal confirmed on the device, §3.7), when
  * it last renewed, that the hub refused its sign-in while it syncs (no alarm:
@@ -660,6 +635,9 @@ export function linkRotation(status: Pick<CloudStatus, "link">): LinkRotation | 
  * elsewhere, with the way back: put its key aside for good and sign it in
  * again under a new identity (§3.8 「只剩退役钥时」). Worded so as not to alarm:
  * restoring this device's own backup from before a renewal ends here too.
+ *
+ * `idle` and `unreadable` say nothing here: nothing is known of a renewal, or
+ * the link stopped over a key that does not read (its own settings say why).
  */
 export function RotationNote({
   rotation,
@@ -669,7 +647,7 @@ export function RotationNote({
   onFresh,
   now = Date.now(),
 }: {
-  rotation: LinkRotation;
+  rotation: CloudRotation;
   canManage: boolean;
   busy: boolean;
   error: string | null;
@@ -711,6 +689,7 @@ export function RotationNote({
       </p>
     );
   }
+  if (rotation.state !== "foreign") return null;
   return (
     <div data-testid="droppen-rotation" data-state="foreign" data-signal="failed" className="flex flex-col gap-2 border border-border bg-danger/4 p-3 shadow-[inset_2px_0_0_var(--color-danger)]">
       <span className="font-mono text-xs text-danger">{t("this device's identity key was replaced elsewhere")}</span>

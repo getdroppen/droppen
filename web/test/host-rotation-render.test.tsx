@@ -18,7 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ControlConfirm, DeviceRow, type DeviceRowView, HostControl, rowMenuItems } from "../src/features/cloud/devices.js";
 import { AlwaysConfirmSetting, EndPauseConfirm, EnterCode, PushRenewNotice, RenewalLine, RenewalNotice, RenewalsAhead, RenewPanel } from "../src/features/cloud/renewal.js";
 import { renewalErrorText } from "../src/features/cloud/ui.js";
-import { RotationNote, linkRotation, type LinkRotation } from "../src/features/link/link-settings.js";
+import { RotationNote, type CloudRotation } from "../src/features/link/link-settings.js";
 import { RenewalError, type RenewalFailure } from "../src/lib/hub/account.js";
 import type { RenewalRunner, RenewalStatus } from "../src/lib/hub/renewal.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -461,7 +461,7 @@ test("R6: a host that lets an isolated one control it says to remove that one fi
 
 // ------------------------------------------------------------ the host's own settings
 
-const note = (rotation: LinkRotation, canManage = true, onFresh = () => undefined, lng = "en") =>
+const note = (rotation: CloudRotation, canManage = true, onFresh = () => undefined, lng = "en") =>
   draw(<RotationNote rotation={rotation} canManage={canManage} busy={false} error={null} onFresh={onFresh} now={1_000} />, lng);
 
 test("the host's own Droppen settings: the code while it lasts, the last renewal, nothing otherwise", () => {
@@ -472,9 +472,8 @@ test("the host's own Droppen settings: the code while it lasts, the last renewal
   const renewed = note({ state: "renewed", renewedMs: 2_000, previousFingerprint: "OLD-FP" });
   assert.match(renewed, /identity key renewed · /);
   assert.ok(renewed.includes("previous fingerprint OLD-FP"));
-  assert.equal(linkRotation({ link: null }), null);
-  assert.equal(linkRotation({ link: { rotation: { state: "idle" } } } as never), null);
-  assert.deepEqual(linkRotation({ link: { rotation: { state: "foreign", reason: "renewed_elsewhere" } } } as never), { state: "foreign", reason: "renewed_elsewhere" });
+  assert.equal(note({ state: "idle" }), "", "nothing known: nothing shown");
+  assert.equal(note({ state: "unreadable", reason: "staged_key_unreadable" }), "", "unreadable: nothing shown (the link says why)");
   // Refused while it syncs: said quietly — nothing is known yet.
   const refused = note({ state: "refused" });
   assert.match(refused, /data-state="refused"/);
@@ -523,7 +522,7 @@ test("every string the renewal screens use is in zh-CN, zh-TW and ja", () => {
   const src = (f: string) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
   const keysOf = (text: string) => new Set([...text.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!));
   const renewal = keysOf(src("features/cloud/renewal.tsx"));
-  const settings = keysOf(src("features/link/link-settings.tsx").slice(src("features/link/link-settings.tsx").indexOf("export interface LinkRotation")));
+  const settings = keysOf(src("features/link/link-settings.tsx").slice(src("features/link/link-settings.tsx").indexOf("export function RotationNote")));
   const errors = keysOf(src("features/cloud/ui.tsx").slice(src("features/cloud/ui.tsx").indexOf("export function renewalErrorText")));
   assert.ok(renewal.size > 30 && settings.size > 8 && errors.size > 10);
   for (const [name, table] of [
