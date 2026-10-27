@@ -175,11 +175,11 @@ impl BinStore {
             // installed path for the moment between the two calls, and a
             // supervisor restarting in that window would find no binary at all.
             //
-            // The name is unique per call, not the fixed `.staging-prev` it once
-            // was. Two upgrades in flight at the same time would otherwise write
-            // to one path and rename it twice, and the loser's half-copied file
-            // is what would become `.prev` — the binary the rollback ladder
-            // reaches for when things are already going badly.
+            // The name is unique per call: two upgrades in flight at the same
+            // time would otherwise write to one path and rename it twice, and
+            // the loser's half-copied file is what would become `.prev` — the
+            // binary the rollback ladder reaches for when things are already
+            // going badly.
             let keeping = self.staging(&format!("prev-{}", uuid::Uuid::new_v4()));
             install_copy(&installed, &keeping)?;
             std::fs::rename(&keeping, self.previous())?;

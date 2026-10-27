@@ -1,19 +1,15 @@
 //! The same-origin guard and CORS answer on `/api/*`.
 //!
-//! Port of the two `app.use("/api/*", ...)` middlewares in the former
-//! TypeScript server's `app.ts` plus the `cors()` they wrap
-//! (`hono/dist/middleware/cors/index.js`). The fs endpoints can write into
-//! `$HOME` and read files back, so a cross-origin page must never be able to
-//! reach them: a browser request whose `Origin` is not trusted is refused
-//! outright, and only a trusted one is echoed back in
-//! `Access-Control-Allow-Origin`. Tools that send no `Origin` at all (curl,
-//! the integration tests) are unaffected, exactly as in the TypeScript.
+//! The fs endpoints can write into `$HOME` and read files back, so a
+//! cross-origin page must never be able to reach them: a browser request whose
+//! `Origin` is not trusted is refused outright, and only a trusted one is
+//! echoed back in `Access-Control-Allow-Origin`. Tools that send no `Origin` at
+//! all (curl, the integration tests) are unaffected.
 //!
 //! Same-host origins are trusted, for any name the server answers to (below);
 //! extra proxy origins come from `DROPPEN_ALLOWED_ORIGINS`. Nothing else is:
-//! the development origins this once trusted for any `Host` were another site's
-//! page as far as the browser was concerned (`pnpm dev` proxies the API, so it
-//! never needed them).
+//! a development origin is another site's page as far as the browser is
+//! concerned (`pnpm dev` proxies the API, so it needs no exemption).
 //!
 //! # Which names the server answers to
 //!
@@ -62,9 +58,8 @@
 //!
 //! It is a layer over the whole router rather than a route-scoped one, because
 //! gotcha only exposes `GotchaRouter::layer` (`gotcha-0.4.1/src/router.rs:207`)
-//! and nesting would rewrite every documented path. The `/api/` prefix test the
-//! TypeScript gets from its route pattern is therefore made explicitly, in the
-//! first line of the guard.
+//! and nesting would rewrite every documented path. The `/api/` prefix test is
+//! therefore made explicitly, in the first line of the guard.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
@@ -77,12 +72,12 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use crate::api::error::ApiError;
 
-/// The methods the CORS preflight advertises — hono's defaults, which the
-/// TypeScript does not override.
+/// The methods the CORS preflight advertises: every method the API answers.
 const ALLOW_METHODS: &str = "GET,HEAD,PUT,POST,DELETE,PATCH";
 
-/// Extra trusted origins, comma-separated, from `DROPPEN_ALLOWED_ORIGINS`
-/// (before the rename, `RH_ALLOWED_ORIGINS`, still read).
+/// Extra trusted origins, comma-separated, from `DROPPEN_ALLOWED_ORIGINS`.
+/// Its old name, `RH_ALLOWED_ORIGINS`, is still read until v0.2.135
+/// ([`crate::env`]).
 fn configured_origins() -> &'static [String] {
     static ORIGINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     ORIGINS.get_or_init(|| {
@@ -96,11 +91,10 @@ fn configured_origins() -> &'static [String] {
     })
 }
 
-/// The `host` of an origin, as `new URL(origin).host` computes it: lowercase,
+/// The `host` of an origin, as a browser's `URL.host` computes it: lowercase,
 /// without userinfo, and without a port that is the scheme's default.
 ///
-/// `None` means the string is not a URL at all, which is what makes the
-/// TypeScript's `try { new URL(origin) } catch { return false }` reject it.
+/// `None` means the string is not a URL at all, so it can never match a host.
 fn origin_host(origin: &str) -> Option<String> {
     let (scheme, rest) = origin.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
@@ -355,8 +349,8 @@ fn foreign_fetch(sec_fetch_site: &str) -> bool {
     site.eq_ignore_ascii_case("cross-site") || site.eq_ignore_ascii_case("same-site")
 }
 
-/// hono's preflight answer: `204`, no body, and the request's own header list
-/// echoed back (its `allowHeaders` option is left empty by the TypeScript).
+/// The preflight answer: `204`, no body, and the request's own header list
+/// echoed back, because the browser asks whether it may send those headers.
 fn preflight(origin: Option<&str>, request_headers: Option<&str>) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NO_CONTENT;
@@ -384,9 +378,9 @@ mod tests {
         assert!(!origin_allowed("https://evil.example.com", Some("remote.example.com")));
     }
 
-    /// The development origins once trusted for any `Host` are not trusted for
-    /// any `Host` they do not name: a page at `localhost:5180` is another site
-    /// to a server at `127.0.0.1:8700`, and `pnpm dev` proxies the API anyway.
+    /// A development origin is not trusted for a `Host` it does not name: a
+    /// page at `localhost:5180` is another site to a server at
+    /// `127.0.0.1:8700`, and `pnpm dev` proxies the API anyway.
     #[test]
     fn no_origin_is_trusted_for_a_host_it_does_not_name() {
         assert!(!origin_allowed("http://localhost:5180", None));

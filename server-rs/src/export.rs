@@ -68,8 +68,7 @@ async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
         .map_err(|e| format!("connect: {e}"))?;
     let response = client.get(&url).send().await.map_err(|e| format!("connect: {e}"))?;
     let status = response.status();
-    // Exactly `200`, as the raw HTTP/1.1 reader this replaced accepted: a
-    // redirect is an answer to report, not one to follow.
+    // Exactly `200`: a redirect is an answer to report, not one to follow.
     if status != reqwest::StatusCode::OK {
         return Err(format!("GET /openapi.json -> {:?} {status}", response.version()));
     }

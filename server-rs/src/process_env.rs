@@ -1,7 +1,5 @@
 //! The environment a spawned CLI runs with, and the redaction every captured
 //! byte of its output passes through.
-//!
-//! Port of the former TypeScript server's `env.ts`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -201,20 +199,19 @@ pub fn apply_env(command: &mut tokio::process::Command, env: &Env) {
 /// for credential sk-…"), so every path that surfaces child output runs through
 /// this first.
 ///
-/// Not `sk-ant-` alone any more. A codex account's key is an OpenAI-shaped
-/// `sk-…` or `sk-proj-…`, and `codex exec` quotes it back verbatim on a 401 —
-/// so a pattern that only knew Anthropic's prefix would have put somebody's key
-/// in a session recording the first time it was typed wrong. The prefix is kept
-/// in the replacement, because "which vendor refused this" is the useful half
-/// of the line and is not itself a secret.
+/// The pattern covers `sk-` as well as `sk-ant-`. A codex account's key is an
+/// OpenAI-shaped `sk-…` or `sk-proj-…`, and `codex exec` quotes it back
+/// verbatim on a 401 — so a pattern that knew only Anthropic's prefix would put
+/// somebody's key in a session recording the first time it was typed wrong. The
+/// prefix is kept in the replacement, because "which vendor refused this" is
+/// the useful half of the line and is not itself a secret.
 ///
 /// Two alternatives rather than one widened pattern, because the two prefixes
 /// carry different amounts of evidence. `sk-ant-` is Anthropic's and nothing
-/// else's, so eight characters behind it are already a credential — the
-/// threshold this has always used, and lowering the bar for an unprefixed
-/// `sk-` must not raise it here. A bare `sk-` is a prefix half the world uses,
-/// so it needs twenty before the guess is safe: longer than every `sk-`-word
-/// that is not a credential, far shorter than the shortest real key.
+/// else's, so eight characters behind it are already a credential, and a wider
+/// bare-`sk-` rule must not raise that bar. A bare `sk-` is a prefix half the
+/// world uses, so it needs twenty before the guess is safe: longer than every
+/// `sk-`-word that is not a credential, far shorter than the shortest real key.
 ///
 /// This is only ever the *second* layer. It can catch a credential nobody told
 /// us about, which is why it exists; it cannot catch one that does not look
@@ -314,12 +311,9 @@ mod tests {
         assert!(!env.keys().any(|k| k == "CLAUDECODE"));
     }
 
-    /// The root branch, proved without being root.
-    ///
-    /// No test process runs as uid 0, so the marker's own rule is asserted
-    /// against a handed-in uid, and [`claude_env`] is then held to that rule
-    /// under whatever uid the test really has. Between them the two halves say
-    /// what matters: the marker appears exactly when the spawn would be root's.
+    /// The desktop app's switch is the server's alone: a terminal or a CLI it
+    /// starts is not run by the app, so an inherited one would make that server
+    /// refuse to self-upgrade and hide its own login.
     #[test]
     fn the_desktop_app_switch_stays_with_the_server() {
         assert!(is_server_only_variable("DROPPEN_DESKTOP_APP"));
@@ -333,6 +327,12 @@ mod tests {
         assert!(!is_server_only_variable("PATH"));
     }
 
+    /// The root branch, proved without being root.
+    ///
+    /// No test process runs as uid 0, so the marker's own rule is asserted
+    /// against a handed-in uid, and [`claude_env`] is then held to that rule
+    /// under whatever uid the test really has. Between them the two halves say
+    /// what matters: the marker appears exactly when the spawn would be root's.
     #[test]
     fn the_sandbox_marker_appears_for_root_and_for_nobody_else() {
         assert_eq!(sandbox_marker(0), Some((SANDBOX_MARKER, "1")), "root needs the escape hatch");
@@ -369,7 +369,7 @@ mod tests {
         assert!(!redacted.contains("AbCdEf"), "the secret body must be gone: {redacted}");
         assert!(redacted.contains("sk-ant-\u{2026}[redacted]"));
         assert!(redacted.ends_with("(see docs)"), "the surrounding text is untouched");
-        // Too short to be a credential: left alone, as in the TypeScript.
+        // Too short to be a credential: left alone.
         assert_eq!(redact_secrets("sk-ant-1234"), "sk-ant-1234");
 
         // A codex account's key is an OpenAI-shaped `sk-…`, and `codex exec`
@@ -379,9 +379,9 @@ mod tests {
         assert_eq!(codex, "Incorrect API key provided: sk-\u{2026}[redacted] (docs)");
         assert_eq!(redact_secrets("sk-short"), "sk-short", "not every sk- word is a credential");
 
-        // The two thresholds are not the same number, and widening the bare
-        // `sk-` one must never have raised Anthropic's: `sk-ant-` is nobody
-        // else's prefix, so eight characters behind it are already a token.
+        // The two thresholds are not the same number, and the bare `sk-` one
+        // must not raise Anthropic's: `sk-ant-` is nobody else's prefix, so
+        // eight characters behind it are already a token.
         assert_eq!(redact_secrets("sk-ant-api03-abcdefgh"), "sk-ant-\u{2026}[redacted]");
         assert_eq!(
             redact_secrets("sk-ant-Abcdefgh"),

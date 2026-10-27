@@ -34,9 +34,10 @@
 //! `serve` child survives by design (a process group of its own,
 //! `KillMode=process`, `AbandonProcessGroup`), keeps the lock, and keeps
 //! serving. The service manager then starts a fresh supervisor, whose `serve`
-//! is refused at once. Counting that refusal as a failure moved a perfectly
-//! good binary to `.bad` after three tries — and with no `.prev` and nothing
-//! better baked in, left the service down until somebody reinstalled it.
+//! is refused at once. Counting that refusal as a failure would move a
+//! perfectly good binary to `.bad` after three tries — and with no `.prev` and
+//! nothing better baked in, leave the service down until somebody reinstalled
+//! it.
 //!
 //! So `serve` exits with [`INSTANCE_HELD_EXIT`] for that refusal and nothing
 //! else, and this loop treats it as "wait": it neither counts the exit as a fast
@@ -65,9 +66,8 @@
 //! app and detached CLI is spawned to *outlive* the server, so when the server
 //! exits they are reparented to pid 1 — and if pid 1 never `wait()`s, each one
 //! becomes a zombie that holds a pid until the container dies. A shell script
-//! with `exec` in it, which is what the entrypoint used to be, is not a reaper.
-//! This loop is: it waits on **every** child, not just its own, and throws away
-//! the statuses of the ones it did not start.
+//! with `exec` in it is not a reaper. This loop is: it waits on **every** child,
+//! not just its own, and throws away the statuses of the ones it did not start.
 //!
 //! # Signals
 //!
@@ -113,8 +113,8 @@ const FAST_FAILURES: u32 = 3;
 /// than zero that this loop reads anything into (see the module docs). Chosen
 /// to stay clear of everything else a child can end with: every other failure
 /// of every subcommand exits 1, and a death by signal is reported as `128 + n`.
-/// A person running `serve` by hand sees the same refusal message as before;
-/// only the status differs.
+/// A person running `serve` by hand sees the same refusal message; only the
+/// status differs.
 pub const INSTANCE_HELD_EXIT: u8 = 75;
 
 /// The shortest gap between two restarts.
@@ -354,11 +354,11 @@ pub fn failure_exit_code(error: &GotchaError) -> u8 {
 
 /// Move the failing binary aside and say what will be tried instead.
 ///
-/// Note what this does *not* do: reset the backoff. It used to, and the result
-/// was a machine where everything was broken cycling 2s, 4s, 2s, 4s forever —
-/// three failures, a step down, a reset, three more failures — hammering a
-/// binary that could not run at all. Stepping down is not evidence that things
-/// are getting better, so the wait keeps growing.
+/// Note what this does *not* do: reset the backoff. A reset would make a
+/// machine where everything is broken cycle 2s, 4s, 2s, 4s forever — three
+/// failures, a step down, a reset, three more failures — hammering a binary
+/// that cannot run at all. Stepping down is not evidence that things are
+/// getting better, so the wait keeps growing.
 fn step_down(store: &BinStore, baked: &Path) {
     let step = match store.demote() {
         Ok(step) => step,
@@ -400,8 +400,8 @@ fn spawn(exe: &Path, args: &[String]) -> io::Result<i32> {
         .args(args)
         // How the server knows it may restart itself; see
         // [`crate::selfupdate::SUPERVISED_ENV`]. Under both names: after a
-        // rollback the child may be a server from before the rename to
-        // Droppen, which reads only `RH_SUPERVISED`.
+        // rollback the child may be a pre-rename server, which
+        // reads only `RH_SUPERVISED`.
         .envs(crate::env::with_old_name(selfupdate::SUPERVISED_ENV).map(|name| (name, "1")))
         // And every setting this `up` was given under a new name, under the
         // old one too: such a child reads only `REMOTE_HAND_DATA_DIR`, and
@@ -617,10 +617,10 @@ mod tests {
     #[test]
     fn asking_whether_a_signal_arrived_is_not_the_same_as_one_arriving() {
         // The loop asks on every poll, and the answer has to be "no" until one
-        // really does. An earlier version consumed the flag by swapping the
-        // marker in unconditionally, which made the very first poll look like a
-        // stop request — so the supervisor exited after its first child instead
-        // of restarting it, and self-upgrade silently became a shutdown.
+        // really does. Consuming the flag by swapping the marker in
+        // unconditionally would make the very first poll look like a stop
+        // request — the supervisor would exit after its first child instead of
+        // restarting it, and self-upgrade would silently become a shutdown.
         assert_eq!(SIGNALLED.load(Ordering::SeqCst), 0, "no test before this one may have signalled");
         assert_eq!(taken_signal(), None);
         assert!(!stopping(), "asking must not be answering");

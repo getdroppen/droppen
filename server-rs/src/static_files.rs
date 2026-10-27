@@ -558,7 +558,7 @@ mod tests {
         }
         assert!(RETIRING_WORKER.contains("self.registration.unregister()"));
         assert!(RETIRING_WORKER.contains("caches.delete(name)"));
-        // The page's own worker, and the same path fetched as anything else, are served as before.
+        // The page's own worker, and the same path fetched as anything else, are served normally.
         let mut asked = gotcha::axum::http::HeaderMap::new();
         asked.insert("service-worker", HeaderValue::from_static("script"));
         assert!(!foreign_worker(&asked, "/sw.js"));

@@ -1,11 +1,10 @@
 //! Instance ownership: the directory one server owns, and the lock that says so.
 //!
 //! Everything remote-hand can *adopt* after a restart — the pty shims of
-//! [`crate::terminals`] today, injected runs and embedded apps in the phases
-//! that follow — is a resource that survives the process that made it. Two
-//! servers started on one machine would therefore both find it and both believe
-//! it is theirs: they would adopt the same shim socket, race on the same cursor
-//! file and kill each other's shells.
+//! [`crate::terminals`], injected runs and embedded apps — is a resource that
+//! survives the process that made it. Two servers started on one machine would
+//! therefore both find it and both believe it is theirs: they would adopt the
+//! same shim socket, race on the same cursor file and kill each other's shells.
 //!
 //! The fix is ownership rather than coordination. Every adoptable thing lives
 //! under `<data>/instances/<name>/`, and a server holds an exclusive `flock` on
@@ -14,9 +13,9 @@
 //! server that wants to coexist is given a different name (`APP_INSTANCE`) and a
 //! disjoint directory, so there is nothing left to race over.
 //!
-//! Shared, non-adoptable state deliberately stays where it is: `accounts.json`,
-//! UI preferences, session titles, the seen and archived lists, uploads and
-//! `notify.json` are files two instances may legitimately both read. They are
+//! Shared, non-adoptable state deliberately stays where it is: UI preferences,
+//! session titles, the seen and archived lists, uploads and `notify.json` are
+//! files two instances may legitimately both read. They are
 //! keyed by globally unique session ids or hold settings the user meant
 //! everywhere, so one copy is the right number. `notify.json` is the clearest
 //! case of the latter: it names the phone the user wants notifications on, and
@@ -64,15 +63,14 @@
 //! `push.json` into its instance, so the copy hop is gone: an install older than
 //! that does not inherit the shared files.
 //!
-//! `users.json` — the local accounts — joined them, later and for a different
-//! reason. The three above are per-instance because a shared one would be
-//! *wrong*: it names resources the other server does not have. The accounts
-//! were shared quite correctly right up until an instance was handed to
-//! somebody else, at which point one `user add` put both servers behind one
-//! person's password. That is the boundary this module exists to draw, and
-//! [`crate::auth::users`] draws it: the reasoning, and why the machine-wide set
-//! an older build kept is left on disk rather than moved or deleted, are all in
-//! its module note.
+//! `users.json` — the local accounts — is per-instance for a different reason.
+//! The three above are per-instance because a shared one would be *wrong*: it
+//! names resources the other server does not have. A shared account set is
+//! wrong the moment an instance is handed to somebody else, because one
+//! `user add` then puts both servers behind one person's password. That is the
+//! boundary this module exists to draw, and [`crate::auth::users`] draws it:
+//! the reasoning, and why the machine-wide set an older build kept is left on
+//! disk rather than moved or deleted, are in its module note.
 //!
 //! # Orphan reaping
 //!
@@ -247,12 +245,12 @@ impl InstanceDirs {
         self.root.join("server.port")
     }
 
-    /// Injected runs that outlive the server (phase 2).
+    /// Injected runs that outlive the server.
     pub fn runs_file(&self) -> PathBuf {
         self.root.join("runs.json")
     }
 
-    /// Embedded apps that outlive the server (phase 3).
+    /// Embedded apps that outlive the server.
     pub fn apps_file(&self) -> PathBuf {
         self.root.join("apps.json")
     }
@@ -602,7 +600,7 @@ mod tests {
 
         // And the danger is real rather than theoretical: with the name gone,
         // a second server takes the instance while the first still holds a
-        // lock on the inode that used to be there.
+        // lock on the inode the path named when the lock was taken.
         let usurper = InstanceLock::acquire(&dirs).expect("a fresh file locks unopposed");
         usurper.verify_still_held().expect("the new owner's own lock is sound");
 
@@ -612,8 +610,8 @@ mod tests {
         assert!(matches!(error, LockLost::Replaced { .. }), "{error:?}");
     }
 
-    /// The sidecars that moved must move for *every* instance: a path that
-    /// still went through the config directory would be the shared file again.
+    /// Each sidecar is per instance: a path that went through the config
+    /// directory would be one shared file again.
     #[test]
     fn the_moved_sidecars_are_disjoint_between_instances() {
         let a = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "a");

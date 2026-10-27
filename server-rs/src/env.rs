@@ -1,13 +1,14 @@
-//! The server's environment variables, under the names they have had since the
-//! rename to Droppen.
+//! The server's environment variables, and the old names a 0.2.125 build
+//! still passes and reads.
 //!
-//! Before the rename they were `REMOTE_HAND_*` and `RH_*`; each is `DROPPEN_*`
-//! now ([`RENAMED`] lists every one with its old name). The server reads them
-//! through [`var`], which takes the new name and, when that is unset, the old
-//! one — so a launchd plist, a unit or a shell profile written before the
-//! rename keeps working until v0.2.135, when the old names are removed:
+//! Every setting is `DROPPEN_*`; [`RENAMED`] lists each with the
+//! `REMOTE_HAND_*` or `RH_*` name the 0.2.125 upgrade floor knows. The server
+//! reads them through [`var`], which takes the new name and, when that is
+//! unset, the old one — so a launchd plist, a unit or a shell profile written
+//! for a pre-rename install keeps working until v0.2.135, when the old names are
+//! removed:
 //!
-//! * a value is trimmed, and an empty one is unset, as it always was;
+//! * a value is trimmed, and an empty one is unset;
 //! * only the old name is set: its value is used, and the server says once that
 //!   the old name is deprecated and stops working in v0.2.135 — add the new
 //!   name with the same value;
@@ -23,19 +24,20 @@
 //! Until v0.2.135, the variables one Droppen program sets for another
 //! ([`Kind::Handoff`]: `up` for the server it runs, the desktop app for its
 //! server, a server for a session's `droppen-notify`) are written under both
-//! names ([`with_old_name`]), because either side may be the older program —
+//! names ([`with_old_name`]), because either side may be a 0.2.125 binary that
+//! still passes the old names, or a pre-rename program that reads only them —
 //! an `up` from before a self-upgrade runs every server after it — and read
-//! under both without a word: an old name there was set by an older Droppen,
-//! not by anybody's configuration, so there is nothing for a person to
-//! rename. When the two differ, the old name wins: only a program from before
-//! the rename writes one without the other, over a new name it inherited from
+//! under both without a word: an old name there was set by another Droppen
+//! program, not by anybody's configuration, so there is nothing for a person
+//! to rename. When the two differ, the old name wins: only a pre-rename
+//! program writes one without the other, over a new name it inherited from
 //! further out.
 //!
-//! Until v0.2.135, a program that may start an *older* server — `up`, which
+//! Until v0.2.135, a program that may start a pre-rename server — `up`, which
 //! runs `.prev` after a rollback — also hands it every setting it was given
-//! under a new name under the old one ([`settings_under_old_names`]): a server
-//! from before the rename would otherwise miss `DROPPEN_DATA_DIR` and run on
-//! the default install's files.
+//! under a new name under the old one ([`settings_under_old_names`]): such a
+//! server would otherwise miss `DROPPEN_DATA_DIR` and run on the default
+//! install's files.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -52,16 +54,16 @@ pub enum Kind {
     Handoff,
 }
 
-/// Every variable the server reads that had another name before the rename:
-/// `(new, old, kind)`. `REMOTE_HAND_X` became `DROPPEN_X`, `RH_HUB_X`
-/// `DROPPEN_HUB_X` and any other `RH_X` `DROPPEN_X`.
+/// Every variable the server reads that a 0.2.125 install names differently:
+/// `(new, old, kind)`. `REMOTE_HAND_X` is `DROPPEN_X`, `RH_HUB_X` is
+/// `DROPPEN_HUB_X` and any other `RH_X` is `DROPPEN_X`.
 ///
-/// Not here, because they never had another name: `APP_*` (the framework's),
-/// `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`, `DROPPEN_DESKTOP_SHELL_READ`,
-/// `DROPPEN_ALLOWED_HOSTS`.
-/// Not here either, because their old names are gone: `DROPPEN_CODEX_API_KEY`
-/// (the server sets it and names it in the same spawn of `codex`), and the
-/// names only a test reads.
+/// Not here, because a 0.2.125 install names them the same way: `APP_*` (the
+/// framework's), `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`,
+/// `DROPPEN_DESKTOP_SHELL_READ`, `DROPPEN_ALLOWED_HOSTS`.
+/// Not here either, because no supported build reads their old names:
+/// `DROPPEN_CODEX_API_KEY` (the server sets it and names it in the same spawn
+/// of `codex`), and the names only a test reads.
 pub const RENAMED: &[(&str, &str, Kind)] = &[
     // Where this server keeps its files, and the Claude roots it reads
     // (`crate::sessions::Paths`).
@@ -114,13 +116,13 @@ pub const RENAMED: &[(&str, &str, Kind)] = &[
     ("DROPPEN_NOTIFY_TOKEN", "RH_NOTIFY_TOKEN", Kind::Handoff),
 ];
 
-/// The name `name` had before the rename, and who sets it; `None` for a name
-/// that never had another.
+/// The old name a 0.2.125 install uses for `name`, and who sets it; `None` for
+/// a name that has no other.
 fn renamed(name: &str) -> Option<(&'static str, Kind)> {
     RENAMED.iter().find(|(new, _, _)| *new == name).map(|(_, old, kind)| (*old, *kind))
 }
 
-/// The name `name` had before the rename to Droppen, if it had one.
+/// The old name a 0.2.125 install uses for `name`, if it has one.
 pub fn old_name(name: &str) -> Option<&'static str> {
     renamed(name).map(|(old, _)| old)
 }
@@ -136,7 +138,7 @@ const EMPTY_IS_A_VALUE: &[&str] = &["DROPPEN_AGENT_DIRECT_STUN"];
 
 /// Every setting ([`Kind::Setting`]) this process has under its new name,
 /// under its old name with the same value: what `up` adds to the environment
-/// of a server it starts, which may be one from before the rename (`.prev`,
+/// of a server it starts, which may be a pre-rename one (`.prev`,
 /// after a rollback) that reads only the old names. Without them such a server
 /// would run on the default install's data and configuration — another
 /// instance's state, identity and binary store — and not on the ones this
@@ -236,7 +238,7 @@ pub enum OldName {
 ///
 /// A handoff ([`Kind::Handoff`]) set to two different values takes the old
 /// name's, and says nothing: the old name is the newer of the two, written by
-/// a program from before the rename over a new name it inherited (a server of
+/// a pre-rename program over a new name it inherited (a server of
 /// that age started inside a newer one's session, say).
 pub fn lookup(name: &str, empty: Empty, read: impl Fn(&str) -> Option<String>) -> (Option<String>, Option<OldName>) {
     let get = |n: &str| {
@@ -297,8 +299,7 @@ mod tests {
         lookup(name, empty, |n| vars.get(n).map(|v| v.to_string()))
     }
 
-    /// The spellings both switch readers use. Each caller used to carry its own
-    /// copy of this table; they all go through [`truthy`] now.
+    /// The spellings both switch readers use, through [`truthy`].
     #[test]
     fn a_switch_is_on_only_for_an_explicit_yes() {
         const NAME: &str = "DROPPEN_TEST_FLAG";
@@ -438,9 +439,9 @@ mod tests {
         assert_eq!(notice(&noticed, "DROPPEN_STALL_MS", &OldName::Overridden("RH_STALL_MS")), None);
     }
 
-    /// An old name an older Droppen set for this process (an `up` from before
-    /// a self-upgrade, a session started by an older server) is nobody's to
-    /// rename, so nothing is said about it.
+    /// An old name a pre-rename program set for this process (an
+    /// `up` from before a self-upgrade, a session started by that server) is
+    /// nobody's to rename, so nothing is said about it.
     #[test]
     fn a_handoff_under_its_old_name_says_nothing() {
         let noticed = Mutex::new(BTreeSet::new());
@@ -453,8 +454,8 @@ mod tests {
     }
 
     /// Two different values of a handoff: the old name was written last, by a
-    /// program from before the rename (a server that old, started in a newer
-    /// one's session, over the session's own channel), so it wins, quietly.
+    /// pre-rename program (a server that old, started in a newer one's
+    /// session, over the session's own channel), so it wins, quietly.
     #[test]
     fn a_handoff_set_twice_takes_the_old_name_which_is_the_newer() {
         let inner = [("DROPPEN_NOTIFY_URL", "http://outer/api/notify"), ("RH_NOTIFY_URL", "http://inner/api/notify")];
@@ -466,7 +467,7 @@ mod tests {
         assert_eq!(lookup_in(&setting, "DROPPEN_STALL_MS"), (Some("5".into()), Some(OldName::Overridden("RH_STALL_MS"))));
     }
 
-    /// What `up` adds for a server that may be from before the rename: each
+    /// What `up` adds for a server that may be pre-rename: each
     /// setting it has under a new name, under the old one, with its value.
     #[test]
     fn an_older_child_gets_each_setting_under_its_old_name() {

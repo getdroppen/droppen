@@ -1,8 +1,8 @@
 //! Text helpers that more than one subsystem needs.
 //!
-//! Hex is re-exported from [`rh_client`], which already spells it the way every
-//! binary field in the hub's control messages does; [`sha256_hex`] is the one
-//! digest-to-hex spelling left in this crate. [`strip_ansi`] is the terminal
+//! Hex is re-exported from [`rh_client`], which spells it the way every binary
+//! field in the hub's control messages does; [`sha256_hex`] is the one
+//! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal
 //! cleaner the setup wizard and the installer-output reader share — every escape
 //! becomes a space, never nothing, so two words the escape sat between do not
 //! splice together.
@@ -19,9 +19,9 @@ pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
 
 /// Every escape is replaced by a space, never deleted.
 ///
-/// Deleting once spliced the trailing "Store this token…" hint onto the token
-/// itself and produced a silently unusable account, so the separator has to
-/// survive the strip.
+/// Deleting it would splice the trailing "Store this token…" hint onto the
+/// token itself and produce a silently unusable account, so the separator has
+/// to survive the strip.
 pub fn strip_ansi(text: &str) -> String {
     ansi_re().replace_all(text, " ").into_owned()
 }

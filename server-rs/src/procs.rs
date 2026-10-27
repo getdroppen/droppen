@@ -189,13 +189,12 @@ pub async fn is_running(pid: u32, program: &str) -> bool {
 /// An app is spawned into a group of its own (`process_group(0)`) precisely so
 /// this reaches every node process `code-server` started, and not one of ours.
 ///
-/// The `<= 1` guard is the lesson the pty shim's own group signal carries, in
-/// numeric form: a pid that was never learned is `0`, and `kill(-0, …)` means
-/// "my own process group" — the server's — while `kill(-1, …)` means "every
-/// process I may signal". Both are the accident, not the intent. It is a
-/// `libc::kill` rather than a `kill(1)` for the same reason: a computed pid put
-/// into a string that another program re-parses is how a missing `--` becomes an
-/// outage.
+/// The `<= 1` guard matters because these are the two wildcard values: a pid
+/// that was never learned is `0`, and `kill(-0, …)` means "my own process
+/// group" — the server's — while `kill(-1, …)` means "every process I may
+/// signal". Both are the accident, not the intent. It is a `libc::kill` rather
+/// than a `kill(1)` for the same reason: a computed pid put into a string that
+/// another program re-parses is how a missing `--` becomes an outage.
 pub fn signal_group(pid: u32, signal: libc::c_int) {
     let group = pid as libc::pid_t;
     if group <= 1 {

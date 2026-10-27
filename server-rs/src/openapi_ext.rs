@@ -10,15 +10,16 @@
 //! name) plus the status entry into the operation's `responses`.
 //!
 //! It also carries two shape fixes that keep the generated TypeScript identical
-//! to the zod contract in the former TypeScript server's `schemas.ts`:
+//! to the checked-in contract (`openapi/openapi.json`, and the zod schemas it
+//! came from):
 //!
 //! * [`Nullable`] — a value that is always present but may be `null`. gotcha maps
-//!   `Option<T>` to *optional and nullable*, but zod's `.nullable()` (without
-//!   `.optional()`) means *required and nullable*, which is a different TS type.
-//! * [`hoist_nullable_refs`] — zod-openapi puts `.nullable()` on a registered
-//!   object schema *inside* the component (`Injection` is `["object","null"]`),
-//!   whereas a `Nullable<Injection>` field would carry `nullable` next to its
-//!   `$ref`, where generators ignore it.
+//!   `Option<T>` to *optional and nullable*, but the contract means *required
+//!   and nullable*, which is a different TS type.
+//! * [`hoist_nullable_refs`] — the contract carries the nullability on a
+//!   registered object schema *inside* the component (`Injection` is
+//!   `["object","null"]`), whereas a `Nullable<Injection>` field would carry
+//!   `nullable` next to its `$ref`, where generators ignore it.
 
 use std::collections::BTreeMap;
 
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 /// A value that is always present in the payload but may be `null`.
 ///
-/// Mirrors zod's `.nullable()` without `.optional()`: `required` in the schema,
+/// The contract's required-and-nullable shape: `required` in the schema,
 /// `nullable: true` on the value. Plain `Option<T>` cannot express this because
 /// `<Option<T> as Schematic>::required()` is hard-coded to `false`
 /// (`gotcha_core-0.4.1/src/lib.rs:262`).
@@ -92,7 +93,7 @@ impl<T: Schematic> Schematic for Nullable<T> {
 
 /// A value that may be absent from the payload, but is never `null`.
 ///
-/// Mirrors zod's `.optional()` without `.nullable()`: the key is missing from
+/// The contract's optional-and-not-nullable shape: the key is missing from
 /// `required` and the value carries no `nullable`. Plain `Option<T>` cannot
 /// express this either, because gotcha hard-codes
 /// `<Option<T> as Schematic>::nullable()` to `Some(true)`
@@ -193,13 +194,13 @@ where
     Deserialize::deserialize(deserializer).map(Some)
 }
 
-/// A value of any JSON shape, as zod's `z.any()` documents it.
+/// A value of any JSON shape, as the contract documents it.
 ///
-/// `serde_json::Value` already generates the empty schema `{}` that `z.any()`
-/// produces, but it is *required*; `Option<Value>` is optional yet also marks
-/// the schema `nullable`, which is a different TypeScript type. This is the
-/// third combination — optional, no nullability — and it is what every
-/// client-owned blob in the contract (`Screen.layout`) uses.
+/// `serde_json::Value` already generates the empty schema `{}`, but it is
+/// *required*; `Option<Value>` is optional yet also marks the schema
+/// `nullable`, which is a different TypeScript type. This is the third
+/// combination — optional, no nullability — and it is what every client-owned
+/// blob in the contract (`Screen.layout`) uses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AnyValue(pub serde_json::Value);
@@ -309,7 +310,7 @@ struct ResponseOverride {
     /// Media type the body is served as.
     pub content_type: &'static str,
     /// Drop the `default` response gotcha derives from the handler's `Result`
-    /// error side, now that the real status codes are documented.
+    /// error side, when the real status codes are documented instead.
     pub drop_default: bool,
     /// Move the response generated under this status to [`Self::status`],
     /// keeping its body. gotcha derives every success as `200`
@@ -500,8 +501,8 @@ fn body_response(description: &str, content_type: &str, schema: Schema) -> Respo
 /// Apply every override, then normalize the nullable-`$ref` placement.
 ///
 /// A `(method, path)` that matches no generated operation is a programming
-/// error — the route was renamed or never registered — so it is logged loudly
-/// rather than silently skipped.
+/// error — the route has another name or was never registered — so it is
+/// logged loudly rather than silently skipped.
 pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
     let mut new_components: BTreeMap<String, Schema> = BTreeMap::new();
 
@@ -637,9 +638,9 @@ fn declare_bearer_scheme(spec: &mut OpenAPIV3) {
 /// component `X` itself.
 ///
 /// `$ref` siblings are ignored by every generator, so the field would come out
-/// as a non-nullable `X`. zod-openapi puts the nullability on the component too
-/// (`Injection` is `["object","null"]` in `openapi/openapi.json`), so this both
-/// fixes the type and matches the golden contract.
+/// as a non-nullable `X`. The checked-in contract puts the nullability on the
+/// component too (`Injection` is `["object","null"]` in `openapi/openapi.json`),
+/// so this both fixes the type and matches it.
 fn hoist_nullable_refs(spec: &mut OpenAPIV3) {
     let Some(schemas) = spec.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
         return;

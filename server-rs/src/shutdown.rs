@@ -70,13 +70,13 @@ pub async fn supervise(cancel: CancellationToken, cleanups: Cleanups) {
 
 /// Everything that must be torn down before the process exits.
 ///
-/// A struct rather than a bare call so the rest of the port has somewhere
-/// obvious to add its own without touching the serve loop.
+/// A struct rather than a bare call so a later cleanup has an obvious place to
+/// go without touching the serve loop.
 ///
 /// A CLI remote-hand injected into — a resident `claude`, a `codex exec` run —
-/// is deliberately **not** on this list, and the TypeScript did not kill one
-/// either. Both are headless: they finish on their own and append to the session
-/// transcript, which the next boot reads back in full. Killing them would throw
+/// is deliberately **not** on this list. Both are headless: they finish on
+/// their own and append to the session transcript, which the next boot reads
+/// back in full. Killing them would throw
 /// that turn away for nothing — the user asked for it, and no client is waiting
 /// on the socket. A resident makes the point harder rather than softer, because
 /// it is the *session*, not one turn: ending it at shutdown would take the

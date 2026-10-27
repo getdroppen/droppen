@@ -10,8 +10,8 @@
 //! * Run as `droppen` (any path whose last part is `droppen`): the usage and the
 //!   suggested commands say `droppen`, and errors start with `droppen:`.
 //! * Run under any other name — `remote-hand-server`, the supervisor's child,
-//!   a test binary: exactly what it said before, `remote-hand:` prefix
-//!   included, so scripts that grep for it keep working.
+//!   a test binary: the usage says `remote-hand-server`, and errors start with
+//!   `remote-hand:`, which scripts that grep for it keep relying on.
 //!
 //! The managed binary is not renamed: the `up` supervisor, self-upgrade and the
 //! `.prev`/`.bad` rollback ladder all stay on `<data>/bin/remote-hand-server`
@@ -66,8 +66,8 @@ impl Name {
         }
     }
 
-    /// What starts an error on stderr: `droppen`, or `remote-hand` as it always
-    /// has under the old name (scripts grep for `remote-hand:`).
+    /// What starts an error on stderr: `droppen`, or `remote-hand` under the
+    /// old name, which scripts grep for.
     pub fn error_prefix(self) -> &'static str {
         match self {
             Self::Droppen => DROPPEN,
@@ -174,8 +174,8 @@ fn same_file(a: &Path, b: &Path) -> bool {
 ///
 /// Each directory under its old name too, `REMOTE_HAND_DATA_DIR` /
 /// `REMOTE_HAND_CONFIG_DIR`, with the same value: the `droppen` a person's
-/// shell finds may be another install's, from before the rename to Droppen,
-/// which reads only the old names and would act on its own files instead
+/// shell finds may be another install's pre-rename binary, which reads only
+/// the old names and would act on its own files instead
 /// ([`crate::env`]).
 ///
 /// Without these, `open`, `setup-code` and `user add` typed as the page says
@@ -319,8 +319,8 @@ mod tests {
         assert_eq!(droppen_env_for(&other_instance, Some(home)), vec![pair("APP_INSTANCE", "bob")]);
 
         // A second install, its files under another root.
-        // Under both names: the `droppen` a shell finds may be from before the
-        // rename, and read only the old ones.
+        // Under both names: the `droppen` a shell finds may be a pre-rename
+        // binary, which reads only the old ones.
         let second = crate::sessions::Paths::for_instance(home.join("bob"), "default");
         let (data, config) = (crate::env::old_name("DROPPEN_DATA_DIR").unwrap(), crate::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
         assert_eq!(

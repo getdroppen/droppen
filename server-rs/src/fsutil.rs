@@ -9,8 +9,8 @@
 //! 2. create that temp file `create_new` with mode `0600`, so the bytes are
 //!    never world-readable — not even for the instant between `write` and a
 //!    `chmod` — and a temp file left by an earlier crash is never reused;
-//! 3. set `0600` once more before the rename, so the mode does not depend on
-//!    the umask or on how the inode came to exist;
+//! 3. set `0600` once more before moving it into place, so the mode does not
+//!    depend on the umask or on how the inode came to exist;
 //! 4. optionally create a missing parent directory `0700`, for the writers that
 //!    own the directory they write into (the agent's key/state paths).
 //!

@@ -1,9 +1,8 @@
 //! A server run by the Droppen desktop app (`desktop/` in this repository).
 //!
 //! The app starts this binary as a sidecar with `DROPPEN_DESKTOP_APP=1` (and,
-//! for a server from before the rename to Droppen, `RH_DESKTOP_APP=1`, which is
-//! still read: [`crate::env`]), and two things are different about such a
-//! server:
+//! for a pre-rename server, `RH_DESKTOP_APP=1`, which is still
+//! read: [`crate::env`]), and two things are different about such a server:
 //!
 //! * **It never replaces its binary.** The app runs the server it ships
 //!   inside its own bundle and is updated as a whole. `POST
@@ -27,8 +26,7 @@ pub const ENV: &str = "DROPPEN_DESKTOP_APP";
 /// Whether this process was started by the desktop app.
 ///
 /// The spellings are [`crate::env::flag`]'s, like every other switch: `1`,
-/// `true`, `yes`, `on` (any case) turn it on, and nothing else does. The table
-/// these used to be pinned against now lives with the parser.
+/// `true`, `yes`, `on` (any case) turn it on, and nothing else does.
 pub fn from_env() -> bool {
     crate::env::flag(ENV)
 }

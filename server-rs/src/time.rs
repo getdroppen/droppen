@@ -3,10 +3,10 @@
 //! There is one clock and one parser here. Everything that needs "now" as
 //! milliseconds since the epoch calls [`now_ms`], and everything that reads a
 //! stored stamp back calls [`parse_iso_ms`] — the exact inverse of the
-//! [`iso8601`](crate::sessions::iso8601) writer, with the same leniency the
-//! hand-written parser had: a `T` or a space between date and time, an optional
-//! fractional part of any length, and an optional `Z` (with anything after the
-//! seconds ignored, as before).
+//! [`iso8601`](crate::sessions::iso8601) writer, with its leniency kept as a
+//! contract: a `T` or a space between date and time, an optional fractional
+//! part of any length, and an optional `Z` (with anything after the seconds
+//! ignored).
 //!
 //! [`parse_iso`] is the stricter reader for a stamp this server did not write:
 //! a hand-editable schedule file may hold any RFC 3339 string, and a stamp that
@@ -16,8 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Milliseconds since the Unix epoch.
 ///
-/// A clock that reads before the epoch is clamped to zero, which is what every
-/// copy of this function did.
+/// A clock that reads before the epoch is clamped to zero.
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -37,9 +36,9 @@ pub fn parse_iso(stamp: &str) -> Option<SystemTime> {
 
 /// Milliseconds since the epoch, for a stamp [`crate::sessions::iso8601`] wrote.
 ///
-/// The field scan is deliberately the hand-written one's: that leniency is the
-/// contract this function replaced, and a recording made by an older writer
-/// must keep replaying. Only the civil-date arithmetic moved to chrono.
+/// The field scan is deliberately lenient — a `T` or a space, any fraction, an
+/// optional `Z` — because a recording made by an older writer must keep
+/// replaying. Only the civil-date arithmetic is chrono's.
 pub fn parse_iso_ms(text: &str) -> Option<i64> {
     let bytes = text.as_bytes();
     if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' || (bytes[10] != b'T' && bytes[10] != b' ') {
@@ -85,8 +84,8 @@ mod tests {
         assert_eq!(parse_iso_ms("2026-08-29 12:00:00"), parse_iso_ms("2026-08-29T12:00:00Z"));
         assert_eq!(parse_iso_ms("2026-08-29T12:00:00Z"), parse_iso_ms("2026-08-29T12:00:00.000Z"));
         assert_eq!(parse_iso_ms("2026-08-29T12:00:00.5Z"), parse_iso_ms("2026-08-29T12:00:00.500Z"));
-        // A day past the month's end keeps normalising, as the civil-date
-        // arithmetic it replaced did.
+        // A day past the month's end keeps normalising: the 31st of February
+        // is the 3rd of March.
         assert_eq!(parse_iso_ms("2026-02-31T00:00:00"), parse_iso_ms("2026-03-03T00:00:00"));
         for bad in ["", "nonsense", "2026-08-29", "2026-13-01T00:00:00.000Z", "2026-08-32T00:00:00.000Z"] {
             assert_eq!(parse_iso_ms(bad), None, "{bad}");

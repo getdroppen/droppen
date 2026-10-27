@@ -31,12 +31,12 @@
 //!
 //! # Downgrades
 //!
-//! `preflight` is a subcommand this phase introduced, so a binary older than it
-//! fails the health check and is refused. That is the honest behaviour rather
-//! than a bug: this route cannot verify a binary that predates the contract it
-//! verifies against. Rolling further back means restoring an older binary by
-//! hand, or deleting `<data>/bin/remote-hand-server` so the one baked into the
-//! running program seeds again.
+//! A binary without `preflight` fails the health check and is refused. That is
+//! the honest behaviour rather than a bug: this route cannot verify a binary
+//! that predates the contract it verifies against. Rolling further back means
+//! restoring an older binary by hand, or deleting
+//! `<data>/bin/remote-hand-server` so the one baked into the running program
+//! seeds again.
 //!
 //! # Privilege
 //!
@@ -106,9 +106,9 @@ const MAX_VERSION: usize = 200;
 /// The presence of a supervisor is not something a process can ask the kernel —
 /// "my parent is a `remote-hand-server up`" is not knowable portably, and being
 /// pid 1's child means nothing after a reparent. So the supervisor says so —
-/// under this name and its old one, `RH_SUPERVISED`, the only one an `up` from
-/// before the rename to Droppen sets; such an `up` stays the parent of every
-/// server a self-upgrade brings ([`crate::env`]).
+/// under this name and its old one, `RH_SUPERVISED`, the only one a pre-rename
+/// `up` sets; such an `up` stays the parent of every server a self-upgrade
+/// brings ([`crate::env`]).
 pub const SUPERVISED_ENV: &str = "DROPPEN_SUPERVISED";
 
 /// What happens to this server once the new binary is installed.
@@ -123,12 +123,12 @@ enum Restart {
 impl Restart {
     /// Whether this server is running under [`crate::supervisor`].
     ///
-    /// The environment marker is the whole test, and deliberately so. This once
-    /// also treated "my executable lives under `<data>/bin`" as proof of a
-    /// supervisor, which is not the same claim and is wrong in the direction
-    /// that hurts: running the installed binary by hand — the obvious thing to
-    /// do when debugging — answered `restarting`, and then the server exited
-    /// and nothing brought it back. Being in a directory is not being watched.
+    /// The environment marker is the whole test, and deliberately so. Living
+    /// under `<data>/bin` is not evidence of a supervisor, and taking it as
+    /// proof is wrong in the direction that hurts: running the installed binary
+    /// by hand — the obvious thing to do when debugging — would answer
+    /// `restarting`, and then the server would exit and nothing would bring it
+    /// back. Being in a directory is not being watched.
     ///
     /// The marker has no matching hole, because [`crate::supervisor`] sets it on
     /// every child it starts, unconditionally.
@@ -316,7 +316,8 @@ impl Staged {
         &self.path
     }
 
-    /// Give up ownership: the file has been renamed and must not be deleted.
+    /// Give up ownership: the file is in its final place and must not be
+    /// deleted.
     fn promoted(self) {
         std::mem::forget(self);
     }
@@ -454,10 +455,10 @@ async fn health_check(path: &Path) -> Result<String, String> {
 /// The output is *capped*, which matters more than it sounds. This runs a
 /// program that has been uploaded but not yet trusted — that is the entire point
 /// of the step — so "collect everything it writes" is a memory budget handed to
-/// a stranger. A staged binary that `exec`s `yes` took this process to several
-/// gigabytes of RSS in a few seconds; in a memory-capped container the resulting
-/// OOM kill reads to the supervisor as a fast failure, and three of those
-/// quarantine the *healthy* binary that was running all along. So each pipe
+/// a stranger. A staged binary that `exec`s `yes` would take this process to
+/// several gigabytes of RSS in a few seconds; in a memory-capped container the
+/// resulting OOM kill reads to the supervisor as a fast failure, and three of
+/// those quarantine the *healthy* binary that was running all along. So each pipe
 /// keeps at most [`CAPTURE_CAP`] and discards the rest — discards rather than
 /// stops reading, because a full pipe would block the child and turn a chatty
 /// binary into a ten-second timeout instead of an immediate answer.
@@ -646,11 +647,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_binary_that_will_not_stop_talking_is_read_in_bounded_memory() {
-        // The regression this pins: `run` used to collect the whole of both
-        // pipes. A staged binary that prints without stopping then decides how
-        // much memory this process uses, and in a memory-capped container the
-        // OOM kill that follows looks to the supervisor like a fast failure —
-        // three of which quarantine the healthy binary that was running fine.
+        // An unbounded read would let a staged binary that prints without
+        // stopping decide how much memory this process uses, and in a
+        // memory-capped container the OOM kill that follows looks to the
+        // supervisor like a fast failure — three of which quarantine the healthy
+        // binary that was running fine.
         let dir = tempfile::tempdir().expect("tempdir");
         let chatty = dir.path().join("chatty");
         // A real version on the first line, then far more than the cap. `yes`
@@ -690,9 +691,9 @@ mod tests {
 
     #[test]
     fn only_the_supervisor_s_own_marker_means_supervised() {
-        // The regression this pins: living under `<data>/bin` was once taken as
-        // proof of a supervisor. Running the installed binary by hand then
-        // answered `restarting`, exited, and nothing brought it back.
+        // Living under `<data>/bin` is not proof of a supervisor: taken as
+        // proof, running the installed binary by hand would answer
+        // `restarting`, exit, and nothing would bring it back.
         assert_eq!(Restart::from_marker(None), Restart::Manual);
         assert_eq!(Restart::from_marker(Some("1")), Restart::Automatic);
         assert_eq!(Restart::from_marker(Some("0")), Restart::Manual, "only an explicit 1 counts");

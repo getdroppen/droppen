@@ -14,8 +14,8 @@
 //! port = 8700
 //! ```
 //!
-//! and `APP_SERVER__PORT=9000` overrides the port. remote-hand's own settings
-//! sit at the top level next to `home_dir` — `instance = "staging"`, or
+//! and `APP_SERVER__PORT=9000` overrides the port. remote-hand's own settings sit
+//! at the top level next to `home_dir` — `instance = "staging"`, or
 //! `APP_INSTANCE=staging` — rather than in `[server]`, which is the framework's
 //! own struct and cannot grow a field of ours.
 //!
@@ -32,8 +32,8 @@
 //! Putting a typed [`DefaultsSource`] in front of the file and environment
 //! sources fixes that and removes the need for a config file at all — which is
 //! also how the contract's `127.0.0.1:8700` default gets expressed, instead of
-//! patching gotcha's `3000` afterwards (a patch that cannot tell an untouched
-//! port from a deliberate `3000`).
+//! fixing up gotcha's `3000` afterwards (a fix-up that cannot tell whether a
+//! port was left untouched or deliberately set to `3000`).
 //!
 //! The trait API is used rather than the `Gotcha` builder because the builder
 //! swallows a configuration error and silently falls back to `Default`
@@ -135,10 +135,11 @@ fn split_ids(list: Option<&str>) -> std::collections::BTreeSet<String> {
 pub struct AuthSettings {
     /// Force authentication on (`true`) or off (`false`).
     ///
-    /// Unset is the default and means *on exactly when accounts exist*, so that
-    /// this feature landing does not lock out a machine that upgrades into it.
-    /// `true` is the fuse for a deployment that would rather refuse every request
-    /// than serve every request if `users.json` were ever lost.
+    /// Unset is the default and means *on exactly when accounts exist*: a
+    /// machine with accounts asks for a login without anyone flipping this, and
+    /// one without them stays in its setup state. `true` is the fuse for a
+    /// deployment that would rather refuse every request than serve every
+    /// request if `users.json` were ever lost.
     ///
     /// The one field with no typed default — there is no TOML value meaning
     /// "unset" — so it carries its own lenient deserializer instead, and accepts
@@ -227,7 +228,7 @@ impl AppConfig {
     /// directory somebody later cannot find.
     pub fn instance(&self) -> String {
         // An empty value means "unset", matching how `home_dir` and every
-        // `REMOTE_HAND_*` override in `crate::sessions::Paths` read one.
+        // `DROPPEN_*` override in `crate::sessions::Paths` read one.
         self.instance
             .as_deref()
             .map(str::trim)
@@ -237,8 +238,8 @@ impl AppConfig {
     }
 }
 
-/// gotcha's `ServerConfig` defaults to port 3000; remote-hand's contract is 8700
-/// on the loopback interface, which is what `web/vite.config.ts` proxies to.
+/// gotcha's `ServerConfig` defaults to port 3000; remote-hand's contract is 8700 on
+/// the loopback interface, which is what `web/vite.config.ts` proxies to.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// The port `web/vite.config.ts` proxies `/api` to.
 pub const DEFAULT_PORT: u16 = 8700;

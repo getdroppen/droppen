@@ -104,15 +104,14 @@ impl GotchaApp for RemoteHandApp {
             // path and `prepare`'s agree by construction: both read the same two
             // config fields.
             let instance = Arc::new(instance_dirs(&paths, &instance)?);
-            // The pre-chain-v3 pending aggregator key is deleted once at boot,
-            // whatever the link and cloud state: nothing writes it any more,
-            // and while it exists the status route would keep reporting
-            // `pending` for ever.
+            // A pending aggregator key from before chain v3 is deleted once at
+            // boot, whatever the link and cloud state: nothing in this build
+            // writes it, and while it exists the status route would keep
+            // reporting `pending` for ever.
             crate::aggregator::sweep_legacy_key(paths.as_ref());
             // Attachments uploaded but never sent accumulate; sweep the stale
             // ones once at boot, off the startup path so a slow disk cannot
-            // delay the listener (the former TypeScript server's `files.ts`
-            // does it at import).
+            // delay the listener.
             tokio::spawn({
                 let paths = paths.clone();
                 async move { crate::files::sweep_uploads(paths.as_ref()).await }
@@ -250,16 +249,16 @@ impl RemoteHandApp {
                 // is: a throwaway server sweeping `<data>/bin` would delete the
                 // staging file of an upgrade the real server has in flight.
                 crate::selfupdate::sweep_staging(&paths);
-                // The Claude root remote-hand owns used to be shared by every
-                // instance; the `default` one claims it here, before anything
-                // lists a session out of either place. Renaming a directory two
-                // servers could be reading is an owner's move, so it sits behind
-                // the same lock every adoption below does.
+                // The Claude root remote-hand owns may still be at the path
+                // every instance shared before roots were per-instance; the
+                // `default` instance claims it here, before anything lists a
+                // session out of either place. Renaming a directory two servers
+                // could be reading is an owner's move, so it sits behind the
+                // same lock every adoption below does.
                 crate::claude_roots::migrate_legacy_managed_root(&paths);
                 // After the move, so a legacy root's leftovers are swept too:
-                // an adoption (a feature earlier builds had) interrupted between
-                // its copy and its rename left a full transcript nothing will
-                // ever list.
+                // an adoption interrupted between its copy and its rename left
+                // a full transcript nothing will ever list.
                 crate::sessions::adoption_leftovers::sweep_partial_adoptions(&paths);
                 // Who this server is, minted once and kept for ever after.
                 // Under the lock like everything else here: it writes to the
@@ -619,10 +618,10 @@ mod tests {
     /// the server's state.
     ///
     /// The state is cloned into every handler and background task, and some of
-    /// them end after the serve task does. While the state held the lock
-    /// strongly, the instance stayed claimed until the last of them ended, and a
+    /// them end after the serve task does. A state that held the lock strongly
+    /// would keep the instance claimed until the last of them ended, and a
     /// server restarted in the same process (which is what the restart tests
-    /// do) was refused on a busy machine.
+    /// do) would be refused on a busy machine.
     #[tokio::test]
     async fn the_instance_is_released_when_serving_ends_while_the_state_lives_on() {
         let home = tempfile::tempdir().expect("tempdir");

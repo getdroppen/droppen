@@ -1,12 +1,12 @@
 //! The two Claude config roots remote-hand knows about.
 //!
-//! Port of the former TypeScript server's `claude-roots.ts`. Claude Code keeps
-//! everything (projects, live-session registrations, credentials) under one
-//! config root, chosen by `CLAUDE_CONFIG_DIR`. remote-hand knows two of them:
+//! Claude Code keeps everything (projects, live-session registrations,
+//! credentials) under one config root, chosen by `CLAUDE_CONFIG_DIR`.
+//! remote-hand knows two of them:
 //!
 //! * **local** — `~/.claude`, the user's own login. Never touched by the account
-//!   machinery: sessions there keep spawning exactly as before. Everything in it
-//!   is **external** to this server — browsable, but not its own.
+//!   machinery: sessions there spawn with the user's own login. Everything in
+//!   it is **external** to this server — browsable, but not its own.
 //! * **managed** — the root *this instance* owns, at
 //!   `<data>/instances/<name>/claude`, used for every session that runs under one
 //!   of the stored accounts. The token is injected per spawn, so a single managed
@@ -19,13 +19,12 @@
 //! scanned, not watched and not searched by id: [`ClaudeRoot::ALL`] is exactly
 //! "self and local", and nothing else enumerates roots.
 //!
-//! The TypeScript reads `homedir()` at module scope; here the roots hang off a
-//! [`Paths`], which resolves both of them once at construction, so a test can
-//! point a whole server at a synthetic tree without touching process-global
-//! state. The `DROPPEN_CLAUDE_*_ROOT` environment seams also answer to their
-//! pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through [`crate::env`];
-//! [`env_dir`] is the only place they — or any other directory override — are
-//! read.
+//! The roots hang off a [`Paths`], which resolves both of them once at
+//! construction, so a test can point a whole server at a synthetic tree without
+//! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
+//! also answer to the names a 0.2.125 install sets,
+//! `REMOTE_HAND_CLAUDE_*_ROOT`, through [`crate::env`]; [`env_dir`] is the only
+//! place they — or any other directory override — are read.
 
 use std::path::PathBuf;
 
@@ -74,11 +73,13 @@ impl ClaudeRoot {
     }
 }
 
-/// Test seam: point the user's own root at a scratch directory (before the
-/// rename, `REMOTE_HAND_CLAUDE_LOCAL_ROOT`, still read).
+/// Test seam: point the user's own root at a scratch directory. Its old name,
+/// `REMOTE_HAND_CLAUDE_LOCAL_ROOT`, is still read until v0.2.135
+/// ([`crate::env`]).
 pub const LOCAL_ROOT_ENV: &str = "DROPPEN_CLAUDE_LOCAL_ROOT";
-/// Test seam: point the managed root at a scratch directory (before the
-/// rename, `REMOTE_HAND_CLAUDE_MANAGED_ROOT`, still read).
+/// Test seam: point the managed root at a scratch directory. Its old name,
+/// `REMOTE_HAND_CLAUDE_MANAGED_ROOT`, is still read until v0.2.135
+/// ([`crate::env`]).
 pub const MANAGED_ROOT_ENV: &str = "DROPPEN_CLAUDE_MANAGED_ROOT";
 
 /// An environment override, honoured only when it is a non-empty value; under
@@ -92,7 +93,7 @@ pub fn env_dir(name: &str) -> Option<PathBuf> {
 
 /// The override-or-nothing decision, with the value supplied explicitly.
 pub fn override_dir(value: Option<&str>) -> Option<PathBuf> {
-    // `process.env.X || fallback` in JavaScript treats "" as absent.
+    // An empty value is absent: it means the same as unset.
     value.filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
@@ -138,12 +139,12 @@ pub enum LegacyMigration {
 
 /// Claim the pre-instance managed root for the default instance, once.
 ///
-/// Before ownership, every account-backed session of every instance lived in one
-/// shared `<data>/claude`. That directory is now one instance's own root, and
-/// the only defensible answer to "whose?" is the instance a single-server
-/// machine has always been running: `default`. So `default` renames it into
-/// place, and any other instance leaves it exactly where it is — a name it never
-/// owned is not a name it may take.
+/// A shared `<data>/claude` may still hold every instance's account-backed
+/// sessions from builds before roots were per-instance. It is now one
+/// instance's own root, and the only defensible answer to "whose?" is the
+/// instance a single-server machine has always been running: `default`. So
+/// `default` renames it into place, and any other instance leaves it exactly
+/// where it is — a name it never owned is not a name it may take.
 ///
 /// Idempotent by construction: the rename only happens when the destination does
 /// not exist, so the second boot finds `LegacyMigration::BothPresent` at worst
@@ -211,12 +212,10 @@ pub fn migrate_legacy_managed_root(paths: &Paths) -> LegacyMigration {
 
 /// The managed root's `.credentials.json`, when there is one.
 ///
-/// This used to be a refusal: older CLIs let file credentials outrank the
-/// environment, so a token injected next to a file would have billed whichever
-/// login was on disk. claude 2.1.266 (checked 2026-09-23 with a bogus file next
-/// to a valid `CLAUDE_CODE_OAUTH_TOKEN`) uses the environment, so the file is
-/// worth a log line and nothing more — refusing only made the root's own
-/// login and account sessions mutually exclusive.
+/// Not a refusal: claude 2.1.266 reads the environment rather than the file
+/// (verified with a bogus file next to a valid `CLAUDE_CODE_OAUTH_TOKEN`), so
+/// the file is worth a log line and nothing more. Refusing would only make the
+/// root's own login and account sessions mutually exclusive.
 pub async fn managed_root_file_credentials(paths: &Paths) -> Option<PathBuf> {
     let path = root_dir(paths, ClaudeRoot::Managed).join(".credentials.json");
     tokio::fs::metadata(&path).await.ok().map(|_| path)
