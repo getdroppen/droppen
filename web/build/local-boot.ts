@@ -50,7 +50,7 @@ export const HUB_PAGES = "/src/hub-pages.ts";
  */
 const CLOUD_CODE: [pattern: RegExp, what: string][] = [
   [/\/src\/hub-pages\.ts$/, "what a hub serves"],
-  [/\/src\/(?:features\/cloud\/|lib\/machines\/shells\/hub\.ts$|features\/machines\/device-facts\.ts$|lib\/page-resume\.ts$|components\/prefs-controls\.tsx$)/, "cloud mode's app"],
+  [/\/src\/(?:features\/cloud\/|lib\/machines\/shells\/hub\.ts$|lib\/transport\/switching\.ts$|features\/machines\/device-facts\.ts$|lib\/page-resume\.ts$|components\/prefs-controls\.tsx$)/, "cloud mode's app"],
   [/\/src\/(?:lib\/hub\/(?!(?:config|hosts|boot-url)\.ts$)|api\/hub\.ts$)/, "the hub client"],
   [/\/src\/(?:lib\/e2e\/(?!(?:bytes|keys|field)\.ts$)|lib\/transport\/p2p\.ts$)/, "the end-to-end protocol"],
   [/\/src\/features\/link\/(?:link-popup\.tsx|add-host\.ts)$/, "droppen.app's half of a computer's sign-in"],

@@ -29,6 +29,7 @@ test("what of cloud mode the local app's boot may not hold, and the few modules 
     "/w/web/src/features/link/add-host.ts",
     "/w/web/src/lib/machines/shells/hub.ts",
     "/w/web/src/lib/transport/p2p.ts",
+    "/w/web/src/lib/transport/switching.ts",
     "/w/web/src/api/hub.ts",
   ]) {
     assert.ok(cloudCode(id), id);
