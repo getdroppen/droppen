@@ -59,7 +59,6 @@ import {
   type NoiseKeyPair,
   openFrom,
   openFromRecovery,
-  readKept,
   RECOVERY_RECIPIENT,
   requireCommitted,
   type SealContext,
@@ -73,6 +72,7 @@ import {
   Writer,
 } from "@/lib/e2e";
 import type { KeyringEntry } from "./api";
+import { deviceKey, forgetDeviceKey, isAesKey } from "./device-key";
 
 const LOCAL_WRAP = "local-wrap/v1";
 const UK_LABEL = utf8("rh/v1 local UK\0");
@@ -105,11 +105,6 @@ function isStoredUserKey(value: unknown): value is StoredUserKey {
   return !!v && v.v === 1 && v.iv instanceof Uint8Array && v.ct instanceof Uint8Array;
 }
 
-function isAesKey(value: unknown): value is CryptoKey {
-  const k = value as Partial<CryptoKey> | undefined;
-  return !!k && typeof k === "object" && k.type === "secret" && (k.algorithm as { name?: string } | undefined)?.name === "AES-GCM";
-}
-
 function ukAad(account: string, epoch: number): Bytes {
   return new Writer().raw(UK_LABEL).str16(account).u32(epoch).finish();
 }
@@ -133,37 +128,36 @@ async function forgetSealedLocally(store: KeyStore): Promise<void> {
 function localWrapKey(store: KeyStore): Promise<CryptoKey> {
   let key = localKeys.get(store);
   if (!key) {
-    key = (async () => {
-      // Kept, but handed back as nothing (WebKit, for a stored `CryptoKey` it
-      // cannot unseal) is read again: a new one orphans every key sealed
-      // under it. Only when that one will never open again (the store keeps
-      // new keys fine) is it replaced — and what it sealed forgotten, so that
-      // another device sending those keys again restores them. Otherwise fail
-      // this time: the next use reads it again.
-      const existing = await readKept(store, LOCAL_WRAP);
-      if (isAesKey(existing)) return existing;
-      if (existing !== undefined && !(await storeKeepsCryptoKeys(store))) throw new Error("this browser could not read the key its user keys are sealed under; reload the page");
+    // Kept, but handed back as nothing (WebKit, for a stored `CryptoKey` it
+    // cannot unseal) is read again: a new one orphans every key sealed
+    // under it. Only when that one will never open again (the store keeps
+    // new keys fine) is it replaced — and what it sealed forgotten, so that
+    // another device sending those keys again restores them. Otherwise fail
+    // this time: the next use reads it again.
+    key = deviceKey(store, LOCAL_WRAP, {
+      usages: ["encrypt", "decrypt", "unwrapKey"],
+      unreadable: "this browser could not read the key its user keys are sealed under; reload the page",
       // Decided under the lock, on one more read: another page may have made it, or this read may work now.
-      return underKeyStoreLock("rh-local-wrap", async () => {
-        const again = await store.get(LOCAL_WRAP);
-        if (isAesKey(again)) return again;
-        // Kept but handed back as nothing here (whatever the first read said): replaced only if it provably never opens again.
-        if (again !== undefined) {
-          if (!(await storeKeepsCryptoKeys(store))) throw new Error("this browser could not read the key its user keys are sealed under; reload the page");
-          // The store keeps new keys: one more read before deciding this one never opens again — it may now.
-          const last = await store.get(LOCAL_WRAP);
-          if (isAesKey(last)) return last;
-        }
-        // The new key first: a store that will not take it changes nothing (the old key and what it sealed stay).
-        const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt", "unwrapKey"]);
-        await store.put(LOCAL_WRAP, fresh);
-        if (again !== undefined) {
-          console.warn("keyring: the device-local key will never open again: what it sealed is forgotten, and other devices send it again");
-          await forgetSealedLocally(store);
-        }
-        return fresh;
-      });
-    })();
+      make: (_existing, fresh) =>
+        underKeyStoreLock("rh-local-wrap", async () => {
+          const again = await store.get(LOCAL_WRAP);
+          if (isAesKey(again)) return again;
+          // Kept but handed back as nothing here (whatever the first read said): replaced only if it provably never opens again.
+          if (again !== undefined) {
+            if (!(await storeKeepsCryptoKeys(store))) throw new Error("this browser could not read the key its user keys are sealed under; reload the page");
+            // The store keeps new keys: one more read before deciding this one never opens again — it may now.
+            const last = await store.get(LOCAL_WRAP);
+            if (isAesKey(last)) return last;
+          }
+          // The new key first: a store that will not take it changes nothing (the old key and what it sealed stay).
+          const key = await fresh();
+          if (again !== undefined) {
+            console.warn("keyring: the device-local key will never open again: what it sealed is forgotten, and other devices send it again");
+            await forgetSealedLocally(store);
+          }
+          return key;
+        }),
+    });
     key.catch(() => localKeys.delete(store));
     localKeys.set(store, key);
   }
@@ -173,7 +167,7 @@ function localWrapKey(store: KeyStore): Promise<CryptoKey> {
 /** Forget the device-local wrap key (a removed device's wipe). */
 export async function forgetLocalWrapKey(store: KeyStore): Promise<void> {
   localKeys.delete(store);
-  await store.delete(LOCAL_WRAP);
+  await forgetDeviceKey(store, LOCAL_WRAP);
 }
 
 /** This browser's `UK` epochs for one account, encrypted at rest under the device-local key. */

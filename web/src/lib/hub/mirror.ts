@@ -51,9 +51,10 @@
  *   ({@link forgetMirrorKey}): a copy that survived the clear opens for nobody.
  */
 import type { components } from "@/api/schema";
-import { type Bytes, bytes, copy, equal, fromUtf8, hex, indexedDbKeyStore, type KeyStore, MemoryKeyStore, readKept, Serial, storeKeepsCryptoKeys, utf8, Writer } from "@/lib/e2e";
+import { type Bytes, bytes, copy, equal, fromUtf8, hex, indexedDbKeyStore, type KeyStore, MemoryKeyStore, Serial, utf8, Writer } from "@/lib/e2e";
 import { cacheSealed, cacheTransact } from "@/lib/local-cache";
 import type { CopyFollow, CopyMark, CopyName, CopySource } from "./copy-source";
+import { deviceKey, forgetDeviceKey } from "./device-key";
 import type { FeedCopy, IndexState, StatusState } from "./streams";
 
 export { namesOf } from "./copy-source";
@@ -212,11 +213,6 @@ function sealAad(at: SealAt): Bytes {
   return new Writer().raw(SEAL_LABEL).u16(MIRROR_SCHEMA).str16(at.account).str16(at.machine).str16(at.key).finish();
 }
 
-function isAesKey(value: unknown): value is CryptoKey {
-  const k = value as Partial<CryptoKey> | undefined;
-  return !!k && typeof k === "object" && k.type === "secret" && (k.algorithm as { name?: string } | undefined)?.name === "AES-GCM";
-}
-
 /**
  * Making the key is one at a time across every store: two seals (two key
  * stores over the same database) creating it at once would each keep a key
@@ -232,20 +228,21 @@ function mirrorKey(store: KeyStore): Promise<CryptoKey> {
   if (held && held.generation === keyGeneration) return held.key;
   const entry = {
     generation: keyGeneration,
-    key: keySerial.run(async () => {
-      // Kept but handed back as nothing (WebKit, a stored `CryptoKey` it cannot
-      // unseal) is read again; it is replaced only when it will never open
-      // again (the store keeps new keys fine), else nothing is saved this time.
-      const existing = await readKept(store, MIRROR_KEY_NAME);
-      if (isAesKey(existing)) return existing;
-      if (existing !== undefined && !(await storeKeepsCryptoKeys(store))) throw new Error("the browser could not read the key the device copies are sealed under");
-      // Signed out (the copies cleared and sealed): nothing can be saved, and
-      // a key made now would only outlive the copies it was forgotten with.
-      if (cacheSealed()) throw new Error("the device copies are sealed: no new mirror key");
-      const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-      await store.put(MIRROR_KEY_NAME, fresh);
-      return fresh;
-    }),
+    // Kept but handed back as nothing (WebKit, a stored `CryptoKey` it cannot
+    // unseal) is read again; it is replaced only when it will never open
+    // again (the store keeps new keys fine), else nothing is saved this time.
+    key: keySerial.run(() =>
+      deviceKey(store, MIRROR_KEY_NAME, {
+        usages: ["encrypt", "decrypt"],
+        unreadable: "the browser could not read the key the device copies are sealed under",
+        make: async (_existing, fresh) => {
+          // Signed out (the copies cleared and sealed): nothing can be saved, and
+          // a key made now would only outlive the copies it was forgotten with.
+          if (cacheSealed()) throw new Error("the device copies are sealed: no new mirror key");
+          return fresh();
+        },
+      }),
+    ),
   };
   mirrorKeys.set(store, entry);
   entry.key.catch(() => {
@@ -314,7 +311,7 @@ export function defaultMirrorSeal(): MirrorSeal {
 export function forgetMirrorKey(store: KeyStore = deviceMirrorStore()): Promise<void> {
   keyGeneration++;
   mirrorKeys.delete(store);
-  return keySerial.run(() => store.delete(MIRROR_KEY_NAME));
+  return keySerial.run(() => forgetDeviceKey(store, MIRROR_KEY_NAME));
 }
 
 const isIv = (v: unknown): v is Uint8Array => v instanceof Uint8Array && v.length === 12;
