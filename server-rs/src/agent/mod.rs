@@ -369,7 +369,7 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(bad(&format!("unsupported key file version {}", file.version)));
         }
-        let seed = decode_seed(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let seed = hub::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
         let nonce = link::unhex(&file.nonce)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
@@ -418,14 +418,15 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(format!("{}: unsupported key file version {}", path.display(), file.version));
         }
-        let seed = decode_seed(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
+        let seed = hub::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
         Ok(Some(StoredSeed {
             uuid: file.uuid,
             seed: Zeroizing::new(seed),
         }))
     }
 
-    fn create(&self, seed: &StoredSeed) -> Result<(), String> {
+    /// Store a new seed; refuses to replace one.
+    pub fn create(&self, seed: &StoredSeed) -> Result<(), String> {
         let file = Zeroizing::new(
             serde_json::to_vec_pretty(&KeyFile {
                 version: 1,
@@ -632,17 +633,6 @@ pub fn load_or_create_in(store: &FileSeedStore, uuid: &str) -> Result<(MachineId
         seed: seed.clone(),
     })?;
     Ok((MachineIdentity::from_seed(&seed), true))
-}
-
-fn decode_seed(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }
 
 #[cfg(unix)]
