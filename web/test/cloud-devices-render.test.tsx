@@ -68,6 +68,7 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "../src/i18n/cross-device.js";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { ja } from "../src/i18n/ja.js";
+import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
@@ -274,9 +275,9 @@ test("every string these screens use is translated into zh-CN, zh-TW and ja", ()
   for (const src of files) for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 50);
   for (const [name, table] of [
-    ["zh-CN", { ...onboardingZhCN, ...crossDeviceZhCN, ...cloudDevicesZhCN, ...zhCN }],
-    ["zh-TW", { ...onboardingZhTW, ...crossDeviceZhTW, ...cloudDevicesZhTW, ...zhTW }],
-    ["ja", { ...onboardingJa, ...crossDeviceJa, ...cloudDevicesJa, ...ja }],
+    ["zh-CN", { ...onboardingZhCN, ...crossDeviceZhCN, ...cloudDevicesZhCN, ...welcomeZhCN, ...zhCN }],
+    ["zh-TW", { ...onboardingZhTW, ...crossDeviceZhTW, ...cloudDevicesZhTW, ...welcomeZhTW, ...zhTW }],
+    ["ja", { ...onboardingJa, ...crossDeviceJa, ...cloudDevicesJa, ...welcomeJa, ...ja }],
   ] as const) {
     const missing = [...keys].filter((k) => !(k in table));
     assert.deepEqual(missing, [], `${name} lacks these`);

@@ -14,7 +14,6 @@ export const welcomeZhTW: Record<string, string> = {
   "Where to use it": "在哪裡用", // shell.step.where
   "First session": "第一個工作階段", // shell.step.first
   "Finishing up": "收尾", // shell.step.wrap
-  "done": "完成", // shell.state.done
   "skipped": "已略過", // shell.state.skipped
   "Every step can be skipped and changed later in Settings.": "每一步都能略過，之後都能在「設定」裡修改。", // shell.railFoot
   "Offline. Installing, signing in and Droppen need the internet; everything else works.": "目前沒有連網：安裝、登入和 Droppen 需要網路，其他都能用。", // shell.offline
@@ -44,7 +43,6 @@ export const welcomeZhTW: Record<string, string> = {
   "checking": "檢查中", // tools.st.checking
   "not installed": "未安裝", // tools.st.notInstalled
   "installing": "安裝中", // tools.st.installing
-  "failed": "失敗", // tools.st.failed
   "not signed in": "未登入", // tools.st.signedOut
   "signing in": "登入中", // tools.st.signingIn
   "ready": "已就緒", // tools.st.ready
@@ -110,7 +108,6 @@ export const welcomeZhTW: Record<string, string> = {
   "Developer tools (git)": "開發者工具（git）", // tools.git
   "Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.": "Claude Code 和 Codex 在程式專案裡會用 git。沒裝的話，macOS 會在第一個工作階段裡跳出視窗要你安裝 Apple 的命令列工具；可以現在先裝好。", // tools.git.body
   "Install (Apple)": "安裝（Apple 官方）", // tools.git.install
-  "installed": "已安裝", // tools.git.ready
   "optional": "選用", // tools.optional
   "Add accounts to Droppen (advanced)": "把帳號加到 Droppen（進階）", // tools.adv
   "For switching accounts automatically when one runs out of quota, or paying through an API key or a company gateway. Most people don't need this. Keys stay on this device and are never shown again.": "適合額度用完時自動換帳號，或用 API key、公司閘道計費。大多數人用不到。金鑰只存在這台裝置上，存好後不再顯示。", // tools.adv.body

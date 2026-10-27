@@ -14,7 +14,6 @@ export const welcomeJa: Record<string, string> = {
   "Where to use it": "使う場所", // shell.step.where
   "First session": "最初のセッション", // shell.step.first
   "Finishing up": "仕上げ", // shell.step.wrap
-  "done": "完了", // shell.state.done
   "skipped": "スキップ", // shell.state.skipped
   "Every step can be skipped and changed later in Settings.": "どのステップもスキップでき、あとから「設定」で変更できます。", // shell.railFoot
   "Offline. Installing, signing in and Droppen need the internet; everything else works.": "オフラインです。インストール・ログイン・Droppen にはインターネットが必要ですが、それ以外は使えます。", // shell.offline
@@ -44,7 +43,6 @@ export const welcomeJa: Record<string, string> = {
   "checking": "確認中", // tools.st.checking
   "not installed": "未インストール", // tools.st.notInstalled
   "installing": "インストール中", // tools.st.installing
-  "failed": "失敗", // tools.st.failed
   "not signed in": "未ログイン", // tools.st.signedOut
   "signing in": "ログイン中", // tools.st.signingIn
   "ready": "準備完了", // tools.st.ready
@@ -110,7 +108,6 @@ export const welcomeJa: Record<string, string> = {
   "Developer tools (git)": "デベロッパツール（git）", // tools.git
   "Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.": "Claude Code と Codex はコードのプロジェクトで git を使います。入っていないと、最初のセッション中に macOS が Apple のコマンドラインツールのインストールを求めてきます。今のうちに入れておけます。", // tools.git.body
   "Install (Apple)": "インストール（Apple 公式）", // tools.git.install
-  "installed": "インストール済み", // tools.git.ready
   "optional": "任意", // tools.optional
   "Add accounts to Droppen (advanced)": "Droppen にアカウントを追加（上級）", // tools.adv
   "For switching accounts automatically when one runs out of quota, or paying through an API key or a company gateway. Most people don't need this. Keys stay on this device and are never shown again.": "使用量が尽きたときの自動切り替えや、API キー・社内ゲートウェイでの課金向けです。ほとんどの方には不要です。キーはこのデバイスにだけ保存され、保存後は表示されません。", // tools.adv.body

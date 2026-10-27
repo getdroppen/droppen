@@ -11,6 +11,7 @@ import { linkJa, linkZhCN, linkZhTW } from "../src/i18n/link.js";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
+import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 
@@ -229,9 +230,9 @@ test("every string of the Droppen settings, the /link popup and the browser hand
   for (const src of files) for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 40);
   for (const [name, table] of [
-    ["zh-CN", { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...zhCN }],
-    ["zh-TW", { ...onboardingZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...zhTW }],
-    ["ja", { ...onboardingJa, ...linkJa, ...cloudDevicesJa, ...ja }],
+    ["zh-CN", { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...welcomeZhCN, ...zhCN }],
+    ["zh-TW", { ...onboardingZhTW, ...linkZhTW, ...cloudDevicesZhTW, ...welcomeZhTW, ...zhTW }],
+    ["ja", { ...onboardingJa, ...linkJa, ...cloudDevicesJa, ...welcomeJa, ...ja }],
   ] as const) {
     const missing = [...keys].filter((k) => !(k in table));
     assert.deepEqual(missing, [], `${name} lacks these`);

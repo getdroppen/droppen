@@ -2,8 +2,6 @@
 // own, so that it is in the ja chunk alone (`lang-ja.ts`).
 
 export const linkHandoffJa: Record<string, string> = {
-  "Continue in your browser": "ブラウザで続けてください",
-  "Sign in to droppen.app, or create an account.": "droppen.app にサインインするか、アカウントを作成します。",
   "Check that the fingerprint there matches this one, then add this device.": "表示されたフィンガープリントがこれと一致することを確認して、このデバイスを追加します。",
   "Come back here: this device joins your account by itself.": "ここに戻ると、このデバイスが自動でアカウントに加わります。",
   "waiting for droppen.app… the link works for another {{left}}": "droppen.app を待っています… リンクはあと {{left}} 有効です",

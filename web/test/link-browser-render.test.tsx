@@ -23,6 +23,7 @@ import { LOCAL } from "../src/lib/machines/key.js";
 import { apiFor } from "../src/lib/machines/registry.js";
 import { cloudDevicesZhCN } from "../src/i18n/cloud-devices.js";
 import { linkZhCN } from "../src/i18n/link.js";
+import { welcomeZhCN } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import type { HubLink } from "../src/lib/hub/link.js";
@@ -32,7 +33,7 @@ async function i18nIn(lng: string, translation: Record<string, string> = {}) {
   await i18n.use(initReactI18next).init({ lng, resources: { [lng]: { translation } }, interpolation: { escapeValue: false } });
   return i18n;
 }
-const ZH = { ...cloudDevicesZhCN, ...linkZhCN, ...zhCN };
+const ZH = { ...cloudDevicesZhCN, ...linkZhCN, ...welcomeZhCN, ...zhCN };
 const FORBIDDEN_ZH = /机器|电脑|本机/;
 
 const NOW = 1_800_000_000_000;

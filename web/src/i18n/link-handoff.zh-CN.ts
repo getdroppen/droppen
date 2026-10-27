@@ -3,8 +3,6 @@
 
 export const linkHandoffZhCN: Record<string, string> = {
   // The device's page.
-  "Continue in your browser": "在浏览器里继续",
-  "Sign in to droppen.app, or create an account.": "登录 droppen.app，或者注册一个账户。",
   "Check that the fingerprint there matches this one, then add this device.": "核对那边显示的指纹和这里一致，然后加入这台设备。",
   "Come back here: this device joins your account by itself.": "回到这里，这台设备会自己加入你的账户。",
   "waiting for droppen.app… the link works for another {{left}}": "等待 droppen.app… 链接还能用 {{left}}",

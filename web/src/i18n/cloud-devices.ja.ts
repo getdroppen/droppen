@@ -36,8 +36,6 @@ export const cloudDevicesJa: Record<string, string> = {
   "now": "今",
   "relay": "中継",
   "sessions not listed yet": "セッションはまだ一覧にありません",
-  "1 session": "1 件のセッション",
-  "{{n}} sessions": "{{n}} 件のセッション",
   "read the copy": "コピーを読む",
   "terminal": "ターミナル",
   "asking you {{n}}": "質問中 {{n}}",
@@ -165,8 +163,6 @@ export const cloudDevicesJa: Record<string, string> = {
   "active": "有効",
   "waiting for approval": "承認待ち",
   "removed": "削除済み",
-  "remove": "削除",
-  "cancel": "キャンセル",
   "add a device": "デバイスを追加",
   "this account has no recovery words": "このアカウントにはリカバリーワードがありません",
   "Without them, losing every device means losing everything encrypted. (Words are cleared when the device that made them, or one that came back with them, is removed.)":
@@ -294,8 +290,6 @@ export const cloudDevicesJa: Record<string, string> = {
   "Its keys and its offline copies are gone from this browser. To use it again, sign in and add it as a new device from one that is still in the account.":
     "鍵とオフラインコピーはこのブラウザから消去されました。再び使うには、サインインして、アカウントに残っているデバイスから新しいデバイスとして追加してください。",
   "sign in again": "もう一度サインイン",
-  "password": "パスワード",
-  "copied": "コピーしました",
   "Twelve recovery words let you get back in if you lose every device. They are shown once, and nobody — not the hub, not us — can recover them for you.":
     "12 語のリカバリーワードがあれば、すべてのデバイスを失っても戻れます。表示は一度だけで、ハブも私たちも誰も代わりに復元できません。",
   "create keys with recovery words": "リカバリーワード付きで鍵を作成",

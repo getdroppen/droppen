@@ -18,7 +18,6 @@ export const updatesZhTW: Record<string, string> = {
   "You're on the latest version, {{version}}.": "已是最新版本 {{version}}。",
   "Checking for updates…": "正在檢查更新…",
   "Check now": "立即檢查",
-  "Try again": "再試一次",
   "checked just now": "剛剛檢查過",
   "checked {{when}} ago": "{{when}}前檢查過",
   "not checked yet": "還沒有檢查過",

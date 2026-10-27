@@ -31,6 +31,7 @@ import { constantStore } from "../src/lib/machines/store.js";
 import { cloudDevicesZhCN } from "../src/i18n/cloud-devices.js";
 import { linkZhCN } from "../src/i18n/link.js";
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
+import { welcomeZhCN } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 
 class MemoryStorage {
@@ -51,7 +52,7 @@ Object.assign(globalThis, { localStorage: storage });
 const i18n = i18next.createInstance();
 void i18n.use(initReactI18next).init({
   lng: "en",
-  resources: { en: { translation: {} }, "zh-CN": { translation: { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...zhCN } } },
+  resources: { en: { translation: {} }, "zh-CN": { translation: { ...onboardingZhCN, ...linkZhCN, ...cloudDevicesZhCN, ...welcomeZhCN, ...zhCN } } },
   interpolation: { escapeValue: false },
   keySeparator: false,
   nsSeparator: false,

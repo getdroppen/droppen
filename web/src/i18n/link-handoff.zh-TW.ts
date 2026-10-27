@@ -2,8 +2,6 @@
 // own, so that it is in the zh-TW chunk alone (`lang-zh-TW.ts`).
 
 export const linkHandoffZhTW: Record<string, string> = {
-  "Continue in your browser": "在瀏覽器裡繼續",
-  "Sign in to droppen.app, or create an account.": "登入 droppen.app，或註冊一個帳戶。",
   "Check that the fingerprint there matches this one, then add this device.": "核對那邊顯示的指紋和這裡一致，然後加入這台裝置。",
   "Come back here: this device joins your account by itself.": "回到這裡，這台裝置會自己加入你的帳戶。",
   "waiting for droppen.app… the link works for another {{left}}": "等待 droppen.app… 連結還能用 {{left}}",

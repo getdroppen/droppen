@@ -45,6 +45,7 @@ import { BADGE_CAP, setAppBadgeCount } from "../src/lib/badge.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "../src/i18n/cross-device.js";
 import { ja } from "../src/i18n/ja.js";
+import { welcomeJa, welcomeZhCN, welcomeZhTW } from "../src/i18n/welcome.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, StreamWriter, until } from "./stream-fixtures.js";
@@ -345,9 +346,9 @@ test("every string of the ledger and a device's row is translated into zh-CN, zh
   for (const src of files) for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 30);
   for (const [name, table] of [
-    ["zh-CN", { ...crossDeviceZhCN, ...cloudDevicesZhCN, ...zhCN }],
-    ["zh-TW", { ...crossDeviceZhTW, ...cloudDevicesZhTW, ...zhTW }],
-    ["ja", { ...crossDeviceJa, ...cloudDevicesJa, ...ja }],
+    ["zh-CN", { ...crossDeviceZhCN, ...cloudDevicesZhCN, ...welcomeZhCN, ...zhCN }],
+    ["zh-TW", { ...crossDeviceZhTW, ...cloudDevicesZhTW, ...welcomeZhTW, ...zhTW }],
+    ["ja", { ...crossDeviceJa, ...cloudDevicesJa, ...welcomeJa, ...ja }],
   ] as const) {
     const missing = [...keys].filter((k) => !(k in table));
     assert.deepEqual(missing, [], `${name} lacks these`);

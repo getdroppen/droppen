@@ -37,6 +37,8 @@ const { moveJa, moveZhCN, moveZhTW } = await import("../src/i18n/move.js");
 const { signOutJa, signOutZhCN, signOutZhTW } = await import("../src/i18n/sign-out.js");
 const { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } = await import("../src/i18n/cloud-devices.js");
 const { ja } = await import("../src/i18n/ja.js");
+const { zhCN } = await import("../src/i18n/zh-CN.js");
+const { zhTW } = await import("../src/i18n/zh-TW.js");
 type MoveOutcome = import("../src/features/move/index.js").MoveOutcome;
 type DeviceHere = import("../src/lib/hub/device-here.js").DeviceHere;
 
@@ -202,8 +204,8 @@ test("every word of the notice is in zh-CN, zh-TW and ja", () => {
   const keys = [...source.matchAll(/\bt\("((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`) as string);
   assert.ok(keys.length >= 25, `${keys.length} keys`);
   const tables = {
-    "zh-CN": { ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...moveZhCN },
-    "zh-TW": { ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...moveZhTW },
+    "zh-CN": { ...cloudDevicesZhCN, ...signOutZhCN, ...hostsZhCN, ...moveZhCN, ...zhCN },
+    "zh-TW": { ...cloudDevicesZhTW, ...signOutZhTW, ...hostsZhTW, ...moveZhTW, ...zhTW },
     ja: { ...ja, ...cloudDevicesJa, ...signOutJa, ...hostsJa, ...moveJa },
   };
   for (const [lng, table] of Object.entries(tables)) {

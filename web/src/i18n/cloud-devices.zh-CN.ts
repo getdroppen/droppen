@@ -36,8 +36,6 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "now": "现在",
   "relay": "中继",
   "sessions not listed yet": "会话还未列出",
-  "1 session": "1 个会话",
-  "{{n}} sessions": "{{n}} 个会话",
   "read the copy": "读副本",
   "terminal": "终端",
   "asking you {{n}}": "在问你 {{n}}",
@@ -165,8 +163,6 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "active": "有效",
   "waiting for approval": "等待批准",
   "removed": "已移除",
-  "remove": "移除",
-  "cancel": "取消",
   "add a device": "添加设备",
   "this account has no recovery words": "该账户没有恢复词",
   "Without them, losing every device means losing everything encrypted. (Words are cleared when the device that made them, or one that came back with them, is removed.)":
@@ -294,8 +290,6 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "Its keys and its offline copies are gone from this browser. To use it again, sign in and add it as a new device from one that is still in the account.":
     "它的钥匙和离线副本已从这个浏览器清除。如需再次使用，请登录，并从仍在账户中的设备把它作为新设备添加。",
   "sign in again": "重新登录",
-  "password": "密码",
-  "copied": "已复制",
   "Twelve recovery words let you get back in if you lose every device. They are shown once, and nobody — not the hub, not us — can recover them for you.":
     "12 个恢复词能在你丢失所有设备时找回账户。它们只显示一次，任何人（包括云端和我们）都无法替你找回。",
   "create keys with recovery words": "创建密钥并生成恢复词",

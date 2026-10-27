@@ -18,7 +18,6 @@ export const updatesJa: Record<string, string> = {
   "You're on the latest version, {{version}}.": "最新バージョン {{version}} です。",
   "Checking for updates…": "アップデートを確認中…",
   "Check now": "今すぐ確認",
-  "Try again": "もう一度試す",
   "checked just now": "たった今確認しました",
   "checked {{when}} ago": "{{when}}前に確認しました",
   "not checked yet": "まだ確認していません",
