@@ -31,7 +31,7 @@ import type { TerminalsSearch } from "@/features/terminals/terminals-view";
 import { firstRunRedirect } from "@/features/setup/auto-open";
 import { validateWelcomeSearch } from "@/features/setup/model";
 import { authRedirect, authStatus, clearToken, isDesktopApp, LOGIN_PATH, primeDownloadTicket } from "@/lib/auth";
-import { pluginAlias } from "@/plugins/aliases";
+import { isCloud } from "@/lib/hub/config";
 import { PluginRoute } from "@/plugins/plugin-route";
 
 /**
@@ -49,11 +49,6 @@ import { PluginRoute } from "@/plugins/plugin-route";
 const rootRoute = createRootRoute({
   component: RootLayout,
   beforeLoad: async ({ location }) => {
-    // An old top-level path a bundled plugin still answers to (`/tasks`): its
-    // page lives under `/p/<id>/` now, and bookmarks and installed home-screen
-    // apps keep working. Only the plugins this build bundles have aliases.
-    const alias = pluginAlias(location.pathname);
-    if (alias) throw redirect({ to: "/p/$plugin/$", params: { plugin: alias, _splat: "" }, replace: true });
     const status = await authStatus();
     if (status.authRequired && status.user) {
       // Downloads and `<img src>` cannot send a header, so the first paint is
@@ -229,12 +224,16 @@ const settingsRoute = createRoute({
 
 /**
  * Every plugin page: `/p/<plugin id>/<the plugin's own path>`. Which plugins
- * exist is the build's business (`virtual:droppen/bundled-plugins`), which are
- * on is the instance's; the route itself is the same in every build.
+ * exist is the instance's (`web/src/plugins/registry.tsx`), which are on is
+ * its too; the route itself is the same everywhere. A page a hub serves has no
+ * plugin pages at all (`docs/plugins/runtime.md` §5).
  */
 const pluginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "p/$plugin/$",
+  beforeLoad: () => {
+    if (isCloud()) throw redirect({ to: "/sessions", replace: true });
+  },
   component: PluginRoute,
 });
 

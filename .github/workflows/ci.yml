@@ -76,9 +76,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm --filter @droppen/plugin-sdk test
       # The web app's own tests run in the three `web-tests` shards below.
-      # The open distribution (distribution.json): no plugins.
       - run: pnpm --filter @remote-hand/web build
-      - run: node -e "const m=require('./web/dist/plugins/manifest.json'); if (m.plugins.length) { console.error('the open build bundles plugins:', m.plugins.map(p=>p.id)); process.exit(1) }"
 
   # The web app's tests (`pnpm --filter @remote-hand/web test`), split by test
   # file into three shards that run side by side: Node's `--test-shard=i/3`

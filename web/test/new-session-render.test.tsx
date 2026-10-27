@@ -14,17 +14,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
-import { register } from "node:module";
 import { installFakeDom, type FakeNode } from "./fake-dom.js";
-
-// The build's plugin list (`virtual:droppen/bundled-plugins`, made by Vite):
-// the open distribution's, none, for the pane code to import.
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
-  )}`,
-);
 
 const container = installFakeDom();
 // Relative requests (`new Request("/api/uploads")`) resolve as on a page.

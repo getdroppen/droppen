@@ -322,14 +322,9 @@ mkdir -p "$WORK/sidecar"
 # skips it.
 HOME_HINT=" (if the build said \"stripping debug info with rust-objcopy failed\", put rustup's cargo proxy first on PATH — Homebrew's is in /opt/homebrew/opt/rustup/bin — not a toolchain's bin/)"
 check_binary() { # path — the same checks as scripts/release-public.sh
-  local bin=$1 markers
-  markers=$(LC_ALL=C grep -ao '"distribution": "[^"]*"' "$bin" | sort -u)
-  [ "$markers" = '"distribution": "public"' ] || die "$bin: distribution markers are [$markers], not exactly \"public\""
-  for needle in '"id": "tasks"' 'plugin-tasks' '.droppen-plugins/'; do
-    if LC_ALL=C grep -aqF "$needle" "$bin"; then die "$bin: contains $needle (a bundled plugin)"; fi
-  done
+  local bin=$1
   if LC_ALL=C grep -aqF "$HOME/" "$bin"; then die "$bin: still names paths under $HOME$HOME_HINT"; fi
-  echo "ok: $(lipo -archs "$bin") $bin: distribution public, no plugins, no \$HOME paths"
+  echo "ok: $(lipo -archs "$bin") $bin: no \$HOME paths"
 }
 
 if [ -n "$SIDECAR" ]; then
@@ -359,15 +354,14 @@ if [ -n "$SIDECAR" ]; then
   echo "ok: the sidecar is $SIDE_VERSION, this ref's server"
 fi
 if [ -z "$SIDECAR" ] || { [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; }; then
-  say "web app: the public distribution"
+  say "web app"
   PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
   mkdir -p "$WORK/shims"
   if ! command -v pnpm >/dev/null || [ "$(pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
     printf '#!/bin/sh\nexec npx -y pnpm@%s "$@"\n' "$PNPM_VERSION" > "$WORK/shims/pnpm"
     chmod +x "$WORK/shims/pnpm"
   fi
-  # No DROPPEN_DISTRIBUTION: the build then reads `distribution.json`, the public one.
-  web_env=(env -u DROPPEN_DISTRIBUTION PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
+  web_env=(env PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
   run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
 fi
 if [ "$E2E" = 0 ]; then
@@ -401,11 +395,6 @@ $hits"
 fi
 if [ -z "$SIDECAR" ]; then
   run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
-  node -e '
-    const m = require(process.argv[1]);
-    if (m.distribution !== undefined && m.distribution !== "public") { console.error("distribution is", m.distribution); process.exit(1); }
-    if ((m.plugins || []).length) { console.error("the public build bundles plugins:", m.plugins.map((p) => p.id)); process.exit(1); }
-  ' "$SRC/web/dist/plugins/manifest.json" || die "web/dist is not the public distribution"
 
   say "server: ${TARGETS[*]}"
   # The commit goes in under both names: REF may be from before the rename to

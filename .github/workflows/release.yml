@@ -202,7 +202,6 @@ jobs:
           TZ: UTC
         run: |
           set -euo pipefail
-          unset DROPPEN_DISTRIBUTION
           npm install -g "pnpm@$PNPM_VERSION"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
           pnpm install --frozen-lockfile --filter "@remote-hand/web..."
@@ -342,7 +341,6 @@ jobs:
           TOOLS_SHA: ${{ needs.tools.outputs.sha }}
         run: |
           set -euo pipefail
-          unset DROPPEN_DISTRIBUTION
           .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$RUNNER_TEMP/a/tools" "$ALLOW_TOOLS"
           export PATH="$RUNNER_TEMP/a/tools/bin:$PATH"
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
@@ -371,7 +369,6 @@ jobs:
           TZ: UTC
         run: |
           set -euo pipefail
-          unset DROPPEN_DISTRIBUTION
           .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/web-dist/web-dist.tar" "$WEB_SHA" "$RUNNER_TEMP/a/web" "$ALLOW_WEB"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
           pnpm --filter @remote-hand/web build

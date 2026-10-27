@@ -9,16 +9,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { register } from "node:module";
-
-// The settings page reaches the plugin host, which imports the build's
-// bundled-plugin list: answer it as the open build does.
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
-  )}`,
-);
 
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");

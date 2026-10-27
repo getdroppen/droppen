@@ -40,6 +40,8 @@ test("the host may not reach the hosted service's code by alias or by relative p
   const root = tree({
     "web/src/plugins/a.ts": 'import { api } from "@/api/client";\nimport { hub } from "@/lib/hub/client";\n',
     "web/src/plugins/b.ts": 'import { t } from "../lib/transport";\nimport { c } from "../features/cloud/cloud-bar";\nimport { cn } from "../lib/cn";\n',
+    // The shell's marker reader is the one hub file the plugin host may use.
+    "web/src/plugins/d.ts": 'import { isCloud } from "@/lib/hub/config";\nimport { hubOrigin } from "../lib/hub/config";\n',
     "web/src/app/c.ts": 'const p = import("@droppen/plugin-tasks");\nimport "@droppen/plugin-sdk";\n',
   });
   const problems: string[] = checkBoundary(root);

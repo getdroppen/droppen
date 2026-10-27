@@ -1,6 +1,6 @@
 #!/bin/sh
 # droppen-plugin-sdk is the open contract between Droppen and its plugins
-# (docs/plugins/distribution.md): its normal dependency tree may reach neither the
+# (docs/plugins/runtime.md): its normal dependency tree may reach neither the
 # host (gotcha, axum, tokio) nor the hosted service (rh-hub, rh-proto). The
 # TypeScript half of the same rule is scripts/check-plugin-boundary.mjs.
 set -eu

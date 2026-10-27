@@ -66,7 +66,7 @@ cd web/dist && find . -type f | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum
 
 ## 3. 怎么做到的
 
-**可复现构建。** Node 钉在 `.nvmrc`（22.23.3），Hub 的镜像构建网页时用同一版本；pnpm 是 `packageManager` 里的 10.6.3；依赖由 `pnpm-lock.yaml` 钉死。公开发行版不设 `DROPPEN_DISTRIBUTION`，只用仓库里的 `distribution.json`（不含插件）。构建产物里没有时间戳和本机路径；发版和 CI 仍设 `SOURCE_DATE_EPOCH`（提交时间），留给以后读时间的工具。
+**可复现构建。** Node 钉在 `.nvmrc`（22.23.3），Hub 的镜像构建网页时用同一版本；pnpm 是 `packageManager` 里的 10.6.3；依赖由 `pnpm-lock.yaml` 钉死。网页构建本身不带任何插件：插件按实例在运行时安装，由该实例自己的服务器提供（[plugins/runtime.md](plugins/runtime.md)）。构建产物里没有时间戳和本机路径；发版和 CI 仍设 `SOURCE_DATE_EPOCH`（提交时间），留给以后读时间的工具。
 
 **云构建（静态下发）。** 默认的 `pnpm --filter @remote-hand/web build` 不设任何变量，产物就是证过的这一份：没有标记，没有云文件。要交给静态托管（Cloudflare Pages 一类）时设 `DROPPEN_WEB_MODE=cloud`，它在同一个产物上再加三样东西：`index.html` 的 `<head>` 后面写上指向规范服务源的 `rh-hub` 标记（默认 `wss://api.droppen.app`），`dist/.well-known/droppen-hub`（`{origin, app, site}`，与 Hub 的回答同形），以及 `dist/_headers`（CSP、`Permissions-Policy`、`Referrer-Policy`、HSTS）。CSP 里内联脚本的哈希用的就是 Service Worker 表里那套例程；标记在 `sw.js` 的完整性表写好之后才写进外壳，所以外壳的 sha256 仍是加标记之前的那一份。`DROPPEN_WEB_ROLE=app|site`（默认 `app`）说明这份 dist 部署在哪一类主机上：`app`（`my.`）允许本站 WebAuthn、可框 Turnstile、跨源调用 API 与中继；`site`（`www.`、apex）一律 `=()`、`frame-src 'none'`、`connect-src 'self'`。两种角色只有 `_headers` 不同，其余文件逐字节相同。云构建不写 `/.well-known/droppen-build`（那是 Hub 的回答），所以在静态主机上验证脚本按发版清单核对，标记剥掉、清单外的文件不看。主机、应用与站点、Turnstile、中继的 origin 都能用 `DROPPEN_WEB_*` 变量改，默认即 droppen.app 的值；不设 `DROPPEN_WEB_MODE=cloud` 时它们一概不参与，自建服务器与公开分发不受影响。
 
@@ -76,7 +76,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 - `files`：每个文件的路径、大小、sha256；
 - `digest`：构建摘要。每个文件一行 `<sha256>  <路径>\n`（即 `sha256sum` 的输出），按路径逐字节排序，整体再取 sha256；
-- `commit`、`ref`、`repository`，以及构建输入：Node 和 pnpm 版本、`SOURCE_DATE_EPOCH`、`.nvmrc`、`package.json`、`pnpm-lock.yaml`、`distribution.json` 的哈希。
+- `commit`、`ref`、`repository`，以及构建输入：Node 和 pnpm 版本、`SOURCE_DATE_EPOCH`、`.nvmrc`、`package.json`、`pnpm-lock.yaml` 的哈希。
 
 签名与构建分开。构建任务要跑依赖代码（安装、vite、cargo），所以没有签名权限（没有 `id-token`），也拿不到任何密钥。签名的 `attest` 任务只在真正发版时运行（试运行不生成证明），不装依赖、不编译，也不运行任何构建出来的程序，构建产物都先按产出它的任务给的 sha256 核对：它用 GitHub 自己的 `actions/attest-build-provenance` 为发版的每个文件（清单也在内）生成 SLSA 构建来源证明，再为清单单独生成一份；`publish` 任务把清单和这份 bundle（`web-manifest.sigstore.json`）连同发版的其他文件一起发布到本仓库同一标签的 GitHub Release 上。这样任何构建期依赖都拿不到能签证明的 OIDC 令牌。证明把清单绑定到这个仓库、`release.yml` 和发版标签。
 

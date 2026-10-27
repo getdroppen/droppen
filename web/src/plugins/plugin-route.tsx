@@ -1,6 +1,12 @@
 /**
  * `/p/$plugin/$` — every plugin page, routed by the longest matching
  * `RouteContribution.path` prefix of the rest of the path.
+ *
+ * Which plugins exist is the instance's (`registry.statuses`, from its
+ * statuses); the page keeps running the build it started with, so an upgrade
+ * elsewhere shows its "Reload to finish" notice here until the page reloads.
+ * A page a hub serves never gets this far (`app/router.tsx` sends `/p/…` to
+ * the session list).
  */
 import { localize } from "@droppen/plugin-sdk";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
@@ -10,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
 import { PluginBoundary } from "./boundary";
 import { hostLocale } from "./host";
+import { ReloadNotice } from "./reload-notice";
 import { usePluginRegistry } from "./registry";
 import type { PluginStatus } from "./types";
 import { matchRoute } from "./routing";
@@ -61,20 +68,28 @@ export function PluginRoute() {
   const searchStr = useRouterState({ select: (s) => s.location.searchStr });
   const search = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
   const registry = usePluginRegistry();
-  const bundled = registry.bundled.find((b) => b.id === id);
-  if (!bundled) return <PluginUnavailable message={t("there is no plugin called {{id}} in this build", { id })} />;
-  const name = localize(bundled.manifest.name, hostLocale());
-  const status = registry.statuses?.find((s) => s.id === id);
-  if (registry.statuses === null || registry.loading.includes(id)) return <Spinner className="flex-1" />;
-  if (registry.errors[id]) return <PluginUnavailable message={t("the {{name}} plugin could not start", { name })} detail={registry.errors[id]} />;
+  // A page that cannot be shown, with the reload prompt above it when the
+  // reason may be a change made elsewhere (docs/plugins/runtime.md §6).
+  const unavailable = (message: string, detail?: string) => (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {registry.reloadNeeded && <ReloadNotice className="m-3 mb-0" />}
+      <PluginUnavailable message={message} detail={detail} />
+    </div>
+  );
+  if (registry.statuses === null) return <Spinner className="flex-1" />;
+  const status = registry.statuses.find((s) => s.id === id);
+  if (!status) return unavailable(t("there is no plugin called {{id}} on this instance", { id }));
+  const name = localize(status.name, hostLocale());
+  if (registry.loading.includes(id)) return <Spinner className="flex-1" />;
+  if (registry.errors[id]) return unavailable(t("the {{name}} plugin could not start", { name }), registry.errors[id]);
   const active = registry.active.find((p) => p.id === id);
-  if (!status?.enabled || !active)
-    return <PluginUnavailable message={t("the {{name}} plugin is not enabled", { name })} detail={status?.reason ?? undefined} />;
+  if (!status.enabled || !active) return unavailable(t("the {{name}} plugin is not enabled", { name }), status.reason ?? undefined);
   const route = matchRoute(active.contributions.routes ?? [], subpath);
-  if (!route) return <PluginUnavailable message={t("{{name}} has no page here", { name })} detail={`/p/${id}/${subpath}`} />;
+  if (!route) return unavailable(t("{{name}} has no page here", { name }), `/p/${id}/${subpath}`);
   const Page = route.component;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-plugin={id}>
+      {registry.reloadNeeded && <ReloadNotice className="m-3 mb-0" />}
       <PluginNotices status={status} />
       <div className="flex min-h-0 min-w-0 flex-1">
         <PluginBoundary host={active.host} name={name}>

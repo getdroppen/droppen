@@ -134,13 +134,8 @@ function inputHash(name) {
   return existsSync(file) ? sha256(readFileSync(file)) : null;
 }
 
-/** The manifest of the build in `dist`. Refuses anything but the public distribution. */
+/** The manifest of the build in `dist`. */
 export function manifestOf(dist, { commit = null, ref = null } = {}) {
-  if (process.env.DROPPEN_DISTRIBUTION?.trim())
-    throw new Error("DROPPEN_DISTRIBUTION is set: only the public distribution (distribution.json) gets a manifest");
-  const plugins = JSON.parse(readFileSync(join(dist, "plugins", "manifest.json"), "utf8"));
-  if (plugins.distribution !== "public" || plugins.plugins.length)
-    throw new Error(`${dist} is the "${plugins.distribution}" distribution with ${plugins.plugins.length} plugin(s), not the public build`);
   const files = filesOf(dist);
   const worker = distWorkerProblems(dist, files);
   if (worker.length) throw new Error(`${dist}: the service worker's integrity table does not match the build:\n  ${worker.join("\n  ")}`);
@@ -150,13 +145,12 @@ export function manifestOf(dist, { commit = null, ref = null } = {}) {
     repository: process.env.GITHUB_REPOSITORY || null,
     commit,
     ref,
-    distribution: plugins.distribution,
     build: {
       command: 'pnpm install --frozen-lockfile --filter "@remote-hand/web..." && pnpm --filter @remote-hand/web build',
       node: process.version,
       packageManager: rootPackage.packageManager ?? null,
       source_date_epoch: process.env.SOURCE_DATE_EPOCH ?? null,
-      inputs: Object.fromEntries([".nvmrc", "package.json", "pnpm-lock.yaml", "distribution.json"].map((n) => [n, inputHash(n)])),
+      inputs: Object.fromEntries([".nvmrc", "package.json", "pnpm-lock.yaml"].map((n) => [n, inputHash(n)])),
     },
     digest: digestOf(files),
     files,

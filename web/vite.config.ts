@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type Rollup } from "vite";
 import { cloudBuild, cloudConfig } from "./build/cloud-mode";
 import { devTools } from "./build/dev-tools";
-import { droppenPlugins } from "./build/droppen-plugins";
 import { hubPagesSet, localBoot } from "./build/local-boot";
+import { pluginShared } from "./build/plugin-shared";
 import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
@@ -194,7 +194,9 @@ export default defineConfig({
     },
   },
   plugins: [
-    droppenPlugins({ webRoot: fileURLToPath(new URL(".", import.meta.url)) }),
+    // The host's React and plugin SDK as facade chunks, named by the shell's
+    // import map: runtime plugins share this build's instances of them (§3).
+    pluginShared({ webRoot: fileURLToPath(new URL(".", import.meta.url)) }),
     react(),
     tailwindcss(),
     katexWoff2Only(),
@@ -225,6 +227,11 @@ export default defineConfig({
     proxy: {
       "/api": { target: proxyTarget, ws: true },
       "/embed": { target: proxyTarget, ws: true },
+      // Plugin code, served by the instance under `/plugins/**`
+      // (docs/plugins/runtime.md §2). The import map is a build feature; a
+      // `vite dev` page resolves a plugin's bare imports the way the browser
+      // does, so plugins are exercised on a built page.
+      "/plugins": { target: proxyTarget },
       ...(probeHub ? { "/v1/probe": { target: probeHub, ws: true, changeOrigin: true } } : {}),
     },
   },

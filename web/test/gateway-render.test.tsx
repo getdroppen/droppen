@@ -15,16 +15,8 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { register } from "node:module";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installFakeDom, type FakeNode } from "./fake-dom.js";
-
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
-  )}`,
-);
 
 const container = installFakeDom();
 after(() => void setTimeout(() => process.exit(), 50));

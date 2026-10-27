@@ -1,5 +1,4 @@
 import type { Plugin, Rollup } from "vite";
-import { isPluginModule } from "./droppen-plugins";
 
 /**
  * Third-party code in chunks of its own (`output.manualChunks`).
@@ -33,14 +32,8 @@ import { isPluginModule } from "./droppen-plugins";
  * cycle between chunks runs one before the other's exports exist (a finer
  * split failed to boot). `guardBootChunks` fails the build if the chunks above
  * ever import anything but `vendor-react`.
- *
- * Bundled plugins (`build/droppen-plugins.ts`) live in `node_modules` too, but
- * they are lazy chunks of their own: in `vendor` they would be downloaded by
- * every page, enabled or not. `droppenPlugins()` fails the build if one ever
- * ends up statically reachable from the entry.
  */
 export function vendorChunk(id: string, meta: Rollup.ManualChunkMeta): string | undefined {
-  if (isPluginModule(id)) return undefined;
   const pkg = packageOf(id);
   if (pkg?.startsWith("@xterm/")) return "vendor-xterm";
   if (!bootModules(meta).has(id)) return undefined;

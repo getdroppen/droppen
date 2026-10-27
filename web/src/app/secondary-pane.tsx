@@ -22,6 +22,7 @@ import { readPaneContent, storePaneContent, type PluginPaneContent } from "@/plu
 import { PluginIcon } from "@/plugins/boundary";
 import { PluginPane, usePluginPaneOptions, usePluginPaneTitle } from "@/plugins/plugin-pane";
 import { DeviceChip, DevicePicker, readOnlyHere } from "@/features/machines/device-picker";
+import { isCloud } from "@/lib/hub/config";
 import { useApi, useHoldMachine, useHomeMachine, useMachine, useOpenMachines } from "@/lib/machines/context";
 import { isOpen, shellKind } from "@/lib/machines/registry";
 import { sessionKey, type MachineKey } from "@/lib/machines/key";
@@ -569,6 +570,9 @@ function PaneLeafBody({
     queryFn: async () => (await api.GET("/api/terminals")).data,
     enabled: content.kind === "terminal",
   });
+  // A page a hub serves shows no plugin pane, even one mirrored in a saved
+  // layout (docs/plugins/runtime.md §5).
+  if (isCloud() && content.kind === "plugin") return null;
   const terminalTitle =
     content.kind === "terminal"
       ? (terminals?.terminals.find((t) => t.id === content.id)?.title ?? "terminal")

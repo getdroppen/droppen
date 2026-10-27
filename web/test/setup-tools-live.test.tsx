@@ -16,10 +16,11 @@ import { register } from "node:module";
 import { installFakeDom, type FakeNode } from "./fake-dom.js";
 import { commands, quota, report, task, tool } from "./setup-fixtures.js";
 
-const bundled = `data:text/javascript,${encodeURIComponent('export const distribution = "public"; export const bundledPlugins = [];')}`;
+// The terminal view imports xterm, which needs a browser: the same stand-in
+// this file has always used.
 register(
   `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { if (["xterm-pane", "xterm-pane.tsx", "xterm-pane.js"].includes(specifier.split("/").pop())) return { url: "data:text/javascript,export function XtermPane() { return null; }", shortCircuit: true }; return specifier === "virtual:droppen/bundled-plugins" ? { url: ${JSON.stringify(bundled)}, shortCircuit: true } : next(specifier, context); }`,
+    `export async function resolve(specifier, context, next) { if (["xterm-pane", "xterm-pane.tsx", "xterm-pane.js"].includes(specifier.split("/").pop())) return { url: "data:text/javascript,export function XtermPane() { return null; }", shortCircuit: true }; return next(specifier, context); }`,
   )}`,
 );
 

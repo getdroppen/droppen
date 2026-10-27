@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 /**
  * The plugin SDK and the plugin host are part of the open core: neither may
- * reach into the hosted service's code (docs/plugins/distribution.md).
+ * reach into the hosted service's code (docs/plugins/runtime.md).
  *
  * - `packages/plugin-sdk/src` may import `react` and its own files, nothing
  *   else — a relative import that climbs out of `packages/plugin-sdk` counts
  *   as anything else.
  * - `web/src/plugins` (the host) may not import the hub/e2e/transport layers or
  *   the cloud and landing features, by alias or by relative path; it talks to
- *   the server through `@/api/client`.
- * - Nothing in `web/src` imports a plugin package directly: plugins arrive only
- *   through `virtual:droppen/bundled-plugins`, so the open build cannot depend
- *   on a private plugin by accident.
+ *   the server through `@/api/client`. `@/lib/hub/config` is the exception: it
+ *   only reads the shell's hub marker (`isCloud()`), which the plugin host must
+ *   ask to keep plugins off a page a hub serves (docs/plugins/runtime.md §5).
+ * - Nothing in `web/src` imports a plugin package directly: plugin code is
+ *   fetched at runtime from the instance's own server, so the open build cannot
+ *   depend on a private plugin by accident.
  *
  * The Rust half (`droppen-plugin-sdk`'s dependency tree) is
- * `scripts/check-sdk-crate-deps.sh`; plugin code importing the core is refused
- * by the build itself (`web/build/droppen-plugins.ts`).
+ * `scripts/check-sdk-crate-deps.sh`. In the page, a plugin's bare imports
+ * resolve only through the shell's import map (`web/build/plugin-shared.ts`).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -69,7 +71,11 @@ export function checkBoundary(root) {
   const src = join(root, "web/src");
   const hosted = ["lib/hub", "lib/e2e", "lib/transport", "features/cloud", "features/landing"];
   const HUB = hosted.map((dir) => new RegExp(`^@/${dir}(/|$)`));
+  // The shell's marker reader, not the hub client: the plugin host asks it
+  // whether this page may run plugins at all (docs/plugins/runtime.md §5).
+  const open = new Set(["@/lib/hub/config", join(src, "lib/hub/config"), join(src, "lib/hub/config.ts")]);
   rule("web/src/plugins", (spec, target) => {
+    if (open.has(spec) || (target && open.has(target))) return null;
     const reason = "the plugin host is open-core and may not use the hosted service's internals";
     if (HUB.some((re) => re.test(spec))) return reason;
     if (target && hosted.some((dir) => inside(target, join(src, dir)))) return reason;
@@ -77,7 +83,7 @@ export function checkBoundary(root) {
   });
 
   rule("web/src", (spec) =>
-    /^@droppen\/plugin-(?!sdk(\/|$))/.test(spec) ? "plugins are composed by the distribution build, never imported by the core" : null,
+    /^@droppen\/plugin-(?!sdk(\/|$))/.test(spec) ? "plugin code arrives at runtime, never imported by the core" : null,
   );
   return problems;
 }
