@@ -16,14 +16,12 @@
 //! The value in each row is unused: the *presence* of the row is the fact, the
 //! way membership of a JSON array was.
 //!
-//! `archived.json` is read exactly once, by the import on the first boot after
-//! the upgrade, and never written again. It was a mirror for one version, so a
-//! `.prev` binary that had never heard of the database would still hide the
-//! same sessions; the rollback floor has since risen to a build that reads the
-//! database, and `crate::sessions::claude::archived_ids` — the last reader that
-//! went to the file — now comes back through [`archived_ids`] here. The file is
-//! left where it is rather than deleted: it costs nothing, and it is the
-//! cheapest way to seed a database that has to be rebuilt from scratch.
+//! `archived.json` was a mirror for one version, so a `.prev` binary that had
+//! never heard of the database would still hide the same sessions; the rollback
+//! floor has since risen to a build that reads the database, and
+//! `crate::sessions::claude::archived_ids` — the last reader that went to the
+//! file — now comes back through [`archived_ids`] here. Nothing reads the file
+//! any more.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,13 +40,9 @@ pub struct ArchiveError(pub String);
 
 const CODEX_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The database, with `archived.json` drained into it if nobody has yet.
+/// The machine-wide database the hidden list lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::ARCHIVED, || {
-        ids_in_file(paths).into_iter().map(|id| (id, PRESENT.to_string())).collect()
-    });
-    db
+    crate::db::at(paths.config_db())
 }
 
 /// Every id the user has archived out of the list.
@@ -58,19 +52,6 @@ fn store(paths: &Paths) -> Arc<Db> {
 /// answers from the table, which is the only place an archive is recorded.
 pub fn archived_ids(paths: &Paths) -> std::collections::HashSet<String> {
     store(paths).kv_scope(scope::ARCHIVED).into_keys().collect()
-}
-
-/// The file, parsed. Read exactly once per install, by the import. Anything
-/// that is not an array of strings reads as nothing archived, which is the safe
-/// direction: a session shown is recoverable, a session hidden is not findable.
-fn ids_in_file(paths: &Paths) -> Vec<String> {
-    let Ok(raw) = std::fs::read_to_string(paths.archived_file()) else {
-        return Vec::new();
-    };
-    match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(serde_json::Value::Array(values)) => values.iter().filter_map(|v| v.as_str()).map(str::to_owned).collect(),
-        _ => Vec::new(),
-    }
 }
 
 /// Add a claude session to remote-hand's hidden list.
@@ -143,52 +124,6 @@ mod tests {
         );
     }
 
-    /// A file nobody can parse imports as nothing archived — the safe
-    /// direction — and an archive taken afterwards stands on its own.
-    #[tokio::test]
-    async fn a_corrupt_hidden_list_costs_nothing_but_itself() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.archived_file(), "{not json").expect("seed");
-
-        archive_claude_session(&paths, "one").await.expect("archive");
-        assert_eq!(archived_ids(&paths), ["one".to_string()].into_iter().collect());
-        assert_eq!(
-            std::fs::read_to_string(paths.archived_file()).expect("read"),
-            "{not json",
-            "and the unreadable file is left for a person to look at, not overwritten"
-        );
-    }
-
-    /// The file is an input, once, and never an output. An archive that wrote
-    /// it back would be an archive that a hand-restored `archived.json` could
-    /// not survive being imported from.
-    #[tokio::test]
-    async fn an_archive_never_writes_the_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        archive_claude_session(&paths, "one").await.expect("archive");
-        assert!(!paths.archived_file().exists(), "no file is created where there was none");
-    }
-
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        let before = "[\n  \"from-the-file\"\n]\n";
-        std::fs::write(paths.archived_file(), before).expect("seed");
-
-        archive_claude_session(&paths, "one").await.expect("archive");
-        assert!(archived_ids(&paths).contains("from-the-file"));
-        assert_eq!(
-            std::fs::read_to_string(paths.archived_file()).expect("read"),
-            before,
-            "byte for byte as it was found, import and archive notwithstanding"
-        );
-    }
-
     /// The bug this store moved for. Two archives used to read the same list,
     /// each append their own id and each write the whole thing back, so the
     /// loser's session reappeared. Neither call reads the list any more.
@@ -213,29 +148,6 @@ mod tests {
             crate::sessions::claude::archived_ids(&paths).await,
             ["one".to_string(), "two".to_string()].into_iter().collect()
         );
-    }
-
-    /// The file is drained on the first look and never consulted again, so a
-    /// session the user has since unarchived cannot be hidden again by a file
-    /// that still remembers it.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.archived_file(), r#"["from-the-file"]"#).expect("seed");
-
-        archive_claude_session(&paths, "one").await.expect("archive");
-        assert!(
-            store(&paths).kv_scope(scope::ARCHIVED).contains_key("from-the-file"),
-            "what was hidden before the upgrade stays hidden after it"
-        );
-
-        std::fs::write(paths.archived_file(), r#"["edited-behind-its-back"]"#).expect("re-seed");
-        archive_claude_session(&paths, "two").await.expect("archive");
-        let hidden = store(&paths).kv_scope(scope::ARCHIVED);
-        assert!(!hidden.contains_key("edited-behind-its-back"), "the import does not run a second time");
-        assert_eq!(hidden.len(), 3, "from-the-file, one and two: {hidden:?}");
     }
 
     #[tokio::test]

@@ -6,14 +6,10 @@
 //! notification's `tag` carries, so the three never have to be translated into
 //! each other.
 //!
-//! `seen.json` is read exactly once, by the import on the first boot after the
-//! upgrade, and never written again. It was a mirror for one version, so that a
-//! [`crate::supervisor`] demotion onto a `.prev` binary that had never heard of
-//! this database would still find its marks; the rollback floor has since risen
-//! to a build that reads the database, so there is nothing left to keep the copy
-//! in step for. The file is left where it is rather than deleted — it costs
-//! nothing and it is the cheapest way to seed a database that has to be built
-//! from scratch.
+//! `seen.json` was a mirror for one version, so that a [`crate::supervisor`]
+//! demotion onto a `.prev` binary that had never heard of this database would
+//! still find its marks; the rollback floor has since risen to a build that
+//! reads the database, so nothing reads the file any more.
 //!
 //! It is deliberately *not* a subsystem with its own state struct. There is
 //! nothing to cache: the store is a few hundred bytes, every reader wants the
@@ -40,16 +36,13 @@
 //!   gone.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-use serde_json::Value;
 
 use crate::db::{scope, Db};
 use crate::sessions::{iso8601, Paths, Source};
 
 /// How many sessions are remembered. Well past what any one list shows, and
-/// small enough that the file stays a single short read.
+/// small enough that the scope stays a single short read.
 pub const MAX_ENTRIES: usize = 500;
 
 /// The key both this store and a notification's `tag` use for a session.
@@ -74,52 +67,19 @@ pub fn key_of(source: Source, id: &str) -> String {
 ///
 /// Process-global rather than a field on a store struct because the store *is*
 /// the path: any number of `Paths` values in one process (two servers in one
-/// test binary) name different files, and taking one lock across all of them
-/// costs a few microseconds on a route that runs at human speed.
+/// test binary) name different databases, and taking one lock across all of
+/// them costs a few microseconds on a route that runs at human speed.
 static WRITE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-fn file(paths: &Paths) -> PathBuf {
-    paths.seen_file()
-}
-
-/// The database, with `seen.json` drained into it if nobody has done that yet.
+/// The machine-wide database the marks live in.
 fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::SEEN, || from_value(&parse_file(paths)).into_iter().collect());
-    db
-}
-
-/// The file, parsed. Read exactly once per install, by the import above.
-///
-/// `std::fs` on the runtime thread, deliberately: it is the same read this
-/// module did on every call a version ago, and it now happens once.
-fn parse_file(paths: &Paths) -> Value {
-    std::fs::read_to_string(file(paths))
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or(Value::Null)
+    crate::db::at(paths.config_db())
 }
 
 /// Every remembered `read_at`. A store with nothing in it reads as empty, which
 /// marks everything unread — the safe direction.
 pub async fn read(paths: &Paths) -> BTreeMap<String, String> {
     store(paths).kv_scope(scope::SEEN)
-}
-
-/// Map a parsed file onto the store's shape, dropping anything that is not a
-/// string timestamp.
-///
-/// Still here, and still tested, because the import crosses exactly this bridge:
-/// the file it drains is one somebody may have hand-edited, and one bad value
-/// must cost its own entry rather than the whole history. The same split
-/// [`crate::prefs`] makes.
-fn from_value(raw: &Value) -> BTreeMap<String, String> {
-    let Value::Object(map) = raw else {
-        return BTreeMap::new();
-    };
-    map.iter()
-        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
-        .collect()
 }
 
 /// Drop the oldest entries until at most [`MAX_ENTRIES`] remain.
@@ -249,70 +209,6 @@ mod tests {
         assert!(before > MAX_ENTRIES, "the fixture actually overflowed");
         assert!(!entries.contains_key("claude/ancient-a"), "the oldest goes first");
         assert!(!entries.contains_key("claude/ancient-b"));
-    }
-
-    #[test]
-    fn a_file_that_is_not_a_map_of_strings_reads_as_empty() {
-        assert!(from_value(&Value::Null).is_empty());
-        assert!(from_value(&serde_json::json!([1, 2])).is_empty());
-        assert!(from_value(&serde_json::json!("nonsense")).is_empty());
-        let mixed = from_value(&serde_json::json!({ "claude/a": "2026-01-01T00:00:00.000Z", "claude/b": 42 }));
-        assert_eq!(mixed.len(), 1, "one unreadable value costs its own entry, not the file");
-        assert!(mixed.contains_key("claude/a"));
-    }
-
-    /// The contract since the mirror went: the file is an input, once, and
-    /// never an output. A mark that wrote it back would be a mark that a
-    /// hand-restored `seen.json` could not survive being imported from.
-    #[tokio::test]
-    async fn a_mark_never_writes_the_file() {
-        let (_dir, paths) = paths();
-        mark(&paths, Source::Claude, "abc").await.expect("mark");
-        assert!(!paths.seen_file().exists(), "no file is created where there was none");
-        assert!(!paths.seen_file().with_extension("json.tmp").exists());
-    }
-
-    /// …and a file that was already there is left byte for byte as it was
-    /// found, after the import has read it and after a mark that changes what
-    /// it would have said. That is what makes a hand-restored `seen.json` a
-    /// safe thing to drop next to an empty database.
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let (_dir, seeded) = paths();
-        std::fs::create_dir_all(seeded.config_dir()).expect("config dir");
-        let before = "{\n  \"claude/abc\": \"2026-01-01T00:00:00.000Z\"\n}\n";
-        std::fs::write(seeded.seen_file(), before).expect("seed");
-        mark_at(&seeded, Source::Claude, "abc", "2026-06-06T00:00:00.000Z".into())
-            .await
-            .expect("mark");
-        assert_eq!(
-            read(&seeded).await.get("claude/abc").map(String::as_str),
-            Some("2026-06-06T00:00:00.000Z")
-        );
-        assert_eq!(std::fs::read_to_string(seeded.seen_file()).expect("read"), before);
-    }
-
-    /// The file is drained on the first look and never consulted again. If it
-    /// were re-read, a user who cleared their marks under the new build would
-    /// have them handed back by the next boot.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.seen_file(), r#"{"claude/abc":"2026-01-01T00:00:00.000Z"}"#).expect("seed");
-
-        assert_eq!(
-            read(&paths).await.get("claude/abc").map(String::as_str),
-            Some("2026-01-01T00:00:00.000Z"),
-            "what was in the file on the first look is in the store"
-        );
-
-        // Somebody edits the file behind the store's back — a person with an
-        // editor, or a restore. It was an input once and is not one again.
-        std::fs::write(paths.seen_file(), r#"{"claude/zzz":"1999-01-01T00:00:00.000Z"}"#).expect("re-seed");
-        let entries = read(&paths).await;
-        assert_eq!(entries.get("claude/abc").map(String::as_str), Some("2026-01-01T00:00:00.000Z"));
-        assert!(!entries.contains_key("claude/zzz"), "the import does not run a second time");
     }
 
     /// The point of the move: a mark outlives the process that took it, and

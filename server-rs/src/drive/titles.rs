@@ -18,17 +18,13 @@
 //! asks the database, which is as immediate and cannot disagree with what was
 //! committed.
 //!
-//! `titles.json` is read exactly once, by the import on the first boot after
-//! the upgrade, and never written again. It was a mirror for one version, so a
-//! `.prev` binary that had never heard of the database would still find the
-//! names; the rollback floor has since risen to a build that reads the
-//! database, and `crate::sessions::claude::custom_titles` — the last reader
-//! that went to the file — now asks [`all`] instead. The file is left where it
-//! is rather than deleted: it costs nothing, and it is the cheapest way to seed
-//! a database that has to be rebuilt from scratch.
+//! `titles.json` was a mirror for one version, so a `.prev` binary that had
+//! never heard of the database would still find the names; the rollback floor
+//! has since risen to a build that reads the database, and
+//! `crate::sessions::claude::custom_titles` — the last reader that went to the
+//! file — now asks [`all`] instead. Nothing reads the file any more.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::db::{scope, Db};
@@ -62,9 +58,7 @@ fn key_of(source: Source, id: &str) -> String {
 /// than inside it. Both go to the same rows, so a rename is on the list at the
 /// next refresh without anything having to be written to disk twice.
 pub fn all(paths: &Paths) -> BTreeMap<String, String> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::TITLES, || from_file(&paths.titles_file()).into_iter().collect());
-    db.kv_scope(scope::TITLES)
+    crate::db::at(paths.config_db()).kv_scope(scope::TITLES)
 }
 
 impl TitlesStore {
@@ -73,16 +67,9 @@ impl TitlesStore {
         Self { paths }
     }
 
-    /// Where the file the import drains lives.
-    pub fn path(&self) -> PathBuf {
-        self.paths.titles_file()
-    }
-
-    /// The database, with `titles.json` drained into it if nobody has yet.
+    /// The machine-wide database these titles live in.
     fn db(&self) -> Arc<Db> {
-        let db = crate::db::at(self.paths.config_db());
-        db.import_once(scope::TITLES, || from_file(&self.path()).into_iter().collect());
-        db
+        crate::db::at(self.paths.config_db())
     }
 
     /// Every title anyone has set, keyed `"<source>:<id>"`.
@@ -115,23 +102,6 @@ impl TitlesStore {
     }
 }
 
-/// The file, parsed. Read exactly once per install, by the import.
-///
-/// Anything that is not a string title is dropped rather than read as one, the
-/// tolerance the file reader has always had: a hand-edited file costs its own
-/// entry and not the rest of the map.
-fn from_file(path: &std::path::Path) -> BTreeMap<String, String> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return BTreeMap::new();
-    };
-    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return BTreeMap::new();
-    };
-    map.into_iter()
-        .filter_map(|(key, value)| Some((key, value.as_str()?.to_string())))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,58 +126,6 @@ mod tests {
         let titles = store.read().await;
         assert!(!titles.contains_key("claude:abc"), "an empty title resets to the derived one");
         assert_eq!(titles.get("codex:abc").map(String::as_str), Some("Other"));
-    }
-
-    /// The file is drained on the first look and never consulted again. If it
-    /// were, a title the user has since cleared would come back on the next
-    /// boot from a file that still remembered it.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.titles_file(), r#"{"claude:abc":"From the file","claude:bad":7}"#).expect("seed");
-
-        let store = TitlesStore::new(Arc::new(paths.clone()));
-        let titles = store.read().await;
-        assert_eq!(titles.get("claude:abc").map(String::as_str), Some("From the file"));
-        assert!(!titles.contains_key("claude:bad"), "a title that is not a string costs its own entry");
-
-        std::fs::write(paths.titles_file(), r#"{"claude:zzz":"Edited behind its back"}"#).expect("re-seed");
-        let titles = store.read().await;
-        assert_eq!(titles.get("claude:abc").map(String::as_str), Some("From the file"));
-        assert!(!titles.contains_key("claude:zzz"), "the import does not run a second time");
-    }
-
-    /// The file is an input, once, and never an output. A rename that wrote it
-    /// back would be a rename that a hand-restored `titles.json` could not
-    /// survive being imported from.
-    #[tokio::test]
-    async fn a_rename_never_writes_the_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = TitlesStore::new(Arc::new(Paths::new(dir.path().to_path_buf())));
-        store.set(Source::Claude, "abc", "Renamed").await.expect("set");
-        assert!(!store.path().exists(), "no file is created where there was none");
-    }
-
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        let before = "{\n  \"claude:abc\": \"From the file\"\n}\n";
-        std::fs::write(paths.titles_file(), before).expect("seed");
-
-        let store = TitlesStore::new(Arc::new(paths.clone()));
-        store.set(Source::Claude, "abc", "Renamed again").await.expect("set");
-        store.set(Source::Codex, "abc", "").await.expect("reset");
-
-        assert_eq!(store.read().await.get("claude:abc").map(String::as_str), Some("Renamed again"));
-        assert_eq!(
-            std::fs::read_to_string(paths.titles_file()).expect("read"),
-            before,
-            "byte for byte as it was found, import and renames notwithstanding"
-        );
     }
 
     #[tokio::test]

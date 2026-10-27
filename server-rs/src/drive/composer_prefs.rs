@@ -21,16 +21,12 @@
 //! them, claude and codex, and they are the same row the same pick writes.
 //!
 //! `composer-prefs.json` used to be written in place, so a crash mid-write cost
-//! every remembered pick on the machine at once. It is now read exactly once, by
-//! the import on the first boot after the upgrade, and never written again — it
-//! was a mirror for one version, so a `.prev` binary that had never heard of
-//! this database would still find the picks, and the rollback floor has since
-//! risen to a build that reads the database. The file is left where it is rather
-//! than deleted: it costs nothing, and it is the cheapest way to seed a database
-//! that has to be rebuilt from scratch.
+//! every remembered pick on the machine at once. It was a mirror for one
+//! version, so a `.prev` binary that had never heard of this database would
+//! still find the picks; the rollback floor has since risen to a build that
+//! reads the database. Nothing reads the file any more.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use gotcha::Schematic;
@@ -146,7 +142,7 @@ pub struct ComposerPrefsStore {
 }
 
 /// The document shape, which is how the rows are read and written: the two
-/// buckets the file had, sorted, so a snapshot of the store is deterministic.
+/// buckets, sorted, so a snapshot of the store is deterministic.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StoredPrefs {
     defaults: BTreeMap<String, ComposerChoice>,
@@ -164,9 +160,9 @@ impl StoredPrefs {
 
 /// One choice out of arbitrary JSON, keeping only string-valued fields.
 ///
-/// The single tolerant reader this module has: it is what the import crosses,
-/// what every row is parsed through, and the reason a hand-edited value costs
-/// its own field rather than the store.
+/// The single tolerant reader this module has: every row is parsed through it,
+/// and it is the reason a hand-edited value costs its own field rather than the
+/// store.
 fn choice_from_value(raw: &serde_json::Value) -> Option<ComposerChoice> {
     let value = raw.as_object()?;
     let string = |name: &str| value.get(name).and_then(|v| v.as_str()).map(str::to_owned);
@@ -178,7 +174,8 @@ fn choice_from_value(raw: &serde_json::Value) -> Option<ComposerChoice> {
     })
 }
 
-/// A whole bucket of choices — the defaults row, or one of the file's two maps.
+/// A whole bucket of choices — the defaults row, as it was one of the file's
+/// two maps.
 fn choices_from_value(raw: &serde_json::Value) -> BTreeMap<String, ComposerChoice> {
     let Some(entries) = raw.as_object() else {
         return BTreeMap::new();
@@ -187,17 +184,6 @@ fn choices_from_value(raw: &serde_json::Value) -> BTreeMap<String, ComposerChoic
         .iter()
         .filter_map(|(key, value)| Some((key.clone(), choice_from_value(value)?)))
         .collect()
-}
-
-/// Rebuild the file from arbitrary JSON, keeping only string-valued fields.
-fn sanitize(raw: &serde_json::Value) -> StoredPrefs {
-    let mut prefs = StoredPrefs::default();
-    let Some(object) = raw.as_object() else { return prefs };
-    for (bucket, target) in [("defaults", &mut prefs.defaults), ("sessions", &mut prefs.sessions)] {
-        let Some(entries) = object.get(bucket) else { continue };
-        *target = choices_from_value(entries);
-    }
-    prefs
 }
 
 /// Merge `patch` over `base`, field by field, as the TypeScript spread does.
@@ -220,40 +206,16 @@ impl ComposerPrefsStore {
         }
     }
 
-    /// Where the file the import drains lives.
-    pub fn path(&self) -> PathBuf {
-        self.paths.config_dir().join("composer-prefs.json")
-    }
-
-    /// The database, with `composer-prefs.json` drained into it if nobody has
-    /// yet. The two buckets are flattened into rows on the way in, exactly as
-    /// [`Self::read_stored`] unflattens them coming back out.
+    /// The machine-wide database the picks live in.
     fn db(&self) -> Arc<Db> {
-        let db = crate::db::at(self.paths.config_db());
-        db.import_once(scope::COMPOSER, || {
-            let stored = sanitize(&parse_file(&self.path()));
-            let mut rows = Vec::with_capacity(stored.sessions.len() + 1);
-            if !stored.defaults.is_empty() {
-                if let Ok(encoded) = serde_json::to_string(&stored.defaults) {
-                    rows.push((DEFAULTS_KEY.to_string(), encoded));
-                }
-            }
-            for (key, choice) in &stored.sessions {
-                if let Ok(encoded) = serde_json::to_string(choice) {
-                    rows.push((key.clone(), encoded));
-                }
-            }
-            rows
-        });
-        db
+        crate::db::at(self.paths.config_db())
     }
 
     async fn read_stored(&self) -> StoredPrefs {
         let mut prefs = StoredPrefs::default();
         for (key, encoded) in self.db().kv_scope(scope::COMPOSER) {
-            // A row that will not parse is skipped, not fatal — the same
-            // tolerance the file reader had, one row at a time instead of all
-            // of them at once.
+            // A row that will not parse is skipped, not fatal — one row at a
+            // time, so a hand edit costs its own pick.
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&encoded) else {
                 continue;
             };
@@ -322,14 +284,6 @@ fn write_row(db: &Db, key: &str, value: &impl Serialize) {
         Ok(encoded) => db.kv_set(scope::COMPOSER, key, &encoded),
         Err(error) => tracing::warn!(key, %error, "cannot encode a composer preference"),
     }
-}
-
-/// The file, parsed. Read exactly once per install, by the import.
-fn parse_file(path: &std::path::Path) -> serde_json::Value {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Drop the least recently written entries down to the cap.
@@ -443,73 +397,6 @@ mod tests {
             "an unbalanced bracket is not a variant tag"
         );
         assert!(store.update(Source::Claude, None, &choice(Some("opus[$(id)]"), None)).await.is_err());
-    }
-
-    /// The file is drained on the first look and never consulted again, so a
-    /// pick the user has since changed is not undone by the file that still
-    /// remembers the old one.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let (_dir, store) = store();
-        std::fs::create_dir_all(store.path().parent().expect("parent")).expect("config dir");
-        std::fs::write(
-            store.path(),
-            r#"{"defaults":{"claude":{"model":"from-the-file"}},"sessions":{"claude/abc":{"model":"also-from-the-file"},"claude/bad":7}}"#,
-        )
-        .expect("seed");
-
-        let prefs = store.read().await;
-        assert_eq!(prefs.defaults["claude"].model.as_deref(), Some("from-the-file"));
-        assert_eq!(prefs.sessions["claude/abc"].model.as_deref(), Some("also-from-the-file"));
-        assert!(
-            !prefs.sessions.contains_key("claude/bad"),
-            "an entry that is not an object costs its own row"
-        );
-
-        std::fs::write(
-            store.path(),
-            r#"{"defaults":{"claude":{"model":"edited-behind-its-back"}},"sessions":{}}"#,
-        )
-        .expect("re-seed");
-        let prefs = store.read().await;
-        assert_eq!(
-            prefs.defaults["claude"].model.as_deref(),
-            Some("from-the-file"),
-            "the import does not run a second time"
-        );
-        assert!(prefs.sessions.contains_key("claude/abc"));
-    }
-
-    /// The file is an input, once, and never an output. A pick that wrote it
-    /// back would be a pick that a hand-restored `composer-prefs.json` could
-    /// not survive being imported from.
-    #[tokio::test]
-    async fn a_pick_never_writes_the_file() {
-        let (_dir, store) = store();
-        store
-            .update(Source::Claude, Some("abc"), &choice(Some("opus"), None))
-            .await
-            .expect("update");
-        assert!(!store.path().exists(), "no file is created where there was none");
-    }
-
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let (_dir, store) = store();
-        std::fs::create_dir_all(store.path().parent().expect("parent")).expect("config dir");
-        let before = "{\n  \"defaults\": {},\n  \"sessions\": {\"claude/abc\": {\"model\": \"from-the-file\"}}\n}\n";
-        std::fs::write(store.path(), before).expect("seed");
-
-        let prefs = store
-            .update(Source::Claude, Some("abc"), &choice(Some("picked-since"), None))
-            .await
-            .expect("update");
-        assert_eq!(prefs.sessions["claude/abc"].model.as_deref(), Some("picked-since"));
-        assert_eq!(
-            std::fs::read_to_string(store.path()).expect("read"),
-            before,
-            "byte for byte as it was found, import and pick notwithstanding"
-        );
     }
 
     #[tokio::test]
