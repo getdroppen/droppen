@@ -1278,25 +1278,28 @@ mod tests {
         );
     }
 
-    /// A screen deleted through the API stays deleted: the old shared file is
-    /// not read, so a sibling or a restored backup cannot seed it again.
+    /// The instance's `screens.json` is not read. A CLI install that booted
+    /// 0.2.125 (which copied the shared file in) but never opened the web app
+    /// still has that copy beside the database, and it seeds nothing: the list
+    /// starts empty and the file is left exactly where it was found.
     #[tokio::test]
-    async fn a_deleted_screen_stays_deleted_and_an_old_file_seeds_nothing() {
+    async fn an_instance_screens_file_seeds_nothing() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        seed(&paths, &[screen("from-the-file")]).await;
-        assert_eq!(ids(&read_screens(&paths).await), vec!["from-the-file"]);
-
-        delete(&paths, &GlobalFeed::default(), "from-the-file", None).await.expect("delete it");
-        // What an install older than 0.2.125 still has in the shared config
-        // directory. The upgrade floor says it is not read any more.
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
+        let file = paths.instance_dir().join("screens.json");
+        std::fs::create_dir_all(paths.instance_dir()).expect("instance dir");
         std::fs::write(
-            paths.config_dir().join("screens.json"),
+            &file,
             r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#,
         )
-        .expect("the old file is still on disk");
-        assert!(read_screens(&paths).await.is_empty(), "a deleted screen stays deleted");
+        .expect("what an install that booted 0.2.125 but never opened the SPA still has");
+
+        assert!(read_screens(&paths).await.is_empty(), "the file seeds nothing");
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read"),
+            r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#,
+            "and it is left exactly as it was found"
+        );
     }
 
     /// A second connection to the same file sees what the first committed —
