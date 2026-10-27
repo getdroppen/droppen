@@ -467,6 +467,13 @@ impl Plugins {
         if !file.starts_with(&dir) || !std::fs::metadata(&file).is_ok_and(|meta| meta.is_file()) {
             return None;
         }
+        // `is_record_path` compared ASCII case, but APFS folds Unicode case:
+        // `.droppen-inſtall.json` (U+017F) names the record without matching
+        // it. Comparing the file's identity with the record's catches that,
+        // and every other alias of the file — a hard link included.
+        if same_file(&file, &dir.join(install::RECORD_FILE)) {
+            return None;
+        }
         let bytes = std::fs::read(&file).ok()?;
         // The URL names one build's bytes and is cached immutable: if a swap
         // landed between the first look and this read, the record no longer
@@ -681,6 +688,17 @@ fn resolve_inside(dir: &Path, path: &str) -> Option<PathBuf> {
         target.push(part);
     }
     Some(target)
+}
+
+/// Whether two paths name the same file, by `(device, inode)` — so a Unicode
+/// case alias on a case-folded filesystem, or a hard link under another name,
+/// is the same file however different its path looks.
+fn same_file(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(left), std::fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
 }
 
 /// The media type of a file inside a package, by extension, as §2 lists them.
@@ -963,6 +981,29 @@ pub(crate) mod tests {
 
         plugins.set_enabled("tasks", false, None, DecisionReason::Settings).unwrap();
         assert!(plugins.asset(&key, "tasks", &build, &path).is_none(), "a plugin that is off");
+    }
+
+    /// The record is the host's, not the package's: a Unicode case alias (APFS
+    /// folds `ſ` to `s`) and a hard link under another name are both the same
+    /// file, and both must be refused.
+    #[test]
+    fn the_install_record_is_refused_under_any_alias_of_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["tasks"], PluginSettings::default(), None);
+        let status = plugins.status_of("tasks").unwrap();
+        let key = status_key(&plugins);
+        let package = plugins.package_dir("tasks");
+
+        assert!(
+            plugins.asset(&key, "tasks", &status.build, ".droppen-inſtall.json").is_none(),
+            "a Unicode case alias, on a filesystem that folds it"
+        );
+        // Every filesystem: the same file under another name.
+        std::fs::hard_link(package.join(install::RECORD_FILE), package.join("dist/record-alias.json")).unwrap();
+        assert!(
+            plugins.asset(&key, "tasks", &status.build, "dist/record-alias.json").is_none(),
+            "a hard link to the record"
+        );
     }
 
     /// Installs never create symlinks, but a package directory changed by hand

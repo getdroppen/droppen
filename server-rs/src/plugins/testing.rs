@@ -187,6 +187,24 @@ pub fn raw_tarball(entries: &[Entry]) -> Vec<u8> {
     gzip.finish().expect("gz")
 }
 
+/// A gzip'd tar of one GNU long-name header that *actually carries* `body`
+/// bytes (written in chunks, never held whole) and claims `declared`; no
+/// member follows it. For proving the decompression bound, not the header
+/// parser.
+pub fn streamed_long_name(declared: u64, body: u64) -> Vec<u8> {
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gzip.write_all(&header(b"././@LongLink", b'L', declared, &[])).expect("gz");
+    let chunk = [0u8; 64 * 1024];
+    let mut left = body;
+    while left > 0 {
+        let take = left.min(chunk.len() as u64) as usize;
+        gzip.write_all(&chunk[..take]).expect("gz");
+        left -= take as u64;
+    }
+    gzip.write_all(&[0u8; 1024]).expect("gz");
+    gzip.finish().expect("gz")
+}
+
 /// One 512-byte ustar header. `size` is what the header says, which for a
 /// lying entry is not `data.len()`.
 fn header(path: &[u8], typeflag: u8, size: u64, link: &[u8]) -> [u8; 512] {

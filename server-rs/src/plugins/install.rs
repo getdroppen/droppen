@@ -46,9 +46,10 @@
 //! Installs and uninstalls take a per-instance `flock` on
 //! `plugin-packages/.lock`, so two processes — the server and the CLI, or two
 //! requests — serialize rather than race over the same id. The same lock
-//! guards a sweep of `.tmp-*` and `.old-*` leftovers: a temporary directory is
-//! removed, and an `.old-<id>.<uuid>` whose `<id>` is missing is put back
-//! (the fallback swap's crash window), or removed when the id is there again.
+//! guards a sweep of `.tmp-*`, `.del-*` and `.old-*` leftovers: temporary and
+//! deleted directories are removed, and an `.old-<id>.<uuid>` whose `<id>` is
+//! missing is put back (the fallback swap's crash window), or removed when the
+//! id is there again.
 //!
 //! # The install record
 //!
@@ -97,7 +98,7 @@ const MAX_MESSAGE_CHARS: usize = 512;
 /// into that many syscalls before the file count has a chance to refuse it.
 const MAX_ENTRIES: usize = 10_000;
 /// Where an install writes its own record, inside the package directory.
-const RECORD_FILE: &str = ".droppen-install.json";
+pub const RECORD_FILE: &str = ".droppen-install.json";
 /// The record's format tag.
 const RECORD_FORMAT: &str = "droppen.plugin-install.v1";
 /// What every entry of a `pnpm pack` tarball starts with.
@@ -222,7 +223,9 @@ pub fn install(instance_dir: &Path, tarball: &[u8]) -> Result<Installed, Install
 /// Remove an installed package. Its documents and its on/off decision stay.
 ///
 /// The directory is renamed aside under the lock first, so the id stops naming
-/// a package even if removing the bytes fails (the leftover is swept later).
+/// a package even if removing the bytes fails. The aside name is a `.del-`
+/// one, which the sweep always deletes: an uninstall must never come back,
+/// unlike the `.old-<id>.*` a fallback swap leaves for the sweep to restore.
 pub fn uninstall(instance_dir: &Path, id: &str) -> Result<(), InstallError> {
     if !valid_id(id) {
         return Err(InstallError::NotFound(format!("no plugin {id:?} is installed")));
@@ -238,7 +241,7 @@ pub fn uninstall(instance_dir: &Path, id: &str) -> Result<(), InstallError> {
         Ok(meta) if meta.is_dir() => {}
         _ => return Err(InstallError::NotFound(format!("no plugin {id:?} is installed"))),
     }
-    let aside = parent.join(format!(".old-{id}.{}", uuid::Uuid::new_v4()));
+    let aside = parent.join(format!(".del-{}", uuid::Uuid::new_v4()));
     fs::rename(&dir, &aside).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             InstallError::NotFound(format!("no plugin {id:?} is installed"))
@@ -313,12 +316,29 @@ fn unpack(tarball: &[u8], into: &Path) -> Result<(Manifest, String), InstallErro
     // PAX header body whole before it yields the entry it describes.
     let decoder = flate2::read::GzDecoder::new(tarball);
     let mut stream = decoder.take(MAX_DECOMPRESSED_BYTES);
+    let result = unpack_entries(&mut stream, into);
+    // An error caused by the bound ("unexpected EOF during skip") is a package
+    // that is too large, not a truncated one; the limit is checked first for
+    // that reason.
+    if stream.limit() == 0 {
+        return Err(too_large(
+            format!("the package decompresses to more than {MAX_DECOMPRESSED_BYTES} bytes"),
+            MAX_DECOMPRESSED_BYTES,
+        ));
+    }
+    result
+}
+
+/// [`unpack`]'s body, with the bounded stream already made. Everything here
+/// returns normally — dropping the tar reader with it — so the caller can tell
+/// a bound hit from a malformed archive.
+fn unpack_entries(stream: &mut impl Read, into: &Path) -> Result<(Manifest, String), InstallError> {
     let mut files = 0usize;
     let mut entries = 0usize;
     let mut unpacked = 0u64;
     let mut seen = std::collections::HashSet::new();
     {
-        let mut archive = tar::Archive::new(&mut stream);
+        let mut archive = tar::Archive::new(stream);
         for entry in archive.entries().map_err(|error| refused(format!("not a gzip'd tar: {error}")))? {
             let mut entry = entry.map_err(|error| refused(format!("not a gzip'd tar: {error}")))?;
             entries += 1;
@@ -370,12 +390,6 @@ fn unpack(tarball: &[u8], into: &Path) -> Result<(Manifest, String), InstallErro
                 fs::create_dir_all(into.join(Path::new(&path))).map_err(|error| refused(format!("{shown}: {error}")))?;
             }
         }
-    }
-    if stream.limit() == 0 {
-        return Err(too_large(
-            format!("the package decompresses to more than {MAX_DECOMPRESSED_BYTES} bytes"),
-            MAX_DECOMPRESSED_BYTES,
-        ));
     }
 
     let package_file = into.join("package.json");
@@ -691,8 +705,12 @@ fn lock_packages(parent: &Path) -> Result<PackagesLock, InstallError> {
 }
 
 /// Clean up what a crash or an interrupted install left beside the packages:
-/// temporary directories go, and an `.old-<id>.<uuid>` whose id is missing is
-/// put back (a fallback swap that died between its two renames).
+/// temporary and `.del-` directories go, and an `.old-<id>.<uuid>` whose id is
+/// missing is put back (a fallback swap that died between its two renames).
+///
+/// A `.del-` is an uninstall's renamed-aside copy and is never restored, even
+/// if removing it failed halfway: an uninstall that came back would be worse
+/// than a few bytes left on disk.
 ///
 /// Called with the packages lock held, so nothing is moving underneath it.
 fn sweep_stale(parent: &Path) {
@@ -702,7 +720,7 @@ fn sweep_stale(parent: &Path) {
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
-        if name.starts_with(".tmp-") {
+        if name.starts_with(".tmp-") || name.starts_with(".del-") {
             remove_tree(&path);
             continue;
         }
@@ -848,12 +866,12 @@ mod tests {
         assert!(leftovers.is_empty(), "no temporary directory outlived the install: {leftovers:?}");
     }
 
-    /// `.tmp-*` and `.old-*` entries left beside the packages (the `.lock` is
-    /// expected and is not one).
+    /// `.tmp-*`, `.del-*` and `.old-*` entries left beside the packages (the
+    /// `.lock` is expected and is not one).
     fn leftover_work_dirs(instance: &Path) -> Vec<String> {
         read_dir_names(&packages_dir(instance))
             .into_iter()
-            .filter(|name| name.starts_with(".tmp-") || name.starts_with(".old-"))
+            .filter(|name| name.starts_with(".tmp-") || name.starts_with(".del-") || name.starts_with(".old-"))
             .collect()
     }
 
@@ -941,6 +959,17 @@ mod tests {
         assert!(message.len() < 1024, "the refusal echoed the entry: {} bytes", message.len());
     }
 
+    /// Hitting the decompression bound mid-entry is "too large", not "not a
+    /// gzip'd tar": the bound is checked before the tar error is reported.
+    #[test]
+    fn exceeding_the_decompression_bound_is_too_large() {
+        let message = refusal(&crate::plugins::testing::streamed_long_name(
+            100 * 1024 * 1024,
+            MAX_DECOMPRESSED_BYTES + 1024 * 1024,
+        ));
+        assert!(message.contains("decompresses to more than"), "{message}");
+    }
+
     /// A directory header with a 33 GiB size would have tar skip 33 GiB of
     /// stream. The header is refused before any of it is read.
     #[test]
@@ -989,6 +1018,22 @@ mod tests {
         exchange(&left, &right).expect("the platform exchanges directories");
         assert!(left.join("was-right").is_dir(), "the contents swapped");
         assert!(right.join("was-left").is_dir());
+    }
+
+    /// An uninstall's renamed-aside copy is swept, never put back: a
+    /// half-removed uninstall must not come back on the next install.
+    #[test]
+    fn an_uninstalls_aside_copy_is_swept_not_restored() {
+        let (_dir, instance) = temp();
+        install(&instance, &tarball(&package("tasks", "0.1.0"), &[("dist/index.js", b"x")])).unwrap();
+        let parent = packages_dir(&instance);
+        // What `uninstall` leaves if `remove_dir_all` fails halfway.
+        let aside = parent.join(format!(".del-{}", uuid::Uuid::new_v4()));
+        fs::rename(package_dir(&instance, "tasks"), &aside).unwrap();
+        // Any later sweep — here the next uninstall, which then finds nothing.
+        assert!(matches!(uninstall(&instance, "tasks"), Err(InstallError::NotFound(_))));
+        assert!(!package_dir(&instance, "tasks").exists(), "the plugin stays uninstalled");
+        assert!(!aside.exists(), "the aside copy is deleted, not restored");
     }
 
     /// An interrupted fallback swap leaves `.old-<id>.<uuid>`; the next
