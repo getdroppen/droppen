@@ -44,14 +44,15 @@ export const HUB_PAGES = "/src/hub-pages.ts";
  * mode at all, which of a hub's hosts it is on, the public pages' paths and
  * the move popup's (`lib/hub/config`, `hosts`, `boot-url`,
  * `features/landing/route`, `get-droppen`, `lib/move/types`, read by
- * `main.tsx` before anything else), and the hex and SHA-256 of the local half
- * of a computer's sign-in to Droppen (`features/link/handoff.ts`).
+ * `main.tsx` before anything else), the hex and SHA-256 of the local half of a
+ * computer's sign-in to Droppen (`features/link/handoff.ts`), and the field
+ * arithmetic its key check uses (`lib/e2e/field.ts`, which imports nothing).
  */
 const CLOUD_CODE: [pattern: RegExp, what: string][] = [
   [/\/src\/hub-pages\.ts$/, "what a hub serves"],
   [/\/src\/(?:features\/cloud\/|lib\/machines\/shells\/hub\.ts$|features\/machines\/device-facts\.ts$|lib\/page-resume\.ts$|components\/prefs-controls\.tsx$)/, "cloud mode's app"],
   [/\/src\/(?:lib\/hub\/(?!(?:config|hosts|boot-url)\.ts$)|api\/hub\.ts$)/, "the hub client"],
-  [/\/src\/(?:lib\/e2e\/(?!(?:bytes|keys)\.ts$)|lib\/transport\/p2p\.ts$)/, "the end-to-end protocol"],
+  [/\/src\/(?:lib\/e2e\/(?!(?:bytes|keys|field)\.ts$)|lib\/transport\/p2p\.ts$)/, "the end-to-end protocol"],
   [/\/src\/features\/link\/(?:link-popup\.tsx|add-host\.ts)$/, "droppen.app's half of a computer's sign-in"],
   [/\/src\/features\/landing\/(?!(?:route|get-droppen)\.ts$)/, "the public pages"],
   [/\/src\/(?:features\/move\/|lib\/move\/(?!types\.ts$))/, "the browser key move"],
