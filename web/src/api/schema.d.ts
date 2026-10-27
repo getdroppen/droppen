@@ -436,9 +436,9 @@ export interface paths {
          *     On the desktop app's instance the control socket opens nothing (any
          *     process of the user could ask it, and that instance never leaves its setup
          *     state: [`super::local_open`], "Not on the desktop app's instance"). The app
-         *     asks here instead, signed in as its own app-internal account — the
-         *     password in its keychain item, as before — and hands the browser the page
-         *     with the token, which the page trades for a session of this device's owner
+         *     asks here instead, signed in as its own app-internal account (the password
+         *     in its keychain item), and hands the browser the page with the token, which
+         *     the page trades for a session of this device's owner
          *     ([`local_open`]). Only on a server the desktop app runs, and only for an
          *     app-internal account; `null` once the instance has a user account.
          */
@@ -5895,7 +5895,7 @@ export interface components {
         TicketRequest: {
             /**
              * @description What the ticket is for. `ws` is single-use and lives a minute; `download`
-             *     is reusable and lives ten.
+             *     is reusable and lives a minute too.
              */
             scope: components["schemas"]["TicketScope"];
         };

@@ -42,9 +42,9 @@
 //! way round — a header would let a guesser be a new peer on every request.
 //!
 //! The global limit can be tripped on purpose to keep the owner waiting. The
-//! way round it is the one that always existed: `remote-hand-server user add`
-//! on the device itself, or a restart (the counters are in memory, and the
-//! restart mints a fresh code).
+//! way round it is local: `remote-hand-server user add` on the device itself,
+//! or a restart (the counters are in memory, and the restart mints a fresh
+//! code).
 
 use std::collections::HashMap;
 use std::net::IpAddr;

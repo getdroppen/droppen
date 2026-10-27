@@ -1,8 +1,9 @@
-//! The eight endpoints under `/api/auth/`.
+//! The ten operations under `/api/auth/`.
 //!
-//! Three of them answer without a token — [`login`], [`setup`] and [`status`] —
-//! and are the only three [`super::guard`] lets past. The rest need one, and
-//! say so in the spec through `#[api(security = "bearerAuth")]`.
+//! Four of them answer without a token — [`login`], [`setup`], [`status`] and
+//! [`local_open`] — and are the only four [`super::guard`] lets past on these
+//! paths. The rest need one, and say so in the spec through
+//! `#[api(security = "bearerAuth")]`.
 //!
 //! Every refusal on the login path is the same refusal: `401` with
 //! `{"error":"invalid credentials"}`, whether the account does not exist, the
@@ -191,7 +192,7 @@ pub struct AuthSessionList {
 #[serde(rename_all = "camelCase")]
 pub struct TicketRequest {
     /// What the ticket is for. `ws` is single-use and lives a minute; `download`
-    /// is reusable and lives ten.
+    /// is reusable and lives a minute too.
     pub scope: TicketScope,
 }
 
@@ -300,12 +301,12 @@ pub async fn login(
     // attempts against an allowance of five: the allowance was the attacker's
     // connection count rather than the policy's number.
     //
-    // Serializing costs no throughput, because logins were never concurrent
-    // past this point anyway: `UsersStore::verify` holds its own lock across the
-    // hash so that N logins cannot allocate N × 64 MiB. What it does cost is
-    // that simultaneous logins now queue — which is the right answer, and the
-    // reason the fix is a gate rather than counting the attempt up front. That
-    // would have made six *correct* simultaneous logins lock the account.
+    // Serializing costs no throughput, because logins are never concurrent past
+    // this point anyway: `UsersStore::verify` holds its own lock across the hash
+    // so that N logins cannot allocate N × 64 MiB. What it does cost is that
+    // simultaneous logins queue — the right answer, and the reason this is a
+    // gate rather than counting the attempt up front: counting would make six
+    // *correct* simultaneous logins lock the account.
     let _attempt = auth.login_gate.lock().await;
 
     // A name that could not be an account and a name that is not one are the
@@ -441,9 +442,9 @@ pub async fn local_open(
 /// On the desktop app's instance the control socket opens nothing (any
 /// process of the user could ask it, and that instance never leaves its setup
 /// state: [`super::local_open`], "Not on the desktop app's instance"). The app
-/// asks here instead, signed in as its own app-internal account — the
-/// password in its keychain item, as before — and hands the browser the page
-/// with the token, which the page trades for a session of this device's owner
+/// asks here instead, signed in as its own app-internal account (the password
+/// in its keychain item), and hands the browser the page with the token, which
+/// the page trades for a session of this device's owner
 /// ([`local_open`]). Only on a server the desktop app runs, and only for an
 /// app-internal account; `null` once the instance has a user account.
 #[api(
@@ -1270,8 +1271,8 @@ mod tests {
         assert_eq!(grant.token.0, None);
     }
 
-    /// An instance with a user account: a login everywhere — exactly as
-    /// before — whether `auth.enabled = true` is set or not.
+    /// An instance with a user account asks for a login everywhere, whether
+    /// `auth.enabled = true` is set or not: an account alone turns the guard on.
     #[tokio::test]
     async fn with_a_user_account_everyone_logs_in() {
         for enabled in [None, Some(true)] {

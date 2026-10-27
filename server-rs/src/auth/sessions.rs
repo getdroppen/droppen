@@ -1,9 +1,9 @@
 //! Login sessions: rows in this instance's state database.
 //!
-//! Per-instance, unlike the account file next door in [`super::users`]. An
-//! instance is a server, and a token is a claim on *a server* — so restarting
-//! one instance, or stopping it entirely, does not have to invalidate the phone
-//! that is logged in to another one on the same machine.
+//! Per-instance, like the accounts next door in [`super::users`]. An instance
+//! is a server, and a token is a claim on *a server* — so restarting one
+//! instance, or stopping it entirely, does not have to invalidate the phone that
+//! is logged in to another one on the same machine.
 //!
 //! **The server never stores a token.** What goes in the store is
 //! `sha256(token)`, hex; the token itself exists only in the response to
@@ -22,16 +22,16 @@
 //! In this instance's [`crate::db`], at `<instance>/state.db` — the database
 //! [`crate::sessions::Paths::instance_db`] names.
 //!
-//! Expiry is the reason this store has a *column* and not just a payload. The
-//! file it replaced had to be read whole and filtered in Rust to answer "which
-//! of these are still alive", so every login, every revocation and every list
-//! rewrote the whole thing to drop the dead ones. `expires_at` makes that
-//! `DELETE FROM auth_sessions WHERE expires_at < ?`, and the index makes it a
-//! range scan over the ones that are actually dead. It is stored in
-//! **milliseconds**, matching the ISO stamps beside it in the payload rather
-//! than SQLite's `unixepoch()` convention: a session minted with a zero TTL has
-//! to be dead the instant it exists, and a second's rounding would keep it alive
-//! for the rest of that second.
+//! Expiry is the reason this store has a *column* and not just a payload.
+//! Answering "which of these are still alive" from a payload alone means
+//! reading every row and filtering in Rust, so every login, every revocation
+//! and every list would rewrite the whole table to drop the dead ones.
+//! `expires_at` makes that `DELETE FROM auth_sessions WHERE expires_at < ?`, and
+//! the index makes it a range scan over the ones that are actually dead. It is
+//! stored in **milliseconds**, matching the ISO stamps beside it in the payload
+//! rather than SQLite's `unixepoch()` convention: a session minted with a zero
+//! TTL has to be dead the instant it exists, and a second's rounding would keep
+//! it alive for the rest of that second.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -56,8 +56,7 @@ const TOKEN_BYTES: usize = 32;
 ///
 /// The field exists so a person can recognise "this is the phone I lost"; it is
 /// not an audit log. Writing it on every request would turn a read-only API call
-/// into a write transaction — and, back when this was a file, into a `rename` of
-/// something every other request also read.
+/// into a write transaction, on the commonest request this server serves.
 const LAST_SEEN_FLUSH: Duration = Duration::from_secs(5 * 60);
 
 /// One live login, as it is stored.
@@ -92,9 +91,8 @@ pub struct NewSession {
 
 /// The session store, owning its database handle and its lock.
 ///
-/// `write_lock` outlived the mirror it was introduced beside, and what it
-/// protects now is narrower and worth naming: [`SessionsStore::revoke_user`] and
-/// [`SessionsStore::sweep`] read the live sessions, decide which to drop, and
+/// `write_lock` protects a read-decide-delete sequence: [`SessionsStore::revoke_user`]
+/// and [`SessionsStore::sweep`] read the live sessions, decide which to drop, and
 /// delete them in a *second* transaction. "Log every other device out", which is
 /// what a password change asks for, must not let a login slip into the gap
 /// between those two — the device it minted would survive an eviction that was
@@ -183,13 +181,12 @@ impl SessionsStore {
 
     /// Whose session this token is, or `None` for an unknown or expired one.
     ///
-    /// The digest lookup is still a linear scan with a constant-time comparison
-    /// rather than the primary-key hit the table now makes available, and the
-    /// reason it is worth keeping is the one it always was: an index probe leaks
-    /// through timing exactly what a `==` on the digest leaks, comparing in
-    /// constant time is free to avoid it, and the scan is bounded by how many
-    /// devices one person is logged in from. The `WHERE` clause does the work
-    /// the index is actually for — not reading the dead rows at all.
+    /// The digest lookup is a linear scan with a constant-time comparison
+    /// rather than a primary-key hit: an index probe leaks through timing
+    /// exactly what a `==` on the digest leaks, comparing in constant time is
+    /// free to avoid it, and the scan is bounded by how many devices one person
+    /// is logged in from. The `WHERE` clause does the work the index is actually
+    /// for — not reading the dead rows at all.
     ///
     /// Nothing is deleted here. This runs on every authenticated request, and
     /// turning a read into a write transaction per request is a price the
@@ -252,9 +249,8 @@ impl SessionsStore {
 
     /// Every live session, oldest first, with the expired ones dropped.
     ///
-    /// The dropping is now a `DELETE` rather than a filter over a copy of the
-    /// file, so the dead rows stop existing instead of being skipped by every
-    /// reader for ever.
+    /// The dropping is a `DELETE`, so the dead rows stop existing instead of
+    /// being skipped by every reader for ever.
     pub async fn list(&self) -> Vec<StoredSession> {
         let _guard = self.write_lock.lock().await;
         let now = now_millis();

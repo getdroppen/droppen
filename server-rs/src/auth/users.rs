@@ -1,70 +1,61 @@
-//! The account file: `<data>/instances/<name>/users.json`.
+//! The account store: `<instance>/state.db`'s `users` table, mirrored to
+//! `<instance>/users.json`.
 //!
-//! **Per-instance**, and it was not always. The note that stood here argued the
-//! opposite, at length, and the argument is kept in view rather than quietly
-//! replaced because it is the kind that sounds right for years. It went: an
-//! instance is a set of adoptable resources — terminals, runs, apps, a Claude
-//! root — and not a tenant; two instances on one machine are two views of one
-//! person's `$HOME`; separate password files would only mean the same person
-//! maintaining two of them while either one still reaches every file the other
-//! can.
-//!
-//! Every clause of that is true about the filesystem and the load-bearing one is
-//! not about the filesystem. **One person** was the premise, and it stops
-//! holding the moment an instance is handed to someone else. It stopped holding
-//! on a machine that ran two instances, each a server on its own port: `alice`
-//! for the machine's owner, `bob` for a second person. With one set of
-//! accounts, the single `user add` meant to put a password on `bob` turned
-//! `authRequired` on for *both* servers. The owner's own server was then behind
-//! somebody else's password, and there was no way to give the two of them
-//! different logins, because there was only ever one set of accounts.
-//!
-//! So the accounts are per-instance. Be exact about what that does and does not
-//! buy, because the old note's objection is still a fact: both servers run as
-//! the same operating-system user, so `bob`'s account can still read every file
-//! the owner's can. This is **not** a sandbox and nothing here should ever be
-//! sold as one — anyone who needs isolation needs two Unix accounts or two
-//! machines. What it buys is the thing the shared file made impossible: two
+//! **Per-instance.** Two instances on one machine — a server for the machine's
+//! owner and one handed to somebody else — must not share a door: with one
+//! account set, the `user add` that puts a password on the second server puts
+//! the owner's server behind it too, and the two can never have different
+//! logins. Be exact about what that buys. Both servers run as the same
+//! operating-system user, so either account can still read every file the
+//! other can: this is **not** a sandbox and nothing here should ever be sold as
+//! one — isolation needs two Unix accounts or two machines. What it buys is two
 //! people, two passwords, either one revocable without touching the other, and
-//! a server whose door is closed by *its own* operator rather than by whoever
-//! happened to run `user add` first.
+//! a server whose door is closed by *its own* operator.
 //!
-//! Sessions — the *tokens* — were already per-instance; see [`super::sessions`].
+//! Sessions — the *tokens* — are per-instance too; see [`super::sessions`].
 //!
 //! Passwords are stored as argon2id PHC strings. The cost parameters are named
-//! below rather than taken from `Params::DEFAULT`, because a login has to be able
-//! to tell "hashed by an older build" from "hashed by this one" and re-hash on
-//! the way past; a moving default would make that comparison meaningless.
+//! below rather than taken from `Params::DEFAULT`, because a login has to tell a
+//! hash made at cheaper parameters from one made at these and re-hash on the way
+//! past; a moving default would make that comparison meaningless.
 //!
-//! # Where the accounts actually live now
+//! # The table is the store
 //!
 //! In [`crate::db`], at `<instance>/state.db` — the same database the runs, the
 //! layouts and the schedule are in, so an account and this instance's state are
-//! one file and one `fsync`. `users.json` is still written beside it, on every
-//! change, but it is a *copy* — nothing reads it after the import below.
-//!
-//! That way round, and not the other, because of the one bug this store has that
-//! no amount of care inside one process can fix: `remote-hand-server user add`
-//! runs **while a server is up**, deliberately (see [`super::cli`]), takes no
-//! lock the server respects, and read-modify-writes the same file. Whoever
-//! renames last wins and the other edit is gone without a word — a password
-//! change that silently did not happen. Two processes cannot be serialised by a
-//! mutex private to each of them; they can be serialised by SQLite, which is
-//! what `busy_timeout` and a transaction are for.
+//! one file and one `fsync`. `remote-hand-server user add` runs **while a server
+//! is up**, deliberately (see [`super::cli`]), and takes no lock the server
+//! respects. Two processes cannot be serialised by a mutex private to each of
+//! them; they can by SQLite's `busy_timeout` and a transaction. A file both
+//! read-modify-wrote would let whoever renames last drop the other's edit
+//! without a word — a password change that silently did not happen.
 //!
 //! # What an instance starts with
 //!
-//! Only its own accounts. It does **not** inherit the machine-wide set the old
-//! design kept (`<config>/state.db`'s `users` table, and `<config>/users.json`
-//! beside it): that copy was an upgrade bridge, and every install from 0.2.37
-//! (when accounts became per-instance) has already made it. An install
-//! upgrading straight from an older build, or a new instance made by this
-//! build, therefore starts with no user account and is in its setup state until
-//! the first one exists ([`super::setup`]). That is fail-closed, not
-//! authentication off: no API route opens, and the ways in are
-//! `droppen user add`, `droppen open` or the setup code. The machine-wide set
-//! is left on disk untouched, so it remains a manual recovery source and a
-//! rolled-back binary still finds accounts.
+//! Only its own accounts. It does **not** inherit the machine-wide set builds
+//! before 0.2.37 kept (`<config>/state.db`'s `users` table, and
+//! `<config>/users.json` beside it): an install that ran 0.2.37 or later has
+//! already copied it into its instance, and one older than that is below the
+//! 0.2.125 upgrade floor. Such an install, or a new instance, starts with no user
+//! account and is in its setup state until the first one exists
+//! ([`super::setup`]). That is fail-closed, not authentication off: no API route
+//! opens, and the ways in are `droppen user add`, `droppen open` or the setup
+//! code.
+//!
+//! Nothing here reads or writes the machine-wide set, and nothing deletes it:
+//! the schema is additive-only, it is the user's data, and it is a manual
+//! recovery source. An older binary that still seeds from it — the supervisor's
+//! `.prev`, a build from before the seed was removed — finds accounts there
+//! rather than none, which is the **fail-closed** direction; [`SEED_MARKER`]
+//! below is what keeps such a build from copying them into an instance created
+//! here. A migration that is no longer needed is not a licence to delete user
+//! data.
+//!
+//! The accepted cost: an account revoked on an instance is not removed from that
+//! set, so a build that still seeds could put it back into an instance whose
+//! marker is gone. That is the deliberate direction of the error: it can leave a
+//! door shut-but-openable by a credential that should have been withdrawn, never
+//! a door with no lock on it at all — and only the second cannot be walked back.
 //!
 //! # App-internal accounts
 //!
@@ -73,55 +64,30 @@
 //! app-internal, in the stamps payload beside the row, and is not a *user*
 //! account: [`UsersStore::has_users`] does not count it, so it does not end the
 //! setup state, and a person on that device can still open the page as its
-//! owner (`remote-hand-server open`) or make the first account of their own. An
-//! older binary reads the row and not the mark, and takes it for an ordinary
-//! account: the fail-closed direction.
+//! owner (`remote-hand-server open`) or make the first account of their own. A
+//! binary that predates the mark reads the row and not the mark, and takes it
+//! for an ordinary account: the fail-closed direction.
 //!
-//! # The machine-wide set is left on disk
+//! # Why this store, alone, still writes a JSON file
 //!
-//! Nothing here reads or writes the machine-wide `users` table in
-//! `<config>/state.db` or `<config>/users.json`. Both are deliberately left
-//! untouched rather than deleted: the schema is additive-only, a supervisor
-//! rollback to `.prev` runs a binary that reads its accounts from that set, and
-//! finding accounts there keeps it **fail-closed**. Deleting a migration is not
-//! a licence to delete user data.
+//! The mirror is a **second opinion**, and [`UsersStore::has_users`] and
+//! [`UsersStore::is_empty`] are its only readers. Everywhere else in this server
+//! an empty table means an empty store. Here it means *authentication is
+//! switched off*, on a server that may be published to the internet through a
+//! tunnel, and the two things that could empty it — a database set aside as
+//! corrupt, a restore that brought back the wrong file — both look exactly like
+//! "the operator has not configured any accounts yet". So a table that says
+//! nobody is on file is believed only when `users.json` agrees. Other stores have
+//! no JSON mirror; do not drop this one to match them.
 //!
-//! The accepted cost: an account revoked on an instance is not removed from that
-//! set, so a rolled-back binary would honour it again until somebody rolls
-//! forward. That is the deliberate direction of the error. This trade can leave
-//! a door shut-but-openable by a credential that should have been withdrawn; it
-//! can never leave a door with no lock on it at all, and the second failure is
-//! the one that cannot be walked back.
-//!
-//! # Why this one store still writes its file
-//!
-//! Every other store dropped its JSON mirror once the rollback floor rose to a
-//! build that reads the database. This one kept it, and the asymmetry is
-//! deliberate rather than an oversight — if you are here to finish the job by
-//! deleting it, read this first.
-//!
-//! The mirror is not a rollback bridge any more. It is a **second opinion**, and
-//! [`UsersStore::has_users`] and [`UsersStore::is_empty`] are the only readers
-//! that want one. Everywhere else
-//! in this server an empty table means an empty store and that is the end of it.
-//! Here, an empty table means *authentication is switched off*, on a server
-//! published to the internet through a tunnel. The two things that could empty
-//! it — a database set aside as corrupt, a restore that brought back the wrong
-//! file — both look exactly like "the operator has not configured any accounts
-//! yet", and the first thing that happens next is that the API answers everyone.
-//!
-//! So `users.json` is kept in step, and a table that says nobody is on file is
-//! believed only when the file agrees. The cost is nothing: it is written on
-//! `user add`, `user passwd` and `user rm`, which is to say a handful of times
-//! in a machine's life, not once per turn — plus once more when the store finds
-//! accounts in the database and no file to mirror them to, so that the second
-//! opinion exists after a file somebody deleted. A failure to write it is
-//! logged rather than returned — the account exists either way, and refusing the
-//! operation would not put the file back.
+//! It is written on `user add`, `user passwd` and `user rm` — a handful of times
+//! in a machine's life — plus once more when the store finds accounts in the
+//! database and no file, so the second opinion survives somebody deleting it. A
+//! failure to write it is logged rather than returned: the account exists
+//! either way, and refusing the operation would not put the file back.
 //!
 //! The failure this buys is a lockout rather than an exposure: an account in the
-//! file with no row behind it keeps the door shut and says so loudly, and
-//! somebody has to work out why. That is the right way round.
+//! file with no row behind it keeps the door shut and says so loudly.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -160,14 +126,14 @@ pub const MAX_USERNAME: usize = 32;
 /// through; see [`UsersStore::ensure_imported`].
 const IMPORT_MARKER: &str = "users.json";
 
-/// The marker for the machine-wide *seed*, which this store no longer performs.
+/// The marker of the machine-wide *seed*: written — once, with no rows — the
+/// first time an instance's store is opened, though this store never seeds.
 ///
-/// It is still written — once, with no rows — the first time an instance's
-/// store is opened. An instance created by this build thus records that the
-/// seed has been considered, so a fallback to an older binary (the supervisor's
-/// `.prev`, or an image-baked build) does not copy the machine-wide accounts
-/// into an instance that deliberately started without them. Not a path, so it
-/// cannot be confused with one: nothing is drained from a file called this.
+/// A binary that still seeds (the supervisor's `.prev`, or an image-baked
+/// build) copies the machine-wide accounts into any instance that lacks this
+/// marker; with it, an instance that deliberately started without them stays
+/// that way. Not a path, so it cannot be confused with one: nothing is drained
+/// from a file called this.
 const SEED_MARKER: &str = "machine-wide-users";
 
 /// Where the two ISO stamps live, keyed by user name.
@@ -308,12 +274,11 @@ struct Stamps {
 
 /// The account store, owning its database handle and its two locks.
 ///
-/// Two `Mutex`es with different jobs. `write_lock` no longer exists to make a
-/// read-modify-write cycle atomic — the transaction does that, and does it
-/// against the CLI's process as well as this one — but to keep the *mirror*
-/// honest: it is a whole-file rewrite of everything, so two writers that commit
-/// in one order and then mirror in the other would leave `users.json`
-/// describing neither. It is held across the commit and the copy.
+/// Two `Mutex`es with different jobs. `write_lock` keeps the *mirror* honest
+/// (the transaction already makes each change atomic, against the CLI's process
+/// as well as this one): the mirror is a whole-file rewrite of everything, so
+/// two writers that commit in one order and then mirror in the other would leave
+/// `users.json` describing neither. It is held across the commit and the copy.
 /// `verify_lock` serializes *hashing*: each argon2id verification allocates 64
 /// MiB, so N concurrent logins would allocate N × 64 MiB. Holding it across the
 /// hash caps that at one, and doubles as the crudest possible rate limit — a
@@ -352,12 +317,12 @@ impl UsersStore {
     ///
     /// The database is the one beside the file, so this names an instance's
     /// store by pointing at `<instance>/users.json`, and the machine-wide store
-    /// an older build kept by pointing at `<config>/users.json`. Nothing is
+    /// builds before 0.2.37 kept by pointing at `<config>/users.json`. Nothing is
     /// inherited either way: a store holds only the accounts in its own
     /// database.
     ///
-    /// The CLI opening a file the server has open is left to SQLite, which is
-    /// the only thing that has ever been able to arbitrate it.
+    /// The CLI opening a file the server has open is left to SQLite, the only
+    /// thing that can arbitrate it.
     pub fn at(path: PathBuf) -> Self {
         let db = path.parent().unwrap_or_else(|| Path::new(".")).join("state.db");
         Self::over(path, db)
@@ -398,14 +363,7 @@ impl UsersStore {
             self.db.import_once(IMPORT_MARKER, || staged_from_json(&path));
             drain_staged(&self.db, IMPORT_MARKER);
 
-            // The seed is gone, but its marker is still written, once, with no
-            // rows. An instance created here may later be served by an older
-            // binary (`supervisor`'s `.prev`, or an image-baked build), and that
-            // build seeds itself from the machine-wide set unless this marker
-            // says the instance has already been through it. Recording
-            // "considered, nothing to copy" keeps such a fallback from silently
-            // reinstating machine-wide accounts on an instance that
-            // deliberately started without them.
+            // "Considered, nothing to copy": see [`SEED_MARKER`].
             self.db.import_once(SEED_MARKER, || Vec::new());
 
             // Accounts in the table and no file beside them is the one shape
@@ -433,8 +391,8 @@ impl UsersStore {
     /// with no row behind it keeps the door shut while somebody works out why.
     /// It cannot fire in the ordinary course of events: the import puts every
     /// user in the file into the table, and every write updates both. A file
-    /// that does not parse still reads as no accounts, which is the deliberate
-    /// fail-open this module has always had.
+    /// that does not parse still reads as no accounts: this module's deliberate
+    /// fail-open.
     pub async fn is_empty(&self) -> bool {
         if self.count() > 0 {
             return false;
@@ -492,9 +450,9 @@ impl UsersStore {
     /// Every row, in the order the file kept them.
     ///
     /// `ORDER BY rowid`, because the JSON this mirrors is a list in creation
-    /// order, [`UsersStore::list`] promises "newest last", and a rowid is
-    /// exactly the insertion order a `Vec::push` had. An `UPDATE` keeps its
-    /// rowid, which is what leaves a password change where it was in the list.
+    /// order, [`UsersStore::list`] promises "newest last", and a rowid is the
+    /// insertion order. An `UPDATE` keeps its rowid, which is what leaves a
+    /// password change where it was in the list.
     fn snapshot(&self) -> UsersFile {
         self.ensure_imported();
         self.rows()
@@ -543,10 +501,9 @@ impl UsersStore {
     /// Create an account.
     ///
     /// The name is the primary key, so "already exists" is not a check followed
-    /// by an insert — it *is* the insert, which is the difference between this
-    /// and the file it replaces. Two `user add`s of one name in two processes
-    /// now produce one account and one refusal instead of two accounts, one of
-    /// which vanishes.
+    /// by an insert — it *is* the insert: two `user add`s of one name in two
+    /// processes produce one account and one refusal, never two accounts of
+    /// which one vanishes.
     pub async fn add(&self, name: &str, password: &str) -> Result<(), UserError> {
         self.add_kind(name, password, false).await
     }
@@ -636,9 +593,9 @@ impl UsersStore {
     /// Make an existing account app-internal ([`UsersStore::add_app`]),
     /// password and all.
     ///
-    /// For the desktop app's installs made before the distinction existed,
-    /// whose own login is an ordinary account: the app marks it on its next
-    /// start, and the instance is left with the user accounts it really has.
+    /// For an install whose desktop-app login is an ordinary account, made by a
+    /// build without the mark: the app marks it on its next start, and the
+    /// instance is left with the user accounts it really has.
     pub async fn mark_app(&self, name: &str) -> Result<(), UserError> {
         let name = check_name(name)?;
         let _guard = self.write_lock.lock().await;
@@ -704,8 +661,8 @@ impl UsersStore {
     /// re-confirms that the name is still on file, so a removed user cannot be
     /// resurrected by a token that was minted before the removal. Another
     /// instance's account of the same name is a different account and is not
-    /// touched — that is what per-instance means, and it is why
-    /// [`super::cli`] no longer sweeps every instance's sessions.
+    /// touched — that is what per-instance means, and why [`super::cli`]
+    /// revokes this instance's sessions only.
     ///
     /// It does not reach the machine-wide set on disk either; see the module
     /// note on what a rollback would then still honour, and why that is the
@@ -769,8 +726,8 @@ impl UsersStore {
     /// Deliberately *not* filtered: a row whose hash is unparseable is returned
     /// as it stands, fails to verify like any wrong password, and — the point —
     /// still counts as an account. Dropping it as an unusable row would be the
-    /// tolerant thing to do everywhere else in this migration and is the wrong
-    /// thing here, because dropping the last one turns authentication off.
+    /// tolerant thing to do anywhere else and is the wrong thing here, because
+    /// dropping the last one turns authentication off.
     fn hash_of(&self, name: &str) -> Option<String> {
         self.ensure_imported();
         self.db
@@ -1042,7 +999,7 @@ mod tests {
         UsersStore::new(&Paths::for_instance(home.to_path_buf(), name))
     }
 
-    /// The machine-wide store an older build kept: the table in
+    /// The machine-wide store builds before 0.2.37 kept: the table in
     /// `<config>/state.db`, mirrored to `<config>/users.json`.
     fn machine_wide(home: &Path) -> UsersStore {
         UsersStore::at(home.join(".config").join("remote-hand").join("users.json"))
@@ -1195,8 +1152,9 @@ mod tests {
         assert!(store.is_empty().await);
     }
 
-    /// The upgrade path: a machine that has been running for a year has its
-    /// accounts in a file and nothing in a database.
+    /// Accounts in `users.json` with no table behind them — what a build
+    /// without the table wrote — are imported once, and the file is not read
+    /// again.
     #[tokio::test]
     async fn an_existing_accounts_file_is_imported_once_and_then_left_alone() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1235,9 +1193,9 @@ mod tests {
         );
         assert_eq!(listed[1].updated_at, "2024-02-02T00:00:00.000Z");
 
-        // Someone rolls back, the old build adds an account, someone rolls
-        // forward. The file is not the source of truth any more, and re-reading
-        // it here would be re-importing over whatever has happened since.
+        // A rolled-back build adds an account to the file, then the server
+        // rolls forward: the file is not the source of truth, and re-reading it
+        // would import over whatever has happened since.
         let mut behind = existing.clone();
         behind.users[0].name = "someone-else".into();
         std::fs::write(&path, serde_json::to_string(&behind).expect("encode")).expect("rewrite");
@@ -1250,8 +1208,8 @@ mod tests {
         assert!(!reopened.exists("someone-else").await);
     }
 
-    /// The whole point of the exercise: the hash outlives the process that made
-    /// it, in the database and not only in the copy beside it.
+    /// The hash outlives the process that made it, in the database and not
+    /// only in the mirror.
     #[tokio::test]
     async fn a_hash_survives_a_reopen_of_the_database() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1274,8 +1232,9 @@ mod tests {
         assert!(verify_sync(&hash, "correct horse battery"), "and it is still the password's hash");
     }
 
-    /// The mirror is the rollback bridge: a `.prev` binary that finds no file
-    /// concludes there are no accounts and opens the API.
+    /// Every change reaches the mirror, the one that empties it included: it is
+    /// the second opinion [`UsersStore::is_empty`] asks before "no accounts"
+    /// switches authentication off.
     #[tokio::test]
     async fn every_change_reaches_the_mirror_including_the_one_that_empties_it() {
         let (_dir, store) = store();
@@ -1315,9 +1274,9 @@ mod tests {
         );
     }
 
-    /// The incident this file was rewritten for: one `user add`, meant for the
-    /// instance somebody else was given, closed the owner's own server too.
-    /// Two instances, two account sets, no crosstalk in either direction.
+    /// Two instances, two account sets, no crosstalk in either direction: a
+    /// `user add` for the instance somebody else was given leaves the owner's
+    /// server as it was.
     #[tokio::test]
     async fn two_instances_on_one_machine_keep_their_own_accounts() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1339,9 +1298,8 @@ mod tests {
         assert_ne!(owner.path(), guest.path(), "two files, not one");
     }
 
-    /// The upgrade path, and the one that must not open anything: an account
-    /// the machine-wide set still names is not this instance's account, so the
-    /// instance starts in its setup state.
+    /// An account the machine-wide set still names is not this instance's
+    /// account, so the instance starts in its setup state, not open.
     #[tokio::test]
     async fn an_instance_does_not_inherit_the_machine_wide_accounts() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1364,8 +1322,8 @@ mod tests {
         assert!(file.contains("ada"), "and the file an older build reads still names it");
     }
 
-    /// The seed no longer runs, but its marker is still written — once, with no
-    /// rows — so a fallback to a binary that still seeds does not copy the
+    /// Nothing is seeded, but the seed's marker is written — once, with no rows
+    /// — so a fallback to a binary that still seeds does not copy the
     /// machine-wide accounts into an instance created here.
     #[tokio::test]
     async fn a_fresh_instance_records_the_seed_marker_without_importing() {

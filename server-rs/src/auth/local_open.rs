@@ -45,12 +45,11 @@
 //! **Not on the desktop app's instance.** That instance never leaves its setup
 //! state — its only account, the app's own (`droppen-app`), is app-internal —
 //! so a socket that answered there would hand an owner session to any process
-//! of that macOS user, for as long as the app runs, where before this the
-//! instance asked for the password in the app's keychain item. Its server
+//! of that macOS user, for as long as the app runs. Its server
 //! (`crate::desktop_app`) answers the socket with a refusal and mints nothing
 //! there; the app's *Open in Browser* asks for the token over HTTP instead,
 //! signed in as its own account (`POST /api/auth/local-open/grant`,
-//! [`crate::auth::routes::local_open_grant`]) — the same password as before.
+//! [`crate::auth::routes::local_open_grant`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

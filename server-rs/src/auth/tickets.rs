@@ -55,7 +55,7 @@ const MAX_LIVE: usize = 4096;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "lowercase")]
 pub enum TicketScope {
-    /// The three websocket upgrades: `/api/events`,
+    /// The four websocket upgrades: `/api/events`, `/api/agg/ws`,
     /// `/api/sessions/{source}/{id}/ws` and `/api/terminals/{id}/ws`.
     Ws,
     /// `GET /api/fs/download`, and nothing else.

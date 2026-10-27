@@ -1,10 +1,10 @@
 //! Local accounts: who may talk to this server at all.
 //!
-//! Until this module existed the answer was "anybody who can reach the port",
-//! and the README said so in a warning box. That is defensible for a loopback
-//! binding and indefensible for anything else, because the API can read and
-//! write every file under `$HOME`, open interactive shells, and drive the local
-//! CLIs. This is the missing layer, and it is deliberately small:
+//! Without this layer the answer is "anybody who can reach the port", which is
+//! defensible for a loopback binding and indefensible for anything else: the API
+//! can read and write every file under `$HOME`, open interactive shells, and
+//! drive the local CLIs. What sits in front of all of that is deliberately
+//! small:
 //!
 //! * [`users`] — argon2id password hashes in
 //!   `<data>/instances/<name>/users.json`, one account set per instance, so an
@@ -20,7 +20,7 @@
 //! * [`local_open`] — the local capability: a control socket only this OS user
 //!   can reach, through which `remote-hand-server open` gets a one-time token
 //!   that opens the page signed in as this device's owner;
-//! * [`routes`] — the nine endpoints under `/api/auth/`;
+//! * [`routes`] — the ten operations under `/api/auth/`;
 //! * [`cli`] — `remote-hand-server user add|list|passwd|rm`, the local-admin
 //!   path to an account that needs no code: whoever has a shell here is trusted.
 //!
@@ -621,8 +621,8 @@ fn ticket_offered(method: &Method, path: &str, uri: &Uri, headers: &HeaderMap) -
     Some((query_param(uri, "ticket")?, scope))
 }
 
-/// The websocket routes, by path: the three of the app, and the local
-/// gateway (`/api/agg/ws`, S1-7).
+/// The websocket routes, by path: the three of the app, and the local gateway
+/// (`/api/agg/ws`).
 ///
 /// Written out rather than derived, because "ends in `/ws`" is a rule a future
 /// route could satisfy by accident, and this list is a security boundary.

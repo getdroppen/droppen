@@ -5906,7 +5906,7 @@
         "properties": {
           "scope": {
             "$ref": "#/components/schemas/TicketScope",
-            "description": "What the ticket is for. `ws` is single-use and lives a minute; `download`\nis reusable and lives ten."
+            "description": "What the ticket is for. `ws` is single-use and lives a minute; `download`\nis reusable and lives a minute too."
           }
         },
         "required": [
@@ -7637,7 +7637,7 @@
     "/api/auth/local-open/grant": {
       "post": {
         "deprecated": false,
-        "description": "A local-open token for the desktop app's *Open in Browser*, asked for with\nthe app's own login.\n\nOn the desktop app's instance the control socket opens nothing (any\nprocess of the user could ask it, and that instance never leaves its setup\nstate: [`super::local_open`], \"Not on the desktop app's instance\"). The app\nasks here instead, signed in as its own app-internal account — the\npassword in its keychain item, as before — and hands the browser the page\nwith the token, which the page trades for a session of this device's owner\n([`local_open`]). Only on a server the desktop app runs, and only for an\napp-internal account; `null` once the instance has a user account.",
+        "description": "A local-open token for the desktop app's *Open in Browser*, asked for with\nthe app's own login.\n\nOn the desktop app's instance the control socket opens nothing (any\nprocess of the user could ask it, and that instance never leaves its setup\nstate: [`super::local_open`], \"Not on the desktop app's instance\"). The app\nasks here instead, signed in as its own app-internal account (the password\nin its keychain item), and hands the browser the page with the token, which\nthe page trades for a session of this device's owner\n([`local_open`]). Only on a server the desktop app runs, and only for an\napp-internal account; `null` once the instance has a user account.",
         "operationId": "auth_local_open_grant",
         "parameters": [],
         "responses": {
