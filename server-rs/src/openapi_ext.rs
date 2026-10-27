@@ -252,8 +252,50 @@ fn collect_schema<T: Schematic>() -> (Schema, BTreeMap<String, Schema>) {
 /// The media type a JSON body is served as.
 const JSON: &str = "application/json";
 
+/// Implement `Schematic` for a string enum that must stay *inline* in its
+/// parent schema.
+///
+/// A derived `Schematic` registers a named component and refers to it by
+/// `$ref`. The contract spells these enums as inline string enums in the field
+/// they belong to, and `openapi/openapi.json` is a checked-in contract, so the
+/// generated document must stay byte-for-byte what it was.
+#[macro_export]
+macro_rules! inline_string_enum {
+    ($name:ident, [$($variant:literal),+ $(,)?]) => {
+        impl ::gotcha::Schematic for $name {
+            fn name() -> &'static str {
+                ::std::stringify!($name)
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "string"
+            }
+
+            fn generate_schema() -> ::gotcha_core::EnhancedSchema {
+                ::gotcha_core::EnhancedSchema {
+                    schema: ::gotcha::oas::Schema {
+                        _type: Some("string".to_string()),
+                        format: None,
+                        nullable: None,
+                        description: None,
+                        extras: ::std::collections::BTreeMap::from([(
+                            "enum".to_string(),
+                            ::serde_json::json!([$($variant),+]),
+                        )]),
+                    },
+                    required: true,
+                }
+            }
+        }
+    };
+}
+
 /// One declarative amendment to a generated operation.
-pub struct ResponseOverride {
+struct ResponseOverride {
     /// HTTP method, uppercase (`"GET"`).
     pub method: &'static str,
     /// Route path as registered (`"/api/sessions/{source}/{id}"`).
@@ -273,91 +315,6 @@ pub struct ResponseOverride {
     /// keeping its body. gotcha derives every success as `200`
     /// (`gotcha_core-0.4.1/src/responsible.rs:25`), so a `201` route has to say so.
     pub rename_from: Option<u16>,
-}
-
-/// Document an extra status code whose body is `T`.
-pub fn extra_response<T: Schematic>(method: &'static str, path: &'static str, status: u16, description: &'static str) -> ResponseOverride {
-    ResponseOverride {
-        method,
-        path,
-        status,
-        description,
-        schema: Some(collect_schema::<T>),
-        content_type: JSON,
-        drop_default: true,
-        rename_from: None,
-    }
-}
-
-/// Reword an already-generated response (gotcha hard-codes `"default return"`).
-pub fn describe(method: &'static str, path: &'static str, status: u16, description: &'static str) -> ResponseOverride {
-    ResponseOverride {
-        method,
-        path,
-        status,
-        description,
-        schema: None,
-        content_type: JSON,
-        drop_default: false,
-        rename_from: None,
-    }
-}
-
-/// [`describe`], and also drop the `default` response gotcha derives from a
-/// `Result` handler's error side — for a route whose documented statuses are
-/// exactly the ones it already carries.
-pub fn describe_final(method: &'static str, path: &'static str, status: u16, description: &'static str) -> ResponseOverride {
-    ResponseOverride {
-        drop_default: true,
-        ..describe(method, path, status, description)
-    }
-}
-
-/// Restate the generated `200` under the status the handler actually sends.
-///
-/// The body schema is kept exactly as gotcha derived it from the return type;
-/// only the key and the description change.
-pub fn restatus(method: &'static str, path: &'static str, from: u16, to: u16, description: &'static str) -> ResponseOverride {
-    ResponseOverride {
-        method,
-        path,
-        status: to,
-        description,
-        schema: None,
-        content_type: JSON,
-        drop_default: false,
-        rename_from: Some(from),
-    }
-}
-
-/// Replace a generated response with raw bytes.
-///
-/// A handler that streams a file returns `axum::response::Response`, which is
-/// not `Schematic`, so it cannot be documented from the return type at all; the
-/// route documents its success case through this instead.
-pub fn binary_response(method: &'static str, path: &'static str, status: u16, description: &'static str) -> ResponseOverride {
-    fn binary_schema() -> (Schema, BTreeMap<String, Schema>) {
-        (
-            Schema {
-                _type: Some("string".to_string()),
-                format: Some("binary".to_string()),
-                nullable: None,
-                description: None,
-                extras: Default::default(),
-            },
-            BTreeMap::new(),
-        )
-    }
-    ResponseOverride {
-        method,
-        path,
-        status,
-        description,
-        schema: Some(binary_schema),
-        content_type: "application/octet-stream",
-        drop_default: true,
-        rename_from: None,
-    }
 }
 
 /// One declarative amendment to a generated operation's request body.
@@ -391,40 +348,104 @@ pub struct ExtraResponses {
 }
 
 impl ExtraResponses {
-    /// Reword a response gotcha already generated.
+    /// Reword a response gotcha already generated (it hard-codes `"default return"`).
     pub fn describe(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(describe(method, path, status, description));
+        self.responses.push(ResponseOverride {
+            method,
+            path,
+            status,
+            description,
+            schema: None,
+            content_type: JSON,
+            drop_default: false,
+            rename_from: None,
+        });
         self
     }
 
     /// Document a failure status whose body is the API's [`crate::api::error::Error`].
     pub fn error(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses
-            .push(extra_response::<crate::api::error::Error>(method, path, status, description));
-        self
+        self.body::<crate::api::error::Error>(method, path, status, description)
     }
 
     /// Document an extra status whose body is `T`.
     pub fn body<T: Schematic>(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(extra_response::<T>(method, path, status, description));
+        self.responses.push(ResponseOverride {
+            method,
+            path,
+            status,
+            description,
+            schema: Some(collect_schema::<T>),
+            content_type: JSON,
+            drop_default: true,
+            rename_from: None,
+        });
         self
     }
 
-    /// [`Self::describe`], and drop the `default` response too.
+    /// [`Self::describe`], and drop the `default` response gotcha derives from a
+    /// `Result` handler's error side — for a route whose documented statuses are
+    /// exactly the ones it already carries.
     pub fn describe_final(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(describe_final(method, path, status, description));
+        self.responses.push(ResponseOverride {
+            method,
+            path,
+            status,
+            description,
+            schema: None,
+            content_type: JSON,
+            drop_default: true,
+            rename_from: None,
+        });
         self
     }
 
-    /// Restate the generated response under the status the handler really sends.
+    /// Restate the generated `200` under the status the handler actually sends.
+    ///
+    /// The body schema is kept exactly as gotcha derived it from the return
+    /// type; only the key and the description change.
     pub fn restatus(&mut self, method: &'static str, path: &'static str, from: u16, to: u16, description: &'static str) -> &mut Self {
-        self.responses.push(restatus(method, path, from, to, description));
+        self.responses.push(ResponseOverride {
+            method,
+            path,
+            status: to,
+            description,
+            schema: None,
+            content_type: JSON,
+            drop_default: false,
+            rename_from: Some(from),
+        });
         self
     }
 
     /// Document a success status that carries raw bytes.
+    ///
+    /// A handler that streams a file returns `axum::response::Response`, which
+    /// is not `Schematic`, so it cannot be documented from the return type at
+    /// all; the route documents its success case through this instead.
     pub fn binary(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(binary_response(method, path, status, description));
+        fn binary_schema() -> (Schema, BTreeMap<String, Schema>) {
+            (
+                Schema {
+                    _type: Some("string".to_string()),
+                    format: Some("binary".to_string()),
+                    nullable: None,
+                    description: None,
+                    extras: Default::default(),
+                },
+                BTreeMap::new(),
+            )
+        }
+        self.responses.push(ResponseOverride {
+            method,
+            path,
+            status,
+            description,
+            schema: Some(binary_schema),
+            content_type: "application/octet-stream",
+            drop_default: true,
+            rename_from: None,
+        });
         self
     }
 
