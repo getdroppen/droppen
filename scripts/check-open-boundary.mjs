@@ -50,7 +50,7 @@ export const isHub = (name) => HUB_NAMES.some((hub) => dashed(name) === hub || d
 
 /**
  * Environment variables named like the hub's that are the open side's own:
- * the hub a new sign-in uses (`server-rs/src/api/cloud.rs`) and the hub-API
+ * the hub a new sign-in uses (`server-rs/src/api/cloud/link.rs`) and the hub-API
  * traffic capture (`docs/hub-api/check.mjs --traffic`), each read under its
  * Droppen name first and its name from before the rename after it
  * (`server-rs/src/env.rs`). Exactly the names main reads; a new one is

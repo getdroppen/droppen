@@ -610,7 +610,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 
 ### 4.5 本机 API、鉴权与 CSRF
 
-新路由放在 `S/api/cloud.rs`。
+新路由放在 `S/api/cloud/mod.rs`。
 
 | 路由 | 作用 | 谁能调 |
 |---|---|---|
@@ -966,7 +966,7 @@ interface AppShell {
 | 模块 | 今天 | 改成 |
 |---|---|---|
 | `C/rh-proto/src/chain.rs`、`handshake.rs`、互通向量 | v2；只有一个新鲜度窗口 | v3 的条目、映射、签名规则、`host`/`admin` 检查；按操作的新鲜度 |
-| `S/api/cloud.rs`（新） | — | §4.5 |
+| `S/api/cloud/`（新） | — | §4.5 |
 | `S/agent/{enroll,link,mod}.rs` | 独立进程注册；启动时起链接；只当响应方 | 注册改为库函数；运行中启停；对移除做出反应；`status`、`unenroll`；声明 `chain/3`、`policy/1` |
 | `S/agent/bridge.rs` | 所有设备都能用全部 API | 非 admin 的拒绝清单 |
 | `S/aggregator/*`（新） | — | 用同一身份做控制：`hub.rs`（设备会话、`/v1/client`、信箱）、`keys.rs`、`copies.rs`、`channels.rs`（票据、中继、Noise 发起、直连）、`gateway.rs`、`access.rs` |

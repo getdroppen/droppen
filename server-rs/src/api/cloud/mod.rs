@@ -66,7 +66,7 @@ mod link;
 
 pub use access::remote_viewer;
 pub use file::{file_path, hand_over_from_local_owner};
-pub use link::{post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
+pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
 use link::*;

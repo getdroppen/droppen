@@ -23,7 +23,7 @@ pub(super) struct Attempt {
     /// The local user who opened it.
     pub(super) owner: String,
     /// The hub, as the agent signs in to it (`wss://…`), and where a browser
-    /// signs in to it ([`super::hub_web`]: its app origin, or its own as `https://`).
+    /// signs in to it ([`crate::api::hub_web`]: its app origin, or its own as `https://`).
     pub(super) hub: String,
     pub(super) hub_web: String,
     pub(super) aggregate: bool,
@@ -111,7 +111,7 @@ impl Cloud {
 /// The hub a sign-in uses: the request's, else `DROPPEN_HUB_DEFAULT` (or its
 /// old name, `RH_HUB_DEFAULT`), else
 /// api.droppen.app; as the agent signs in to it, `wss://…`. Where a browser
-/// signs in to it is the hub's to say ([`super::hub_web`]).
+/// signs in to it is the hub's to say ([`crate::api::hub_web`]).
 pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
     let configured = crate::env::var("DROPPEN_HUB_DEFAULT");
     let url = requested
@@ -124,7 +124,7 @@ pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
 
 /// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only):
 /// the hub's own web origin, where a browser signs in unless the hub names
-/// its app's ([`super::hub_web`]). The one implementation is
+/// its app's ([`crate::api::hub_web`]). The one implementation is
 /// [`crate::aggregator::hub::HubOriginExt::http_base`].
 pub fn web_origin(ws_origin: &str) -> String {
     use crate::aggregator::hub::HubOriginExt;
@@ -184,7 +184,7 @@ pub async fn post_link(
         _ => resolve_hub(body.hub.as_deref())?,
     };
     // Where the browser signs in: the hub's app origin, when its discovery
-    // document names one (my.droppen.app), else its own (`super::hub_web`).
+    // document names one (my.droppen.app), else its own (`crate::api::hub_web`).
     let hub_web = cloud.hub_webs.for_sign_in(&hub).await;
     let identity = cloud.control.identity().map_err(ApiError::internal)?;
     let aggregate = body.aggregate.unwrap_or(true);

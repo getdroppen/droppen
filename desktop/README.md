@@ -489,7 +489,7 @@ system browser (`docs/local-aggregator.md` §4.9, the browser hand-off):
 The attempt is the app's own account's (`droppen-app`, app-internal): on the
 app's server — and only there — that account may sign in a device whose link
 nobody owns yet, and owns the link it signs in; a link a person's account owns
-stays theirs (`server-rs/src/api/cloud.rs`, `may_manage`).
+stays theirs (`server-rs/src/api/cloud/access.rs`, `may_manage`).
 
 droppen.app has to serve this hand-off before an app that uses it ships: an
 older droppen.app only says to open the sign-in from the device's settings.
