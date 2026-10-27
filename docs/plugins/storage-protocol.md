@@ -65,7 +65,11 @@ dismissed, and goes away when those files are cleared.
 
 `GET /api/settings` and the global feed's `settings` frame carry the same list
 as `plugins`. After an install, an uninstall or a switch, the feed sends
-`{ "type": "plugins", "plugins": PluginStatus[] }`.
+`{ "type": "plugins", "plugins": PluginStatus[] }`. None of this reaches a
+bridged caller (`cloud:<device>`): its `settings` (route or frame) carries
+`plugins: []`, it is sent no `plugins` or `plugin-doc` frame, and the hub's
+offline copy — made from the agent's own bridged `/api/settings` — has no
+plugin status either (`runtime.md` §5).
 
 Who may install, uninstall or switch: any signed-in user of the instance
 (there are no roles). The configuration wins over the switch: `[plugins]

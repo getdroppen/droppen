@@ -216,7 +216,8 @@ pub struct Attached {
 /// knows nothing about.
 ///
 /// `plugins` is the instance's plugin list as of the attach; a later switch
-/// arrives as its own `plugins` frame.
+/// arrives as its own `plugins` frame. A cloud subscriber is given an empty
+/// list, the list being this computer's own (`docs/plugins/runtime.md` §5).
 pub async fn attach(
     feed: &Arc<GlobalFeed>,
     drive: &Arc<Drive>,
@@ -465,6 +466,27 @@ fn snapshot_frame(sessions: &[SessionSummary]) -> String {
     serde_json::json!({ "type": "sessions:snapshot", "sessions": sessions }).to_string()
 }
 
+/// Whether `frame` is about runtime-installed plugins: the `plugins` list or a
+/// `plugin-doc` write announcement. Both are this computer's own pages' alone
+/// (`docs/plugins/runtime.md` §5), so a cloud subscriber drops them.
+///
+/// The broadcast is shared by every subscriber, and session frames are almost
+/// all of its traffic: the cheap text check keeps parsing for a frame that
+/// cannot be one, and a session title that happens to contain `"plugin` still
+/// parses to a `sessions:*` type and goes through.
+fn plugin_frame(frame: &str) -> bool {
+    if !frame.contains("\"plugin") {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(frame) else {
+        return false;
+    };
+    matches!(
+        value.get("type").and_then(serde_json::Value::as_str),
+        Some("plugins" | "plugin-doc")
+    )
+}
+
 /// The live session-list feed. Deliberately **not** annotated with `#[api]`:
 /// `WebSocketUpgrade` is not a `ParameterProvider`, so the macro's generated
 /// call fails to compile (`gotcha_macro-0.4.1/src/route.rs:88`). The TypeScript
@@ -486,8 +508,11 @@ pub async fn events_ws(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let options = MuxOptions::from_query(query.v.as_deref(), query.z.as_deref());
+    // A bridged device is droppen.app, and plugins are this computer's own
+    // (`docs/plugins/runtime.md` §5): read the flag before `who` is consumed.
+    let cloud = who.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"));
     let login = who.0.and_then(|identity| identity.token_sha256.map(|digest| (identity.username, digest)));
-    upgrade.on_upgrade(move |socket| run_socket(socket, state, options, login))
+    upgrade.on_upgrade(move |socket| run_socket(socket, state, options, login, cloud))
 }
 
 /// How often a feed socket opened by a login looks again at whether that
@@ -507,18 +532,24 @@ pub struct EventsQuery {
 }
 
 /// `login`: the account and its login's digest, when a login opened it.
+/// `cloud`: a bridged device (`cloud:<device>`), which hears nothing of the
+/// plugins (`docs/plugins/runtime.md` §5) — no status in `settings`, and no
+/// `plugins` / `plugin-doc` frame.
 ///
 /// Every send is bounded ([`send_within`]), and so is the close
 /// ([`CLOSE_LIMIT`]): a client that stops reading would otherwise park this
 /// task for good, with the list feed and every subscription it holds.
-async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, login: Option<(String, String)>) {
+async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, login: Option<(String, String)>, cloud: bool) {
     let (mut sender, mut receiver) = socket.split();
     let (limit, shutdown) = (state.send_limit, &state.cancel);
     let compress = options.compress;
     if options.enabled && !send_within(&mut sender, Message::Text(hello_frame(options).into()), limit, shutdown).await {
         return;
     }
-    let plugins = state.plugins.status_async().await;
+    // A cloud subscriber is told there are no plugins, so `settings` says
+    // `plugins: []` just as `/api/settings` does for it (`docs/plugins/
+    // runtime.md` §5); the live frames are filtered below.
+    let plugins = if cloud { Vec::new() } else { state.plugins.status_async().await };
     let attached = attach(&state.global, &state.drive, state.instance.name(), state.started_at.as_ref(), &plugins).await;
     let mut attachment = attached.attachment;
     for frame in attached.opening {
@@ -546,6 +577,13 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
             }
             frame = attachment.next_frame() => match frame {
                 Some(frame) => {
+                    // The broadcast is shared, so the filter is the
+                    // subscriber's: a cloud socket drops what only this
+                    // computer's own pages may hear (`docs/plugins/runtime.md`
+                    // §5).
+                    if cloud && plugin_frame(&frame) {
+                        continue;
+                    }
                     if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
                         break;
                     }
@@ -749,6 +787,128 @@ mod tests {
         .expect("a JSON frame");
         let route = serde_json::to_value(vec![crate::plugins::wire::PluginStatus::from(status)]).expect("JSON");
         assert_eq!(frame["plugins"], route);
+    }
+
+    /// The filter is by type, not by the word: a session's title is arbitrary
+    /// text and may well contain `"plugin`.
+    #[test]
+    fn only_the_plugin_frames_are_plugin_frames() {
+        assert!(plugin_frame(r#"{"type":"plugins","plugins":[]}"#));
+        assert!(plugin_frame(r#"{"type":"plugin-doc","plugin":"tasks","name":"state","revision":1}"#));
+        assert!(!plugin_frame(r#"{"type":"sessions:delta","upserts":[{"title":"a \"plugin\" thing"}]}"#));
+        assert!(!plugin_frame(r#"{"type":"screens:changed","listRevision":1}"#));
+        assert!(!plugin_frame("not json"));
+    }
+
+    /// A bridged subscriber is droppen.app, and plugins are this computer's
+    /// own (`docs/plugins/runtime.md` §5): its `settings` frame says there are
+    /// none, and the `plugins` / `plugin-doc` frames a local page hears never
+    /// reach it. A local page hears both, as it always did.
+    #[tokio::test]
+    async fn a_cloud_subscriber_hears_nothing_of_the_plugins() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        /// The next JSON frame of a feed socket, skipping the keepalive pings.
+        async fn next_frame(
+            socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        ) -> serde_json::Value {
+            use tokio_tungstenite::tungstenite::Message as WsMessage;
+            loop {
+                match tokio::time::timeout(Duration::from_secs(10), socket.next())
+                    .await
+                    .expect("a frame in time")
+                {
+                    Some(Ok(WsMessage::Text(text))) => return serde_json::from_str(&text).expect("a JSON frame"),
+                    Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_))) => continue,
+                    other => panic!("{other:?}"),
+                }
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let (state, addr) = crate::api::test_support::served_with(home.path(), |state| {
+            // One plugin this instance has, so `settings` differs visibly
+            // between the two subscribers.
+            state.plugins = Arc::new(crate::plugins::tests::installed_host(
+                home.path(),
+                &["tasks"],
+                crate::config::PluginSettings::default(),
+                None,
+            ));
+        })
+        .await;
+
+        let mut request = format!("ws://{addr}/api/events").into_client_request().expect("a request");
+        request.headers_mut().insert(
+            crate::agent::bridge::CREDENTIAL_HEADER,
+            state
+                .drive
+                .auth
+                .internal_credential()
+                .to_string()
+                .parse()
+                .expect("a header value"),
+        );
+        request.headers_mut().insert(
+            crate::agent::bridge::DEVICE_HEADER,
+            "d-1".parse().expect("a header value"),
+        );
+        let (mut cloud, _) = tokio_tungstenite::connect_async(request).await.expect("a bridged socket");
+
+        let ticket = crate::api::test_support::owner_ticket(&state).await;
+        let (mut local, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/events?ticket={ticket}"))
+            .await
+            .expect("a local socket");
+
+        let cloud_settings = next_frame(&mut cloud).await;
+        assert_eq!(cloud_settings["type"], "settings");
+        assert_eq!(cloud_settings["plugins"], serde_json::json!([]), "a cloud subscriber is told of no plugins");
+
+        let local_settings = next_frame(&mut local).await;
+        assert_eq!(local_settings["type"], "settings");
+        assert_eq!(local_settings["plugins"][0]["id"], "tasks", "a local page still sees the list");
+
+        // Both are attached now; what the plugins publish reaches every
+        // subscriber through the same broadcast.
+        state
+            .global
+            .publish(serde_json::json!({"type":"plugins","plugins":[{"id":"tasks"}]}).to_string());
+        state
+            .global
+            .publish(serde_json::json!({"type":"plugin-doc","plugin":"tasks","name":"state","revision":1}).to_string());
+        state
+            .global
+            .publish(serde_json::json!({"type":"screens:changed","listRevision":1}).to_string());
+
+        /// The types of the frames up to `marker` — what `socket` heard, in
+        /// order, so a test can say what it did not.
+        async fn types_until_marker(
+            socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            marker: &str,
+        ) -> Vec<String> {
+            let mut types = Vec::new();
+            for _ in 0..16 {
+                let frame = next_frame(socket).await;
+                let kind = frame["type"].as_str().unwrap_or_default().to_string();
+                let done = kind == marker;
+                types.push(kind);
+                if done {
+                    break;
+                }
+            }
+            assert_eq!(types.last().map(String::as_str), Some(marker), "no {marker} in {types:?}");
+            types
+        }
+
+        let cloud_heard = types_until_marker(&mut cloud, "screens:changed").await;
+        assert!(
+            !cloud_heard.iter().any(|kind| kind == "plugins" || kind == "plugin-doc"),
+            "a cloud subscriber heard {cloud_heard:?}"
+        );
+        let local_heard = types_until_marker(&mut local, "screens:changed").await;
+        for kind in ["plugins", "plugin-doc"] {
+            assert!(local_heard.iter().any(|heard| heard == kind), "a local page heard {local_heard:?}");
+        }
     }
 
     #[test]

@@ -245,6 +245,9 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
     let (claude_sessions, codex_sessions) = tokio::join!(claude::list_claude_sessions(paths, &bindings), codex::list_codex_sessions(paths));
+    // The agent's own status mirror reads this route as `cloud:agent-sync`, so
+    // the hub's offline copy gets the same empty list (`docs/plugins/
+    // runtime.md` §5).
     let plugins: Vec<crate::plugins::wire::PluginStatus> = if crate::plugins::is_cloud(&who) {
         Vec::new()
     } else {
@@ -769,6 +772,41 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// A bridged caller is droppen.app — and the agent's own status mirror,
+    /// which reads this route as `cloud:agent-sync` and is what the hub's
+    /// offline copy is made from. Neither may learn of a plugin
+    /// (`docs/plugins/runtime.md` §5); a local page still may.
+    #[tokio::test]
+    async fn a_bridged_settings_says_there_are_no_plugins() {
+        let home = tempfile::tempdir().unwrap();
+        let mut state = test_support::state(home.path()).await;
+        state.plugins = Arc::new(crate::plugins::tests::installed_host(
+            home.path(),
+            &["tasks"],
+            crate::config::PluginSettings::default(),
+            None,
+        ));
+
+        let local = settings(State(state.clone()), crate::auth::MaybeIdentity(None)).await.0;
+        assert_eq!(local.plugins.len(), 1, "a local caller sees the instance's plugins");
+
+        for device in ["agent-sync", "d-1"] {
+            let bridged = settings(
+                State(state.clone()),
+                crate::auth::MaybeIdentity(Some(crate::auth::AuthIdentity {
+                    username: format!("cloud:{device}"),
+                    token_sha256: None,
+                })),
+            )
+            .await
+            .0;
+            assert!(
+                bridged.plugins.is_empty(),
+                "a bridged caller must not learn of any plugin: {device}"
+            );
+        }
+    }
 
     fn heartbeat() -> Heartbeat {
         Heartbeat::new(Duration::from_secs(30), Duration::from_secs(90))
