@@ -92,20 +92,31 @@ function packageOf(id: string): string | null {
 /**
  * Fail the build when the boot chunks (the entry and what it imports
  * statically, as the shell preloads and the service worker precaches them)
- * hold code or a stylesheet of a package the app loads on demand (`onDemand`:
- * package names, a trailing `/` for a scope), or when a vendor chunk imports
- * anything but `vendor-react`. A stylesheet's JS proxy renders to nothing, but
- * its CSS ships with the chunk as a render-blocking `<link>`.
+ * hold code or a stylesheet the app loads on demand (`onDemand`: package
+ * names, a trailing `/` for a scope; or the app's own modules by their path
+ * from the web root, `src/features/files/files-view.tsx`), or when a vendor
+ * chunk imports anything but `vendor-react`. A stylesheet's JS proxy renders
+ * to nothing, but its CSS ships with the chunk as a render-blocking `<link>`.
  *
  * `vendorChunk` keeps lazy-only packages out of `vendor` by itself. This is
  * the alarm for one of them becoming eager by a static import in the wrong
- * place, and for the chunk cycle a finer split once failed to boot with.
+ * place — or one of the app's lazy views (`src/app/lazy-views.ts`) — and for
+ * the chunk cycle a finer split once failed to boot with.
  */
 export function guardBootChunks(onDemand: readonly string[]): Plugin {
-  const isOnDemand = (pkg: string) => onDemand.some((p) => (p.endsWith("/") ? pkg.startsWith(p) : pkg === p));
+  let root = "";
+  /** A module of the app's own by its path from the web root, without a query. */
+  const appModuleOf = (id: string) => (root && id.startsWith(`${root}/`) ? id.slice(root.length + 1).replace(/[?#].*$/, "") : null);
+  const isOnDemand = (id: string) => {
+    const name = packageOf(id) ?? appModuleOf(id);
+    return name !== null && onDemand.some((p) => (p.endsWith("/") ? name.startsWith(p) : name === p));
+  };
   return {
     name: "rh-guard-boot-chunks",
     apply: "build",
+    configResolved(config) {
+      root = config.root;
+    },
     generateBundle(_options, bundle) {
       const chunks = new Map<string, Rollup.OutputChunk>();
       for (const file of Object.values(bundle)) if (file.type === "chunk") chunks.set(file.fileName, file);
@@ -119,7 +130,7 @@ export function guardBootChunks(onDemand: readonly string[]): Plugin {
       for (const chunk of chunks.values()) if (chunk.isEntry) visit(chunk.fileName);
       for (const fileName of boot) {
         const eager = Object.entries(chunks.get(fileName)!.modules)
-          .filter(([id, m]) => (m.renderedLength > 0 || /\.css($|\?)/.test(id)) && isOnDemand(packageOf(id) ?? ""))
+          .filter(([id, m]) => (m.renderedLength > 0 || /\.css($|\?)/.test(id)) && isOnDemand(id))
           .map(([id]) => id);
         if (eager.length)
           this.error(

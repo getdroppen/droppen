@@ -57,7 +57,7 @@ import { DesktopUpdate } from "./desktop-update";
 import { NAV_ITEM_CLASS } from "./rail-item";
 import { PluginRegistryProvider } from "@/plugins/registry";
 import { PluginNav } from "@/plugins/plugin-nav";
-import { NewSessionHotkey, useNewSessionShortcut, useOpenNewSession } from "@/features/sessions/new-session-view";
+import { NewSessionHotkey, useNewSessionShortcut, useOpenNewSession } from "@/features/sessions/new-session-open";
 import { MachineProvider, useApi, useHomeMachine, useInfoOf, useMachine, useMachineInfo } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";

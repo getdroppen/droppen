@@ -54,7 +54,8 @@ const { MachineProvider } = await import("../src/lib/machines/context.js");
 const { LOCAL, sessionKey } = await import("../src/lib/machines/key.js");
 const registry = await import("../src/lib/machines/registry.js");
 const { constantStore } = await import("../src/lib/machines/store.js");
-const { NewSessionHotkey, NewSessionRoute, useOpenNewSession, validateNewSessionSearch } = await import("../src/features/sessions/new-session-view.js");
+const { NewSessionRoute } = await import("../src/features/sessions/new-session-view.js");
+const { NewSessionHotkey, useOpenNewSession, validateNewSessionSearch } = await import("../src/features/sessions/new-session-open.js");
 const { DeliveryPreviews, seedDeliveryPreview, useDeliveryPreviews, usePendingDeliveries } = await import("../src/features/sessions/delivery-preview-view.js");
 const { readNewSessionDraft, writeNewSessionDraft } = await import("../src/features/sessions/new-session.js");
 const { PaneLeafContent } = await import("../src/app/secondary-pane.js");
@@ -379,9 +380,9 @@ test("in a split pane the view is the pane's content, and the pane becomes the s
     <PaneLeafContent content={{ kind: "new-session" }} onChange={(next) => void changes.push(next)} onClose={() => undefined} />,
   );
   t.after(() => root.unmount());
-  await flush();
-  const view = first((n) => n.getAttribute("data-new-session") === LOCAL);
-  assert.ok(view, "the empty session view, in the pane");
+  // The pane's view is loaded the first time one is shown (`app/lazy-views.ts`).
+  await until("the empty session view, in the pane", () => !!first((n) => n.getAttribute("data-new-session") === LOCAL));
+  const view = first((n) => n.getAttribute("data-new-session") === LOCAL)!;
   assert.ok(walk(view).some((n) => n.getAttribute("aria-label") === "close pane"), "with the pane's own controls in its title row");
   type("start here");
   await flush();

@@ -20,7 +20,7 @@ import { LiveDot } from "@/components/live-dot";
 import { Content, Panel, PanelHeader } from "@/components/panel";
 import { useFeedConnected, useFeedSessions, useFeedSettings, useMachineFeedSelector, type GlobalFeedState } from "@/app/global-feed";
 import { LinkFirstRun } from "@/features/link/first-run";
-import { useNewSessionShortcut, useOpenNewSession } from "@/features/sessions/new-session-view";
+import { useNewSessionShortcut, useOpenNewSession } from "@/features/sessions/new-session-open";
 import { RenameSessionDialog, type RenameTarget } from "@/features/sessions/rename-dialog";
 import { useSessionPin } from "@/features/sessions/session-pin";
 import { ActivityChipView, EdgeBar, EDGE_CLASS, UnreadPill } from "@/features/sessions/attention-badges";

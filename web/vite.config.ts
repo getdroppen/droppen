@@ -35,21 +35,37 @@ const probeHub = process.env.RH_DEV_HUB;
 const cloud = cloudConfig();
 
 /**
- * Packages the app loads on demand, which no boot chunk may hold
+ * Packages and views the app loads on demand, which no boot chunk may hold
  * (`guardBootChunks`). Third-party code goes to the vendor chunks only when
  * the entry reaches it statically (`build/vendor-chunks.ts`), so a package
  * used only by lazy code stays out of the boot set without being listed here.
  * The list is the alarm for these becoming eager by an import in the wrong
- * place: the terminal (xterm, with the first terminal view), the QR encoder
- * and decoder (pairing a device, cloud mode only), compatibility mode's curves
- * (`@noble/curves` and its hashes, reached only from `lib/e2e/soft25519.ts`,
- * on a browser without them natively), math: KaTeX and the parsing around it
- * (`components/markdown-math.ts`), fetched by the first message that may hold
- * a formula, and diagrams: Mermaid (`lib/mermaid-render.ts`), fetched by the
- * first ```mermaid fence a message draws, with the largest packages only it
- * uses: its parser's chevrotain, cytoscape and cytoscape's layouts.
+ * place: the views loaded when first shown (`src/app/lazy-views.ts`) and the
+ * markdown they draw messages with, the terminal (xterm, with the first
+ * terminal view), the QR encoder and decoder (pairing a device, cloud mode
+ * only), compatibility mode's curves (`@noble/curves` and its hashes, reached
+ * only from `lib/e2e/soft25519.ts`, on a browser without them natively), math:
+ * KaTeX and the parsing around it (`components/markdown-math.ts`), fetched by
+ * the first message that may hold a formula, and diagrams: Mermaid
+ * (`lib/mermaid-render.ts`), fetched by the first ```mermaid fence a message
+ * draws, with the largest packages only it uses: its parser's chevrotain,
+ * cytoscape and cytoscape's layouts.
  */
 const ON_DEMAND = [
+  "src/features/sessions/session-detail.tsx",
+  "src/features/sessions/new-session-view.tsx",
+  "src/features/chat/chat-home.tsx",
+  "src/features/chat/claude-chat-view.tsx",
+  "src/features/chat/api-chat-view.tsx",
+  "src/features/files/files-view.tsx",
+  "src/features/terminals/terminals-view.tsx",
+  "src/features/screens/screen-view.tsx",
+  "src/features/apps/app-view.tsx",
+  "src/features/auth/login-view.tsx",
+  "src/features/auth/setup-view.tsx",
+  "src/components/markdown.tsx",
+  "react-markdown",
+  "remark-gfm",
   "@xterm/",
   "jsqr",
   "qrcode-generator",

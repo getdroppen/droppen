@@ -5,21 +5,28 @@ import {
   lazyRouteComponent,
   redirect,
 } from "@tanstack/react-router";
+import {
+  ApiChatView,
+  AppView,
+  ChatHome,
+  ClaudeChatView,
+  CodexChatView,
+  FilesView,
+  LoginView,
+  NewSessionRoute,
+  preloadAfterFirstPaint,
+  ScreenView,
+  SessionDetail,
+  SetupView,
+  TerminalsView,
+} from "./lazy-views";
 import { MachineRoute } from "./machine-route";
 import { RootLayout } from "./root-layout";
-import { AppView } from "@/features/apps/app-view";
-import { LoginView } from "@/features/auth/login-view";
-import { SetupView } from "@/features/auth/setup-view";
-import { ApiChatView } from "@/features/chat/api-chat-view";
-import { ChatHome } from "@/features/chat/chat-home";
 import { ChatLayout } from "@/features/chat/chat-layout";
-import { ClaudeChatView, CodexChatView } from "@/features/chat/claude-chat-view";
-import { FilesView, type FilesSearch } from "@/features/files/files-view";
-import { ScreenView } from "@/features/screens/screen-view";
-import { SessionDetail } from "@/features/sessions/session-detail";
-import { NewSessionRoute, validateNewSessionSearch } from "@/features/sessions/new-session-view";
+import type { FilesSearch } from "@/features/files/files-view";
+import { validateNewSessionSearch } from "@/features/sessions/new-session-open";
 import { SessionsIndex, SessionsLayout } from "@/features/sessions/sessions-layout";
-import { TerminalsView, type TerminalsSearch } from "@/features/terminals/terminals-view";
+import type { TerminalsSearch } from "@/features/terminals/terminals-view";
 import { firstRunRedirect } from "@/features/setup/auto-open";
 import { validateWelcomeSearch } from "@/features/setup/model";
 import { authRedirect, authStatus, clearToken, isDesktopApp, LOGIN_PATH, primeDownloadTicket } from "@/lib/auth";
@@ -376,7 +383,14 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = createRouter({ routeTree });
+// A view's chunk starts loading when a link to it is hovered or touched, not
+// when it is clicked (`app/lazy-views.ts`).
+export const router = createRouter({ routeTree, defaultPreload: "intent" });
+
+const stopWatchingFirstPaint = router.subscribe("onRendered", () => {
+  stopWatchingFirstPaint();
+  preloadAfterFirstPaint();
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

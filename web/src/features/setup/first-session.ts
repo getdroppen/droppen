@@ -11,7 +11,7 @@
  * device's stored default, shown in its row — and is not set from here.
  */
 import { useCallback } from "react";
-import { useOpenNewSession } from "@/features/sessions/new-session-view";
+import { useOpenNewSession } from "@/features/sessions/new-session-open";
 import { useMachine } from "@/lib/machines/context";
 import { LANDED } from "./first-model";
 import { opensFirstSession } from "./model";
