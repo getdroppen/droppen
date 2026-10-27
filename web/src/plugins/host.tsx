@@ -205,6 +205,12 @@ export interface HostDeps {
   storage?: PluginStorage;
 }
 
+/** Whether this page is the desktop app's own window (its init script defines `window.__droppenDesktop`). */
+function desktopWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as { __droppenDesktop?: unknown }).__droppenDesktop !== undefined;
+}
+
 /** Build the host one plugin gets for the life of the page. */
 export function createPluginHost(id: string, deps: HostDeps): PluginHost {
   const ns = pluginNamespace(id);
@@ -242,7 +248,11 @@ export function createPluginHost(id: string, deps: HostDeps): PluginHost {
       },
     },
     capabilities: {
-      print: typeof window !== "undefined" && typeof window.print === "function",
+      // wry 0.57's WKWebView UI delegate implements no print callback, so
+      // window.print() silently does nothing in the app's window. A browser
+      // on the same server prints — `isDesktopApp()` is true there too, which
+      // is why the app's own marker decides instead.
+      print: typeof window !== "undefined" && typeof window.print === "function" && !desktopWindow(),
       clipboard: typeof navigator !== "undefined" && !!navigator.clipboard?.writeText && window.isSecureContext,
     },
     files: { save: saveFile, open: openFile },

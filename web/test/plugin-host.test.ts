@@ -207,3 +207,24 @@ test("old task panes read as the tasks plugin's checklist and are saved the old 
   assert.ok(!validPaneState({ big: "x".repeat(3000) }));
   assert.ok(!validPaneState([1]));
 });
+
+test("a plugin can print in a browser on the server, but not in the desktop app's window", async () => {
+  // wry 0.57's WKWebView UI delegate implements no print callback: the app's
+  // window reports a print function that does nothing. A browser on the same
+  // server prints, and `isDesktopApp()` is true there too — the app's own
+  // marker (`window.__droppenDesktop`, desktop/src-tauri/src/init.js) decides.
+  const { createPluginHost } = await import("../src/plugins/host.js");
+  const hostOf = () =>
+    createPluginHost("tasks", { navigate: () => undefined, machine: LOCAL, storage: createTestHost().storage });
+  const setWindow = (value: unknown) => Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value });
+  try {
+    setWindow({ print: () => undefined, isSecureContext: false });
+    assert.equal(hostOf().capabilities.print, true, "a browser on the server prints");
+    setWindow({ print: () => undefined, isSecureContext: false, __droppenDesktop: {} });
+    assert.equal(hostOf().capabilities.print, false, "the app's window cannot print");
+    setWindow({ isSecureContext: false });
+    assert.equal(hostOf().capabilities.print, false, "no print function at all");
+  } finally {
+    delete (globalThis as Record<string, unknown>).window;
+  }
+});
