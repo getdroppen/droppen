@@ -608,7 +608,7 @@ async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Result<u
 
 /// Whether `st` is an enrollment still waiting for a device to add this
 /// machine: the chain does not name it (yet), and has not removed it. Never
-/// a member that merely stopped running AI: counting one as waiting let the
+/// a member that merely stopped running AI: counting one as waiting would let the
 /// code's expiry, or cancel, delete its state.
 fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()

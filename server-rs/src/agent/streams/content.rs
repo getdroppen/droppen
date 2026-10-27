@@ -1,5 +1,5 @@
 //! What the agent's streams say: the bodies of records and pages, cut from the
-//! same things today's API serves — the session list's rows, the feed's
+//! same things the live API serves — the session list's rows, the feed's
 //! normalised transcript items — so a browser reading them renders exactly
 //! what it would have been sent live. Pure functions; the sync task feeds
 //! them and the writer seals what they return.

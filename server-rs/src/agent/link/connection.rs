@@ -44,7 +44,7 @@ pub struct Running {
     /// The streams' writer, which holds `streams.db` open.
     pub(in crate::agent) sync_task: tokio::task::JoinHandle<()>,
     /// This computer's device role ([`crate::aggregator::controller`]), when
-    /// it may run (`RH_AGENT_CONTROL`), and what it reports.
+    /// it may run (`DROPPEN_AGENT_CONTROL`), and what it reports.
     pub(in crate::agent) control: Option<tokio::task::JoinHandle<()>>,
     pub(in crate::agent) control_status: Arc<Mutex<crate::aggregator::controller::Status>>,
     /// Its copies of the other devices ([`crate::aggregator::copies`]), and

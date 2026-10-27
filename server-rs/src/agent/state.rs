@@ -14,7 +14,7 @@
 //!   next to it ([`super::FileSeedStore`]).
 //!
 //! A missing `state.json` means "not enrolled", and then nothing in this
-//! module runs: the server is exactly today's single-machine server.
+//! module runs: the server is a single-machine server.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1184,8 +1184,9 @@ mod tests {
         assert_eq!(*keys[&2], [2; 32]);
     }
 
-    /// A re-enrollment after `agent enroll` does not keep the old
-    /// `machine-keys.json`: the writer would seal under its newest epoch.
+    /// A new enrollment forgets what the last one left: its
+    /// `machine-keys.json` (the writer would seal under that file's newest
+    /// epoch) and its `streams.db` with `-wal`.
     #[test]
     fn a_new_enrollment_forgets_the_last_ones_keys_and_streams() {
         let dir = tempfile::tempdir().unwrap();

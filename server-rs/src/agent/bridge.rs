@@ -1206,8 +1206,8 @@ mod tests {
             "the query is not the route"
         );
         assert!(allowed(StreamClass::Rpc, "/api/sessions/claude/a%20b"));
-        // A plugin document's encoded slash gets no exception any more, and
-        // the plugin routes themselves are refused by [`refusal`], not here
+        // A plugin document's encoded slash gets no exception, and the
+        // plugin routes themselves are refused by [`refusal`], not here
         // (`docs/plugins/runtime.md` §5).
         for path in [
             "/api/plugins/tasks/docs/events%2F2026-10",

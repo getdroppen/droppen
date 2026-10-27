@@ -11,10 +11,10 @@
 //!   and only when, this instance is enrolled.
 //! - [`direct`] — direct paths: a WebRTC DataChannel next to the hub that a
 //!   channel moves onto when the device can reach this machine, and back off
-//!   when it fails (`RH_AGENT_DIRECT=0` turns them off).
+//!   when it fails (`DROPPEN_AGENT_DIRECT=0` turns them off).
 //! - [`relays`] — the account's relays: tickets from the hub, a connection
 //!   to each relay of the account's set, round trips measured and reported
-//!   (`RH_AGENT_RELAYS=0` turns them off).
+//!   (`DROPPEN_AGENT_RELAYS=0` turns them off).
 //! - [`bridge`] — a channel's sub-streams bridged to this server's own
 //!   loopback API, with a per-boot credential `auth::guard` accepts only from
 //!   loopback.
@@ -352,10 +352,10 @@ mod tests {
     /// point in between the store holds the old seed (alone, or with staged
     /// ones) or the new one (at worst with staged ones never used): what a
     /// crash leaves.
-    /// R6 review: every write or rename of a staging — staging it, setting
-    /// it aside, taking it back, promoting it — flushes the directory, so a
-    /// crash right after never loses it (nor brings an old one back). A2:
-    /// one set aside is never among the stagings; a promotion forgets it.
+    /// Every write or rename of a staging — staging it, setting it aside,
+    /// taking it back, promoting it — flushes the directory, so a crash right
+    /// after never loses it (nor brings an old one back). One set aside is
+    /// never among the stagings; a promotion forgets it.
     #[test]
     fn every_staging_rename_is_flushed_and_one_set_aside_is_kept_apart() {
         let dir = tempfile::tempdir().expect("tempdir");

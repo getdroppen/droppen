@@ -25,8 +25,8 @@
 //! so is one whose tail has been idle for [`COMPACT_IDLE`], whose oldest
 //! uncovered record is [`COMPACT_OLDEST`] old (the hub keeps tails in Redis,
 //! short), or that the hub refused an append for with `compact`; one
-//! the hub disagrees with (a `CONFLICT`), whose transcript changed under it,
-//! or that is in an older `MK` epoch, is rebuilt from the transcript with a
+//! the hub disagrees with (a `CONFLICT`), whose transcript is rewritten under
+//! it, or that is in an older `MK` epoch, is rebuilt from the transcript with a
 //! rebase. [`writer`] has the write-ahead and `ACK` rules, [`store`] the
 //! persistence.
 //!
@@ -86,15 +86,15 @@ pub const BACKFILL_BYTES_PER_SEC: u64 = 1024 * 1024;
 pub const PAGES_OVER: usize = 64 * 1024;
 /// A delta bigger than this is sent as a rebuild (pages) instead.
 pub const REBUILD_OVER: usize = 4 * 1024 * 1024;
-/// Compaction: when the tail has this many records (`RH_AGENT_COMPACT_RECORDS`)…
+/// Compaction: when the tail has this many records (`DROPPEN_AGENT_COMPACT_RECORDS`)…
 pub const COMPACT_RECORDS: u64 = 128;
 /// …or more bytes than this and than the state it describes.
 pub const COMPACT_MIN_BYTES: i64 = 512 * 1024;
-/// The least time between two checkpoints of one stream (`RH_AGENT_COMPACT_EVERY_SECS`).
+/// The least time between two checkpoints of one stream (`DROPPEN_AGENT_COMPACT_EVERY_SECS`).
 pub const COMPACT_EVERY: Duration = Duration::from_secs(60);
-/// …and a tail with no append for this long is compacted (`RH_AGENT_COMPACT_IDLE_SECS`)…
+/// …and a tail with no append for this long is compacted (`DROPPEN_AGENT_COMPACT_IDLE_SECS`)…
 pub const COMPACT_IDLE: Duration = Duration::from_secs(5 * 60);
-/// …as is one whose oldest uncovered record is this old (`RH_AGENT_COMPACT_OLDEST_SECS`).
+/// …as is one whose oldest uncovered record is this old (`DROPPEN_AGENT_COMPACT_OLDEST_SECS`).
 pub const COMPACT_OLDEST: Duration = Duration::from_secs(30 * 60);
 
 /// When to compact, overridable for tests and the acceptance run.
@@ -369,7 +369,7 @@ struct Sync {
     text: Option<mpsc::UnboundedSender<String>>,
     /// Streams the hub refused an append for with `compact`: checkpoint first.
     compact_now: HashSet<StreamId>,
-    /// `RH_AGENT_SYNC_DAYS`: the window when the plan keeps longer, or says nothing.
+    /// `DROPPEN_AGENT_SYNC_DAYS`: the window when the plan keeps longer, or says nothing.
     env_days: u64,
     /// The account's plan as the hub last told it (kept in `streams.db`).
     plan: Option<HubPlan>,

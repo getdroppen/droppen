@@ -140,7 +140,7 @@ pub(in crate::agent) fn account_change_in(entry: &Entry, prev: Option<&Entry>, p
 /// Anything else is its own alert: a user-key rotation
 /// after adding a plain device, a key epoch entry that also commits other
 /// hosts' keys or a user key next to a new host's, or key epochs after key
-/// epochs, which cannot chain the cover along.
+/// epochs: the cover never chains from one to the next.
 pub(in crate::agent) fn part_of_a_batch(entry: &Entry, prev: Option<&Entry>) -> bool {
     let Action::KeyEpochs(keys) = &entry.draft.action else { return false };
     let Some(prev) = prev.filter(|p| p.draft.signer == entry.draft.signer) else {
@@ -222,9 +222,9 @@ pub(in crate::agent) fn alert_account_changes(shared: &Arc<Shared>, entries: &[E
 
 /// An alarm every device must hear about: logged, kept in the state (and so
 /// in the encrypted status stream and `/rh/info`, which every device of the
-/// account reads), and pushed (Web Push and Bark). The same alarm is raised
-/// again at most hourly — a fork served on every reconnect must be said once
-/// an hour, not once a reconnect.
+/// account reads), and pushed (Web Push and Bark): logged every time, pushed
+/// at most hourly — a fork served on every reconnect must be said once an
+/// hour, not once a reconnect.
 pub(in crate::agent) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     tracing::error!("ALARM: {what}");
     let alarms = {

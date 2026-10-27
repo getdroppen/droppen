@@ -9,9 +9,9 @@
 //!
 //! - **Who reads it.** Only once a device said it reads such names
 //!   ([`rh_proto::stream::STREAMS_FEATURE`] in its channel hello, remembered in
-//!   `streams.db`) does the agent name streams this way; until then it is
-//!   exactly as before — every name the first epoch's, a rotation's
-//!   re-encryption a same-name rebase.
+//!   `streams.db`) does the agent name streams this way; until then every
+//!   name is the first epoch's, and a rotation's re-encryption is a
+//!   same-name rebase.
 //! - **Index and status** are always under the newest epoch's name: a reader
 //!   tries the newest epoch it holds first, then older ones (a machine that
 //!   is off and has not moved yet).
@@ -48,7 +48,7 @@ use serde_json::Value;
 use super::store::{Kind, Row};
 
 /// A rotation's session migration starts at a random moment within this
-/// (`RH_AGENT_MIGRATE_WITHIN_SECS`).
+/// (`DROPPEN_AGENT_MIGRATE_WITHIN_SECS`).
 pub const MIGRATE_WITHIN: Duration = Duration::from_secs(6 * 60 * 60);
 /// Where `streams.db` remembers that a device reads epoch names.
 pub const STREAMS2_KEY: &str = "streams2";

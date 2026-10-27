@@ -21,7 +21,7 @@
 //!   address it resolves to is public — or, for a public-looking name, if
 //!   every one is a local proxy's fake address (`198.18.0.0/15`, fake-ip mode:
 //!   the proxy carries the connection, TLS still verifies the name); pings
-//!   follow no redirects and use no proxy. `RH_AGENT_RELAY_INSECURE=1` (local
+//!   follow no redirects and use no proxy. `DROPPEN_AGENT_RELAY_INSECURE=1` (local
 //!   testing only) allows loopback besides, and plain `ws://` to loopback only.
 //! - **Measuring.** Every 15 minutes (and when the list changes) the agent
 //!   times `GET /v1/ping` on every listed relay — four requests, the first
@@ -37,7 +37,7 @@
 //!   open on it. A relay that says `goaway` is draining: its channels move on
 //!   (the device opens new ones elsewhere) and the agent reconnects once it
 //!   is back.
-//! - `RH_AGENT_RELAYS=0` turns all of this off (then devices can reach this
+//! - `DROPPEN_AGENT_RELAYS=0` turns all of this off (then devices can reach this
 //!   machine only while the hub still relays; after the cut-over, not at all).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -153,7 +153,7 @@ struct Manager {
     rtts: BTreeMap<String, u32>,
     reported: Option<(BTreeMap<String, u32>, BTreeSet<String>)>,
     asked_ms: u64,
-    /// `RH_AGENT_RELAY_INSECURE=1`: relays on loopback too (local testing).
+    /// `DROPPEN_AGENT_RELAY_INSECURE=1`: relays on loopback too (local testing).
     insecure: bool,
     /// Pings, by the same rules as connections (`None` if it cannot be built).
     http: Option<reqwest::Client>,

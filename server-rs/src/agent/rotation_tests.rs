@@ -915,8 +915,8 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
 }
 
 /// The state — with the chain that names the renewed key — is saved before
-/// the staged seed takes the place
-/// of the key in use, or the seed is not swapped at all. When that save
+/// the staged seed takes the place of the key in use, or the seed is not
+/// swapped at all. When that save
 /// failed and the seed was swapped all the same, a device renewed once
 /// before was left with a state whose chain names its previous keys, and a
 /// renewal on it: the next start took its own renewal for one made
@@ -973,8 +973,8 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
 }
 
 /// When the staged seed cannot take the place of the key in use after the
-/// state was saved (its file moved away, say), the
-/// key in use stays, and so do its push keys: `push_renew` is back to what it
+/// state was saved (its file moved away, say), the key in use stays, and so
+/// do its push keys: `push_renew` is back to what it
 /// was, in memory and on disk — the push key is not refused (503
 /// `push_renewing`) for a renewal not taken.
 #[tokio::test]
@@ -1097,9 +1097,9 @@ async fn a_close_4005_signs_in_with_the_staged_key_and_promotes_on_the_chain() {
     assert!(logins[2].by(&new, &hub.url) && logins[2].welcomed);
 }
 
-/// Once the renewal is committed — the
-/// chain names the staged key, or the hub closed with 4005 — the key in use
-/// never signs in again, even while the hub turns the new one away: a
+/// Once the renewal is committed (`docs/host-identity-rotation.md` §3.8) —
+/// the chain names the staged key, or the hub closed with 4005 — the key in
+/// use never signs in again, even while the hub turns the new one away: a
 /// sign-in with a retired key is the hub's evidence against this very device.
 #[tokio::test]
 async fn after_a_committed_renewal_the_old_key_never_signs_in_again() {

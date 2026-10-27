@@ -129,8 +129,7 @@ fn http(dir: &str, method: &str, url: &str, status: Option<u16>, body: &Value) {
 /// answer that mints one, `token`, and the `/v1/client` login that presents
 /// one, `session`), a known-client token (`known_client`, `kc1.…` in `GET
 /// /v1/me`), and the account's e-mail. The capture is for checking shapes;
-/// those are credentials and personal data, so they are redacted wherever
-/// they appear.
+/// those are credentials and personal data.
 pub fn redacted(value: &Value) -> Value {
     redact(value, false)
 }

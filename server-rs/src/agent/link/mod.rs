@@ -13,9 +13,10 @@
 //! A device that offers sequenced frames ([`rh_proto::path::CLIENT_FEATURE`]
 //! in its hello) gets a two-path channel, and may ask on its signaling
 //! stream for a direct path ([`super::direct`], [`rh_proto::direct::serve`]):
-//! the direct hello is admitted under exactly the rules above, and the direct
-//! path lives and dies with its channel — a removal that closes the channel
-//! ([`drop_removed`]) closes the direct path too.
+//! the direct hello is admitted by [`admit::LinkAdmit`] under exactly the
+//! rules above, and the direct path lives and dies with its channel — a
+//! removal that closes the channel ([`drop_removed`]) closes the direct path
+//! too.
 //!
 //! An open channel is held to control's seven days as a new one is: once no
 //! admin has vouched for this machine's view for that long, it is closed
@@ -29,11 +30,6 @@
 //! State is saved after anything that changes it, and the replay guard is
 //! saved *before* a handshake reply leaves, so a crash cannot make a replayed
 //! first message acceptable.
-//!
-//! TODO: the reply should carry this agent's chain suffix for a device the
-//! hub keeps behind; a removal should close that device's open channels here
-//! at once; and machine keys should also arrive inside a channel, not only
-//! through the mailbox.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -99,7 +95,7 @@ pub(super) struct Shared {
     pub(super) state: Arc<Mutex<AgentState>>,
     guard: Mutex<ReplayGuard>,
     pub(super) cancel: CancellationToken,
-    /// Direct paths on (`RH_AGENT_DIRECT`), and the peers they may hold at once.
+    /// Direct paths on (`DROPPEN_AGENT_DIRECT`), and the peers they may hold at once.
     direct: bool,
     peers: Arc<Semaphore>,
     /// When a recovered device's self-activation this agent held back (too
@@ -120,7 +116,7 @@ pub(super) struct Shared {
     pub(super) after_admission: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// The hub connection's control sender, while it is up.
     pub(super) hub_text: Mutex<Option<mpsc::UnboundedSender<String>>>,
-    /// The account's relays (`None`: `RH_AGENT_RELAYS=0`).
+    /// The account's relays (`None`: `DROPPEN_AGENT_RELAYS=0`).
     pub(super) relays: Mutex<Option<super::relays::Handle>>,
     /// Whether the hub connection is up, since when, and why it last failed
     /// (the local API's `GET /api/cloud`).
@@ -308,8 +304,8 @@ mod tests {
         }
     }
 
-    /// The batch of the PoC: d-2 removed, a thief joining with the recovery
-    /// words, then an entry with a spoiled signature.
+    /// A batch that fails half-way: d-2 removed, a thief joining with the
+    /// recovery words, then an entry with a spoiled signature.
     fn half_bad_batch(a: &mut Account) -> Vec<Entry> {
         let thief = MachineIdentity::from_seed(&[9; 32]);
         let rm = a
@@ -555,10 +551,10 @@ mod tests {
         );
     }
 
-    /// The 412's `reason` follows the freshness check (web half of the chain
-    /// v3 review): an admin vouching for a head beyond this agent's view
-    /// makes it `behind`; once this agent takes a different entry at that
-    /// seq, the same vouching conflicts with its view: `fork`.
+    /// The 412's `reason` follows the freshness check: an admin vouching for a
+    /// head beyond this agent's view makes it `behind`; once this agent takes
+    /// a different entry at that seq, the same vouching conflicts with its
+    /// view: `fork`.
     #[test]
     fn standing_tells_a_view_behind_from_a_fork() {
         use bridge::Local as _;
@@ -622,11 +618,10 @@ mod tests {
 
     /// While this computer renews its push keys with its identity key
     /// (`rotation.push_renew`, until the push keys are renewed), a device
-    /// asking over a channel for the push
-    /// key, or subscribing against it, is answered 503 `push_renewing` — not
-    /// handed the key about to be replaced, which its page would keep as
-    /// current — and nothing reaches the server; once they are renewed, the
-    /// request reaches it again.
+    /// asking over a channel for the push key, or subscribing against it, is
+    /// answered 503 `push_renewing` — not handed the key about to be
+    /// replaced, which its page would keep as current — and nothing reaches
+    /// the server; once they are renewed, the request reaches it again.
     #[tokio::test]
     async fn the_push_key_is_not_handed_out_while_it_is_renewed() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -682,8 +677,8 @@ mod tests {
     }
 
     /// A renewal of the push keys that fails (the state database refusing the
-    /// write, here) is tried
-    /// again while the link runs, after a back-off — not only at the next
+    /// write, here) is tried again while the link runs, after a back-off — not
+    /// only at the next
     /// start, the push key refused until then — and `push_renew` clears once
     /// it is done.
     #[tokio::test(start_paused = true)]
@@ -1706,8 +1701,9 @@ mod tests {
         assert!(connect(&a, &a.d1, "d-1", 3, &mut routes).await.is_ok(), "and lets devices in again");
     }
 
-    /// A hub batch that fails half-way is still acted on for everything it
-    /// applied — not only what `absorb` returned.
+    /// A hub batch that fails half-way is acted on, at the link, for
+    /// everything it applied: the removed device's channel closed, both
+    /// changes alerted, the state saved ([`assert_acted_on`]).
     #[tokio::test]
     async fn a_hub_batch_that_fails_half_way_is_acted_on_for_what_took_effect() {
         let mut a = account();
@@ -2094,10 +2090,10 @@ mod tests {
         closed
     }
 
-    /// A relay is not trusted: every `OPEN` it sends waits until that
-    /// channel's first message or `CLOSE`, or a relay could grow the agent's
-    /// memory without bound. At most 256 wait per connection; the rest are
-    /// refused.
+    /// A relay is not trusted, and every `OPEN` it sends waits until that
+    /// channel's first message or `CLOSE`: unbounded, a relay could grow the
+    /// agent's memory without bound. At most 256 wait per connection; the
+    /// rest are refused.
     #[tokio::test]
     async fn channels_opening_are_bounded_per_connection() {
         let a = account();

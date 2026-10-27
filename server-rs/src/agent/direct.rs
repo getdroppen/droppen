@@ -4,7 +4,7 @@
 //! it; when one comes up, the channel's frames move onto it and fall back to
 //! the hub when it fails ([`rh_proto::path`], [`rh_proto::direct`]).
 //!
-//! - **Off switch**: `RH_AGENT_DIRECT=0` turns direct paths off for this
+//! - **Off switch**: `DROPPEN_AGENT_DIRECT=0` turns direct paths off for this
 //!   instance: the agent then answers the signaling stream with 403, binds no
 //!   UDP socket and offers no `direct/1` feature. Channels still negotiate
 //!   sequenced frames (`paths/1`), which costs nothing and gives the
@@ -14,7 +14,7 @@
 //!   when the attempt fails or the direct path ends. Only an enrolled
 //!   instance runs the link, so an instance that was never enrolled binds
 //!   nothing at all.
-//! - **STUN**: Cloudflare and Google by default; `RH_AGENT_DIRECT_STUN` is a
+//! - **STUN**: Cloudflare and Google by default; `DROPPEN_AGENT_DIRECT_STUN` is a
 //!   comma-separated list to use instead (empty: none, host candidates only).
 //!   No TURN: the hub is the fallback.
 //! - **Admission**: the direct hello is admitted by `handshake::accept_direct`
