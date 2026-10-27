@@ -668,11 +668,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
       {section.kind === "list" && done && (
         <div data-testid="change-report" data-signal="ok" className="mx-6 my-4 flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:mx-4">
           <span className="font-mono text-xs text-ok">{done.title}</span>
-          {reportLines(done.report, t).map((line, i) => (
-            <span key={i} className={cn("font-mono text-2xs", alarmLine(done.report, line) ? "text-danger" : "text-muted")} data-signal={alarmLine(done.report, line) ? "alarm" : undefined}>
-              {line}
-            </span>
-          ))}
+          <ReportLines report={done.report} t={t} />
           <Button variant="ghost" className="self-start" onClick={() => setDone(null)}>
             {t("done")}
           </Button>
@@ -1069,11 +1065,7 @@ export function UpgradeAccount({
     return (
       <div data-testid="upgraded" data-signal="ok" className="flex flex-col gap-1 border-b border-border px-6 py-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:px-4">
         <span className="font-mono text-xs text-ok">{t("the account is on chain v3")}</span>
-        {reportLines(report, t).map((line, i) => (
-          <span key={i} className="font-mono text-2xs text-muted">
-            {line}
-          </span>
-        ))}
+        <ReportLines report={report} t={t} alarm={false} />
       </div>
     );
   }
@@ -1598,6 +1590,22 @@ function alarmLine(report: RotationReport, line: string): boolean {
   return report.machines.some((m) => m.keyring && (line.startsWith(`${m.machine}:`) || line.startsWith(`${m.machine}：`)) && line.includes(m.keyring));
 }
 
+/** A rotation report's lines; `alarm` marks the machine whose new key the keyring did not take (`UpgradeAccount` never did). */
+function ReportLines({ report, t, alarm = true }: { report: RotationReport; t: (key: string, opts?: Record<string, unknown>) => string; alarm?: boolean }) {
+  return (
+    <>
+      {reportLines(report, t).map((line, i) => {
+        const alarmHere = alarm && alarmLine(report, line);
+        return (
+          <span key={i} className={cn("font-mono text-2xs", alarmHere ? "text-danger" : "text-muted")} data-signal={alarmHere ? "alarm" : undefined}>
+            {line}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function reportLines(report: RotationReport, t: (key: string, opts?: Record<string, unknown>) => string): string[] {
   const lines =
     report.ukEpoch === null
@@ -1682,11 +1690,7 @@ function RemoveDevice({
     return (
       <div data-signal="ok" className="flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)]">
         <span className="font-mono text-xs text-ok">{t("removed {{id}}", { id: device })}</span>
-        {reportLines(report, t).map((line, i) => (
-          <span key={i} className={cn("font-mono text-2xs", alarmLine(report, line) ? "text-danger" : "text-muted")} data-signal={alarmLine(report, line) ? "alarm" : undefined}>
-            {line}
-          </span>
-        ))}
+        <ReportLines report={report} t={t} />
         <div className="flex gap-2">
           <button type="button" className={quiet} onClick={onDone}>
             {t("done")}
@@ -1804,11 +1808,7 @@ function RotateKeys({ account, link, due }: { account: CloudAccount; link: HubLi
     return (
       <div data-testid="rotated" data-signal="ok" className="mx-6 my-4 flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:mx-4">
         <span className="font-mono text-xs text-ok">{t("keys rotated")}</span>
-        {reportLines(report, t).map((line, i) => (
-          <span key={i} className={cn("font-mono text-2xs", alarmLine(report, line) ? "text-danger" : "text-muted")} data-signal={alarmLine(report, line) ? "alarm" : undefined}>
-            {line}
-          </span>
-        ))}
+        <ReportLines report={report} t={t} />
         <Button variant="ghost" className="self-start" onClick={() => setReport(null)}>
           {t("done")}
         </Button>
@@ -2119,11 +2119,7 @@ export function RetireReplacedPrompt({
     return (
       <div data-testid="retire-replaced-done" className="flex flex-col gap-1">
         <span className="font-mono text-xs text-ok">{t("removed {{id}}", { id: device })}</span>
-        {reportLines(report, t).map((line, i) => (
-          <span key={i} className={cn("font-mono text-2xs", alarmLine(report, line) ? "text-danger" : "text-muted")} data-signal={alarmLine(report, line) ? "alarm" : undefined}>
-            {line}
-          </span>
-        ))}
+        <ReportLines report={report} t={t} />
       </div>
     );
   }
