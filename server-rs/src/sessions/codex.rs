@@ -662,7 +662,7 @@ async fn list_by_scanning(paths: &Paths) -> Vec<SessionSummary> {
 
 /// Resolve one visible Codex session without listing the whole corpus.
 pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummary> {
-    if id.is_empty() || !id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !crate::sessions::reference::is_path_segment_id(id) {
         return None;
     }
     // After the id check, not before: an id that cannot name a thread is not a
