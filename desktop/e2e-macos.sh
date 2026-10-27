@@ -67,6 +67,8 @@ APP=${1:?usage: e2e-macos.sh <Droppen E2E.app (an --e2e build)> [<screenshot dir
 SHOTS=${2:-/tmp/desktop-review}
 # shellcheck source=e2e-identity.sh
 . "$(cd "$(dirname "$0")" && pwd -P)/e2e-identity.sh"
+# shellcheck source=e2e-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/e2e-lib.sh"
 e2e_check_app "$APP"
 APP=$(cd "$APP" && pwd -P)
 BIN="$APP/Contents/MacOS/Droppen"
@@ -99,11 +101,6 @@ FAILED=0
 # (left by an earlier one) and after it.
 e2e_clean_bundle_dirs
 
-say() { printf '\n== %s\n' "$*"; }
-pass() { printf 'PASS %s\n' "$*"; }
-fail() { printf 'FAIL %s\n' "$*"; FAILED=1; }
-check() { if eval "$2"; then pass "$1"; else fail "$1"; fi; }
-
 # Whether no FILE has PATTERN — and every FILE is there to be read. A bare
 # `! grep` passes when a file is missing too (grep exits 2), which would take a
 # log that was never written for a clean one. `-F`: PATTERN is a fixed string.
@@ -118,8 +115,6 @@ nowhere() { # [-F] pattern file…
   grep "$flags" -- "$pattern" "$@" && status=0 || status=$?
   [ "$status" = 1 ]
 }
-
-alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
 # A pid of the build under test (the app, its server), stopped only while it
 # still runs from that build.
@@ -169,28 +164,7 @@ launch() {
 # The server binary's own CLI, against the throwaway home.
 server_cli() { env -i HOME="$HOME_DIR" PATH=/usr/bin:/bin "$SERVER" "$@"; }
 
-# Send a command to the app and print its result line. Each command carries an
-# id of its own (testctl's `@<id> `) and its result is the line with that id: a
-# snapshot or a probe can answer after its wait gave up, and that late line is
-# never taken for a later command's. The command file is written whole and
-# renamed into place: the app, which polls for it, could otherwise read it
-# between its creation and its text, take it for empty and drop it.
-command() {
-  local id line deadline
-  id=$(uuidgen)
-  printf '@%s %s\n' "$id" "$1" >"$CTL/command.new"
-  mv -f "$CTL/command.new" "$CTL/command"
-  deadline=$((SECONDS + 20))
-  while [ $SECONDS -lt $deadline ]; do
-    line=$(grep -F "\"id\":\"$id\"" "$CTL/results.jsonl" 2>/dev/null | tail -1 || true)
-    if [ -n "$line" ]; then printf '%s\n' "$line"; return 0; fi
-    sleep 0.2
-  done
-  echo '{"timeout":true}'
-}
-
 json() { python3 -c 'import json,sys; v=json.loads(sys.argv[1]); print(v.get(sys.argv[2]))' "$1" "$2"; }
-state() { command state; }
 field() { json "$(state)" "$1"; }
 
 wait_for() { # description, condition, seconds
@@ -203,36 +177,14 @@ wait_for() { # description, condition, seconds
   return 1
 }
 
-count() { local n; n=$(grep -c -- "$1" "$LOG" 2>/dev/null) || true; echo "${n:-0}"; }
-probes() { count ' probe: '; }
-last_probe() { grep ' probe: ' "$LOG" | tail -1 | sed 's/.* probe: //'; }
-probe_field() { python3 -c 'import json,sys; v=json.loads(json.loads(sys.argv[1])); print(v.get(sys.argv[2]))' "$(last_probe)" "$1"; }
 reload_and_probe() { # js, then wait for the probe after the next page load
   local before
   before=$(probes)
   command "js $1" >/dev/null
   wait_for "the page to load" '[ "$(probes)" -gt "$before" ]' 30 || true
 }
-# One reading of the page, as the probe's JSON (fields: `json "$P" path`): now,
-# without a page load (testctl's `probe`; the first-run guide's steps are one
-# page), or as the last page load left it (the log's). A probe that failed
-# fails here: it is no reading, never a page without what is looked for. A
-# check takes one reading and reads every field from it.
-read_page() {
-  python3 -c 'import json,sys
-r = json.loads(sys.argv[1])
-if r.get("ok") is not True or not isinstance(r.get("probe"), dict): sys.exit(1)
-print(json.dumps(r["probe"]))' "$(command probe)" 2>/dev/null
-}
-loaded_page() {
-  python3 -c 'import json,sys
-v = json.loads(json.loads(sys.argv[1]))
-if not isinstance(v, dict): sys.exit(1)
-print(json.dumps(v))' "$(last_probe)" 2>/dev/null
-}
 guide_at() { local page; page=$(read_page) && [ "$(json "$page" guide)" = "$1" ]; }
 on_sessions() { json "$1" path | grep -q '^/sessions'; } # the session list's layout, where the setup bar would be
-press() { command "js document.querySelector(\"$1\").click()" >/dev/null; } # selector: a click on it, as a person's
 # The guide's progress as the server keeps it (GET /api/setup/progress),
 # through a login of the app's own, revoked after.
 setup_progress() {
@@ -255,8 +207,6 @@ login_code() { # user password -> the HTTP status of a login with them
   curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
     -d "{\"username\":\"$1\",\"password\":\"$2\"}" "http://127.0.0.1:$(field port)/api/auth/login"
 }
-password() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["password"])' "$SUPPORT/credentials.json"; }
-username() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["username"])' "$SUPPORT/credentials.json"; }
 hostile_logins() { # five wrong passwords for the app's account: the server locks it
   local user port
   user=$(username)
