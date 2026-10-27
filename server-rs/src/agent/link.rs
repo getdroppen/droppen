@@ -904,23 +904,50 @@ async fn rotated_sync(shared: &Arc<Shared>, sink: &mut hub::Sink, source: &mut h
     if hub::send_json(sink, &json!({"t": "chain_sub", "from": from})).await.is_err() {
         return;
     }
+    read_chain_until(shared, source, tokio::time::Instant::now() + ROTATED_SYNC, || false).await;
+}
+
+/// How a [`read_chain_until`] ended.
+enum ChainRead {
+    /// The link was cancelled.
+    Cancelled,
+    /// The peer closed the connection (or it failed).
+    Closed,
+    /// The deadline passed.
+    Deadline,
+    /// `on_chain` asked to stop after a chain frame.
+    Stopped,
+}
+
+/// Read only `Chain` frames from `source` until `deadline`, the link's
+/// cancellation, or the peer closing — acting on each as any chain frame
+/// ([`on_frame`]) with frames going nowhere: nothing else happens on this
+/// socket. `on_chain` runs after each one and stops the read when it says so.
+async fn read_chain_until(
+    shared: &Arc<Shared>,
+    source: &mut hub::Source,
+    deadline: tokio::time::Instant,
+    mut on_chain: impl FnMut() -> bool,
+) -> ChainRead {
     // Frames go nowhere: nothing else happens on this socket.
     let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
     let (text, _text_rx) = mpsc::unbounded_channel::<String>();
-    let deadline = tokio::time::Instant::now() + ROTATED_SYNC;
     loop {
         let message = tokio::select! {
             m = source.next() => m,
-            () = tokio::time::sleep_until(deadline) => return,
-            () = shared.cancel.cancelled() => return,
+            () = tokio::time::sleep_until(deadline) => return ChainRead::Deadline,
+            () = shared.cancel.cancelled() => return ChainRead::Cancelled,
         };
         match message {
             Some(Ok(Message::Binary(bytes))) => {
                 if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
                     on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
+                    if on_chain() {
+                        return ChainRead::Stopped;
+                    }
                 }
             }
-            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return ChainRead::Closed,
             Some(Ok(_)) => {}
         }
     }
@@ -962,28 +989,10 @@ async fn staged_key_connection(shared: &Arc<Shared>, source: &mut hub::Source, s
     if promoted() {
         return Ok(());
     }
-    // Frames go nowhere: nothing is sent on this connection.
-    let (out, _out_rx) = mpsc::unbounded_channel::<Frame>();
-    let (text, _text_rx) = mpsc::unbounded_channel::<String>();
     let deadline = tokio::time::Instant::now() + super::rotation::NEW_KEY_GRACE;
-    loop {
-        let message = tokio::select! {
-            m = source.next() => m,
-            () = tokio::time::sleep_until(deadline) => break,
-            () = shared.cancel.cancelled() => return Ok(()),
-        };
-        match message {
-            Some(Ok(Message::Binary(bytes))) => {
-                if let Ok(frame @ Frame::Chain { .. }) = Frame::decode(&bytes) {
-                    on_frame(shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
-                    if shared.cancel.is_cancelled() || promoted() {
-                        return Ok(());
-                    }
-                }
-            }
-            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
-            Some(Ok(_)) => {}
-        }
+    match read_chain_until(shared, source, deadline, || shared.cancel.is_cancelled() || promoted()).await {
+        ChainRead::Cancelled | ChainRead::Stopped => return Ok(()),
+        ChainRead::Closed | ChainRead::Deadline => {}
     }
     // The hub took the staged key, so it holds a renewal to it: the key in
     // use is not tried — the staged key signs in (and reads the chain) again
