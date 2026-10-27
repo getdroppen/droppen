@@ -555,8 +555,11 @@ test("every string the page and the passkey join use is translated into zh-CN, z
   // The sign-in change notices, and approving a join by pairing (only these parts of those files).
   const plan = readFileSync(new URL("../src/features/cloud/plan.tsx", import.meta.url), "utf8");
   files.push(plan.slice(plan.indexOf("export function SignInChangeAlerts"), plan.indexOf("Where a session's state stands")));
-  const devices = readFileSync(new URL("../src/features/cloud/devices.tsx", import.meta.url), "utf8");
-  files.push(devices.slice(devices.indexOf("export function ConfirmCandidate"), devices.indexOf("export function blockedByHold")));
+  const addDevice = readFileSync(new URL("../src/features/cloud/add-device.tsx", import.meta.url), "utf8");
+  const confirm = addDevice.indexOf("export function ConfirmCandidate");
+  const hold = addDevice.indexOf("export function blockedByHold");
+  assert.ok(confirm >= 0 && hold > confirm, "add-device.tsx has ConfirmCandidate, then blockedByHold");
+  files.push(addDevice.slice(confirm, hold));
   // The pairing's refusal of an offer from another device than the one waiting.
   keys.add("the device that showed this code is not the one that asked to join with a passkey: nothing was approved");
   // Pairing while this device holds an activation back (`CloudAccount.pairDevice`).
