@@ -371,11 +371,9 @@ impl Setup {
     }
 }
 
-/// Write the code, 0600, through a tmp file.
+/// Write the code, `0600`, atomically.
 fn write_code_file(path: &Path, code: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    super::write_private(&tmp, format!("{}\n", display(code)).as_bytes())?;
-    std::fs::rename(&tmp, path)
+    crate::fsutil::write_private(path, format!("{}\n", display(code)).as_bytes())
 }
 
 /// Remove the code file; it not being there is fine.

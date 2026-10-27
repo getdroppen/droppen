@@ -681,29 +681,11 @@ pub(crate) fn check_private(_: &Path) -> Result<(), String> {
 
 /// Write `data` to `path` as a new 0600 file in a 0700 directory, atomically:
 /// a half-written key file must never be what the next run finds.
+///
+/// The rule itself lives in [`crate::fsutil::write_private`]; this adds the
+/// path to the error, which is the shape every caller here reports.
 pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let dir = path.parent().ok_or("a key path has a parent")?;
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("agent");
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let written = options.open(&tmp).and_then(|mut f| {
-        f.write_all(data)?;
-        f.sync_all()
-    });
-    if let Err(error) = written.and_then(|()| std::fs::rename(&tmp, path)) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("{}: {error}", path.display()));
-    }
-    Ok(())
+    crate::fsutil::write_private(path, data).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn describe(paths: &Paths, identity: &MachineIdentity, created: bool) {

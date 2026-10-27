@@ -710,56 +710,15 @@ impl<S: Send + Sync> FromRequestParts<S> for MaybeIdentity {
     }
 }
 
-/// Write JSON `0600` through a tmp file.
+/// Write JSON `0600` through a temp file, atomically.
 ///
-/// The fourth copy of this in the tree, after [`crate::accounts::store`],
-/// [`crate::push::store`] and [`crate::chats::provider`], and copied on purpose
-/// for the reason `push::store` gives: the rule is what matters, and the rule is
-/// written down at each site rather than shared through a module none of them
-/// would otherwise import. The rule:
-///
-/// 1. write to a tmp file and `rename`, so a crash cannot leave half a store;
-/// 2. give `0600` to `open`, so the bytes are never world-readable — not even
-///    for the instant between `write` and a `chmod`;
-/// 3. set `0600` **again** afterwards, because `open`'s mode only applies to a
-///    fresh inode and a tmp file left behind by an earlier crash keeps whatever
-///    mode it already had.
-///
-/// Password hashes and session tokens are what this file holds, so all three
-/// steps are load-bearing.
-///
-/// Synchronous, which it was not: [`users::UsersStore`] mirrors from an `async
-/// fn` on a blocking thread *and* from the repair in `ensure_imported`, which
-/// runs inside a `std::sync::Once` on the first read of the store where there
-/// is no `await` to be had. Two implementations of a three-step rule is how one
-/// of the three steps eventually goes missing from one of them, so there is one,
-/// and it is the one that works in both places.
+/// The rule — temp, fsync, rename, `0600`, a `0700` directory — is written down
+/// once, in [`crate::fsutil::write_private`], where the other private stores of
+/// the tree write through it too. Password hashes and session tokens are what
+/// this file holds, so none of its steps is optional.
 fn write_json_private(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
     let body = format!("{}\n", serde_json::to_string_pretty(value)?);
-    write_private(&tmp, body.as_bytes())?;
-    std::fs::rename(&tmp, path)
-}
-
-#[cfg(unix)]
-fn write_private(path: &Path, body: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(body)?;
-    file.flush()?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn write_private(path: &Path, body: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, body)
+    crate::fsutil::write_private(path, body.as_bytes())
 }
 
 #[cfg(test)]

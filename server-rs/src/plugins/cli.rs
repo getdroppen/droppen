@@ -207,7 +207,7 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())? + "\n";
             match out {
                 Some(out) => {
-                    write_private(Path::new(&out), json.as_bytes())?;
+                    crate::fsutil::write_private(Path::new(&out), json.as_bytes()).map_err(|error| format!("cannot write {out}: {error}"))?;
                     println!("exported {} documents of {id} on instance {instance} to {out}", export.docs.len());
                 }
                 None => {
@@ -286,30 +286,6 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             Ok(())
         }
     }
-}
-
-/// Write `0600`, through a temporary file renamed into place.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let temp = dir.join(format!(".plugin-export-{}.tmp", uuid::Uuid::new_v4()));
-    let write = || -> std::io::Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&temp, path)
-    };
-    write().map_err(|error| {
-        let _ = std::fs::remove_file(&temp);
-        format!("cannot write {}: {error}", path.display())
-    })
 }
 
 #[cfg(test)]
