@@ -8,8 +8,9 @@
 //! The file is instance-scoped (`<data>/instances/<name>/screens.json`) rather
 //! than shared like most sidecars: those leaf ids name terminals and resident
 //! sessions that only their own server can resolve, so a layout from a sibling
-//! instance is a screen of dead panes. [`crate::instance`] has the whole rule,
-//! and copies a pre-instance file in once.
+//! instance is a screen of dead panes. [`crate::instance`] has the whole rule.
+//! The layouts themselves are rows in the instance database now, and the file is
+//! neither read nor written.
 //!
 //! The tree arrives from the web client, which makes the sanitizers below the
 //! security boundary rather than a tidying step: nothing from the request is
@@ -19,20 +20,20 @@
 //!
 //! # Where a screen actually lives
 //!
-//! In [`crate::db`], one row per layout, since the version that added it. The
-//! file this module is named after is read exactly once, to drain it into the
-//! table — see [`read_screens_file`] — and is never written. The bug that
-//! motivated the move is worth naming: `screens.json` was written *in place*,
-//! `tokio::fs::write` straight over the live file with no lock of any kind, and
-//! every reader here turns a truncated file into an empty list. A crash in that
-//! window therefore did not damage one layout, it silently deleted all of them.
-//! A transaction has no such window.
+//! In [`crate::db`], one row per layout, since the version that added it. Older
+//! builds drained `screens.json` into that table once, on the first read; the
+//! upgrade floor is 0.2.125, which has already done so, and the drain is gone.
+//! The bug that motivated the move is worth naming: `screens.json` was written
+//! *in place*, `tokio::fs::write` straight over the live file with no lock of
+//! any kind, and every reader here turns a truncated file into an empty list. A
+//! crash in that window therefore did not damage one layout, it silently deleted
+//! all of them. A transaction has no such window.
 //!
 //! The release that added the table went on writing the file after every save,
 //! so that a [`crate::supervisor`] demotion to a `.prev` binary — one that had
 //! never heard of the database — would still find its layouts where it left
-//! them. No such binary is left to demote to, so that write is gone: the file is
-//! an input, once, and nothing else.
+//! them. No such binary is left to demote to, so that write is gone; with the
+//! import gone too, nothing opens the file at all.
 //!
 //! # Two devices, one layout
 //!
@@ -56,7 +57,7 @@
 //! should look again.
 
 use std::collections::HashSet;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use gotcha::axum::http::StatusCode;
@@ -69,7 +70,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::api::error::ApiError;
 use crate::api::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::api::{ApiRouter, AppState, SendResult};
-use crate::db::Db;
 use crate::feed::global::GlobalFeed;
 use crate::openapi_ext::{AnyValue, ExtraResponses, Optional};
 use crate::sessions::{iso8601, Paths};
@@ -364,9 +364,9 @@ fn sanitize_kind(value: Option<&Value>) -> Value {
             }
             content
         }
-        // No route serves a browser pane any more, but a `screens.json` written
-        // by an older build still holds them and the web still renders one as a
-        // picker. Degrading it here would silently rewrite the user's file on
+        // No route serves a browser pane any more, but a row written by an
+        // older build still holds them and the web still renders one as a
+        // picker. Degrading it here would silently rewrite the user's layout on
         // the next save; the server does not own these ids and must not.
         Some("browser") => id.map_or_else(picker, |id| json!({ "kind": "browser", "id": id })),
         _ => picker(),
@@ -614,21 +614,13 @@ fn parse_emoji(value: &str) -> Result<Option<String>, &'static str> {
     Ok(Some(value.to_string()))
 }
 
-/// The name this store's one-time drain of `screens.json` is recorded under.
+/// One screen, rebuilt field by field from whatever payload the store handed
+/// back.
 ///
-/// The same string [`crate::db::Db::import_once`] would have used, and it lands
-/// in the same `imported` scope; only the destination of the *rows* differs,
-/// which is the whole reason this module carries its own copy of that function
-/// below.
-const IMPORT_MARKER: &str = "screens";
-
-/// One screen, rebuilt field by field from whatever the store handed back.
-///
-/// The same coercion on both sides of the migration, and deliberately so: a
-/// `payload` column holds the JSON a [`Screen`] serialises to, which is exactly
-/// the shape an entry in `screens.json` always had. One function reads both, so
-/// a hand-edited file and a row written by a build that has since changed cost
-/// the field they broke rather than the screen.
+/// The same coercion on both sides of the database, and deliberately so: a
+/// `payload` column holds the JSON a [`Screen`] serialises to, so a row written
+/// by a build that has since changed costs the field it broke rather than the
+/// screen.
 fn screen_at(entry: &Value, index: usize) -> Screen {
     Screen {
         id: sanitize_id(entry.get("id")),
@@ -642,7 +634,7 @@ fn screen_at(entry: &Value, index: usize) -> Screen {
         created_at: entry.get("createdAt").and_then(Value::as_str).map_or_else(now, str::to_owned),
         updated_at: entry.get("updatedAt").and_then(Value::as_str).map_or_else(now, str::to_owned),
         // The `revision` column is the truth for a row; see [`screen_in_row`].
-        // A file entry never had one, and starts where every screen does.
+        // This is where every screen starts, and a row overrides it.
         revision: 1,
     }
 }
@@ -667,180 +659,6 @@ fn screen_in_row(entry: &Value, index: usize, revision: i64) -> Screen {
 /// somehow will not encode should cost itself and not the save.
 fn payload(screen: &Screen) -> String {
     serde_json::to_string(screen).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// What `screens.json` says, for the one boot that drains it.
-///
-/// A missing or corrupt file reads as an empty list. That tolerance has not
-/// changed, only moved: it used to guard every read, and now it guards the
-/// import, which is the only thing that still opens the file.
-async fn read_screens_file(paths: &Paths) -> Vec<Screen> {
-    let Ok(text) = tokio::fs::read_to_string(paths.screens_file()).await else {
-        return vec![];
-    };
-    let Ok(raw) = serde_json::from_str::<Value>(&text) else {
-        return vec![];
-    };
-    let Some(entries) = raw.get("screens").and_then(Value::as_array) else {
-        return vec![];
-    };
-    entries.iter().enumerate().map(|(index, entry)| screen_at(entry, index)).collect()
-}
-
-/// This instance's database, with `screens.json` drained into it once.
-///
-/// The marker is checked on every call rather than remembered in a `OnceLock`,
-/// and that is not laziness: [`crate::db::at`] is keyed by path, a test holds
-/// two homes at once, and a process-wide "already imported" flag would be wrong
-/// for the second of them. One indexed lookup against a table of kilobytes is
-/// cheaper than the `read(2)` this whole module used to do per request.
-async fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.instance_db());
-    if db.kv_get(crate::db::scope::IMPORTED, IMPORT_MARKER).is_none() {
-        import_once(&db, read_screens_file(paths).await);
-    }
-    db
-}
-
-/// [`crate::db::Db::import_once`], for a store whose rows are a table.
-///
-/// That one drains into `kv` and this one into `screens`; everything else about
-/// it is the same, including all three of the properties it documents. The mark
-/// goes in the same transaction as the rows, so an interrupted import is an
-/// import that did not happen; the file is left exactly where it was, so that a
-/// restored backup can be dropped back in to seed a fresh database; and a file
-/// that was never there still counts as drained, or a fresh install re-runs the
-/// import every boot and a user who deleted every screen finds them back.
-fn import_once(db: &Db, screens: Vec<Screen>) {
-    let count = screens.len();
-    let outcome = db.write(|tx| {
-        // Re-checked inside the transaction. Two servers can boot at once, and
-        // the loser must not import over layouts the winner has already handed
-        // back to a user who has started editing them.
-        let done: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .ok();
-        if done.is_some() {
-            return Ok(false);
-        }
-        for (ordinal, screen) in screens.iter().enumerate() {
-            tx.execute(
-                "INSERT OR IGNORE INTO screens (id, ordinal, payload) VALUES (?1, ?2, ?3)",
-                (&screen.id, ordinal as i64, payload(screen)),
-            )?;
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (crate::db::scope::IMPORTED, IMPORT_MARKER, count.to_string()),
-        )?;
-        Ok(true)
-    });
-    match outcome {
-        Ok(true) => tracing::info!(rows = count, "imported screens.json into the state database"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "cannot import screens.json; the layouts stay in the file this boot"),
-    }
-}
-
-/// Take back the screens an older build of the desktop app inherited.
-///
-/// Until [`crate::instance::Heir::DesktopApp`] existed, the app's instance
-/// copied the shared `screens.json` on its first boot like any command-line
-/// instance did, and drained the copy into its table on the first
-/// `GET /api/screens`: the command-line instances' layouts, every pane naming
-/// a terminal or a session this server does not have, which the app's rail
-/// showed as a row of identical grid icons. This undoes exactly that, and
-/// nothing else:
-///
-/// * only while the instance's copy is still byte for byte the shared file —
-///   the evidence that it is the inheritance and not a file of the app's own;
-/// * only screens the shared file names, untouched since (row revision 1), in
-///   a list nobody has added to, deleted from or reordered (list revision 1).
-///   If the user has made even one of them their own, all of them stay: they
-///   have seen them, and what to delete is theirs to say.
-///
-/// A copy not drained yet is marked drained with nothing in it. Either way the
-/// copy is then renamed `screens.json.inherited` — kept, never deleted — so the
-/// next boot finds nothing to do. Returns how many screens were removed.
-///
-/// Called at boot by the desktop app's own server only, under the instance
-/// lock and before the router exists.
-pub async fn forget_inherited(paths: &Paths) -> usize {
-    let (Ok(shared), Ok(copy)) = (
-        tokio::fs::read(paths.legacy_screens_file()).await,
-        tokio::fs::read(paths.screens_file()).await,
-    ) else {
-        return 0;
-    };
-    if shared != copy {
-        return 0;
-    }
-    let inherited: HashSet<String> = serde_json::from_slice::<Value>(&copy)
-        .ok()
-        .and_then(|raw| raw.get("screens").and_then(Value::as_array).cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_owned))
-        .collect();
-
-    let db = crate::db::at(paths.instance_db());
-    let outcome = db.write(|tx| {
-        let drained: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .optional()?;
-        if drained.is_none() {
-            // Never drained: nothing to remove, and nothing ever will be.
-            tx.execute(
-                "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER, "0"),
-            )?;
-            return Ok(0);
-        }
-        if list_revision_in(tx)? != 1 {
-            return Ok(0);
-        }
-        let rows: Vec<(String, i64)> = {
-            let mut statement = tx.prepare("SELECT id, revision FROM screens")?;
-            let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        if rows.iter().any(|(id, revision)| *revision != 1 || !inherited.contains(id)) {
-            return Ok(0);
-        }
-        for (id, _) in &rows {
-            tx.execute("DELETE FROM screens WHERE id = ?1", [id])?;
-        }
-        if !rows.is_empty() {
-            bump_list_revision(tx)?;
-        }
-        Ok(rows.len())
-    });
-    let removed = match outcome {
-        Ok(removed) => removed,
-        Err(error) => {
-            tracing::error!(%error, "cannot take back the screens the desktop app inherited; they stay this boot");
-            return 0;
-        }
-    };
-    let kept = paths.screens_file().with_extension("json.inherited");
-    if let Err(error) = tokio::fs::rename(paths.screens_file(), &kept).await {
-        tracing::warn!(%error, "cannot set the inherited screens.json aside");
-    }
-    if removed > 0 {
-        tracing::info!(
-            removed,
-            "removed the screens the desktop app had inherited from the command-line instances"
-        );
-    }
-    removed
 }
 
 /// Where the list revision lives, inside [`crate::db::scope::SCREENS`].
@@ -903,7 +721,7 @@ pub async fn read_screens(paths: &Paths) -> Vec<Screen> {
 
 /// Every saved screen and the list's revision, from one read.
 pub async fn read_list(paths: &Paths) -> ScreenList {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     db.read(list_in).unwrap_or(ScreenList {
         screens: vec![],
         list_revision: 1,
@@ -974,7 +792,7 @@ fn announce_list(feed: &GlobalFeed, list_revision: u64) {
 /// Create a screen holding one empty pane: one row inserted, nothing else
 /// rewritten.
 async fn create(paths: &Paths, feed: &GlobalFeed, body: ScreenCreate) -> Result<Screen, ApiError> {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let (screen, list_revision) = db
         .write(|tx| {
             if let Some(stale) = stale_list(tx, body.base_list_revision.0)? {
@@ -1010,7 +828,7 @@ async fn create(paths: &Paths, feed: &GlobalFeed, body: ScreenCreate) -> Result<
 /// Patch one screen, if the client's `baseRevision` is still its revision.
 async fn update(paths: &Paths, feed: &GlobalFeed, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
     let emoji = body.emoji.as_deref().map(parse_emoji).transpose().map_err(ApiError::bad_request)?;
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     // A layout autosave and an icon change can arrive together. Read and patch
     // this row in one transaction so neither rewrites the other's old value —
     // and refuse either one that was made against a revision since replaced.
@@ -1056,7 +874,7 @@ async fn update(paths: &Paths, feed: &GlobalFeed, id: &str, body: ScreenUpdate) 
 
 /// Delete one screen: one row removed, nothing else rewritten.
 async fn delete(paths: &Paths, feed: &GlobalFeed, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let (revision, list_revision) = db
         .write(|tx| {
             if let Some(stale) = stale_list(tx, base_list_revision)? {
@@ -1092,7 +910,7 @@ fn merged_order(existing: &[String], wanted: &[String]) -> Vec<String> {
 
 /// Move screens' positions, in one transaction, without touching any payload.
 async fn reorder(paths: &Paths, feed: &GlobalFeed, body: ScreenOrder) -> Result<ScreenList, ApiError> {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let (list, moved) = db
         .write(|tx| {
             if let Some(stale) = stale_list(tx, body.base_list_revision.0)? {
@@ -1386,17 +1204,27 @@ mod tests {
         assert!(screen_at(&json!({ "id": "legacy" }), 0).emoji.is_none());
     }
 
-    /// A home of its own per body: the file is drained into the database once,
-    /// so three seeds into one instance would only ever test the first.
+    /// One `screens` row exactly as an older build left it: a payload the
+    /// sanitizer has not touched, at the ordinal given.
+    fn seed_payload(paths: &Paths, id: &str, ordinal: i64, body: &str) {
+        crate::db::at(paths.instance_db())
+            .write(|tx| tx.execute("INSERT INTO screens (id, ordinal, payload) VALUES (?1, ?2, ?3)", (id, ordinal, body)))
+            .expect("seed a row");
+    }
+
+    /// A stored row that will not parse costs itself, not the list. Rows are
+    /// read exactly where they were written; there is no file left to be
+    /// lenient about.
     #[tokio::test]
-    async fn a_corrupt_file_reads_as_an_empty_list() {
-        for body in ["not json at all", "{}", r#"{"version":1,"screens":"nope"}"#] {
-            let home = tempfile::tempdir().expect("tempdir");
-            let paths = Paths::new(home.path().to_path_buf());
-            std::fs::create_dir_all(paths.screens_file().parent().expect("parent")).expect("config dir");
-            std::fs::write(paths.screens_file(), body).expect("seed");
-            assert!(read_screens(&paths).await.is_empty(), "{body} should read as no screens");
-        }
+    async fn a_corrupt_row_costs_only_itself() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        seed_payload(&paths, "truncated", 0, "{\"id\":");
+        seed_payload(&paths, "empty", 1, "");
+        seed_payload(&paths, "good", 2, &payload(&screen("good")));
+
+        let screens = read_screens(&paths).await;
+        assert_eq!(ids(&screens), vec!["good"], "a row that will not parse is dropped");
     }
 
     /// The bug this store moved to end, and the contract that replaced it.
@@ -1404,10 +1232,10 @@ mod tests {
     /// `screens.json` was written in place, so a crash mid-write left a
     /// truncated file — and every reader here turned a truncated file into no
     /// screens at all, which is every saved layout gone at once rather than one
-    /// damaged. Now the file is an import source and nothing more: a save does
-    /// not touch it, and whatever it holds is left exactly as found.
+    /// damaged. Now a layout is a row: a save writes the table and creates no
+    /// file, and nothing reads one.
     #[tokio::test]
-    async fn a_truncated_file_costs_nothing_and_a_save_never_rewrites_it() {
+    async fn a_save_writes_only_the_table() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let screen = Screen {
@@ -1422,22 +1250,18 @@ mod tests {
             revision: 1,
         };
         seed(&paths, std::slice::from_ref(&screen)).await;
-        assert!(!paths.screens_file().exists(), "a save writes the table and creates no file");
-        assert!(!paths.screens_file().with_extension("json.tmp").exists());
-
-        // Exactly what the interrupted `tokio::fs::write` used to leave behind.
-        std::fs::write(paths.screens_file(), "").expect("truncate");
+        let file = paths.instance_dir().join("screens.json");
+        assert!(!file.exists(), "a save writes the table and creates no file");
+        assert!(!file.with_extension("json.tmp").exists());
 
         let screens = read_screens(&paths).await;
-        assert_eq!(screens.len(), 1, "the layouts are in the database, not in the file");
+        assert_eq!(screens.len(), 1, "the layouts are in the database");
         assert_eq!(screens[0], screen);
 
-        // And the next save leaves it byte for byte as it was found, rather than
-        // repairing it: there is no writer left.
-        let feed = GlobalFeed::default();
+        // And the next save leaves the table as the only place a layout lives.
         update(
             &paths,
-            &feed,
+            &GlobalFeed::default(),
             "screen-1",
             ScreenUpdate {
                 title: Some("again".to_string()).into(),
@@ -1446,115 +1270,32 @@ mod tests {
         )
         .await
         .expect("save again");
-        assert_eq!(std::fs::read_to_string(paths.screens_file()).expect("read"), "");
-    }
-
-    /// The shared file and an identical instance copy: what an older desktop
-    /// app build left behind.
-    fn inherit(paths: &Paths, body: &str) {
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::create_dir_all(paths.instance_dir()).expect("instance dir");
-        std::fs::write(paths.legacy_screens_file(), body).expect("shared");
-        std::fs::write(paths.screens_file(), body).expect("copy");
-    }
-
-    const INHERITED: &str = r#"{"version":1,"screens":[{"id":"screen-1","title":"screen 1"},{"id":"screen-2","title":"screen 2"}]}"#;
-
-    #[tokio::test]
-    async fn the_desktop_app_gives_back_screens_it_inherited_untouched() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        inherit(&paths, INHERITED);
-        assert_eq!(read_screens(&paths).await.len(), 2, "the older build drained the copy");
-
-        assert_eq!(forget_inherited(&paths).await, 2);
-        assert!(read_screens(&paths).await.is_empty(), "the rail starts empty");
-        assert!(!paths.screens_file().exists(), "the copy is set aside");
-        assert!(paths.screens_file().with_extension("json.inherited").is_file(), "kept, not deleted");
+        assert_eq!(read_screens(&paths).await[0].title, "again");
+        assert!(!file.exists(), "a save never creates a file");
         assert!(
-            paths.legacy_screens_file().is_file(),
-            "the shared file is the command-line instances' own"
+            !paths.config_dir().join("screens.json").exists(),
+            "and nothing is written to the shared config directory either"
         );
-        assert!(read_list(&paths).await.list_revision > 1, "a client holding the old list re-reads it");
-
-        assert_eq!(forget_inherited(&paths).await, 0, "once");
     }
 
+    /// A screen deleted through the API stays deleted: the old shared file is
+    /// not read, so a sibling or a restored backup cannot seed it again.
     #[tokio::test]
-    async fn a_screen_the_user_made_their_own_keeps_every_inherited_one() {
+    async fn a_deleted_screen_stays_deleted_and_an_old_file_seeds_nothing() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        inherit(&paths, INHERITED);
-        read_screens(&paths).await;
-        update(
-            &paths,
-            &GlobalFeed::default(),
-            "screen-1",
-            ScreenUpdate {
-                title: Some("mine now".to_string()).into(),
-                ..patch(1)
-            },
-        )
-        .await
-        .expect("rename it");
+        seed(&paths, &[screen("from-the-file")]).await;
+        assert_eq!(ids(&read_screens(&paths).await), vec!["from-the-file"]);
 
-        assert_eq!(forget_inherited(&paths).await, 0);
-        assert_eq!(ids(&read_screens(&paths).await), vec!["screen-1", "screen-2"]);
-    }
-
-    #[tokio::test]
-    async fn a_screen_added_since_keeps_the_inherited_ones_too() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        inherit(&paths, INHERITED);
-        read_screens(&paths).await;
-        create(&paths, &GlobalFeed::default(), ScreenCreate::default())
-            .await
-            .expect("a screen of the app's own");
-
-        assert_eq!(forget_inherited(&paths).await, 0);
-        assert_eq!(read_screens(&paths).await.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn an_instance_file_of_its_own_is_never_touched() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        inherit(&paths, INHERITED);
-        std::fs::write(paths.screens_file(), r#"{"version":1,"screens":[{"id":"screen-1","title":"different"}]}"#).expect("own");
-
-        assert_eq!(forget_inherited(&paths).await, 0);
-        assert!(paths.screens_file().is_file(), "left exactly where it was");
-        assert_eq!(read_screens(&paths).await.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_copy_never_drained_never_will_be() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        inherit(&paths, INHERITED);
-
-        assert_eq!(forget_inherited(&paths).await, 0);
-        assert!(read_screens(&paths).await.is_empty(), "marked drained, with nothing in it");
-    }
-
-    /// The file is drained exactly once, and never over what the user has done
-    /// since — otherwise every boot puts a deleted screen back.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_never_over_newer_rows() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        std::fs::create_dir_all(paths.screens_file().parent().expect("parent")).expect("config dir");
-        std::fs::write(paths.screens_file(), r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#).expect("seed");
-
-        let screens = read_screens(&paths).await;
-        assert_eq!(screens.len(), 1);
-        assert_eq!(screens[0].id, "from-the-file");
-        assert_eq!(screens[0].revision, 1, "an imported screen starts where every screen does");
-
-        // The user deletes it, and a sibling process puts the old file back.
         delete(&paths, &GlobalFeed::default(), "from-the-file", None).await.expect("delete it");
-        std::fs::write(paths.screens_file(), r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#).expect("the file comes back");
+        // What an install older than 0.2.125 still has in the shared config
+        // directory. The upgrade floor says it is not read any more.
+        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
+        std::fs::write(
+            paths.config_dir().join("screens.json"),
+            r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#,
+        )
+        .expect("the old file is still on disk");
         assert!(read_screens(&paths).await.is_empty(), "a deleted screen stays deleted");
     }
 
@@ -1578,7 +1319,7 @@ mod tests {
         )
         .await;
 
-        let reopened = Db::open(paths.instance_db());
+        let reopened = crate::db::Db::open(paths.instance_db());
         let (stored, revision): (Value, i64) = reopened
             .read(|conn| {
                 conn.query_row("SELECT payload, revision FROM screens", [], |row| {
@@ -1597,21 +1338,24 @@ mod tests {
         assert_eq!(screens[0].layout.0["content"], json!({ "kind": "tasks" }));
     }
 
+    /// A row written by an older build may be missing fields; each one is
+    /// filled in on read rather than costing the screen.
     #[tokio::test]
     async fn a_screen_missing_its_metadata_is_filled_in_by_position() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        std::fs::create_dir_all(paths.screens_file().parent().expect("parent")).expect("config dir");
-        std::fs::write(
-            paths.screens_file(),
-            r#"{"version":1,"screens":[{"id":"a"},{"id":"b","title":"named","createdAt":"then","updatedAt":"then"}]}"#,
-        )
-        .expect("seed");
+        seed_payload(&paths, "a", 0, r#"{"id":"a"}"#);
+        seed_payload(
+            &paths,
+            "b",
+            1,
+            r#"{"id":"b","title":"named","createdAt":"then","updatedAt":"then"}"#,
+        );
 
         let screens = read_screens(&paths).await;
         assert_eq!(screens.len(), 2);
         assert_eq!(screens[0].title, "screen 1", "a missing title is numbered by position");
-        assert!(screens[0].emoji.is_none(), "legacy screens keep the default icon");
+        assert!(screens[0].emoji.is_none(), "a screen with no icon keeps the default one");
         assert_eq!(screens[0].layout.0["content"], json!({ "kind": "picker" }));
         assert!(screens[0].created_at.ends_with('Z'), "a missing timestamp becomes now");
         assert_eq!(screens[1].title, "named");
@@ -1639,14 +1383,13 @@ mod tests {
         assert!(error.to_string().contains("baseRevision"), "{error}");
     }
 
-    /// A `screens.json` written by an older build still holds browser leaves.
-    /// The web renders one as a picker; the server must not *rewrite* it as one,
-    /// because the next save would put the degraded tree back on disk.
+    /// A row written by an older build still holds browser leaves. The web
+    /// renders one as a picker; the server must not *rewrite* it as one, because
+    /// the next save would put the degraded tree back in the row.
     #[tokio::test]
     async fn a_legacy_browser_leaf_round_trips_unchanged() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.screens_file().parent().expect("parent")).expect("config dir");
         let layout = json!({
             "type": "split",
             "id": "s1",
@@ -1658,16 +1401,13 @@ mod tests {
             ],
         });
         let seeded = json!({
-            // The envelope's version, which only the importer reads and nothing
-            // branches on; it was a constant back when this module wrote files.
-            "version": 1,
-            "screens": [{ "id": "screen-1", "title": "work", "layout": layout, "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+            "id": "screen-1",
+            "title": "work",
+            "layout": layout,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
         });
-        std::fs::write(
-            paths.screens_file(),
-            format!("{}\n", serde_json::to_string_pretty(&seeded).expect("json")),
-        )
-        .expect("seed");
+        seed_payload(&paths, "screen-1", 0, &seeded.to_string());
 
         let screens = read_screens(&paths).await;
         assert_eq!(screens.len(), 1);
@@ -1699,9 +1439,9 @@ mod tests {
     // ---- two devices, one layout --------------------------------------
 
     /// Rows exactly as given, one each, at the revisions they carry — the
-    /// shape an older build or the importer leaves behind.
+    /// shape a build that predates this one leaves behind.
     async fn seed(paths: &Paths, screens: &[Screen]) {
-        let db = store(paths).await;
+        let db = crate::db::at(paths.instance_db());
         db.write(|tx| {
             for (ordinal, screen) in screens.iter().enumerate() {
                 tx.execute(
@@ -1745,7 +1485,7 @@ mod tests {
     }
 
     /// Every frame published so far, decoded.
-    fn drain(rx: &mut tokio::sync::broadcast::Receiver<Arc<str>>) -> Vec<Value> {
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<std::sync::Arc<str>>) -> Vec<Value> {
         std::iter::from_fn(|| rx.try_recv().ok())
             .map(|frame| serde_json::from_str(&frame).expect("a JSON frame"))
             .collect()
@@ -2087,11 +1827,6 @@ mod tests {
                 )
                 .expect("a row the previous release wrote");
             }
-            conn.execute(
-                "INSERT INTO kv (scope, key, value) VALUES (?1, ?2, '0')",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-            )
-            .expect("already imported");
         }
 
         let list = read_list(&paths).await;

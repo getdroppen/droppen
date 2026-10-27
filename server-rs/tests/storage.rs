@@ -307,9 +307,9 @@ async fn screen_emoji_and_layout_autosave_do_not_overwrite_each_other() {
 /// trailing newline: the layout is a row, and the file is not written at all.
 ///
 /// Worth an assertion rather than a deletion, because "no file" is the whole of
-/// the new contract. `screens.json` is read once, by the import, and a save that
-/// wrote it back would quietly re-establish two answers to one question — with
-/// the file, as ever, being the one nothing reads and everything believes.
+/// the new contract. A layout is a row and nothing writes `screens.json`; a save
+/// that put one back would quietly re-establish two answers to one question —
+/// with the file, as ever, being the one nothing reads and everything believes.
 #[tokio::test]
 async fn a_saved_layout_is_a_row_and_the_file_stays_unwritten() {
     let server = common::TestServer::start().await;
@@ -324,67 +324,68 @@ async fn a_saved_layout_is_a_row_and_the_file_stays_unwritten() {
         "the sanitized tree is what was stored, not the request"
     );
 
-    assert!(!server.paths.screens_file().exists(), "a save creates no file where there was none");
-    assert!(!server.paths.screens_file().with_extension("json.tmp").exists());
+    let file = server.paths.instance_dir().join("screens.json");
+    assert!(!file.exists(), "a save creates no file where there was none");
+    assert!(!file.with_extension("json.tmp").exists());
 
     server.stop().await;
 }
 
-/// Layouts used to live in the shared config directory and are now one
-/// instance's own. An upgrade must not look like the screens were deleted — so
-/// boot copies the shared file in, and leaves the original where an older
-/// sibling build can still read it.
+/// Layouts live in the instance database now. A database seeded before boot is
+/// what `GET /api/screens` serves, and the `screens.json` an install older than
+/// 0.2.125 keeps in the shared config directory is neither copied nor read.
 #[tokio::test]
-async fn boot_inherits_the_pre_instance_screens_file_and_then_owns_it() {
-    let seeded = json!({
+async fn boot_serves_the_instance_database_and_ignores_the_old_shared_file() {
+    let payload = json!({
+        "id": "seeded",
+        "title": "seeded layout",
+        "layout": { "type": "leaf", "id": "l1", "content": { "kind": "picker" } },
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+    });
+    let legacy = json!({
         "version": 1,
         "screens": [{
             "id": "screen-inherited",
             "title": "from the shared file",
-            "layout": { "type": "leaf", "id": "l1", "content": { "kind": "picker" } },
+            "layout": { "type": "leaf", "id": "l2", "content": { "kind": "picker" } },
             "createdAt": "2026-01-01T00:00:00.000Z",
             "updatedAt": "2026-01-01T00:00:00.000Z",
         }],
     });
-    let body = format!("{}\n", serde_json::to_string_pretty(&seeded).expect("json"));
-    let legacy = body.clone();
+    let body = format!("{}\n", serde_json::to_string_pretty(&legacy).expect("json"));
+    let shared_body = body.clone();
     let server = common::TestServer::start_with(move |home| {
+        let paths = remote_hand_server::sessions::Paths::new(home.to_path_buf());
+        remote_hand_server::db::at(paths.instance_db())
+            .write(|tx| {
+                tx.execute(
+                    "INSERT INTO screens (id, ordinal, payload) VALUES ('seeded', 0, ?1)",
+                    (payload.to_string(),),
+                )
+            })
+            .expect("seed the instance database");
         let config = home.join(".config").join("remote-hand");
         std::fs::create_dir_all(&config).expect("config dir");
-        std::fs::write(config.join("screens.json"), legacy).expect("seed");
+        std::fs::write(config.join("screens.json"), shared_body).expect("seed the old shared file");
     })
     .await;
 
     let listed = server.get_json("/api/screens").await;
-    assert_eq!(listed["screens"].as_array().expect("array").len(), 1, "the layouts survived the move");
-    assert_eq!(listed["screens"][0]["id"], "screen-inherited");
-    assert!(
-        server.paths.screens_file().is_file(),
-        "boot copied the shared file into the instance directory, which is what the import then drains"
-    );
+    assert_eq!(listed["screens"].as_array().expect("array").len(), 1);
+    assert_eq!(listed["screens"][0]["id"], "seeded");
+    assert_eq!(listed["screens"][0]["title"], "seeded layout");
 
-    // Writing here must not reach back into the shared file: the other instance
-    // is a different server with different terminal ids.
-    let (status, _) = server.json("DELETE", "/api/screens/screen-inherited", &json!({})).await;
+    // Deleting through the API touches the row and nothing else: the old file
+    // is inert, because an install older than the floor is not migrated.
+    let (status, _) = server.json("DELETE", "/api/screens/seeded", &json!({})).await;
     assert_eq!(status, 200);
-    assert_eq!(
-        server.get_json("/api/screens").await,
-        json!({ "screens": [], "listRevision": 2 }),
-        "and the delete took"
-    );
+    assert_eq!(server.get_json("/api/screens").await, json!({ "screens": [], "listRevision": 2 }));
     let shared = server.home.join(".config").join("remote-hand").join("screens.json");
     assert_eq!(
         std::fs::read_to_string(&shared).expect("shared screens.json"),
         body,
-        "the original is untouched"
-    );
-    // Nor is the inherited copy: both files are inputs now, and the delete that
-    // just happened lives only in the table. A build that wrote either of them
-    // back would put a deleted screen where the next fresh database imports it.
-    assert_eq!(
-        std::fs::read_to_string(server.paths.screens_file()).expect("inherited screens.json"),
-        body,
-        "the copy boot made is not written back either"
+        "the old shared file is left exactly as it was found"
     );
 
     server.stop().await;
