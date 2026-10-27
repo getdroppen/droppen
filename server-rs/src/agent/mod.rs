@@ -205,7 +205,8 @@ mod tests {
             parse(&args(&["run"])).unwrap(),
             Invocation {
                 action: Action::Run,
-                hub: None
+                hub: None,
+                instance: None,
             }
         );
         let enroll = parse(&args(&["enroll", &code(), "--hub", "wss://hub.example/v1/agent"])).unwrap();

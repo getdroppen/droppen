@@ -75,6 +75,10 @@ tower-service = "0.3"
 tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "map-response-body"] }
 libc = "0.2"
 
+# The command line of this binary, the relay and the desktop update tool. One
+# derive tree per binary; parsing only, so the subcommands' own argument checks
+# (a required --hub, a validated instance name) stay where they are.
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

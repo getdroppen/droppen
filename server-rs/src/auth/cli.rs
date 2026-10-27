@@ -200,7 +200,10 @@ pub(crate) fn take_instance(args: &[String]) -> Result<(Vec<String>, Option<Stri
 }
 
 /// An instance name, or the same refusal [`crate::instance`] gives for one.
-fn named(name: String) -> Result<String, String> {
+///
+/// Shared with `agent`'s parser: `--instance` is taken out of that command's
+/// arguments the same way, and validated before it can become a path segment.
+pub(crate) fn named(name: String) -> Result<String, String> {
     if crate::instance::valid_name(&name) {
         Ok(name)
     } else {
