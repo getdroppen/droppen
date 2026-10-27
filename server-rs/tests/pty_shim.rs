@@ -260,7 +260,7 @@ async fn peek_shell_pid(shims: &Path, id: &str) -> u32 {
 }
 
 fn alive(pid: u32) -> bool {
-    remote_hand_server::pty_shim::client::process_alive(pid)
+    remote_hand_server::procs::alive(pid)
 }
 
 /// Whether a shim is ready for whoever dials it next: it accepts a connection,

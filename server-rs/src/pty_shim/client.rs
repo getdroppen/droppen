@@ -157,36 +157,9 @@ impl Link {
     }
 }
 
-/// Whether a process is still there.
-///
-/// `kill(pid, 0)` performs the permission and existence checks and delivers
-/// nothing, which is exactly the question a corpse guard asks. `EPERM` counts as
-/// alive: the process exists, it simply is not ours — which is the case for a
-/// shim adopted across a user switch, and refusing to attach then would be a
-/// false negative.
-pub fn process_alive(pid: u32) -> bool {
-    if pid <= 1 {
-        return false;
-    }
-    // SAFETY: signal 0 is the existence probe; it delivers nothing and touches
-    // no memory.
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn liveness_is_a_signal_probe_and_never_a_wildcard() {
-        assert!(process_alive(std::process::id()), "this process is alive");
-        assert!(!process_alive(0), "pid 0 is `my own process group`, not a process");
-        assert!(!process_alive(1), "pid 1 is never a shell of ours");
-        // A pid that cannot exist: the reserved maximum on every platform this
-        // runs on is well below it.
-        assert!(!process_alive(u32::MAX - 1));
-    }
 
     #[tokio::test]
     async fn connecting_to_nothing_is_an_error_rather_than_a_hang() {

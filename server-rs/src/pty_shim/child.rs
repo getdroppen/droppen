@@ -898,7 +898,7 @@ fn terminate_shell(shell_pid: u32) {
     kill_shell(shell_pid, libc::SIGTERM);
     tokio::spawn(async move {
         tokio::time::sleep(KILL_ESCALATION).await;
-        if super::client::process_alive(shell_pid) {
+        if crate::procs::alive(shell_pid) {
             tracing::info!(shell_pid, "the shell ignored SIGTERM; killing it");
             kill_shell(shell_pid, libc::SIGKILL);
         }
