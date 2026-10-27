@@ -2,7 +2,7 @@
 // `/devices`, one way to it from the bar (「设备」), and one list on it —
 // every device, the ones that run AI among them — under what the plan uses
 // and this device's own settings. No filter: an old `?view=` link opens the
-// same page, and the address drops it.
+// same page.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -51,7 +51,7 @@ function draw(node: React.ReactElement, lng = "en"): string {
   return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
 }
 
-test("「我的设备」 is /devices, and an old link's `?view=` is dropped from the address", () => {
+test("「我的设备」 is /devices", () => {
   assert.ok(isDevicesPath("/devices") && isDevicesPath("/devices/"));
   assert.ok(!isDevicesPath("/sessions") && !isDevicesPath("/devices/x") && !isDevicesPath("/"));
   assert.equal(DEVICES_PATH, "/devices");
