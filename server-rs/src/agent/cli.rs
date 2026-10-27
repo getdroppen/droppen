@@ -1,7 +1,7 @@
 use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
 
 use super::now_ms;
-use super::seed::{key_path, load_or_create, FileSeedStore};
+use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, hub, rotation, state};
 use crate::sessions::Paths;
 
@@ -87,7 +87,7 @@ pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool)
     println!(
         "device identity {} {}",
         if created { "created at" } else { "loaded from" },
-        key_path(paths).display()
+        paths.machine_key_path().display()
     );
     println!(
         "  signing key    {}  (Ed25519: hub sign-in, stream manifests, push payloads)",
@@ -203,7 +203,7 @@ pub(super) fn rotation_lines(rotation: &rotation::Status, now: u64) -> Vec<Strin
 
 /// The machine identity if it exists (never made here).
 pub(super) fn load_or_create_existing(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
-    if !key_path(paths).exists() {
+    if !paths.machine_key_path().exists() {
         return Err("no machine key".into());
     }
     load_or_create(paths)

@@ -755,7 +755,7 @@ mod tests {
     /// Make the next save of `a`'s state fail (its file's place taken by a
     /// directory), or let it succeed again.
     fn break_saves(a: &Account, broken: bool) {
-        let path = state::state_path(&a.shared.paths);
+        let path = a.shared.paths.agent_state_path();
         if broken {
             let _ = std::fs::remove_file(&path);
             std::fs::create_dir_all(path.join("in-the-way")).unwrap();

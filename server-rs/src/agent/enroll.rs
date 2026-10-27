@@ -130,7 +130,7 @@ pub async fn begin(paths: &Paths, identity: &MachineIdentity, code: &EnrollCode,
     let state = AgentState::enrolling(&origin, &account, &machine, code.account_fingerprint, now_ms());
     // A new machine id with new keys: what an earlier enrollment of this
     // instance left (its machine keys, its streams' store) is not this one's.
-    super::state::forget_enrollment_leftovers(paths).map_err(BeginError::Local)?;
+    paths.forget_enrollment_leftovers().map_err(BeginError::Local)?;
     state.save(paths).map_err(BeginError::Local)?;
     Ok(Begun {
         origin,
@@ -231,7 +231,7 @@ pub async fn wait_confirmed(paths: &Paths, identity: &MachineIdentity, begun: Be
         let Some(Ok(message)) = message else {
             return Err(EnrollFailure::Pending(format!(
                 "the hub closed the connection before the page added this device; `serve` finishes the enrollment once it does (state saved in {})",
-                super::state::state_path(paths).display()
+                paths.agent_state_path().display()
             )));
         };
         let Message::Binary(bytes) = message else { continue };

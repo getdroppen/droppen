@@ -280,7 +280,7 @@ impl Control {
     /// and not removed. `false`, and nothing started, otherwise — the server
     /// is then exactly the single-machine server.
     pub async fn start_if_enrolled(&self) -> bool {
-        if self.available().is_err() || !super::state::exists(&self.paths) {
+        if self.available().is_err() || !self.paths.has_agent_state() {
             return false;
         }
         let _gate = self.gate.lock().await;
@@ -616,8 +616,8 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
 
 /// Delete an enrollment's state (and what it left), keeping the machine key.
 fn forget_enrollment(paths: &Paths) -> Result<(), String> {
-    super::state::forget_enrollment_leftovers(paths)?;
-    match std::fs::remove_file(super::state::state_path(paths)) {
+    paths.forget_enrollment_leftovers()?;
+    match std::fs::remove_file(paths.agent_state_path()) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -631,7 +631,7 @@ fn forget_enrollment(paths: &Paths) -> Result<(), String> {
 /// link — and with it the streams' writer — must be stopped first; the
 /// process's connection to `streams.db` is dropped here, before the file.
 pub fn unenroll_files(paths: &Paths) -> Result<(), String> {
-    crate::db::forget(&super::streams::store::path(paths));
+    crate::db::forget(&paths.streams_db_path());
     let dir = paths.instance_dir().join("agent");
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -713,7 +713,7 @@ mod tests {
         let identity = control.identity().unwrap();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000);
         st.save(&paths).unwrap();
-        super::super::state::store_machine_key(&paths, 0, &[7; 32]).unwrap();
+        paths.store_machine_key(0, &[7; 32]).unwrap();
         let status = control.status();
         assert_eq!(status.state, Standing::Enrolling);
         assert_eq!(status.machine.as_deref(), Some("m-1"));
@@ -749,7 +749,7 @@ mod tests {
         old.set_kv("plan", "old-account-plan");
         drop(old);
         control.unenroll().await.unwrap();
-        let file = crate::agent::streams::store::path(&paths);
+        let file = paths.streams_db_path();
         assert!(!file.exists(), "agent/ is gone on disk");
         let _ = control.identity().unwrap(); // a new machine key, as a new sign-in makes
         let fresh = crate::agent::streams::store::Store::open(&paths);
@@ -759,7 +759,7 @@ mod tests {
         drop(fresh);
 
         // The same for an enrollment that replaces one that never completed.
-        crate::agent::state::forget_enrollment_leftovers(&paths).unwrap();
+        paths.forget_enrollment_leftovers().unwrap();
         assert_eq!(crate::agent::streams::store::Store::open(&paths).get_kv("plan"), None);
     }
 
@@ -869,7 +869,7 @@ mod tests {
         assert!(st.absorb(&entries, 5_000).error.is_none());
         assert!(st.enrolled() && st.not_hosting());
         st.save(&paths).unwrap();
-        let state_file = super::super::state::state_path(&paths);
+        let state_file = paths.agent_state_path();
         assert_eq!(control.status().state, Standing::NotHosting, "not \"enrolling\"");
         assert!(!control.cancel_enrollment().await.unwrap(), "nothing to cancel");
         assert!(state_file.exists());
@@ -968,11 +968,11 @@ mod tests {
         let old = control.identity().unwrap();
         AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
         // What the crash left: the marker, the seed archived, the state kept.
-        let agent = super::super::key_path(&paths).parent().unwrap().to_path_buf();
+        let agent = paths.machine_key_path().parent().unwrap().to_path_buf();
         crate::agent::write_private(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
-        std::fs::rename(super::super::key_path(&paths), super::super::rotation::archived_key_path(&paths, 5)).unwrap();
+        std::fs::rename(paths.machine_key_path(), super::super::rotation::archived_key_path(&paths, 5)).unwrap();
         control.attach(link_env(&paths));
-        assert!(!crate::agent::state::exists(&paths), "the old enrollment is forgotten");
+        assert!(!paths.has_agent_state(), "the old enrollment is forgotten");
         assert!(!agent.join("re-enroll-fresh.json").exists());
         let fresh = control.identity().unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public());

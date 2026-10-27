@@ -1127,7 +1127,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     };
     // The fingerprint only when the key exists already: a status is never
     // what makes one.
-    let fingerprint = crate::agent::key_path(&cloud.paths)
+    let fingerprint = cloud.paths.machine_key_path()
         .exists()
         .then(|| cloud.control.identity().ok())
         .flatten()

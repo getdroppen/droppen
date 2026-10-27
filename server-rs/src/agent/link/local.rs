@@ -6,14 +6,13 @@ use serde_json::{json, Value};
 use super::bridge;
 use super::hub::now_ms;
 use super::lapse::{still_controls, ChannelLapse};
-use super::state;
 use super::Shared;
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
 /// device tells the agent itself rather than its API.
 ///
 /// - `GET /rh/info` → `{displayName, hostname, mkEpoch, machine, alarms,
-///   controllers}` (`controllers` as in the status stream, [`state::Controllers`])
+///   controllers}` (`controllers` as in the status stream, [`super::state::Controllers`])
 /// - `POST /rh/display-name {name}` — what devices call this machine
 /// - `POST /rh/machine-key {epoch, key, reencrypt}` — a machine key handed
 ///   over inside the end-to-end channel (the mailbox is only the fallback for
@@ -178,7 +177,7 @@ impl AgentLocal {
                     }
                     st.mk_epoch
                 };
-                if let Err(error) = state::store_machine_key(&shared.paths, epoch, key.as_ref()) {
+                if let Err(error) = shared.paths.store_machine_key(epoch, key.as_ref()) {
                     tracing::error!(%error, "cannot store a machine key");
                     return (500, json!({"error": "unavailable", "message": "cannot store the key"}));
                 }

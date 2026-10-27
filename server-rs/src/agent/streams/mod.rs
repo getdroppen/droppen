@@ -745,7 +745,7 @@ impl Sync {
     /// written ahead of the chain): new records are sealed under the newest
     /// of these, not the newest in the file.
     fn load_keys(&mut self) {
-        match super::state::load_machine_keys(&self.paths) {
+        match self.paths.load_machine_keys() {
             Ok(keys) => {
                 for (epoch, key) in committed_only(keys, &self.committed) {
                     self.writer.add_key(epoch, key);

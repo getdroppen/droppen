@@ -945,7 +945,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     let shared = link::test_shared(&a.paths, a.state(hub), MachineIdentity::from_seed(&[44; 32]), super::streams::Handle::detached(), restart);
     // The state cannot be saved (a directory where its file goes); what is
     // on disk stays as it was, as after any failed atomic write.
-    let state_file = super::state::state_path(&a.paths);
+    let state_file = a.paths.agent_state_path();
     let on_disk = std::fs::read(&state_file).unwrap();
     std::fs::remove_file(&state_file).unwrap();
     std::fs::create_dir(&state_file).unwrap();
@@ -1547,7 +1547,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     assert!(file.exists(), "the statement survives");
     let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(left, vec![file.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
-    assert!(!super::state::exists(&a.paths));
+    assert!(!a.paths.has_agent_state());
     // Still delivered, unenrolled…
     let tried = hub.disputes().len();
     until("a delivery after the unenroll", || hub.disputes().len() > tried).await;

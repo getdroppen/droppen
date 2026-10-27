@@ -116,7 +116,7 @@ pub fn path(paths: &Paths, account: &str, host: &str, seq: u64, entry_hash: &str
         id.update(part);
     }
     let id = id.finalize();
-    super::key_path(paths).with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
+    paths.machine_key_path().with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
 }
 
 /// The statement this device makes against the renewal that retired
@@ -181,7 +181,7 @@ fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
 
 /// Every statement this instance keeps, by entry.
 pub fn kept(paths: &Paths) -> Vec<(PathBuf, Statement)> {
-    let key = super::key_path(paths);
+    let key = paths.machine_key_path();
     let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else {
         return Vec::new();
     };
@@ -264,7 +264,7 @@ impl Drop for Running {
 }
 
 fn agent_dir(paths: &Paths) -> PathBuf {
-    super::key_path(paths).parent().map(std::path::Path::to_path_buf).unwrap_or_default()
+    paths.machine_key_path().parent().map(std::path::Path::to_path_buf).unwrap_or_default()
 }
 
 /// Deliver every statement this instance keeps that the hub has not taken —
@@ -699,7 +699,7 @@ mod tests {
         keep(&paths, &s).unwrap();
         let fresh = crate::agent::rotation::re_enroll_fresh(&paths, 99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());
-        assert!(!crate::agent::state::exists(&paths), "the enrollment is forgotten");
+        assert!(!paths.has_agent_state(), "the enrollment is forgotten");
         assert_eq!(kept(&paths), vec![(s.path(&paths), s.clone())], "the statement is not");
         fake.lock().unwrap().answers.clear();
         deliver(&paths);

@@ -1027,7 +1027,7 @@ pub fn seed_retired(paths: &Paths, identity: &MachineIdentity) -> bool {
 
 /// Whether `identity`'s seed is one [`re_enroll_fresh`] archived.
 pub fn archived(paths: &Paths, identity: &MachineIdentity) -> bool {
-    let key = super::key_path(paths);
+    let key = paths.machine_key_path();
     let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else { return false };
     entries.filter_map(Result::ok).any(|e| {
         let name = e.file_name();
@@ -1063,7 +1063,7 @@ pub fn identity_for_enrolling(paths: &Paths) -> Result<MachineIdentity, String> 
 /// has not finished: whatever start comes next finishes it
 /// ([`finish_re_enroll`]).
 fn re_enroll_marker(paths: &Paths) -> std::path::PathBuf {
-    super::key_path(paths).with_file_name("re-enroll-fresh.json")
+    paths.machine_key_path().with_file_name("re-enroll-fresh.json")
 }
 
 /// "Add this device again with a new identity" (§3.8 「只剩退役钥时」): for a
@@ -1131,7 +1131,7 @@ thread_local! {
 
 /// [`re_enroll_fresh`]'s steps after its marker; each may run again.
 fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentity, String> {
-    let current = super::key_path(paths);
+    let current = paths.machine_key_path();
     if current.exists() {
         // Whatever seed is in place: the old one, or (a crash after the
         // fresh one was made) one never enrolled anywhere.
@@ -1145,9 +1145,9 @@ fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentit
         return Err("crashed after archiving (test)".into());
     }
     FileSeedStore::for_instance(paths).discard_all_staged()?;
-    super::state::forget_enrollment_leftovers(paths)?;
+    paths.forget_enrollment_leftovers()?;
     crate::aggregator::forget_all(paths)?;
-    match std::fs::remove_file(super::state::state_path(paths)) {
+    match std::fs::remove_file(paths.agent_state_path()) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.to_string()),
@@ -1169,7 +1169,7 @@ fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentit
 /// Where [`re_enroll_fresh`] archives a retired seed:
 /// `<instance dir>/agent/machine-key.retired-<ms>.json`.
 pub fn archived_key_path(paths: &Paths, now: u64) -> std::path::PathBuf {
-    super::key_path(paths).with_file_name(format!("machine-key.retired-{now}.json"))
+    paths.machine_key_path().with_file_name(format!("machine-key.retired-{now}.json"))
 }
 
 /// [`archived_key_path`], or beside it when that is taken (an archive is
@@ -1455,7 +1455,7 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotfresh");
         let (old, _) = super::super::load_or_create(&paths).unwrap();
         AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5).save(&paths).unwrap();
-        crate::agent::state::store_machine_key(&paths, 0, &[7; 32]).unwrap();
+        paths.store_machine_key(0, &[7; 32]).unwrap();
         FileSeedStore::for_instance(&paths).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
         let fresh = re_enroll_fresh(&paths, 1234).unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public(), "a fresh seed");
@@ -1469,9 +1469,9 @@ mod tests {
         assert!(!created);
         assert_eq!(now.sign_public(), fresh.sign_public());
         // The enrollment is forgotten: no state, no machine keys, nothing staged.
-        assert!(!crate::agent::state::exists(&paths));
+        assert!(!paths.has_agent_state());
         assert!(AgentState::load(&paths).unwrap().is_none());
-        assert!(!crate::agent::state::keys_path(&paths).exists());
+        assert!(!paths.agent_keys_path().exists());
         assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
     }
 
@@ -1490,7 +1490,7 @@ mod tests {
         // Archived, then a crash put the archive back in place (or a copy of it):
         // never loaded, and enrolling makes a fresh seed.
         let archive = archived_key_path(&paths, 5);
-        std::fs::copy(super::super::key_path(&paths), &archive).unwrap();
+        std::fs::copy(paths.machine_key_path(), &archive).unwrap();
         assert!(archived(&paths, &old));
         let refused = super::super::load_or_create(&paths).err().expect("an archived seed is not loaded");
         assert!(refused.contains("archived"), "{refused}");
@@ -1498,7 +1498,7 @@ mod tests {
         assert_ne!(fresh.sign_public(), old.sign_public());
         assert_eq!(super::super::load_or_create(&paths).unwrap().0.sign_public(), fresh.sign_public());
         // Only the archive left (a crash right after archiving): a fresh seed, never the archive.
-        std::fs::remove_file(super::super::key_path(&paths)).unwrap();
+        std::fs::remove_file(paths.machine_key_path()).unwrap();
         let (made, created) = super::super::load_or_create(&paths).unwrap();
         assert!(created && made.sign_public() != old.sign_public() && made.sign_public() != fresh.sign_public());
 
@@ -1593,7 +1593,7 @@ mod tests {
         let untouched = |why: &str| {
             assert!(!seed_retired(&paths, &current), "{why}: its own renewal");
             assert!(!archived(&paths, &current), "{why}: nothing archived");
-            assert!(crate::agent::state::exists(&paths), "{why}: the enrollment stays");
+            assert!(paths.has_agent_state(), "{why}: the enrollment stays");
             assert_eq!(
                 MachineIdentity::from_seed(&store.load().unwrap().unwrap().seed).sign_public(),
                 current.sign_public(),
@@ -1647,7 +1647,7 @@ mod tests {
         assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Unreadable);
         assert!(!seed_retired(&paths, &current));
         assert!(re_enroll_fresh(&paths, 5).err().is_some_and(|e| e.contains("does not read")));
-        assert!(!archived(&paths, &current) && crate::agent::state::exists(&paths));
+        assert!(!archived(&paths, &current) && paths.has_agent_state());
         // One set aside as expired that does not read counts the same.
         std::fs::rename(store.staging_path(&mine.nonce), store.expired_path(&mine.nonce)).unwrap();
         assert_eq!(stored_verdict(&paths, &st, &current), Verdict::Unreadable);
@@ -1666,20 +1666,20 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotcrash");
         let (old, _) = super::super::load_or_create(&paths).unwrap();
         renewed_to(&old, &MachineIdentity::from_seed(&[66; 32])).save(&paths).unwrap();
-        crate::agent::state::store_machine_key(&paths, 0, &[7; 32]).unwrap();
+        paths.store_machine_key(0, &[7; 32]).unwrap();
         FileSeedStore::for_instance(&paths).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
         CRASH_AFTER_ARCHIVE.with(|c| c.set(true));
         assert!(re_enroll_fresh(&paths, 1234).is_err(), "crashed");
         // What the crash left: the seed archived, the enrollment still there.
-        assert!(!super::super::key_path(&paths).exists());
+        assert!(!paths.machine_key_path().exists());
         assert!(archived(&paths, &old));
-        assert!(crate::agent::state::exists(&paths));
+        assert!(paths.has_agent_state());
         assert!(re_enroll_marker(&paths).exists());
         // The next start finishes it.
         let fresh = finish_re_enroll(&paths).unwrap().expect("finished");
         assert_ne!(fresh.sign_public(), old.sign_public());
-        assert!(!crate::agent::state::exists(&paths), "the old enrollment is forgotten");
-        assert!(!crate::agent::state::keys_path(&paths).exists());
+        assert!(!paths.has_agent_state(), "the old enrollment is forgotten");
+        assert!(!paths.agent_keys_path().exists());
         assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
         assert!(!re_enroll_marker(&paths).exists());
         assert_eq!(super::super::load_or_create(&paths).unwrap().0.sign_public(), fresh.sign_public());
@@ -1690,7 +1690,7 @@ mod tests {
         assert!(re_enroll_fresh(&paths, 1235).is_err());
         let again = identity_for_enrolling(&paths).unwrap();
         assert!(again.sign_public() != fresh.sign_public() && again.sign_public() != old.sign_public());
-        assert!(!crate::agent::state::exists(&paths) && !re_enroll_marker(&paths).exists());
+        assert!(!paths.has_agent_state() && !re_enroll_marker(&paths).exists());
         assert!(archived(&paths, &old) && archived(&paths, &fresh), "both archived, neither written over");
     }
 

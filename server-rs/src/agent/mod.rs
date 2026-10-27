@@ -88,7 +88,7 @@ mod cli;
 mod seed;
 
 pub use cli::{run, ENROLL_PENDING_EXIT, USAGE};
-pub use seed::{key_path, load_or_create, load_or_create_in, FileSeedStore, StagedSeed, StoredSeed};
+pub use seed::{load_or_create, load_or_create_in, FileSeedStore, StagedSeed, StoredSeed};
 pub(in crate::agent) use seed::sync_dir;
 #[cfg(test)]
 pub(crate) use seed::dir_syncs;
@@ -266,7 +266,7 @@ mod tests {
         assert!(refusal.contains("user add <name> --instance enrolltest"), "says how: {refusal}");
         assert!(refusal.contains("setup-code --instance enrolltest"), "and where the code is: {refusal}");
         assert!(refusal.contains(&crate::auth::setup::code_file(&paths).display().to_string()));
-        assert!(!key_path(&paths).exists(), "refused before a machine key is made");
+        assert!(!paths.machine_key_path().exists(), "refused before a machine key is made");
 
         let users = crate::auth::users::UsersStore::new(&paths);
         users.add_app("app", "correct horse battery").await.expect("the desktop app's account");
@@ -302,7 +302,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let path = key_path(&paths);
+            let path = paths.machine_key_path();
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -312,9 +312,9 @@ mod tests {
 
         // The same file copied into another instance is refused, not silently re-derived.
         let other = Paths::for_instance(dir.path().to_path_buf(), "agentother");
-        let copied = key_path(&other);
+        let copied = other.machine_key_path();
         std::fs::create_dir_all(copied.parent().unwrap()).unwrap();
-        std::fs::copy(key_path(&paths), &copied).unwrap();
+        std::fs::copy(paths.machine_key_path(), &copied).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -403,7 +403,7 @@ mod tests {
         let store = FileSeedStore::for_instance(&paths);
         assert_eq!(
             store.staging_path(&[1; 16]),
-            key_path(&paths).with_file_name(format!("machine-key.next-{}.json", hub::hex(&[1; 16])))
+            paths.machine_key_path().with_file_name(format!("machine-key.next-{}.json", hub::hex(&[1; 16])))
         );
         assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
         assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");
@@ -493,7 +493,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         load_or_create(&paths).unwrap();
-        let path = key_path(&paths);
+        let path = paths.machine_key_path();
         let uuid = crate::identity::ensure(&paths).unwrap().uuid;
         std::fs::write(&path, format!(r#"{{"version":1,"uuid":"{uuid}","seed":"abcd"}}"#)).unwrap();
         assert!(load_or_create(&paths).unwrap_err().contains("not 32 bytes"));

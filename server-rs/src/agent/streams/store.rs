@@ -95,9 +95,11 @@ pub const SCHEMA: &[&str] = &[
 ",
 ];
 
-/// `<instance dir>/agent/streams.db`.
-pub fn path(paths: &Paths) -> PathBuf {
-    paths.instance_dir().join("agent").join("streams.db")
+impl Paths {
+    /// `<instance dir>/agent/streams.db`.
+    pub fn streams_db_path(&self) -> PathBuf {
+        self.instance_dir().join("agent").join("streams.db")
+    }
 }
 
 /// Which stream a row is.
@@ -276,7 +278,7 @@ pub struct Store {
 
 impl Store {
     pub fn open(paths: &Paths) -> Self {
-        Self::at(&path(paths))
+        Self::at(&paths.streams_db_path())
     }
 
     pub fn at(file: &Path) -> Self {

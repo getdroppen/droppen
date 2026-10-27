@@ -99,7 +99,9 @@ pub struct FileSeedStore {
 impl FileSeedStore {
     /// The file for this instance: `<instance dir>/agent/machine-key.json`.
     pub fn for_instance(paths: &Paths) -> Self {
-        Self { path: key_path(paths) }
+        Self {
+            path: paths.machine_key_path(),
+        }
     }
 
     /// A seed file at an explicit path (an archived or expired key).
@@ -385,9 +387,11 @@ pub(super) fn sync_dir(path: &Path) {
     let _ = path;
 }
 
-/// Where this instance's machine identity lives.
-pub fn key_path(paths: &Paths) -> PathBuf {
-    paths.instance_dir().join("agent").join("machine-key.json")
+impl Paths {
+    /// Where this instance's machine identity lives.
+    pub fn machine_key_path(&self) -> PathBuf {
+        self.instance_dir().join("agent").join("machine-key.json")
+    }
 }
 /// This instance's machine identity, created on first use. The `bool` says
 /// whether it was created just now.
@@ -401,7 +405,7 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
     if !created && rotation::archived(paths, &identity) {
         return Err(format!(
             "{} is an archived (retired) identity key and is never used again: add this device again under a new identity",
-            key_path(paths).display()
+            paths.machine_key_path().display()
         ));
     }
     Ok((identity, created))

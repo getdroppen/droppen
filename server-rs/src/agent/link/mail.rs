@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::local::unhex;
-use super::state;
 use super::Shared;
 
 /// The most mail kept to try again as the chain catches up.
@@ -93,7 +92,7 @@ pub(in crate::agent) fn open_mail(shared: &Arc<Shared>, value: &Value) -> MailVe
     };
     match wrap::open_machine_key(shared.identity.dh(), &st.machine, chain, &ctx, &sealed) {
         Ok(key) => {
-            if let Err(error) = state::store_machine_key(&shared.paths, epoch, &key) {
+            if let Err(error) = shared.paths.store_machine_key(epoch, &key) {
                 tracing::error!(%error, "cannot store a machine key");
                 return MailVerdict::Later;
             }
