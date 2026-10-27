@@ -24,6 +24,7 @@
  *
  * The store is an interface so tests and the node runner can use memory.
  */
+import { openIdb } from "@/lib/idb";
 import { type Bytes, utf8 } from "./bytes";
 import type { DeviceKeys } from "./keys";
 import { isAlgorithmUnsupported, unsupportedFrom } from "./support";
@@ -79,45 +80,19 @@ export const KEY_STORE_OPEN_MS = 10_000;
  * for the rest of the page's life.
  */
 export function indexedDbKeyStore(factory: IDBFactory = indexedDB, dbName = KEY_STORE_DB): KeyStore {
-  let db: Promise<IDBDatabase> | null = null;
   let afresh = false;
-  const drop = (which: Promise<IDBDatabase>) => {
-    if (db === which) db = null;
-  };
-  const open = (): Promise<IDBDatabase> => {
-    if (db) return db;
-    const opening: Promise<IDBDatabase> = new Promise((resolve, reject) => {
-      let late = false;
-      const timer = setTimeout(() => {
-        late = true;
-        reject(new Error(`the browser did not open its key store within ${KEY_STORE_OPEN_MS / 1000} s`));
-      }, KEY_STORE_OPEN_MS);
-      const req = factory.open(dbName, 1);
-      req.onupgradeneeded = (event) => {
-        if (event.oldVersion === 0) afresh = true;
-        req.result.createObjectStore(STORE);
-      };
-      req.onsuccess = () => {
-        clearTimeout(timer);
-        const conn = req.result;
-        if (late) return conn.close();
-        conn.onversionchange = () => {
-          conn.close();
-          drop(opening);
-        };
-        conn.onclose = () => drop(opening);
-        resolve(conn);
-      };
-      req.onerror = () => {
-        clearTimeout(timer);
-        reject(req.error ?? new Error("the browser would not open its key store"));
-      };
-    });
-    opening.catch(() => drop(opening));
-    db = opening;
-    return opening;
-  };
-  const tx = async (mode: IDBTransactionMode) => (await open()).transaction(STORE, mode).objectStore(STORE);
+  const idb = openIdb({
+    factory,
+    name: dbName,
+    store: STORE,
+    timeoutMs: KEY_STORE_OPEN_MS,
+    timedOut: `the browser did not open its key store within ${KEY_STORE_OPEN_MS / 1000} s`,
+    refused: "the browser would not open its key store",
+    onFirstOpen: () => {
+      afresh = true;
+    },
+  });
+  const tx = async (mode: IDBTransactionMode) => (await idb.open()).transaction(STORE, mode).objectStore(STORE);
   return {
     async get(name) {
       return request((await tx("readonly")).get(name));
@@ -129,12 +104,7 @@ export function indexedDbKeyStore(factory: IDBFactory = indexedDB, dbName = KEY_
       await request((await tx("readwrite")).delete(name));
     },
     reopen() {
-      const current = db;
-      db = null;
-      void current?.then(
-        (conn) => conn.close(),
-        () => undefined,
-      );
+      idb.reopen();
     },
     createdAfresh: () => afresh,
     async list(prefix) {

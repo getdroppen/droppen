@@ -28,6 +28,7 @@
  * `storage` events. That is said on the console — and refused, as a failure
  * to try again, in a browser that kept them in IndexedDB before.
  */
+import { openIdb } from "@/lib/idb";
 
 /** Where older pages keep the seen record (and this one, where IndexedDB will not open): `localStorage`'s key for `account`. */
 export const seenKey = (account: string) => `rh.hub.seen.${account}`;
@@ -49,6 +50,11 @@ export const SEEN_STORE = STORE;
 export type SeenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 type EventTargetLike = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+const unref = <T>(handle: T): T => {
+  (handle as { unref?: () => void }).unref?.();
+  return handle;
+};
 
 /**
  * The store would not read or write what it keeps, or would not open: a
@@ -85,11 +91,6 @@ export interface SeenStore {
   /** Hear that another page may have written a value: its account, or `null` for any. Returns the stop. */
   watch(heard: (account: string | null) => void): () => void;
 }
-
-const unref = <T>(handle: T): T => {
-  (handle as { unref?: () => void }).unref?.();
-  return handle;
-};
 
 /**
  * The values in memory: one browser's, for the tests. Updates run one after
@@ -247,64 +248,29 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
   const canBroadcast = channelName !== null && typeof BroadcastChannel === "function";
   /** This store's own id on the channel: a page does not hear itself. */
   const self = Math.random().toString(36).slice(2);
-  let db: Promise<IDBDatabase> | null = null;
   let opened = false;
   let fallen: SeenStore | null = null;
   let poster: BroadcastChannel | null = null;
   const watchers = new Set<(account: string | null) => void>();
   let listening: (() => void) | null = null;
 
-  const drop = (which: Promise<IDBDatabase>) => {
-    if (db === which) db = null;
-  };
-  const open = (): Promise<IDBDatabase> => {
-    if (db) return db;
-    const opening = new Promise<IDBDatabase>((resolve, reject) => {
-      let late = false;
-      const timer = unref(
-        setTimeout(() => {
-          late = true;
-          reject(new Error(`the browser did not open the seen record's database within ${SEEN_DB_OPEN_MS / 1000} s`));
-        }, SEEN_DB_OPEN_MS),
-      );
-      let req: IDBOpenDBRequest;
-      try {
-        req = factory.open(dbName, 1);
-      } catch (error) {
-        clearTimeout(timer);
-        // Thrown at once: not to be had here (an opaque origin, storage turned off).
-        reject(new NotHere(describe(error)));
-        return;
-      }
-      req.onupgradeneeded = () => {
-        req.result.createObjectStore(STORE);
-      };
-      req.onsuccess = () => {
-        clearTimeout(timer);
-        const conn = req.result;
-        if (late) return conn.close();
-        conn.onversionchange = () => {
-          conn.close();
-          drop(opening);
-        };
-        conn.onclose = () => drop(opening);
-        resolve(conn);
-      };
-      req.onerror = () => {
-        clearTimeout(timer);
-        reject(req.error ?? new Error("the browser would not open the seen record's database"));
-      };
-    });
-    opening.catch(() => drop(opening));
-    db = opening;
-    return opening;
-  };
+  const idb = openIdb({
+    factory,
+    name: dbName,
+    store: STORE,
+    timeoutMs: SEEN_DB_OPEN_MS,
+    timedOut: `the browser did not open the seen record's database within ${SEEN_DB_OPEN_MS / 1000} s`,
+    refused: "the browser would not open the seen record's database",
+    unref: true,
+    // Thrown at once: not to be had here (an opaque origin, storage turned off).
+    notHere: (error) => new NotHere(describe(error)),
+  });
 
   /** The database, or `null` once this page keeps the records in the fallback. */
   const connection = async (): Promise<IDBDatabase | null> => {
     if (fallen) return null;
     try {
-      const conn = await open();
+      const conn = await idb.open();
       if (!opened) opts.onOpen?.();
       opened = true;
       return conn;
@@ -348,14 +314,7 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
     }
   };
   /** Let go of the connection (one that would not make a transaction, or whose request failed): the next call opens the database afresh. */
-  const letGo = () => {
-    const current = db;
-    db = null;
-    void current?.then(
-      (conn) => conn.close(),
-      () => undefined,
-    );
-  };
+  const letGo = () => idb.reopen();
 
   const post = (account: string) => {
     if (!canBroadcast) return;
