@@ -22,7 +22,7 @@
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
-//! Whether it runs is the owner's choice ([`wanted`]): on for a computer
+//! Whether it runs is the owner's choice ([`crate::sessions::Paths::wants_aggregator`]): on for a computer
 //! signed in from its local settings with aggregation (the default), and for
 //! one enrolled from the command line that never was (§4.3, "已注册的电脑");
 //! off once the owner turns it off.
@@ -56,42 +56,6 @@ pub fn enabled() -> bool {
     crate::env::flag_or("DROPPEN_AGENT_CONTROL", true)
 }
 
-/// Whether the owner wants this computer to control other devices, by
-/// `<instance>/cloud.json` (`crate::api::cloud`): not when they turned it off
-/// (`aggregatorOff`, or a sign-in from the local settings that asked for no
-/// aggregation); yes otherwise — also with no file at all (a computer
-/// enrolled from the command line). A file that cannot be read or does not
-/// parse says no (security review of S1-4, N3: it may be the owner's "off"),
-/// logged once.
-///
-/// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
-/// `cloud.json` is written whole, so any update of it (say `PUT
-/// /api/cloud/access` on a computer enrolled from the command line) writes
-/// the default `aggregate: false` without anybody asking for "off". Only
-/// `aggregatorOff`, or a sign-in from the local settings without
-/// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
-///
-/// This only says whether the controller works. Deleting what it holds is
-/// the local API's turning it off (`POST /api/cloud/aggregator`), which
-/// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json` by
-/// hand stops the controller but leaves `aggregator/keys.json` where it is.
-pub fn wanted(paths: &Paths) -> bool {
-    let path = crate::api::cloud::file_path(paths);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
-        Err(error) => return unreadable(&path, &error.to_string()),
-    };
-    let file: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(file) => file,
-        Err(error) => return unreadable(&path, &error.to_string()),
-    };
-    if file["aggregatorOff"] == true {
-        return false;
-    }
-    file["aggregate"] == true || file["linkedAt"].is_null()
-}
-
 /// Whether this computer's device role may sign in to the hub now, as its
 /// link says (`docs/host-identity-rotation.md` §3.5 「不拿旧钥误伤自己」):
 /// not while a staged identity key is kept and the link has not signed in
@@ -109,15 +73,6 @@ pub(crate) fn holds_named_keys(chain: &rh_proto::chain::ChainState, me: &str, id
     chain
         .device_record(me)
         .is_some_and(|d| d.info.sign_key == identity.sign_public() && d.info.dh_key == identity.dh_public())
-}
-
-/// `cloud.json` does not read: off, said once per process.
-fn unreadable(path: &std::path::Path, error: &str) -> bool {
-    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        tracing::warn!(path = %path.display(), %error, "cannot read the Droppen link's settings: this computer does not control other devices until they read");
-    }
-    false
 }
 
 /// `<instance>/aggregator/`.
@@ -424,22 +379,22 @@ mod tests {
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
         let file = crate::api::cloud::file_path(&paths);
         // Enrolled from the command line: no file, on.
-        assert!(wanted(&paths));
+        assert!(paths.wants_aggregator());
         let write = |v: serde_json::Value| std::fs::write(&file, v.to_string()).unwrap();
         // Signed in from the local settings, with aggregation (the default): on.
         write(serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 5}));
-        assert!(wanted(&paths));
+        assert!(paths.wants_aggregator());
         // Without it, or turned off by a release from before (no `aggregatorOff`): off.
         write(serde_json::json!({"owner": "alice", "aggregate": false, "linkedAt": 5}));
-        assert!(!wanted(&paths));
+        assert!(!paths.wants_aggregator());
         // Turned off: off, whatever else.
         write(serde_json::json!({"aggregate": true, "aggregatorOff": true}));
-        assert!(!wanted(&paths));
+        assert!(!paths.wants_aggregator());
         // A file with no sign-in in it (an owner set before any): on.
         write(serde_json::json!({"remoteAccess": {}}));
-        assert!(wanted(&paths));
+        assert!(paths.wants_aggregator());
         // A file that does not parse may be the owner's "off": off (N3).
         std::fs::write(&file, b"{\"aggregatorOff\": tr").unwrap();
-        assert!(!wanted(&paths));
+        assert!(!paths.wants_aggregator());
     }
 }

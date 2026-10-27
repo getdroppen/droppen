@@ -82,15 +82,24 @@ pub struct Mail {
     pub sealed: Vec<u8>,
 }
 
-/// `wss://host` → `https://host` (`ws://` → `http://`: loopback only, as
-/// [`crate::agent::hub::origin`] allows it).
-pub fn http_base(origin: &str) -> String {
-    if let Some(rest) = origin.strip_prefix("wss://") {
-        format!("https://{rest}")
-    } else if let Some(rest) = origin.strip_prefix("ws://") {
-        format!("http://{rest}")
-    } else {
-        origin.to_string()
+/// A hub's websocket origin as the HTTP base the same hub answers on:
+/// `wss://host` → `https://host`, and `ws://host` → `http://host` (the
+/// loopback hub [`crate::agent::hub::origin`] allows). Anything else passes
+/// through, so a value already in HTTP form is returned as it is.
+pub trait HubOriginExt {
+    /// This origin as an HTTP base.
+    fn http_base(&self) -> String;
+}
+
+impl HubOriginExt for str {
+    fn http_base(&self) -> String {
+        if let Some(rest) = self.strip_prefix("wss://") {
+            format!("https://{rest}")
+        } else if let Some(rest) = self.strip_prefix("ws://") {
+            format!("http://{rest}")
+        } else {
+            self.to_string()
+        }
     }
 }
 
@@ -128,7 +137,7 @@ impl DeviceClient {
         Ok(Self {
             http,
             hub: HubUrl {
-                http: http_base(origin),
+                http: origin.http_base(),
                 ws: origin.to_string(),
                 origin: origin.to_string(),
             },
@@ -251,8 +260,8 @@ mod tests {
 
     #[test]
     fn the_hub_is_reached_over_https_where_the_agent_dials_wss() {
-        assert_eq!(http_base("wss://droppen.app"), "https://droppen.app");
-        assert_eq!(http_base("ws://127.0.0.1:9000"), "http://127.0.0.1:9000");
+        assert_eq!("wss://droppen.app".http_base(), "https://droppen.app");
+        assert_eq!("ws://127.0.0.1:9000".http_base(), "http://127.0.0.1:9000");
     }
 
     #[test]

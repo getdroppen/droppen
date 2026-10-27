@@ -422,10 +422,6 @@ impl Default for LiveCopies {
     }
 }
 
-fn now_ms() -> u64 {
-    crate::agent::now_ms()
-}
-
 impl LiveCopies {
     /// An empty registry.
     pub fn new() -> Arc<Self> {
@@ -538,7 +534,7 @@ impl LiveCopies {
         if presence.online == online {
             return;
         }
-        *presence = Presence { online, since_ms: now_ms() };
+        *presence = Presence { online, since_ms: crate::agent::now_ms() };
         let dir = Self::dir_of(&mut inner);
         drop(inner);
         self.send_dir(dir);
@@ -547,7 +543,7 @@ impl LiveCopies {
     /// Nothing is known of anyone's presence now (the connection to the hub went).
     pub fn presence_unknown(&self) {
         let mut inner = self.lock();
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let mut changed = false;
         for presence in inner.hosts.values_mut() {
             if presence.online.is_some() {
@@ -736,7 +732,7 @@ impl LiveCopies {
     /// The sessions pages opened, most recently first: those subscribed to
     /// now, and those let go of within [`LINGER`].
     pub fn opened(&self) -> Vec<(String, String)> {
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let linger = LINGER.as_millis() as u64;
         let mut inner = self.lock();
         inner.interest.retain(|_, i| !i.subs.is_empty() || now.saturating_sub(i.last_ms) < linger);
@@ -836,7 +832,7 @@ impl LiveCopies {
                 });
                 first = held.subs.is_empty();
                 held.subs.insert(id);
-                held.last_ms = now_ms();
+                held.last_ms = crate::agent::now_ms();
             }
             drop(inner);
             if first {
@@ -861,7 +857,7 @@ impl LiveCopies {
         let mut last = false;
         if let Some(interest) = inner.interest.get_mut(&(key.host.clone(), key.name.clone())) {
             if interest.subs.remove(&id) && interest.subs.is_empty() {
-                interest.last_ms = now_ms();
+                interest.last_ms = crate::agent::now_ms();
                 last = true;
             }
         }

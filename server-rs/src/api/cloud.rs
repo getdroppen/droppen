@@ -48,12 +48,11 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use gotcha::axum::http::StatusCode;
-use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::{api, Json, Schematic, State};
-use gotcha_core::EnhancedSchema;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::created::Accepted;
 use super::error::ApiError;
 use super::extract::ApiJson;
 use super::hub_web::HubWebs;
@@ -61,6 +60,7 @@ use super::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 use super::{ApiRouter, AppState, SendResult};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::agent::enroll::BeginError;
+use crate::aggregator::controller::AggregatorHost;
 use crate::auth::MaybeIdentity;
 use crate::openapi_ext::ExtraResponses;
 use crate::sessions::Paths;
@@ -144,7 +144,7 @@ struct CloudFile {
     /// controls the account's other devices with its one identity).
     #[serde(default)]
     aggregate: bool,
-    /// The owner turned the aggregator off ([`crate::aggregator::wanted`]).
+    /// The owner turned the aggregator off ([`Paths::wants_aggregator`]).
     /// A field of its own: an install enrolled from the command line has no
     /// sign-in here, and controls by default.
     #[serde(default)]
@@ -165,14 +165,10 @@ struct CloudFile {
     accounts_since: BTreeMap<String, String>,
 }
 
-fn now_ms() -> u64 {
-    crate::agent::now_ms()
-}
-
 fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    crate::agent::hub::hex(&bytes)
 }
 
 impl Cloud {
@@ -217,6 +213,15 @@ impl Cloud {
         }
     }
 
+    /// Write `file` back and tell the gateway's connections. Under the file's
+    /// lock, as its callers already hold it.
+    fn write_file(&self, file: &CloudFile) -> Result<(), ApiError> {
+        let bytes = serde_json::to_vec_pretty(file).map_err(|e| ApiError::internal(e.to_string()))?;
+        crate::agent::write_private(&self.file_path(), &bytes).map_err(ApiError::internal)?;
+        self.changed.send_modify(|n| *n += 1);
+        Ok(())
+    }
+
     /// Change `cloud.json` only if it reads, and only if `f` agrees — both
     /// decided under the file's lock, so two requests cannot both pass a
     /// check one of them is about to make false (two claims at once).
@@ -230,9 +235,7 @@ impl Cloud {
             ));
         };
         f(&mut file)?;
-        let bytes = serde_json::to_vec_pretty(&file).map_err(|e| ApiError::internal(e.to_string()))?;
-        crate::agent::write_private(&self.file_path(), &bytes).map_err(ApiError::internal)?;
-        self.changed.send_modify(|n| *n += 1);
+        self.write_file(&file)?;
         Ok(file)
     }
 
@@ -240,9 +243,7 @@ impl Cloud {
         let _guard = self.file.lock().expect("cloud file");
         let mut file = self.read_file();
         f(&mut file);
-        let bytes = serde_json::to_vec_pretty(&file).map_err(|e| ApiError::internal(e.to_string()))?;
-        crate::agent::write_private(&self.file_path(), &bytes).map_err(ApiError::internal)?;
-        self.changed.send_modify(|n| *n += 1);
+        self.write_file(&file)?;
         Ok(file)
     }
 
@@ -274,7 +275,7 @@ impl Cloud {
     /// The attempt still in flight, if any (an expired one is dropped).
     fn live_attempt(&self) -> Option<Attempt> {
         let mut slot = self.attempt.lock().expect("attempt");
-        if slot.as_ref().is_some_and(|a| a.expires_ms <= now_ms()) {
+        if slot.as_ref().is_some_and(|a| a.expires_ms <= crate::agent::now_ms()) {
             *slot = None;
             return None;
         }
@@ -286,7 +287,7 @@ impl Cloud {
         *self.handoff_outcome.lock().expect("handoff outcome") = Some(HandoffOutcome {
             attempt: attempt.id.clone(),
             owner: attempt.owner.clone(),
-            at_ms: now_ms(),
+            at_ms: crate::agent::now_ms(),
             result,
         });
     }
@@ -298,7 +299,7 @@ impl Cloud {
         let slot = self.handoff_outcome.lock().expect("handoff outcome");
         let outcome = slot
             .as_ref()
-            .filter(|o| o.owner == user && now_ms().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
+            .filter(|o| o.owner == user && crate::agent::now_ms().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
         let (name, machine, error, message) = match &outcome.result {
             HandoffResult::Receiving => ("receiving", None, None, None),
             HandoffResult::HandedOver(machine) => ("handed_over", Some(machine.clone()), None, None),
@@ -327,6 +328,51 @@ impl Cloud {
 /// `<instance>/cloud.json`.
 pub fn file_path(paths: &Paths) -> std::path::PathBuf {
     paths.instance_dir().join("cloud.json")
+}
+
+impl Paths {
+    /// Whether the owner wants this computer to control other devices, by
+    /// `<instance>/cloud.json`: not when they turned it off (`aggregatorOff`,
+    /// or a sign-in from the local settings that asked for no aggregation); yes
+    /// otherwise — also with no file at all (a computer enrolled from the
+    /// command line). A file that cannot be read or does not parse says no
+    /// (security review of S1-4, N3: it may be the owner's "off"), logged
+    /// once.
+    ///
+    /// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
+    /// `cloud.json` is written whole, so any update of it (say `PUT
+    /// /api/cloud/access` on a computer enrolled from the command line) writes
+    /// the default `aggregate: false` without anybody asking for "off". Only
+    /// `aggregatorOff`, or a sign-in from the local settings without
+    /// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
+    ///
+    /// This only says whether the controller works. Deleting what it holds is
+    /// the local API's turning it off (`POST /api/cloud/aggregator`), which
+    /// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json`
+    /// by hand stops the controller but leaves `aggregator/keys.json` where it
+    /// is.
+    pub(crate) fn wants_aggregator(&self) -> bool {
+        let path = file_path(self);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(error) => return unreadable(&path, &error.to_string()),
+        };
+        let file: CloudFile = match serde_json::from_slice(&bytes) {
+            Ok(file) => file,
+            Err(error) => return unreadable(&path, &error.to_string()),
+        };
+        !file.aggregator_off && (file.aggregate || file.linked_at.is_none())
+    }
+}
+
+/// `cloud.json` does not read: off, said once per process.
+fn unreadable(path: &std::path::Path, error: &str) -> bool {
+    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(path = %path.display(), %error, "cannot read the Droppen link's settings: this computer does not control other devices until they read");
+    }
+    false
 }
 
 /// When the device gets its first user account: a Droppen link the local owner
@@ -389,15 +435,11 @@ fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
 
 /// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only):
 /// the hub's own web origin, where a browser signs in unless the hub names
-/// its app's ([`super::hub_web`]).
+/// its app's ([`super::hub_web`]). The one implementation is
+/// [`crate::aggregator::hub::HubOriginExt::http_base`].
 pub fn web_origin(ws_origin: &str) -> String {
-    if let Some(rest) = ws_origin.strip_prefix("wss://") {
-        format!("https://{rest}")
-    } else if let Some(rest) = ws_origin.strip_prefix("ws://") {
-        format!("http://{rest}")
-    } else {
-        ws_origin.to_string()
-    }
+    use crate::aggregator::hub::HubOriginExt;
+    ws_origin.http_base()
 }
 
 /// `{error: code, message}` at `status`.
@@ -688,43 +730,6 @@ impl From<crate::agent::rotation::Status> for CloudRotation {
     }
 }
 
-/// One device that runs AI and accepts this computer's control, and the
-/// content keys (its machine-key epochs) held of it here.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct AggregatorHost {
-    /// Its id.
-    pub id: String,
-    /// Its newest committed machine-key epoch.
-    pub latest_epoch: Option<u32>,
-    /// The epochs held here.
-    pub epochs: Vec<u32>,
-    /// Whether its agent declared `policy/1` (refuses this computer its admin
-    /// routes); `null` until the hub said.
-    pub policy: Option<bool>,
-    /// What is copied of it here (S1-5); `null` before anything is, and for
-    /// a caller who may not see other devices (§4.6: only whoever manages the
-    /// link, or a local account the owner let see them).
-    pub copy: Option<AggregatorCopy>,
-}
-
-/// What this computer holds of one device's copy (S1-5): counts and times,
-/// never content.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct AggregatorCopy {
-    /// Sessions in its index, as copied (`null`: no index yet).
-    pub index_rows: Option<u64>,
-    /// When its agent last listed them (ms).
-    pub index_as_of_ms: Option<u64>,
-    /// When its agent last signed its status (ms).
-    pub status_at_ms: Option<u64>,
-    /// Sessions copied here (its newest).
-    pub sessions: u64,
-    /// Whether it is online now (`null`: not known).
-    pub online: Option<bool>,
-}
-
 /// The aggregator: this computer controlling the account's other devices
 /// with its one identity (local-aggregator §5, S1-4).
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -1009,40 +1014,6 @@ pub struct AccessRequest {
     pub remote: bool,
 }
 
-/// A body sent with `202 Accepted`.
-#[derive(Debug, Clone)]
-pub struct Accepted<T>(pub T);
-
-impl<T: Serialize> IntoResponse for Accepted<T> {
-    fn into_response(self) -> Response {
-        (StatusCode::ACCEPTED, Json(self.0)).into_response()
-    }
-}
-
-impl<T: Schematic> Schematic for Accepted<T> {
-    fn name() -> &'static str {
-        T::name()
-    }
-    fn required() -> bool {
-        T::required()
-    }
-    fn nullable() -> Option<bool> {
-        T::nullable()
-    }
-    fn type_() -> &'static str {
-        T::type_()
-    }
-    fn doc() -> Option<String> {
-        T::doc()
-    }
-    fn fields() -> Vec<(&'static str, EnhancedSchema)> {
-        T::fields()
-    }
-    fn generate_schema() -> EnhancedSchema {
-        T::generate_schema()
-    }
-}
-
 // ---------------------------------------------------------------- handlers
 
 fn standing_name(state: Standing) -> &'static str {
@@ -1076,7 +1047,10 @@ fn sees_other_devices(file: Option<&CloudFile>, accounts: &BTreeMap<String, Stri
 async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     let cloud = &state.cloud;
     let agent: AgentStatus = cloud.control.status();
-    let file = cloud.read_file();
+    // Read once: the lenient view (for what the status shows of the owner)
+    // and the strict one (for who may see other devices) are the same read.
+    let strict = cloud.read_file_strict();
+    let file = strict.clone().unwrap_or_default();
     let attempt = cloud.live_attempt();
     // Signed in with authentication on: nobody without a session gets here.
     let local_auth = !state.drive.auth.is_off() && user.is_some();
@@ -1092,7 +1066,6 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     // decision of 2026-10-19): shown to the owner, and to the local accounts
     // the owner allowed — never while there is no owner (or its account is
     // gone, or `cloud.json` does not read), never with local authentication off.
-    let strict = cloud.read_file_strict();
     let created = self::accounts(state).await;
     let owner = strict.as_ref().and_then(|f| owner_of(f, &created));
     let sees_other_devices = if owner_now {
@@ -1165,7 +1138,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
         aggregator: {
             let control = cloud.control.control_status().filter(|c| c.running);
             CloudAggregator {
-                enabled: crate::aggregator::wanted(&cloud.paths),
+                enabled: cloud.paths.wants_aggregator(),
                 state: if crate::aggregator::key_path(&cloud.paths).exists() {
                     "pending".into()
                 } else if control.is_some() {
@@ -1175,27 +1148,15 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
                 },
                 signed_in: control.as_ref().is_some_and(|c| c.signed_in),
                 error: control.as_ref().and_then(|c| c.error.clone()),
-                hosts: control
-                    .as_ref()
-                    .map(|c| {
-                        c.hosts
-                            .iter()
-                            .map(|h| AggregatorHost {
-                                id: h.id.clone(),
-                                latest_epoch: h.latest_epoch,
-                                epochs: h.epochs.clone(),
-                                policy: h.policy,
-                                copy: h.copy.as_ref().filter(|_| sees_other_devices).map(|c| AggregatorCopy {
-                                    index_rows: c.index_rows,
-                                    index_as_of_ms: c.index_as_of_ms,
-                                    status_at_ms: c.status_at_ms,
-                                    sessions: c.sessions,
-                                    online: c.online,
-                                }),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                hosts: {
+                    let mut hosts = control.as_ref().map(|c| c.hosts.clone()).unwrap_or_default();
+                    if !sees_other_devices {
+                        for host in &mut hosts {
+                            host.copy = None;
+                        }
+                    }
+                    hosts
+                },
                 asked_ms: control.as_ref().and_then(|c| c.asked_ms),
             }
         },
@@ -1266,7 +1227,7 @@ pub async fn post_link(
                 .map_err(ApiError::internal)?
                 .ok_or_else(|| ApiError::internal("the agent state went away"))?;
             Some(LinkEnrolled {
-                account_fp: st.root.account_fingerprint.iter().map(|b| format!("{b:02x}")).collect(),
+                account_fp: crate::agent::hub::hex(&st.root.account_fingerprint),
                 id: st.machine.clone(),
             })
         }
@@ -1294,7 +1255,7 @@ pub async fn post_link(
     // `aggregator` stays in the answer (always null) for pages from before.
     let aggregator: Option<LinkAggregator> = None;
     let id = random_hex(16);
-    let expires_ms = now_ms() + ATTEMPT_TTL_MS;
+    let expires_ms = crate::agent::now_ms() + ATTEMPT_TTL_MS;
     let hostname = super::hostname();
     // The browser hand-off (§4.9), for a page that said where it is: the
     // reply comes back to that origin, which the `/api/*` origin check has
@@ -1446,7 +1407,7 @@ pub async fn post_finish(
     // failure below is said, and signing in again opens a new one.
     let attempt = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, now_ms())?
+        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, crate::agent::now_ms())?
     };
     complete_sign_in(&state, attempt, &code, body.email).await
 }
@@ -1480,7 +1441,7 @@ pub async fn post_return(
         .ok_or_else(|| refusal(StatusCode::BAD_REQUEST, "bad_reply", "droppen.app's answer is not readable"))?;
     let (attempt, reply) = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, now_ms())?;
+        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, crate::agent::now_ms())?;
         // Said before the attempt's lock goes: no look at the status ever
         // finds the attempt gone without this.
         state.cloud.record_handoff(&taken.0, HandoffResult::Receiving);
@@ -1562,7 +1523,7 @@ async fn complete_sign_in(
         file.owner = Some(user.clone());
         file.aggregate = attempt.aggregate;
         file.aggregator_off = !attempt.aggregate;
-        file.linked_at = Some(now_ms());
+        file.linked_at = Some(crate::agent::now_ms());
         file.email = email;
         file.remote_access.insert(user.clone(), true);
     })?;
@@ -1581,7 +1542,7 @@ pub async fn post_cancel(
     let cloud = &state.cloud;
     {
         let mut slot = cloud.attempt.lock().expect("attempt");
-        match check_attempt(&slot, &body.attempt, None, &user, now_ms()) {
+        match check_attempt(&slot, &body.attempt, None, &user, crate::agent::now_ms()) {
             Ok(_) => *slot = None,
             // An attempt that expired meanwhile is gone either way.
             Err(e) if e.status() == StatusCode::GONE => *slot = None,
@@ -2845,7 +2806,7 @@ mod tests {
         assert!(!may_manage(&state, &file, owner).await, "not the owner any more");
         assert!(may_manage(&state, &file, "ada").await, "an account manages an ownerless link");
         // What `post_return` asks of the attempt's opener.
-        let attempt = attempt(owner, now_ms() + 60_000).unwrap();
+        let attempt = attempt(owner, crate::agent::now_ms() + 60_000).unwrap();
         assert!(!may_manage(&state, &file, &attempt.owner).await);
     }
 

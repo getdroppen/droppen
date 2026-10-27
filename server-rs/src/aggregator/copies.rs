@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use gotcha::Schematic;
 use rand::Rng;
 use rh_client::follow::{check_page, Floor, FollowError, Follower, Step};
 use rh_client::http::HttpError;
@@ -44,7 +45,7 @@ use rh_client::HubUrl;
 use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
 use rh_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, watch, Notify};
 use tokio_util::sync::CancellationToken;
@@ -117,20 +118,20 @@ pub struct KeyRing {
     pub hosts: BTreeMap<String, Keys>,
 }
 
-/// What `GET /api/cloud` shows of one host's copy: counts and times, never
-/// content.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// What this computer holds of one device's copy (S1-5): counts and times,
+/// never content.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
-pub struct HostCopy {
-    /// Sessions in its index, as copied.
+pub struct AggregatorCopy {
+    /// Sessions in its index, as copied (`null`: no index yet).
     pub index_rows: Option<u64>,
     /// When its agent last listed them (ms).
     pub index_as_of_ms: Option<u64>,
     /// When its agent last signed its status (ms).
     pub status_at_ms: Option<u64>,
-    /// Sessions copied here.
+    /// Sessions copied here (its newest).
     pub sessions: u64,
-    /// Whether it is online now (`None`: not known).
+    /// Whether it is online now (`null`: not known).
     pub online: Option<bool>,
 }
 
@@ -140,7 +141,7 @@ pub struct Status {
     /// Its connection is up.
     pub connected: bool,
     /// Every host followed.
-    pub hosts: BTreeMap<String, HostCopy>,
+    pub hosts: BTreeMap<String, AggregatorCopy>,
     /// Why the last connection failed or ended.
     pub error: Option<String>,
 }
@@ -761,10 +762,6 @@ struct Copies {
     interest: watch::Receiver<u64>,
 }
 
-fn now_ms() -> u64 {
-    crate::agent::now_ms()
-}
-
 fn jitter(d: Duration) -> Duration {
     let ms = d.as_millis() as u64;
     Duration::from_millis(ms / 2 + rand::thread_rng().gen_range(0..=ms / 2))
@@ -861,7 +858,7 @@ impl Copies {
     /// What a round needs: the enrollment as the chain has it, the keys, and
     /// the hosts to follow — `None` while it may not run.
     fn ready(&self) -> Option<(View, Arc<KeyRing>, Vec<Host>)> {
-        if !super::wanted(&self.env.paths) {
+        if !self.env.paths.wants_aggregator() {
             return None;
         }
         let view = view(&self.env.state)?;
@@ -875,7 +872,7 @@ impl Copies {
 
     fn guard(&self) -> super::keys::Guard {
         let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-        Box::new(move || !cancel.is_cancelled() && super::wanted(&paths))
+        Box::new(move || !cancel.is_cancelled() && paths.wants_aggregator())
     }
 
     /// One connection, or the reason there is none: how long to wait after.
@@ -888,7 +885,7 @@ impl Copies {
         self.env.live.set_signers(&signers(&hosts));
         self.unpark_if_moved();
         if let Some(until) = self.quiet_until {
-            let now = now_ms();
+            let now = crate::agent::now_ms();
             if now < until {
                 return Duration::from_millis(until - now).min(IDLE_EVERY);
             }
@@ -1019,7 +1016,7 @@ impl Copies {
             }
             "removed" | "device_removed" => self.removed(view),
             "host_devices_off" => {
-                self.quiet_until = Some(now_ms() + REFUSED_EVERY.as_millis() as u64);
+                self.quiet_until = Some(crate::agent::now_ms() + REFUSED_EVERY.as_millis() as u64);
                 self.set_status(|s| s.error = Some("the hub lets no device that runs AI act as a device now".into()));
                 REFUSED_EVERY.min(IDLE_EVERY)
             }
@@ -1031,7 +1028,7 @@ impl Copies {
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
                 self.session = None;
                 self.parked = Some(*self.env.chain.borrow());
-                self.quiet_until = Some(now_ms() + REFUSED_EVERY.as_millis() as u64);
+                self.quiet_until = Some(crate::agent::now_ms() + REFUSED_EVERY.as_millis() as u64);
                 self.set_status(|s| {
                     s.error = Some("the hub suspends this device's device role while its identity renewal is pending (rotation_pending)".into())
                 });
@@ -1058,13 +1055,13 @@ impl Copies {
         if let Err(error) = super::forget_all(&self.env.paths) {
             tracing::error!(%error, "cannot delete the other devices' copies");
         }
-        self.quiet_until = Some(now_ms() + REMOVED_EVERY.as_millis() as u64);
+        self.quiet_until = Some(crate::agent::now_ms() + REMOVED_EVERY.as_millis() as u64);
         IDLE_EVERY
     }
 
     /// The device session, minted when there is none or it expires soon.
     async fn signed_in(&mut self, http: &reqwest::Client, hub: &HubUrl, view: &View) -> Result<Arc<RwLock<Zeroizing<String>>>, Duration> {
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         if let Some((token, expires)) = &self.session {
             if *expires > now + RENEW_BEFORE_MS {
                 return Ok(token.clone());
@@ -1213,7 +1210,7 @@ struct Live {
     /// Heads of unchanged copies to write (a heartbeat: how current they are).
     touches: HashMap<(String, Kind, String), (StreamId, SignedHead, [u8; 32])>,
     online: BTreeMap<String, Option<bool>>,
-    reported: Option<BTreeMap<String, HostCopy>>,
+    reported: Option<BTreeMap<String, AggregatorCopy>>,
 }
 
 impl Live {
@@ -1391,7 +1388,7 @@ impl Live {
                 }
             }
         }
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         for want in wants {
             if self.subs.contains_key(&want.stream) || c.too_large.contains(&want.stream) {
                 continue;
@@ -1502,7 +1499,7 @@ impl Live {
                         head_key,
                         state: Some(state),
                         too_large: false,
-                        updated_ms: now_ms(),
+                        updated_ms: crate::agent::now_ms(),
                     },
                 );
             }
@@ -1575,7 +1572,7 @@ impl Live {
                         head_key: None,
                         state: None,
                         too_large: true,
-                        updated_ms: now_ms(),
+                        updated_ms: crate::agent::now_ms(),
                     },
                 );
             }
@@ -1597,7 +1594,7 @@ impl Live {
                     }
                 }
                 let wait = (REBUILD_MIN * 2u32.saturating_pow(tries.min(10))).min(REBUILD_MAX);
-                c.failures.insert(want.stream, (now_ms() + wait.as_millis() as u64, tries + 1));
+                c.failures.insert(want.stream, (crate::agent::now_ms() + wait.as_millis() as u64, tries + 1));
                 tracing::warn!(host = %want.host, kind = want.kind.as_str(), %error, "a copy stopped; reading it again in {wait:?}");
                 if unauthorized {
                     return Err(Ended::Unauthorized);
@@ -1637,7 +1634,7 @@ impl Live {
                 if !hosts.contains(host.as_str()) {
                     continue;
                 }
-                match store.touch(&host, kind, &name, &stream, &head, &head_key, now_ms()) {
+                match store.touch(&host, kind, &name, &stream, &head, &head_key, crate::agent::now_ms()) {
                     Ok(_) => {}
                     Err(error) if error == super::store::OFF => return Err(Ended::Off),
                     Err(error) => tracing::debug!(%error, %host, "cannot note how current a copy is"),
@@ -1647,7 +1644,7 @@ impl Live {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let every = SESSION_WRITE_EVERY.as_millis() as u64;
         let hosts: HashSet<&str> = self.hosts.iter().map(|h| h.id.as_str()).collect();
         let mut later = HashMap::new();
@@ -1696,13 +1693,13 @@ impl Live {
 
     /// Report what is held, when it changed.
     fn report(&mut self, c: &Copies) -> Result<(), Ended> {
-        let mut hosts: BTreeMap<String, HostCopy> = BTreeMap::new();
+        let mut hosts: BTreeMap<String, AggregatorCopy> = BTreeMap::new();
         for host in &self.hosts {
             let index = self.indexes.get(&host.id);
             let status = self.stored.get(&(host.id.clone(), Kind::Status, String::new()));
             hosts.insert(
                 host.id.clone(),
-                HostCopy {
+                AggregatorCopy {
                     index_rows: index.map(|i| i.rows.len() as u64),
                     index_as_of_ms: index.and_then(|i| i.as_of),
                     status_at_ms: status.and_then(|s| s.at_ms),
@@ -1906,7 +1903,7 @@ mod tests {
         let wait = c.refused(&live.view, "rotation_pending");
         assert!(wait <= IDLE_EVERY, "{wait:?}");
         let quiet = c.quiet_until.expect("parked");
-        assert!(quiet > now_ms() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < now_ms() + REMOVED_EVERY.as_millis() as u64);
+        assert!(quiet > crate::agent::now_ms() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < crate::agent::now_ms() + REMOVED_EVERY.as_millis() as u64);
         assert_eq!(c.parked, Some(3));
         assert!(super::super::store::path(&paths).exists(), "the copies stay");
         assert!(c.store.is_some());

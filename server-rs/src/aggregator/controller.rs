@@ -10,7 +10,7 @@
 //!
 //! - the chain names this computer as a current device (an enrollment still
 //!   waiting for a device, or a removed computer, has no device role), and
-//! - the owner has not turned the aggregator off ([`super::wanted`]).
+//! - the owner has not turned the aggregator off ([`crate::sessions::Paths::wants_aggregator`]).
 //!
 //! **Each round** (on a chain change, every [`GAP_EVERY`] while a key is
 //! missing, else every [`IDLE_EVERY`]):
@@ -38,10 +38,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gotcha::Schematic;
 use rh_proto::chain::{ChainError, ChainState};
 use rh_proto::identity::MachineIdentity;
 use rh_proto::wrap::{self, HostKeyContext, WrapError};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -87,21 +88,24 @@ const ME_EVERY: Duration = Duration::from_secs(5 * 60);
 /// The most mail one round reads.
 const MAX_PAGES: usize = 8;
 
-/// One host this device may reach, and what it holds of it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// One device that runs AI and accepts this computer's control, and the
+/// content keys (its machine-key epochs) held of it here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
-pub struct HostCoverage {
-    /// The host's id.
+pub struct AggregatorHost {
+    /// Its id.
     pub id: String,
     /// Its newest committed machine-key epoch.
     pub latest_epoch: Option<u32>,
-    /// The epochs of it held here.
+    /// The epochs held here.
     pub epochs: Vec<u32>,
-    /// Whether its agent declared `policy/1` (refuses this device the admin
-    /// routes); `None` until the hub said.
+    /// Whether its agent declared `policy/1` (refuses this computer its admin
+    /// routes); `null` until the hub said.
     pub policy: Option<bool>,
-    /// What is copied of it here (S1-5; [`super::copies`]).
-    pub copy: Option<super::copies::HostCopy>,
+    /// What is copied of it here (S1-5); `null` before anything is, and for
+    /// a caller who may not see other devices (§4.6: only whoever manages the
+    /// link, or a local account the owner let see them).
+    pub copy: Option<super::copies::AggregatorCopy>,
 }
 
 /// What the local settings show (`GET /api/cloud`'s `aggregator`). Nothing secret.
@@ -116,11 +120,9 @@ pub struct Status {
     /// Why the last round failed, in words.
     pub error: Option<String>,
     /// The hosts that accept this device's control.
-    pub hosts: Vec<HostCoverage>,
+    pub hosts: Vec<AggregatorHost>,
     /// When it last asked the admins for keys.
     pub asked_ms: Option<u64>,
-    /// When the last round ended.
-    pub checked_ms: Option<u64>,
 }
 
 /// How often it does what (the constants above; shorter in tests).
@@ -201,10 +203,6 @@ pub(super) fn view(state: &Mutex<AgentState>) -> Option<View> {
         me: st.machine.clone(),
         chain: st.chain.clone()?,
     })
-}
-
-fn now_ms() -> u64 {
-    crate::agent::now_ms()
 }
 
 /// What to do with one mail. Its `Debug` never prints a key (security
@@ -400,7 +398,6 @@ impl Controller {
         self.set_status(|s| {
             *s = Status {
                 error: why,
-                checked_ms: Some(now_ms()),
                 ..Status::default()
             }
         });
@@ -408,7 +405,7 @@ impl Controller {
     }
 
     async fn round(&mut self) -> Duration {
-        if !super::wanted(&self.env.paths) {
+        if !self.env.paths.wants_aggregator() {
             return self.idle(None);
         }
         let Some(view) = view(&self.env.state) else {
@@ -416,7 +413,7 @@ impl Controller {
         };
         if let Some((account, device, at)) = &self.hub_removed {
             if *account == view.account && *device == view.me {
-                let left = (REMOVED_EVERY.as_millis() as u64).saturating_sub(now_ms().saturating_sub(*at));
+                let left = (REMOVED_EVERY.as_millis() as u64).saturating_sub(crate::agent::now_ms().saturating_sub(*at));
                 if left > 0 {
                     return Duration::from_millis(left);
                 }
@@ -442,7 +439,7 @@ impl Controller {
         if self.keys.is_none() {
             // Every write asks again, under the directory's lock: still on, the link still running (S1).
             let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && super::wanted(&paths));
+            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && paths.wants_aggregator());
             match HostKeys::load(&self.env.paths, &view.account, &view.me) {
                 Ok(keys) => self.keys = Some(keys.guarded(guard)),
                 Err(error) => {
@@ -474,7 +471,7 @@ impl Controller {
                 // link then restarts with the new key) — or REFUSED_EVERY:
                 // not retried on the back-off meanwhile (R6 review).
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
-                self.suspended = Some((*self.env.chain.borrow(), now_ms() + REFUSED_EVERY.as_millis() as u64));
+                self.suspended = Some((*self.env.chain.borrow(), crate::agent::now_ms() + REFUSED_EVERY.as_millis() as u64));
                 self.report(&view, Some(HubError::Suspended.to_string()));
                 REFUSED_EVERY
             }
@@ -517,7 +514,7 @@ impl Controller {
             return Ok(false);
         }
         self.publish(view);
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let client = self.client.as_mut().expect("a client");
         if !client.signed_in(now) {
             client.sign_in(&self.env.identity, now).await?;
@@ -555,7 +552,7 @@ impl Controller {
     }
 
     async fn read_mail(&mut self, view: &View) -> Result<(), HubError> {
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let mut after = 0i64;
         for _ in 0..MAX_PAGES {
             let page = self.client.as_mut().expect("a client").mailbox(after).await?;
@@ -639,7 +636,7 @@ impl Controller {
     /// Which hosts declared `policy/1` (for the status; S2 checks it before
     /// opening a channel). Best effort.
     async fn read_policy(&mut self, view: &View) {
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         let seq = Some(view.chain.seq());
         if self.policy_seq == seq && now.saturating_sub(self.policy_ms) < ME_EVERY.as_millis() as u64 {
             return;
@@ -678,7 +675,7 @@ impl Controller {
             tries,
             "asked the account's admins for the content keys this device lacks"
         );
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         // The requests took a while: the aggregator may be off, or its keys deleted, by now (S1).
         let Some(keys) = self.keys.as_mut() else { return Ok(()) };
         let noted = keys.set_asked(now, name, tries);
@@ -695,7 +692,7 @@ impl Controller {
     /// the time is over.
     fn parked(&mut self) -> Option<Duration> {
         let (version, until) = self.suspended?;
-        let now = now_ms();
+        let now = crate::agent::now_ms();
         if *self.env.chain.borrow() == version && now < until {
             return Some(Duration::from_millis(until - now));
         }
@@ -730,12 +727,11 @@ impl Controller {
         if let Err(error) = super::forget_all(&self.env.paths) {
             tracing::error!(%error, "cannot delete the other devices' keys");
         }
-        self.hub_removed = Some((view.account.clone(), view.me.clone(), now_ms()));
+        self.hub_removed = Some((view.account.clone(), view.me.clone(), crate::agent::now_ms()));
         self.set_status(|s| {
             *s = Status {
                 running: true,
                 error: Some(HubError::Removed.to_string()),
-                checked_ms: Some(now_ms()),
                 ..Status::default()
             }
         });
@@ -776,7 +772,7 @@ impl Controller {
         let hosts = view
             .chain
             .hosts_admitting(&view.me)
-            .map(|h| HostCoverage {
+            .map(|h| AggregatorHost {
                 id: h.info.id.clone(),
                 latest_epoch: view.chain.latest_machine_epoch(&h.info.id),
                 epochs: keys.map(|k| k.epochs(&h.info.id)).unwrap_or_default(),
@@ -784,7 +780,7 @@ impl Controller {
                 copy: None,
             })
             .collect();
-        let signed_in = self.client.as_ref().is_some_and(|c| c.signed_in(now_ms()));
+        let signed_in = self.client.as_ref().is_some_and(|c| c.signed_in(crate::agent::now_ms()));
         let asked_ms = keys.and_then(HostKeys::asked_ms);
         self.set_status(|s| {
             *s = Status {
@@ -793,7 +789,6 @@ impl Controller {
                 error,
                 hosts,
                 asked_ms,
-                checked_ms: Some(now_ms()),
             }
         });
     }
@@ -1054,7 +1049,7 @@ mod tests {
                         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "denied"})));
                     }
                     h.sessions += 1;
-                    (StatusCode::OK, Json(json!({"token": "tok", "expires_ms": now_ms() + 3_600_000})))
+                    (StatusCode::OK, Json(json!({"token": "tok", "expires_ms": crate::agent::now_ms() + 3_600_000})))
                 }),
             )
             .route(
@@ -1087,7 +1082,7 @@ mod tests {
                         h.asked.push((
                             body["recipient"].as_str().unwrap_or_default().into(),
                             body["purpose"].as_u64().unwrap_or_default() as u8,
-                            now_ms(),
+                            crate::agent::now_ms(),
                         ));
                         (1000 + h.asked.len(), h.ask_delay_ms)
                     };
@@ -1147,8 +1142,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let mut st = AgentState::enrolling(&origin, "a-1", "m-me", a.pin, now_ms());
-        assert!(st.absorb(&a.entries, now_ms()).error.is_none());
+        let mut st = AgentState::enrolling(&origin, "a-1", "m-me", a.pin, crate::agent::now_ms());
+        assert!(st.absorb(&a.entries, crate::agent::now_ms()).error.is_none());
         assert!(st.enrolled());
         let state = Arc::new(Mutex::new(st));
         let (bump, chain) = watch::channel(0u64);
@@ -1202,14 +1197,14 @@ mod tests {
         assert_eq!(status.lock().unwrap().hosts.len(), 1, "only m-2 accepts it");
 
         // m-2's key turns over; nobody seals it the new one: it asks the admin, once.
-        let committed = now_ms();
+        let committed = crate::agent::now_ms();
         {
             let mut st = state.lock().unwrap();
             let chain = st.chain.clone().unwrap();
             let e = chain
                 .draft(Signer::Device("d-a".into()), commit("m-2", 1, &[0x23; 32]), 100)
                 .sign(&a.admin.0);
-            assert!(st.absorb(&[e], now_ms()).error.is_none());
+            assert!(st.absorb(&[e], crate::agent::now_ms()).error.is_none());
         }
         bump.send_modify(|v| *v += 1);
         until(Duration::from_secs(10), "a key request", || !hub.lock().unwrap().asked.is_empty()).await;
@@ -1277,8 +1272,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let mut st = AgentState::enrolling(origin, "a-1", "m-me", a.pin, now_ms());
-        assert!(st.absorb(&a.entries, now_ms()).error.is_none());
+        let mut st = AgentState::enrolling(origin, "a-1", "m-me", a.pin, crate::agent::now_ms());
+        assert!(st.absorb(&a.entries, crate::agent::now_ms()).error.is_none());
         let state = Arc::new(Mutex::new(st));
         let (bump, chain) = watch::channel(0u64);
         let status = Arc::new(Mutex::new(Status::default()));
@@ -1328,7 +1323,7 @@ mod tests {
                 chain.apply(&e, &mut ChainClock::history()).unwrap();
                 entries.push(e);
             }
-            assert!(st.absorb(&entries, now_ms()).error.is_none());
+            assert!(st.absorb(&entries, crate::agent::now_ms()).error.is_none());
         }
         r.bump.send_modify(|v| *v += 1);
     }

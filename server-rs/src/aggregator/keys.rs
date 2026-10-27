@@ -98,8 +98,9 @@ pub struct HostKeys {
     guard: Guard,
 }
 
+/// [`crate::agent::hub::hex`], zeroized: this is key material.
 fn hex(data: &[u8]) -> Zeroizing<String> {
-    Zeroizing::new(data.iter().map(|b| format!("{b:02x}")).collect())
+    Zeroizing::new(crate::agent::hub::hex(data))
 }
 
 fn unhex32(text: &str) -> Option<[u8; 32]> {

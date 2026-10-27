@@ -36,6 +36,7 @@ use serde_json::{json, Value};
 
 use super::hub::{hex, now_ms};
 use super::state::AgentState;
+use crate::aggregator::hub::HubOriginExt;
 use crate::sessions::Paths;
 
 /// The first wait after a delivery that failed…
@@ -227,7 +228,7 @@ fn segment(id: &str) -> String {
 async fn post(http: &reqwest::Client, s: &Statement) -> Delivery {
     let url = format!(
         "{}/v1/rotations/{}/disputes",
-        crate::aggregator::hub::http_base(&s.hub).trim_end_matches('/'),
+        s.hub.http_base().trim_end_matches('/'),
         segment(&s.host)
     );
     let body = json!({"seq": s.seq, "entry_hash": s.entry_hash, "sig": s.sig});
