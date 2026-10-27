@@ -12,8 +12,6 @@
  * (a deep link, the page it was on) is kept to go back to when a device is
  * opened (`HubShell.select`).
  *
- * The page once had a filter (「全部」 · 「可运行 AI」) named by `?view=`; an
- * old link that names one opens the one page, and the address drops it.
  */
 import { createStore } from "@/lib/machines/store";
 
@@ -40,20 +38,6 @@ export function isAccountPath(pathname: string): boolean {
 /** Whether `pathname` is one of the shell's own pages, shown with no device in view: 「我的设备」 or the account's settings. */
 export function isShellPagePath(pathname: string): boolean {
   return isDevicesPath(pathname) || isAccountPath(pathname);
-}
-
-/**
- * The address 「我的设备」 should have while it is at `pathname` + `search`:
- * without the old filter's `?view=` (anything else kept), or `null` when it
- * has none — or is not the page at all.
- */
-export function cleanDevicesAddress(pathname: string, search: string): string | null {
-  if (!isDevicesPath(pathname)) return null;
-  const params = new URLSearchParams(search);
-  if (!params.has("view")) return null;
-  params.delete("view");
-  const rest = params.toString();
-  return rest ? `${DEVICES_PATH}?${rest}` : DEVICES_PATH;
 }
 
 /** A part of the page a way in asks for (the relay picker: `relays`), taken by the page as it opens — or, already open, scrolled to. */

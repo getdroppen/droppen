@@ -29,7 +29,7 @@ import { useStore } from "@/lib/machines/store";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { unreadAcross } from "@/features/machines/needs-you";
 import { UnreadSignals } from "@/features/machines/unread-signals";
-import { ACCOUNT_PATH, askedPlace, askRemoval, cleanDevicesAddress, DEVICES_PATH, isAccountPath } from "./devices-route";
+import { ACCOUNT_PATH, askedPlace, askRemoval, DEVICES_PATH, isAccountPath } from "./devices-route";
 import { AccountNotices, ChainAlerts, DevicesPanel, PendingRecoveryBanner, useAccountVersion } from "./devices";
 import { PendingPasskeyBanner } from "./passkey-join";
 import { VerifyEmailBanner } from "./email-verify";
@@ -118,7 +118,7 @@ export function MyDevicesScreen({ account, link }: MyDevicesProps) {
   );
 }
 
-/** A part of the page a way in asked for, brought into view; and an old address's filter dropped. */
+/** A part of the page a way in asked for, brought into view. */
 function useAskedPlace(): void {
   const asked = useStore(askedPlace);
   useEffect(() => {
@@ -126,11 +126,6 @@ function useAskedPlace(): void {
     askedPlace.set(null);
     scrollTo(asked.anchor);
   }, [asked]);
-  useEffect(() => {
-    if (typeof location === "undefined") return;
-    const href = cleanDevicesAddress(location.pathname, location.search);
-    if (href) history.replaceState(history.state, "", href);
-  }, []);
 }
 
 /** Bring the element `id` into view once it is drawn (the relay picker draws once it has the relays). */

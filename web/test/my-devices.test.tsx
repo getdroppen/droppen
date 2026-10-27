@@ -10,7 +10,7 @@ import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { askedPlace, cleanDevicesAddress, DEVICES_PATH, isDevicesPath } from "../src/features/cloud/devices-route.js";
+import { askedPlace, DEVICES_PATH, isDevicesPath } from "../src/features/cloud/devices-route.js";
 import { AccountName, DevicesButton, MyDevicesScreen } from "../src/features/cloud/my-devices.js";
 import { AccountNotices, DevicesPanel, ThisDeviceSection } from "../src/features/cloud/devices.js";
 import { openRelayPicker } from "../src/features/cloud/cloud-bar.js";
@@ -55,11 +55,6 @@ test("「我的设备」 is /devices, and an old link's `?view=` is dropped from
   assert.ok(isDevicesPath("/devices") && isDevicesPath("/devices/"));
   assert.ok(!isDevicesPath("/sessions") && !isDevicesPath("/devices/x") && !isDevicesPath("/"));
   assert.equal(DEVICES_PATH, "/devices");
-  assert.equal(cleanDevicesAddress("/devices", "?view=ai"), "/devices");
-  assert.equal(cleanDevicesAddress("/devices/", "?view=all"), "/devices");
-  assert.equal(cleanDevicesAddress("/devices", "?view=ai&x=1"), "/devices?x=1", "anything else is kept");
-  assert.equal(cleanDevicesAddress("/devices", ""), null, "nothing to drop");
-  assert.equal(cleanDevicesAddress("/sessions", "?view=ai"), null, "off the page: the app's address is left alone");
 });
 
 /** An account with `hosts` computers that run AI and `others` browsers or phones. */

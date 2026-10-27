@@ -1,6 +1,6 @@
 /*
  * The hooks the cloud screens read the page's cloud state with: the hub
- * link's state and presence, a machine's channel, paths and copy (whether a
+ * link's state and presence, a machine's channel and copy (whether a
  * view shows the copy is `features/machines/copy-mode.ts`, which every mode
  * reads). What there is to read — the account, the link, every machine's
  * channel and copy — is droppen.app's shell (`hub-shell.ts`, `hubShell()`),
@@ -10,7 +10,6 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { type AgentKeyState, agentKeyState, onAgentKeyState } from "@/lib/hub/deliver";
 import type { HubLink, LinkState, PresenceState } from "@/lib/hub/link";
-import type { PathStats } from "@/lib/e2e";
 import type { MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { MachineMirror } from "@/lib/hub/mirror";
 import type { RelayPool } from "@/lib/hub/relays";
@@ -87,15 +86,6 @@ export function useChannelStatus(channel: MachineChannel | null | undefined): Ma
   return useSyncExternalStore(
     (notify) => (channel ? channel.onStatus(notify) : () => undefined),
     () => channel?.status ?? "idle",
-  );
-}
-
-/** How the open channel reaches its machine (direct or via the hub, and the round trips); `null` before it is open, or with an agent that does not sequence frames. */
-export function usePaths(channel: MachineChannel | null | undefined): PathStats | null {
-  return useSyncExternalStore(
-    (notify) => (channel ? channel.onPaths(notify) : () => undefined),
-    () => channel?.paths ?? null,
-    () => null,
   );
 }
 
