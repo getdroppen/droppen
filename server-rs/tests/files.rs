@@ -342,7 +342,7 @@ async fn the_sweep_drops_stale_upload_directories_and_keeps_fresh_ones() {
         .set_times(std::fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago))
         .expect("age the directory");
 
-    remote_hand_server::files::sweep_uploads(&server.paths).await;
+    server.paths.sweep_uploads().await;
 
     assert!(!stale.exists(), "an upload older than the TTL should have been swept");
     assert!(fresh.exists(), "a recent upload must survive the sweep");

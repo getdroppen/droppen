@@ -114,7 +114,7 @@ impl GotchaApp for RemoteHandApp {
             // delay the listener.
             tokio::spawn({
                 let paths = paths.clone();
-                async move { crate::files::sweep_uploads(paths.as_ref()).await }
+                async move { paths.sweep_uploads().await }
             });
             let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
             let drive = crate::drive::Drive::new(paths.clone(), &instance, auth);

@@ -5,7 +5,7 @@
 //! writes the API performs outside its own config directory. A device reaching
 //! this computer through Droppen is fenced out of the server's own data and
 //! config directories on top of that, save what the transcript links to in
-//! there ([`fence`]).
+//! there ([`Paths::fence`]).
 //!
 //! Every entry point takes the request's [`Paths`], and nothing here may read
 //! `$HOME` or `dirs::home_dir()` directly: the integration tests point a whole
@@ -45,7 +45,8 @@ const ATTACHMENT_LIMIT: u64 = 100 * 1024 * 1024;
 /// past even the raised cap fails while the multipart body is being read, which
 /// the handler reports as its fallback text (a `400`), not a bare `413`.
 const MULTIPART_OVERHEAD: u64 = 64 * 1024;
-/// How long an uploaded-but-never-sent attachment survives; see [`sweep_uploads`].
+/// How long an uploaded-but-never-sent attachment survives; see
+/// [`Paths::sweep_uploads`].
 const UPLOAD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How much of a download is read per stream poll.
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
@@ -53,7 +54,7 @@ const DOWNLOAD_CHUNK: usize = 64 * 1024;
 /// The message every containment failure carries.
 const OUTSIDE_HOME: &str = "path is outside the home directory";
 /// What a device reaching this computer through Droppen is told about the
-/// server's own directories ([`fence`]).
+/// server's own directories ([`Paths::fence`]).
 const PRIVATE_TO_THIS_COMPUTER: &str = "this device's Droppen data and settings directories are not reachable from another device";
 
 /// Extensions the download route is willing to serve inline, and their mime types.
@@ -268,7 +269,7 @@ pub enum FsError {
     /// A refusal the user should read: its message is what the client sees.
     Access(&'static str),
     /// A device reaching this computer through Droppen asked for the
-    /// server's own data or settings directory ([`fence`]): a `403`.
+    /// server's own data or settings directory ([`Paths::fence`]): a `403`.
     Private,
     /// Anything else, replaced by the route's fallback text.
     Other,
@@ -309,7 +310,7 @@ impl Reach {
     }
 }
 
-/// What a file route does with the path it is fenced on ([`fence`]).
+/// What a file route does with the path it is fenced on ([`Paths::fence`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
     /// List, read or download.
@@ -320,7 +321,7 @@ pub enum Access {
 
 /// The managed Claude root's directories a device reaching this computer
 /// through Droppen may read, though they sit in the server's data directory
-/// ([`fence`]): what the transcript links to there.
+/// ([`Paths::fence`]): what the transcript links to there.
 ///
 /// * `plans` — a session in plan mode writes its plan to
 ///   `$CLAUDE_CONFIG_DIR/plans/<name>.md` and says so; the path becomes a
@@ -351,42 +352,272 @@ const READABLE_IN_CLAUDE_ROOT: [&str; 2] = ["plans", "image-cache"];
 /// Read-only to devices, like [`READABLE_IN_CLAUDE_ROOT`].
 const READABLE_IN_PROJECTS: [(&str, usize); 2] = [("memory", 2), ("tool-results", 3)];
 
-/// Defence in depth for devices that reach this computer through Droppen: the
-/// server's own data directory (the instance's machine key, chain state,
-/// accounts, the managed Claude root…) and its config directory are not theirs
-/// to list, read, download or write into —
-/// whichever path leads there, through `..` (gone by [`resolve_safe`]) or
-/// symlinks, dangling ones included, and whatever the case on a
-/// case-insensitive disk (directories are compared by identity, not by
-/// name).
-///
-/// What the transcript shows from in there stays reachable: the uploads
-/// directory (composer attachments), and — to read only — this
-/// instance's managed Claude root's plans, pasted images, memory notes and
-/// saved tool output ([`READABLE_IN_CLAUDE_ROOT`], [`READABLE_IN_PROJECTS`]),
-/// judged on where
-/// the path really lands, so a symlink in one of them leads nowhere else.
-/// Another instance's root is not this instance's to open.
-///
-/// A directory walk cannot see a hard link, so one in a reopened directory
-/// (the uploads directory included) is refused too: a regular file there
-/// with more than one name may be a login or a key from elsewhere in the
-/// fenced trees under a name the walk lets through. Claude Code and this
-/// server only ever write single-named files there. Elsewhere in the home
-/// directory a hard-linked file reads like any other — a build's outputs
-/// (cargo links every one), a local `git clone`'s objects, a pnpm store on a
-/// disk without clones — because no name there is in the fenced trees, and a
-/// second name made for a fenced file outside them is a copy that no
-/// path-based fence can tell apart from any other.
-///
-/// Local users are not fenced. Not a boundary — a device that may control
-/// this computer can run a terminal on it — but no file route hands these
-/// out by itself.
-pub fn fence(paths: &Paths, reach: Reach, access: Access, target: &Path) -> Result<(), FsError> {
-    judge(paths, reach, access, target).map(drop)
+impl Paths {
+    /// Defence in depth for devices that reach this computer through Droppen: the
+    /// server's own data directory (the instance's machine key, chain state,
+    /// accounts, the managed Claude root…) and its config directory are not theirs
+    /// to list, read, download or write into —
+    /// whichever path leads there, through `..` (gone by [`resolve_safe`]) or
+    /// symlinks, dangling ones included, and whatever the case on a
+    /// case-insensitive disk (directories are compared by identity, not by
+    /// name).
+    ///
+    /// What the transcript shows from in there stays reachable: the uploads
+    /// directory (composer attachments), and — to read only — this
+    /// instance's managed Claude root's plans, pasted images, memory notes and
+    /// saved tool output ([`READABLE_IN_CLAUDE_ROOT`], [`READABLE_IN_PROJECTS`]),
+    /// judged on where
+    /// the path really lands, so a symlink in one of them leads nowhere else.
+    /// Another instance's root is not this instance's to open.
+    ///
+    /// A directory walk cannot see a hard link, so one in a reopened directory
+    /// (the uploads directory included) is refused too: a regular file there
+    /// with more than one name may be a login or a key from elsewhere in the
+    /// fenced trees under a name the walk lets through. Claude Code and this
+    /// server only ever write single-named files there. Elsewhere in the home
+    /// directory a hard-linked file reads like any other — a build's outputs
+    /// (cargo links every one), a local `git clone`'s objects, a pnpm store on a
+    /// disk without clones — because no name there is in the fenced trees, and a
+    /// second name made for a fenced file outside them is a copy that no
+    /// path-based fence can tell apart from any other.
+    ///
+    /// Local users are not fenced. Not a boundary — a device that may control
+    /// this computer can run a terminal on it — but no file route hands these
+    /// out by itself.
+    pub fn fence(&self, reach: Reach, access: Access, target: &Path) -> Result<(), FsError> {
+        self.judge(reach, access, target).map(drop)
+    }
+    /// [`Paths::fence`], saying how the path got through.
+    fn judge(&self, reach: Reach, access: Access, target: &Path) -> Result<Through, FsError> {
+        if reach == Reach::Local {
+            return Ok(Through::Open);
+        }
+        let real = real_path(target).ok_or(FsError::Private)?;
+        let private: Vec<FileId> = [self.data_dir(), self.config_dir()].iter().filter_map(|d| file_id(d)).collect();
+        let uploads = file_id(&self.uploads_dir());
+        let claude = self.claude_root(crate::claude_roots::ClaudeRoot::Managed);
+        let readable: Vec<FileId> = READABLE_IN_CLAUDE_ROOT.iter().filter_map(|d| real_dir_id(&claude.join(d))).collect();
+        let projects = real_dir_id(&claude.join("projects"));
+        for dir in real.ancestors() {
+            let Some(id) = file_id(dir) else { continue };
+            if uploads.as_ref() == Some(&id) {
+                return single_named(&real);
+            }
+            if readable.contains(&id) || projects.as_ref().is_some_and(|projects| readable_in_projects(dir, &id, projects)) {
+                return match access {
+                    Access::Read => single_named(&real),
+                    Access::Write => Err(FsError::Private),
+                };
+            }
+            if private.contains(&id) {
+                return Err(FsError::Private);
+            }
+        }
+        Ok(Through::Open)
+    }
+    async fn list_dir(&self, reach: Reach, requested: Option<&str>) -> Result<FsList, FsError> {
+        let path = resolve_safe(self, requested)?;
+        let through = self.judge(reach, Access::Read, &path)?;
+
+        let mut reader = tokio::fs::read_dir(&path).await.map_err(|_| FsError::Other)?;
+        let mut entries: Vec<FsEntry> = Vec::new();
+        while let Some(dirent) = reader.next_entry().await.map_err(|_| FsError::Other)? {
+            let name = dirent.file_name().to_string_lossy().into_owned();
+            // `file_type` comes from the directory entry, so a symlink reports as a
+            // symlink instead of as whatever it points at.
+            let kind = match dirent.file_type().await {
+                Ok(file_type) if file_type.is_dir() => FsKind::Dir,
+                Ok(file_type) if file_type.is_file() => FsKind::File,
+                Ok(file_type) if file_type.is_symlink() => FsKind::Symlink,
+                _ => FsKind::Other,
+            };
+
+            let mut size_bytes = None;
+            let mut mtime = None;
+            // Only regular files are stat'ed: a directory's size means nothing here,
+            // and stat'ing a symlink would follow it off the listing's own tree.
+            if kind == FsKind::File {
+                if let Ok(metadata) = tokio::fs::metadata(path.join(&name)).await {
+                    // A hard link in a reopened directory, which a device may not
+                    // read, is not listed to it either — nor its size and mtime,
+                    // which are the fenced file's ([`Paths::fence`]).
+                    if through == Through::Reopened && metadata.hard_linked() {
+                        continue;
+                    }
+                    size_bytes = Some(metadata.len() as i64);
+                    mtime = metadata.modified().ok().map(iso8601);
+                }
+            }
+
+            entries.push(FsEntry {
+                name,
+                kind,
+                size_bytes: size_bytes.into(),
+                mtime: mtime.into(),
+            });
+        }
+
+        // Directories first, then names in code-point order (`Ord` on `String`).
+        entries.sort_by(|a, b| match ((a.kind == FsKind::Dir), (b.kind == FsKind::Dir)) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        });
+
+        // The home directory is the browser's ceiling, so it reports no parent.
+        let parent = if path == self.home {
+            None
+        } else {
+            Some(path.parent().unwrap_or(path.as_path()).to_string_lossy().into_owned())
+        };
+
+        Ok(FsList {
+            path: path.to_string_lossy().into_owned(),
+            parent: parent.into(),
+            entries,
+        })
+    }
+    async fn read_file_safe(&self, reach: Reach, requested: &str) -> Result<FsRead, FsError> {
+        let path = resolve_safe(self, Some(requested))?;
+        self.fence(reach, Access::Read, &path)?;
+        let metadata = tokio::fs::metadata(&path).await.map_err(|_| FsError::Other)?;
+        if !metadata.is_file() {
+            return Err(FsError::Access("not a regular file"));
+        }
+
+        let size = metadata.len();
+        let mut buffer = vec![0u8; size.min(READ_LIMIT) as usize];
+        let mut file = tokio::fs::File::open(&path).await.map_err(|_| FsError::Other)?;
+        // A short read is not an error: the file may have been truncated between the
+        // stat and the read, which is exactly why the size is taken from the stat.
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match file.read(&mut buffer[filled..]).await {
+                Ok(0) => break,
+                Ok(read) => filled += read,
+                Err(_) => return Err(FsError::Other),
+            }
+        }
+        buffer.truncate(filled);
+
+        // A NUL byte anywhere in the slice is the sniff for "do not try to show this
+        // as text" — the same heuristic `git` uses.
+        let binary = buffer.contains(&0);
+        Ok(FsRead {
+            path: path.to_string_lossy().into_owned(),
+            size_bytes: size as i64,
+            mtime: metadata.modified().ok().map(iso8601).into(),
+            binary,
+            truncated: size > READ_LIMIT,
+            content: if binary {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&buffer).into_owned()
+            },
+        })
+    }
+    /// The resolved path of a file to download, and its base name.
+    async fn stat_for_download(&self, reach: Reach, requested: &str) -> Result<(PathBuf, String), FsError> {
+        let path = resolve_safe(self, Some(requested))?;
+        self.fence(reach, Access::Read, &path)?;
+        let metadata = tokio::fs::metadata(&path).await.map_err(|_| FsError::Other)?;
+        if !metadata.is_file() {
+            return Err(FsError::Access("not a regular file"));
+        }
+        let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        Ok((path, name))
+    }
+    async fn save_upload(&self, reach: Reach, dir_requested: &str, file: &UploadedFile) -> Result<FsUpload, FsError> {
+        let dir = resolve_safe(self, Some(dir_requested))?;
+        self.fence(reach, Access::Write, &dir)?;
+        let metadata = tokio::fs::metadata(&dir).await.map_err(|_| FsError::Other)?;
+        if !metadata.is_dir() {
+            return Err(FsError::Access("not a directory"));
+        }
+        let size = file.bytes.len() as u64;
+        if size > UPLOAD_LIMIT {
+            return Err(FsError::Access("file exceeds the 200 MiB upload limit"));
+        }
+
+        let name = sanitize_name(&file.name);
+        if name.is_empty() || name == "." || name == ".." {
+            return Err(FsError::Access("invalid file name"));
+        }
+        let target = dir.join(&name);
+        // The file itself too: a dangling symlink of that name would carry the
+        // write wherever it points.
+        self.fence(reach, Access::Write, &target)?;
+
+        // Refuse rather than overwrite: this writes into the user's own tree, where
+        // a clobbered file has no undo. The client renames and retries.
+        if tokio::fs::metadata(&target).await.is_ok() {
+            return Err(FsError::Access("file already exists"));
+        }
+
+        tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
+        Ok(FsUpload {
+            path: target.to_string_lossy().into_owned(),
+            size_bytes: size as i64,
+        })
+    }
+    /// Each upload lands in its own uuid directory under the original filename, so
+    /// the download name stays meaningful and same-named files never collide, while
+    /// the path still resolves under the uploads directory — which is what
+    /// [`Paths::assert_under_uploads`] later relies on.
+    async fn save_attachment(&self, file: &UploadedFile) -> Result<Attachment, FsError> {
+        let size = file.bytes.len() as u64;
+        if size > ATTACHMENT_LIMIT {
+            return Err(FsError::Access("file exceeds the 100 MiB upload limit"));
+        }
+
+        let trimmed = sanitize_name(&file.name).trim().to_string();
+        // An attachment with no usable name still has usable bytes, so it gets one.
+        let name = if trimmed.is_empty() { "file".to_string() } else { trimmed };
+        if name == "." || name == ".." {
+            return Err(FsError::Access("invalid file name"));
+        }
+
+        let dir = self.uploads_dir().join(uuid::Uuid::new_v4().to_string());
+        tokio::fs::create_dir_all(&dir).await.map_err(|_| FsError::Other)?;
+        let target = dir.join(&name);
+        tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
+
+        // This route's own extraction: `extension()` is `split('.').last()`, so a
+        // name with no dot is its own extension (and "png" is an image here).
+        let extension = extension(&name);
+        Ok(Attachment {
+            path: target.to_string_lossy().into_owned(),
+            size_bytes: size as i64,
+            is_image: crate::sessions::util::is_image_ext(&extension),
+            name,
+        })
+    }
+    /// Delete upload directories that have not been touched for seven days.
+    ///
+    /// Attachments are uploaded before a message is sent, and a message that is
+    /// never sent leaves its files behind forever; nothing else ever collects them.
+    /// Failures are ignored throughout — a sweep that cannot run is not a reason to
+    /// refuse to serve, and the next one will try again.
+    pub async fn sweep_uploads(&self) {
+        let Ok(mut reader) = tokio::fs::read_dir(self.uploads_dir()).await else {
+            // No uploads directory yet: nothing to sweep.
+            return;
+        };
+
+        let now = SystemTime::now();
+        while let Ok(Some(entry)) = reader.next_entry().await {
+            let target = entry.path();
+            // An unreadable entry is skipped, not a reason to abandon the sweep.
+            let Ok(metadata) = tokio::fs::metadata(&target).await else { continue };
+            let Ok(modified) = metadata.modified() else { continue };
+            if now.duration_since(modified).unwrap_or_default() > UPLOAD_TTL {
+                let _ = tokio::fs::remove_dir_all(&target).await;
+            }
+        }
+    }
 }
 
-/// How a path the fence let through got through ([`fence`]).
+/// How a path the fence let through got through ([`Paths::fence`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Through {
     /// None of the server's own directories was in its way (or the request
@@ -399,56 +630,37 @@ enum Through {
     Reopened,
 }
 
-/// [`fence`], saying how the path got through.
-fn judge(paths: &Paths, reach: Reach, access: Access, target: &Path) -> Result<Through, FsError> {
-    if reach == Reach::Local {
-        return Ok(Through::Open);
-    }
-    let real = real_path(target).ok_or(FsError::Private)?;
-    let private: Vec<FileId> = [paths.data_dir(), paths.config_dir()].iter().filter_map(|d| file_id(d)).collect();
-    let uploads = file_id(&paths.uploads_dir());
-    let claude = paths.claude_root(crate::claude_roots::ClaudeRoot::Managed);
-    let readable: Vec<FileId> = READABLE_IN_CLAUDE_ROOT.iter().filter_map(|d| real_dir_id(&claude.join(d))).collect();
-    let projects = real_dir_id(&claude.join("projects"));
-    for dir in real.ancestors() {
-        let Some(id) = file_id(dir) else { continue };
-        if uploads.as_ref() == Some(&id) {
-            return single_named(&real);
-        }
-        if readable.contains(&id) || projects.as_ref().is_some_and(|projects| readable_in_projects(dir, &id, projects)) {
-            return match access {
-                Access::Read => single_named(&real),
-                Access::Write => Err(FsError::Private),
-            };
-        }
-        if private.contains(&id) {
-            return Err(FsError::Private);
-        }
-    }
-    Ok(Through::Open)
-}
 
 /// `real`, in a reopened directory, is let through unless it is a regular
 /// file with another name — a hard link — which may be anything in the
-/// fenced trees ([`fence`]). What is not there yet (an upload's target) is
+/// fenced trees ([`Paths::fence`]). What is not there yet (an upload's target) is
 /// for the route to find missing.
 fn single_named(real: &Path) -> Result<Through, FsError> {
     match std::fs::metadata(real) {
-        Ok(meta) if hard_linked(&meta) => Err(FsError::Private),
+        Ok(meta) if meta.hard_linked() => Err(FsError::Private),
         _ => Ok(Through::Reopened),
     }
 }
 
-/// Whether `meta` is a regular file with more than one name.
+/// Whether a `Metadata` describes a regular file with more than one name.
+trait HardLinked {
+    /// Whether this file has another name somewhere.
+    fn hard_linked(&self) -> bool;
+}
+
 #[cfg(unix)]
-fn hard_linked(meta: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    meta.is_file() && meta.nlink() > 1
+impl HardLinked for std::fs::Metadata {
+    fn hard_linked(&self) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        self.is_file() && self.nlink() > 1
+    }
 }
 
 #[cfg(not(unix))]
-fn hard_linked(_meta: &std::fs::Metadata) -> bool {
-    false
+impl HardLinked for std::fs::Metadata {
+    fn hard_linked(&self) -> bool {
+        false
+    }
 }
 
 /// Whether `dir` (identity `id`) is one of [`READABLE_IN_PROJECTS`]: the
@@ -543,7 +755,7 @@ fn real_path(path: &Path) -> Option<PathBuf> {
 /// deliberate (no [`std::fs::canonicalize`]): the check guards against *typed*
 /// paths, not against a home directory whose owner has linked something in.
 /// A device reaching this computer through Droppen is judged on the real path
-/// too, but only against the server's own directories ([`fence`]).
+/// too, but only against the server's own directories ([`Paths::fence`]).
 /// `tests/files.rs` pins it.
 fn resolve(requested: &Path) -> PathBuf {
     let absolute = if requested.is_absolute() {
@@ -630,139 +842,38 @@ pub fn assert_under_uploads(paths: &Paths, requested: &Path) -> Result<PathBuf, 
 // Listing and reading
 // ---------------------------------------------------------------------------
 
-async fn list_dir(paths: &Paths, reach: Reach, requested: Option<&str>) -> Result<FsList, FsError> {
-    let path = resolve_safe(paths, requested)?;
-    let through = judge(paths, reach, Access::Read, &path)?;
 
-    let mut reader = tokio::fs::read_dir(&path).await.map_err(|_| FsError::Other)?;
-    let mut entries: Vec<FsEntry> = Vec::new();
-    while let Some(dirent) = reader.next_entry().await.map_err(|_| FsError::Other)? {
-        let name = dirent.file_name().to_string_lossy().into_owned();
-        // `file_type` comes from the directory entry, so a symlink reports as a
-        // symlink instead of as whatever it points at.
-        let kind = match dirent.file_type().await {
-            Ok(file_type) if file_type.is_dir() => FsKind::Dir,
-            Ok(file_type) if file_type.is_file() => FsKind::File,
-            Ok(file_type) if file_type.is_symlink() => FsKind::Symlink,
-            _ => FsKind::Other,
-        };
 
-        let mut size_bytes = None;
-        let mut mtime = None;
-        // Only regular files are stat'ed: a directory's size means nothing here,
-        // and stat'ing a symlink would follow it off the listing's own tree.
-        if kind == FsKind::File {
-            if let Ok(metadata) = tokio::fs::metadata(path.join(&name)).await {
-                // A hard link in a reopened directory, which a device may not
-                // read, is not listed to it either — nor its size and mtime,
-                // which are the fenced file's ([`fence`]).
-                if through == Through::Reopened && hard_linked(&metadata) {
-                    continue;
-                }
-                size_bytes = Some(metadata.len() as i64);
-                mtime = metadata.modified().ok().map(iso8601);
-            }
-        }
 
-        entries.push(FsEntry {
-            name,
-            kind,
-            size_bytes: size_bytes.into(),
-            mtime: mtime.into(),
-        });
-    }
-
-    // Directories first, then names in code-point order (`Ord` on `String`).
-    entries.sort_by(|a, b| match ((a.kind == FsKind::Dir), (b.kind == FsKind::Dir)) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.cmp(&b.name),
-    });
-
-    // The home directory is the browser's ceiling, so it reports no parent.
-    let parent = if path == paths.home {
-        None
-    } else {
-        Some(path.parent().unwrap_or(path.as_path()).to_string_lossy().into_owned())
-    };
-
-    Ok(FsList {
-        path: path.to_string_lossy().into_owned(),
-        parent: parent.into(),
-        entries,
-    })
-}
-
-async fn read_file_safe(paths: &Paths, reach: Reach, requested: &str) -> Result<FsRead, FsError> {
-    let path = resolve_safe(paths, Some(requested))?;
-    fence(paths, reach, Access::Read, &path)?;
-    let metadata = tokio::fs::metadata(&path).await.map_err(|_| FsError::Other)?;
-    if !metadata.is_file() {
-        return Err(FsError::Access("not a regular file"));
-    }
-
-    let size = metadata.len();
-    let mut buffer = vec![0u8; size.min(READ_LIMIT) as usize];
-    let mut file = tokio::fs::File::open(&path).await.map_err(|_| FsError::Other)?;
-    // A short read is not an error: the file may have been truncated between the
-    // stat and the read, which is exactly why the size is taken from the stat.
-    let mut filled = 0;
-    while filled < buffer.len() {
-        match file.read(&mut buffer[filled..]).await {
-            Ok(0) => break,
-            Ok(read) => filled += read,
-            Err(_) => return Err(FsError::Other),
-        }
-    }
-    buffer.truncate(filled);
-
-    // A NUL byte anywhere in the slice is the sniff for "do not try to show this
-    // as text" — the same heuristic `git` uses.
-    let binary = buffer.contains(&0);
-    Ok(FsRead {
-        path: path.to_string_lossy().into_owned(),
-        size_bytes: size as i64,
-        mtime: metadata.modified().ok().map(iso8601).into(),
-        binary,
-        truncated: size > READ_LIMIT,
-        content: if binary {
-            String::new()
-        } else {
-            String::from_utf8_lossy(&buffer).into_owned()
-        },
-    })
-}
-
-/// The resolved path of a file to download, and its base name.
-async fn stat_for_download(paths: &Paths, reach: Reach, requested: &str) -> Result<(PathBuf, String), FsError> {
-    let path = resolve_safe(paths, Some(requested))?;
-    fence(paths, reach, Access::Read, &path)?;
-    let metadata = tokio::fs::metadata(&path).await.map_err(|_| FsError::Other)?;
-    if !metadata.is_file() {
-        return Err(FsError::Access("not a regular file"));
-    }
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok((path, name))
-}
-
-/// The file's bytes as a stream, so the response is chunked.
+/// A file's bytes as a stream, so the response is chunked.
 ///
 /// `unfold` rather than `tokio_util::io::ReaderStream` only because
 /// `Cargo.toml` does not ask for `tokio-util`'s `io` feature.
-fn file_stream(file: tokio::fs::File) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> {
-    futures_util::stream::unfold(Some(file), |state| async move {
-        let mut file = state?;
-        let mut chunk = vec![0u8; DOWNLOAD_CHUNK];
-        match file.read(&mut chunk).await {
-            Ok(0) => None,
-            Ok(read) => {
-                chunk.truncate(read);
-                Some((Ok(chunk), Some(file)))
+trait FileStream {
+    /// The file's bytes, chunked.
+    fn file_stream(self) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>>;
+}
+
+impl FileStream for tokio::fs::File {
+    fn file_stream(self) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> {
+        futures_util::stream::unfold(Some(self), |state| async move {
+            let mut file = state?;
+            let mut chunk = vec![0u8; DOWNLOAD_CHUNK];
+            match file.read(&mut chunk).await {
+                Ok(0) => None,
+                Ok(read) => {
+                    chunk.truncate(read);
+                    Some((Ok(chunk), Some(file)))
+                }
+                // Surface the failure in the body and stop; the status line is long gone.
+                Err(error) => Some((Err(error), None)),
             }
-            // Surface the failure in the body and stop; the status line is long gone.
-            Err(error) => Some((Err(error), None)),
-        }
-    })
+        })
+    }
+}
+            }
+        })
+    }
 }
 
 /// `encodeURIComponent`: percent-escape every byte outside the unreserved set.
@@ -801,21 +912,28 @@ struct UploadedFile {
     bytes: Vec<u8>,
 }
 
-/// Take the `file` field out of a multipart body.
-///
-/// A missing field is [`FsError::Other`], so the route answers with its
-/// fallback text.
-async fn take_file_field(mut multipart: Multipart) -> Result<UploadedFile, FsError> {
-    while let Some(field) = multipart.next_field().await.map_err(|_| FsError::Other)? {
-        if field.name() != Some("file") {
-            continue;
+/// Taking the `file` field out of a multipart body.
+trait MultipartExt {
+    /// Take the `file` field out, buffered.
+    ///
+    /// A missing field is [`FsError::Other`], so the route answers with its
+    /// fallback text.
+    async fn take_file_field(self) -> Result<UploadedFile, FsError>;
+}
+
+impl MultipartExt for Multipart {
+    async fn take_file_field(mut self) -> Result<UploadedFile, FsError> {
+        while let Some(field) = self.next_field().await.map_err(|_| FsError::Other)? {
+            if field.name() != Some("file") {
+                continue;
+            }
+            // The name has to be copied out before `bytes` consumes the field.
+            let name = field.file_name().unwrap_or_default().to_string();
+            let bytes = field.bytes().await.map_err(|_| FsError::Other)?;
+            return Ok(UploadedFile { name, bytes: bytes.to_vec() });
         }
-        // The name has to be copied out before `bytes` consumes the field.
-        let name = field.file_name().unwrap_or_default().to_string();
-        let bytes = field.bytes().await.map_err(|_| FsError::Other)?;
-        return Ok(UploadedFile { name, bytes: bytes.to_vec() });
+        Err(FsError::Other)
     }
-    Err(FsError::Other)
 }
 
 /// The last `/`-separated segment of a name, trailing slashes ignored.
@@ -835,96 +953,8 @@ fn sanitize_name(raw: &str) -> String {
     base_name(raw).chars().filter(|c| *c != '/' && *c != '\\').collect()
 }
 
-async fn save_upload(paths: &Paths, reach: Reach, dir_requested: &str, file: &UploadedFile) -> Result<FsUpload, FsError> {
-    let dir = resolve_safe(paths, Some(dir_requested))?;
-    fence(paths, reach, Access::Write, &dir)?;
-    let metadata = tokio::fs::metadata(&dir).await.map_err(|_| FsError::Other)?;
-    if !metadata.is_dir() {
-        return Err(FsError::Access("not a directory"));
-    }
-    let size = file.bytes.len() as u64;
-    if size > UPLOAD_LIMIT {
-        return Err(FsError::Access("file exceeds the 200 MiB upload limit"));
-    }
 
-    let name = sanitize_name(&file.name);
-    if name.is_empty() || name == "." || name == ".." {
-        return Err(FsError::Access("invalid file name"));
-    }
-    let target = dir.join(&name);
-    // The file itself too: a dangling symlink of that name would carry the
-    // write wherever it points.
-    fence(paths, reach, Access::Write, &target)?;
 
-    // Refuse rather than overwrite: this writes into the user's own tree, where
-    // a clobbered file has no undo. The client renames and retries.
-    if tokio::fs::metadata(&target).await.is_ok() {
-        return Err(FsError::Access("file already exists"));
-    }
-
-    tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
-    Ok(FsUpload {
-        path: target.to_string_lossy().into_owned(),
-        size_bytes: size as i64,
-    })
-}
-
-/// Each upload lands in its own uuid directory under the original filename, so
-/// the download name stays meaningful and same-named files never collide, while
-/// the path still resolves under the uploads directory — which is what
-/// [`assert_under_uploads`] later relies on.
-async fn save_attachment(paths: &Paths, file: &UploadedFile) -> Result<Attachment, FsError> {
-    let size = file.bytes.len() as u64;
-    if size > ATTACHMENT_LIMIT {
-        return Err(FsError::Access("file exceeds the 100 MiB upload limit"));
-    }
-
-    let trimmed = sanitize_name(&file.name).trim().to_string();
-    // An attachment with no usable name still has usable bytes, so it gets one.
-    let name = if trimmed.is_empty() { "file".to_string() } else { trimmed };
-    if name == "." || name == ".." {
-        return Err(FsError::Access("invalid file name"));
-    }
-
-    let dir = paths.uploads_dir().join(uuid::Uuid::new_v4().to_string());
-    tokio::fs::create_dir_all(&dir).await.map_err(|_| FsError::Other)?;
-    let target = dir.join(&name);
-    tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
-
-    // This route's own extraction: `extension()` is `split('.').last()`, so a
-    // name with no dot is its own extension (and "png" is an image here).
-    let extension = extension(&name);
-    Ok(Attachment {
-        path: target.to_string_lossy().into_owned(),
-        size_bytes: size as i64,
-        is_image: crate::sessions::util::is_image_ext(&extension),
-        name,
-    })
-}
-
-/// Delete upload directories that have not been touched for seven days.
-///
-/// Attachments are uploaded before a message is sent, and a message that is
-/// never sent leaves its files behind forever; nothing else ever collects them.
-/// Failures are ignored throughout — a sweep that cannot run is not a reason to
-/// refuse to serve, and the next one will try again.
-pub async fn sweep_uploads(paths: &Paths) {
-    let Ok(mut reader) = tokio::fs::read_dir(paths.uploads_dir()).await else {
-        // No uploads directory yet: nothing to sweep.
-        return;
-    };
-
-    let now = SystemTime::now();
-    while let Ok(Some(entry)) = reader.next_entry().await {
-        let target = entry.path();
-        // An unreadable entry is skipped, not a reason to abandon the sweep.
-        let Ok(metadata) = tokio::fs::metadata(&target).await else { continue };
-        let Ok(modified) = metadata.modified() else { continue };
-        if now.duration_since(modified).unwrap_or_default() > UPLOAD_TTL {
-            let _ = tokio::fs::remove_dir_all(&target).await;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -937,7 +967,7 @@ pub async fn fs_list(
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsListQuery>,
 ) -> Result<Json<FsList>, ApiError> {
-    list_dir(state.paths.as_ref(), Reach::of(&who), query.path.as_deref())
+    state.paths.list_dir(Reach::of(&who), query.path.as_deref())
         .await
         .map(Json)
         .map_err(|error| error.into_api("cannot list directory"))
@@ -950,7 +980,7 @@ pub async fn fs_read(
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsReadQuery>,
 ) -> Result<Json<FsRead>, ApiError> {
-    read_file_safe(state.paths.as_ref(), Reach::of(&who), &query.path)
+    state.paths.read_file_safe(Reach::of(&who), &query.path)
         .await
         .map(Json)
         .map_err(|error| error.into_api("cannot read file"))
@@ -964,7 +994,7 @@ pub async fn fs_download(
     ApiQuery(query): ApiQuery<FsDownloadQuery>,
 ) -> Result<FileBytes, ApiError> {
     let fallback = "cannot download file";
-    let (path, name) = stat_for_download(state.paths.as_ref(), Reach::of(&who), &query.path)
+    let (path, name) = state.paths.stat_for_download(Reach::of(&who), &query.path)
         .await
         .map_err(|error| error.into_api(fallback))?;
 
@@ -997,7 +1027,7 @@ pub async fn fs_download(
         .header(CONTENT_SECURITY_POLICY, INLINE_CSP)
         // No `Content-Length`: the file can change between the stat and the read,
         // and a chunked body that ends early beats a truncated one that lies.
-        .body(Body::from_stream(file_stream(file)))
+        .body(Body::from_stream(file.file_stream()))
         .map_err(|_| ApiError::bad_request(fallback))?;
     Ok(FileBytes(response))
 }
@@ -1011,8 +1041,8 @@ pub async fn fs_upload(
     multipart: Multipart,
 ) -> Result<Json<FsUpload>, ApiError> {
     let fallback = "cannot save file";
-    let file = take_file_field(multipart).await.map_err(|error| error.into_api(fallback))?;
-    save_upload(state.paths.as_ref(), Reach::of(&who), &query.dir, &file)
+    let file = multipart.take_file_field().await.map_err(|error| error.into_api(fallback))?;
+    state.paths.save_upload(Reach::of(&who), &query.dir, &file)
         .await
         .map(Json)
         .map_err(|error| error.into_api(fallback))
@@ -1022,8 +1052,8 @@ pub async fn fs_upload(
 #[api(id = "upload_attachment", group = "files", summary = "Upload an attachment")]
 pub async fn upload_attachment(State(state): State<AppState>, multipart: Multipart) -> Result<Json<Attachment>, ApiError> {
     let fallback = "cannot save image";
-    let file = take_file_field(multipart).await.map_err(|error| error.into_api(fallback))?;
-    save_attachment(state.paths.as_ref(), &file)
+    let file = multipart.take_file_field().await.map_err(|error| error.into_api(fallback))?;
+    state.paths.save_attachment(&file)
         .await
         .map(Json)
         .map_err(|error| error.into_api(fallback))
@@ -1229,17 +1259,17 @@ mod tests {
         let private = |r: Result<(), FsError>| matches!(r, Err(FsError::Private));
 
         let cloud = Reach::Cloud;
-        assert!(private(list_dir(&paths, cloud, Some(&data.to_string_lossy())).await.map(drop)));
-        assert!(private(read_file_safe(&paths, cloud, &key.to_string_lossy()).await.map(drop)));
-        assert!(private(stat_for_download(&paths, cloud, &key.to_string_lossy()).await.map(drop)));
+        assert!(private((&paths).list_dir(cloud, Some(&data.to_string_lossy())).await.map(drop)));
+        assert!(private((&paths).read_file_safe(cloud, &key.to_string_lossy()).await.map(drop)));
+        assert!(private((&paths).stat_for_download(cloud, &key.to_string_lossy()).await.map(drop)));
         assert!(
-            private(read_file_safe(&paths, cloud, &h("cfg/settings.json")).await.map(drop)),
+            private((&paths).read_file_safe(cloud, &h("cfg/settings.json")).await.map(drop)),
             "through a symlink"
         );
-        assert!(private(list_dir(&paths, cloud, Some(&h("cfg"))).await.map(drop)));
+        assert!(private((&paths).list_dir(cloud, Some(&h("cfg"))).await.map(drop)));
         assert!(
             private(
-                read_file_safe(&paths, cloud, &h("x/../.config/remote-hand/settings.json"))
+                (&paths).read_file_safe(cloud, &h("x/../.config/remote-hand/settings.json"))
                     .await
                     .map(drop)
             ),
@@ -1251,7 +1281,7 @@ mod tests {
             // Another case names the very same directories: fenced.
             for variant in [&config_case, &key_case] {
                 assert!(
-                    private(read_file_safe(&paths, cloud, variant).await.map(drop)),
+                    private((&paths).read_file_safe(cloud, variant).await.map(drop)),
                     "another case on a case-insensitive disk: {variant}"
                 );
             }
@@ -1259,7 +1289,7 @@ mod tests {
             // Another case is another name: nothing is there...
             for variant in [&config_case, &key_case] {
                 assert!(
-                    matches!(read_file_safe(&paths, cloud, variant).await, Err(FsError::Other)),
+                    matches!((&paths).read_file_safe(cloud, variant).await, Err(FsError::Other)),
                     "another case on a case-sensitive disk names nothing: {variant}"
                 );
             }
@@ -1267,21 +1297,21 @@ mod tests {
             // the fence knows by identity, not by name: it reads.
             std::fs::create_dir_all(Path::new(&config_case).parent().unwrap()).unwrap();
             std::fs::write(&config_case, b"mine").unwrap();
-            assert_eq!(read_file_safe(&paths, cloud, &config_case).await.unwrap().content, "mine");
-            assert!(list_dir(&paths, cloud, Some(&h(".CONFIG/Remote-Hand"))).await.is_ok());
-            assert!(private(list_dir(&paths, cloud, Some(&config.to_string_lossy())).await.map(drop)));
+            assert_eq!((&paths).read_file_safe(cloud, &config_case).await.unwrap().content, "mine");
+            assert!((&paths).list_dir(cloud, Some(&h(".CONFIG/Remote-Hand"))).await.is_ok());
+            assert!(private((&paths).list_dir(cloud, Some(&config.to_string_lossy())).await.map(drop)));
         }
         let file = UploadedFile {
             name: "planted.sh".into(),
             bytes: b"echo pwned".to_vec(),
         };
-        assert!(private(save_upload(&paths, cloud, &config.to_string_lossy(), &file).await.map(drop)));
+        assert!(private((&paths).save_upload(cloud, &config.to_string_lossy(), &file).await.map(drop)));
         let through = UploadedFile {
             name: "dangling".into(),
             bytes: b"echo pwned".to_vec(),
         };
         assert!(
-            private(save_upload(&paths, cloud, &h(""), &through).await.map(drop)),
+            private((&paths).save_upload(cloud, &h(""), &through).await.map(drop)),
             "a dangling symlink in an allowed directory"
         );
         assert!(!config.join("planted.sh").exists(), "nothing landed");
@@ -1292,18 +1322,18 @@ mod tests {
         );
 
         // What uses the computer goes on, attachments included.
-        assert!(read_file_safe(&paths, cloud, &h("notes.txt")).await.is_ok());
-        assert!(stat_for_download(&paths, cloud, &attachment.to_string_lossy()).await.is_ok());
-        assert!(list_dir(&paths, cloud, Some("~")).await.is_ok());
+        assert!((&paths).read_file_safe(cloud, &h("notes.txt")).await.is_ok());
+        assert!((&paths).stat_for_download(cloud, &attachment.to_string_lossy()).await.is_ok());
+        assert!((&paths).list_dir(cloud, Some("~")).await.is_ok());
         let note = UploadedFile {
             name: "new.txt".into(),
             bytes: b"x".to_vec(),
         };
-        assert!(save_upload(&paths, cloud, "~", &note).await.is_ok());
+        assert!((&paths).save_upload(cloud, "~", &note).await.is_ok());
 
         // Local users are not fenced.
-        assert!(read_file_safe(&paths, Reach::Local, &key.to_string_lossy()).await.is_ok());
-        assert!(list_dir(&paths, Reach::Local, Some(&h("cfg"))).await.is_ok());
+        assert!((&paths).read_file_safe(Reach::Local, &key.to_string_lossy()).await.is_ok());
+        assert!((&paths).list_dir(Reach::Local, Some(&h("cfg"))).await.is_ok());
     }
 
     /// The same fence at the routes: the request's identity decides.
@@ -1431,18 +1461,18 @@ mod tests {
         let private = |r: Result<(), FsError>| matches!(r, Err(FsError::Private));
 
         // Read again: list, read, download — also through a link in the home directory.
-        assert_eq!(read_file_safe(&paths, cloud, &at("plans/p.md")).await.unwrap().content, "# plan");
-        assert!(list_dir(&paths, cloud, Some(&at("plans"))).await.is_ok());
-        assert!(stat_for_download(&paths, cloud, &at("image-cache/s-1/1.png")).await.is_ok());
-        assert!(list_dir(&paths, cloud, Some(&at("image-cache/s-1"))).await.is_ok());
-        assert!(read_file_safe(&paths, cloud, &at("projects/-w/s-1/tool-results/toolu_1.txt"))
+        assert_eq!((&paths).read_file_safe(cloud, &at("plans/p.md")).await.unwrap().content, "# plan");
+        assert!((&paths).list_dir(cloud, Some(&at("plans"))).await.is_ok());
+        assert!((&paths).stat_for_download(cloud, &at("image-cache/s-1/1.png")).await.is_ok());
+        assert!((&paths).list_dir(cloud, Some(&at("image-cache/s-1"))).await.is_ok());
+        assert!((&paths).read_file_safe(cloud, &at("projects/-w/s-1/tool-results/toolu_1.txt"))
             .await
             .is_ok());
-        assert!(list_dir(&paths, cloud, Some(&at("projects/-w/s-1/tool-results"))).await.is_ok());
-        assert!(stat_for_download(&paths, cloud, &at("projects/-w/memory/MEMORY.md")).await.is_ok());
-        assert!(list_dir(&paths, cloud, Some(&at("projects/-w/memory"))).await.is_ok());
+        assert!((&paths).list_dir(cloud, Some(&at("projects/-w/s-1/tool-results"))).await.is_ok());
+        assert!((&paths).stat_for_download(cloud, &at("projects/-w/memory/MEMORY.md")).await.is_ok());
+        assert!((&paths).list_dir(cloud, Some(&at("projects/-w/memory"))).await.is_ok());
         let linked = format!("{}/plans-link/p.md", home.path().display());
-        assert!(read_file_safe(&paths, cloud, &linked).await.is_ok(), "through a symlink");
+        assert!((&paths).read_file_safe(cloud, &linked).await.is_ok(), "through a symlink");
 
         // Still fenced.
         for secret in [
@@ -1467,8 +1497,8 @@ mod tests {
             data.join("instances/other/claude/plans/q.md").to_string_lossy().into_owned(),
             data.join("claude/plans/old.md").to_string_lossy().into_owned(),
         ] {
-            assert!(private(read_file_safe(&paths, cloud, &secret).await.map(drop)), "{secret}");
-            assert!(private(stat_for_download(&paths, cloud, &secret).await.map(drop)), "{secret}");
+            assert!(private((&paths).read_file_safe(cloud, &secret).await.map(drop)), "{secret}");
+            assert!(private((&paths).stat_for_download(cloud, &secret).await.map(drop)), "{secret}");
         }
         for dir in [
             at(""),
@@ -1478,7 +1508,7 @@ mod tests {
             at("backups"),
             at("paste-cache"),
         ] {
-            assert!(private(list_dir(&paths, cloud, Some(&dir)).await.map(drop)), "{dir}");
+            assert!(private((&paths).list_dir(cloud, Some(&dir)).await.map(drop)), "{dir}");
         }
 
         // Another case opens nothing more. On a case-insensitive disk it
@@ -1494,30 +1524,30 @@ mod tests {
         if case_insensitive(home.path()) {
             for (dir, file) in variants {
                 let variant = at(&format!("{dir}/{file}"));
-                assert!(read_file_safe(&paths, cloud, &variant).await.is_ok(), "{variant}");
-                assert!(list_dir(&paths, cloud, Some(&at(dir))).await.is_ok(), "{dir}");
+                assert!((&paths).read_file_safe(cloud, &variant).await.is_ok(), "{variant}");
+                assert!((&paths).list_dir(cloud, Some(&at(dir))).await.is_ok(), "{dir}");
             }
             for secret in secrets {
-                assert!(private(read_file_safe(&paths, cloud, &at(secret)).await.map(drop)), "{secret}");
+                assert!(private((&paths).read_file_safe(cloud, &at(secret)).await.map(drop)), "{secret}");
             }
         } else {
             // On a case-sensitive one another case is another name: nothing is
             // there, in the fenced root...
             for (dir, file) in variants {
                 let variant = at(&format!("{dir}/{file}"));
-                assert!(private(read_file_safe(&paths, cloud, &variant).await.map(drop)), "{variant}");
+                assert!(private((&paths).read_file_safe(cloud, &variant).await.map(drop)), "{variant}");
             }
             for secret in secrets {
-                assert!(private(read_file_safe(&paths, cloud, &at(secret)).await.map(drop)), "{secret}");
+                assert!(private((&paths).read_file_safe(cloud, &at(secret)).await.map(drop)), "{secret}");
             }
             // ...and a directory made under that name is not the opened one.
             for (dir, file) in variants {
                 let variant = at(&format!("{dir}/{file}"));
                 put(Path::new(&variant), b"made by hand");
-                assert!(private(read_file_safe(&paths, cloud, &variant).await.map(drop)), "{variant}");
-                assert!(private(list_dir(&paths, cloud, Some(&at(dir))).await.map(drop)), "{dir}");
+                assert!(private((&paths).read_file_safe(cloud, &variant).await.map(drop)), "{variant}");
+                assert!(private((&paths).list_dir(cloud, Some(&at(dir))).await.map(drop)), "{dir}");
             }
-            assert_eq!(read_file_safe(&paths, cloud, &at("plans/p.md")).await.unwrap().content, "# plan");
+            assert_eq!((&paths).read_file_safe(cloud, &at("plans/p.md")).await.unwrap().content, "# plan");
         }
 
         // Read only: nothing is uploaded into them.
@@ -1531,7 +1561,7 @@ mod tests {
             at("projects/-w/memory"),
             at("projects/-w/s-1/tool-results"),
         ] {
-            assert!(private(save_upload(&paths, cloud, &dir, &file).await.map(drop)), "{dir}");
+            assert!(private((&paths).save_upload(cloud, &dir, &file).await.map(drop)), "{dir}");
             assert!(!Path::new(&dir).join("planted.md").exists(), "{dir}");
         }
         let into = UploadedFile {
@@ -1540,19 +1570,19 @@ mod tests {
         };
         std::os::unix::fs::symlink(claude.join("plans/into-plans.md"), home.path().join("into-plans.md")).unwrap();
         assert!(
-            private(save_upload(&paths, cloud, "~", &into).await.map(drop)),
+            private((&paths).save_upload(cloud, "~", &into).await.map(drop)),
             "a dangling symlink into an opened directory"
         );
         assert!(!claude.join("plans/into-plans.md").exists());
         assert!(
-            save_upload(&paths, Reach::Local, &at("plans"), &file).await.is_ok(),
+            (&paths).save_upload(Reach::Local, &at("plans"), &file).await.is_ok(),
             "local users are not fenced"
         );
 
         // A symlink in an opened directory's place opens nothing.
         std::fs::remove_dir_all(claude.join("plans")).unwrap();
         std::os::unix::fs::symlink(paths.instance_dir().join("agent"), claude.join("plans")).unwrap();
-        assert!(private(read_file_safe(&paths, cloud, &at("plans/machine-key.json")).await.map(drop)));
+        assert!(private((&paths).read_file_safe(cloud, &at("plans/machine-key.json")).await.map(drop)));
     }
 
     /// The walk up from a path compares directories, and a hard link has no
@@ -1595,12 +1625,12 @@ mod tests {
             put(&plain, b"mine");
             std::fs::hard_link(secret, &linked).unwrap();
             let (plain, linked) = (plain.to_string_lossy().into_owned(), linked.to_string_lossy().into_owned());
-            let shown = names(list_dir(&paths, cloud, Some(&dir.to_string_lossy())).await.unwrap());
+            let shown = names((&paths).list_dir(cloud, Some(&dir.to_string_lossy())).await.unwrap());
 
-            assert_eq!(read_file_safe(&paths, cloud, &plain).await.unwrap().content, "mine", "{plain}");
-            assert!(stat_for_download(&paths, cloud, &plain).await.is_ok(), "{plain}");
-            assert!(private(read_file_safe(&paths, cloud, &linked).await.map(drop)), "{linked}");
-            assert!(private(stat_for_download(&paths, cloud, &linked).await.map(drop)), "{linked}");
+            assert_eq!((&paths).read_file_safe(cloud, &plain).await.unwrap().content, "mine", "{plain}");
+            assert!((&paths).stat_for_download(cloud, &plain).await.is_ok(), "{plain}");
+            assert!(private((&paths).read_file_safe(cloud, &linked).await.map(drop)), "{linked}");
+            assert!(private((&paths).stat_for_download(cloud, &linked).await.map(drop)), "{linked}");
             assert!(shown.contains(&plain_name), "{plain} is listed");
             assert!(!shown.contains(&linked_name), "{linked} is not listed");
 
@@ -1608,11 +1638,11 @@ mod tests {
             let via = home.path().join("via");
             let _ = std::fs::remove_file(&via);
             std::os::unix::fs::symlink(&linked, &via).unwrap();
-            assert!(private(read_file_safe(&paths, cloud, &via.to_string_lossy()).await.map(drop)), "{linked}");
+            assert!(private((&paths).read_file_safe(cloud, &via.to_string_lossy()).await.map(drop)), "{linked}");
 
             // Local users are not fenced.
-            assert_eq!(read_file_safe(&paths, Reach::Local, &linked).await.unwrap().content, "secret");
-            let local = names(list_dir(&paths, Reach::Local, Some(&dir.to_string_lossy())).await.unwrap());
+            assert_eq!((&paths).read_file_safe(Reach::Local, &linked).await.unwrap().content, "secret");
+            let local = names((&paths).list_dir(Reach::Local, Some(&dir.to_string_lossy())).await.unwrap());
             assert!(local.contains(&linked_name), "{linked} is listed locally");
         }
 
@@ -1622,8 +1652,8 @@ mod tests {
         put(&deps, b"\x7fELF");
         let built = home.path().join("app/target/debug/app");
         std::fs::hard_link(&deps, &built).unwrap();
-        assert!(stat_for_download(&paths, cloud, &built.to_string_lossy()).await.is_ok());
-        let shown = names(list_dir(&paths, cloud, Some(&built.parent().unwrap().to_string_lossy())).await.unwrap());
+        assert!((&paths).stat_for_download(cloud, &built.to_string_lossy()).await.is_ok());
+        let shown = names((&paths).list_dir(cloud, Some(&built.parent().unwrap().to_string_lossy())).await.unwrap());
         assert!(shown.contains(&"app".to_string()));
     }
 
@@ -1654,7 +1684,7 @@ mod tests {
             name: "big.bin".to_string(),
             bytes: vec![0u8; (UPLOAD_LIMIT + 1) as usize],
         };
-        match save_upload(&paths, Reach::Local, &home.path().to_string_lossy(), &file).await {
+        match (&paths).save_upload(Reach::Local, &home.path().to_string_lossy(), &file).await {
             Err(FsError::Access(message)) => assert_eq!(message, "file exceeds the 200 MiB upload limit"),
             other => panic!("an over-limit upload was not refused: {other:?}"),
         }
@@ -1663,7 +1693,7 @@ mod tests {
             name: "big.bin".to_string(),
             bytes: vec![0u8; (ATTACHMENT_LIMIT + 1) as usize],
         };
-        match save_attachment(&paths, &file).await {
+        match (&paths).save_attachment(&file).await {
             Err(FsError::Access(message)) => assert_eq!(message, "file exceeds the 100 MiB upload limit"),
             other => panic!("an over-limit attachment was not refused: {other:?}"),
         }
