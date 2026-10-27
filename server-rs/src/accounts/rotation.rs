@@ -994,8 +994,9 @@ impl RotationOutcome {
     }
 }
 
-/// Inline in `SessionRotation`, the way the contract spells `outcome`, rather
-/// than a schema of its own.
+// Inline in `SessionRotation`, the way the contract spells `outcome`, rather
+// than a schema of its own. (`///` here would be an unused doc comment: rustdoc
+// does not document macro invocations.)
 crate::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
 
 /// What set a rotation off.
@@ -1029,7 +1030,7 @@ impl RotationTrigger {
     }
 }
 
-/// Inline in `SessionRotation`, like [`RotationOutcome`].
+// Inline in `SessionRotation`, like `RotationOutcome`.
 crate::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
 
 /// One automatic account rotation of a session, as `SessionDetail.rotation`

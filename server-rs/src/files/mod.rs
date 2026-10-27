@@ -116,8 +116,8 @@ pub enum FsKind {
     Other,
 }
 
-/// Inline in `FsEntry`: the contract spells `kind` as an inline string enum,
-/// not a named component.
+// Inline in `FsEntry`: the contract spells `kind` as an inline string enum,
+// not a named component.
 crate::inline_string_enum!(FsKind, ["file", "dir", "symlink", "other"]);
 
 /// One row of a directory listing.
