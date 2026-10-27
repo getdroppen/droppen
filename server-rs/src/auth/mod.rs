@@ -71,9 +71,10 @@
 //! tests, unsafe anywhere else, and the server says so loudly every time it
 //! starts.
 //!
-//! An instance created on a machine that already has accounts inherits them
-//! once, on its first read. [`users`] has what is inherited from where, and
-//! why that is a copy rather than a move.
+//! Accounts are per-instance and are not inherited: an instance created on a
+//! machine that has accounts starts in its setup state. [`users`] has the
+//! reasoning, and why the machine-wide set an older build kept is left on disk
+//! rather than moved or deleted.
 //!
 //! # What is deliberately *not* behind the guard
 //!
@@ -728,10 +729,10 @@ impl<S: Send + Sync> FromRequestParts<S> for MaybeIdentity {
 /// steps are load-bearing.
 ///
 /// Synchronous, which it was not: [`users::UsersStore`] mirrors from an `async
-/// fn` on a blocking thread *and* from the once-per-instance seed, which runs
-/// inside a `std::sync::Once` on the first read of the store where there is no
-/// `await` to be had. Two implementations of a three-step rule is how one of
-/// the three steps eventually goes missing from one of them, so there is one,
+/// fn` on a blocking thread *and* from the repair in `ensure_imported`, which
+/// runs inside a `std::sync::Once` on the first read of the store where there
+/// is no `await` to be had. Two implementations of a three-step rule is how one
+/// of the three steps eventually goes missing from one of them, so there is one,
 /// and it is the one that works in both places.
 fn write_json_private(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");

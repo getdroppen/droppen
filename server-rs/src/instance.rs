@@ -69,9 +69,9 @@
 //! were shared quite correctly right up until an instance was handed to
 //! somebody else, at which point one `user add` put both servers behind one
 //! person's password. That is the boundary this module exists to draw, and
-//! [`crate::auth::users`] draws it: the reasoning, the once-only inheritance
-//! from the machine-wide set, and why that set is frozen rather than moved, are
-//! all in its module note.
+//! [`crate::auth::users`] draws it: the reasoning, and why the machine-wide set
+//! an older build kept is left on disk rather than moved or deleted, are all in
+//! its module note.
 //!
 //! # Orphan reaping (a note for the container phase)
 //!

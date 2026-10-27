@@ -210,6 +210,32 @@ async fn with_no_accounts_nobody_gets_in_without_a_session() {
     server.stop().await;
 }
 
+/// Accounts in the machine-wide set an older build kept are not inherited: a
+/// fresh instance starts in its setup state, and no API route opens.
+#[tokio::test]
+async fn machine_wide_accounts_do_not_open_a_fresh_instance() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let machine = UsersStore::at(home.path().join(".config/remote-hand/users.json"));
+    machine.add("ada", PASSWORD).await.expect("the machine-wide accounts an older build kept");
+
+    let server = common::TestServer::start_guarded_at(home.path(), None).await;
+    let status: Value = server.get_json("/api/auth/status").await;
+    assert_eq!(status["authRequired"], true);
+    assert_eq!(status["setupRequired"], true, "no account of its own, so setup, not a login");
+    assert_eq!(server.get("/api/settings").await.0, 401);
+    let (status, body) = server
+        .json("POST", "/api/auth/login", &json!({ "username": "ada", "password": PASSWORD }))
+        .await;
+    assert_eq!(status, 401, "the machine-wide password is not this instance's account: {body}");
+
+    assert!(
+        !server.paths.instance_dir().join("users.json").exists(),
+        "and nothing was copied into the instance"
+    );
+    assert!(machine.exists("ada").await, "the machine-wide set is left exactly as it was");
+    server.stop().await;
+}
+
 /// `auth.enabled = false` is the one open server left, and it is explicit.
 #[tokio::test]
 async fn with_authentication_switched_off_every_face_is_open() {
@@ -1232,19 +1258,13 @@ async fn removing_the_last_account_puts_the_server_back_in_its_setup_state() {
     server.stop().await;
 }
 
-/// Two servers, one account inherited by both, and no token that crosses
+/// Two servers, an account of the same name on each, and no token that crosses
 /// between them.
-///
-/// The account is seeded machine-wide — where every build before this one kept
-/// it — so this is also the upgrade path end to end: two instances that both
-/// take the password the machine had, and still hand each other nothing.
 #[tokio::test]
 async fn a_token_is_a_claim_on_one_instance() {
     let home = tempfile::tempdir().expect("tempdir");
-    UsersStore::at(home.path().join(".config/remote-hand/users.json"))
-        .add("ada", PASSWORD)
-        .await
-        .expect("seed the machine-wide accounts an upgrade would find");
+    seed_account(home.path(), "ada", PASSWORD).await;
+    accounts(home.path(), "staging").add("ada", PASSWORD).await.expect("seed the other instance");
     let first = common::TestServer::start_guarded_at(home.path(), None).await;
     let second = common::TestServer::start_guarded_at(home.path(), Some("staging")).await;
 
@@ -1256,10 +1276,15 @@ async fn a_token_is_a_claim_on_one_instance() {
         "the same account, a different server"
     );
 
-    // And the second instance inherited the same account, so the same password
-    // still opens it — with a token of its own.
+    // The same name and password are the second instance's own account, so they
+    // open it too — with a token of its own.
     let other = login(&second, "ada", PASSWORD).await;
     assert_eq!(get_as(&second, "/api/settings", &other).await.0, 200);
+    assert_eq!(
+        get_as(&first, "/api/settings", &other).await.0,
+        401,
+        "and the other token is no claim on the first server"
+    );
     second.stop().await;
     first.stop().await;
 }

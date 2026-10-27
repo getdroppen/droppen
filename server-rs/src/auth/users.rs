@@ -52,26 +52,18 @@
 //! mutex private to each of them; they can be serialised by SQLite, which is
 //! what `busy_timeout` and a transaction are for.
 //!
-//! # What an instance inherits
+//! # What an instance starts with
 //!
-//! Making the store per-instance would, on its own, hand every existing machine
-//! a set of servers with no accounts — and no accounts means *authentication
-//! off*, on servers published to the internet through a tunnel. An upgrade may
-//! not open a door. So the first time an instance's store is opened it seeds
-//! itself, once ever, from the machine-wide set the old design kept: the `users`
-//! table in `<config>/state.db`, and `<config>/users.json` when that table has
-//! nothing in it. Every instance therefore keeps accepting exactly the logins it
-//! accepted the day before the upgrade, and an instance created afterwards on a
-//! machine that has accounts inherits them rather than starting open.
-//!
-//! Once only, and marked in the same transaction as the rows it writes — the
-//! discipline [`crate::db::Db::import_once`] exists for. Without that, revoking
-//! an account here would be undone by the next boot re-seeding it from a
-//! machine-wide set that still lists it.
-//!
-//! An instance that seeds to nothing — a machine that never had an account —
-//! has no user account, and is in its setup state until the first one exists
-//! ([`super::setup`]).
+//! Only its own accounts. It does **not** inherit the machine-wide set the old
+//! design kept (`<config>/state.db`'s `users` table, and `<config>/users.json`
+//! beside it): that copy was an upgrade bridge, and every install from 0.2.125
+//! has already made it. An install upgrading straight from an older build, or a
+//! new instance made on a 0.2.125+ machine, therefore starts with no user
+//! account and is in its setup state until the first one exists
+//! ([`super::setup`]). That is fail-closed, not authentication off: no API route
+//! opens, and the ways in are `droppen user add`, `droppen open` or the setup
+//! code. The machine-wide set is left on disk untouched, so it remains a manual
+//! recovery source and a rolled-back binary still finds accounts.
 //!
 //! # App-internal accounts
 //!
@@ -84,29 +76,21 @@
 //! older binary reads the row and not the mark, and takes it for an ordinary
 //! account: the fail-closed direction.
 //!
-//! # The machine-wide set is frozen, not deleted
+//! # The machine-wide set is left on disk
 //!
-//! Nothing here drops the machine-wide `users` table or removes
-//! `<config>/users.json`. Two reasons, and the second is the one that decides
-//! it.
+//! Nothing here reads or writes the machine-wide `users` table in
+//! `<config>/state.db` or `<config>/users.json`. Both are deliberately left
+//! untouched rather than deleted: the schema is additive-only, a supervisor
+//! rollback to `.prev` runs a binary that reads its accounts from that set, and
+//! finding accounts there keeps it **fail-closed**. Deleting a migration is not
+//! a licence to delete user data.
 //!
-//! Dropping the table is barred outright: the schema behind
-//! [`crate::db::SCHEMA`] is additive-only, at length and for its own reasons.
-//! Emptying the set — which no rule bars, and which the tidy instinct after a
-//! migration is to do — is refused because [`crate::supervisor`] rolls back to
-//! `.prev`, a binary that reads its accounts from `<config>/state.db` and knows
-//! nothing about any of this. Leaving that set populated means such a binary
-//! still finds accounts and stays **fail-closed**. Emptying it would mean a
-//! rollback found none, concluded the machine had never been configured, and
-//! opened every API on it.
-//!
-//! The accepted cost, written down because it is a real one: an account revoked
-//! *after* this upgrade is removed from its instance and left in the frozen
-//! machine-wide set, so a rolled-back binary would honour it again until
-//! somebody rolls forward. That is the deliberate direction of the error. This
-//! trade can leave a door shut-but-openable by a credential that should have
-//! been withdrawn; it can never leave a door with no lock on it at all, and the
-//! second failure is the one that cannot be walked back.
+//! The accepted cost: an account revoked on an instance is not removed from that
+//! set, so a rolled-back binary would honour it again until somebody rolls
+//! forward. That is the deliberate direction of the error. This trade can leave
+//! a door shut-but-openable by a credential that should have been withdrawn; it
+//! can never leave a door with no lock on it at all, and the second failure is
+//! the one that cannot be walked back.
 //!
 //! # Why this one store still writes its file
 //!
@@ -128,11 +112,11 @@
 //! So `users.json` is kept in step, and a table that says nobody is on file is
 //! believed only when the file agrees. The cost is nothing: it is written on
 //! `user add`, `user passwd` and `user rm`, which is to say a handful of times
-//! in a machine's life, not once per turn — plus once more when an instance
-//! seeds itself, so that an instance which has inherited accounts and never been
-//! edited has a second opinion too. A failure to write it is logged rather than
-//! returned — the account exists either way, and refusing the operation would
-//! not put the file back.
+//! in a machine's life, not once per turn — plus once more when the store finds
+//! accounts in the database and no file to mirror them to, so that the second
+//! opinion exists after a file somebody deleted. A failure to write it is
+//! logged rather than returned — the account exists either way, and refusing the
+//! operation would not put the file back.
 //!
 //! The failure this buys is a lockout rather than an exposure: an account in the
 //! file with no row behind it keeps the door shut and says so loudly, and
@@ -174,17 +158,6 @@ pub const MAX_USERNAME: usize = 32;
 /// already been drained. Also the scope its rows are staged in on the way
 /// through; see [`UsersStore::ensure_imported`].
 const IMPORT_MARKER: &str = "users.json";
-
-/// The marker for the *other* one-time import: the machine-wide set this
-/// instance inherits the first time its store is opened.
-///
-/// A second marker rather than a second use of the first, because the two ask
-/// different questions of the same database — "has this instance drained the
-/// file beside it?" and "has this instance ever inherited?" — and a store that
-/// answered yes to one on behalf of the other would either re-seed over a
-/// revocation or never seed at all. Not a path, so it cannot be confused with
-/// one: nothing is drained from a file called this.
-const SEED_MARKER: &str = "machine-wide-users";
 
 /// Where the two ISO stamps live, keyed by user name.
 ///
@@ -337,32 +310,12 @@ struct Stamps {
 pub struct UsersStore {
     path: PathBuf,
     db: Arc<Db>,
-    /// Where the machine-wide accounts this instance inherits are, or `None`
-    /// for a store that is not an instance's — the machine-wide store itself,
-    /// and the unit tests that stand in for one.
-    seed: Option<Seed>,
-    /// The two imports below run once per process at most; the markers they
-    /// leave in the database make them once per *instance*, which is the half
-    /// that matters.
+    /// The import below runs once per process at most; the marker it leaves in
+    /// the database makes it once per *instance*, which is the half that
+    /// matters.
     imported: std::sync::Once,
     write_lock: tokio::sync::Mutex<()>,
     verify_lock: tokio::sync::Mutex<()>,
-}
-
-/// The machine-wide account set an instance inherits from, once ever.
-///
-/// Two paths and not one, in the order they are believed: the table is that
-/// store's source of truth and the file beside it is its mirror, so they agree
-/// in every case but the one the mirror exists for — a `<config>/state.db` set
-/// aside as corrupt, where the file is the only copy of the accounts left. This
-/// is [`UsersStore::is_empty`]'s second-opinion rule again, pointed at the store
-/// being inherited *from*.
-#[derive(Debug, Clone)]
-struct Seed {
-    /// `<config>/state.db` — the machine-wide accounts, believed first.
-    db: PathBuf,
-    /// `<config>/users.json` — read only when that table has nothing in it.
-    file: PathBuf,
 }
 
 /// What a login attempt found.
@@ -375,30 +328,22 @@ pub enum Verdict {
 }
 
 impl UsersStore {
-    /// This instance's store: `<instance>/users.json` over `<instance>/state.db`,
-    /// inheriting the machine-wide set the first time it is read.
+    /// This instance's store: `<instance>/users.json` over `<instance>/state.db`.
     ///
     /// The server and the CLI both build one of these, which is what makes
     /// `user add --instance bob` and the server running instance `bob` the same
     /// account set.
     pub fn new(paths: &Paths) -> Self {
-        Self {
-            seed: Some(Seed {
-                db: paths.config_db(),
-                file: paths.config_dir().join("users.json"),
-            }),
-            ..Self::over(paths.instance_dir().join("users.json"), paths.instance_db())
-        }
+        Self::over(paths.instance_dir().join("users.json"), paths.instance_db())
     }
 
-    /// A store over an explicit path, with no machine-wide set behind it.
+    /// A store over an explicit path.
     ///
     /// The database is the one beside the file, so this names an instance's
-    /// store by pointing at `<instance>/users.json` and the machine-wide one by
-    /// pointing at `<config>/users.json` — which is exactly what a test that
-    /// wants to *be* the pre-upgrade machine does. Nothing is inherited either
-    /// way: inheriting is [`UsersStore::new`]'s, because only a `Paths` knows
-    /// where the machine-wide set is.
+    /// store by pointing at `<instance>/users.json`, and the machine-wide store
+    /// an older build kept by pointing at `<config>/users.json`. Nothing is
+    /// inherited either way: a store holds only the accounts in its own
+    /// database.
     ///
     /// The CLI opening a file the server has open is left to SQLite, which is
     /// the only thing that has ever been able to arbitrate it.
@@ -411,7 +356,6 @@ impl UsersStore {
         Self {
             path,
             db: db::at(db),
-            seed: None,
             imported: std::sync::Once::new(),
             write_lock: tokio::sync::Mutex::new(()),
             verify_lock: tokio::sync::Mutex::new(()),
@@ -425,21 +369,15 @@ impl UsersStore {
     }
 
     /// Fill this instance's table, once ever, before the first read: from the
-    /// file beside it, and then from the machine-wide set it inherits.
+    /// file beside it.
     ///
-    /// Two hops per import rather than one, because [`Db::import_once`] writes
-    /// rows into `kv` and these rows belong in `users`. The first hop is the one
-    /// that must not happen twice — it is the one that could import over an edit
-    /// somebody has since made — and it is marked in the same transaction as the
-    /// rows it writes. The second is a plain `INSERT OR IGNORE` and a `DELETE`
-    /// in one transaction, so it is idempotent: a crash between the two hops
-    /// leaves rows staged rather than lost, and the next boot finishes the job.
-    ///
-    /// The order of the two imports is the order of precedence, and it is the
-    /// only order that can be right: this instance's own file is what this
-    /// instance last decided, and the machine-wide set is what it inherited
-    /// before it decided anything. `INSERT OR IGNORE` means the first one to
-    /// name an account owns it.
+    /// Two hops rather than one, because [`Db::import_once`] writes rows into
+    /// `kv` and these rows belong in `users`. The first hop is the one that must
+    /// not happen twice — it is the one that could import over an edit somebody
+    /// has since made — and it is marked in the same transaction as the rows it
+    /// writes. The second is a plain `INSERT OR IGNORE` and a `DELETE` in one
+    /// transaction, so it is idempotent: a crash between the two hops leaves
+    /// rows staged rather than lost, and the next boot finishes the job.
     ///
     /// What is left at the end is the mirror, when there are accounts and no
     /// file holding them — see the comment there for the failure that closes.
@@ -449,19 +387,13 @@ impl UsersStore {
             self.db.import_once(IMPORT_MARKER, || staged_from_json(&path));
             drain_staged(&self.db, IMPORT_MARKER);
 
-            if let Some(seed) = self.seed.as_ref() {
-                self.db.import_once(SEED_MARKER, || staged_from_machine(seed));
-                drain_staged(&self.db, SEED_MARKER);
-            }
-
             // Accounts in the table and no file beside them is the one shape
             // that reads as "this server has no accounts" — an open API — if
-            // the database is ever set aside as corrupt. An instance that
-            // inherited its accounts and has never been edited is exactly that
-            // shape, and so is one whose mirror somebody deleted, so the
-            // condition is the shape rather than the cause. Written here rather
-            // than awaited, because this runs inside a `Once` on the first read
-            // and `rows` deliberately does not re-enter it.
+            // the database is ever set aside as corrupt. An instance whose
+            // mirror somebody deleted is exactly that shape, so the condition is
+            // the shape rather than the cause. Written here rather than awaited,
+            // because this runs inside a `Once` on the first read and `rows`
+            // deliberately does not re-enter it.
             let rows = self.rows();
             if !rows.users.is_empty() && !self.path.exists() {
                 write_mirror(&self.path, &rows);
@@ -548,8 +480,8 @@ impl UsersStore {
     }
 
     /// [`UsersStore::snapshot`] without the import, for the one caller that is
-    /// *inside* the import: [`UsersStore::ensure_imported`] mirrors what it has
-    /// just inherited, and a `std::sync::Once` re-entered from its own closure
+    /// *inside* the import: [`UsersStore::ensure_imported`] mirrors what the
+    /// database holds, and a `std::sync::Once` re-entered from its own closure
     /// deadlocks.
     fn rows(&self) -> UsersFile {
         let users = self
@@ -578,9 +510,9 @@ impl UsersStore {
     ///
     /// Called with `write_lock` held, always after the commit and never before:
     /// a mirror written first would describe a change that then failed. On a
-    /// blocking thread, because the write itself is synchronous — the seed path
-    /// has no `await` available and one implementation of the `0600` rule is
-    /// worth a `spawn_blocking` here.
+    /// blocking thread, because the write itself is synchronous — the repair
+    /// path in [`UsersStore::ensure_imported`] has no `await` available and one
+    /// implementation of the `0600` rule is worth a `spawn_blocking` here.
     async fn mirror(&self) {
         let file = self.snapshot();
         let path = self.path.clone();
@@ -754,7 +686,7 @@ impl UsersStore {
     /// touched — that is what per-instance means, and it is why
     /// [`super::cli`] no longer sweeps every instance's sessions.
     ///
-    /// It does not reach the frozen machine-wide set either; see the module
+    /// It does not reach the machine-wide set on disk either; see the module
     /// note on what a rollback would then still honour, and why that is the
     /// direction the error is allowed to point in.
     pub async fn remove(&self, name: &str) -> Result<(), UserError> {
@@ -887,13 +819,12 @@ fn user_from_row(name: String, hash: String, created_at: i64, payload: Option<St
     }
 }
 
-/// Read a mirror — this instance's, or the machine-wide one it inherits from —
-/// tolerating everything.
+/// Read a mirror — this instance's, usually — tolerating everything.
 ///
-/// Synchronous because every caller is: the two imports run once inside a
-/// `Once`, and [`UsersStore::is_empty`]'s safety net only reaches the file when
-/// the database has already said there is nothing — on the overwhelmingly
-/// common path that is one failed `open` of a file that is not there.
+/// Synchronous because every caller is: the import runs once inside a `Once`,
+/// and [`UsersStore::is_empty`]'s safety net only reaches the file when the
+/// database has already said there is nothing — on the overwhelmingly common
+/// path that is one failed `open` of a file that is not there.
 fn read_mirror(path: &Path) -> UsersFile {
     match std::fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str::<UsersFile>(&raw).unwrap_or_default(),
@@ -911,62 +842,11 @@ fn staged_from_json(path: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The machine-wide accounts, as rows to stage into an instance's table.
-///
-/// The table first and the file second, for the reason [`Seed`] gives. Both are
-/// left exactly as they are: this is a copy, and the module note explains at
-/// length why the original has to stay behind.
-fn staged_from_machine(seed: &Seed) -> Vec<(String, String)> {
-    let rows = machine_rows(&seed.db);
-    if rows.is_empty() {
-        return staged_from_json(&seed.file);
-    }
-    rows
-}
-
-/// Every account in the machine-wide database, in the shape the staging table
-/// takes — which is the shape the file had, so the two sources drain
-/// identically.
-///
-/// The database is *named* rather than opened when it is not there. Opening it
-/// would create it, and an instance booting on a machine that has never had a
-/// configuration database has no business leaving one behind on its way past.
-fn machine_rows(path: &Path) -> Vec<(String, String)> {
-    if !path.exists() {
-        return Vec::new();
-    }
-    let db = db::at(path.to_path_buf());
-    db.read(|conn| {
-        let mut statement = conn.prepare(
-            "SELECT u.name, u.hash, u.created_at, k.value
-               FROM users u
-               LEFT JOIN kv k ON k.scope = ?1 AND k.key = u.name
-              ORDER BY u.rowid",
-        )?;
-        let rows = statement.query_map((STAMPS_SCOPE,), |row| {
-            Ok(user_from_row(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?;
-        Ok(rows
-            .filter_map(Result::ok)
-            .filter(|user| !user.name.is_empty())
-            .filter_map(|user| Some((user.name.clone(), serde_json::to_string(&user).ok()?)))
-            .collect::<Vec<_>>())
-    })
-    .unwrap_or_else(|error| {
-        tracing::error!(
-            database = %path.display(),
-            %error,
-            "cannot read the machine-wide accounts to inherit them; this instance starts with only what it already has"
-        );
-        Vec::new()
-    })
-}
-
 /// Write the mirror `0600`, through a tmp file, and carry on if it cannot be
 /// written.
 ///
 /// Synchronous: [`UsersStore::mirror`] hands it to a blocking thread and the
-/// seed in [`UsersStore::ensure_imported`] calls it where there is no `await`.
+/// repair in [`UsersStore::ensure_imported`] calls it where there is no `await`.
 fn write_mirror(path: &Path, file: &UsersFile) {
     if let Some(dir) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(dir) {
@@ -995,7 +875,7 @@ fn write_mirror(path: &Path, file: &UsersFile) {
 /// order the list will come back in for ever after.
 ///
 /// Answers with how many accounts it moved, which is zero on every boot after
-/// the first and is how the seed knows whether it has anything to mirror.
+/// the first.
 fn drain_staged(db: &Db, scope: &str) -> usize {
     let staged: Vec<String> = db
         .read(|conn| {
@@ -1146,10 +1026,8 @@ mod tests {
         UsersStore::new(&Paths::for_instance(home.to_path_buf(), name))
     }
 
-    /// The machine-wide store as every build before this one wrote it: the
-    /// table in `<config>/state.db`, mirrored to `<config>/users.json`. What a
-    /// machine looks like the moment before it is upgraded into per-instance
-    /// accounts.
+    /// The machine-wide store an older build kept: the table in
+    /// `<config>/state.db`, mirrored to `<config>/users.json`.
     fn machine_wide(home: &Path) -> UsersStore {
         UsersStore::at(home.join(".config").join("remote-hand").join("users.json"))
     }
@@ -1445,71 +1323,35 @@ mod tests {
         assert_ne!(owner.path(), guest.path(), "two files, not one");
     }
 
-    /// The upgrade path, and the one that must not open anything: a machine
-    /// with accounts hands them to every instance that reads its store, once.
+    /// The upgrade path, and the one that must not open anything: an account
+    /// the machine-wide set still names is not this instance's account, so the
+    /// instance starts in its setup state.
     #[tokio::test]
-    async fn an_instance_inherits_the_machine_wide_accounts_exactly_once() {
+    async fn an_instance_does_not_inherit_the_machine_wide_accounts() {
         let home = tempfile::tempdir().expect("tempdir");
-        machine_wide(home.path()).add("ada", "correct horse battery").await.expect("seed");
+        let machine = machine_wide(home.path());
+        machine.add("ada", "correct horse battery").await.expect("seed the machine-wide set");
 
-        let inherited = instance(home.path(), "alice");
+        let fresh = instance(home.path(), "alice");
+        assert!(fresh.is_empty().await);
+        assert!(!fresh.has_users().await, "so its server is in its setup state");
+        assert_eq!(fresh.verify("ada", "correct horse battery").await, Verdict::No);
+
+        // And the machine-wide account is still there: a rollback, or a person
+        // adding the same login by hand, still finds it.
         assert_eq!(
-            inherited.verify("ada", "correct horse battery").await,
+            machine.verify("ada", "correct horse battery").await,
             Verdict::Ok,
-            "the hash came across, not just the name"
+            "the machine-wide set is left exactly as it was"
         );
-        assert!(!inherited.is_empty().await, "so the server it belongs to is not opened by the upgrade");
-
-        // An instance made after the upgrade inherits too: a new server on a
-        // machine with accounts must not arrive with its door off its hinges.
-        assert!(!instance(home.path(), "made-later").is_empty().await);
-
-        // And the revocation sticks. Re-seeding on the next boot would put back
-        // an account somebody has just taken away, which is the failure the
-        // once-only marker exists for.
-        inherited.remove("ada").await.expect("remove");
-        let reopened = instance(home.path(), "alice");
-        assert!(!reopened.exists("ada").await, "inheriting happens once ever, not once per process");
-        assert!(reopened.is_empty().await);
+        let file = std::fs::read_to_string(home.path().join(".config/remote-hand/users.json")).expect("still there");
+        assert!(file.contains("ada"), "and the file an older build reads still names it");
     }
 
-    /// An instance that has inherited accounts and has never been edited still
-    /// has a second opinion, because the seed writes the mirror on its way
-    /// past. Without it, a database set aside as corrupt would leave the file
-    /// missing too, and a missing file reads as "no accounts" — an open API.
-    #[tokio::test]
-    async fn an_inherited_set_is_mirrored_so_a_lost_database_still_keeps_the_door_shut() {
-        let home = tempfile::tempdir().expect("tempdir");
-        machine_wide(home.path()).add("ada", "correct horse battery").await.expect("seed");
-
-        let inherited = instance(home.path(), "alice");
-        assert!(!inherited.is_empty().await, "reading the store is what seeds it");
-        let mirrored: UsersFile =
-            serde_json::from_str(&std::fs::read_to_string(inherited.path()).expect("the seed wrote the mirror")).expect("parse");
-        assert_eq!(mirrored.users.first().map(|user| user.name.as_str()), Some("ada"));
-        assert!(
-            inherited.path().starts_with(home.path().join(".local")),
-            "beside the instance, not in the config directory"
-        );
-
-        inherited
-            .db
-            .write(|tx| {
-                tx.execute("DELETE FROM users", ())?;
-                Ok(())
-            })
-            .expect("lose the rows");
-        assert!(
-            !inherited.is_empty().await,
-            "the mirror still names an account, so authentication stays on"
-        );
-    }
-
-    /// The same repair from the other direction: a mirror somebody deleted —
-    /// tidying, a restore, a `rm` that meant something else — is written again
-    /// the next time the store is opened. The condition is "accounts, and no
-    /// file naming them", not "this instance has just inherited", because the
-    /// damage is the same whatever produced it.
+    /// A mirror somebody deleted — tidying, a restore, a `rm` that meant
+    /// something else — is written again the next time the store is opened.
+    /// The condition is "accounts, and no file naming them", so the damage is
+    /// repaired whatever produced it.
     #[tokio::test]
     async fn a_mirror_that_goes_missing_is_written_again_on_the_next_open() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -1523,30 +1365,10 @@ mod tests {
         assert_eq!(mirrored.users.first().map(|user| user.name.as_str()), Some("ada"));
     }
 
-    /// The machine-wide set is frozen, not migrated: an account revoked on an
-    /// instance is left in it on purpose, so a rolled-back binary finds
-    /// accounts and stays shut rather than finding none and opening.
-    #[tokio::test]
-    async fn revoking_on_an_instance_leaves_the_frozen_machine_wide_set_alone() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let machine = machine_wide(home.path());
-        machine.add("ada", "correct horse battery").await.expect("seed");
-
-        let inherited = instance(home.path(), "alice");
-        inherited.remove("ada").await.expect("remove");
-
-        assert_eq!(
-            machine.verify("ada", "correct horse battery").await,
-            Verdict::Ok,
-            "the accepted cost: a rollback would honour this account again"
-        );
-        let file = std::fs::read_to_string(home.path().join(".config/remote-hand/users.json")).expect("still there");
-        assert!(file.contains("ada"), "and the file an older build reads still names it");
-    }
-
     /// A machine that never had an account keeps the documented fail-open, one
-    /// server at a time: nothing to inherit is not the same as something to
-    /// inherit that happens to be empty.
+    /// server at a time: an instance with no account of its own is open until
+    /// its first `user add`, and looking at it creates no configuration
+    /// database on the machine.
     #[tokio::test]
     async fn an_instance_on_a_machine_with_no_accounts_is_open_until_its_first_user_add() {
         let home = tempfile::tempdir().expect("tempdir");
