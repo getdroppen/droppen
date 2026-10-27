@@ -284,7 +284,7 @@ pub fn read_package(dir: &Path) -> Result<Installed, String> {
     }
     let package = serde_json::from_slice::<serde_json::Value>(&fs::read(dir.join("package.json")).map_err(|error| format!("{}: {error}", dir.join("package.json").display()))?)
         .map_err(|error| format!("{}: {error}", dir.join("package.json").display()))?;
-    let manifest = manifest_of(&package)?;
+    let manifest = package.manifest_of()?;
     if manifest.id.as_str() != id {
         return Err(format!("{} declares plugin {}, not {id}", dir.join("package.json").display(), manifest.id));
     }
@@ -395,7 +395,7 @@ fn unpack_entries(stream: &mut impl Read, into: &Path) -> Result<(Manifest, Stri
     let package_file = into.join("package.json");
     let bytes = fs::read(&package_file).map_err(|_| refused("the package has no package/package.json".to_string()))?;
     let package: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| refused(format!("package/package.json: {error}")))?;
-    let manifest = manifest_of(&package).map_err(|message| refused(message))?;
+    let manifest = package.manifest_of().map_err(|message| refused(message))?;
     if !manifest.compatible_with(&sdk_version()) {
         return Err(refused(format!(
             "it needs Droppen plugin SDK {}; this host implements {}",
@@ -403,7 +403,7 @@ fn unpack_entries(stream: &mut impl Read, into: &Path) -> Result<(Manifest, Stri
             sdk_version()
         )));
     }
-    let entry = entry_of(&package, into).map_err(|message| refused(message))?;
+    let entry = package.entry_of(into).map_err(|message| refused(message))?;
     Ok((manifest, entry))
 }
 
@@ -478,10 +478,23 @@ fn write_file(into: &Path, path: &str, data: &mut impl Read, size: u64) -> io::R
     Ok(())
 }
 
-/// The manifest a package declares: its `droppen` object, with the package's
-/// top-level `version` and, when the object gives no name, the id as one.
-fn manifest_of(package: &serde_json::Value) -> Result<Manifest, String> {
-    let object = package.as_object().ok_or("package/package.json is not a JSON object")?;
+/// Reading a package's `package.json`.
+trait PackageJson {
+    /// The manifest it declares: its `droppen` object, with the package's
+    /// top-level `version` and, when the object gives no name, the id as one.
+    fn manifest_of(&self) -> Result<Manifest, String>;
+
+    /// The entry a package names, before it is checked: `exports`, `module`
+    /// and `main`, nullish fallbacks and all.
+    fn entry_field(&self) -> Result<String, String>;
+
+    /// The entry module's relative path, resolved by the npm rules.
+    fn entry_of(&self, dir: &Path) -> Result<String, String>;
+}
+
+impl PackageJson for serde_json::Value {
+    fn manifest_of(&self) -> Result<Manifest, String> {
+    let object = self.as_object().ok_or("package/package.json is not a JSON object")?;
     let droppen = object.get("droppen").ok_or("package/package.json has no \"droppen\" manifest")?;
     let mut fields = droppen
         .as_object()
@@ -508,21 +521,15 @@ fn manifest_of(package: &serde_json::Value) -> Result<Manifest, String> {
         return Err(problems.join("; "));
     }
     Ok(manifest)
-}
+    }
 
-/// The entry module's relative path: `exports["."]` (a string, or its
-/// `import`/`default`), else `module`, else `main`, else `index.js`; a
-/// relative `.js`/`.mjs` file that exists.
-fn entry_of(package: &serde_json::Value, dir: &Path) -> Result<String, String> {
-    let rel = entry_field(package)?;
-    resolve_entry(dir, &rel)
-}
+    fn entry_of(&self, dir: &Path) -> Result<String, String> {
+        let rel = self.entry_field()?;
+        resolve_entry(dir, &rel)
+    }
 
-/// The entry a package names, before it is checked: `exports`, `module` and
-/// `main`, nullish fallbacks and all. A name that is there but not a string is
-/// a refusal rather than a reason to fall through to `index.js`.
-fn entry_field(package: &serde_json::Value) -> Result<String, String> {
-    let rel = match package.get("exports") {
+    fn entry_field(&self) -> Result<String, String> {
+    let rel = match self.get("exports") {
         Some(serde_json::Value::String(rel)) => Some(serde_json::Value::String(rel.clone())),
         Some(exports @ serde_json::Value::Object(map)) => {
             // `exp["."] ?? exp`: an absent (or null) dot key means the object
@@ -545,7 +552,7 @@ fn entry_field(package: &serde_json::Value) -> Result<String, String> {
         serde_json::Value::String(
             ["module", "main"]
                 .iter()
-                .find_map(|key| package.get(*key).and_then(serde_json::Value::as_str))
+                .find_map(|key| self.get(*key).and_then(serde_json::Value::as_str))
                 .unwrap_or("index.js")
                 .to_string(),
         )
@@ -553,6 +560,7 @@ fn entry_field(package: &serde_json::Value) -> Result<String, String> {
     match rel {
         serde_json::Value::String(rel) => Ok(rel),
         _ => Err("cannot tell the entry module from \"exports\"".to_string()),
+    }
     }
 }
 

@@ -248,7 +248,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
     // The agent's own status mirror reads this route as `cloud:agent-sync`, so
     // the hub's offline copy gets the same empty list (`docs/plugins/
     // runtime.md` §5).
-    let plugins: Vec<crate::plugins::wire::PluginStatus> = if crate::plugins::is_cloud(&who) {
+    let plugins: Vec<crate::plugins::wire::PluginStatus> = if who.is_cloud() {
         Vec::new()
     } else {
         state.plugins.status_async().await.into_iter().map(Into::into).collect()

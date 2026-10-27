@@ -57,7 +57,7 @@ pub async fn serve_asset(
 ) -> Response<Body> {
     // The guard resolved a bridged request's identity even on this exempt
     // surface; a device's request is answered nothing, key or no key.
-    if super::is_cloud(&who) {
+    if who.is_cloud() {
         return not_found();
     }
     let plugins = state.plugins.clone();

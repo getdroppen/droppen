@@ -159,106 +159,136 @@ fn parse(name: &str, text: &str) -> Result<Value, StoreError> {
     serde_json::from_str(text).map_err(|error| StoreError::Failed(format!("document {name:?} holds a value that is not JSON: {error}")))
 }
 
-fn select(tx: &rusqlite::Connection, name: &str) -> rusqlite::Result<Option<Row>> {
-    tx.query_row(
-        "SELECT revision, value, updated_at, updated_by FROM docs WHERE name = ?1",
-        (name,),
-        |row| {
-            Ok(Row {
-                revision: row.get::<_, i64>(0)?.max(0) as u64,
-                value: row.get(1)?,
-                updated_at: row.get(2)?,
-                updated_by: row.get(3)?,
-            })
-        },
-    )
-    .optional()
+/// Reading documents and their sizes from a store connection.
+trait StoreRead {
+    /// One document's row, if it exists.
+    fn select(&self, name: &str) -> rusqlite::Result<Option<Row>>;
+
+    /// Bytes of every live document, name and value.
+    fn live_bytes(&self) -> rusqlite::Result<u64>;
+
+        /// Bytes of every kept past version, name and value.
+    fn history_bytes(&self) -> rusqlite::Result<u64>;
 }
 
-/// Bytes of every live document, name and value. (`length()` of TEXT counts
-/// characters; the limit is bytes.)
-fn live_bytes(tx: &rusqlite::Connection) -> rusqlite::Result<u64> {
-    tx.query_row(
-        "SELECT COALESCE(SUM(length(CAST(value AS BLOB)) + length(CAST(name AS BLOB))), 0) FROM docs",
-        [],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|bytes| bytes.max(0) as u64)
-}
-
-/// Bytes of every kept past version, name and value.
-fn history_bytes(tx: &rusqlite::Connection) -> rusqlite::Result<u64> {
-    tx.query_row(
-        "SELECT COALESCE(SUM(length(CAST(value AS BLOB)) + length(CAST(name AS BLOB))), 0) FROM doc_history",
-        [],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|bytes| bytes.max(0) as u64)
-}
-
-/// Keep `old` as a past version of `name`, and forget all but the newest
-/// [`HISTORY_KEPT`] — and, of those, all but the newest that fit in
-/// [`MAX_HISTORY_BYTES_PER_DOC`].
-fn remember(tx: &Transaction<'_>, name: &str, old: &Row) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO doc_history (name, revision, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)",
-        (name, old.revision as i64, &old.value, &old.updated_at, &old.updated_by),
-    )?;
-    tx.execute(
-        "DELETE FROM doc_history WHERE name = ?1 AND rowid NOT IN
-             (SELECT rowid FROM doc_history WHERE name = ?1 ORDER BY rowid DESC LIMIT ?2)",
-        (name, HISTORY_KEPT as i64),
-    )?;
-    let sizes: Vec<(i64, u64)> = {
-        let mut statement = tx.prepare("SELECT rowid, length(CAST(value AS BLOB)) FROM doc_history WHERE name = ?1 ORDER BY rowid DESC")?;
-        let rows = statement.query_map((name,), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
-        rows.collect::<rusqlite::Result<_>>()?
-    };
-    let mut kept = 0u64;
-    for (index, (rowid, size)) in sizes.into_iter().enumerate() {
-        kept += size;
-        if index > 0 && kept > MAX_HISTORY_BYTES_PER_DOC {
-            tx.execute("DELETE FROM doc_history WHERE rowid = ?1", (rowid,))?;
-        }
+impl StoreRead for rusqlite::Connection {
+    fn select(&self, name: &str) -> rusqlite::Result<Option<Row>> {
+        self.query_row(
+            "SELECT revision, value, updated_at, updated_by FROM docs WHERE name = ?1",
+            (name,),
+            |row| {
+                Ok(Row {
+                    revision: row.get::<_, i64>(0)?.max(0) as u64,
+                    value: row.get(1)?,
+                    updated_at: row.get(2)?,
+                    updated_by: row.get(3)?,
+                })
+            },
+        )
+        .optional()
     }
-    Ok(())
+
+
+    /// Bytes of every live document, name and value. (`length()` of TEXT counts
+    /// characters; the limit is bytes.)
+    fn live_bytes(&self) -> rusqlite::Result<u64> {
+        self.query_row(
+            "SELECT COALESCE(SUM(length(CAST(value AS BLOB)) + length(CAST(name AS BLOB))), 0) FROM docs",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|bytes| bytes.max(0) as u64)
+    }
+
+
+    /// Bytes of every kept past version, name and value.
+    fn history_bytes(&self) -> rusqlite::Result<u64> {
+        self.query_row(
+            "SELECT COALESCE(SUM(length(CAST(value AS BLOB)) + length(CAST(name AS BLOB))), 0) FROM doc_history",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|bytes| bytes.max(0) as u64)
+    }
 }
+
+/// Writing a document and keeping its history, inside a store transaction.
+trait StoreWrite {
+    /// Keep `old` as a past version, bounded by [`HISTORY_KEPT`] and
+    /// [`MAX_HISTORY_BYTES_PER_DOC`].
+    fn remember(&self, name: &str, old: &Row) -> rusqlite::Result<()>;
+
+    /// Forget the oldest past versions until the store fits `limit`.
+    fn fit_history(&self, limit: u64) -> rusqlite::Result<()>;
+
+    /// Insert or replace one document row.
+    fn upsert(&self, name: &str, revision: u64, value: &str, updated_at: &str, by: Option<&str>) -> rusqlite::Result<()>;
+}
+
+impl StoreWrite for Transaction<'_> {
+    fn remember(&self, name: &str, old: &Row) -> rusqlite::Result<()> {
+        self.execute(
+            "INSERT INTO doc_history (name, revision, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (name, old.revision as i64, &old.value, &old.updated_at, &old.updated_by),
+        )?;
+        self.execute(
+            "DELETE FROM doc_history WHERE name = ?1 AND rowid NOT IN
+                 (SELECT rowid FROM doc_history WHERE name = ?1 ORDER BY rowid DESC LIMIT ?2)",
+            (name, HISTORY_KEPT as i64),
+        )?;
+        let sizes: Vec<(i64, u64)> = {
+            let mut statement = self.prepare("SELECT rowid, length(CAST(value AS BLOB)) FROM doc_history WHERE name = ?1 ORDER BY rowid DESC")?;
+            let rows = statement.query_map((name,), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut kept = 0u64;
+        for (index, (rowid, size)) in sizes.into_iter().enumerate() {
+            kept += size;
+            if index > 0 && kept > MAX_HISTORY_BYTES_PER_DOC {
+                self.execute("DELETE FROM doc_history WHERE rowid = ?1", (rowid,))?;
+            }
+        }
+        Ok(())
+    }
+
 
 /// Forget the oldest past versions, of any document, until the whole store is
 /// within `limit`. The live documents are the caller's to have checked.
-fn fit_history(tx: &Transaction<'_>, limit: u64) -> rusqlite::Result<()> {
-    let live = live_bytes(tx)?;
-    let mut over = (live + history_bytes(tx)?).saturating_sub(limit);
-    while over > 0 {
-        let oldest: Vec<(i64, u64)> = {
-            let mut statement =
-                tx.prepare("SELECT rowid, length(CAST(value AS BLOB)) + length(CAST(name AS BLOB)) FROM doc_history ORDER BY rowid LIMIT 256")?;
-            let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        if oldest.is_empty() {
-            break;
-        }
-        for (rowid, size) in oldest {
-            tx.execute("DELETE FROM doc_history WHERE rowid = ?1", (rowid,))?;
-            over = over.saturating_sub(size);
-            if over == 0 {
+    fn fit_history(&self, limit: u64) -> rusqlite::Result<()> {
+        let live = self.live_bytes()?;
+        let mut over = (live + self.history_bytes()?).saturating_sub(limit);
+        while over > 0 {
+            let oldest: Vec<(i64, u64)> = {
+                let mut statement =
+                    self.prepare("SELECT rowid, length(CAST(value AS BLOB)) + length(CAST(name AS BLOB)) FROM doc_history ORDER BY rowid LIMIT 256")?;
+                let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            if oldest.is_empty() {
                 break;
             }
+            for (rowid, size) in oldest {
+                self.execute("DELETE FROM doc_history WHERE rowid = ?1", (rowid,))?;
+                over = over.saturating_sub(size);
+                if over == 0 {
+                    break;
+                }
+            }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-fn upsert(tx: &Transaction<'_>, name: &str, revision: u64, value: &str, updated_at: &str, by: Option<&str>) -> rusqlite::Result<()> {
-    let revision = i64::try_from(revision).map_err(|_| abort(StoreError::Invalid("revision out of range".into())))?;
-    tx.execute(
-        "INSERT INTO docs (name, revision, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (name) DO UPDATE SET revision = excluded.revision, value = excluded.value,
-             updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-        (name, revision, value, updated_at, by),
-    )?;
-    Ok(())
+
+    fn upsert(&self, name: &str, revision: u64, value: &str, updated_at: &str, by: Option<&str>) -> rusqlite::Result<()> {
+        let revision = i64::try_from(revision).map_err(|_| abort(StoreError::Invalid("revision out of range".into())))?;
+        self.execute(
+            "INSERT INTO docs (name, revision, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (name) DO UPDATE SET revision = excluded.revision, value = excluded.value,
+                 updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+            (name, revision, value, updated_at, by),
+        )?;
+        Ok(())
+    }
 }
 
 fn check_name(name: &str) -> Result<(), StoreError> {
@@ -339,7 +369,7 @@ impl Store {
     /// One document, or `None`.
     pub fn get(&self, name: &str) -> Result<Option<Doc>, StoreError> {
         check_name(name)?;
-        let row = self.db.read(|conn| select(conn, name))?;
+        let row = self.db.read(|conn| conn.select(name))?;
         row.map(|row| row.into_doc(name)).transpose()
     }
 
@@ -389,7 +419,7 @@ impl Store {
 
     /// The bytes of JSON every live document holds together.
     pub fn bytes(&self) -> Result<u64, StoreError> {
-        Ok(self.db.read(live_bytes)?)
+        Ok(self.db.read(|conn| conn.live_bytes())?)
     }
 
     /// Write one document by compare-and-set: a batch of one.
@@ -432,7 +462,7 @@ impl Store {
         let docs = self.db.write_immediate(|tx| {
             let mut olds = Vec::with_capacity(encoded.len());
             for (write, _) in &encoded {
-                let current = select(tx, &write.name)?;
+                let current = tx.select(&write.name)?;
                 let holds = match (write.expected_revision, &current) {
                     (None, None) => true,
                     (Some(expected), Some(current)) => current.revision == expected,
@@ -453,7 +483,7 @@ impl Store {
                 .filter_map(|((write, _), old)| old.as_ref().map(|old| (old.value.len() + write.name.len()) as u64))
                 .sum();
             let added: u64 = encoded.iter().map(|(write, text)| (text.len() + write.name.len()) as u64).sum();
-            let total = live_bytes(tx)?.saturating_sub(replaced) + added;
+            let total = tx.live_bytes()?.saturating_sub(replaced) + added;
             if total > self.store_limit {
                 return Err(abort(over_store_limit(total, self.store_limit)));
             }
@@ -466,9 +496,9 @@ impl Store {
                         .ok_or_else(|| abort(StoreError::Invalid("revision out of range".into())))?,
                 };
                 if let Some(old) = &old {
-                    remember(tx, &write.name, old)?;
+                    tx.remember(&write.name, old)?;
                 }
-                upsert(tx, &write.name, revision, text, &at, by)?;
+                tx.upsert(&write.name, revision, text, &at, by)?;
                 docs.push(Doc {
                     name: write.name.clone(),
                     revision,
@@ -476,7 +506,7 @@ impl Store {
                     value: write.value.clone(),
                 });
             }
-            fit_history(tx, self.store_limit)?;
+            tx.fit_history(self.store_limit)?;
             Ok(docs)
         })?;
         Ok(docs)
@@ -578,25 +608,25 @@ impl Store {
                 }
                 for (name, old) in &existing {
                     if !seen.contains(name) {
-                        remember(tx, name, old)?;
+                        tx.remember(name, old)?;
                         tx.execute("DELETE FROM docs WHERE name = ?1", (name,))?;
                     }
                 }
                 for (doc, text) in &encoded {
                     let revision = match existing.get(&doc.name) {
                         Some(old) => {
-                            remember(tx, &doc.name, old)?;
+                            tx.remember(&doc.name, old)?;
                             doc.revision.max(old.revision + 1)
                         }
                         None => doc.revision,
                     };
-                    upsert(tx, &doc.name, revision, text, &doc.updated_at, by)?;
+                    tx.upsert(&doc.name, revision, text, &doc.updated_at, by)?;
                 }
-                let live = live_bytes(tx)?;
+                let live = tx.live_bytes()?;
                 if live > self.store_limit {
                     return Err(abort(over_store_limit(live, self.store_limit)));
                 }
-                fit_history(tx, self.store_limit)?;
+                tx.fit_history(self.store_limit)?;
                 let stored = {
                     let mut statement = tx.prepare("SELECT name, revision, value, updated_at, updated_by FROM docs ORDER BY name")?;
                     let rows = statement.query_map([], |row| {
@@ -795,7 +825,7 @@ mod tests {
         for n in 1..=10u64 {
             store.put("a", Some(n), value(n), None).unwrap();
         }
-        let total = |store: &Store| -> u64 { store.db.read(|conn| Ok(live_bytes(conn)? + history_bytes(conn)?)).unwrap() };
+        let total = |store: &Store| -> u64 { store.db.read(|conn| Ok(conn.live_bytes()? + conn.history_bytes()?)).unwrap() };
         assert!(total(&store) <= 200, "history is held to the store's limit: {}", total(&store));
         let kept = store.history("a", 0, Some(HISTORY_KEPT)).unwrap().versions;
         assert_eq!(kept[0].value, value(9), "the newest past version is the one kept");

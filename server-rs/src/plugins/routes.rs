@@ -175,37 +175,42 @@ where
     }
 }
 
-/// Run a blocking store call off the runtime: a write is an fsync.
-async fn blocking<T: Send + 'static>(
-    plugins: &Arc<Plugins>,
-    work: impl FnOnce(&Plugins) -> Result<T, PluginError> + Send + 'static,
-) -> Result<T, ApiError> {
-    let plugins = plugins.clone();
-    tokio::task::spawn_blocking(move || work(&plugins))
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?
-        .map_err(ApiError::from)
-}
-
-fn caller(who: &MaybeIdentity) -> Option<String> {
-    who.0.as_ref().map(|identity| identity.username.clone())
-}
-
-/// Refuse a request that came over the cloud agent's bridge: a device gets
-/// none of the plugin surface, and the answer is the one an unknown plugin
-/// gets so it learns nothing from the difference.
-fn refuse_cloud(who: &MaybeIdentity) -> Result<(), ApiError> {
-    if super::is_cloud(who) {
-        return Err(coded(
-            StatusCode::NOT_FOUND,
-            codes::PLUGIN_NOT_FOUND,
-            "no plugin is available to a bridged request",
-        ));
+impl Plugins {
+    /// Run a blocking store call off the runtime: a write is an fsync.
+    async fn blocking<T: Send + 'static>(
+        self: &Arc<Self>,
+        work: impl FnOnce(&Plugins) -> Result<T, PluginError> + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let plugins = self.clone();
+        tokio::task::spawn_blocking(move || work(&plugins))
+            .await
+            .map_err(|error| ApiError::internal(error.to_string()))?
+            .map_err(ApiError::from)
     }
-    Ok(())
 }
 
-/// [`refuse_cloud`], before the request's body is parsed.
+impl MaybeIdentity {
+    /// Refuse a request that came over the cloud agent's bridge: a device gets
+    /// none of the plugin surface, and the answer is the one an unknown plugin
+    /// gets so it learns nothing from the difference.
+    fn refuse_cloud(&self) -> Result<(), ApiError> {
+        if self.is_cloud() {
+            return Err(coded(
+                StatusCode::NOT_FOUND,
+                codes::PLUGIN_NOT_FOUND,
+                "no plugin is available to a bridged request",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The signed-in user behind a request, when there is one.
+    fn caller(&self) -> Option<String> {
+        self.0.as_ref().map(|identity| identity.username.clone())
+    }
+}
+
+/// [`MaybeIdentity::refuse_cloud`], before the request's body is parsed.
 ///
 /// A handler's arguments — including a JSON body — are extracted before its
 /// first line runs, so a malformed body from a device would otherwise be
@@ -233,7 +238,7 @@ async fn refuse_cloud_requests(request: Request, next: Next) -> Response {
 /// Every plugin installed in this instance, as this instance sees it.
 #[api(id = "list_plugins", group = "plugins", summary = "List plugins")]
 pub async fn list_plugins(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
-    refuse_cloud(&who)?;
+    who.refuse_cloud()?;
     Ok(Json(PluginList {
         plugins: state.plugins.status_async().await.into_iter().map(PluginStatus::from).collect(),
     }))
@@ -251,9 +256,9 @@ pub async fn install_plugin(
     #[api(skip)] who: MaybeIdentity,
     #[api(skip)] PluginTarball(tarball): PluginTarball,
 ) -> Result<Json<PluginStatus>, ApiError> {
-    refuse_cloud(&who)?;
-    let by = caller(&who);
-    blocking(&state.plugins, move |plugins| plugins.install(&tarball, by.as_deref()))
+    who.refuse_cloud()?;
+    let by = who.caller();
+    state.plugins.blocking( move |plugins| plugins.install(&tarball, by.as_deref()))
         .await
         .map(|status| Json(status.into()))
 }
@@ -266,8 +271,8 @@ pub async fn uninstall_plugin(
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<PluginDeleted, ApiError> {
-    refuse_cloud(&who)?;
-    blocking(&state.plugins, move |plugins| plugins.uninstall(&id)).await?;
+    who.refuse_cloud()?;
+    state.plugins.blocking( move |plugins| plugins.uninstall(&id)).await?;
     Ok(PluginDeleted)
 }
 
@@ -279,9 +284,9 @@ pub async fn set_plugin_enabled(
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<PluginSwitch>,
 ) -> Result<Json<PluginStatus>, ApiError> {
-    refuse_cloud(&who)?;
-    let by = caller(&who);
-    blocking(&state.plugins, move |plugins| {
+    who.refuse_cloud()?;
+    let by = who.caller();
+    state.plugins.blocking( move |plugins| {
         plugins.set_enabled(&id, body.enabled, by.as_deref(), DecisionReason::Settings)
     })
     .await
@@ -296,9 +301,9 @@ pub async fn list_plugin_docs(
     ApiQuery(query): ApiQuery<PluginDocQuery>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDocList>, ApiError> {
-    refuse_cloud(&who)?;
+    who.refuse_cloud()?;
     let prefix = query.prefix.unwrap_or_default();
-    blocking(&state.plugins, move |plugins| plugins.list(&id, &prefix)).await.map(|docs| {
+    state.plugins.blocking( move |plugins| plugins.list(&id, &prefix)).await.map(|docs| {
         Json(PluginDocList {
             docs: docs.into_iter().map(Into::into).collect(),
         })
@@ -312,8 +317,8 @@ pub async fn get_plugin_doc(
     ApiPath((id, name)): ApiPath<(String, String)>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDoc>, ApiError> {
-    refuse_cloud(&who)?;
-    blocking(&state.plugins, move |plugins| plugins.get(&id, &name))
+    who.refuse_cloud()?;
+    state.plugins.blocking( move |plugins| plugins.get(&id, &name))
         .await
         .map(|doc| Json(doc.into()))
 }
@@ -326,9 +331,9 @@ pub async fn put_plugin_doc(
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginPutDoc>,
 ) -> Result<Json<PluginDoc>, ApiError> {
-    refuse_cloud(&who)?;
-    let by = caller(&who);
-    blocking(&state.plugins, move |plugins| plugins.put(&id, &name, body.into(), by.as_deref()))
+    who.refuse_cloud()?;
+    let by = who.caller();
+    state.plugins.blocking( move |plugins| plugins.put(&id, &name, body.into(), by.as_deref()))
         .await
         .map(|doc| Json(doc.into()))
 }
@@ -341,10 +346,10 @@ pub async fn plugin_batch(
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginBatch>,
 ) -> Result<Json<PluginBatchResult>, ApiError> {
-    refuse_cloud(&who)?;
-    let by = caller(&who);
+    who.refuse_cloud()?;
+    let by = who.caller();
     let writes = body.writes.into_iter().map(Into::into).collect();
-    blocking(&state.plugins, move |plugins| plugins.batch(&id, writes, by.as_deref()))
+    state.plugins.blocking( move |plugins| plugins.batch(&id, writes, by.as_deref()))
         .await
         .map(|docs| {
             Json(PluginBatchResult {
@@ -361,10 +366,10 @@ pub async fn plugin_doc_history(
     ApiQuery(query): ApiQuery<PluginHistoryQuery>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDocHistory>, ApiError> {
-    refuse_cloud(&who)?;
+    who.refuse_cloud()?;
     let offset = query.offset.unwrap_or(0) as usize;
     let limit = query.limit.map(|limit| limit as usize);
-    blocking(&state.plugins, move |plugins| plugins.history(&id, &name, offset, limit))
+    state.plugins.blocking( move |plugins| plugins.history(&id, &name, offset, limit))
         .await
         .map(|page| {
             Json(PluginDocHistory {
@@ -725,9 +730,9 @@ mod tests {
             username: "cloud:device-1".into(),
             token_sha256: None,
         }));
-        let refused = refuse_cloud(&cloud).expect_err("a bridged identity is refused");
+        let refused = cloud.refuse_cloud().expect_err("a bridged identity is refused");
         assert_eq!((refused.status(), refused.body()["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
-        assert!(refuse_cloud(&MaybeIdentity(None)).is_ok());
+        assert!(MaybeIdentity(None).refuse_cloud().is_ok());
 
         let home = tempfile::tempdir().unwrap();
         let (state, router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;

@@ -161,15 +161,27 @@ impl std::fmt::Debug for Plugins {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+/// Taking a mutex back from a panic rather than propagating it.
+trait MutexExt<T> {
+    /// Lock, recovering the guard a panic left poisoned.
+    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for Mutex<T> {
+    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 /// Whether this request came over the cloud agent's bridge and speaks for a
 /// device (`crate::auth` resolves it from the agent's headers). Nothing of the
 /// plugin host is served to one.
-pub(crate) fn is_cloud(who: &crate::auth::MaybeIdentity) -> bool {
-    who.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"))
+impl crate::auth::MaybeIdentity {
+    /// Whether this request came over the cloud agent's bridge and speaks for
+    /// a device. Nothing of the plugin host is served to one.
+    pub(crate) fn is_cloud(&self) -> bool {
+        self.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"))
+    }
 }
 
 impl Plugins {
@@ -312,7 +324,7 @@ impl Plugins {
     fn evaluate(&self, package: &Installed, key: Option<&str>) -> PluginStatus {
         let manifest = &package.manifest;
         let id = manifest.id.as_str();
-        let mut status = effective(manifest, self.force_on.contains(id), self.force_off.contains(id), self.decision(id).as_ref(), &package.build);
+        let mut status = manifest.effective( self.force_on.contains(id), self.force_off.contains(id), self.decision(id).as_ref(), &package.build);
         if status.enabled {
             if let Some(key) = key {
                 status.entry = Some(entry_url(key, id, &package.build, &package.entry));
@@ -327,7 +339,7 @@ impl Plugins {
     /// the life of the process.
     fn asset_key(&self) -> String {
         {
-            let cached = lock(&self.asset_key);
+            let cached = self.asset_key.lock_or_recover();
             if let Some(key) = cached.as_ref() {
                 return key.clone();
             }
@@ -352,7 +364,7 @@ impl Plugins {
                 }
             }
         };
-        *lock(&self.asset_key) = Some(key.clone());
+        *self.asset_key.lock_or_recover() = Some(key.clone());
         key
     }
 
@@ -360,7 +372,7 @@ impl Plugins {
     /// asks with this: a request cannot bring a key into existence.
     fn stored_asset_key(&self) -> Option<String> {
         {
-            let cached = lock(&self.asset_key);
+            let cached = self.asset_key.lock_or_recover();
             if let Some(key) = cached.as_ref() {
                 return Some(key.clone());
             }
@@ -370,7 +382,7 @@ impl Plugins {
             return None;
         }
         let key = crate::db::at(&self.instance_db).kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key))?;
-        *lock(&self.asset_key) = Some(key.clone());
+        *self.asset_key.lock_or_recover() = Some(key.clone());
         Some(key)
     }
 
@@ -507,7 +519,7 @@ impl Plugins {
     /// moved aside since (a purge) is forgotten, and the store made afresh.
     pub(crate) fn open_store(&self, id: &str) -> Arc<Store> {
         let path = self.store_path(id);
-        let mut stores = lock(&self.stores);
+        let mut stores = self.stores.lock_or_recover();
         if let Some(store) = stores.get(id) {
             if path.exists() {
                 return store.clone();
@@ -607,9 +619,16 @@ fn reset_store(dir: &Path) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
-/// A plugin's switch, worked out: configuration, then the instance's decision,
-/// then off — and on only when compatible.
-pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision: Option<&Decision>, build: &str) -> PluginStatus {
+/// Working out one plugin's switch.
+trait PluginManifestExt {
+    /// Configuration first, then the instance's decision, then off — and on
+    /// only when compatible.
+    fn effective(&self, force_on: bool, force_off: bool, decision: Option<&Decision>, build: &str) -> PluginStatus;
+}
+
+impl PluginManifestExt for Manifest {
+    fn effective(&self, force_on: bool, force_off: bool, decision: Option<&Decision>, build: &str) -> PluginStatus {
+    let manifest = self;
     let host = sdk_version();
     let compatible = manifest.compatible_with(&host);
     let (wanted, why_off, pinned) = if force_off {
@@ -649,6 +668,7 @@ pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision:
         entry: None,
         aliases: manifest.aliases.clone(),
         permissions: manifest.permissions.clone(),
+    }
     }
 }
 
@@ -1084,26 +1104,26 @@ pub(crate) mod tests {
             reason: DecisionReason::Settings,
         };
         let build = "0.1.0-0123456789ab";
-        assert!(!effective(&manifest, false, false, None, build).enabled, "off until something says otherwise");
-        assert!(effective(&manifest, false, false, Some(&decided(true)), build).enabled);
-        assert!(!effective(&manifest, false, false, Some(&decided(false)), build).enabled);
-        let pinned = effective(&manifest, true, false, Some(&decided(false)), build);
+        assert!(!manifest.effective( false, false, None, build).enabled, "off until something says otherwise");
+        assert!(manifest.effective( false, false, Some(&decided(true)), build).enabled);
+        assert!(!manifest.effective( false, false, Some(&decided(false)), build).enabled);
+        let pinned = manifest.effective( true, false, Some(&decided(false)), build);
         assert!(pinned.enabled && pinned.forced, "the configuration beats the instance");
         assert!(pinned.entry.is_none(), "a switch cannot make the URL itself");
-        let both = effective(&manifest, true, true, Some(&decided(true)), build);
+        let both = manifest.effective( true, true, Some(&decided(true)), build);
         assert!(!both.enabled && both.forced, "disable beats enable");
         assert!(both.reason.is_some());
-        assert_eq!(effective(&manifest, false, false, Some(&decided(true)), build).reason, None, "nothing to explain");
+        assert_eq!(manifest.effective( false, false, Some(&decided(true)), build).reason, None, "nothing to explain");
 
         let mut future = manifest.clone();
         future.engines.droppen = "^0.2.0".parse().unwrap();
-        let status = effective(&future, true, false, None, build);
+        let status = future.effective( true, false, None, build);
         assert!(!status.enabled && !status.compatible, "never on when the host cannot run it");
         assert!(status.switched_on, "but still wanted, so the page can say it needs an update");
         assert!(status.reason.unwrap().contains("^0.2.0"));
-        assert!(effective(&future, false, false, Some(&decided(true)), build).switched_on);
-        assert!(!effective(&future, false, false, Some(&decided(false)), build).switched_on, "switched off: nothing to say");
-        assert!(!effective(&future, true, true, None, build).switched_on, "pinned off");
+        assert!(future.effective( false, false, Some(&decided(true)), build).switched_on);
+        assert!(!future.effective( false, false, Some(&decided(false)), build).switched_on, "switched off: nothing to say");
+        assert!(!future.effective( true, true, None, build).switched_on, "pinned off");
     }
 
     #[test]
