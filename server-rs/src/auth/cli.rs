@@ -221,6 +221,14 @@ fn named(name: String) -> Result<String, String> {
 /// a server that has not been started yet is a thing somebody may legitimately
 /// mean.
 pub(crate) fn home_paths(requested: Option<&str>) -> Result<Paths, String> {
+    cli_context(requested).map(|(paths, _)| paths)
+}
+
+/// [`home_paths`] and the configuration it was derived from, loaded once.
+///
+/// A command that needs both — the paths to find the instance, the config for
+/// its own switches — used to load and merge every source twice.
+pub(crate) fn cli_context(requested: Option<&str>) -> Result<(Paths, gotcha::ConfigWrapper<crate::config::AppConfig>), String> {
     let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
     let instance = match requested {
         Some(name) => name.to_string(),
@@ -239,7 +247,7 @@ pub(crate) fn home_paths(requested: Option<&str>) -> Result<Paths, String> {
             ));
         }
     }
-    Ok(paths)
+    Ok((paths, config))
 }
 
 async fn add(store: &UsersStore, paths: &Paths, name: &str, kind: Kind) -> Result<(), String> {
@@ -389,8 +397,7 @@ pub async fn setup_code(args: &[String]) -> Result<(), String> {
     if !rest.is_empty() {
         return Err(SETUP_CODE_USAGE.to_string());
     }
-    let paths = home_paths(instance.as_deref())?;
-    let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
+    let (paths, config) = cli_context(instance.as_deref())?;
     let store = UsersStore::new(&paths);
     let name = paths.instance();
     let file = super::setup::code_file(&paths);

@@ -110,8 +110,7 @@ fn parse(args: &[String]) -> Result<Action, String> {
 pub async fn run(args: &[String]) -> Result<(), String> {
     let (args, instance) = crate::auth::cli::take_instance(args)?;
     let action = parse(&args)?;
-    let paths = crate::auth::cli::home_paths(instance.as_deref())?;
-    let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
+    let (paths, config) = crate::auth::cli::cli_context(instance.as_deref())?;
     let plugins = Plugins::new(paths.instance_dir(), paths.instance_db(), &config.app.plugins, None);
     tokio::task::spawn_blocking(move || execute(&plugins, &paths, action))
         .await
