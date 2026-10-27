@@ -8,22 +8,85 @@
 //! placed on the fallback answers every non-API path, resolving assets out of
 //! the binary and falling back to `index.html` so client-side routing works on
 //! a deep link.
+//!
+//! Its answers go out compressed to a browser that takes brotli or gzip
+//! (tower-http's compression, around this service only). On a LAN, a tailnet
+//! or localhost nothing between this server and the browser compresses them,
+//! and the JavaScript a page boots from is about 3 MB as it is.
 
 use std::convert::Infallible;
 use std::task::{Context, Poll};
 
-use gotcha::axum::body::Body;
+use gotcha::axum::body::{Body, HttpBody};
 use gotcha::axum::extract::Request;
 use gotcha::axum::http::{header, HeaderValue, Response, StatusCode};
+use tower_http::compression::predicate::{NotForContentType, SizeAbove};
+use tower_http::compression::{Compression, CompressionBody, CompressionLevel, Predicate};
+use tower_http::map_response_body::MapResponseBody;
 use tower_service::Service;
 
 /// Serves the SPA out of the binary.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SpaService;
 
+/// [`SpaService`], its answers compressed for a client that accepts it.
+pub type Spa = Compressed<SpaService>;
+
 /// The fallback service for every path the API did not claim.
-pub fn service() -> SpaService {
-    SpaService
+pub fn service() -> Spa {
+    compressed(SpaService)
+}
+
+/// `inner`, behind tower-http's compression: brotli or gzip, whichever the
+/// request's `Accept-Encoding` weighs higher (every line of it; brotli on a
+/// tie), for an answer [`Compressible`] lets through.
+///
+/// Only the web app's own files go through it, never `/api/*`, the feed and
+/// terminal sockets or `/embed/*`: an answer that carries a secret next to
+/// text a page can make the server reflect is what BREACH reads through
+/// compression, and a stream would be held back by the compressor's buffer.
+///
+/// On the fly, so at a level a request can afford: 5, brotli and gzip alike.
+/// On the app's 2 MB main chunk, brotli 5 takes about 80 ms of one core and
+/// comes out 15% larger than brotli 11, which takes seconds; tower-http's
+/// default, 4, takes half the time and comes out 25% larger, little better
+/// than gzip on the vendor chunk. A file under `/assets/` costs that once per
+/// browser, which then keeps it for a year.
+pub type Compressed<S> = MapResponseBody<Compression<S, Compressible>, fn(CompressionBody<Body>) -> Body>;
+
+fn compressed<S>(inner: S) -> Compressed<S> {
+    // Never zstd, should another crate turn the feature on: it links a C
+    // library the Linux and desktop builds do without. Nor deflate, which
+    // every browser that sends it sends with gzip.
+    let compression = Compression::new(inner)
+        .no_zstd()
+        .no_deflate()
+        .quality(CompressionLevel::Precise(5))
+        .compress_when(Compressible);
+    MapResponseBody::new(compression, Body::new as fn(CompressionBody<Body>) -> Body)
+}
+
+/// Files smaller than this are sent as they are: compressing them saves about
+/// what `Content-Encoding` and `Vary` cost. The feed socket's floor too
+/// (`feed::mux::COMPRESS_MIN`).
+const COMPRESS_MIN: u16 = 1024;
+
+/// Which answers go out compressed: those of [`COMPRESS_MIN`] bytes or more,
+/// except images (svg is text) and fonts, which are compressed formats already,
+/// and a server-sent event stream, which must reach the page event by event
+/// whatever this service comes to answer.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Compressible;
+
+impl Predicate for Compressible {
+    fn should_compress<B: HttpBody>(&self, response: &Response<B>) -> bool {
+        SizeAbove::new(COMPRESS_MIN)
+            .and(NotForContentType::IMAGES)
+            .and(NotForContentType::const_new("font/"))
+            .and(NotForContentType::SSE)
+            .and(NotForContentType::GRPC)
+            .should_compress(response)
+    }
 }
 
 impl<B> Service<Request<B>> for SpaService {
@@ -159,8 +222,10 @@ fn etag_of(body: &[u8]) -> String {
 
 /// Whether an `If-None-Match` names `etag`. Weakly: a proxy that compressed
 /// the body on its way out (the tunnel does) hands the browser `W/"…"`, and
-/// that is what comes back.
+/// that is what comes back; and the tag of a file this server compresses is
+/// weak itself ([`file_response`]).
 fn matches_etag(if_none_match: &str, etag: &str) -> bool {
+    let etag = etag.trim_start_matches("W/");
     if_none_match
         .split(',')
         .map(|candidate| candidate.trim().trim_start_matches("W/"))
@@ -176,20 +241,26 @@ fn file_response(path: &str, body: Vec<u8>, versioned: bool, if_none_match: Opti
     // its bytes again: the icons and the shell are most of a reload's requests.
     let immutable = path.starts_with("assets/") || versioned;
     let etag = (!immutable).then(|| etag_of(&body));
-    let unchanged = matches!((&etag, if_none_match), (Some(etag), Some(sent)) if matches_etag(sent, etag));
-    let mut response = if unchanged {
-        let mut response = Response::new(Body::empty());
+    let mut response = Response::new(Body::from(body));
+    if let Ok(value) = HeaderValue::from_str(&content_type(path)) {
+        response.headers_mut().insert(header::CONTENT_TYPE, value);
+    }
+    // A file [`compressed`] sends compressed to a client that takes it: then
+    // every answer for it depends on `Accept-Encoding` — a `304` too, which
+    // the compression layer leaves alone — and its tag is weak, the same for
+    // each coding, as nginx makes it: the compressed bytes are not the ones a
+    // strong tag of the file would name, only the same content.
+    let compressible = Compressible.should_compress(&response);
+    let etag = etag.map(|etag| if compressible { format!("W/{etag}") } else { etag });
+    if matches!((&etag, if_none_match), (Some(etag), Some(sent)) if matches_etag(sent, etag)) {
+        response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
-        response
-    } else {
-        let mut response = Response::new(Body::from(body));
-        if let Ok(value) = HeaderValue::from_str(&content_type(path)) {
-            response.headers_mut().insert(header::CONTENT_TYPE, value);
-        }
-        response
-    };
+    }
     let cache = if immutable { "public, max-age=31536000, immutable" } else { "no-cache" };
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    if compressible {
+        response.headers_mut().insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
     if let Some(value) = etag.and_then(|etag| HeaderValue::from_str(&etag).ok()) {
         response.headers_mut().insert(header::ETAG, value);
     }
@@ -261,6 +332,8 @@ mod assets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gotcha::axum::http::Method;
+    use gotcha::axum::Router;
 
     fn get(path: &str) -> Response<Body> {
         respond(path)
@@ -272,8 +345,212 @@ mod tests {
         if let Some(value) = header_value {
             builder = builder.header("service-worker", value);
         }
-        let mut spa = service();
+        let mut spa = SpaService;
         Service::call(&mut spa, builder.body(()).unwrap()).into_inner().unwrap()
+    }
+
+    /// Text big enough to be compressed.
+    fn script() -> Vec<u8> {
+        "console.log(\"the file as it is\");\n".repeat(64).into_bytes()
+    }
+
+    /// What a client gets for a request with `headers` when the server answers
+    /// with `body` as the file at `path`, compression included:
+    /// [`file_response`] behind [`compressed`], mounted as the server mounts
+    /// it and reached over a real connection (hyper is what sets
+    /// `Content-Length` and drops a `HEAD`'s body). The client decodes nothing.
+    async fn fetch(method: Method, path: &'static str, body: Vec<u8>, headers: &[(&'static str, &str)]) -> Response<Body> {
+        #[derive(Clone)]
+        struct File(&'static str, Vec<u8>);
+        impl<B> Service<Request<B>> for File {
+            type Response = Response<Body>;
+            type Error = Infallible;
+            type Future = std::future::Ready<Result<Response<Body>, Infallible>>;
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+                Poll::Ready(Ok(()))
+            }
+            fn call(&mut self, request: Request<B>) -> Self::Future {
+                let sent = request.headers().get(header::IF_NONE_MATCH).and_then(|value| value.to_str().ok());
+                std::future::ready(Ok(file_response(self.0, self.1.clone(), false, sent)))
+            }
+        }
+        let router: Router = Router::new().fallback_service(compressed(File(path, body)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { gotcha::axum::serve(listener, router).await });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut request = client.request(method, format!("http://{addr}/{path}"));
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let sent = request.send().await.unwrap();
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = sent.status();
+        *response.headers_mut() = sent.headers().clone();
+        *response.body_mut() = Body::from(sent.bytes().await.unwrap());
+        response
+    }
+
+    async fn body_of(response: Response<Body>) -> Vec<u8> {
+        gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()
+    }
+
+    fn gunzip(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(bytes).read_to_end(&mut out).unwrap();
+        out
+    }
+
+    fn header_of<'a>(response: &'a Response<Body>, name: header::HeaderName) -> Option<&'a str> {
+        response.headers().get(name).map(|value| value.to_str().unwrap())
+    }
+
+    #[tokio::test]
+    async fn the_web_app_goes_out_in_the_coding_the_client_weighs_highest() {
+        let coding = |accept: Option<&'static str>| async move {
+            let headers: Vec<_> = accept.map(|accept| ("accept-encoding", accept)).into_iter().collect();
+            let response = fetch(Method::GET, "assets/index-abc123.js", script(), &headers).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let kind = content_type("assets/index-abc123.js");
+            assert_eq!(header_of(&response, header::CONTENT_TYPE), Some(kind.as_str()), "{accept:?}: the file's own type");
+            let vary: Vec<_> = response.headers().get_all(header::VARY).iter().map(|value| value.to_str().unwrap()).collect();
+            assert_eq!(vary, ["accept-encoding"], "{accept:?}: every answer for the file, once");
+            header_of(&response, header::CONTENT_ENCODING).map(str::to_string)
+        };
+        assert_eq!(coding(Some("gzip, deflate, br, zstd")).await.as_deref(), Some("br"), "a browser over https, or on localhost");
+        assert_eq!(coding(Some("gzip, deflate")).await.as_deref(), Some("gzip"), "a browser over plain http");
+        assert_eq!(coding(None).await, None, "no header: curl, a script");
+        assert_eq!(coding(Some("")).await, None);
+        assert_eq!(coding(Some("identity")).await, None);
+        assert_eq!(coding(Some("deflate, zstd")).await, None, "never deflate or zstd");
+        assert_eq!(coding(Some("br;q=0, gzip")).await.as_deref(), Some("gzip"), "q=0 rules a coding out");
+        assert_eq!(coding(Some("br;q=0, gzip;q=0")).await, None);
+        assert_eq!(coding(Some("gzip;q=1.0, br;q=0.5")).await.as_deref(), Some("gzip"), "the client's preference first");
+        assert_eq!(coding(Some("gzip;q=0.5, br;q=0.5")).await.as_deref(), Some("br"), "brotli on a tie");
+        assert_eq!(coding(Some("x-gzip")).await.as_deref(), Some("gzip"));
+
+        let br = fetch(Method::GET, "assets/index-abc123.js", script(), &[("accept-encoding", "br")]).await;
+        assert!(br.headers().get(header::CONTENT_LENGTH).is_none(), "streamed as it is compressed");
+        assert!(body_of(br).await.len() < script().len());
+        let gzip = fetch(Method::GET, "assets/index-abc123.js", script(), &[("accept-encoding", "gzip")]).await;
+        assert_eq!(gunzip(&body_of(gzip).await), script(), "the file, compressed");
+        let identity = fetch(Method::GET, "assets/index-abc123.js", script(), &[]).await;
+        assert_eq!(header_of(&identity, header::CONTENT_LENGTH), Some(script().len().to_string().as_str()));
+        assert_eq!(body_of(identity).await, script());
+    }
+
+    #[tokio::test]
+    async fn accept_encoding_split_over_several_lines_is_one_list() {
+        let coding = |lines: &'static [(&'static str, &'static str)]| async move {
+            let response = fetch(Method::GET, "assets/index-abc123.js", script(), lines).await;
+            header_of(&response, header::CONTENT_ENCODING).map(str::to_string)
+        };
+        assert_eq!(coding(&[("accept-encoding", "gzip"), ("accept-encoding", "br")]).await.as_deref(), Some("br"), "not the first line alone");
+        assert_eq!(coding(&[("accept-encoding", "br;q=0"), ("accept-encoding", "gzip")]).await.as_deref(), Some("gzip"));
+        assert_eq!(coding(&[("accept-encoding", "identity"), ("accept-encoding", "br;q=0")]).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_compressed_files_tag_is_weak_and_the_same_for_every_coding_and_its_304_comes() {
+        let shell = |headers: &'static [(&'static str, &'static str)]| fetch(Method::GET, "index.html", script(), headers);
+        let strong = etag_of(&script());
+        let weak = format!("W/{strong}");
+        let codings: [&'static [(&'static str, &'static str)]; 3] = [&[("accept-encoding", "br")], &[("accept-encoding", "gzip")], &[]];
+        for headers in codings {
+            let response = shell(headers).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(header_of(&response, header::ETAG), Some(weak.as_str()), "{headers:?}: never the strong tag of the bytes as they are");
+        }
+
+        let again = fetch(Method::GET, "index.html", script(), &[("accept-encoding", "br"), ("if-none-match", weak.as_str())]).await;
+        assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(header_of(&again, header::ETAG), Some(weak.as_str()));
+        assert_eq!(header_of(&again, header::VARY), Some("accept-encoding"), "a 304 varies as its 200 does");
+        assert_eq!(header_of(&again, header::CACHE_CONTROL), Some("no-cache"));
+        assert!(again.headers().get(header::CONTENT_ENCODING).is_none(), "a 304 has no body to encode");
+        assert!(body_of(again).await.is_empty());
+        // An older server's strong tag, a list that names it, `*`.
+        for sent in [strong.clone(), format!("\"other\", W/\"x\", {weak}"), "*".to_string()] {
+            let response = fetch(Method::GET, "index.html", script(), &[("accept-encoding", "gzip"), ("if-none-match", sent.as_str())]).await;
+            assert_eq!(response.status(), StatusCode::NOT_MODIFIED, "{sent:?}");
+        }
+        let stale = fetch(Method::GET, "index.html", script(), &[("accept-encoding", "br"), ("if-none-match", "W/\"stale\"")]).await;
+        assert_eq!(stale.status(), StatusCode::OK, "a deploy is never a 304");
+        assert_eq!(header_of(&stale, header::CONTENT_ENCODING), Some("br"));
+
+        let tiny = fetch(Method::GET, "index.html", b"<!doctype html>".to_vec(), &[("accept-encoding", "br")]).await;
+        assert_eq!(header_of(&tiny, header::ETAG), Some(etag_of(b"<!doctype html>").as_str()), "sent as it is: the strong tag");
+        assert!(tiny.headers().get(header::VARY).is_none() && tiny.headers().get(header::CONTENT_ENCODING).is_none());
+    }
+
+    /// Images, fonts and files too small to gain go out as they are; an
+    /// event stream never goes out compressed, whatever this service comes to
+    /// answer.
+    #[cfg(feature = "embed")]
+    #[tokio::test]
+    async fn images_fonts_tiny_files_and_event_streams_are_sent_as_they_are() {
+        for (path, body) in [
+            ("icon-512.png", vec![0x89; 4096]),
+            ("assets/KaTeX_Main-Regular-abc.woff2", vec![7; 4096]),
+            ("assets/sheet-abc.js", b"export const x = 1;".to_vec()),
+        ] {
+            let response = fetch(Method::GET, path, body.clone(), &[("accept-encoding", "br, gzip")]).await;
+            assert!(response.headers().get(header::CONTENT_ENCODING).is_none(), "{path}");
+            assert!(response.headers().get(header::VARY).is_none(), "{path}: one answer for everyone");
+            assert_eq!(body_of(response).await, body, "{path}");
+        }
+        let svg = fetch(Method::GET, "logo.svg", "<svg><path d=\"M0 0h1v1z\"/></svg>\n".repeat(64).into_bytes(), &[("accept-encoding", "br")]).await;
+        assert_eq!(header_of(&svg, header::CONTENT_ENCODING), Some("br"), "svg is text");
+
+        let mut events = Response::new(Body::from("data: {}\n\n".repeat(1024)));
+        events.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+        assert!(!Compressible.should_compress(&events));
+        events.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+        assert!(Compressible.should_compress(&events), "the same answer as text");
+    }
+
+    /// `HEAD` and `Range`, as a client sees them.
+    #[tokio::test]
+    async fn head_is_the_get_without_its_body_and_a_range_is_the_whole_file() {
+        let get = fetch(Method::GET, "index.html", script(), &[("accept-encoding", "gzip, deflate, br")]).await;
+        let head = fetch(Method::HEAD, "index.html", script(), &[("accept-encoding", "gzip, deflate, br")]).await;
+        assert_eq!(head.status(), StatusCode::OK);
+        for name in [header::CONTENT_ENCODING, header::CONTENT_TYPE, header::CONTENT_LENGTH, header::VARY, header::ETAG, header::CACHE_CONTROL] {
+            assert_eq!(head.headers().get(&name), get.headers().get(&name), "{name}");
+        }
+        assert_eq!(header_of(&head, header::CONTENT_ENCODING), Some("br"));
+        assert!(body_of(head).await.is_empty());
+        let plain = fetch(Method::HEAD, "index.html", script(), &[]).await;
+        assert_eq!(header_of(&plain, header::CONTENT_LENGTH), Some(script().len().to_string().as_str()), "as it is, its length");
+
+        let ranged = fetch(Method::GET, "index.html", script(), &[("accept-encoding", "br"), ("range", "bytes=0-0")]).await;
+        assert_eq!(ranged.status(), StatusCode::OK, "ranges are not served: the whole file");
+        assert!(ranged.headers().get(header::CONTENT_RANGE).is_none());
+        assert_eq!(header_of(&ranged, header::CONTENT_ENCODING), Some("br"));
+    }
+
+    /// The shell and its scripts out of this build, through the service the
+    /// server mounts; only a build with `web/dist` has them.
+    #[cfg(all(feature = "embed", not(web_dist_missing)))]
+    #[tokio::test]
+    async fn the_embedded_shell_goes_out_compressed_from_any_route() {
+        let shell = assets::get("index.html").expect("the build's shell");
+        let send = |path: &'static str, accept: &'static str| async move {
+            let request = gotcha::axum::http::Request::builder().uri(path).header("accept-encoding", accept).body(Body::empty()).unwrap();
+            Service::call(&mut service(), request).await.unwrap()
+        };
+        for route in ["/", "/sessions", "/some/deep/route"] {
+            let gzip = send(route, "gzip, deflate").await;
+            assert_eq!(header_of(&gzip, header::CONTENT_ENCODING), Some("gzip"), "{route}");
+            assert_eq!(header_of(&gzip, header::VARY), Some("accept-encoding"), "{route}");
+            assert!(header_of(&gzip, header::ETAG).is_some_and(|etag| etag.starts_with("W/\"")), "{route}");
+            assert_eq!(gunzip(&body_of(gzip).await), shell, "{route}: the shell");
+            assert_eq!(header_of(&send(route, "gzip, deflate, br, zstd").await, header::CONTENT_ENCODING), Some("br"), "{route}");
+        }
+        let missing = send("/assets/index-NoSuchHash.js", "br").await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert!(missing.headers().get(header::CONTENT_ENCODING).is_none());
     }
 
     #[test]

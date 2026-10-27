@@ -66,6 +66,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
 tower-service = "0.3"
+# Compressing the web app's answers (`static_files`), brotli and gzip only: the
+# crate is already in the graph (reqwest's), and these are its pure-Rust
+# codecs; zstd would link a C library.
+tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "map-response-body"] }
 libc = "0.2"
 
 serde = { version = "1", features = ["derive"] }
