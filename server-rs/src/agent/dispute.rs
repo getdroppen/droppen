@@ -13,14 +13,14 @@
 //!   holds, its hash and the sign key it installed, signed with that key
 //!   ([`statement`]).
 //! - **Kept** before anything is sent: `agent/rotation-dispute-<seq>-<id>.json`,
-//!   written whole and flushed ([`keep`]). It needs no seed and holds no
+//!   written whole and flushed ([`Paths::keep_dispute`]). It needs no seed and holds no
 //!   secret, so it outlives "add this device again with a new identity" and
 //!   "disconnect" alike, until the hub has it.
 //! - **Delivered** to `POST /v1/rotations/{host}/disputes` `{seq, entry_hash,
 //!   sig}` — no session: the signature is the credential — until the hub
 //!   says 200, or 410 `host_removed` (then it stops). Anything else is tried
 //!   again 30 s later, doubling to 10 minutes, and again at every start
-//!   ([`deliver`]), enrolled or not. The hub's 200 is noted as
+//!   ([`Paths::deliver_disputes`]), enrolled or not. The hub's 200 is noted as
 //!   `RotationNote.evidence_ms` (while that enrollment is still here); then,
 //!   as after a 410, the file is marked done and deleted.
 
@@ -90,9 +90,9 @@ impl Statement {
         self.acked_ms.is_none() && self.stopped.is_none()
     }
 
-    /// Where it is kept ([`path`]).
+    /// Where it is kept ([`Paths::dispute_path`]).
     pub fn path(&self, paths: &Paths) -> PathBuf {
-        path(paths, &self.account, &self.host, self.seq, &self.entry_hash)
+        paths.dispute_path(&self.account, &self.host, self.seq, &self.entry_hash)
     }
 
     /// Whether `other` is this very statement: the same renewal of the same
@@ -104,19 +104,21 @@ impl Statement {
     }
 }
 
-/// `<instance dir>/agent/rotation-dispute-<seq>-<id>.json`, `<id>` naming the
-/// account, the host and the disputed entry's hash: a seq is
-/// only a place on one account's chain, and this instance may have disputed
-/// renewals in more than one enrollment (added again, signed up elsewhere).
-pub fn path(paths: &Paths, account: &str, host: &str, seq: u64, entry_hash: &str) -> PathBuf {
-    use sha2::{Digest, Sha256};
-    let mut id = Sha256::new();
-    for part in [account.as_bytes(), host.as_bytes(), &seq.to_be_bytes(), entry_hash.as_bytes()] {
-        id.update((part.len() as u32).to_be_bytes());
-        id.update(part);
+impl Paths {
+    /// `<instance dir>/agent/rotation-dispute-<seq>-<id>.json`, `<id>` naming the
+    /// account, the host and the disputed entry's hash: a seq is
+    /// only a place on one account's chain, and this instance may have disputed
+    /// renewals in more than one enrollment (added again, signed up elsewhere).
+    pub fn dispute_path(&self, account: &str, host: &str, seq: u64, entry_hash: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        let mut id = Sha256::new();
+        for part in [account.as_bytes(), host.as_bytes(), &seq.to_be_bytes(), entry_hash.as_bytes()] {
+            id.update((part.len() as u32).to_be_bytes());
+            id.update(part);
+        }
+        let id = id.finalize();
+        self.machine_key_path().with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
     }
-    let id = id.finalize();
-    paths.machine_key_path().with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
 }
 
 /// The statement this device makes against the renewal that retired
@@ -154,22 +156,24 @@ pub fn statement(st: &AgentState, current: &MachineIdentity, now: u64) -> Option
     })
 }
 
-/// Keep `s` (0600, written whole, the directory flushed) unless this very
-/// statement is kept already: `true` when it was written now. What is in its
-/// place is read and compared, never taken for it by its name alone; one that
-/// does not read, or is another statement, gives way.
-pub fn keep(paths: &Paths, s: &Statement) -> Result<bool, String> {
-    let path = s.path(paths);
-    match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<Statement>(&bytes) {
-            Ok(kept) if kept.same(s) => return Ok(false),
-            _ => tracing::warn!(path = %path.display(), "another (or unreadable) dispute statement where this one goes: replaced"),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("{}: {e}", path.display())),
+impl Paths {
+    /// Keep `s` (0600, written whole, the directory flushed) unless this very
+    /// statement is kept already: `true` when it was written now. What is in its
+    /// place is read and compared, never taken for it by its name alone; one that
+    /// does not read, or is another statement, gives way.
+    pub fn keep_dispute(&self, s: &Statement) -> Result<bool, String> {
+        let path = s.path(self);
+        match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Statement>(&bytes) {
+                Ok(kept) if kept.same(s) => return Ok(false),
+                _ => tracing::warn!(path = %path.display(), "another (or unreadable) dispute statement where this one goes: replaced"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        }
+        write(&path, s)?;
+        Ok(true)
     }
-    write(&path, s)?;
-    Ok(true)
 }
 
 fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
@@ -179,25 +183,27 @@ fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
     Ok(())
 }
 
-/// Every statement this instance keeps, by entry.
-pub fn kept(paths: &Paths) -> Vec<(PathBuf, Statement)> {
-    let key = paths.machine_key_path();
-    let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(PathBuf, Statement)> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("rotation-dispute-") && n.ends_with(".json")))
-        .filter_map(|e| {
-            let read = std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<Statement>(&b).ok());
-            if read.is_none() {
-                tracing::warn!(path = %e.path().display(), "a dispute statement that does not read: not delivered");
-            }
-            read.map(|s| (e.path(), s))
-        })
-        .collect();
-    out.sort_by_key(|(_, s)| s.seq);
-    out
+impl Paths {
+    /// Every statement this instance keeps, by entry.
+    pub fn kept_disputes(&self) -> Vec<(PathBuf, Statement)> {
+        let key = self.machine_key_path();
+        let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(PathBuf, Statement)> = entries
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("rotation-dispute-") && n.ends_with(".json")))
+            .filter_map(|e| {
+                let read = std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<Statement>(&b).ok());
+                if read.is_none() {
+                    tracing::warn!(path = %e.path().display(), "a dispute statement that does not read: not delivered");
+                }
+                read.map(|s| (e.path(), s))
+            })
+            .collect();
+        out.sort_by_key(|(_, s)| s.seq);
+        out
+    }
 }
 
 /// What the hub did with one delivery.
@@ -263,92 +269,102 @@ impl Drop for Running {
     }
 }
 
-fn agent_dir(paths: &Paths) -> PathBuf {
-    paths.machine_key_path().parent().map(std::path::Path::to_path_buf).unwrap_or_default()
-}
-
-/// Deliver every statement this instance keeps that the hub has not taken —
-/// at start, and whenever one is made. One delivery task per instance; none
-/// when nothing waits (or outside a runtime).
-pub fn deliver(paths: &Paths) {
-    if !kept(paths).iter().any(|(_, s)| s.pending()) {
-        return;
-    }
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-        tracing::warn!("no runtime to deliver this device's dispute statement now: at the next start");
-        return;
-    };
-    let dir = agent_dir(paths);
-    let mut running = RUNNING.lock().expect("dispute deliveries");
-    if running.contains_key(&dir) {
-        return;
-    }
-    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let guard = Running(dir.clone(), generation);
-    let task = runtime.spawn(deliveries(paths.clone(), guard));
-    running.insert(dir, (generation, task.abort_handle()));
-}
-
-/// Tests: the delivery task ends as the process would.
-#[cfg(test)]
-pub fn stop_delivery(paths: &Paths) {
-    if let Some((_, task)) = RUNNING.lock().expect("dispute deliveries").get(&agent_dir(paths)) {
-        task.abort();
+impl Paths {
+    fn agent_state_dir(&self) -> PathBuf {
+        self.machine_key_path().parent().map(std::path::Path::to_path_buf).unwrap_or_default()
     }
 }
 
-/// Tests: whether a delivery task runs for `paths`.
-#[cfg(test)]
-pub fn delivering(paths: &Paths) -> bool {
-    RUNNING.lock().expect("dispute deliveries").contains_key(&agent_dir(paths))
-}
-
-async fn deliveries(paths: Paths, guard: Running) {
-    crate::agent::traffic::install_client_tap();
-    let http = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap_or_default();
-    let mut wait = RETRY_FIRST;
-    loop {
-        let pending: Vec<(PathBuf, Statement)> = {
-            // Checked and given up under the lock, so a statement kept right
-            // after is never left without a delivery ([`deliver`]).
-            let mut running = RUNNING.lock().expect("dispute deliveries");
-            let pending: Vec<_> = kept(&paths).into_iter().filter(|(_, s)| s.pending()).collect();
-            if pending.is_empty() {
-                if running.get(&guard.0).is_some_and(|(g, _)| *g == guard.1) {
-                    running.remove(&guard.0);
-                }
-                return;
-            }
-            pending
-        };
-        let mut again = false;
-        for (path, mut s) in pending {
-            match post(&http, &s).await {
-                Delivery::Acked => {
-                    let at = now_ms();
-                    tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
-                    s.acked_ms = Some(at);
-                    note_evidence(&paths, &s, at);
-                    done(&path, &s);
-                }
-                Delivery::Removed => {
-                    tracing::info!(seq = s.seq, "the hub says this device was removed: its dispute statement is not delivered any more");
-                    s.stopped = Some("host_removed".into());
-                    done(&path, &s);
-                }
-                Delivery::Again(why) => {
-                    tracing::warn!(seq = s.seq, %why, "cannot deliver this device's dispute statement yet; trying again in {wait:?}");
-                    again = true;
-                }
-            }
+impl Paths {
+    /// Deliver every statement this instance keeps that the hub has not taken —
+    /// at start, and whenever one is made. One delivery task per instance; none
+    /// when nothing waits (or outside a runtime).
+    pub fn deliver_disputes(&self) {
+        if !self.kept_disputes().iter().any(|(_, s)| s.pending()) {
+            return;
         }
-        if again {
-            tokio::time::sleep(wait).await;
-            wait = (wait * 2).min(RETRY_MAX);
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("no runtime to deliver this device's dispute statement now: at the next start");
+            return;
+        };
+        let dir = self.agent_state_dir();
+        let mut running = RUNNING.lock().expect("dispute deliveries");
+        if running.contains_key(&dir) {
+            return;
+        }
+        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let guard = Running(dir.clone(), generation);
+        let task = runtime.spawn(self.clone().deliver_disputes_loop(guard));
+        running.insert(dir, (generation, task.abort_handle()));
+    }
+}
+
+impl Paths {
+    /// Tests: the delivery task ends as the process would.
+    #[cfg(test)]
+    pub fn stop_dispute_delivery(&self) {
+        if let Some((_, task)) = RUNNING.lock().expect("dispute deliveries").get(&self.agent_state_dir()) {
+            task.abort();
+        }
+    }
+}
+
+impl Paths {
+    /// Tests: whether a delivery task runs for this instance.
+    #[cfg(test)]
+    pub fn delivering_disputes(&self) -> bool {
+        RUNNING.lock().expect("dispute deliveries").contains_key(&self.agent_state_dir())
+    }
+}
+
+impl Paths {
+    async fn deliver_disputes_loop(self, guard: Running) {
+        crate::agent::traffic::install_client_tap();
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+        let mut wait = RETRY_FIRST;
+        loop {
+            let pending: Vec<(PathBuf, Statement)> = {
+                // Checked and given up under the lock, so a statement kept right
+                // after is never left without a delivery ([`Paths::deliver_disputes`]).
+                let mut running = RUNNING.lock().expect("dispute deliveries");
+                let pending: Vec<_> = self.kept_disputes().into_iter().filter(|(_, s)| s.pending()).collect();
+                if pending.is_empty() {
+                    if running.get(&guard.0).is_some_and(|(g, _)| *g == guard.1) {
+                        running.remove(&guard.0);
+                    }
+                    return;
+                }
+                pending
+            };
+            let mut again = false;
+            for (path, mut s) in pending {
+                match post(&http, &s).await {
+                    Delivery::Acked => {
+                        let at = now_ms();
+                        tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
+                        s.acked_ms = Some(at);
+                         self.note_dispute_evidence(&s, at);
+                        done(&path, &s);
+                    }
+                    Delivery::Removed => {
+                        tracing::info!(seq = s.seq, "the hub says this device was removed: its dispute statement is not delivered any more");
+                        s.stopped = Some("host_removed".into());
+                        done(&path, &s);
+                    }
+                    Delivery::Again(why) => {
+                        tracing::warn!(seq = s.seq, %why, "cannot deliver this device's dispute statement yet; trying again in {wait:?}");
+                        again = true;
+                    }
+                }
+            }
+            if again {
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(RETRY_MAX);
+            }
         }
     }
 }
@@ -368,7 +384,7 @@ fn done(path: &std::path::Path, s: &Statement) {
 }
 
 /// Whether `path` (a file in `agent/`) is a dispute statement still to be
-/// delivered: what "disconnect" keeps ([`super::control::unenroll_files`]) —
+/// delivered: what "disconnect" keeps ([`Paths::unenroll_agent_files`]) —
 /// signed evidence with no secret in it, which the hub may not have yet.
 pub fn is_pending_statement(path: &std::path::Path) -> bool {
     let named = path
@@ -382,17 +398,19 @@ pub fn is_pending_statement(path: &std::path::Path) -> bool {
             .is_some_and(|s| s.pending())
 }
 
-/// The hub took `s`: noted for the local settings — in the state of the
-/// enrollment it disputes, when that is still the one here (it stopped on
-/// the verdict: nothing else writes it meanwhile).
-fn note_evidence(paths: &Paths, s: &Statement, at: u64) {
-    let Ok(Some(mut st)) = AgentState::load(paths) else { return };
-    if st.account != s.account || st.machine != s.host || st.rotation.foreign_ms.is_none() {
-        return;
-    }
-    st.rotation.evidence_ms.get_or_insert(at);
-    if let Err(error) = st.save(paths) {
-        tracing::error!(%error, "cannot note the delivered dispute statement");
+impl Paths {
+    /// The hub took `s`: noted for the local settings — in the state of the
+    /// enrollment it disputes, when that is still the one here (it stopped on
+    /// the verdict: nothing else writes it meanwhile).
+    fn note_dispute_evidence(&self, s: &Statement, at: u64) {
+        let Ok(Some(mut st)) = AgentState::load(self) else { return };
+        if st.account != s.account || st.machine != s.host || st.rotation.foreign_ms.is_none() {
+            return;
+        }
+        st.rotation.evidence_ms.get_or_insert(at);
+        if let Err(error) = st.save(self) {
+            tracing::error!(%error, "cannot note the delivered dispute statement");
+        }
     }
 }
 
@@ -595,16 +613,16 @@ mod tests {
         let b = statement(&renewed_in("a-2", &[&k2, &k3], &origin), &k2, now_ms()).unwrap();
         assert_eq!(a.seq, b.seq, "the same place on two chains");
         assert_ne!(a.entry_hash, b.entry_hash);
-        assert!(keep(&paths, &a).unwrap());
-        assert!(keep(&paths, &b).unwrap(), "another statement with the same seq: kept too");
-        assert!(!keep(&paths, &a).unwrap() && !keep(&paths, &b).unwrap(), "the very same ones again: duplicates");
-        assert_eq!(kept(&paths).len(), 2);
+        assert!(paths.keep_dispute(&a).unwrap());
+        assert!(paths.keep_dispute(&b).unwrap(), "another statement with the same seq: kept too");
+        assert!(!paths.keep_dispute(&a).unwrap() && !paths.keep_dispute(&b).unwrap(), "the very same ones again: duplicates");
+        assert_eq!(paths.kept_disputes().len(), 2);
         // Something in its place that is not it (damaged here) gives way.
         crate::agent::write_private(&a.path(&paths), b"{}").unwrap();
-        assert!(keep(&paths, &a).unwrap());
-        assert_eq!(kept(&paths).len(), 2);
-        deliver(&paths);
-        until("both delivered", || kept(&paths).is_empty()).await;
+        assert!(paths.keep_dispute(&a).unwrap());
+        assert_eq!(paths.kept_disputes().len(), 2);
+        paths.deliver_disputes();
+        until("both delivered", || paths.kept_disputes().is_empty()).await;
         let sigs: Vec<String> = fake.lock().unwrap().posts.iter().map(|(_, b, _)| b["sig"].as_str().unwrap().to_string()).collect();
         assert!(sigs.contains(&a.sig) && sigs.contains(&b.sig), "{sigs:?}");
     }
@@ -621,17 +639,17 @@ mod tests {
         let (_dir, paths) = instance("disputeretry", [4; 32], &st);
         let s = statement(&st, &k0, now_ms()).unwrap();
         let before = crate::agent::dir_syncs();
-        assert!(keep(&paths, &s).unwrap());
+        assert!(paths.keep_dispute(&s).unwrap());
         assert!(crate::agent::dir_syncs() > before, "flushed before it is sent");
-        assert!(!keep(&paths, &s).unwrap(), "one per renewal");
+        assert!(!paths.keep_dispute(&s).unwrap(), "one per renewal");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(s.path(&paths)).unwrap().permissions().mode() & 0o777, 0o600);
         }
-        deliver(&paths);
+        paths.deliver_disputes();
         until("taken, and then deleted", || !s.path(&paths).exists()).await;
-        assert!(kept(&paths).is_empty());
+        assert!(paths.kept_disputes().is_empty());
         let posts: Vec<(String, Value, Instant)> = fake.lock().unwrap().posts.clone();
         assert_eq!(posts.len(), 4, "503, a timeout, 500, then 200");
         for (host, body, _) in &posts {
@@ -643,8 +661,8 @@ mod tests {
         assert!(gaps[0] >= RETRY_FIRST, "{gaps:?}");
         assert!(gaps[2] >= RETRY_FIRST * 4, "{gaps:?}");
         assert!(AgentState::load(&paths).unwrap().unwrap().rotation.evidence_ms.is_some());
-        until("the delivery ends", || !delivering(&paths)).await;
-        deliver(&paths);
+        until("the delivery ends", || !paths.delivering_disputes()).await;
+        paths.deliver_disputes();
         tokio::time::sleep(RETRY_MAX).await;
         assert_eq!(fake.lock().unwrap().posts.len(), 4, "taken: not sent again");
     }
@@ -657,16 +675,16 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503); 50]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputerestart", [4; 32], &st);
-        keep(&paths, &statement(&st, &k0, now_ms()).unwrap()).unwrap();
-        deliver(&paths);
+        paths.keep_dispute(&statement(&st, &k0, now_ms()).unwrap()).unwrap();
+        paths.deliver_disputes();
         until("a first try", || !fake.lock().unwrap().posts.is_empty()).await;
-        stop_delivery(&paths);
-        until("the process gone", || !delivering(&paths)).await;
-        assert!(kept(&paths)[0].1.pending());
+        paths.stop_dispute_delivery();
+        until("the process gone", || !paths.delivering_disputes()).await;
+        assert!(paths.kept_disputes()[0].1.pending());
         // The hub is well again; the next start delivers it.
         fake.lock().unwrap().answers.clear();
-        deliver(&paths);
-        until("taken after the restart", || kept(&paths).is_empty()).await;
+        paths.deliver_disputes();
+        until("taken after the restart", || paths.kept_disputes().is_empty()).await;
     }
 
     /// 410 `host_removed`: nobody needs it any more — delivering stops, the
@@ -677,11 +695,11 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503), Answer::Status(410)]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputegone", [4; 32], &st);
-        keep(&paths, &statement(&st, &k0, now_ms()).unwrap()).unwrap();
-        deliver(&paths);
-        until("stopped, and deleted", || kept(&paths).is_empty()).await;
-        until("the delivery ends", || !delivering(&paths)).await;
-        deliver(&paths);
+        paths.keep_dispute(&statement(&st, &k0, now_ms()).unwrap()).unwrap();
+        paths.deliver_disputes();
+        until("stopped, and deleted", || paths.kept_disputes().is_empty()).await;
+        until("the delivery ends", || !paths.delivering_disputes()).await;
+        paths.deliver_disputes();
         tokio::time::sleep(RETRY_MAX * 2).await;
         assert_eq!(fake.lock().unwrap().posts.len(), 2);
         assert!(AgentState::load(&paths).unwrap().unwrap().rotation.evidence_ms.is_none());
@@ -696,14 +714,14 @@ mod tests {
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputefresh", [4; 32], &st);
         let s = statement(&st, &k0, now_ms()).unwrap();
-        keep(&paths, &s).unwrap();
+        paths.keep_dispute(&s).unwrap();
         let fresh = crate::agent::rotation::re_enroll_fresh(&paths, 99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());
         assert!(!paths.has_agent_state(), "the enrollment is forgotten");
-        assert_eq!(kept(&paths), vec![(s.path(&paths), s.clone())], "the statement is not");
+        assert_eq!(paths.kept_disputes(), vec![(s.path(&paths), s.clone())], "the statement is not");
         fake.lock().unwrap().answers.clear();
-        deliver(&paths);
-        until("taken", || kept(&paths).is_empty()).await;
+        paths.deliver_disputes();
+        until("taken", || paths.kept_disputes().is_empty()).await;
         assert_eq!(fake.lock().unwrap().posts[0].1["sig"], json!(s.sig));
     }
 }

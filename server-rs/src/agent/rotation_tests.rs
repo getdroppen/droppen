@@ -909,7 +909,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     // signed, kept or delivered, and the promoted key has none to make.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
-    assert!(super::dispute::kept(&a.paths).is_empty());
+    assert!(a.paths.kept_disputes().is_empty());
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
 }
@@ -1472,7 +1472,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
-    let file = super::dispute::path(&a.paths, "a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
+    let file = a.paths.dispute_path("a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
     let name = file.file_name().unwrap().to_str().unwrap().to_string();
     assert!(name.starts_with(&format!("rotation-dispute-{}-", entries[0].seq())) && name.ends_with(".json"), "{name}");
     assert!(file.parent().unwrap().ends_with("agent"));
@@ -1539,7 +1539,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     hub.send_entries(&entries);
     tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
     let seq = entries[0].seq();
-    let file = super::dispute::path(&a.paths, "a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
+    let file = a.paths.dispute_path("a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
     until("a first delivery", || !hub.disputes().is_empty()).await;
     assert!(file.exists());
     // Disconnect before the hub has it.
@@ -1552,16 +1552,16 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     let tried = hub.disputes().len();
     until("a delivery after the unenroll", || hub.disputes().len() > tried).await;
     // …and after a restart (the process ends; the next start delivers it).
-    super::dispute::stop_delivery(&a.paths);
-    until("the process gone", || !super::dispute::delivering(&a.paths)).await;
+    a.paths.stop_dispute_delivery();
+    until("the process gone", || !a.paths.delivering_disputes()).await;
     assert!(file.exists());
     hub.script.lock().unwrap().dispute_answers.clear();
-    super::dispute::deliver(&a.paths);
+    a.paths.deliver_disputes();
     until("delivered, and only then deleted", || !file.exists()).await;
     let sig = unhex64(hub.disputes().last().unwrap().1["sig"].as_str().unwrap());
     assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig));
     // Done: a disconnect now leaves nothing at all.
-    super::control::unenroll_files(&a.paths).unwrap();
+    a.paths.unenroll_agent_files().unwrap();
     assert!(!file.parent().unwrap().exists());
 }
 

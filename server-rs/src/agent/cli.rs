@@ -105,7 +105,7 @@ pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool)
 /// does. The state it had, if any.
 pub(super) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentState>, String> {
     let before = state::AgentState::load(paths).ok().flatten();
-    control::unenroll_files(paths)?;
+    paths.unenroll_agent_files()?;
     crate::aggregator::forget_all(paths)?;
     let cloud = crate::api::cloud::file_path(paths);
     match std::fs::remove_file(&cloud) {
@@ -259,7 +259,7 @@ pub(super) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> R
         "enrolling with account key {} (the code's secret never leaves this device)",
         display_fingerprint(&code.account_fingerprint)
     );
-    match enroll::enroll(paths, &identity, code, hub).await {
+    match paths.enroll(&identity, code, hub).await {
         Ok(()) => Ok(()),
         Err(enroll::EnrollFailure::Failed(message)) => Err(message),
         Err(enroll::EnrollFailure::Pending(message)) => {

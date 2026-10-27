@@ -4,7 +4,7 @@
 //! - at boot it starts the link when `agent/state.json` is there (an instance
 //!   that never enrolled starts nothing);
 //! - [`Control::enroll`] runs the same enrollment `agent enroll` does
-//!   ([`super::enroll::begin`]) in this process and starts the link at once,
+//!   ([`Paths::begin_enrollment`]) in this process and starts the link at once,
 //!   which then follows the chain until a device adds the machine;
 //! - the link stops itself when this machine is removed from the account
 //!   ([`super::link`]), and [`Control::status`] says so;
@@ -262,7 +262,7 @@ impl Control {
         }
         // A dispute statement the hub has not taken yet: delivered again
         // (it outlives the enrollment it disputes).
-        super::dispute::deliver(&self.paths);
+        self.paths.deliver_disputes();
         let _ = self.env.set(env);
     }
 
@@ -310,8 +310,8 @@ impl Control {
         }
         // An install still enrolled at the legacy apex hub moves to the
         // canonical `api.` origin once, if the hub takes its sign-in
-        // ([`super::migrate_hub`]).
-        super::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
+        // ([`Paths::migrate_hub`]).
+        self.paths.migrate_hub().await.map_err(ControlError::Failed)?;
         let started = super::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
         *self.running.lock().expect("running") = Some(started);
         Ok(())
@@ -395,7 +395,7 @@ impl Control {
         // A seed a renewal retired (or one archived) never signs up again:
         // a fresh one then (`docs/host-identity-rotation.md` §3.8).
         let begun = match super::rotation::identity_for_enrolling(&self.paths) {
-            Ok(identity) => super::enroll::begin(&self.paths, &identity, code, hub_url)
+            Ok(identity) => self.paths.begin_enrollment(&identity, code, hub_url)
                 .await
                 .map_err(ControlError::Begin),
             Err(error) => Err(ControlError::Failed(error)),
@@ -445,7 +445,7 @@ impl Control {
         }
         tracing::warn!("no device added this machine within the enrollment code's lifetime; forgetting the enrollment");
         self.stop_locked().await;
-        if let Err(error) = forget_enrollment(&self.paths) {
+        if let Err(error) = self.paths.forget_agent_enrollment() {
             tracing::error!(%error, "cannot forget the expired enrollment");
         }
     }
@@ -465,7 +465,7 @@ impl Control {
             return Ok(false);
         }
         self.stop_locked().await;
-        forget_enrollment(&self.paths).map_err(ControlError::Failed)?;
+        self.paths.forget_agent_enrollment().map_err(ControlError::Failed)?;
         Ok(true)
     }
 
@@ -527,7 +527,7 @@ impl Control {
     pub async fn unenroll(&self) -> Result<(), ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        unenroll_files(&self.paths).map_err(ControlError::Failed)
+        self.paths.unenroll_agent_files().map_err(ControlError::Failed)
     }
 }
 
@@ -614,58 +614,62 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
 
-/// Delete an enrollment's state (and what it left), keeping the machine key.
-fn forget_enrollment(paths: &Paths) -> Result<(), String> {
-    paths.forget_enrollment_leftovers()?;
-    match std::fs::remove_file(paths.agent_state_path()) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
+impl Paths {
+    /// Delete an enrollment's state (and what it left), keeping the machine key.
+    fn forget_agent_enrollment(&self) -> Result<(), String> {
+        self.forget_enrollment_leftovers()?;
+        match std::fs::remove_file(self.agent_state_path()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 
-/// Delete `agent/` and everything in it (no-op when it is not there) — but
-/// a dispute statement the hub has not taken yet ([`super::dispute`]): the
-/// only evidence that this device's key was replaced elsewhere, signed and
-/// holding no secret, kept and still delivered until the hub has it. The
-/// link — and with it the streams' writer — must be stopped first; the
-/// process's connection to `streams.db` is dropped here, before the file.
-pub fn unenroll_files(paths: &Paths) -> Result<(), String> {
-    crate::db::forget(&paths.streams_db_path());
-    let dir = paths.instance_dir().join("agent");
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("{}: {e}", dir.display())),
-    };
-    let mut kept = 0usize;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
-        let path = entry.path();
-        let is_dir = entry.file_type().map_err(|e| format!("{}: {e}", path.display()))?.is_dir();
-        if !is_dir && super::dispute::is_pending_statement(&path) {
-            kept += 1;
-            continue;
-        }
-        let removed = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
-        match removed {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        }
-    }
-    if kept == 0 {
-        match std::fs::remove_dir(&dir) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+impl Paths {
+    /// Delete `agent/` and everything in it (no-op when it is not there) — but
+    /// a dispute statement the hub has not taken yet ([`super::dispute`]): the
+    /// only evidence that this device's key was replaced elsewhere, signed and
+    /// holding no secret, kept and still delivered until the hub has it. The
+    /// link — and with it the streams' writer — must be stopped first; the
+    /// process's connection to `streams.db` is dropped here, before the file.
+    pub fn unenroll_agent_files(&self) -> Result<(), String> {
+        crate::db::forget(&self.streams_db_path());
+        let dir = self.instance_dir().join("agent");
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(format!("{}: {e}", dir.display())),
+        };
+        let mut kept = 0usize;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+            let path = entry.path();
+            let is_dir = entry.file_type().map_err(|e| format!("{}: {e}", path.display()))?.is_dir();
+            if !is_dir && super::dispute::is_pending_statement(&path) {
+                kept += 1;
+                continue;
+            }
+            let removed = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+            match removed {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
         }
-        tracing::info!(dir = %dir.display(), "unenrolled: the agent's files are gone");
-    } else {
-        super::sync_dir(&dir.join("."));
-        tracing::warn!(dir = %dir.display(), kept, "unenrolled: the agent's files are gone but the dispute statements the hub does not have yet");
+        if kept == 0 {
+            match std::fs::remove_dir(&dir) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", dir.display())),
+            }
+            tracing::info!(dir = %dir.display(), "unenrolled: the agent's files are gone");
+        } else {
+            super::sync_dir(&dir.join("."));
+            tracing::warn!(dir = %dir.display(), kept, "unenrolled: the agent's files are gone but the dispute statements the hub does not have yet");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -934,12 +934,12 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     shared.cancel.cancel();
     match statement {
         Ok(Some(statement)) => {
-            match super::dispute::keep(&shared.paths, &statement) {
+            match shared.paths.keep_dispute(&statement) {
                 Ok(true) => tracing::warn!(seq = statement.seq, "signed a dispute of that renewal with the retired key; delivering it to the hub"),
                 Ok(false) => {}
                 Err(error) => tracing::error!(%error, "cannot keep the dispute statement"),
             }
-            super::dispute::deliver(&shared.paths);
+            shared.paths.deliver_disputes();
         }
         Ok(None) => tracing::warn!("the device chain retired no key this device holds: no dispute statement to sign"),
         Err(()) => tracing::info!("the hub took this device's dispute statement already"),

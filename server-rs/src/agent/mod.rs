@@ -107,40 +107,42 @@ const CANONICAL_HUB: &str = "wss://api.droppen.app";
 /// How long the canonical hub has to answer the pre-flight sign-in.
 const MIGRATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Move an install still enrolled at the legacy apex hub to the canonical
-/// `api.` origin — once, and only if the canonical hub takes its sign-in.
-/// The machine keeps its identity, account and chain; only the origin its
-/// link dials changes. A hub that cannot be reached, or refuses the machine,
-/// leaves the enrolled origin alone (the apex still serves it).
-pub async fn migrate_hub(paths: &Paths) -> Result<(), String> {
-    let Some(mut state) = state::AgentState::load(paths)? else {
-        return Ok(());
-    };
-    if state.hub != LEGACY_HUB {
-        return Ok(());
-    }
-    let (identity, created) = load_or_create(paths)?;
-    if created {
-        return Ok(());
-    }
-    let origin = hub::origin(CANONICAL_HUB)?;
-    let attempt = async {
-        let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
-        hub::login(&mut sink, &mut source, &identity, &state.account, &state.machine, &origin, nonce)
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    };
-    match tokio::time::timeout(MIGRATE_TIMEOUT, attempt).await {
-        Ok(Ok(())) => {
-            let from = std::mem::replace(&mut state.hub, origin);
-            state.save(paths)?;
-            tracing::info!(from = %from, to = %state.hub, machine = %state.machine, "moved this machine to the canonical hub");
+impl Paths {
+    /// Move an install still enrolled at the legacy apex hub to the canonical
+    /// `api.` origin — once, and only if the canonical hub takes its sign-in.
+    /// The machine keeps its identity, account and chain; only the origin its
+    /// link dials changes. A hub that cannot be reached, or refuses the machine,
+    /// leaves the enrolled origin alone (the apex still serves it).
+    pub async fn migrate_hub(&self) -> Result<(), String> {
+        let Some(mut state) = state::AgentState::load(self)? else {
+            return Ok(());
+        };
+        if state.hub != LEGACY_HUB {
+            return Ok(());
         }
-        Ok(Err(error)) => tracing::warn!(%error, "the canonical hub did not take this machine; keeping the enrolled hub"),
-        Err(_) => tracing::warn!("the canonical hub did not answer in time; keeping the enrolled hub"),
+        let (identity, created) = load_or_create(self)?;
+        if created {
+            return Ok(());
+        }
+        let origin = hub::origin(CANONICAL_HUB)?;
+        let attempt = async {
+            let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
+            hub::login(&mut sink, &mut source, &identity, &state.account, &state.machine, &origin, nonce)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        match tokio::time::timeout(MIGRATE_TIMEOUT, attempt).await {
+            Ok(Ok(())) => {
+                let from = std::mem::replace(&mut state.hub, origin);
+                state.save(self)?;
+                tracing::info!(from = %from, to = %state.hub, machine = %state.machine, "moved this machine to the canonical hub");
+            }
+            Ok(Err(error)) => tracing::warn!(%error, "the canonical hub did not take this machine; keeping the enrolled hub"),
+            Err(_) => tracing::warn!("the canonical hub did not answer in time; keeping the enrolled hub"),
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(unix)]
