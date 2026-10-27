@@ -211,7 +211,7 @@ impl Tail {
 
 /// The last [`TAIL_LINES`] non-empty lines of `text`, as displayed.
 pub fn last_lines(text: &str) -> Vec<String> {
-    let clean = crate::accounts::setup_token::strip_ansi(text);
+    let clean = crate::text::strip_ansi(text);
     let lines: Vec<String> = clean
         .split('\n')
         .filter_map(|line| line.split('\r').rev().find(|part| !part.trim().is_empty()))

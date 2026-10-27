@@ -1588,7 +1588,7 @@ pub(crate) mod tests {
 
         for (file, functions) in [
             ("accounts/mod.rs", &["parse_auth_status"][..]),
-            ("accounts/setup_token.rs", &["strip_ansi"][..]),
+            ("text.rs", &["strip_ansi"][..]),
             ("quota/mod.rs", &["claude_plan_label"][..]),
             ("quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
             ("process_env.rs", &["apply_env"][..]),
