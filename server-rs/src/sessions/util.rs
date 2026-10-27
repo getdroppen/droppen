@@ -229,6 +229,30 @@ pub struct ToolDisplay {
     pub is_error: bool,
 }
 
+impl ToolDisplay {
+    /// A call row: the tool's name, its one-line summary, a caption and a fold.
+    pub fn call(tool: impl Into<String>, text: impl Into<String>, meta: Option<String>, detail: Option<String>) -> Self {
+        Self {
+            tool_name: Some(tool.into()),
+            text: text.into(),
+            meta,
+            detail,
+            is_error: false,
+        }
+    }
+
+    /// A result row, which inherits the tool name from the call it answers.
+    pub fn result(text: impl Into<String>, meta: Option<String>, detail: Option<String>, is_error: bool) -> Self {
+        Self {
+            tool_name: None,
+            text: text.into(),
+            meta,
+            detail,
+            is_error,
+        }
+    }
+}
+
 /// Build a text/thinking item, applying the emergency clip.
 pub fn make_item(role: Role, kind: ItemKind, raw_text: &str, timestamp: Option<&str>) -> TranscriptItem {
     let (text, truncated) = clip(raw_text.trim(), TEXT_LIMIT);

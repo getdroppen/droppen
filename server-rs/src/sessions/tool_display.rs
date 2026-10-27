@@ -157,6 +157,51 @@ pub(super) fn diff_of(old_text: &str, new_text: &str) -> String {
     removed.chain(added).collect::<Vec<_>>().join("\n")
 }
 
+/// A checklist fold: one line per item, `[x]` when done, `[~]` while in
+/// progress and `[ ]` otherwise.
+///
+/// Claude's `TodoWrite` and Codex's `update_plan` are the same board in two
+/// shapes, so the marks and the joining are written once.
+pub(super) fn checklist_lines<S: AsRef<str>, T: AsRef<str>>(items: impl Iterator<Item = (S, T)>) -> String {
+    items
+        .map(|(status, text)| {
+            let mark = match status.as_ref() {
+                "completed" => "[x]",
+                "in_progress" | "inProgress" => "[~]",
+                _ => "[ ]",
+            };
+            format!("{mark} {}", text.as_ref())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A question tool's fold: each question's title, then one `◦` line per
+/// option, a blank line between questions.
+///
+/// Claude's `AskUserQuestion` and Codex's `request_user_input` spell the
+/// question and its options differently — Claude shows an option's description,
+/// Codex does not — so each caller renders both through its own closures.
+pub(super) fn question_lines<'a>(
+    questions: impl IntoIterator<Item = &'a Json>,
+    title_of: impl Fn(&Json) -> String,
+    option_of: impl Fn(&Value) -> Option<String>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for question in questions {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(title_of(question));
+        for option in question.get("options").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(line) = option_of(option) {
+                lines.push(line);
+            }
+        }
+    }
+    lines
+}
+
 /// A `$ command` summary, with an ellipsis when more lines follow.
 fn command_line(command: &str) -> String {
     format!("$ {}{}", first_line_of(command, 180), if command.contains('\n') { " ⋯" } else { "" })
@@ -174,21 +219,12 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
         "Bash" | "Monitor" => {
             let command = str_field(input, "command").unwrap_or_default();
             match str_field(input, "description").filter(|d| !d.trim().is_empty()) {
-                Some(description) => ToolDisplay {
-                    tool_name: Some(tool_name),
-                    text: description,
-                    meta: Some(command_line(&command)),
-                    detail: Some(command),
-                    is_error: false,
-                },
-                None => ToolDisplay {
-                    tool_name: Some(tool_name),
-                    text: command_line(&command),
-                    meta: None,
-                    // Nothing to unfold: the row already shows the whole command.
-                    detail: command.contains('\n').then_some(command),
-                    is_error: false,
-                },
+                Some(description) => ToolDisplay::call(tool_name, description, Some(command_line(&command)), Some(command)),
+                None => {
+                    // Nothing to unfold when the row already shows the whole command.
+                    let detail = command.contains('\n').then(|| command.clone());
+                    ToolDisplay::call(tool_name, command_line(&command), None, detail)
+                }
             }
         }
         "Read" => {
@@ -204,64 +240,41 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
                     None => format!("@{offset}"),
                 }
             });
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: as_display_string(input.get("file_path")),
-                meta: range,
-                detail: None,
-                is_error: false,
-            }
+            ToolDisplay::call(tool_name, as_display_string(input.get("file_path")), range, None)
         }
-        "Write" => ToolDisplay {
-            tool_name: Some(tool_name),
-            text: as_display_string(input.get("file_path")),
-            meta: None,
-            detail: str_field(input, "content"),
-            is_error: false,
-        },
+        "Write" => ToolDisplay::call(
+            tool_name,
+            as_display_string(input.get("file_path")),
+            None,
+            str_field(input, "content"),
+        ),
         "Edit" => {
             let old_string = str_field(input, "old_string").unwrap_or_default();
             let new_string = str_field(input, "new_string").unwrap_or_default();
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: as_display_string(input.get("file_path")),
-                meta: (input.get("replace_all") == Some(&Value::Bool(true))).then(|| "replace_all".to_string()),
-                detail: Some(diff_of(&old_string, &new_string)),
-                is_error: false,
-            }
+            ToolDisplay::call(
+                tool_name,
+                as_display_string(input.get("file_path")),
+                (input.get("replace_all") == Some(&Value::Bool(true))).then(|| "replace_all".to_string()),
+                Some(diff_of(&old_string, &new_string)),
+            )
         }
         "TodoWrite" => {
             let todos = input.get("todos").and_then(Value::as_array).cloned().unwrap_or_default();
-            let lines = todos
-                .iter()
-                .map(|todo| {
-                    let todo = todo.as_object().cloned().unwrap_or_default();
-                    let mark = match todo.get("status").and_then(Value::as_str) {
-                        Some("completed") => "[x]",
-                        Some("in_progress") => "[~]",
-                        _ => "[ ]",
-                    };
-                    format!("{mark} {}", as_display_string(todo.get("content")))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: format!("{} todos", todos.len()),
-                meta: None,
-                detail: (!lines.is_empty()).then_some(lines),
-                is_error: false,
-            }
+            let lines = checklist_lines(todos.iter().map(|todo| {
+                let todo = todo.as_object().cloned().unwrap_or_default();
+                let status = todo.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+                (status, as_display_string(todo.get("content")))
+            }));
+            ToolDisplay::call(tool_name, format!("{} todos", todos.len()), None, (!lines.is_empty()).then_some(lines))
         }
         "Agent" | "Task" => {
             let parts: Vec<String> = ["subagent_type", "model"].iter().filter_map(|key| str_field(input, key)).collect();
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: as_display_string(input.get("description")),
-                meta: (!parts.is_empty()).then(|| parts.join(" · ")),
-                detail: str_field(input, "prompt"),
-                is_error: false,
-            }
+            ToolDisplay::call(
+                tool_name,
+                as_display_string(input.get("description")),
+                (!parts.is_empty()).then(|| parts.join(" · ")),
+                str_field(input, "prompt"),
+            )
         }
         // The agent-orchestration family: a message to a running child, and the
         // task board beside it. Every one of these calls is mostly routing — an
@@ -281,23 +294,21 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
             let summary = str_field(input, "summary")
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or_else(|| body.clone());
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: first_line_of(&summary, 180),
-                meta: str_field(input, "to")
+            ToolDisplay::call(
+                tool_name,
+                first_line_of(&summary, 180),
+                str_field(input, "to")
                     .or_else(|| str_field(input, "recipient"))
                     .map(|to| format!("→ {to}")),
-                detail: (!body.is_empty()).then_some(body),
-                is_error: false,
-            }
+                (!body.is_empty()).then_some(body),
+            )
         }
-        "TaskCreate" => ToolDisplay {
-            tool_name: Some(tool_name),
-            text: first_line_of(&as_display_string(input.get("subject")), 180),
-            meta: str_field(input, "activeForm"),
-            detail: str_field(input, "description"),
-            is_error: false,
-        },
+        "TaskCreate" => ToolDisplay::call(
+            tool_name,
+            first_line_of(&as_display_string(input.get("subject")), 180),
+            str_field(input, "activeForm"),
+            str_field(input, "description"),
+        ),
         "TaskUpdate" => {
             let status = str_field(input, "status");
             let text = match (task_id(input), &status) {
@@ -306,82 +317,60 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
                 (None, Some(status)) => status.clone(),
                 (None, None) => compact(input),
             };
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text,
-                meta: None,
-                // The blocking edges live nowhere else on the row.
-                detail: Some(pretty(input)),
-                is_error: false,
-            }
+            // The blocking edges live nowhere else on the row.
+            ToolDisplay::call(tool_name, text, None, Some(pretty(input)))
         }
-        "TaskStop" | "TaskGet" => ToolDisplay {
-            tool_name: Some(tool_name),
-            text: task_id(input).map(|id| format!("task {id}")).unwrap_or_default(),
-            meta: None,
+        "TaskStop" | "TaskGet" => ToolDisplay::call(
+            tool_name,
+            task_id(input).map(|id| format!("task {id}")).unwrap_or_default(),
+            None,
             // An id is the whole call; anything else it carries is worth a fold.
-            detail: (input.len() > 1).then(|| pretty(input)),
-            is_error: false,
-        },
+            (input.len() > 1).then(|| pretty(input)),
+        ),
         "AskUserQuestion" => {
             let questions = input.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
             let first = questions.first().and_then(Value::as_object).cloned().unwrap_or_default();
             let fallback = str_field(input, "__unparsedToolInput").unwrap_or_default();
-            let mut lines: Vec<String> = Vec::new();
-            for question in questions.iter().filter_map(Value::as_object) {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push(as_display_string(question.get("question")));
-                for option in question
-                    .get("options")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_object)
-                {
-                    let description = match option.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
-                        Some(d) => format!(" — {d}"),
-                        None => String::new(),
-                    };
-                    lines.push(format!("◦ {}{description}", as_display_string(option.get("label"))));
-                }
-            }
+            let lines = question_lines(
+                questions.iter().filter_map(Value::as_object),
+                |question| as_display_string(question.get("question")),
+                |option| {
+                    option.as_object().map(|option| {
+                        let description = match option.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+                            Some(description) => format!(" — {description}"),
+                            None => String::new(),
+                        };
+                        format!("◦ {}{description}", as_display_string(option.get("label")))
+                    })
+                },
+            );
             let headline = match first.get("question").filter(|value| !value.is_null()) {
                 Some(question) => as_display_string(Some(question)),
                 None => fallback.clone(),
             };
             let detail = lines.join("\n");
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: first_line_of(&headline, 180),
-                meta: (questions.len() > 1).then(|| format!("{} questions", questions.len())),
-                detail: if detail.is_empty() {
+            ToolDisplay::call(
+                tool_name,
+                first_line_of(&headline, 180),
+                (questions.len() > 1).then(|| format!("{} questions", questions.len())),
+                if detail.is_empty() {
                     (!fallback.is_empty()).then_some(fallback)
                 } else {
                     Some(detail)
                 },
-                is_error: false,
-            }
+            )
         }
         _ => {
             if input.is_empty() {
-                return ToolDisplay {
-                    tool_name: Some(tool_name),
-                    text: String::new(),
-                    meta: None,
-                    detail: None,
-                    is_error: false,
-                };
+                return ToolDisplay::call(tool_name, String::new(), None, None);
             }
             let picked = pick_preferred(input);
-            ToolDisplay {
-                tool_name: Some(tool_name),
-                text: first_line_of(&picked.unwrap_or_else(|| compact(input)), 180),
-                meta: None,
-                detail: Some(pretty(&redact_encrypted(input))),
-                is_error: false,
-            }
+            ToolDisplay::call(
+                tool_name,
+                first_line_of(&picked.unwrap_or_else(|| compact(input)), 180),
+                None,
+                Some(pretty(&redact_encrypted(input))),
+            )
         }
     }
 }
@@ -486,15 +475,14 @@ pub fn display_claude_tool_result(content: Option<&Value>, is_error_flag: bool) 
         text = "no output".to_string();
     }
 
-    ToolDisplay {
+    ToolDisplay::result(
+        text,
+        None,
         // A result inherits the tool name from its call; the transcript parser
         // fills it in once it has matched the `tool_use_id`.
-        tool_name: None,
-        text,
-        meta: None,
-        detail: (!body.is_empty()).then_some(body),
+        (!body.is_empty()).then_some(body),
         is_error,
-    }
+    )
 }
 
 #[cfg(test)]

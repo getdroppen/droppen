@@ -63,7 +63,7 @@ use serde_json::{json, Map, Value};
 
 use super::iso8601;
 use super::mentions::resolve_within_home;
-use super::tool_display::{as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name};
+use super::tool_display::{as_display_string, checklist_lines, compact, diff_of, pick_preferred, pretty, question_lines, redact_encrypted, shorten_tool_name};
 use super::transcript::is_renderable_image;
 use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use crate::record::replay::parse_iso8601;
@@ -86,17 +86,6 @@ pub struct Context<'a> {
     pub home: &'a Path,
     /// The session's working directory, from its `session_meta`.
     pub cwd: Option<&'a str>,
-}
-
-/// A call row, named and summarised.
-fn call(tool: &str, text: impl Into<String>, meta: Option<String>, detail: Option<String>) -> ToolDisplay {
-    ToolDisplay {
-        tool_name: Some(tool.to_string()),
-        text: text.into(),
-        meta,
-        detail,
-        is_error: false,
-    }
 }
 
 fn str_of<'a>(map: &'a Json, key: &str) -> Option<&'a str> {
@@ -263,7 +252,7 @@ fn shell_call(command: &str, cwd: Option<String>, parsed: Option<&Vec<Value>>) -
         let more = if command.trim().contains('\n') { " ⋯" } else { "" };
         format!("{}{more}", first_line_of(command, LINE))
     });
-    call(
+    ToolDisplay::call(
         SHELL,
         text,
         cwd.filter(|cwd| !cwd.trim().is_empty()),
@@ -278,7 +267,7 @@ fn stdin_call(session: Option<String>, chars: Option<String>) -> ToolDisplay {
         Some(chars) => format!("send {} → {session}", serde_json::to_string(&chars).unwrap_or_default()),
         None => format!("poll {session}"),
     };
-    call("write_stdin", text, None, None)
+    ToolDisplay::call("write_stdin", text, None, None)
 }
 
 // ── outputs ───────────────────────────────────────────────────────────────
@@ -588,13 +577,12 @@ fn verdict(outcome: Outcome) -> ToolDisplay {
         Some(running) if outcome.exit.is_none() && !failed => format!("Command running in background ({running})"),
         _ => first_line_of(outcome.headline.as_deref().unwrap_or(&body), LINE),
     };
-    ToolDisplay {
-        tool_name: None,
-        text: if text.is_empty() { "no output".to_string() } else { text },
-        meta: (!meta.is_empty()).then(|| meta.join(" · ")),
-        detail: (!body.is_empty()).then_some(body),
-        is_error: failed,
-    }
+    ToolDisplay::result(
+        if text.is_empty() { "no output".to_string() } else { text },
+        (!meta.is_empty()).then(|| meta.join(" · ")),
+        (!body.is_empty()).then_some(body),
+        failed,
+    )
 }
 
 /// The result of any codex call, read from its output alone.
@@ -634,19 +622,8 @@ fn plan_call(steps: &[Step], explanation: Option<String>) -> ToolDisplay {
         Some(current) => format!("{done}/{} · {}", steps.len(), first_line_of(&current.text, LINE)),
         None => format!("{done}/{} steps", steps.len()),
     };
-    let lines = steps
-        .iter()
-        .map(|step| {
-            let mark = match step.status.as_str() {
-                "completed" => "[x]",
-                "in_progress" | "inProgress" => "[~]",
-                _ => "[ ]",
-            };
-            format!("{mark} {}", step.text)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    call("update_plan", text, explanation, (!lines.is_empty()).then_some(lines))
+    let lines = checklist_lines(steps.iter().map(|step| (step.status.as_str(), step.text.as_str())));
+    ToolDisplay::call("update_plan", text, explanation, (!lines.is_empty()).then_some(lines))
 }
 
 /// `request_user_input`: the question on the row, every option in the fold,
@@ -666,21 +643,13 @@ fn questions_call(name: &str, input: &Json) -> ToolDisplay {
             .unwrap_or("")
             .to_string()
     };
-    let mut lines: Vec<String> = Vec::new();
-    for question in &questions {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push(title(question));
-        for option in question.get("options").and_then(Value::as_array).into_iter().flatten() {
-            let label = match option {
-                Value::Object(option) => str_of(option, "label").unwrap_or("").to_string(),
-                other => as_display_string(Some(other)),
-            };
-            lines.push(format!("◦ {label}"));
-        }
-    }
-    call(
+    let lines = question_lines(questions.iter().copied(), &title, |option| {
+        Some(match option {
+            Value::Object(option) => format!("◦ {}", str_of(option, "label").unwrap_or("")),
+            other => format!("◦ {}", as_display_string(Some(other))),
+        })
+    });
+    ToolDisplay::call(
         name,
         questions
             .first()
@@ -873,20 +842,20 @@ fn file_changes(changes: Option<&Value>) -> Vec<PatchFile> {
 /// change: `Write` for a new file, `Edit` for one hunk, `MultiEdit` for several.
 fn file_call(file: &PatchFile) -> ToolDisplay {
     match &file.op {
-        FileOp::Add { content } => call("Write", file.path.clone(), None, Some(content.clone())),
-        FileOp::Delete { content } => call("Delete", file.path.clone(), None, content.clone().filter(|c| !c.is_empty())),
+        FileOp::Add { content } => ToolDisplay::call("Write", file.path.clone(), None, Some(content.clone())),
+        FileOp::Delete { content } => ToolDisplay::call("Delete", file.path.clone(), None, content.clone().filter(|c| !c.is_empty())),
         FileOp::Update { move_to, edits, .. } => {
             let text = match move_to {
                 Some(to) => format!("{} → {to}", file.path),
                 None => file.path.clone(),
             };
             match edits.as_slice() {
-                [] => call("Edit", text, None, None),
-                [(old, new)] => call("Edit", text, None, Some(diff_of(old, new))),
+                [] => ToolDisplay::call("Edit", text, None, None),
+                [(old, new)] => ToolDisplay::call("Edit", text, None, Some(diff_of(old, new))),
                 many => {
                     let edits: Vec<Value> = many.iter().map(|(old, new)| json!({"old_string": old, "new_string": new})).collect();
                     let input = json!({"file_path": file.path, "edits": edits});
-                    call("MultiEdit", text, None, input.as_object().map(pretty))
+                    ToolDisplay::call("MultiEdit", text, None, input.as_object().map(pretty))
                 }
             }
         }
@@ -897,17 +866,16 @@ fn file_call(file: &PatchFile) -> ToolDisplay {
 fn file_result(file: &PatchFile, failure: Option<&str>) -> ToolDisplay {
     if let Some(failure) = failure {
         let failure = failure.trim();
-        return ToolDisplay {
-            tool_name: None,
-            text: if failure.is_empty() {
+        return ToolDisplay::result(
+            if failure.is_empty() {
                 "failed".to_string()
             } else {
                 first_line_of(failure, LINE)
             },
-            meta: None,
-            detail: (!failure.is_empty()).then(|| failure.to_string()),
-            is_error: true,
-        };
+            None,
+            (!failure.is_empty()).then(|| failure.to_string()),
+            true,
+        );
     }
     let verb = match &file.op {
         FileOp::Add { .. } => "created",
@@ -915,13 +883,7 @@ fn file_result(file: &PatchFile, failure: Option<&str>) -> ToolDisplay {
         FileOp::Update { move_to: Some(_), .. } => "moved",
         FileOp::Update { .. } => "updated",
     };
-    ToolDisplay {
-        tool_name: None,
-        text: format!("{verb} {}", base_name(&file.path)),
-        meta: None,
-        detail: None,
-        is_error: false,
-    }
+    ToolDisplay::result(format!("{verb} {}", base_name(&file.path)), None, None, false)
 }
 
 /// The hunks a direct `apply_patch`'s own `FileChange` recorded for a file
@@ -1157,12 +1119,12 @@ fn cell_call(source: &str) -> ToolDisplay {
         let named = match only.name.as_str() {
             "exec_command" => field("cmd").map(|cmd| shell_call(&cmd, field("workdir"), None)),
             "write_stdin" => Some(stdin_call(extract_number_field(object, "session_id"), field("chars"))),
-            "view_image" => field("path").map(|path| call("view_image", path, None, None)),
+            "view_image" => field("path").map(|path| ToolDisplay::call("view_image", path, None, None)),
             "apply_patch" => literal_at(source, only.args_at)
                 .filter(|patch| is_patch(patch))
-                .map(|patch| call("apply_patch", patch_file_list(&patch), None, Some(patch))),
-            "web__run" => field("q").map(|query| call("WebSearch", query, None, Some(source.to_string()))),
-            name if name.starts_with("mcp__") => Some(call(
+                .map(|patch| ToolDisplay::call("apply_patch", patch_file_list(&patch), None, Some(patch))),
+            "web__run" => field("q").map(|query| ToolDisplay::call("WebSearch", query, None, Some(source.to_string()))),
+            name if name.starts_with("mcp__") => Some(ToolDisplay::call(
                 &shorten_tool_name(name),
                 ["title", "query", "text", "path", "url"]
                     .iter()
@@ -1194,7 +1156,7 @@ fn cell_call(source: &str) -> ToolDisplay {
             .collect::<Vec<_>>()
             .join(" · ")
     };
-    call(CELL, text, None, Some(source.to_string()))
+    ToolDisplay::call(CELL, text, None, Some(source.to_string()))
 }
 
 // ── direct calls ──────────────────────────────────────────────────────────
@@ -1208,12 +1170,12 @@ fn millis_text(input: &Json, key: &str) -> Option<String> {
 /// freeform tool nothing here knows, shown by its first line.
 pub fn display_codex_custom_tool_call(name: &str, input: &str) -> ToolDisplay {
     if is_patch(input) {
-        return call("apply_patch", patch_file_list(input), None, Some(input.to_string()));
+        return ToolDisplay::call("apply_patch", patch_file_list(input), None, Some(input.to_string()));
     }
     if name == "exec" {
         return cell_call(input);
     }
-    call(name, first_line_of(input, LINE), None, Some(input.to_string()))
+    ToolDisplay::call(name, first_line_of(input, LINE), None, Some(input.to_string()))
 }
 
 /// A `function_call`: `arguments` is a JSON-encoded string, and `namespace`
@@ -1221,7 +1183,7 @@ pub fn display_codex_custom_tool_call(name: &str, input: &str) -> ToolDisplay {
 /// or an MCP server).
 pub fn display_codex_function_call(name: &str, namespace: Option<&str>, args: &str) -> ToolDisplay {
     let Ok(Value::Object(input)) = serde_json::from_str::<Value>(args) else {
-        return call(name, first_line_of(args, LINE), None, Some(args.to_string()));
+        return ToolDisplay::call(name, first_line_of(args, LINE), None, Some(args.to_string()));
     };
     let field = |key: &str| str_of(&input, key).map(str::to_owned);
     match name {
@@ -1239,12 +1201,12 @@ pub fn display_codex_function_call(name: &str, namespace: Option<&str>, args: &s
                 return plan_call(&steps, field("explanation"));
             }
         }
-        "view_image" => return call("view_image", field("path").unwrap_or_default(), None, None),
+        "view_image" => return ToolDisplay::call("view_image", field("path").unwrap_or_default(), None, None),
         "request_user_input" | "request_user_input_async" => return questions_call(name, &input),
-        "sleep" => return call(name, millis_text(&input, "duration_ms").unwrap_or_default(), None, None),
-        "wait_agent" => return call(name, millis_text(&input, "timeout_ms").unwrap_or_default(), None, None),
+        "sleep" => return ToolDisplay::call(name, millis_text(&input, "duration_ms").unwrap_or_default(), None, None),
+        "wait_agent" => return ToolDisplay::call(name, millis_text(&input, "timeout_ms").unwrap_or_default(), None, None),
         "wait" if input.contains_key("cell_id") => {
-            return call(name, format!("cell {}", as_display_string(input.get("cell_id"))), None, None);
+            return ToolDisplay::call(name, format!("cell {}", as_display_string(input.get("cell_id"))), None, None);
         }
         "spawn_agent" | "send_message" | "followup_task" | "send_input" => {
             // The message itself is usually a fernet blob, so who it went to is
@@ -1255,7 +1217,7 @@ pub fn display_codex_function_call(name: &str, namespace: Option<&str>, args: &s
                 (None, Some(target)) => format!("→ {target}"),
                 (None, None) => str_of(&redacted, "message").map(|m| first_line_of(m, LINE)).unwrap_or_default(),
             };
-            return call(name, text, None, Some(pretty(&redacted)));
+            return ToolDisplay::call(name, text, None, Some(pretty(&redacted)));
         }
         _ => {}
     }
@@ -1270,10 +1232,10 @@ pub fn display_codex_function_call(name: &str, namespace: Option<&str>, args: &s
         },
     };
     if input.is_empty() {
-        return call(&tool_name, String::new(), None, None);
+        return ToolDisplay::call(&tool_name, String::new(), None, None);
     }
     let redacted = redact_encrypted(&input);
-    call(
+    ToolDisplay::call(
         &tool_name,
         first_line_of(&pick_preferred(&redacted).unwrap_or_else(|| compact(&redacted)), LINE),
         field("task_name"),
@@ -1406,9 +1368,8 @@ fn web_pair(id: String, item: &Json) -> Pair {
         })
         .filter(|line| !line.is_empty())
         .collect();
-    let result = ToolDisplay {
-        tool_name: None,
-        text: match (results.len(), reading) {
+    let result = ToolDisplay::result(
+        match (results.len(), reading) {
             (0, _) => "no results".to_string(),
             (_, true) => lines
                 .first()
@@ -1417,11 +1378,11 @@ fn web_pair(id: String, item: &Json) -> Pair {
             (1, false) => "1 result".to_string(),
             (n, false) => format!("{n} results"),
         },
-        meta: None,
-        detail: (!lines.is_empty()).then(|| lines.join(if reading { "\n\n" } else { "\n" })),
-        is_error: false,
-    };
-    Pair::new(id, call(tool, first_line_of(&text, LINE), None, None), result)
+        None,
+        (!lines.is_empty()).then(|| lines.join(if reading { "\n\n" } else { "\n" })),
+        false,
+    );
+    Pair::new(id, ToolDisplay::call(tool, first_line_of(&text, LINE), None, None), result)
 }
 
 /// The calls and results one `item_completed` stands for — nothing for an
@@ -1491,7 +1452,7 @@ fn item_pairs(item: &Json, context: Context<'_>) -> Vec<Pair> {
             } else {
                 first_line_of(&pick_preferred(&redacted).unwrap_or_else(|| compact(&redacted)), LINE)
             };
-            let call = call(&format!("{server}:{tool}"), text, None, (!args.is_empty()).then_some(detail));
+            let call = ToolDisplay::call(&format!("{server}:{tool}"), text, None, (!args.is_empty()).then_some(detail));
             vec![Pair::new(id, call, mcp_result(item))]
         }
         "WebSearch" => vec![web_pair(id, item)],
@@ -1516,7 +1477,7 @@ fn item_pairs(item: &Json, context: Context<'_>) -> Vec<Pair> {
                         ..Outcome::default()
                     }),
                 };
-                let mut pair = Pair::new(id, call("image_gen", first_line_of(&prompt, LINE), None, Some(prompt)), result);
+                let mut pair = Pair::new(id, ToolDisplay::call("image_gen", first_line_of(&prompt, LINE), None, Some(prompt)), result);
                 // Never `result`: it is the image itself, base64, megabytes of it.
                 pair.images = saved.as_deref().and_then(|saved| thumbnail(saved, context));
                 vec![pair]
@@ -1529,7 +1490,7 @@ fn item_pairs(item: &Json, context: Context<'_>) -> Vec<Pair> {
             let path = str_of(item, "path").map(file_path_of).unwrap_or_default();
             let mut pair = Pair::new(
                 id,
-                call("view_image", path.clone(), None, None),
+                ToolDisplay::call("view_image", path.clone(), None, None),
                 verdict(plain(format!("viewed {}", base_name(&path)))),
             );
             pair.images = thumbnail(&path, context);
@@ -1862,12 +1823,11 @@ impl CodexTools {
         let tool_name = pair.call.tool_name.clone();
         push_call(items, pair.call, Some(pair.id.clone()), timestamp, model);
         if let Some(status) = str_of(payload, "status").filter(|status| *status != "in_progress") {
+            // The result names the tool the search call did, unlike most
+            // results, which inherit it when the transcript parser pairs them.
             let result = ToolDisplay {
                 tool_name,
-                text: status.to_string(),
-                meta: None,
-                detail: None,
-                is_error: matches!(status, "failed" | "incomplete"),
+                ..ToolDisplay::result(status.to_string(), None, None, matches!(status, "failed" | "incomplete"))
             };
             let mut item = make_tool_item(Role::User, ItemKind::ToolResult, result, timestamp);
             item.result_of = Some(pair.id);
