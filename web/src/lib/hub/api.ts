@@ -19,7 +19,7 @@
  */
 import { createHubClient, type HubClient } from "@/api/hub";
 import type { components } from "@/api/hub-schema";
-import { type Bytes, fromHex, hex, sha256, utf8 } from "@/lib/e2e";
+import { type Bytes, fromHex, hex, MAX_PAGE_LEN, RecordError, sha256, utf8 } from "@/lib/e2e";
 import { hubHttpOrigin } from "./config";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
 import type { RelayDirectory } from "./relays";
@@ -1384,11 +1384,45 @@ export class HubApi {
    * One snapshot page of a stream, as the hub stores it: sealed bytes it
    * cannot open. Unchecked here — the reader checks it against the signed
    * manifest that names it (`openManifestPage`) before using a byte of it.
+   *
+   * At most {@link MAX_PAGE_LEN} bytes, whatever the hub sends (the same cap
+   * as the Rust device's `read_capped`): a `Content-Length` over it is refused
+   * before the body is touched, and a larger body is refused and its reader
+   * cancelled as the bytes come in — never buffered whole first. Refused as a
+   * `tooLarge` page, which a stream reader handles like any other page it
+   * cannot use.
    */
   async streamPage(token: string, stream: Uint8Array, page: Uint8Array): Promise<Bytes> {
     const res = await this.send("GET", `/v1/streams/${hex(stream)}/pages/${hex(page)}`, { token });
     if (!res.ok) return HubApi.fail(res);
-    return new Uint8Array(await res.arrayBuffer());
+    const tooLarge = () => new RecordError("tooLarge", `a page larger than ${MAX_PAGE_LEN} bytes`);
+    const declared = res.headers.get("content-length");
+    if (declared !== null && Number(declared) > MAX_PAGE_LEN) throw tooLarge();
+    if (!res.body) return new Uint8Array();
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > MAX_PAGE_LEN) {
+          await reader.cancel().catch(() => undefined);
+          throw tooLarge();
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, at);
+      at += chunk.length;
+    }
+    return out;
   }
 
   /** The relays this account may use, its set and `relay.max`, and its machines' round trips (`GET /v1/relays`). */
