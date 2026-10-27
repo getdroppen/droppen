@@ -416,8 +416,8 @@ mod tests {
 
         // A short "secret" is a word, and replacing every occurrence of one
         // would shred the sentence it appears in.
-        assert_eq!(by_value("the key is bad", "key"), "the key is bad");
-        assert_eq!(by_value("nothing here", "hunter2-gateway-issued-value"), "nothing here");
+        assert_eq!(redact_values("the key is bad", ["key"]), "the key is bad");
+        assert_eq!(redact_values("nothing here", [secret]), "nothing here");
     }
 
     #[test]
