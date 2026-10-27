@@ -43,13 +43,12 @@
 //! * [`runner`] — the five-second loop, and everything it does when a task is due;
 //! * this file — the `0600` store and the four CRUD routes over it.
 //!
-//! # Why the file is this instance's own
+//! # Why the list is this instance's own
 //!
-//! `<data>/instances/<name>/scheduled-tasks.json`, beside
-//! [`crate::sessions::Paths::screens_file`] and for a sharper version of its
-//! reason. A shared file would not merely be confusing: every server running on
-//! the machine would read the same list and every one of them would fire it, so
-//! two instances would mean two sessions per tick, each unaware of the other's.
+//! `<data>/instances/<name>/state.db`, this instance's own database. A shared
+//! list would not merely be confusing: every server running on the machine
+//! would read the same list and every one of them would fire it, so two
+//! instances would mean two sessions per tick, each unaware of the other's.
 //! The task list is a thing a server *acts on*, which makes it ownership state,
 //! and ownership state belongs to the instance that holds the lock.
 //!
@@ -60,21 +59,16 @@
 //!
 //! # Where the tasks actually are
 //!
-//! One row each in [`crate::db`]'s `scheduled_tasks`. `scheduled-tasks.json` is
-//! read exactly once, to drain it into that table, and is never written.
-//!
-//! It was written for a while after the move, so that a [`crate::supervisor`]
-//! demotion to a `.prev` binary — one that had never heard of the database —
-//! would not come back having forgotten every task, which is a silent feature
-//! outage. No binary that old is left to demote to. The file is left on disk
-//! rather than removed: dropping one back in is how a restored backup seeds a
-//! fresh database. See [`update`] for the one thing the move deliberately did
-//! *not* simplify.
+//! One row each in [`crate::db`]'s `scheduled_tasks`, in this instance's state
+//! database. `scheduled-tasks.json` was written for a while after the move, so
+//! that a [`crate::supervisor`] demotion to a `.prev` binary — one that had
+//! never heard of the database — would not come back having forgotten every
+//! task, which is a silent feature outage. No binary that old is left to
+//! demote to, and the file is no longer read: one left on disk is inert.
 
 pub mod cron;
 pub mod runner;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -282,11 +276,6 @@ pub struct ScheduledTaskUpdate {
 
 /* ── the store ───────────────────────────────────────────────────────── */
 
-/// Where the task list lives.
-pub fn tasks_file(paths: &Paths) -> PathBuf {
-    paths.scheduled_tasks_file()
-}
-
 /// A fresh uuid v4.
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -322,18 +311,14 @@ fn optional_at(entry: &Value, key: &str) -> Nullable<String> {
     )
 }
 
-/// The name this store's one-time drain of `scheduled-tasks.json` is recorded
-/// under.
-const IMPORT_MARKER: &str = "scheduled-tasks";
-
 /// One task, rebuilt field by field from whatever the store handed back.
 ///
 /// Per-field coercion rather than one `serde_json::from_str`, for the reason
-/// [`crate::notify::store::read`] gives: a hand-edited file with a number where
-/// a string belongs should cost that field and not the whole list. It reads a
-/// `payload` column and a file entry alike, because a payload *is* the JSON a
-/// [`ScheduledTask`] serialises to — which is the shape the file's entries have
-/// always had.
+/// [`crate::notify::store::read`] gives: a row that has been damaged — by an
+/// older build, or by hand — with a number where a string belongs should cost
+/// that field and not the whole list. The `payload` column *is* the JSON a
+/// [`ScheduledTask`] serialises to, which is the shape the entries have always
+/// had.
 fn task_at(entry: &Value, index: usize) -> ScheduledTask {
     ScheduledTask {
         id: entry
@@ -377,71 +362,9 @@ fn payload(task: &ScheduledTask) -> String {
     serde_json::to_string(task).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// What `scheduled-tasks.json` says, for the one boot that drains it.
-///
-/// A missing or corrupt file reads as an empty list, so a bad write can never
-/// lock the user out of making new tasks — and, more to the point, can never
-/// leave the runner unable to start. That tolerance has not changed, only moved.
-async fn read_tasks_file(paths: &Paths) -> Vec<ScheduledTask> {
-    let Ok(text) = tokio::fs::read_to_string(tasks_file(paths)).await else {
-        return vec![];
-    };
-    let Ok(raw) = serde_json::from_str::<Value>(&text) else {
-        return vec![];
-    };
-    let Some(entries) = raw.get("tasks").and_then(Value::as_array) else {
-        return vec![];
-    };
-    entries.iter().enumerate().map(|(index, entry)| task_at(entry, index)).collect()
-}
-
-/// This instance's database, with `scheduled-tasks.json` drained into it once.
-async fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.instance_db());
-    if db.kv_get(crate::db::scope::IMPORTED, IMPORT_MARKER).is_none() {
-        import_once(&db, read_tasks_file(paths).await);
-    }
-    db
-}
-
-/// [`crate::db::Db::import_once`], for a store whose rows are a table.
-///
-/// That one drains into `kv` and this one into `scheduled_tasks`; the three
-/// properties it documents are kept unchanged. The mark lands in the same
-/// transaction as the rows, so an interrupted import is an import that did not
-/// happen; the file is left on disk untouched; and a file that was never there
-/// still counts as drained, or a user who deleted their last task would find it
-/// scheduled again after every restart.
-fn import_once(db: &Db, tasks: Vec<ScheduledTask>) {
-    let count = tasks.len();
-    let outcome = db.write(|tx| {
-        let done: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .ok();
-        if done.is_some() {
-            return Ok(false);
-        }
-        for task in &tasks {
-            tx.execute(
-                "INSERT OR IGNORE INTO scheduled_tasks (id, payload) VALUES (?1, ?2)",
-                (&task.id, payload(task)),
-            )?;
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (crate::db::scope::IMPORTED, IMPORT_MARKER, count.to_string()),
-        )?;
-        Ok(true)
-    });
-    match outcome {
-        Ok(true) => tracing::info!(tasks = count, "imported scheduled-tasks.json into the state database"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "cannot import scheduled-tasks.json; the tasks stay in the file this boot"),
-    }
+/// This instance's database.
+fn store(paths: &Paths) -> Arc<Db> {
+    crate::db::at(paths.instance_db())
 }
 
 /// Every saved task, in the order they were created in.
@@ -450,7 +373,7 @@ fn import_once(db: &Db, tasks: Vec<ScheduledTask>) {
 /// whole table in one transaction and so the rowids follow the list it was
 /// handed. A row that will not parse is dropped rather than fatal.
 pub async fn read_tasks(paths: &Paths) -> Vec<ScheduledTask> {
-    let db = store(paths).await;
+    let db = store(paths);
     db.read(|conn| {
         let mut statement = conn.prepare("SELECT payload FROM scheduled_tasks ORDER BY rowid")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
@@ -471,7 +394,7 @@ pub async fn read_tasks(paths: &Paths) -> Vec<ScheduledTask> {
 /// is therefore the transaction's alone — a database that will not commit is a
 /// save the user has to be told about, and the routes turn it into a `500`.
 pub async fn write_tasks(paths: &Paths, tasks: &[ScheduledTask]) -> std::io::Result<()> {
-    let db = store(paths).await;
+    let db = store(paths);
     db.write(|tx| {
         // Replace rather than merge: the list handed in is the whole truth, and
         // a task the user deleted must not survive as a row the runner still
@@ -868,46 +791,35 @@ mod tests {
         }
     }
 
+    /// Put raw payloads in the table, as a build that wrote them did.
+    ///
+    /// The payload column is opaque to the schema, so this is the level a
+    /// damaged or older row has to be staged at to exercise the reader's
+    /// per-field tolerance.
+    async fn seed_payloads(paths: &Paths, payloads: &[&str]) {
+        let db = store(paths);
+        db.write(|tx| {
+            for (index, payload) in payloads.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO scheduled_tasks (id, payload) VALUES (?1, ?2)",
+                    (format!("seed-{index}"), *payload),
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed the task table");
+    }
+
     #[tokio::test]
     async fn the_list_round_trips() {
         let (_dir, paths) = paths();
-        assert!(read_tasks(&paths).await.is_empty(), "a missing file is no tasks");
+        assert!(read_tasks(&paths).await.is_empty(), "an empty database is no tasks");
 
         write_tasks(&paths, &[task("a"), task("b")]).await.expect("write");
         let read = read_tasks(&paths).await;
         assert_eq!(read.len(), 2);
         assert_eq!(read[0].id, "a");
         assert_eq!(read[1].expr, "0 9 * * *");
-    }
-
-    /// An instance of its own per body: the file is drained into the database
-    /// once, so three seeds into one instance would only ever test the first.
-    #[tokio::test]
-    async fn a_corrupt_file_reads_as_an_empty_list() {
-        for body in ["not json at all", "{}", r#"{"version":1,"tasks":"nope"}"#] {
-            let (_dir, paths) = paths();
-            std::fs::create_dir_all(tasks_file(&paths).parent().expect("parent")).expect("instance dir");
-            std::fs::write(tasks_file(&paths), body).expect("seed");
-            assert!(read_tasks(&paths).await.is_empty(), "{body} should read as no tasks");
-        }
-    }
-
-    /// The file is drained exactly once, and never over what has happened since
-    /// — otherwise a task the user deleted is scheduled again by the next boot.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_never_over_newer_rows() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(tasks_file(&paths).parent().expect("parent")).expect("instance dir");
-        let seeded = r#"{"version":1,"tasks":[{"id":"from-the-file","expr":"0 9 * * *","enabled":true}]}"#;
-        std::fs::write(tasks_file(&paths), seeded).expect("seed");
-
-        let tasks = read_tasks(&paths).await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].id, "from-the-file");
-
-        write_tasks(&paths, &[]).await.expect("the user deletes it");
-        std::fs::write(tasks_file(&paths), seeded).expect("and the old file comes back");
-        assert!(read_tasks(&paths).await.is_empty(), "a deleted task stays deleted");
     }
 
     /// What a restart is, from the store's point of view.
@@ -926,12 +838,11 @@ mod tests {
     #[tokio::test]
     async fn a_hand_edited_entry_costs_only_the_field_it_broke() {
         let (_dir, paths) = paths();
-        std::fs::create_dir_all(tasks_file(&paths).parent().expect("parent")).expect("instance dir");
-        std::fs::write(
-            tasks_file(&paths),
-            r#"{"version":1,"tasks":[{"id":"a","expr":"0 9 * * *","cwd":7,"enabled":"yes","lastStatus":"nonsense"}]}"#,
+        seed_payloads(
+            &paths,
+            &[r#"{"id":"a","expr":"0 9 * * *","cwd":7,"enabled":"yes","lastStatus":"nonsense"}"#],
         )
-        .expect("seed");
+        .await;
 
         let tasks = read_tasks(&paths).await;
         assert_eq!(tasks.len(), 1);
@@ -1007,37 +918,10 @@ mod tests {
         unsafe { libc::umask(previous) };
         result.expect("write");
 
-        assert!(!tasks_file(&paths).exists(), "no task list is written out beside the database");
-        assert!(!tasks_file(&paths).with_extension("json.tmp").exists());
+        assert!(!paths.scheduled_tasks_file().exists(), "no task list is written out beside the database");
+        assert!(!paths.scheduled_tasks_file().with_extension("json.tmp").exists());
         let mode = std::fs::metadata(paths.instance_db()).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-    }
-
-    /// The contract that replaced the mirror: the file is an input, once, and
-    /// never an output. A save that wrote it back would be one a hand-restored
-    /// file could not survive being imported from.
-    #[tokio::test]
-    async fn no_save_writes_the_file_back() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(tasks_file(&paths).parent().expect("parent")).expect("instance dir");
-        let before = r#"{"version":1,"tasks":[]}"#;
-        std::fs::write(tasks_file(&paths), before).expect("seed");
-
-        write_tasks(&paths, &[task("a")]).await.expect("write");
-        update(&paths, |tasks| {
-            tasks.first_mut()?.enabled = false;
-            Some(())
-        })
-        .await
-        .expect("update");
-        write_tasks(&paths, &[]).await.expect("delete them all");
-
-        assert_eq!(
-            std::fs::read_to_string(tasks_file(&paths)).expect("read"),
-            before,
-            "three saves leave the file byte for byte as found"
-        );
-        assert!(!tasks_file(&paths).with_extension("json.tmp").exists());
     }
 
     #[test]
@@ -1120,14 +1004,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_file_written_before_sources_existed_reads_as_claude() {
+    async fn a_payload_written_before_sources_existed_reads_as_claude() {
         let (_dir, paths) = paths();
-        std::fs::create_dir_all(tasks_file(&paths).parent().expect("parent")).expect("instance dir");
-        std::fs::write(
-            tasks_file(&paths),
-            r#"{"version":1,"tasks":[{"id":"a","expr":"0 9 * * *"},{"id":"b","expr":"0 9 * * *","source":"codex"},{"id":"c","expr":"0 9 * * *","source":"gopher"}]}"#,
+        seed_payloads(
+            &paths,
+            &[
+                r#"{"id":"a","expr":"0 9 * * *"}"#,
+                r#"{"id":"b","expr":"0 9 * * *","source":"codex"}"#,
+                r#"{"id":"c","expr":"0 9 * * *","source":"gopher"}"#,
+            ],
         )
-        .expect("seed");
+        .await;
 
         let tasks = read_tasks(&paths).await;
         assert_eq!(tasks[0].source, Source::Claude);
