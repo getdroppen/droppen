@@ -7,7 +7,7 @@
 //! appended to that file as one line, `{"src": "agent", "kind": "ws",
 //! "socket", "dir": "in"|"out", "body"}` — and, through `rh-client`'s tap
 //! ([`install_client_tap`]), every JSON request and answer of its device
-//! role over HTTP (S1-4) as `{"src": "agent", "kind": "http", "dir",
+//! role over HTTP as `{"src": "agent", "kind": "http", "dir",
 //! "method", "path", "query"?, "status"?, "body"}` and its `/v1/client`
 //! control messages, a device session's token redacted. Binary frames never are. What is
 //! written is what already crosses the wire to the hub or a relay (tickets
@@ -129,8 +129,8 @@ fn http(dir: &str, method: &str, url: &str, status: Option<u16>, body: &Value) {
 /// answer that mints one, `token`, and the `/v1/client` login that presents
 /// one, `session`), a known-client token (`known_client`, `kc1.…` in `GET
 /// /v1/me`), and the account's e-mail. The capture is for checking shapes;
-/// those are credentials and personal data (security reviews of S1-4, N4,
-/// and S1-5, F9).
+/// those are credentials and personal data, so they are redacted wherever
+/// they appear.
 pub fn redacted(value: &Value) -> Value {
     redact(value, false)
 }
@@ -158,8 +158,8 @@ fn redact(value: &Value, in_email: bool) -> Value {
     }
 }
 
-/// What `rh-client` sends and gets for this computer's device role (S1-4,
-/// S1-5), captured as the agent's own: `"src": "agent"`, tokens redacted.
+/// What `rh-client` sends and gets for this computer's device role, captured
+/// as the agent's own: `"src": "agent"`, tokens redacted.
 struct DeviceRole;
 
 impl rh_client::tap::Tap for DeviceRole {

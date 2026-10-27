@@ -22,12 +22,12 @@ pub(in crate::agent) fn defer(deferred: &mut Vec<Value>, value: Value) -> Option
     (deferred.len() > MAX_DEFERRED).then(|| deferred.remove(0))
 }
 
-/// What becomes of a mail pushed out of a full deferred list (M2 re-review:
-/// it used to vanish, neither acknowledged nor ever tried again, and the
-/// hub — counting it as unanswered — sent no further page of mail): one for
-/// an epoch this agent is already past is settled, so acknowledged; any other
-/// is released — left in the mailbox for the next sign-in, and counted as
-/// answered so the next page comes.
+/// What becomes of a mail pushed out of a full deferred list: it must not
+/// vanish, neither acknowledged nor ever tried again — the hub, counting it
+/// as unanswered, would send no further page of mail. One for an epoch this
+/// agent is already past is settled, so acknowledged; any other is released
+/// — left in the mailbox for the next sign-in, and counted as answered so
+/// the next page comes.
 pub(in crate::agent) fn evicted_message(mail: &Value, mk_epoch: Option<u32>) -> Value {
     let epoch = mail["epoch"].as_u64();
     let moot = matches!((epoch, mk_epoch), (Some(e), Some(held)) if e <= u64::from(held));
@@ -56,7 +56,7 @@ pub(in crate::agent) enum MailVerdict {
 }
 
 /// Which mail the agent itself takes: only purpose 2, this host's own
-/// machine key (chain v3 review, finding 6). Everything else in the mailbox
+/// machine key. Everything else in the mailbox
 /// (a device's keys, purpose 5 host keys, purpose 4 requests…) belongs to
 /// the device role of the same id, and is released.
 pub(in crate::agent) fn agents_mail(value: &Value) -> bool {
@@ -64,7 +64,7 @@ pub(in crate::agent) fn agents_mail(value: &Value) -> bool {
 }
 
 /// Open a sealed machine key from the mailbox: from a current full device,
-/// and exactly the key the chain committed for its epoch (M2 review — a
+/// and exactly the key the chain committed for its epoch (a
 /// device removed since it sealed it, or the hub, can hand over nothing the
 /// chain does not already name, and no epoch out of reach). Mail of any
 /// other purpose is not the agent's: released, never acknowledged.

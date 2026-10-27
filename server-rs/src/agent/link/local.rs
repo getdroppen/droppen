@@ -93,8 +93,8 @@ impl bridge::Local for AgentLocal {
     }
 
     fn push_renewing(&self) -> bool {
-        // Set before a renewed identity key is taken, cleared once
-        // [`renew_push`] made the new push keys.
+        // Set before a renewed identity key is taken, cleared once the push
+        // keys are renewed.
         self.shared.state.lock().expect("agent state").rotation.push_renew
     }
 }
@@ -157,9 +157,9 @@ impl AgentLocal {
                 let reencrypt = v["reencrypt"].as_bool().unwrap_or(false);
                 let current = {
                     let st = shared.state.lock().expect("agent state");
-                    // Exactly the key the chain committed for this epoch (M2
-                    // review): never one of the sender's choosing, never an
-                    // epoch the chain has not reached.
+                    // Exactly the key the chain committed for this epoch:
+                    // never one of the sender's choosing, never an epoch the
+                    // chain has not reached.
                     let committed = st.chain.as_ref().map(|c| c.check_machine_key(&st.machine, epoch, key.as_ref()));
                     match committed {
                         Some(Ok(())) => {}

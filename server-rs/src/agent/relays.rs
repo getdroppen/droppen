@@ -924,8 +924,8 @@ mod tests {
         assert_eq!(web_of("ws://127.0.0.1:1"), "http://127.0.0.1:1");
     }
 
-    /// Security review: a relay (or a bad hub entry) could name any origin and
-    /// have this machine dial into its own network.
+    /// A relay (or a bad hub entry) could name any origin and have this
+    /// machine dial into its own network.
     #[test]
     fn relay_origins_must_be_public_and_wss() {
         let long = format!("wss://{}.example", "a".repeat(MAX_ORIGIN));
@@ -1130,10 +1130,10 @@ mod tests {
         addr
     }
 
-    /// Production (2026-10-23): a relay that refuses this machine's ticket as
-    /// revoked (the hub revoked its tickets) is not asked again with that
-    /// ticket until it nears expiry: the manager hears `Revoked` at once, and
-    /// the connection waits for a fresh ticket, then signs in with it.
+    /// A relay that refuses this machine's ticket as revoked (the hub revoked
+    /// its tickets) is not asked again with that ticket until it nears expiry:
+    /// the manager hears `Revoked` at once, and the connection waits for a
+    /// fresh ticket, then signs in with it.
     #[tokio::test]
     async fn a_ticket_refused_as_revoked_is_not_tried_again() {
         use axum::extract::ws::{CloseFrame, Message as WsMessage};

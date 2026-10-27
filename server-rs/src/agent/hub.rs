@@ -26,7 +26,8 @@ pub type Source = SplitStream<Socket>;
 
 /// How long a peer has to say anything during sign-in.
 pub(super) const STEP: Duration = Duration::from_secs(15);
-/// The heartbeat on the hub's and a relay's connection (architecture doc §5).
+/// The heartbeat on the hub's and a relay's connection
+/// (`docs/cross-machine-architecture.md` §5).
 pub(super) const HEARTBEAT: Duration = Duration::from_secs(20);
 /// Silence from the hub or a relay after which the connection is presumed dead.
 pub(super) const SILENCE: Duration = Duration::from_secs(60);

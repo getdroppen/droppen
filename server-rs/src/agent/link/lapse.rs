@@ -38,7 +38,7 @@ pub(in crate::agent) fn on_removed(shared: &Arc<Shared>, why: &str) {
 
 /// Close every open channel whose device the chain no longer lists as current
 /// (removed, or never active): a removal takes effect here at once, whatever
-/// the hub does, and [`accept`] refuses the device from now on.
+/// the hub does, and the handshake refuses the device from now on.
 ///
 /// Chain v3: also every channel whose device this machine no longer accepts
 /// control from — an admin demoted while the policy is admins only, a device

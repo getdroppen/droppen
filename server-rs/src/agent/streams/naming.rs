@@ -2,8 +2,8 @@
 //!
 //! A stream's id is `HMAC(HKDF(MK_e, "rh/v1 stream-id"), source ‖ 0 ‖ id)`
 //! with `e` the machine-key epoch it was created or migrated in (its
-//! `name_epoch` in `streams.db`; none — a stream from before — is the first
-//! epoch's, as every stream was named until now). So a rotation moves the
+//! `name_epoch` in `streams.db`; none, a stream from before `streams/2`, is
+//! the first epoch's). So a rotation moves the
 //! streams to names derived from a key a removed device never had: it cannot
 //! compute the ids written after it, even with the hub's help.
 //!

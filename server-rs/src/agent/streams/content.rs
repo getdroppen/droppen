@@ -454,7 +454,7 @@ impl StatusBodyExt for Vec<u8> {
     }
 }
 
-/// A status body with what this computer runs in it (S1-5): `os` (`{name,
+/// A status body with what this computer runs in it: `os` (`{name,
 /// version, arch}`, [`crate::agent::system::os`]) and `agentVersion` (this
 /// server's version). Older readers ignore both; the web app falls back to
 /// `settings.platform` and `settings.serverVersion` without them.
@@ -492,8 +492,8 @@ pub fn with_changes(body: Vec<u8>, changes: &[crate::agent::state::Alarm]) -> Ve
 /// [`crate::agent::state::Controllers`]), always — an empty list included,
 /// `null` before the agent has a chain; a body without the field is from an
 /// agent that does not keep the record. When a device that could control
-/// this machine no longer can, the page says whether it ever connected
-/// (review D3). A new device, or the chain moving on, is a new record.
+/// this machine no longer can, the page says whether it ever connected. A
+/// new device, or the chain moving on, is a new record.
 pub fn with_controllers(body: Vec<u8>, controllers: Option<&crate::agent::state::Controllers>) -> Vec<u8> {
     let value = controllers.and_then(|c| serde_json::to_value(c).ok()).unwrap_or(Value::Null);
     body.with_field("controllers", Some(value))

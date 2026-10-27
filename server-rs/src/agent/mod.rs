@@ -21,10 +21,10 @@
 //! - [`state`] — what an enrolled agent remembers (pinned root, verified
 //!   chain, first sightings, replay guard, attestations, machine keys).
 //! - [`streams`] — the encrypted copy of this machine's session list, status
-//!   and transcripts it keeps on the hub for offline reading (M2).
+//!   and transcripts it keeps on the hub for offline reading.
 //!
-//! A server that has never been enrolled is exactly today's single-machine
-//! server: without `<instance>/agent/state.json` nothing here runs.
+//! A server that has never been enrolled is a single-machine server: without
+//! `<instance>/agent/state.json` nothing here runs.
 //!
 //! # The identity seed
 //!
@@ -47,13 +47,14 @@
 //! stable identity — which is why the store is a seam and not done yet.
 
 /// What this agent declares (`agent_info.features`, and its handshake
-/// reply's `features`) once it reads chain v3 (local-aggregator §3.5): the
-/// hub sends it v3 entries, and lets the account take them once every host
-/// declares this and [`POLICY_FEATURE`].
+/// reply's `features`) once it reads chain v3 (`docs/local-aggregator.md`
+/// §3.5): the hub sends it v3 entries, and lets the account take them once
+/// every host declares this and [`POLICY_FEATURE`].
 pub const CHAIN_V3_FEATURE: &str = "chain/3";
 /// What this agent declares once it refuses the admin-only routes to devices
-/// that are not admins (local-aggregator §5.4, [`bridge::refusal`]) and
-/// accepts control only as its chain's accept policy says.
+/// that are not admins (`docs/local-aggregator.md` §5.4,
+/// [`bridge::refusal`]) and accepts control only as its chain's accept
+/// policy says.
 pub const POLICY_FEATURE: &str = "policy/1";
 /// What this agent declares once it renews its identity key on request
 /// (`docs/host-identity-rotation.md` §3.2, §5.6): `POST /rh/rotate`, the
@@ -100,14 +101,13 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// The hub origin this deployment used before the `api.` split, and the one
-/// it uses now.
+/// The legacy apex hub origin, and the canonical `api.` one.
 const LEGACY_HUB: &str = "wss://droppen.app";
 const CANONICAL_HUB: &str = "wss://api.droppen.app";
 /// How long the canonical hub has to answer the pre-flight sign-in.
 const MIGRATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Move an install enrolled before the split from the apex to the canonical
+/// Move an install still enrolled at the legacy apex hub to the canonical
 /// `api.` origin — once, and only if the canonical hub takes its sign-in.
 /// The machine keeps its identity, account and chain; only the origin its
 /// link dials changes. A hub that cannot be reached, or refuses the machine,
@@ -323,8 +323,8 @@ mod tests {
         assert!(load_or_create(&other).unwrap_err().contains("belongs to identity"));
     }
 
-    /// Review of the local sign-in: the command line's unenroll left
-    /// `cloud.json` (the owner) and the aggregator's key behind.
+    /// The command line's unenroll leaves neither `cloud.json` (the owner)
+    /// nor the aggregator's key behind.
     #[test]
     fn unenroll_on_the_command_line_leaves_nothing_of_droppen() {
         let dir = tempfile::tempdir().expect("tempdir");

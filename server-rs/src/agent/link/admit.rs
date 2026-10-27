@@ -104,15 +104,15 @@ pub(in crate::agent) fn admit<R>(
     if let Ok(accepted) = &outcome {
         if matches!(accepted, Accepted::Open { .. }) {
             st.save_guard(&guard);
-            // Who ever opened a channel (review D3), recorded as it opens and
-            // saved with the guard (and any entries the hello taught) before
-            // the reply leaves — in this one step under the lock.
+            // Who ever opened a channel, recorded as it opens and saved with
+            // the guard (and any entries the hello taught) before the reply
+            // leaves — in this one step under the lock.
             recorded = Some(st.record_controller(&shared.paths, device, now));
             opened = Some(after_open(st, accepted));
         }
     }
-    // Whatever the hello taught took effect, refused or not (M2 re-review:
-    // a hello whose later entry failed lost the earlier ones).
+    // Whatever the hello taught took effect, refused or not: a hello whose
+    // later entry fails must not lose the earlier ones.
     let learnt = st.entries_after(Some(before));
     Ok((outcome, learnt, recorded, opened))
 }
@@ -142,9 +142,9 @@ impl Admit for LinkAdmit {
             shared.save();
         }
         let unsaved = recorded.as_ref().is_some_and(|r| !let_in(shared, device, r));
-        // Acted on here, whether or not the hub link is up (chain v3 review:
-        // entries a direct hello taught while it was down were saved, and
-        // nothing else — no alert, and no relay channel swept).
+        // Acted on here, whether or not the hub link is up: entries a direct
+        // hello teaches while it is down must still be alerted and swept
+        // through every route table, not only saved.
         learnt_from_direct(shared, &learnt);
         if let Err(error) = &outcome {
             if error.is_alarm() {
@@ -232,8 +232,8 @@ pub(in crate::agent) async fn refuse_signaling(incoming: Incoming) {
 /// The chain advanced by `entries` on a connection (from the hub, or a
 /// device's hello on the hub or a relay): close this connection's channels of
 /// devices that may no longer control this machine at once, then
-/// [`chain_moved`]. Whatever the source (M2 review: a removal learnt from a
-/// hello used to leave the removed device's channel open).
+/// [`chain_moved`]. Whatever the source: a removal learnt from a hello
+/// closes the removed device's channel too.
 pub(in crate::agent) fn chain_advanced(
     shared: &Arc<Shared>,
     entries: &[Entry],
@@ -327,9 +327,9 @@ pub(in crate::agent) fn on_frame(
             }
             // Everything that took effect is acted on — saved, removed
             // devices' channels closed, every change alerted — even when the
-            // batch stopped short (M2 re-review: a join followed by a spoiled
-            // entry used to land silently). The first batch at enrollment is
-            // history: `news` is empty for it.
+            // batch stopped short: a join followed by a spoiled entry must not
+            // land silently. The first batch at enrollment is the history that
+            // let this machine in: `news` is empty for it.
             if absorbed.applied > 0 {
                 tracing::info!(n = absorbed.applied, "device chain advanced");
                 chain_advanced(shared, &absorbed.news, routes, out, text);
@@ -573,8 +573,8 @@ pub(in crate::agent) fn accept(
                         }
                     };
                     // Every stream re-checks that the device is still in the
-                    // account (M2 review): a removal that lands mid-channel
-                    // stops new requests at once, whatever closes the channel.
+                    // account: a removal that lands mid-channel stops new
+                    // requests at once, whatever closes the channel.
                     // Chain v3: and that this machine still accepts control
                     // from it (an accept list changed, an admin demoted,
                     // this machine stopped running AI). And that its control

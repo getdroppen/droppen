@@ -13,9 +13,9 @@
 //! A device that offers sequenced frames ([`rh_proto::path::CLIENT_FEATURE`]
 //! in its hello) gets a two-path channel, and may ask on its signaling
 //! stream for a direct path ([`super::direct`], [`rh_proto::direct::serve`]):
-//! the direct hello is admitted by [`LinkAdmit`] under exactly the rules
-//! above, and the direct path lives and dies with its channel — a removal
-//! that closes the channel ([`drop_removed`]) closes the direct path too.
+//! the direct hello is admitted under exactly the rules above, and the direct
+//! path lives and dies with its channel — a removal that closes the channel
+//! ([`drop_removed`]) closes the direct path too.
 //!
 //! An open channel is held to control's seven days as a new one is: once no
 //! admin has vouched for this machine's view for that long, it is closed
@@ -30,10 +30,10 @@
 //! saved *before* a handshake reply leaves, so a crash cannot make a replayed
 //! first message acceptable.
 //!
-//! TODO(M3): the reply should carry this agent's chain suffix for a device
-//! the hub keeps behind; a removal should close that device's open channels
-//! here at once (M1 has one device and no removal); and machine keys should
-//! also arrive inside a channel, not only through the mailbox.
+//! TODO: the reply should carry this agent's chain suffix for a device the
+//! hub keeps behind; a removal should close that device's open channels here
+//! at once; and machine keys should also arrive inside a channel, not only
+//! through the mailbox.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -72,8 +72,8 @@ pub(super) use local::standing_of;
 pub(crate) use local::unhex;
 
 /// The close of a handshake this agent took but could not save the device
-/// of (review D3: a device not on its record yet is let in only once it is):
-/// the page says the computer cannot save, rather than retrying blind.
+/// of (a device not on its record yet is let in only once it is): the page
+/// says the computer cannot save, rather than retrying blind.
 pub const AGENT_UNSAVED: u16 = 4507;
 /// The close of a channel nobody vouched for in time: a handshake refused
 /// as stale, and an open channel whose control lapsed ([`ChannelLapse`]).
@@ -361,7 +361,7 @@ mod tests {
         HashMap::from([(7, ("d-2".to_string(), d2().dh_public(), tx))])
     }
 
-    // ---- the policy's wiring (chain v3 review, finding 8) ----------------
+    // ---- the policy's wiring --------------------------------------------
 
     /// d-2's keys in [`account`].
     fn d2() -> MachineIdentity {
@@ -620,9 +620,9 @@ mod tests {
         assert_eq!(a.shared.state.lock().unwrap().display_name.as_deref(), Some("study"));
     }
 
-    /// Final review of the renewal (#24, #25): while this computer renews
-    /// its push keys with its identity key (`rotation.push_renew`, until
-    /// [`renew_push`] is done), a device asking over a channel for the push
+    /// While this computer renews its push keys with its identity key
+    /// (`rotation.push_renew`, until the push keys are renewed), a device
+    /// asking over a channel for the push
     /// key, or subscribing against it, is answered 503 `push_renewing` — not
     /// handed the key about to be replaced, which its page would keep as
     /// current — and nothing reaches the server; once they are renewed, the
@@ -681,8 +681,8 @@ mod tests {
         assert_eq!(*reached.lock().unwrap(), vec!["GET /api/push/vapid HTTP/1.1".to_string()]);
     }
 
-    /// Review of the renewal fixes: a renewal of the push keys that fails
-    /// ([`renew_push`]; the state database refusing the write, here) is tried
+    /// A renewal of the push keys that fails (the state database refusing the
+    /// write, here) is tried
     /// again while the link runs, after a back-off — not only at the next
     /// start, the push key refused until then — and `push_renew` clears once
     /// it is done.
@@ -712,7 +712,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), task).await.expect("done").unwrap();
     }
 
-    /// Review D3: a device whose handshake this agent accepts is recorded
+    /// A device whose handshake this agent accepts is recorded
     /// among those that ever opened a channel — in the state saved before the
     /// reply leaves, and the status stream told — and one it refuses is not.
     #[tokio::test]
@@ -769,7 +769,7 @@ mod tests {
         }
     }
 
-    /// The handshake is saved before its reply leaves (a review finding): a
+    /// The handshake is saved before its reply leaves: a
     /// device new to the record whose save fails is refused — no reply, no
     /// route, its note taken back so the next try saves again — and never
     /// gets in without being on disk. One already on record gets in whatever
@@ -826,7 +826,7 @@ mod tests {
         initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap()
     }
 
-    /// Review: handshakes from a device new to the record arriving
+    /// Handshakes from a device new to the record arriving
     /// at once — on the hub link and two direct paths, which run side by
     /// side — while saves fail: none gets in, and none leaves it noted. The
     /// note, the save and the taking back are one step under the state's
@@ -875,15 +875,14 @@ mod tests {
         (!routes.is_empty(), closes(&mut out_rx))
     }
 
-    /// The race of that review, made to happen every time: a hub
-    /// handshake from a device new to the record is held between noting it
-    /// and saving it (a test hook in [`AgentState::record_controller`])
-    /// while saves fail, and a direct handshake from the same device comes
-    /// in then. When the note and the save were two steps, the second saw
-    /// the first's note, took the device for one on the saved record and let
-    /// it in while the first was refused and took its note back — on neither
-    /// disk nor memory, yet in. Now it waits for the first to finish, and is
-    /// refused the same way.
+    /// The race, made to happen every time: a hub handshake from a device new
+    /// to the record is held between noting it and saving it (a test hook in
+    /// [`AgentState::record_controller`]) while saves fail, and a direct
+    /// handshake from the same device comes in then. Were the note and the
+    /// save two steps, the second would see the first's note, take the device
+    /// for one on the saved record and let it in while the first is refused
+    /// and takes its note back — on neither disk nor memory, yet in. It waits
+    /// for the first to finish, and is refused the same way.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_handshake_held_between_note_and_save_hides_its_note_from_a_concurrent_one() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -958,7 +957,7 @@ mod tests {
         (bind, initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap())
     }
 
-    /// Review D3, direct paths: a device admitted on a DataChannel is
+    /// A device admitted on a DataChannel is
     /// recorded and saved before the reply leaves, like on the hub or a
     /// relay; a device new to the record whose save fails is refused (and
     /// the status told nothing), one already on record is not.
@@ -1064,10 +1063,9 @@ mod tests {
         );
     }
 
-    /// Open channel `ch` as `device` the way the hub's connection hands it
-    /// on ([`on_frame`]) or a relay's does ([`on_channel_frame`], as
-    /// [`super::super::relays`] calls it): whether it was let in, and the
-    /// codes it was refused with.
+    /// Open channel `ch` as `device` the way the hub's connection or a
+    /// relay's hands it on: whether it was let in, and the codes it was
+    /// refused with.
     fn open_via(a: &Account, key: &MachineIdentity, device: &str, ch: u32, relay: bool) -> (bool, Vec<(u32, u16)>) {
         let (mut routes, mut pending) = (Routes::new(), Pending::new());
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
@@ -1162,7 +1160,7 @@ mod tests {
         assert!(open_via(&a, &d3(), "d-3", 13, false).0 && open_via(&a, &d3(), "d-3", 14, true).0);
     }
 
-    // ---- control lapses on open channels too (external E2E review, item D) ----
+    // ---- control lapses on open channels too ----------------------------
 
     const SEVEN_DAYS: u64 = rh_proto::chain::CONTROL_FRESHNESS_MS;
 
@@ -1315,7 +1313,7 @@ mod tests {
 
     /// A sole admin's own word counts for the head it was the sole admin at,
     /// even once a second admin joined: pairing one does not end its
-    /// channels before the new one vouches (a review finding).
+    /// channels before the new one vouches.
     #[test]
     fn a_sole_admins_own_word_counts_for_the_head_it_was_sole_at() {
         let mut a = account();
@@ -1359,7 +1357,7 @@ mod tests {
         assert_eq!(lapse_wait(None, 0), Duration::ZERO);
     }
 
-    /// Review (left over): a sole admin's renewal, then its first word
+    /// A sole admin's renewal, then its first word
     /// on the head where a second admin joined (which does not count, and
     /// replaces the renewal in the state), reaching this agent before the
     /// channel heard of the chain change: the renewal is the channel's all
@@ -1492,8 +1490,9 @@ mod tests {
         assert_eq!(Some(*hash), st.chain.as_ref().unwrap().hash_at(vouched));
     }
 
-    /// Review: a sole admin pairing a second admin used to have
-    /// every open channel of its own closed until the new admin vouched.
+    /// A sole admin pairing a second admin keeps every open channel of its
+    /// own: pairing one must not end its channels before the new admin
+    /// vouches.
     #[tokio::test]
     async fn a_sole_admin_pairing_a_second_admin_keeps_its_open_channels() {
         let mut a = account();
@@ -1526,7 +1525,7 @@ mod tests {
         assert!(a.heard_closes.lock().unwrap().is_empty());
     }
 
-    /// Review: a hub that holds one honest admin back at an old head
+    /// A hub that holds one honest admin back at an old head
     /// and forwards its fresh words about it cannot keep an open channel
     /// going past seven days from the last word given before this agent
     /// moved on.
@@ -1553,7 +1552,7 @@ mod tests {
         assert_eq!(served(&channel).await, None);
     }
 
-    /// Review: a stream that races a chain change taking away the
+    /// A stream that races a chain change taking away the
     /// word the channel stood on (its chain version not seen yet) is judged
     /// on the chain as it is, not on the lapse worked out before.
     #[tokio::test]
@@ -1574,7 +1573,7 @@ mod tests {
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
     }
 
-    /// Review: a management request is held to the twelve hours when
+    /// A management request is held to the twelve hours when
     /// it is dispatched, not only when its stream opened — a device could
     /// hold back its `End` past them.
     #[tokio::test]
@@ -1589,7 +1588,7 @@ mod tests {
         assert_eq!(a.shared.state.lock().unwrap().display_name, None, "not renamed");
     }
 
-    /// Review: routes of channels that ended here go — neither the
+    /// Routes of channels that ended here go — neither the
     /// hub nor a relay echoes this agent's `CLOSE`.
     #[test]
     fn routes_of_channels_that_ended_here_are_forgotten() {
@@ -1602,7 +1601,7 @@ mod tests {
         assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![2]);
     }
 
-    // ---- a member that stops running AI (chain v3 review, finding 12) ----
+    // ---- a member that stops running AI ---------------------------------
 
     /// `SetHost false` for this machine: it stays in the account and keeps
     /// its state, closes every channel and accepts none, and its streams'
@@ -1707,9 +1706,8 @@ mod tests {
         assert!(connect(&a, &a.d1, "d-1", 3, &mut routes).await.is_ok(), "and lets devices in again");
     }
 
-    /// The partial-merge PoC, at the link (M2 re-review, and the
-    /// review of the fix: only `absorb`'s return value was tested). A hub
-    /// batch that fails half-way is still acted on for everything it applied.
+    /// A hub batch that fails half-way is still acted on for everything it
+    /// applied — not only what `absorb` returned.
     #[tokio::test]
     async fn a_hub_batch_that_fails_half_way_is_acted_on_for_what_took_effect() {
         let mut a = account();
@@ -1752,9 +1750,9 @@ mod tests {
         assert_acted_on(&a, &routes, &mut out_rx);
     }
 
-    /// M2 re-review: a self-activation with the recovery words — the moment a
-    /// recovered device starts to count — raised no alert anywhere. Every
-    /// change to who is in the account is said now, and nothing else is.
+    /// A self-activation with the recovery words — the moment a recovered
+    /// device starts to count — is an alert like every other change to who is
+    /// in the account, and nothing else is.
     #[test]
     fn every_change_to_who_is_in_the_account_is_an_alert() {
         let ak = MachineIdentity::from_seed(&[1; 32]);
@@ -1775,7 +1773,7 @@ mod tests {
         );
         assert!(said(&entry(Signer::Device("d-1".into()), Action::ApproveDevice("d-r".into()))).is_some_and(|s| s.contains("approved by d-1")));
         assert!(said(&entry(Signer::Device("d-1".into()), Action::RemoveDevice("d-2".into()))).is_some());
-        // Machines too (S1-1): a machine added or removed is said everywhere.
+        // Machines too: a machine added or removed is said everywhere.
         assert_eq!(
             said(&entry(Signer::Device("d-1".into()), Action::RemoveMachine("m-1".into()))).as_deref(),
             Some("device m-1 (runs AI) was removed by d-1")
@@ -1806,7 +1804,7 @@ mod tests {
         );
     }
 
-    /// Chain v3 checklist item 13: every device added (with what it may do),
+    /// Every device added (with what it may do),
     /// every grant of admin, every host joining or restarting, every passkey
     /// slot and passkey join, every change to whom a host accepts control
     /// from is an alert this agent raises from its own chain — a hub cannot
@@ -2096,10 +2094,10 @@ mod tests {
         closed
     }
 
-    /// Security review: a relay is not trusted, and every `OPEN` it sent was
-    /// held until that channel's first message or `CLOSE` — a relay could
-    /// grow the agent's memory without bound. At most 256 wait per
-    /// connection; the rest are refused.
+    /// A relay is not trusted: every `OPEN` it sends waits until that
+    /// channel's first message or `CLOSE`, or a relay could grow the agent's
+    /// memory without bound. At most 256 wait per connection; the rest are
+    /// refused.
     #[tokio::test]
     async fn channels_opening_are_bounded_per_connection() {
         let a = account();
@@ -2118,8 +2116,8 @@ mod tests {
         assert!(closes(&mut out_rx).is_empty(), "an OPEN already waiting takes no more room");
     }
 
-    /// The same review: an `OPEN` with no first message waits 30 s at most,
-    /// then it is refused and its room is free again.
+    /// An `OPEN` with no first message waits 30 s at most, then it is refused
+    /// and its room is free again.
     #[tokio::test]
     async fn channels_opening_wait_thirty_seconds_at_most() {
         let a = account();
@@ -2184,11 +2182,11 @@ mod tests {
         (port, refused)
     }
 
-    /// Review of the local sign-in: a sign-in the hub refuses as "removed"
-    /// used to mark this machine removed for good — the link never started
-    /// again, the settings said "removed" and offered to wipe the keys — on
-    /// the hub's word alone. Only this machine's own verified chain removes
-    /// it; a refusal is a failure like any other: said, and retried.
+    /// A sign-in the hub refuses as "removed" must not mark this machine
+    /// removed — that would stop the link for good, say "removed" in the
+    /// settings and offer to wipe the keys — on the hub's word alone. Only
+    /// this machine's own verified chain removes it; a refusal is a failure
+    /// like any other: said, and retried.
     #[tokio::test]
     async fn the_hub_saying_removed_is_not_a_removal() {
         let a = account();
@@ -2214,7 +2212,7 @@ mod tests {
     #[tokio::test]
     async fn the_verified_chain_removing_this_machine_stops_the_link() {
         let mut a = account();
-        // The other devices' keys it held as a device (S1-4) go with it.
+        // The other devices' keys it held as a device go with it.
         let mut keys = crate::aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
         keys.put("m-2", 0, &[2; 32]).unwrap();
         assert!(crate::aggregator::keys::path(&a.shared.paths).exists());
@@ -2236,9 +2234,9 @@ mod tests {
         assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }
 
-    /// Security re-review of S1-4, 3: stopping a link — also one that already
-    /// ended on its own, which is what a restart does first — ends its device
-    /// role, however stuck it is.
+    /// Stopping a link — also one that already ended on its own, which is
+    /// what a restart does first — ends its device role, however stuck it is:
+    /// a restart must not leave the retired role running.
     #[tokio::test]
     async fn stopping_a_link_that_ended_ends_its_device_role_too() {
         struct Dropped(Arc<std::sync::atomic::AtomicBool>);
@@ -2257,7 +2255,7 @@ mod tests {
             let _flag = flag;
             std::future::pending::<()>().await;
         });
-        // And its copies task too (S1-5).
+        // And its copies task too.
         let copies = tokio::spawn(async move {
             let _flag = copies_flag;
             std::future::pending::<()>().await;
@@ -2278,9 +2276,9 @@ mod tests {
         assert!(copies_ended.load(std::sync::atomic::Ordering::SeqCst), "the stuck copies task was ended");
     }
 
-    /// Security review of S1-4, S2: a machine whose chain removed it — learnt
-    /// by a release that kept `aggregator/`, or before a stop — never starts
-    /// its link again, and loses the other devices' keys when it tries.
+    /// A machine whose chain removed it — learnt by a build that kept
+    /// `aggregator/`, or before a stop — must never start its link again, and
+    /// loses the other devices' keys when it tries.
     #[tokio::test]
     async fn a_removed_machine_does_not_start_and_its_other_devices_keys_go() {
         let mut a = account();
@@ -2302,7 +2300,7 @@ mod tests {
         assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }
 
-    /// Chain v3 review, finding 6: a host's mailbox is shared between its
+    /// A host's mailbox is shared between its
     /// agent and its device role. The agent acknowledges only what it
     /// handles (purpose 2, its own machine key — taken, or refused for good);
     /// every other purpose is released, so the device role can still take it.
@@ -2331,7 +2329,7 @@ mod tests {
         assert!(a.shared.deferred_mail.lock().unwrap().is_empty());
     }
 
-    /// Chain v3 review: the alert for a new host covers only that host's own
+    /// The alert for a new host covers only that host's own
     /// first machine key epoch, and a removal's alert the rotation after it.
     /// A user-key rotation after adding a plain device, a key epoch entry
     /// that also commits a user key or other hosts' keys, and key epochs
@@ -2398,11 +2396,9 @@ mod tests {
         assert_eq!(said, "new keys were committed by d-1: user key epoch 0");
     }
 
-    /// Chain v3 review: entries a direct hello taught while the hub link was
-    /// down were saved and nothing else — no alert, and no relay connection
-    /// told to close the channels of a device the chain had just removed.
-    /// They are acted on as any chain advance now: every connection's route
-    /// table is told to sweep, and the change is alerted.
+    /// Entries a direct hello teaches while the hub link is down are saved
+    /// and acted on as any chain advance: every connection's route table is
+    /// told to sweep, and the change is alerted — not only saved.
     #[tokio::test]
     async fn a_direct_hello_with_the_hub_link_down_still_sweeps_every_connection() {
         let mut a = account();
@@ -2529,12 +2525,11 @@ mod tests {
         }
     }
 
-    /// Chain v3 re-review, M11: the hub connection sweeps its own channels on
-    /// every chain advance, wherever the entries were learnt. A removal that a
-    /// device's hello on a relay, or a direct hello, teaches this agent — the
-    /// hub connection never sees those entries itself — still closes the
-    /// removed device's channel on the hub path at once (4403), and only that
-    /// channel.
+    /// The hub connection sweeps its own channels on every chain advance,
+    /// wherever the entries were learnt. A removal that a device's hello on a
+    /// relay, or a direct hello, teaches this agent — entries the hub
+    /// connection never sees itself — still closes the removed device's
+    /// channel on the hub path at once (4403), and only that channel.
     #[tokio::test]
     async fn a_removal_learnt_from_a_relay_or_direct_hello_closes_the_hub_paths_channels() {
         for via_relay in [true, false] {

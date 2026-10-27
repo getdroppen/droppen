@@ -121,12 +121,12 @@ pub struct RotationNote {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ms: Option<u64>,
     /// When its own verified chain renewed this machine to keys only a staged
-    /// seed that does not read may hold (R6 review): never taken for a
+    /// seed that does not read may hold: never taken for a
     /// replacement elsewhere; the link stops until the file is put right.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unreadable_ms: Option<u64>,
     /// A renewed key was promoted and the push keys have not been renewed
-    /// with it yet (R6 review): the next link start makes a new VAPID
+    /// with it yet: the next link start makes a new VAPID
     /// keypair and forgets every stored push subscription.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub push_renew: bool,
@@ -154,15 +154,15 @@ pub const MAX_CHANGES: usize = 8;
 pub const ALARM_REPEAT_MS: u64 = 60 * 60 * 1000;
 /// At most this many alarms of any kind within [`ALARM_REPEAT_MS`]: alarms
 /// whose text varies (another device id, another seq) cannot flood every
-/// device's notifications (M2 re-review N3).
+/// device's notifications.
 pub const MAX_ALARMS_PER_WINDOW: usize = 4;
 
 /// The most devices [`AgentState::note_controller`] keeps; one more evicts
 /// the one seen first, and the record starts again at the chain seq of then.
 pub const MAX_CONTROLLERS: usize = 256;
 
-/// Which devices ever opened a channel to this machine, as this agent saw it
-/// (review D3), published in the encrypted status stream as evidence: when a
+/// Which devices ever opened a channel to this machine, as this agent saw it,
+/// published in the encrypted status stream as evidence: when a
 /// device that could control this machine no longer can, the page asks for
 /// the machine to be enrolled again and says whether that device ever
 /// connected. Evidence, never a reason to stay quiet: a device that did
@@ -223,7 +223,7 @@ pub enum Recorded {
 /// Something every device must hear about: this agent was served a device
 /// chain that conflicts with its own (a fork, a rollback, another genesis).
 /// Kept in `state.json`, published in the encrypted status stream and on
-/// `/rh/info`, and pushed (M2 re-review: it used to be logged only).
+/// `/rh/info`, and pushed: a fork must reach every device, not only the log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Alarm {
@@ -323,7 +323,7 @@ impl AgentState {
     /// account (enrollment is complete) — whether or not it runs AI now: a
     /// member that stopped running AI (chain v3 `SetHost false`) is still
     /// enrolled ([`AgentState::not_hosting`]), and nothing takes it for an
-    /// enrollment waiting for a device (chain v3 review, finding 12).
+    /// enrollment waiting for a device.
     pub fn enrolled(&self) -> bool {
         self.chain.as_ref().is_some_and(|c| c.device(&self.machine).is_some())
     }
@@ -394,7 +394,7 @@ impl AgentState {
     /// fails) taking the note back are one step under whatever lock holds
     /// this state: what is in memory is only ever what was saved, so "on the
     /// record already" never means another handshake's note that is not on
-    /// disk (review: concurrent hub, relay and direct admissions).
+    /// disk (concurrent hub, relay and direct admissions).
     pub fn record_controller(&mut self, paths: &Paths, device: &str, now_ms: u64) -> Recorded {
         let noted = self.note_controller(device, now_ms);
         #[cfg(test)]
@@ -489,10 +489,10 @@ impl AgentState {
     /// pins the genesis hash too; later batches apply as far as they verify
     /// ([`ChainState::merge_partial`]).
     ///
-    /// What took effect is reported even when the batch stops short (M2
-    /// re-review): the caller alerts about every entry in `news`, closes the
-    /// channels of devices it removed and saves — a join followed by a spoiled
-    /// entry, or by a self-activation that is too early here, is still a join.
+    /// What took effect is reported even when the batch stops short: the
+    /// caller alerts about every entry in `news`, closes the channels of
+    /// devices it removed and saves — a join followed by a spoiled entry, or
+    /// by a self-activation that is too early here, is still a join.
     pub fn absorb(&mut self, entries: &[Entry], now_ms: u64) -> Absorbed {
         self.clock.set_now(now_ms);
         match &mut self.chain {
@@ -780,7 +780,7 @@ pub fn load_machine_keys(paths: &Paths) -> Result<BTreeMap<u32, Zeroizing<[u8; 3
 /// What an earlier enrollment of this instance left that is not the new
 /// one's: its machine keys (`machine-keys.json`) and its streams' store
 /// (`streams.db`). A new enrollment mints a new machine id with new keys; the
-/// old file's epochs must never be what the writer seals under (M2 re-review).
+/// old file's epochs must never be what the writer seals under.
 /// Gone files are fine.
 pub fn forget_enrollment_leftovers(paths: &Paths) -> Result<(), String> {
     let store = super::streams::store::path(paths);
@@ -894,11 +894,11 @@ mod tests {
         assert!(fresh.absorb(&[other_genesis], 0).error.is_some(), "the genesis hash is pinned too");
     }
 
-    /// The partial-merge PoC, at the agent: the hub sends `[RecoveryJoin,
+    /// The partial-merge case, at the agent: the hub sends `[RecoveryJoin,
     /// <a spoiled entry>]`. The join took effect, so it is news — alerted
     /// about, saved, with this agent's own first sighting — though the batch
-    /// stopped short. (It used to come back as a bare `Err`, and the link
-    /// raised nothing, closed nothing and saved nothing.)
+    /// stopped short: a bare `Err` would raise nothing, close nothing and save
+    /// nothing.
     #[test]
     fn a_batch_that_stops_short_still_reports_and_keeps_what_took_effect() {
         use rh_proto::chain::{recovery_keys, RecoveryKey};
@@ -1047,7 +1047,7 @@ mod tests {
         assert!(st.note_alarm(1_000, "the hub served a fork"));
         assert!(!st.note_alarm(2_000, "the hub served a fork"), "the same alarm within the hour");
         assert!(st.note_alarm(1_000 + ALARM_REPEAT_MS, "the hub served a fork"), "again an hour on");
-        // M2 re-review N3: alarms whose text varies are still few an hour.
+        // Alarms whose text varies are still few an hour.
         let later = 10 * ALARM_REPEAT_MS;
         let raised = (0..20)
             .filter(|i| st.note_alarm(later, &format!("device d-{i}'s view conflicts")))
@@ -1184,8 +1184,8 @@ mod tests {
         assert_eq!(*keys[&2], [2; 32]);
     }
 
-    /// M2 re-review: `agent enroll` after a re-enrollment kept the old
-    /// `machine-keys.json`, and the writer sealed under its newest epoch.
+    /// A re-enrollment after `agent enroll` does not keep the old
+    /// `machine-keys.json`: the writer would seal under its newest epoch.
     #[test]
     fn a_new_enrollment_forgets_the_last_ones_keys_and_streams() {
         let dir = tempfile::tempdir().unwrap();

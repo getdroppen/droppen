@@ -10,13 +10,12 @@ use super::Shared;
 
 /// What an entry changes about who is in the account, in words, if anything:
 /// every addition, removal, recovery join and activation, approval and change
-/// of recovery words (M2 review: alerts replace the day of distrust after a
-/// removal; M2 re-review: a self-activation with the recovery words is the
-/// moment a recovered device starts to count, and was said nowhere) — and
-/// new key epochs committed on their own, not as part of a removal's
-/// rotation or a machine's enrollment (`prev`: the entry before it). The
-/// review of the M2 re-review fixes, N2: a full device could commit key
-/// epochs at will without anybody hearing of it.
+/// of recovery words — an alert replaces the day of distrust after a removal,
+/// and a self-activation with the recovery words is the moment a recovered
+/// device starts to count — and new key epochs committed on their own, not as
+/// part of a removal's rotation or a machine's enrollment (`prev`: the entry
+/// before it): a full device must not be able to commit key epochs without
+/// anybody hearing of it.
 ///
 /// Chain v3 (`docs/local-aggregator.md` §3.2 "告警"): every device added (its
 /// flags in words), every grant of admin, every new host or host restarting,
@@ -138,10 +137,10 @@ pub(in crate::agent) fn account_change_in(entry: &Entry, prev: Option<&Entry>, p
 ///   exactly that host's own next machine key epoch: one commitment, for that
 ///   host, and no user key.
 ///
-/// Anything else is its own alert (chain v3 review): a user-key rotation
+/// Anything else is its own alert: a user-key rotation
 /// after adding a plain device, a key epoch entry that also commits other
 /// hosts' keys or a user key next to a new host's, or key epochs after key
-/// epochs (which used to chain the cover along).
+/// epochs, which cannot chain the cover along.
 pub(in crate::agent) fn part_of_a_batch(entry: &Entry, prev: Option<&Entry>) -> bool {
     let Action::KeyEpochs(keys) = &entry.draft.action else { return false };
     let Some(prev) = prev.filter(|p| p.draft.signer == entry.draft.signer) else {
@@ -224,7 +223,8 @@ pub(in crate::agent) fn alert_account_changes(shared: &Arc<Shared>, entries: &[E
 /// An alarm every device must hear about: logged, kept in the state (and so
 /// in the encrypted status stream and `/rh/info`, which every device of the
 /// account reads), and pushed (Web Push and Bark). The same alarm is raised
-/// again at most hourly. M2 re-review: a fork used to be logged only.
+/// again at most hourly — a fork served on every reconnect must be said once
+/// an hour, not once a reconnect.
 pub(in crate::agent) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     tracing::error!("ALARM: {what}");
     let alarms = {

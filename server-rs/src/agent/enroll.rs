@@ -1,7 +1,8 @@
-//! Joining this instance to an account (architecture doc §6): `agent enroll
-//! <code> --hub <url>` on the command line, and the local settings' "Sign in
-//! to Droppen" in process ([`super::control::Control::enroll`]) — the same
-//! [`begin`], then either [`wait_confirmed`] here or the link.
+//! Joining this instance to an account (`docs/cross-machine-architecture.md`
+//! §6): `agent enroll <code> --hub <url>` on the command line, and the local
+//! settings' "Sign in to Droppen" in process
+//! ([`super::control::Control::enroll`]) — the same [`begin`], then either
+//! [`wait_confirmed`] here or the link.
 //!
 //! 1. Dial the hub and present the code's *token* — `HMAC(secret, …)`, never
 //!    the secret. The hub assigns this machine an id in the account the token
@@ -199,7 +200,7 @@ pub async fn wait_confirmed(paths: &Paths, identity: &MachineIdentity, begun: Be
         ..
     } = begun;
     let mut state = AgentState::load(paths)?.ok_or_else(|| "the enrollment's state is gone".to_string())?;
-    // Say first that this agent reads chain v3 (local-aggregator §3.5): the
+    // Say first that this agent reads chain v3 (`docs/local-aggregator.md` §3.5): the
     // hub then sends it the v3 entry that adds it, and lets an account that
     // writes v3 add it at all.
     hub::send_json(

@@ -65,7 +65,7 @@ impl Running {
             tracing::warn!("the streams' writer did not stop within 30 s");
         }
         // Both stop at the token; one stuck in a request is ended here (they
-        // write nothing after the token anyway: security review of S1-4, S1).
+        // write nothing after the token anyway).
         for mut task in self.control.into_iter().chain(self.copies) {
             if tokio::time::timeout(CONTROL_STOP, &mut task).await.is_err() {
                 tracing::warn!("the device role did not stop in time: ending it");
@@ -189,8 +189,8 @@ pub fn start(
     }
     let control_status = Arc::new(Mutex::new(crate::aggregator::controller::Status::default()));
     let copies_status = Arc::new(Mutex::new(crate::aggregator::copies::Status::default()));
-    // This computer as a device controlling the others (S1-4) and following
-    // their copies (S1-5): under the link's token, so both stop with it —
+    // This computer as a device controlling the others and following their
+    // copies: under the link's token, so both stop with it —
     // and with this machine's removal.
     let control = crate::aggregator::enabled().then(|| {
         let (keys_out, keys) = tokio::sync::watch::channel(None);
@@ -243,7 +243,7 @@ pub(in crate::agent) const PUSH_RENEW_AGAIN: [Duration; 4] = [
     Duration::from_secs(300),
 ];
 
-/// R6 review: once a renewed identity key was promoted, a new VAPID
+/// Once a renewed identity key was promoted, a new VAPID
 /// keypair and every stored push subscription forgotten
 /// ([`crate::push::store::renew_vapid`]) — whoever copied the old VAPID key
 /// and endpoints reaches no device that subscribes again. Noted done only
@@ -251,7 +251,7 @@ pub(in crate::agent) const PUSH_RENEW_AGAIN: [Duration; 4] = [
 /// does it again, which is harmless). Until then the push key is refused
 /// (503 `push_renewing`, [`bridge::push_key_route`]), so a try that fails is
 /// tried again while the link runs ([`PUSH_RENEW_AGAIN`]), not only at the
-/// next start (review of the renewal fixes).
+/// next start.
 pub(in crate::agent) async fn renew_push(shared: Arc<Shared>) {
     let mut tries = 0usize;
     loop {
@@ -350,8 +350,8 @@ pub(in crate::agent) fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Sen
 /// The saved agent state a link may start from — none when this instance is
 /// not enrolled, or its chain removed it. A removed one also loses what it
 /// held to control the other devices (`aggregator/`): its removal may have
-/// been learnt by a release that did not delete it (one from before S1-4, or
-/// a run that stopped first: security review of S1-4, S2).
+/// been learnt by a build that did not delete it, or by a run that stopped
+/// before the delete.
 pub(in crate::agent) fn startable(paths: &Paths) -> Result<AgentState, String> {
     let loaded = AgentState::load(paths)?.ok_or("this instance is not enrolled")?;
     if loaded.removed() {
@@ -364,8 +364,8 @@ pub(in crate::agent) fn startable(paths: &Paths) -> Result<AgentState, String> {
 }
 
 /// The writer's check of a machine key from `machine-keys.json`: exactly the
-/// key this agent's chain committed for its epoch (M2 re-review: the file
-/// is not the chain, and outlived re-enrollments).
+/// key this agent's chain committed for its epoch: the file is not the chain,
+/// and outlives re-enrollments.
 pub(in crate::agent) fn committed_keys(state: Arc<Mutex<AgentState>>) -> super::streams::KeyCheck {
     Arc::new(move |epoch, key| {
         let st = state.lock().expect("agent state");
@@ -475,7 +475,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
                 return Err("the hub refuses a staged identity key as renewed: not signing in with the key in use".into());
             }
             Err(hub::LoginError::Refused { code, message }) if staged_key.is_some() && code != "denied" => {
-                // R6 review: only the hub's `denied` — it does not know the
+                // Only the hub's `denied` — it does not know the
                 // staged key — lets the next key try. Anything else
                 // (`unavailable`: its own trouble) is transient: retried
                 // with the back-off, the key in use never tried on it.
@@ -557,7 +557,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     if staged_key.is_none() {
         // Signed in with the key in use: a hub that refused it as `rotated`
         // before takes it again — and no staging that expired before now was
-        // committed, nor should be (set aside, not deleted: R6 review).
+        // committed, nor should be (set aside, not deleted).
         let named = super::rotation::named_keys(&shared.state.lock().expect("agent state"));
         super::rotation::set_aside_expired(&shared.paths, named, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
@@ -816,10 +816,10 @@ pub(in crate::agent) async fn staged_key_connection(shared: &Arc<Shared>, source
 }
 
 /// Give the streams' writer this connection while this machine runs AI in
-/// its account, and take it back once it does not (chain v3 `SetHost false`,
-/// review finding 12: a member that stopped running AI writes no streams);
-/// it gets it again when the chain makes it a host again. `writing` is
-/// whether the writer has it now.
+/// its account, and take it back once it does not (chain v3 `SetHost false`:
+/// a member that stopped running AI writes no streams); it gets it again
+/// when the chain makes it a host again. `writing` is whether the writer has
+/// it now.
 pub(in crate::agent) fn sync_streams(shared: &Shared, writing: &mut bool, frames: &mpsc::UnboundedSender<Frame>, text: &mpsc::UnboundedSender<String>) {
     let hosting = shared.state.lock().expect("agent state").hosting();
     if hosting == *writing {

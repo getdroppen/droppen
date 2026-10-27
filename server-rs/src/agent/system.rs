@@ -1,5 +1,5 @@
-//! What this computer runs, for its status stream (local-aggregator §8,
-//! S1-5): `os` — `{name, version, arch}`, plus `distro` on Linux — read once
+//! What this computer runs, for its status stream (`docs/local-aggregator.md`
+//! §8): `os` — `{name, version, arch}`, plus `distro` on Linux — read once
 //! from the system (`SystemVersion.plist` on macOS, `os-release` on Linux),
 //! and the agent's own version.
 

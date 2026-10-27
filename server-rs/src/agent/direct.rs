@@ -1,8 +1,8 @@
-//! The agent's side of direct paths (architecture doc §9, "直连通道"): a
-//! device that reached this machine through the hub may ask, inside that
-//! end-to-end channel, for a WebRTC DataChannel straight to it; when one
-//! comes up, the channel's frames move onto it and fall back to the hub
-//! when it fails ([`rh_proto::path`], [`rh_proto::direct`]).
+//! The agent's side of direct paths (`docs/cross-machine-architecture.md`
+//! §9, "直连通道"): a device that reached this machine through the hub may
+//! ask, inside that end-to-end channel, for a WebRTC DataChannel straight to
+//! it; when one comes up, the channel's frames move onto it and fall back to
+//! the hub when it fails ([`rh_proto::path`], [`rh_proto::direct`]).
 //!
 //! - **Off switch**: `RH_AGENT_DIRECT=0` turns direct paths off for this
 //!   instance: the agent then answers the signaling stream with 403, binds no

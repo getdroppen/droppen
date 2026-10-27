@@ -705,7 +705,7 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
 /// ten minutes (`link.rotation`). The order is the bridge's
 /// ([`super::bridge::refusal`]): whether the device may control this machine
 /// at all, then whether it is an admin, then the twelve-hour view — and only
-/// then what the chain says about the request (R6 re-review).
+/// then what the chain says about the request.
 #[tokio::test]
 async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() {
     let mut a = Account::new();
@@ -905,7 +905,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     let shown = rotation::status(&a.paths, Some(&st), now_ms());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
-    // R6 re-review: its own renewal is disputed by nobody — no statement
+    // Its own renewal is disputed by nobody — no statement
     // signed, kept or delivered, and the promoted key has none to make.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
@@ -914,8 +914,8 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
 }
 
-/// Final review of the agent's renewal: the state — with the chain that
-/// names the renewed key — is saved before the staged seed takes the place
+/// The state — with the chain that names the renewed key — is saved before
+/// the staged seed takes the place
 /// of the key in use, or the seed is not swapped at all. When that save
 /// failed and the seed was swapped all the same, a device renewed once
 /// before was left with a state whose chain names its previous keys, and a
@@ -972,8 +972,8 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     assert!(st.rotation.push_renew);
 }
 
-/// Review of the renewal fixes: when the staged seed cannot take the place of
-/// the key in use after the state was saved (its file moved away, say), the
+/// When the staged seed cannot take the place of the key in use after the
+/// state was saved (its file moved away, say), the
 /// key in use stays, and so do its push keys: `push_renew` is back to what it
 /// was, in memory and on disk — the push key is not refused (503
 /// `push_renewing`) for a renewal not taken.
@@ -1006,7 +1006,7 @@ async fn a_renewed_key_not_put_in_place_leaves_the_push_keys_alone() {
     assert!(AgentState::load(&a.paths).unwrap().unwrap().rotation.push_renew);
 }
 
-/// R6 re-review: the device role never signs in once this computer's own
+/// The device role never signs in once this computer's own
 /// chain names other keys for it (a renewal not taken yet, or made
 /// elsewhere) — even with no staged seed at all — nor once a renewal is
 /// committed while the connection with the key in use still looks up.
@@ -1036,7 +1036,7 @@ async fn the_device_role_never_signs_in_with_a_key_renewed_away_or_committed() {
     let _ = task.await;
 }
 
-/// R6 re-review: with the account's renewal policy on
+/// With the account's renewal policy on
 /// (`SetRenewalPolicy { always_assured: true }`), a renewal that would not
 /// be confirmed on the device is refused before anything is staged (409
 /// `assurance_required`) — the chain would never take it; one that would be
@@ -1097,7 +1097,7 @@ async fn a_close_4005_signs_in_with_the_staged_key_and_promotes_on_the_chain() {
     assert!(logins[2].by(&new, &hub.url) && logins[2].welcomed);
 }
 
-/// The hub phase's constraint (§3.8): once the renewal is committed — the
+/// Once the renewal is committed — the
 /// chain names the staged key, or the hub closed with 4005 — the key in use
 /// never signs in again, even while the hub turns the new one away: a
 /// sign-in with a retired key is the hub's evidence against this very device.
@@ -1154,7 +1154,7 @@ async fn after_a_committed_renewal_the_old_key_never_signs_in_again() {
     let _ = task.await;
 }
 
-/// The hub phase's review: a page whose answer was lost asks again with a
+/// A page whose answer was lost asks again with a
 /// new nonce; the hub, still holding the FIRST staging, commits it. The
 /// first staged seed is still here: the renewal is this device's own —
 /// promoted, the second forgotten, never "replaced elsewhere".
@@ -1257,8 +1257,9 @@ async fn at_start_a_staged_key_signs_in_first_and_the_key_in_use_after_a_denial(
     let _ = task.await;
 }
 
-/// A crash after the hub committed, before the rename: the saved chain
-/// names the staged key; at start it signs in with it and takes it.
+/// A crash after the hub committed, before the staged key is moved into
+/// place: the saved chain names the staged key; at start it signs in with it
+/// and takes it.
 #[tokio::test]
 async fn at_start_a_staged_key_the_chain_names_is_taken() {
     let mut a = Account::new();
@@ -1374,7 +1375,7 @@ async fn the_device_role_waits_for_the_link_while_a_staged_seed_is_kept() {
     assert!(!rotation::device_role_may_sign_in(&shared), "the connection went");
 }
 
-/// The cross-review's residual: the hub answers a staging after the agent
+/// The hub answers a staging after the agent
 /// stopped waiting (and the page's withdrawal is lost), so it holds a
 /// staging of this device. The seed is kept — unshown, no code — for the
 /// attempt's ten minutes: a sign-in asked to confirm it can (no false
@@ -1693,7 +1694,7 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     }
 }
 
-/// R6 review: a staging set aside as expired — judged on the hub's word
+/// A staging set aside as expired — judged on the hub's word
 /// (it took the key in use after the staging's day was over) — is never
 /// tried at sign-in; but when this device's own verified chain names it
 /// after all (a hub that committed it late), it is taken back, signed in
@@ -1733,7 +1734,7 @@ async fn a_staging_set_aside_as_expired_is_taken_back_when_the_chain_names_it() 
     assert!(logins[1..].iter().all(|l| l.by(&new, &hub.url)), "{logins:?}");
 }
 
-/// R6 review: the hub's own trouble — `error
+/// The hub's own trouble — `error
 /// unavailable`, close 1011 — is transient: the staged key is tried again
 /// after the back-off, and the key in use never signs in on it. Only the
 /// hub's `denied` (it does not know the staged key) lets the key in use try.
@@ -1763,7 +1764,7 @@ async fn a_hub_in_trouble_never_makes_the_key_in_use_sign_in() {
     let _ = task.await;
 }
 
-/// R6 review: the chain renews this device to keys it holds in no
+/// The chain renews this device to keys it holds in no
 /// staging that reads, while a staged file does not read. Not "replaced
 /// elsewhere" — no such alarm, nothing offered, no sign-in on purpose with
 /// the old key — but "staged key unreadable": alarmed, and the link stops

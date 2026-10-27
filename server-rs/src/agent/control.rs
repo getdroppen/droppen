@@ -1,11 +1,8 @@
-//! Starting and stopping the hub link while the server runs.
+//! Starting and stopping the hub link while the server runs: [`Control`] is
+//! the server's handle on its link.
 //!
-//! Before this, the link started once, at boot, and only for an instance that
-//! was already enrolled: enrolling meant `agent enroll` in another process and
-//! then a restart. [`Control`] is the server's handle on its link instead:
-//!
-//! - at boot it starts the link when `agent/state.json` is there (exactly as
-//!   before: an instance that never enrolled starts nothing);
+//! - at boot it starts the link when `agent/state.json` is there (an instance
+//!   that never enrolled starts nothing);
 //! - [`Control::enroll`] runs the same enrollment `agent enroll` does
 //!   ([`super::enroll::begin`]) in this process and starts the link at once,
 //!   which then follows the chain until a device adds the machine;
@@ -201,7 +198,7 @@ pub struct Control {
     gate: tokio::sync::Mutex<()>,
     /// Bumped by every enrollment, so a stale watchdog does nothing.
     generation: Mutex<u64>,
-    /// The other devices' copies in memory, for the local gateway (S1-7):
+    /// The other devices' copies in memory, for the local gateway:
     /// the copies task of whichever link runs publishes into it.
     live: Arc<crate::aggregator::live::LiveCopies>,
 }
@@ -259,7 +256,7 @@ impl Control {
     pub fn attach(&self, env: LinkEnv) {
         crate::aggregator::sweep_deleted(&self.paths);
         // Adding this device again under a new identity, cut short by a
-        // crash: finished before anything starts (R6 review).
+        // crash: finished before anything starts.
         if let Err(error) = super::rotation::finish_re_enroll(&self.paths) {
             tracing::error!(%error, "cannot finish adding this device again under a new identity");
         }
@@ -307,12 +304,13 @@ impl Control {
         };
         // A link that ended on its own (a removal, other keys) is stopped
         // before another starts: its device role, or its streams' writer, may
-        // still be going (security re-review of S1-4, 3).
+        // still be going.
         if let Some(old) = old {
             old.stop().await;
         }
-        // An install enrolled before the api. split moves over once, if the
-        // canonical hub takes its sign-in (`agent::migrate_hub`).
+        // An install still enrolled at the legacy apex hub moves to the
+        // canonical `api.` origin once, if the hub takes its sign-in
+        // ([`super::migrate_hub`]).
         super::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
         let started = super::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
         *self.running.lock().expect("running") = Some(started);
@@ -367,7 +365,7 @@ impl Control {
         }
     }
 
-    /// What this computer's device role reports (S1-4): `None` when the
+    /// What this computer's device role reports: `None` when the
     /// link does not run here.
     pub fn control_status(&self) -> Option<crate::aggregator::controller::Status> {
         let running = self.running.lock().expect("running");
@@ -494,7 +492,7 @@ impl Control {
     /// Before a sign-in shows this computer's keys: when the seed in use is
     /// one it must never use again — archived, or replaced elsewhere on the
     /// chain it knows ([`super::rotation::seed_retired`]: never its own
-    /// renewal to a key it staged, R6 review) — it never signs up again:
+    /// renewal to a key it staged) — it never signs up again:
     /// the link stops, the seed is archived, the old enrollment forgotten and
     /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
     pub async fn renew_retired_seed(&self) -> Result<bool, ControlError> {
@@ -610,8 +608,8 @@ async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Result<u
 
 /// Whether `st` is an enrollment still waiting for a device to add this
 /// machine: the chain does not name it (yet), and has not removed it. Never
-/// a member that merely stopped running AI (chain v3 review, finding 12: one
-/// used to count as waiting, and had its state deleted).
+/// a member that merely stopped running AI: counting one as waiting let the
+/// code's expiry, or cancel, delete its state.
 fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
@@ -737,11 +735,10 @@ mod tests {
         );
     }
 
-    /// Review of the local sign-in:
-    /// the process keeps one connection per database file, so after unenroll
-    /// deleted `streams.db` the next enrollment's store was the old one —
-    /// its rows (re-sent to the new account), in an unlinked file (every
-    /// write lost on restart). The cached connection goes with the file now.
+    /// The process keeps one connection per database file: after unenroll
+    /// deletes `streams.db`, the next enrollment's store would be the old one
+    /// — its rows (re-sent to the new account) in an unlinked file, every
+    /// write lost on restart. The cached connection goes with the file.
     #[tokio::test]
     async fn a_new_enrollment_never_reopens_the_old_streams_store() {
         let dir = tempfile::tempdir().unwrap();
@@ -806,9 +803,9 @@ mod tests {
         assert!(bytes.iter().all(|b| *b == 0), "and zeroed before it went");
     }
 
-    /// Review of the local sign-in: a sign-in that could not begin (the hub
-    /// unreachable — a 502 — or the code refused) stopped the link that was
-    /// running and left it stopped, silently. It is running again now.
+    /// A sign-in that cannot begin (the hub unreachable, or the code
+    /// refused) leaves the link that was running as it was: a failed sign-in
+    /// never leaves it stopped.
     #[tokio::test]
     async fn a_sign_in_that_cannot_begin_leaves_the_link_as_it_was() {
         let dir = tempfile::tempdir().unwrap();
@@ -831,10 +828,10 @@ mod tests {
         control.stop().await;
     }
 
-    /// Chain v3 review, finding 12: a member that stopped running AI (`SetHost
-    /// false`) was taken for an enrollment still waiting for a device — the
-    /// settings said "enrolling", and cancelling, or the code's expiry,
-    /// deleted its `state.json`. It is its own standing now, and keeps it.
+    /// A member that stopped running AI (`SetHost false`) is its own standing,
+    /// not an enrollment still waiting for a device: the settings do not say
+    /// "enrolling", and neither cancel nor the code's expiry deletes its
+    /// `state.json`.
     #[tokio::test]
     async fn a_member_that_stopped_running_ai_keeps_its_state() {
         use rh_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
@@ -921,7 +918,7 @@ mod tests {
             .unwrap();
         store.promote(&[1; 16]).unwrap();
         let new = MachineIdentity::from_seed(&[9; 32]);
-        // R6 review: the promotion noted that the push keys follow; a
+        // The promotion noted that the push keys follow; a
         // device subscribed against the old VAPID key.
         let old_vapid = crate::push::store::vapid_public(&paths).await.unwrap();
         let point = {
@@ -959,7 +956,7 @@ mod tests {
         assert!(!server.is_cancelled() && !session.is_cancelled());
     }
 
-    /// R6 review: "add this device again" cut short by a crash after
+    /// "Add this device again" cut short by a crash after
     /// the seed was archived (its `state.json` still there) is finished when
     /// the control comes up: the instance is not enrolled, with a fresh seed,
     /// and the link does not start as the old enrollment.

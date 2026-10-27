@@ -154,7 +154,7 @@ impl FileSeedStore {
         self.files_with(&self.expired_prefix())
     }
 
-    /// Set the staging of `nonce` aside as expired (R6 review): what this
+    /// Set the staging of `nonce` aside as expired: what this
     /// device saw says no renewal can take it any more — but a hub's word is
     /// part of that, so it is renamed, never deleted: never tried at sign-in
     /// again, and taken back ([`FileSeedStore::restore`]) if this device's own
@@ -190,7 +190,7 @@ impl FileSeedStore {
 
     /// The staging files — waiting, or set aside as expired — that do not
     /// read (or that others can read): never used, and never taken for
-    /// proof that this device holds no staged key (R6 review).
+    /// proof that this device holds no staged key.
     pub fn unreadable(&self) -> Vec<PathBuf> {
         let mut files = self.staging_files();
         files.extend(self.expired_files());
@@ -295,7 +295,7 @@ impl FileSeedStore {
         // Written whole beside the seed in use, then renamed into place: a
         // half-written staged seed is never what the next run finds, and the
         // seed in use is never touched. The rename is flushed before the hub
-        // hears of it (R6 review): a staging the hub takes survives a crash.
+        // hears of it: a staging the hub takes survives a crash.
         let path = self.staging_path(&staged.nonce);
         write_private(&path, &file)?;
         sync_dir(&path);
@@ -364,7 +364,7 @@ thread_local! {
     static DIR_SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How often this thread flushed a directory (tests: R6 review).
+/// How often this thread flushed a directory (tests).
 #[cfg(test)]
 pub(crate) fn dir_syncs() -> usize {
     DIR_SYNCS.with(std::cell::Cell::get)
