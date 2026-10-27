@@ -84,13 +84,17 @@ function entries(bundle: OutputBundle): string[] {
 }
 
 /**
- * `hub-pages.ts`'s chunk and what it loads before it runs that the entry has
- * not loaded already (`/assets/…`, sorted): what a page a hub serves fetches
- * besides the local app's boot.
+ * `hub-pages.ts`'s chunk, then what it loads before it runs that the entry
+ * has not loaded already (`/assets/…`, sorted): what a page a hub serves
+ * fetches besides the local app's boot. Its own chunk first: no local page
+ * loads it, so the worker tells a hub's page by it (`public/sw.js`
+ * `servedByHub`).
  */
 export function hubPagesSet(bundle: OutputBundle): string[] {
   const boot = staticSet(bundle, entries(bundle));
-  return [...staticSet(bundle, [hubPagesChunk(bundle)])].filter((f) => !boot.has(f)).sort().map((f) => `/${f}`);
+  const hub = hubPagesChunk(bundle);
+  const rest = [...staticSet(bundle, [hub])].filter((f) => f !== hub && !boot.has(f)).sort();
+  return [hub, ...rest].map((f) => `/${f}`);
 }
 
 /** The chunk `hub-pages.ts` is in (not necessarily as its facade: nothing imports it but by `import()`). */

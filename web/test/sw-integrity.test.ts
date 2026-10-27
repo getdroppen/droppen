@@ -308,7 +308,7 @@ test("the worker picks the browser's language by the page's own rule (match.ts)"
   }
 });
 
-test("install precaches the cloud app's chunks too, only where the shell it kept is a hub's", async () => {
+test("install precaches the cloud app's chunks too, only on a page a hub serves", async () => {
   const CLOUD = "export const cloud = 1;";
   const table = { "/assets/app-1.js": sha(APP), "/assets/cloud-app-1.js": sha(CLOUD) };
   const network = { "/assets/app-1.js": [APP, JS], "/assets/cloud-app-1.js": [CLOUD, JS] } as Record<string, [string, Record<string, string>]>;
@@ -327,12 +327,18 @@ test("install precaches the cloud app's chunks too, only where the shell it kept
   assert.equal(await (await local.cache()).text("/assets/app-1.js"), APP);
   assert.equal(await (await local.cache()).match("/assets/cloud-app-1.js"), undefined);
   assert.deepEqual(local.fetched, ["/assets/app-1.js"]);
-  // A first install, with no shell kept yet: the local app's boot, and no fetch of a shell to find out.
+  // A first install, with no shell kept yet, on a local page: it never loaded the cloud chunk, which the
+  // HTTP cache is asked for without going to the network; no shell is fetched to find out.
   const first = worker({ ...opts, network: { ...network, "/sessions": [marked(), HTML] } });
   await first.install();
   assert.equal(await (await first.cache()).match("/assets/cloud-app-1.js"), undefined);
   assert.equal(await (await first.cache()).text("/assets/app-1.js"), APP);
-  assert.deepEqual(first.fetched, ["/assets/app-1.js"]);
+  assert.deepEqual(first.fetched, ["/assets/cloud-app-1.js (only-if-cached)", "/assets/app-1.js"]);
+  // A first install on a hub's page, which loaded the cloud chunk before any worker saw its requests.
+  const firstHub = worker({ ...opts, network, httpCache: { "/assets/cloud-app-1.js": CLOUD } });
+  await firstHub.install();
+  assert.equal(await (await firstHub.cache()).text("/assets/cloud-app-1.js"), CLOUD, "from the HTTP cache");
+  assert.equal(await (await firstHub.cache()).text("/assets/app-1.js"), APP);
 });
 
 test("activate drops other caches, unlisted and tampered assets, a foreign shell and anything else", async () => {

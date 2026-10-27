@@ -40,7 +40,7 @@
  *   chunk per language but English, LANGUAGES): those of the languages this
  *   browser shows are precached with it, and no other. A page a hub serves
  *   boots from the cloud app's chunks as well (PRECACHE_CLOUD): precached
- *   where the shell the worker kept is a hub's;
+ *   there, and only there;
  * - only real assets are kept under /assets/: never the HTML a server answers
  *   for a path it does not have, which cached under a script's name would be
  *   handed to the module loader for good.
@@ -263,14 +263,16 @@ function refused(path) {
 
 /* Whether a hub serves this origin's shell (cloud mode), whose page boots from
  * PRECACHE_CLOUD too: the shell kept for offline says. A first install has
- * none yet, and fetches nothing to find out — its page has just loaded those
- * chunks anyway. Only which listed assets the install fetches ahead hangs on
- * it; each is still checked against INTEGRITY. */
+ * none yet: there a page a hub serves has just loaded those chunks, before
+ * any worker saw its requests, and the browser's HTTP cache has the first of
+ * them (what a hub serves), which `only-if-cached` asks without going to the
+ * network; a local page never loads it. Only which listed assets the install
+ * fetches ahead hangs on it; each is still checked against INTEGRITY. */
 async function servedByHub(cache) {
   if (PRECACHE_CLOUD.length === 0) return false;
   try {
     const res = await cache.match(SHELL);
-    if (res === undefined) return false;
+    if (res === undefined) return httpCached(PRECACHE_CLOUD[0]);
     const text = await res.text();
     const head = text.indexOf("<head>");
     return head >= 0 && text.startsWith('<meta name="rh-hub"', head + "<head>".length);

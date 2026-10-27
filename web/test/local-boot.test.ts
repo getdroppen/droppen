@@ -68,7 +68,7 @@ function chunk(fileName: string, opts: { imports?: string[]; css?: string[]; mod
   };
 }
 
-test("what a hub's page fetches besides the boot: hub-pages' chunk and its static imports, with their CSS, less what the entry loads", () => {
+test("what a hub's page fetches besides the boot: hub-pages' chunk first, then its static imports, with their CSS, less what the entry loads", () => {
   const bundle = Object.fromEntries(
     [
       chunk("assets/index-1.js", { entry: true, imports: ["assets/vendor-1.js"], css: ["assets/index-1.css"] }),
@@ -79,7 +79,7 @@ test("what a hub's page fetches besides the boot: hub-pages' chunk and its stati
       chunk("assets/settings-1.js", { modules: ["/w/web/src/features/settings/settings-view.tsx"], imports: ["assets/vendor-1.js"] }),
     ].map((c) => [c.fileName, c]),
   ) as unknown as Rollup.OutputBundle;
-  assert.deepEqual(hubPagesSet(bundle), ["/assets/api-1.js", "/assets/hub-pages-1.js", "/assets/ui-1.css", "/assets/ui-1.js"]);
+  assert.deepEqual(hubPagesSet(bundle), ["/assets/hub-pages-1.js", "/assets/api-1.js", "/assets/ui-1.css", "/assets/ui-1.js"], "its own chunk first");
   delete (bundle as Record<string, unknown>)["assets/hub-pages-1.js"];
   assert.throws(() => hubPagesSet(bundle), /no chunk of its own for \/src\/hub-pages\.ts/);
 });
