@@ -209,7 +209,8 @@ const FAKE_CODEX: &str = include_str!("fake_codex.py");
 
 static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
 
-/// Put the fake CLIs on `PATH`, once per test binary.
+/// Put fake executables on `PATH`, once per test binary, and return their
+/// directory.
 ///
 /// The directory is deliberately leaked: the scripts have to outlive every test
 /// in the binary, and there is no later point at which "every test is done" is
@@ -223,14 +224,10 @@ static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// first one initializes could observe the write mid-flight. Removing the
 /// window entirely would mean an environment snapshot taken before `main`, which
 /// Rust's test harness gives no hook for.
-fn ensure_fake_clis_on_path() -> &'static Path {
+pub fn fake_bin(prefix: &str, scripts: &[(&str, &str)]) -> &'static Path {
     FAKE_BIN.get_or_init(|| {
-        let dir = tempfile::Builder::new()
-            .prefix("remote-hand-fake-bin-")
-            .tempdir()
-            .expect("fake bin dir")
-            .keep();
-        for (name, body) in [("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX)] {
+        let dir = tempfile::Builder::new().prefix(prefix).tempdir().expect("fake bin dir").keep();
+        for (name, body) in scripts {
             let path = dir.join(name);
             std::fs::write(&path, body).expect("write fake cli");
             #[cfg(unix)]
@@ -245,6 +242,10 @@ fn ensure_fake_clis_on_path() -> &'static Path {
         std::env::set_var("PATH", format!("{}:{existing}", dir.display()));
         dir
     })
+}
+
+fn ensure_fake_clis_on_path() -> &'static Path {
+    fake_bin("remote-hand-fake-bin-", &[("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX)])
 }
 
 /// The Claude root the `default` instance owns, under a home with no server yet.
@@ -509,23 +510,28 @@ impl Probe {
 
     /// Write a one-entry transcript into one of the roots and return its path.
     pub fn seed_session(&self, root: &Path, id: &str, cwd: &Path) -> PathBuf {
-        let project = root.join("projects").join("-workspace");
-        std::fs::create_dir_all(&project).expect("project dir");
-        let path = project.join(format!("{id}.jsonl"));
-        std::fs::write(
-            &path,
-            format!(
-                "{}\n",
-                serde_json::json!({
-                    "type": "user",
-                    "cwd": cwd.to_string_lossy(),
-                    "timestamp": "2024-05-01T10:00:00.000Z",
-                    "message": {"content": [{"type": "text", "text": "hello"}]},
-                })
-            ),
+        common::seed_transcript(
+            root,
+            "-workspace",
+            id,
+            &[serde_json::json!({
+                "type": "user",
+                "cwd": cwd.to_string_lossy(),
+                "timestamp": "2024-05-01T10:00:00.000Z",
+                "message": {"content": [{"type": "text", "text": "hello"}]},
+            })],
         )
-        .expect("seed transcript");
-        path
+    }
+
+    /// Create an oauth-token account over HTTP, asserting the `201` and
+    /// returning the body.
+    pub async fn create_account(&self, label: &str, secret: &str) -> Value {
+        common::create_account(&self.server, label, secret).await
+    }
+
+    /// The same, returning the new account's id.
+    pub async fn create_account_id(&self, label: &str, secret: &str) -> String {
+        common::create_account_id(&self.server, label, secret).await
     }
 
     /// Wait until the run remote-hand started for this session has finished.

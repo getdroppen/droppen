@@ -23,10 +23,16 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use remote_hand_server::app::RemoteHandApp;
+use remote_hand_server::apps::Registry;
+use remote_hand_server::feed::global::GlobalFeed;
+use remote_hand_server::feed::FeedRegistry;
+use remote_hand_server::instance::InstanceDirs;
 use remote_hand_server::sessions::Paths;
+use remote_hand_server::shutdown::Cleanups;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
@@ -39,8 +45,11 @@ pub struct TestServer {
     pub home: PathBuf,
     /// The same path set the server's handlers see.
     pub paths: Paths,
-    global: std::sync::Arc<remote_hand_server::feed::global::GlobalFeed>,
-    terminals: std::sync::Arc<remote_hand_server::terminals::Registry>,
+    global: Arc<GlobalFeed>,
+    terminals: Arc<remote_hand_server::terminals::Registry>,
+    apps: Arc<Registry>,
+    feeds: Arc<FeedRegistry>,
+    cleanups: Cleanups,
     cancel: CancellationToken,
     /// An `Option` so `stop` can take it: this struct has a `Drop`, and a type
     /// with one cannot have a field moved out of it.
@@ -135,8 +144,11 @@ impl TestServer {
         };
         let addr = prepared.addr;
         let cancel = prepared.cancel();
-        let global = prepared.global();
-        let terminals = prepared.cleanups().terminals.clone();
+        let cleanups = prepared.cleanups();
+        let global = cleanups.global.clone();
+        let terminals = cleanups.terminals.clone();
+        let apps = cleanups.apps.clone();
+        let feeds = cleanups.feeds.clone();
         let server = tokio::spawn(prepared.serve_task());
         TestServer {
             addr,
@@ -147,6 +159,9 @@ impl TestServer {
             paths: Paths::for_instance(home.to_path_buf(), instance.unwrap_or(remote_hand_server::instance::DEFAULT_INSTANCE)),
             global,
             terminals,
+            apps,
+            feeds,
+            cleanups,
             cancel,
             server: Some(server),
             _home: None,
@@ -156,6 +171,49 @@ impl TestServer {
     /// Whether the global feed's watcher is running — i.e. a client is attached.
     pub fn feed_is_running(&self) -> bool {
         self.global.is_running()
+    }
+
+    /// The apps registry these handlers share.
+    pub fn apps(&self) -> Arc<Registry> {
+        self.apps.clone()
+    }
+
+    /// The terminal registry these handlers share.
+    pub fn terminals(&self) -> Arc<remote_hand_server::terminals::Registry> {
+        self.terminals.clone()
+    }
+
+    /// The live session feeds, so a caller driving the server itself can assert
+    /// they were torn down.
+    pub fn feeds(&self) -> Arc<FeedRegistry> {
+        self.feeds.clone()
+    }
+
+    /// The token that stops this server, for a caller driving the shutdown.
+    pub fn cancel(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
+    /// Everything `shutdown::supervise` tears down on SIGTERM.
+    pub fn cleanups(&self) -> Cleanups {
+        self.cleanups.clone()
+    }
+
+    /// Stop the way `SIGTERM` does: cancel the token and run the registered
+    /// cleanups, which detach terminals and apps rather than killing them.
+    ///
+    /// The serve task is handed back so the caller can wait for the listener to
+    /// go — and, with it, the instance lock the task holds.
+    pub fn shutdown_like_sigterm(&mut self) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
+        self.cancel.cancel();
+        self.cleanups.run();
+        self.server.take()
+    }
+
+    /// Take the serve task without cancelling anything, for a test that stops
+    /// the server by its own route.
+    pub fn take_task(&mut self) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
+        self.server.take()
     }
 
     /// `GET path`, returning `(status, body)`.
@@ -187,27 +245,8 @@ impl TestServer {
     /// A full client (reqwest and its TLS stack) would be a large dependency for
     /// plaintext requests to a loopback port the test just opened.
     pub async fn request_full(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> (u16, String, String) {
-        let mut stream = tokio::net::TcpStream::connect(self.addr).await.expect("connect");
-        // The server's own address, unless the case names another `Host`.
-        let mut request = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\n");
-        if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("host")) {
-            request.push_str(&format!("Host: {}\r\n", self.addr));
-        }
-        for (name, value) in headers {
-            request.push_str(&format!("{name}: {value}\r\n"));
-        }
-        if !body.is_empty() {
-            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-        }
-        request.push_str("\r\n");
-
-        let mut raw = request.into_bytes();
-        raw.extend_from_slice(body);
-        stream.write_all(&raw).await.expect("write");
-
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).await.expect("read");
-        split_response(&response)
+        let (status, head, body) = http(self.addr, method, path, headers, body).await;
+        (status, head, String::from_utf8_lossy(&body).into_owned())
     }
 
     /// The websocket URL of a path on this server.
@@ -225,16 +264,210 @@ impl TestServer {
 }
 
 impl Drop for TestServer {
-    /// Kill whatever terminals the test started.
+    /// Kill whatever terminals and apps the test started.
     ///
     /// A web terminal now belongs to a detached `pty-shim` process that is
     /// *designed* to outlive the server — which is right in production and
     /// wrong in a test binary, where it would leave stray shells behind on the
-    /// developer's machine. `kill_all` is the deliberate escape hatch for
-    /// exactly this, and it signals rather than sending frames so it works from
-    /// a `Drop` with no runtime to await on.
+    /// developer's machine. An embedded app is detached for the same reason.
+    /// `kill_all` is the deliberate escape hatch for exactly this, and it
+    /// signals rather than sending frames so it works from a `Drop` with no
+    /// runtime to await on.
     fn drop(&mut self) {
         self.terminals.kill_all();
+        self.apps.kill_all();
+    }
+}
+
+/* ── talking to a server ─────────────────────────────────────────────── */
+
+/// A one-shot HTTP/1.1 request to `addr`.
+///
+/// A full client (reqwest and its TLS stack) would be a large dependency for
+/// plaintext requests to a loopback port the test just opened. `headers` are
+/// sent verbatim; the `Host` is `addr` unless the caller names its own, and a
+/// non-empty body carries its `Content-Length`. The response is split into
+/// `(status, head, body)`, with a chunked body joined.
+pub async fn http(addr: SocketAddr, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> (u16, String, Vec<u8>) {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let mut request = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\n");
+    if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("host")) {
+        request.push_str(&format!("Host: {addr}\r\n"));
+    }
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    if !body.is_empty() {
+        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    request.push_str("\r\n");
+
+    let mut raw = request.into_bytes();
+    raw.extend_from_slice(body);
+    stream.write_all(&raw).await.expect("write");
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.expect("read");
+    split_response(&response)
+}
+
+/// The (trimmed) value of a response header, or `None`. Case-insensitive.
+pub fn header(head: &str, name: &str) -> Option<String> {
+    head.lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .find(|(key, _)| key.trim().eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.trim().to_string())
+}
+
+/* ── waiting for a condition ─────────────────────────────────────────── */
+
+/// Poll `condition` every 20 ms until it holds, or fail with `what`.
+pub async fn wait_for(what: &str, budget: Duration, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + budget;
+    while !condition() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The same, for a condition that has to be awaited, returning its first `Some`.
+pub async fn wait_for_async<T, F, Fut>(what: &str, budget: Duration, mut probe: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if let Some(value) = probe().await {
+            return value;
+        }
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/* ── seeding transcripts ─────────────────────────────────────────────── */
+
+/// Write JSONL entries, one per line, creating the parent directory.
+pub fn write_jsonl(path: &Path, entries: &[Value]) {
+    std::fs::create_dir_all(path.parent().expect("a parent directory")).expect("transcript dir");
+    let body: String = entries.iter().map(|entry| format!("{entry}\n")).collect();
+    std::fs::write(path, body).expect("seed transcript");
+}
+
+/// Write a transcript at `<root>/projects/<project>/<id>.jsonl` and return its
+/// path.
+pub fn seed_transcript(root: &Path, project: &str, id: &str, entries: &[Value]) -> PathBuf {
+    let dir = root.join("projects").join(project);
+    std::fs::create_dir_all(&dir).expect("project dir");
+    let path = dir.join(format!("{id}.jsonl"));
+    write_jsonl(&path, entries);
+    path
+}
+
+/// Give a transcript a definite mtime, since the session list is ordered by it
+/// and two files written in the same instant would otherwise tie.
+pub fn set_mtime(path: &Path, seconds_since_epoch: u64) {
+    let when = std::time::UNIX_EPOCH + Duration::from_secs(seconds_since_epoch);
+    let file = std::fs::OpenOptions::new().write(true).open(path).expect("open for times");
+    file.set_times(std::fs::FileTimes::new().set_accessed(when).set_modified(when))
+        .expect("set mtime");
+}
+
+/* ── accounts ────────────────────────────────────────────────────────── */
+
+/// Create an oauth-token account over HTTP, asserting the `201` and returning
+/// the body.
+pub async fn create_account(server: &TestServer, label: &str, secret: &str) -> Value {
+    let (status, raw) = server
+        .json("POST", "/api/accounts", &serde_json::json!({"label": label, "kind": "oauth_token", "secret": secret}))
+        .await;
+    assert_eq!(status, 201, "POST /api/accounts -> {status}: {raw}");
+    serde_json::from_str(&raw).unwrap_or_else(|error| panic!("POST /api/accounts returned non-JSON ({error}): {raw}"))
+}
+
+/// The same, returning the new account's id.
+pub async fn create_account_id(server: &TestServer, label: &str, secret: &str) -> String {
+    create_account(server, label, secret).await["id"]
+        .as_str()
+        .expect("account id")
+        .to_string()
+}
+
+/* ── the real binary ─────────────────────────────────────────────────── */
+
+/// A server started from the real binary, on a home directory the test owns.
+///
+/// Killing it is the caller's business: a group signal to `pid` reaches the
+/// server and everything it did not detach.
+pub struct Spawned {
+    pub pid: u32,
+    pub addr: SocketAddr,
+}
+
+/// Start the real server binary on `home` and wait until it is listening.
+///
+/// The flags are the ones every test needs: no login, an ephemeral port, and a
+/// loopback host. `extra_env` is applied on top (the fake-CLI-on-`PATH` seam,
+/// for instance). The child inherits this process's environment and leads a
+/// process group of its own, so the test can kill the group without killing
+/// itself.
+pub async fn spawn_server(home: &Path, instance: &str, extra_env: &[(&str, &str)]) -> Spawned {
+    let port_file = InstanceDirs::new(&Paths::new(home.to_path_buf()).data_dir(), instance)
+        .expect("instance name")
+        .port_file();
+    // So a stale port from a previous server is never mistaken for this one's.
+    let _ = std::fs::remove_file(&port_file);
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
+    command
+        .arg("serve")
+        .env("APP_HOME_DIR", home)
+        // No login: not a test of authentication (`tests/auth.rs` is).
+        .env("APP_AUTH__ENABLED", "false")
+        .env("APP_SERVER__PORT", "0")
+        .env("APP_SERVER__HOST", "127.0.0.1")
+        // A group of its own, so the test can kill the group without killing
+        // itself — and so a child that takes a group of its own again is
+        // demonstrably outside it.
+        .process_group(0)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(false);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().expect("spawn the server binary");
+    let pid = child.id().expect("the server has a pid");
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+
+    let addr = wait_for_listener(home, instance, Duration::from_secs(30)).await;
+    Spawned { pid, addr }
+}
+
+/// Wait until the server rooted at `home` has written its port and answers on
+/// it.
+pub async fn wait_for_listener(home: &Path, instance: &str, budget: Duration) -> SocketAddr {
+    let port_file = InstanceDirs::new(&Paths::new(home.to_path_buf()).data_dir(), instance)
+        .expect("instance name")
+        .port_file();
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|text| text.trim().parse::<u16>().ok()) {
+            let candidate: SocketAddr = ([127, 0, 0, 1], port).into();
+            if tokio::net::TcpStream::connect(candidate).await.is_ok() {
+                return candidate;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server never recorded a port it was listening on"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -306,9 +539,12 @@ pub fn edit(db: &Path, statement: &str, params: impl rusqlite::Params) -> usize 
 }
 
 /// Split a raw HTTP response into `(status, head, body)`, decoding a chunked body.
-fn split_response(raw: &[u8]) -> (u16, String, String) {
-    let text = String::from_utf8_lossy(raw).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").expect("malformed HTTP response");
+fn split_response(raw: &[u8]) -> (u16, String, Vec<u8>) {
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap_or_else(|| panic!("malformed HTTP response: {}", String::from_utf8_lossy(raw)));
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
     let status = head
         .lines()
         .next()
@@ -316,7 +552,12 @@ fn split_response(raw: &[u8]) -> (u16, String, String) {
         .and_then(|code| code.parse().ok())
         .expect("status line");
     let chunked = head.to_lowercase().contains("transfer-encoding: chunked");
-    (status, head.to_string(), if chunked { dechunk(body) } else { body.to_string() })
+    let body = if chunked {
+        dechunk(&String::from_utf8_lossy(&raw[split + 4..])).into_bytes()
+    } else {
+        raw[split + 4..].to_vec()
+    };
+    (status, head, body)
 }
 
 /// Join a chunked body. Streaming responses (file downloads) arrive this way.
