@@ -1,16 +1,16 @@
-//! `apps.json`: what the next boot needs to find the apps this one left running.
+//! Where the next boot finds the apps this one left running.
 //!
 //! ```text
-//! <instance>/apps.json      one record per running app  (server-owned)
-//! <instance>/apps/<id>.log  that app's stdout+stderr    (app-owned)
+//! <instance>/state.db       one `apps` row per running app  (server-owned)
+//! <instance>/apps/<id>.log  that app's stdout+stderr        (app-owned)
 //! ```
 //!
 //! The pty shims of [`crate::pty_shim`] can be found by scanning a directory,
 //! because each one leaves a socket a server can knock on. An embedded app
 //! leaves nothing: it is an ordinary `code-server` on an ordinary loopback port,
 //! indistinguishable from anything else the machine happens to be running. So
-//! the server writes down what it started, and that file — not the port, and not
-//! the process table — is the only thing that says an app was ours.
+//! the server writes down what it started, and that record — not the port, and
+//! not the process table — is the only thing that says an app was ours.
 //!
 //! Which makes the record's integrity the whole story. A record that is a little
 //! bit wrong points at a pid, and the boot that reads it may *signal* that pid.
@@ -25,14 +25,13 @@
 //! sits beside `apps.json`. Everything the paragraph above asks for is now the
 //! transaction's: replacing all the rows at once is atomic by construction, and
 //! the WAL at `synchronous = FULL` is what the hand-rolled `fsync` the temporary
-//! / `rename` / `fsync` the directory dance used to buy. `apps.json` itself is
-//! read exactly once, to drain it into the table, and is never written.
+//! / `rename` / `fsync` the directory dance used to buy.
 //!
-//! It was written for a while after the move, so that a [`crate::supervisor`]
-//! demotion to a `.prev` binary — one that had never heard of the database —
-//! would not adopt nothing and leave a generation of editors running with no
-//! owner. No binary that old is left to demote to. The file stays on disk unread,
-//! because dropping one back in is how a restored backup seeds a fresh database.
+//! `apps.json` was written for a while after the move, so that a
+//! [`crate::supervisor`] demotion to a `.prev` binary — one that had never heard
+//! of the database — would not adopt nothing and leave a generation of editors
+//! running with no owner. No binary that old is left to demote to, and the file
+//! is no longer read: one left on disk is inert.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -77,9 +76,6 @@ pub struct AppRecord {
     pub pid_token: Option<String>,
 }
 
-/// The name this store's one-time drain of `apps.json` is recorded under.
-const IMPORT_MARKER: &str = "apps";
-
 /// The instance database that sits beside `apps.json`.
 ///
 /// Derived from the path rather than taken as a [`crate::sessions::Paths`], and
@@ -88,49 +84,7 @@ const IMPORT_MARKER: &str = "apps";
 /// Threading a `Paths` down here instead would change every caller's signature
 /// to say something the path it already passes has always said.
 fn store(path: &Path) -> Arc<Db> {
-    let db = crate::db::at(path.with_file_name("state.db"));
-    if db.kv_get(crate::db::scope::IMPORTED, IMPORT_MARKER).is_none() {
-        import_once(&db, load_file(path));
-    }
-    db
-}
-
-/// [`crate::db::Db::import_once`], for a store whose rows are a table.
-///
-/// Same three properties, same reasons. The last one has teeth here: a file that
-/// was never there still counts as drained, or `kill_all` — which deliberately
-/// writes an *empty* record so the next server adopts nothing — would be undone
-/// by the next boot re-importing the file it had just emptied.
-fn import_once(db: &Db, records: Vec<AppRecord>) {
-    let count = records.len();
-    let outcome = db.write(|tx| {
-        let done: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .ok();
-        if done.is_some() {
-            return Ok(false);
-        }
-        for (ordinal, record) in records.iter().enumerate() {
-            tx.execute(
-                "INSERT OR IGNORE INTO apps (id, ordinal, payload) VALUES (?1, ?2, ?3)",
-                (&record.id, ordinal as i64, payload(record)),
-            )?;
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (crate::db::scope::IMPORTED, IMPORT_MARKER, count.to_string()),
-        )?;
-        Ok(true)
-    });
-    match outcome {
-        Ok(true) => tracing::info!(apps = count, "imported apps.json into the state database"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "cannot import apps.json; the running apps stay in the file this boot"),
-    }
+    crate::db::at(path.with_file_name("state.db"))
 }
 
 /// A record as the `payload` column holds it: the JSON it has always been.
@@ -157,34 +111,6 @@ pub fn load(path: &Path) -> Vec<AppRecord> {
                 .collect())
         })
         .unwrap_or_default()
-}
-
-/// What `apps.json` says, for the one boot that drains it.
-///
-/// Unreadable is *empty*, never a failure: the alternative is a server that will
-/// not boot because of a file the user has never heard of. What it costs is one
-/// generation of apps left running with nobody to adopt them, which the boot
-/// says out loud.
-fn load_file(path: &Path) -> Vec<AppRecord> {
-    let raw = match std::fs::read(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-        Err(error) => {
-            tracing::warn!(path = %path.display(), %error, "cannot read the app record; adopting nothing");
-            return Vec::new();
-        }
-    };
-    match serde_json::from_slice(&raw) {
-        Ok(records) => records,
-        Err(error) => {
-            tracing::warn!(
-                path = %path.display(),
-                %error,
-                "the app record is not readable; any app it named is now on its own"
-            );
-            Vec::new()
-        }
-    }
 }
 
 /// Replace the stored records with `records`.
@@ -233,7 +159,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("apps.json");
 
-        assert!(load(&path).is_empty(), "no file at all is no apps, not a failure");
+        assert!(load(&path).is_empty(), "no database at all is no apps, not a failure");
 
         save(&path, &[record("one", 101), record("two", 102)]);
         assert_eq!(load(&path).len(), 2);
@@ -267,34 +193,6 @@ mod tests {
         assert_eq!(load(&path), vec![without]);
     }
 
-    /// A directory of its own per body: the file is drained into the database
-    /// once, so four seeds into one instance would only ever test the first.
-    #[test]
-    fn a_file_that_will_not_parse_adopts_nothing_rather_than_guessing() {
-        for corrupt in [r#"[{"id":"half-writ"#, "not json at all", "{}", r#"[{"id":"no-pid","kind":"vscode"}]"#] {
-            let dir = tempfile::tempdir().expect("tempdir");
-            let path = dir.path().join("apps.json");
-            std::fs::write(&path, corrupt).expect("write");
-            assert!(load(&path).is_empty(), "{corrupt:?} must not become a record");
-        }
-    }
-
-    /// The file is drained exactly once, and never over what has happened since.
-    /// `kill_all` writes an empty record on purpose, so an import that ran twice
-    /// would hand the next boot a list of pids it had just been told to forget.
-    #[test]
-    fn the_file_is_imported_once_and_never_over_newer_rows() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("apps.json");
-        std::fs::write(&path, serde_json::to_vec(&[record("one", 101)]).expect("encode")).expect("seed");
-
-        assert_eq!(load(&path), vec![record("one", 101)]);
-
-        save(&path, &[]);
-        std::fs::write(&path, serde_json::to_vec(&[record("one", 101)]).expect("encode")).expect("the old file comes back");
-        assert!(load(&path).is_empty(), "a pid this server has disowned stays disowned");
-    }
-
     /// What a restart is, from the store's point of view.
     #[test]
     fn a_record_survives_the_database_being_reopened() {
@@ -309,9 +207,9 @@ mod tests {
         assert_eq!(stored, "one");
     }
 
-    /// The contract that replaced the mirror: `apps.json` is an input, once, and
-    /// never an output. A save that wrote it back would be one a hand-restored
-    /// file could not survive being imported from.
+    /// A save writes the table and nothing else: `apps.json` is neither read
+    /// nor written any more, so a file left beside the database is inert and a
+    /// save must not recreate one.
     #[test]
     fn no_save_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -321,8 +219,8 @@ mod tests {
         assert!(!path.exists(), "a save writes the table and creates no file");
         assert!(!path.with_extension("json.tmp").exists());
 
-        // A file that appears afterwards is left exactly as found: the import is
-        // long past, and there is no writer left to overwrite it.
+        // A file that appears afterwards is left exactly as found: nothing reads
+        // it, and there is no writer left to overwrite it.
         let planted = b"[{\"id\":\"planted\"".to_vec();
         std::fs::write(&path, &planted).expect("plant");
         save(&path, &[record("two", 102)]);

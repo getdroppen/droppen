@@ -22,9 +22,9 @@
 //! buffers and its language servers, and the next boot picks it back up. Which
 //! makes three things load-bearing:
 //!
-//! * **[`record`]** — `apps.json` in the instance directory is the only thing
-//!   that says an app was ours. Nothing else distinguishes a `code-server` we
-//!   started from one the user started by hand.
+//! * **[`record`]** — the `apps` table in the instance database is the only
+//!   thing that says an app was ours. Nothing else distinguishes a `code-server`
+//!   we started from one the user started by hand.
 //! * **[`Registry::readopt_all`]** — the boot's probe-and-adopt: alive *and*
 //!   answering means adopt, and every other combination is cleaned up rather
 //!   than guessed at.
@@ -223,28 +223,6 @@ fn app_data_root(instance: &InstanceDirs) -> PathBuf {
     instance.root().join("apps")
 }
 
-/// Where app state lived before it moved into the instance directory: one
-/// directory per app under `$HOME`, shared by every instance on that home.
-///
-/// Still read from — an app adopted across the move keeps the `--user-data-dir`
-/// it was spawned with for as long as it runs — and swept from, but never
-/// written to. See [`Registry::sweep_state`] for why sweeping it is the delicate
-/// half.
-fn legacy_app_data_root(home: &Path) -> PathBuf {
-    home.join(".local").join("share").join("remote-hand").join("apps")
-}
-
-/// Whether `id` is safe to hang a path off.
-///
-/// Every id this server writes is a uuid, but they come back through a file that
-/// something else may have written, and what the sweep does with one is delete
-/// the directory it names. A `..` in `apps.json` must not become a delete
-/// somewhere else entirely.
-fn plain_segment(id: &str) -> bool {
-    let mut components = Path::new(id).components();
-    matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none()
-}
-
 /// Extensions stay in `code-server`'s default directory, so they are installed
 /// once and appear in every instance.
 fn extensions_dir(home: &Path) -> PathBuf {
@@ -270,7 +248,8 @@ enum Origin {
     /// The pid cannot have been recycled: it is unreaped until the supervisor
     /// says otherwise, and the supervisor sets `exited` the instant it does.
     Spawned,
-    /// Read out of `apps.json` at boot. The pid is a claim, not a handle.
+    /// Read out of the instance database at boot. The pid is a claim, not a
+    /// handle.
     Adopted,
 }
 
@@ -295,11 +274,12 @@ struct Instance {
 }
 
 impl Instance {
-    /// What `apps.json` should say about this instance, if anything.
+    /// What the record should say about this instance, if anything.
     ///
     /// An instance with no pid is a registered upstream — a test seam with no
     /// process behind it — and an exited one is a pid a later boot must not be
-    /// handed. Neither belongs in a file whose whole purpose is to be acted on.
+    /// handed. Neither belongs in a record whose whole purpose is to be acted
+    /// on.
     fn record(&self) -> Option<AppRecord> {
         let pid = self.pid?;
         if self.exited.load(Ordering::SeqCst) {
@@ -735,10 +715,6 @@ impl Registry {
         // Oldest first, so the titles come back in the order the user made them
         // — the counter is all an adopted app has to be named from.
         records.sort_by(|left, right| left.started_at.cmp(&right.started_at));
-        // Taken before the records are consumed, because the sweep needs to know
-        // which state directories this instance ever claimed, not just which of
-        // them turned out to still be alive.
-        let known: HashSet<String> = records.iter().map(|record| record.id.clone()).collect();
 
         let mut adopted: Vec<(AppRecord, Arc<AtomicBool>)> = Vec::new();
         for record in records {
@@ -798,7 +774,7 @@ impl Registry {
         for (record, exited) in adopted {
             tokio::spawn(watch(Arc::downgrade(self), record, exited));
         }
-        self.sweep_state(&known).await;
+        self.sweep_state().await;
         count
     }
 
@@ -810,10 +786,7 @@ impl Registry {
     /// has in front of them, and deleting it pulls that out from under them. The
     /// log of an app that is gone is kept until the next boot on purpose: it is
     /// where a `code-server` that refused to start said why.
-    ///
-    /// `known` is every id this boot read out of `apps.json`, and it is what
-    /// makes the second half of the sweep safe to run at all.
-    async fn sweep_state(&self, known: &HashSet<String>) {
+    async fn sweep_state(&self) {
         let keep: HashSet<String> = self.lock().iter().map(|instance| instance.info.id.clone()).collect();
 
         // Everything under the instance directory was put there by a server
@@ -838,30 +811,6 @@ impl Registry {
                     _ => tokio::fs::remove_file(&path).await,
                 };
             }
-        }
-
-        // The home-scoped root every instance shared before app state moved into
-        // the instance directory, and where an app adopted across that move
-        // still keeps its settings. Nothing here can be swept on sight, because
-        // here an unrecognised directory does not mean "an app that died"; it
-        // means "another instance's". A second server on the same home has its
-        // own journal, its own ids and its own live editors, and its state
-        // directories are open files, not leftovers. So only the ids this
-        // instance itself wrote down are considered, and everything else is left
-        // exactly as it was found.
-        //
-        // Deleting on sight was the wrong default in the first place: it read
-        // "not in my list" as "belongs to nobody", when the one thing a keep-set
-        // built from this server's own records cannot describe is what any other
-        // server is doing. The failure was silent and total — booting a second
-        // instance pulled the user-data directory out from under the first
-        // instance's running `code-server`.
-        let legacy = legacy_app_data_root(&self.home);
-        for id in known {
-            if keep.contains(id) || !plain_segment(id) {
-                continue;
-            }
-            let _ = tokio::fs::remove_dir_all(legacy.join(id)).await;
         }
     }
 
@@ -1157,30 +1106,18 @@ mod tests {
 
         let home = Path::new("/tmp/home");
         assert!(extensions_dir(home).ends_with(".local/share/code-server/extensions"));
-        assert!(legacy_app_data_root(home).ends_with(".local/share/remote-hand/apps"));
-    }
-
-    #[test]
-    fn an_id_out_of_a_file_never_becomes_a_path_of_its_own() {
-        assert!(plain_segment("11111111-1111-4111-8111-111111111111"));
-        for hostile in ["", ".", "..", "../escape", "/etc", "a/b"] {
-            assert!(!plain_segment(hostile), "{hostile:?} must never name a directory to delete");
-        }
     }
 
     #[tokio::test]
     async fn one_instances_sweep_never_deletes_another_instances_app_data() {
         let home = tempfile::tempdir().expect("tempdir");
-        let legacy = legacy_app_data_root(home.path());
 
-        // Instance A: an editor the user has open right now. Its state is in A's
-        // own instance directory, and — because this app was started before app
-        // state moved in there — in the old home-scoped root as well.
+        // Instance A: an editor the user has open right now, with its state in
+        // A's own instance directory.
         let live = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
         let a = registry(home.path(), "a");
         let a_state = a.app_dir(live);
         std::fs::create_dir_all(&a_state).expect("A's state directory");
-        std::fs::create_dir_all(legacy.join(live)).expect("A's older state directory");
 
         // Instance B, on the same home, with a journal of its own. The one app
         // it remembers is long dead, so B's own leftovers are litter.
@@ -1188,7 +1125,6 @@ mod tests {
         let b = registry(home.path(), "b");
         let b_state = b.app_dir(mine);
         std::fs::create_dir_all(&b_state).expect("B's state directory");
-        std::fs::create_dir_all(legacy.join(mine)).expect("B's older state directory");
         let b_log = b.log_path(mine);
         std::fs::create_dir_all(b_log.parent().expect("the log has a directory")).expect("B's log directory");
         std::fs::write(&b_log, b"listen EADDRINUSE").expect("B's log");
@@ -1197,16 +1133,10 @@ mod tests {
         assert_eq!(b.readopt_all().await, 0, "B has nothing left to adopt");
 
         assert!(a_state.is_dir(), "B must not sweep the instance directory A is using");
-        assert!(
-            legacy.join(live).is_dir(),
-            "and this is the old failure mode: a home-scoped directory B never wrote down \
-             is another server's live editor, not a leftover"
-        );
 
         // The sweep still does its job on what is demonstrably this instance's.
         assert!(!b_state.exists(), "B's own dead app leaves no state behind");
         assert!(!b_log.exists(), "nor a log");
-        assert!(!legacy.join(mine).exists(), "including what it left in the shared root");
     }
 
     #[test]

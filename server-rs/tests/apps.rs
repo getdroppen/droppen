@@ -95,7 +95,7 @@ impl Probe {
     ///
     /// Still `apps.json`, and it is a name rather than a file: `record::save`
     /// and `record::load` derive the instance's `state.db` from it, and the file
-    /// itself is only ever read once, by the import an upgrade runs.
+    /// itself is neither read nor written.
     fn record_file(&self) -> PathBuf {
         instance_dirs(&self.home).apps_file()
     }
