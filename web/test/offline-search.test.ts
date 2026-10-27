@@ -1,5 +1,5 @@
 // In-session search and the first unread message while the machine is away,
-// worked out over the offline copy (`features/cloud/offline-search.ts`).
+// worked out over the offline copy (`lib/transport/offline-search.ts`).
 //
 // The first half replays `server-rs/src/feed/search.rs`'s own tests against
 // the port: the same items, the same queries, the same matches, fields,
@@ -11,8 +11,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { components } from "../src/api/schema.js";
-import { firstUnreadIn, readMarkOf, searchCopy, snippetOf, termsOf, validateQuery, DEFAULT_LIMIT, TOTAL_CAP, SNIPPET_CHARS } from "../src/features/cloud/offline-search.js";
-import { type OfflineOptions, type OfflineSource, offlineTransport } from "../src/features/cloud/offline-transport.js";
+import { firstUnreadIn, readMarkOf, searchCopy, snippetOf, termsOf, validateQuery, DEFAULT_LIMIT, TOTAL_CAP, SNIPPET_CHARS } from "../src/lib/transport/offline-search.js";
+import { type OfflineOptions, type OfflineSource, offlineTransport } from "../src/lib/transport/offline.js";
 import type { MirrorChange, SessionCopy } from "../src/lib/hub/mirror.js";
 import type { FeedCopy } from "../src/lib/hub/streams.js";
 

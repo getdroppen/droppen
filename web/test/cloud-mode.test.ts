@@ -1,12 +1,12 @@
 // Moving the page between its machine and the machine's offline copy
-// (`features/cloud/cloud-transport.ts`): the switching transport sends each
+// (`lib/transport/switching.ts`): the switching transport sends each
 // request and socket to the side the page is on and closes the other side's
 // sockets on a switch; the controller goes live the moment the channel opens,
 // back to the copy only after the channel has stayed down, and keeps trying
 // the channel while the machine is online.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type CloudMode, ModeController, SwitchingTransport } from "../src/features/cloud/cloud-transport.js";
+import { type CloudMode, ModeController, SwitchingTransport } from "../src/lib/transport/switching.js";
 import type { LinkState, PresenceState } from "../src/lib/hub/link.js";
 import type { MachineStatus } from "../src/lib/hub/machine.js";
 import type { SocketLike, Transport } from "../src/lib/transport/index.js";

@@ -64,7 +64,7 @@ export interface ServerInfo {
   serverStartedAt: string;
   /** The plugins installed in this instance and whether each is on; absent on older servers. */
   plugins?: PluginStatus[];
-  /** Played from the machine's offline copy (`offline-transport.ts`) rather than said by the machine itself. */
+  /** Played from the machine's offline copy (`lib/transport/offline.ts`) rather than said by the machine itself. */
   fromCopy?: boolean;
 }
 

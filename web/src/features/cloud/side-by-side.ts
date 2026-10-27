@@ -25,7 +25,7 @@ import { newPaneId, type PaneContent, type PaneNode, withMachine } from "@/app/p
 import type { MachineKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
 import { recentSessions } from "@/features/machines/needs-you";
-import type { SwitchingTransport } from "./cloud-transport";
+import type { SwitchingTransport } from "@/lib/transport/switching";
 import type { HubShell } from "./hub-shell";
 
 /** A session a device's copy knows. */

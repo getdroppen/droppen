@@ -1,6 +1,6 @@
 /*
  * In-session search and the first unread message, answered from the offline
- * copy while the machine is away (`offline-transport.ts`) — the server's own
+ * copy while the machine is away (`offline.ts`) — the server's own
  * answers, computed in the page over the decrypted window the copy holds.
  *
  * A port of `server-rs/src/feed/search.rs` (`search_items`, `snippet_of`, the

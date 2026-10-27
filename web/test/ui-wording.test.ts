@@ -167,7 +167,7 @@ test("errors a device's channel, a relay or an enrollment can end in read in the
   const { default: i18n } = await import("./i18n-all.js");
   const { errorText, knownText } = await import("../src/features/cloud/ui.js");
   const { AccountError } = await import("../src/lib/hub/account.js");
-  const { MachineClosedError } = await import("../src/features/cloud/cloud-transport.js");
+  const { MachineClosedError } = await import("../src/lib/transport/switching.js");
   const { ChannelBlocked } = await import("../src/lib/hub/machine.js");
   const source = (file: string) => readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
   // What the channel, the relays and the enrollment throw or note, as written.

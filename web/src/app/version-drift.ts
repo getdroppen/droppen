@@ -17,7 +17,7 @@ export const NO_DRIFT: VersionDriftState = { seen: null, drifted: false };
 
 /**
  * The build a `settings` frame says the page is talking to: none for one
- * played from the machine's offline copy (`offline-transport.ts`). That is the
+ * played from the machine's offline copy (`lib/transport/offline.ts`). That is the
  * build the machine ran when it last wrote its status, any number of updates
  * ago, and a cloud page starts on the copy until the machine's channel opens:
  * taken as the baseline, it made the live build drift on every load, so no

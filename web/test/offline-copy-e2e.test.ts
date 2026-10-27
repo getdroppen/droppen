@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HubCopySource } from "../src/lib/hub/copy-source.js";
 import { FeedHub } from "../src/app/feed-hub.js";
-import { offlineTransport, type OfflineOptions } from "../src/features/cloud/offline-transport.js";
+import { offlineTransport, type OfflineOptions } from "../src/lib/transport/offline.js";
 import { FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1, generateDeviceKeys, hex, importMachineKey, indexStream, sealEphemeral, statusStream, streamId, streamKey, utf8 } from "../src/lib/e2e/index.js";
 import { MachineMirror } from "../src/lib/hub/mirror.js";
 import { feedFold, StreamClient } from "../src/lib/hub/streams.js";

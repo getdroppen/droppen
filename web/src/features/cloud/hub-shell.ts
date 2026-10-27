@@ -70,10 +70,10 @@ import { type Pipe, type PipeMessage, type PipeOpener, tunnelTransport } from "@
 import { feedHubFor } from "@/app/global-feed";
 import { copySessions, type SessionsStore } from "@/features/machines/copy-sessions";
 import { agentVersionOf, systemLabel } from "@/features/machines/device-facts";
-import { ModeController, SwitchingTransport } from "./cloud-transport";
+import { ModeController, SwitchingTransport } from "@/lib/transport/switching";
 import { DEVICES_PATH, isShellPagePath } from "./devices-route";
 import { shownName } from "./machine-name";
-import { offlineTransport, type OfflineOptions } from "./offline-transport";
+import { offlineTransport, type OfflineOptions } from "@/lib/transport/offline";
 
 /** What the offline copy says in the app, in the page's language at the moment it is said. */
 const offlineMessages: OfflineOptions["messages"] = {

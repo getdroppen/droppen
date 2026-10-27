@@ -27,7 +27,7 @@ import { FilePreview } from "../src/features/files/file-preview.js";
 import { directTransport, type Transport } from "../src/lib/transport/index.js";
 import { homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
 import { BlobError, hostBlobKey, hostBlobs } from "../src/lib/transport/blob.js";
-import { offlineTransport } from "../src/features/cloud/offline-transport.js";
+import { offlineTransport } from "../src/lib/transport/offline.js";
 import { fakeMachine, json } from "./fake-machine.js";
 import { LOCAL } from "../src/lib/machines/key.js";
 

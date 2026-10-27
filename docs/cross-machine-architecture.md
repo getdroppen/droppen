@@ -363,7 +363,7 @@
 - **状态流**：每 60 秒经回环 API 取 `/api/settings`、`/api/accounts`、`/api/stats/quota`，CLI 版本每小时跑一次 `--version`（`RH_AGENT_STATUS_CLI=0` 关掉）；内容没变就不追加。
 - 可调：`RH_AGENT_SYNC_DAYS`、`RH_AGENT_SYNC_EXTERNAL=1`、`RH_AGENT_COMPACT_RECORDS`、`RH_AGENT_COMPACT_EVERY_SECS`。
 
-**浏览器**（`web/src/lib/hub/streams.ts`、`mirror.ts`、`web/src/features/cloud/offline-transport.ts`、`cloud-transport.ts`）
+**浏览器**（`web/src/lib/hub/streams.ts`、`mirror.ts`、`web/src/lib/transport/offline.ts`、`switching.ts`）
 
 - `StreamClient` 按 `ch` 分发流帧，每条流的处理串行化；只交出被签名流头放行的记录、或按签名 manifest 校验过的页。出错按种类重订：`incomplete` 从已确认处，其他（断链、解不开、伪造、正文缺口）从 0。页最多 4 个并发，先取最后一页。
 - `MachineMirror`：索引、状态始终跟随；会话副本保留最近打开的 20 个和最新的 5 个（这些在机器在线时也在后台跟随，「保持温热」）。每条流一条 IndexedDB 记录 `stream/<账户>/<机器>/<流>`，解密后的状态与**签名流头**（不是裸 seq）写在**同一个事务**里；重新加载时先验流头签名，再 `LogReader.fromHead` 续上。退出登录会清空并封存缓存。

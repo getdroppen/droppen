@@ -1,13 +1,13 @@
 /*
  * Whether a view's machine is shown from its copy, in any mode: cloud mode's
  * transport switches between the machine and its offline copy
- * (`features/cloud/cloud-transport.ts`), and the local app shows another
+ * (`lib/transport/switching.ts`), and the local app shows another
  * device only from its copy, read-only (its gateway, S1-7). Apart from the
  * cloud modules, so the views every mode shares (a session, a terminal) read
  * it without loading them.
  */
 import { useSyncExternalStore } from "react";
-import type { CloudMode, SwitchingTransport } from "@/features/cloud/cloud-transport";
+import type { CloudMode, SwitchingTransport } from "@/lib/transport/switching";
 import type { Transport } from "@/lib/transport/types";
 import { useMachineRuntime } from "@/lib/machines/context";
 import { useStore } from "@/lib/machines/store";

@@ -1,5 +1,5 @@
 // The transport the page uses while its machine is away
-// (`features/cloud/offline-transport.ts`): the routes it answers from the
+// (`lib/transport/offline.ts`): the routes it answers from the
 // offline copy, in the machine's own shapes; the 503 everything else gets;
 // and the feed socket it plays — checked frame by frame, and through the real
 // `FeedHub` so the app's own reader is what accepts them.
@@ -14,7 +14,7 @@ import {
   type OfflineSource,
   offlineTransport,
   RefusedSocket,
-} from "../src/features/cloud/offline-transport.js";
+} from "../src/lib/transport/offline.js";
 import type { MirrorChange, SessionCopy } from "../src/lib/hub/mirror.js";
 import type { FeedCopy, StatusState } from "../src/lib/hub/streams.js";
 import { snapshotOf } from "../src/features/sessions/session-feed-pool.js";

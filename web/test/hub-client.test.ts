@@ -58,7 +58,7 @@ import { AGENT_UNSAVED, MachineChannel } from "../src/lib/hub/machine.js";
 import { type RelayDirectory, type RelayEntry, RelayPool } from "../src/lib/hub/relays.js";
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { tunnelTransport } from "../src/lib/transport/tunnel.js";
-import { ModeController, SwitchingTransport } from "../src/features/cloud/cloud-transport.js";
+import { ModeController, SwitchingTransport } from "../src/lib/transport/switching.js";
 
 const ORIGIN = "wss://hub.test";
 /** The relay channels go through when one can carry them (relay-and-plans §2.15). */

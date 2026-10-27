@@ -4,7 +4,7 @@
  * page follows anyway, replaced when it changes.
  *
  * While the device is not online its rows are shown as the app shows them
- * from the copy (`restingRow`, `offline-transport.ts`): nothing can be running
+ * from the copy (`restingRow`, `lib/transport/offline.ts`): nothing can be running
  * on it, so nothing on it is working or asking you — what is unread stays.
  * The same goes for a device that says it is online but whose copy has not
  * moved for longer than its heartbeat allows ({@link STALE_COPY_MS}): a
@@ -14,7 +14,7 @@
 import type { components } from "@/api/schema";
 import type { MachineKey } from "@/lib/machines/key";
 import { createStore, type Store } from "@/lib/machines/store";
-import { restingRow } from "@/features/cloud/offline-transport";
+import { restingRow } from "@/lib/transport/offline";
 import type { DeviceSessions } from "./needs-you";
 
 type SessionSummary = components["schemas"]["SessionSummary"];

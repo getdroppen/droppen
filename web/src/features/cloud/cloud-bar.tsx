@@ -13,7 +13,7 @@ import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { CloudMode } from "./cloud-transport";
+import type { CloudMode } from "@/lib/transport/switching";
 import {
   type CopyView,
   useAgentKeyState,
@@ -49,7 +49,7 @@ import { useHomeMachine } from "@/lib/machines/context";
  * to 「我的设备」 (`my-devices.tsx`). Renders nothing in local mode.
  *
  * When the machine cannot be reached the app shows its offline copy
- * (`offline-transport.ts`), read-only, and a notice under the strip says so
+ * (`lib/transport/offline.ts`), read-only, and a notice under the strip says so
  * and how old the copy is. Only a device with no copy at all is covered
  * ("no offline copy yet") until the machine is back.
  */

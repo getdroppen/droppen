@@ -41,7 +41,7 @@ import { gatewayShell, setGatewayShell } from "@/features/machines/shells";
 import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
 import type { Transport } from "@/lib/transport/types";
 import { copySessions, type SessionsStore } from "@/features/machines/copy-sessions";
-import { offlineTransport, type OfflineOptions } from "@/features/cloud/offline-transport";
+import { offlineTransport, type OfflineOptions } from "@/lib/transport/offline";
 
 /** What the copy of another device says in the app, in the page's language when it is said. */
 export const gatewayMessages: OfflineOptions["messages"] = {

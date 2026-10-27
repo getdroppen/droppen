@@ -3,7 +3,7 @@
  *
  * Two transports under one: `live`, the end-to-end channel to the machine
  * (`lib/transport/tunnel.ts`), and `offline`, the machine's offline copy
- * (`offline-transport.ts`). The page starts offline — drawn at once from the
+ * (`offline.ts`). The page starts offline — drawn at once from the
  * copy on the device — and goes live the moment the channel is open; it goes
  * back to the copy only once the channel has been down for a while
  * ({@link DOWN_MS}), so a blip (a hub deploy, a network change) is reconnected
