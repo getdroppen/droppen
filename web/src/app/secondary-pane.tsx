@@ -31,6 +31,55 @@ import { mq } from "@/lib/machines/query";
 /** What a picker panel hands back: the content, and the device it is on when that is not the panel's own (a session started on another). */
 type Pick = (content: PaneContent, machine?: MachineKey) => void;
 
+/**
+ * The frame the three pickers share: a bordered panel with a back arrow, the
+ * title, the device picker and an optional "new" action, then an optional
+ * toolbar (the session filter) and the scrolling list.
+ */
+function PickerShell({
+  title,
+  onBack,
+  devices,
+  onNew,
+  toolbar,
+  children,
+}: {
+  title: string;
+  onBack: () => void;
+  devices: ReactNode;
+  onNew?: () => void;
+  toolbar?: ReactNode;
+  children: ReactNode;
+}) {
+  const { t: tr } = useTranslation();
+  return (
+    <div className="my-auto flex min-h-0 max-h-[75%] w-88 max-w-full flex-col border border-border-strong bg-bg">
+      <header className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
+        >
+          <ChevronLeft className="size-3.5" />
+        </button>
+        <span className="flex-1 font-mono text-2xs font-semibold tracking-wider text-muted uppercase">{title}</span>
+        {devices}
+        {onNew && (
+          <button
+            type="button"
+            onClick={onNew}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs text-accent hover:bg-hover"
+          >
+            <Plus className="size-3" /> {tr("new")}
+          </button>
+        )}
+      </header>
+      {toolbar}
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
 function SessionPickerPanel({
   onPick,
   onBack,
@@ -62,56 +111,41 @@ function SessionPickerPanel({
       .slice(0, 30);
   }, [allSessions, q]);
 
+  // The empty session view, in this pane: it becomes the session it starts.
   return (
-    <div className="my-auto flex min-h-0 max-h-[75%] w-88 max-w-full flex-col border border-border-strong bg-bg">
-      <header className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-2">
+    <PickerShell
+      title={tr("pick a session")}
+      onBack={onBack}
+      devices={devices}
+      onNew={() => onPick({ kind: "new-session" })}
+      toolbar={
+        <div className="shrink-0 border-b border-border p-1.5">
+          <Input placeholder={tr("filter…")} value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+      }
+    >
+      {isPending && <Spinner />}
+      {sessions.map((s) => (
         <button
+          key={`${s.source}-${s.id}`}
           type="button"
-          onClick={onBack}
-          className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
+          onClick={() => onPick({ kind: "session", source: s.source, id: s.id })}
+          className="block w-full border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
         >
-          <ChevronLeft className="size-3.5" />
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-xs">{s.title}</span>
+            <StatusBadge session={s} unread={unreadCountOf(s)} />
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <SourceIcon source={s.source} className="text-muted" />
+            <span className="truncate font-mono text-2xs text-faint">{basename(s.cwd)}</span>
+            <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
+              {formatRelative(s.updatedAt)}
+            </span>
+          </div>
         </button>
-        <span className="flex-1 font-mono text-2xs font-semibold tracking-wider text-muted uppercase">
-          {tr("pick a session")}
-        </span>
-        {devices}
-        {/* The empty session view, in this pane: it becomes the session it starts. */}
-        <button
-          type="button"
-          onClick={() => onPick({ kind: "new-session" })}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs text-accent hover:bg-hover"
-        >
-          <Plus className="size-3" /> {tr("new")}
-        </button>
-      </header>
-      <div className="shrink-0 border-b border-border p-1.5">
-        <Input placeholder={tr("filter…")} value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {isPending && <Spinner />}
-        {sessions.map((s) => (
-          <button
-            key={`${s.source}-${s.id}`}
-            type="button"
-            onClick={() => onPick({ kind: "session", source: s.source, id: s.id })}
-            className="block w-full border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
-          >
-            <div className="flex items-center gap-1.5">
-              <span className="min-w-0 flex-1 truncate text-xs">{s.title}</span>
-              <StatusBadge session={s} unread={unreadCountOf(s)} />
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <SourceIcon source={s.source} className="text-muted" />
-              <span className="truncate font-mono text-2xs text-faint">{basename(s.cwd)}</span>
-              <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
-                {formatRelative(s.updatedAt)}
-              </span>
-            </div>
-          </button>
-        ))}
-      </div>
-    </div>
+      ))}
+    </PickerShell>
   );
 }
 
@@ -148,46 +182,29 @@ function TerminalPickerPanel({
   });
 
   return (
-    <div className="my-auto flex min-h-0 max-h-[75%] w-88 max-w-full flex-col border border-border-strong bg-bg">
-      <header className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-2">
+    <PickerShell
+      title={tr("pick a terminal")}
+      onBack={onBack}
+      devices={devices}
+      onNew={() => create.mutate()}
+    >
+      {isPending && <Spinner />}
+      {data?.terminals.map((t) => (
         <button
+          key={t.id}
           type="button"
-          onClick={onBack}
-          className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
+          onClick={() => onPick({ kind: "terminal", id: t.id })}
+          className="flex w-full items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
         >
-          <ChevronLeft className="size-3.5" />
+          <SquareTerminal className="size-3.5 shrink-0 text-ok/70" />
+          <span className="min-w-0 flex-1 truncate text-xs">{t.title}</span>
+          <span className="shrink-0 font-mono text-2xs text-faint">{formatRelative(t.createdAt)}</span>
         </button>
-        <span className="flex-1 font-mono text-2xs font-semibold tracking-wider text-muted uppercase">
-          {tr("pick a terminal")}
-        </span>
-        {devices}
-        <button
-          type="button"
-          onClick={() => create.mutate()}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs text-accent hover:bg-hover"
-        >
-          <Plus className="size-3" /> {tr("new")}
-        </button>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {isPending && <Spinner />}
-        {data?.terminals.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onPick({ kind: "terminal", id: t.id })}
-            className="flex w-full items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
-          >
-            <SquareTerminal className="size-3.5 shrink-0 text-ok/70" />
-            <span className="min-w-0 flex-1 truncate text-xs">{t.title}</span>
-            <span className="shrink-0 font-mono text-2xs text-faint">{formatRelative(t.createdAt)}</span>
-          </button>
-        ))}
-        {!isPending && (data?.terminals.length ?? 0) === 0 && (
-          <div className="p-3 text-center font-mono text-2xs text-faint">no terminals yet — create one</div>
-        )}
-      </div>
-    </div>
+      ))}
+      {!isPending && (data?.terminals.length ?? 0) === 0 && (
+        <div className="p-3 text-center font-mono text-2xs text-faint">no terminals yet — create one</div>
+      )}
+    </PickerShell>
   );
 }
 
@@ -206,49 +223,34 @@ function ChatPickerPanel({
   const { data: chats, isPending } = useChatList();
 
   return (
-    <div className="my-auto flex min-h-0 max-h-[75%] w-88 max-w-full flex-col border border-border-strong bg-bg">
-      <header className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-2">
+    <PickerShell title={tr("pick a chat")} onBack={onBack} devices={devices}>
+      {isPending && <Spinner />}
+      {chats?.map((chat) => (
         <button
+          key={`${chat.kind}-${chat.id}`}
           type="button"
-          onClick={onBack}
-          className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
+          onClick={() => onPick({ kind: "chat", chatKind: chat.kind, id: chat.id })}
+          className="block w-full border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
         >
-          <ChevronLeft className="size-3.5" />
+          <div className="flex items-center gap-1.5">
+            {chat.kind === "claude" ? (
+              <Sparkles className="size-3 shrink-0 text-accent" />
+            ) : chat.kind === "codex" ? (
+              <Terminal className="size-3 shrink-0 text-muted" />
+            ) : (
+              <Bot className="size-3 shrink-0 text-muted" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs">{chat.title}</span>
+            <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
+              {formatRelative(chat.updatedAt)}
+            </span>
+          </div>
         </button>
-        <span className="flex-1 font-mono text-2xs font-semibold tracking-wider text-muted uppercase">
-          {tr("pick a chat")}
-        </span>
-        {devices}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {isPending && <Spinner />}
-        {chats?.map((chat) => (
-          <button
-            key={`${chat.kind}-${chat.id}`}
-            type="button"
-            onClick={() => onPick({ kind: "chat", chatKind: chat.kind, id: chat.id })}
-            className="block w-full border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
-          >
-            <div className="flex items-center gap-1.5">
-              {chat.kind === "claude" ? (
-                <Sparkles className="size-3 shrink-0 text-accent" />
-              ) : chat.kind === "codex" ? (
-                <Terminal className="size-3 shrink-0 text-muted" />
-              ) : (
-                <Bot className="size-3 shrink-0 text-muted" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-xs">{chat.title}</span>
-              <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
-                {formatRelative(chat.updatedAt)}
-              </span>
-            </div>
-          </button>
-        ))}
-        {chats && chats.length === 0 && (
-          <div className="p-3 font-mono text-2xs text-faint">{tr("no chats yet — start one →")}</div>
-        )}
-      </div>
-    </div>
+      ))}
+      {chats && chats.length === 0 && (
+        <div className="p-3 font-mono text-2xs text-faint">{tr("no chats yet — start one →")}</div>
+      )}
+    </PickerShell>
   );
 }
 
