@@ -12,7 +12,8 @@ USAGE:
 
 Configuration is environment only: DROPPEN_RELAY_HUB, DROPPEN_RELAY_ORIGIN, DROPPEN_RELAY_KEY,
 DROPPEN_RELAY_REGISTRATION_TOKEN, PORT, … (see rh_relay::config). The old names,
-RH_RELAY_*, still work for now; each one used is logged as deprecated.";
+RH_RELAY_*, are deprecated and stop working in v0.2.135: set the DROPPEN_RELAY_* name instead
+(each old name used is logged once).";
 
 fn main() -> ExitCode {
     // The websocket library logs whole frames at trace level: never, here,

@@ -1,10 +1,10 @@
 //! A relay's configuration, from the environment only (§2.5, §2.11, §2.13).
 //!
 //! A relay's variables are `DROPPEN_RELAY_*`. Before the rename to Droppen
-//! they were `RH_RELAY_*`, and each old name is still read when its new name
-//! is unset: the relay logs once per old name that it is deprecated (or,
-//! when both are set to different values, that the new one is used). See
-//! [`env`].
+//! they were `RH_RELAY_*`; until v0.2.135 each old name is still read when
+//! its new name is unset, and the relay logs once per old name that it is
+//! deprecated and stops working in v0.2.135 (or, when both are set to
+//! different values, that the new one is used). See [`env`].
 //!
 //! | variable | meaning |
 //! |---|---|
@@ -113,9 +113,9 @@ impl std::fmt::Debug for Config {
 
 /// The variable `name`, trimmed (empty is unset). A `DROPPEN_RELAY_*` name
 /// falls back to its old name ([`old_name`]) when unset, so a relay
-/// configured before the rename keeps working; using the old name, or
-/// setting both to different values (the new one wins), is logged once per
-/// name.
+/// configured before the rename keeps working until v0.2.135; using the old
+/// name, or setting both to different values (the new one wins), is logged
+/// once per name.
 pub fn env(name: &str) -> Option<String> {
     let (value, old) = lookup(name, |n| std::env::var(n).ok());
     if let Some(line) = old.and_then(|old| notice(&NOTICED, name, &old)) {
@@ -171,8 +171,10 @@ fn notice(noticed: &std::sync::Mutex<std::collections::BTreeSet<String>>, name: 
         return None;
     }
     Some(match old {
-        OldName::Used(_) => format!("{was} is deprecated: rename it {name} (the old name is still read, for now)"),
-        OldName::Overridden(_) => format!("{name} and the deprecated {was} are both set, to different values: {name} is used; remove {was}"),
+        OldName::Used(_) => format!("{was} is deprecated: add {name} with the same value; {was} stops working in v0.2.135"),
+        OldName::Overridden(_) => format!(
+            "{name} and the deprecated {was} are both set, to different values: {name} is used; remove {was} (it stops working in v0.2.135)"
+        ),
     })
 }
 
@@ -443,10 +445,16 @@ mod tests {
         let noticed = std::sync::Mutex::new(std::collections::BTreeSet::new());
         let used = OldName::Used("RH_RELAY_KEY".into());
         let line = notice(&noticed, "DROPPEN_RELAY_KEY", &used).expect("the first time");
-        assert!(line.starts_with("RH_RELAY_KEY is deprecated") && line.contains("rename it DROPPEN_RELAY_KEY"), "{line}");
+        assert_eq!(
+            line,
+            "RH_RELAY_KEY is deprecated: add DROPPEN_RELAY_KEY with the same value; RH_RELAY_KEY stops working in v0.2.135"
+        );
         assert_eq!(notice(&noticed, "DROPPEN_RELAY_KEY", &used), None, "once");
         let line = notice(&noticed, "DROPPEN_RELAY_ID", &OldName::Overridden("RH_RELAY_ID".into())).expect("another name");
-        assert!(line.contains("DROPPEN_RELAY_ID is used") && line.contains("remove RH_RELAY_ID"), "{line}");
+        assert_eq!(
+            line,
+            "DROPPEN_RELAY_ID and the deprecated RH_RELAY_ID are both set, to different values: DROPPEN_RELAY_ID is used; remove RH_RELAY_ID (it stops working in v0.2.135)"
+        );
         assert_eq!(notice(&noticed, "DROPPEN_RELAY_ID", &OldName::Overridden("RH_RELAY_ID".into())), None);
     }
 }

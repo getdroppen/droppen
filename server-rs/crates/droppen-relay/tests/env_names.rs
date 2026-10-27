@@ -1,7 +1,8 @@
 //! The rename to Droppen: a relay reads `DROPPEN_RELAY_*` first
 //! and the old `RH_RELAY_*` names when those are unset, logging each old name
-//! it used once. Checked on the binary, with nothing in its environment but
-//! what each case sets; every case stops on a bad value before listening.
+//! it used once and that it stops working in v0.2.135. Checked on the binary,
+//! with nothing in its environment but what each case sets; every case stops
+//! on a bad value before listening.
 
 use rh_relay::config::hex;
 
@@ -48,7 +49,10 @@ fn the_old_names_still_configure_a_relay_and_each_is_logged_once() {
     for old in ["RH_RELAY_ORIGIN", "RH_RELAY_ID", "RH_RELAY_KEY", "RH_RELAY_TICKET_KEYS", "RH_RELAY_MAX_CONNS"] {
         assert_eq!(deprecations(&said, old), 1, "{old}: {said}");
     }
-    assert!(said.contains("rename it DROPPEN_RELAY_KEY"), "{said}");
+    assert!(
+        said.contains("RH_RELAY_KEY is deprecated: add DROPPEN_RELAY_KEY with the same value; RH_RELAY_KEY stops working in v0.2.135"),
+        "{said}"
+    );
 }
 
 #[test]
@@ -63,7 +67,9 @@ fn the_new_name_wins_over_the_old_one() {
     let (ok, _, said) = relay(&["serve"], &[&env[..], &[("DROPPEN_RELAY_MAX_CONNS", "lots"), ("RH_RELAY_MAX_CONNS", "10")]].concat());
     assert!(!ok && said.contains("DROPPEN_RELAY_MAX_CONNS: a number"), "{said}");
     assert!(
-        said.contains("DROPPEN_RELAY_MAX_CONNS and the deprecated RH_RELAY_MAX_CONNS are both set, to different values"),
+        said.contains(
+            "DROPPEN_RELAY_MAX_CONNS and the deprecated RH_RELAY_MAX_CONNS are both set, to different values: DROPPEN_RELAY_MAX_CONNS is used; remove RH_RELAY_MAX_CONNS (it stops working in v0.2.135)"
+        ),
         "{said}"
     );
     // The other way round: the new name's 10 parses, and it stops at the next.
