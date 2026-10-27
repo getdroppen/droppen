@@ -8,30 +8,38 @@
 // JSON both ways, binary as lower-case hex, as the real one.
 import {
   type Action,
+  CHAIN_VERSION,
   ChainClock,
   ChainError,
   ChainState,
   decodeEntry,
   decodeHostKeyMail,
+  type Draft,
   encodeEntry,
   enrollProof,
   type EnrollCode,
+  entryHash,
   fromHex,
   generateDeviceKeys,
+  genesisDraft,
   hex,
   hostRotateBody,
   type KeyStore,
   MemoryKeyStore,
+  mnemonicFromEntropy,
   type NoiseKeyPair,
   PASSKEY_DELAY_MS,
   passkeySlotProof,
+  recoveryKeyFor,
+  recoveryKeys,
   rotateConfirmFor,
   rotateSas,
   signDraft,
   signHostRotate,
+  userKeyCommit,
   verifyHubLogin,
 } from "../src/lib/e2e/index.js";
-import { type AccountStorage, CloudAccount } from "../src/lib/hub/account.js";
+import { type AccountStorage, CloudAccount, verifyBatch } from "../src/lib/hub/account.js";
 import { HubApi } from "../src/lib/hub/api.js";
 import type { MachineKeyCourier, RenewalCourier, RotateRequest } from "../src/lib/hub/deliver.js";
 import { MemorySeenStore } from "../src/lib/hub/seen-store.js";
@@ -793,8 +801,45 @@ export class FakeKeysHub {
  * from its genesis); this stands for an account from before, for the tests
  * of what such an account does — its v2 entries, its one-time upgrade.
  */
-export function createV2Genesis(account: CloudAccount, withRecovery: boolean): Promise<string[] | null> {
-  return (account as unknown as { foundAccount(withRecovery: boolean, version: 2): Promise<string[] | null> }).foundAccount(withRecovery, 2);
+export async function createV2Genesis(account: CloudAccount, withRecovery: boolean): Promise<string[] | null> {
+  const ak = (await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"])) as CryptoKeyPair;
+  const akPublic = new Uint8Array(await crypto.subtle.exportKey("raw", ak.publicKey));
+  let words: string[] | null = null;
+  let recoveryKey: Uint8Array | null = null;
+  if (withRecovery) {
+    const rk = crypto.getRandomValues(new Uint8Array(16));
+    try {
+      words = await mnemonicFromEntropy(rk);
+      recoveryKey = await recoveryKeyFor(await recoveryKeys(rk), account.account, akPublic);
+    } finally {
+      rk.fill(0);
+    }
+  }
+  const now = Date.now();
+  const device = { id: account.deviceId, signKey: account.keys.signPublic, dhKey: account.keys.dhPublic, full: true };
+  const genesis = await signDraft(genesisDraft(account.account, akPublic, device, recoveryKey, now), ak.privateKey);
+  const uk = crypto.getRandomValues(new Uint8Array(32));
+  try {
+    const commit: Draft = {
+      version: CHAIN_VERSION,
+      account: account.account,
+      seq: 1,
+      prev: await entryHash(genesis),
+      createdMs: now,
+      signer: { type: "device", id: account.deviceId },
+      action: { type: "keyEpochs", user: { epoch: 0, hash: await userKeyCommit(account.account, 0, uk) }, machines: [] },
+    };
+    const keyEpochs = await signDraft(commit, account.keys.sign.privateKey);
+    await verifyBatch(null, [genesis, keyEpochs]);
+    await account.api.appendChain(account.session.token, [encodeEntry(genesis), encodeEntry(keyEpochs)]);
+    await account.sync();
+    await (account as unknown as { pinMade(): Promise<void> }).pinMade();
+    await account.vault.put(0, uk);
+    await (account as unknown as { sealForRecovery(epoch: number, raw: Uint8Array): Promise<boolean> }).sealForRecovery(0, uk);
+  } finally {
+    uk.fill(0);
+  }
+  return words;
 }
 
 /** A passkey slot on the chain (`PasskeySlotSet`, self-activation on) and the `PAK` that signs as it. */

@@ -112,7 +112,6 @@ import {
   fromHex,
   generateEnrollCode,
   genesis3Draft,
-  genesisDraft,
   HandshakeError,
   hex,
   type HostRotation,
@@ -2764,7 +2763,7 @@ export class CloudAccount {
     const writable = opts.writable ?? chainV3Writable(await this.api.me(this.session.token));
     if (!writable) throw noNewAccounts();
     try {
-      return await this.foundAccount(withRecovery, CHAIN_VERSION_3);
+      return await this.foundAccount(withRecovery);
     } catch (error) {
       // The hub stopped taking v3 entries since it said it did.
       if (error instanceof HubApiError && error.status === 409 && error.code === "chain_v3_not_ready") throw noNewAccounts();
@@ -2816,12 +2815,8 @@ export class CloudAccount {
     return checkpoints(trust).every((mark) => state.seq >= mark.seenThrough && hex(state.hashAt(mark.seenThrough)!) === mark.head);
   }
 
-  /**
-   * The genesis and `UK` epoch 0 in one call, as chain `version`: 3 for
-   * every account made here ({@link createGenesis}); 2 only where a test
-   * stands for an account made before chain v3.
-   */
-  private async foundAccount(withRecovery: boolean, version: typeof CHAIN_VERSION | typeof CHAIN_VERSION_3): Promise<string[] | null> {
+  /** The v3 genesis and `UK` epoch 0 in one call ({@link createGenesis}). */
+  private async foundAccount(withRecovery: boolean): Promise<string[] | null> {
     // AK: generated for this one signature and never stored.
     const ak = (await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"])) as CryptoKeyPair;
     const akPublic = new Uint8Array(await crypto.subtle.exportKey("raw", ak.publicKey));
@@ -2837,15 +2832,18 @@ export class CloudAccount {
       }
     }
     const now = Date.now();
-    const draft =
-      version === CHAIN_VERSION_3
-        ? genesis3Draft(this.account, akPublic, { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } }, recoveryKey, now)
-        : genesisDraft(this.account, akPublic, this.info(), recoveryKey, now);
+    const draft = genesis3Draft(
+      this.account,
+      akPublic,
+      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } },
+      recoveryKey,
+      now,
+    );
     const genesis = await signDraft(draft, ak.privateKey);
     const uk = random32();
     try {
       const commit: Draft = {
-        version,
+        version: CHAIN_VERSION_3,
         account: this.account,
         seq: 1,
         prev: await entryHash(genesis),
