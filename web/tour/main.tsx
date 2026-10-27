@@ -12,7 +12,7 @@
  * not a component of its own is copied from the page that draws it.
  */
 import "@/index.css";
-import i18n from "@/i18n";
+import { applyLanguage } from "@/i18n";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Loader2, Plus, UserRound } from "lucide-react";
@@ -280,7 +280,8 @@ function PairShot() {
   );
 }
 
-void i18n.changeLanguage(lang).then(() => {
+// The app fetches a language's tables when it first shows it: `applyLanguage` waits for them.
+void applyLanguage(lang).then(() => {
   document.documentElement.lang = lang;
   createRoot(document.getElementById("root")!).render(shot === "pair" ? <PairShot /> : <DevicesShot />);
 });

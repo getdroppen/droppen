@@ -16,10 +16,9 @@ It uses kubectl's current context and namespace (`KUBE_CONTEXT`,
 about five minutes in a fresh pod, and deletes the pod when it is done. Nothing
 runs on the machine you start it from.
 
-Out come 14 files, `<shot>-en-<theme>.png` with `theme` `light` | `dark`. The
-homepage shows the English shots whatever the page's language. The scenario is
-also written in Chinese: `shoot.sh lang zh-CN` in a pod kept with `KEEP_POD=1`
-shoots that.
+Out come 28 files, `<shot>-<lang>-<theme>.png` with `lang` `en` | `zh-CN` and
+`theme` `light` | `dark` (`LANGS=zh-CN` for one language). The homepage shows
+the Chinese shots on its Chinese pages and the English ones on the others.
 
 | shot | device | what it shows |
 | ---- | ------ | ------------- |
@@ -60,4 +59,4 @@ projects under `~/code`, every conversation (once in English, once in Chinese).
 - `shoot.sh`: inside the pod: build, then per language seed, serve, stage, capture.
   `shoot.sh lang zh-CN` in a pod kept with `KEEP_POD=1` re-shoots one language.
 - `scenario.mjs`: the demo's content; `transcript.mjs`: it as the CLIs' files.
-- `seed.mjs`, `stage.mjs`, `capture.mjs`: the home on disk, the live state through the API, the pictures.
+- `seed.mjs`, `own.mjs`, `stage.mjs`, `capture.mjs`: the home on disk, its sessions recorded as the server's own (in the instance database, once the server has made it), the live state through the API, the pictures.

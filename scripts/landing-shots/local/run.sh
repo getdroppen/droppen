@@ -9,7 +9,8 @@
 # kubectl's current context and namespace are used unless KUBE_CONTEXT /
 # KUBE_NAMESPACE say otherwise. POD names the pod (default
 # droppen-landing-shots-local), POD_PRIORITY_CLASS gives it a priority class,
-# KEEP_POD=1 leaves it running afterwards (for `shoot.sh lang <lang>` re-runs).
+# KEEP_POD=1 leaves it running afterwards (for `shoot.sh lang <lang>` re-runs),
+# LANGS picks the languages (default `en zh-CN`).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -61,7 +62,7 @@ COPYFILE_DISABLE=1 tar ${mac[@]+"${mac[@]}"} -C "$REPO" -cf - --exclude ./.git -
   --exclude ./desktop/target --exclude ./target --exclude ./web/dist . |
   "${K[@]}" exec -i "$POD" -- tar -x -C /work/src
 
-"${K[@]}" exec "$POD" -- env SRC=/work/src OUT=/work/out bash /work/src/scripts/landing-shots/local/shoot.sh all
+"${K[@]}" exec "$POD" -- env SRC=/work/src OUT=/work/out LANGS="${LANGS:-en zh-CN}" bash /work/src/scripts/landing-shots/local/shoot.sh all
 
 mkdir -p "$OUT"
 "${K[@]}" exec "$POD" -- tar -C /work/out -cf - . | tar -x -C "$OUT"

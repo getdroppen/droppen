@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Inside a throwaway Debian container (bookworm, with Rust), as root: build the
-# server and the web app from this checkout, then seed a demo home, serve it,
-# stage the live sessions and capture the tour screenshots, in English (the
-# homepage shows the English ones in every language; `lang zh-CN` shoots the
-# Chinese scenario).
+# server and the web app from this checkout, then for each language seed a demo
+# home, serve it, stage the live sessions and capture the tour screenshots
+# (LANGS, default `en zh-CN`: the homepage shows the Chinese ones on its Chinese
+# pages, the English ones on the others).
 #
 #   shoot.sh [all | setup | lang <en|zh-CN>]   (default: all)
 #
@@ -120,6 +120,7 @@ SH
 
   as_dev bash -c "cd '$DEV_HOME' && APP_HOME_DIR='$DEV_HOME' APP_AUTH__ENABLED=false APP_SERVER__PORT=$PORT \
     DROPPEN_STALL_MS=86400000 DROPPEN_SESSION_LOG=0 exec '$SERVER' serve" >"$DEMO/server-$lang.log" 2>&1 &
+  as_dev node "$HERE/own.mjs" --home "$DEV_HOME" --state "$DEMO/state"
   node "$HERE/stage.mjs" --lang "$lang" --url "http://127.0.0.1:$PORT" --state "$DEMO/state"
   node "$HERE/capture.mjs" --lang "$lang" --url "http://127.0.0.1:$PORT" --state "$DEMO/state" --out "$OUT" --tz "$TZ_NAME"
   stop_server
@@ -144,7 +145,7 @@ case "${1:-all}" in
     [ -n "${SHOOT_UNDER_TINI:-}" ] || setup
     under_tini "$@"
     mkdir -p "$OUT"
-    shoot_lang en
+    for lang in ${LANGS:-en zh-CN}; do shoot_lang "$lang"; done
     ls -1 "$OUT"
     ;;
   *) echo "usage: shoot.sh [all | setup | lang <en|zh-CN>]" >&2; exit 2 ;;

@@ -6,9 +6,9 @@
 //
 // Run as the user the server runs as, on an empty home, before the server
 // starts. The sessions are where the CLIs keep them on the user's own login
-// (`~/.claude`, `~/.codex`), and every one is listed in the instance's
-// ownership registry: the server's own (drivable, on the local login), not a
-// browse-only external one.
+// (`~/.claude`, `~/.codex`), and every one goes into the instance's
+// ownership registry (own.mjs, from the list this writes to <state>/owned.json):
+// the server's own (drivable, on the local login), not a browse-only external one.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -28,7 +28,6 @@ if (!["en", "zh-CN"].includes(lang) || !home || !state) {
   process.exit(2);
 }
 
-const instance = path.join(home, ".local/share/remote-hand/instances/default");
 const claudeRoot = path.join(home, ".claude");
 const now = Date.now();
 const iso = (ms) => new Date(ms).toISOString();
@@ -134,8 +133,8 @@ const codexModel = (slug, name) => ({
   default_reasoning_level: "medium",
 });
 write(path.join(home, ".codex/models_cache.json"), JSON.stringify({ models: [codexModel("gpt-5.5", "GPT-5.5"), codexModel("gpt-5.4", "GPT-5.4")] }));
-// Drained into the instance's database on its first boot (see the server's
-// `sessions::owned_sessions`): every session here is this server's own.
-write(path.join(instance, "owned-sessions.json"), JSON.stringify(owned));
+// Every session here is this server's own: own.mjs records them in the
+// instance's database once the server has made it.
+write(path.join(state, "owned.json"), JSON.stringify(owned));
 write(path.join(state, "seen.json"), JSON.stringify(sessions(lang).filter((s) => s.seen).map((s) => ({ source: s.source, id: s.id }))));
 console.log(`seeded ${home} (${lang}): ${sessions(lang).length} sessions, ${Object.keys(projects(lang)).length} projects`);
