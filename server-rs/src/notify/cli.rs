@@ -1,10 +1,10 @@
-//! `remote-hand-server notify` — what an injected `droppen-notify` (or its old
-//! name, `rh-notify`) actually runs.
+//! `remote-hand-server notify` — what an injected `droppen-notify` actually
+//! runs.
 //!
 //! # Why this is a subcommand and not a shell script
 //!
-//! The obvious `rh-notify` is four lines of `sh` around `curl`, and it is wrong
-//! for one reason: the arguments are prose written by a model. They contain
+//! The obvious `droppen-notify` is four lines of `sh` around `curl`, and it is
+//! wrong for one reason: the arguments are prose written by a model. They contain
 //! quotes, backticks, `$`, newlines, emoji and CJK, and every one of those is a
 //! way for a hand-rolled JSON-in-shell encoder to produce a body the server
 //! rejects — or, worse, a command substitution. A notification that says
@@ -65,26 +65,6 @@ pub struct Options {
 
 /// The command's name on a session's `PATH`.
 pub const NAME: &str = "droppen-notify";
-/// Its old name, kept on the `PATH` as the same command.
-pub const LEGACY_NAME: &str = "rh-notify";
-/// Set by the script a session runs to the name it was run as (see
-/// [`super::inject::program_text`]), so the usage and the errors an agent reads
-/// say the command it typed.
-pub const NAME_ENV: &str = "DROPPEN_NOTIFY_AS";
-
-/// The name the agent ran this as: `droppen-notify`, or `rh-notify` — also for
-/// a script written before both names existed, which set nothing.
-pub fn invoked_as() -> &'static str {
-    name_of(std::env::var(NAME_ENV).ok().as_deref())
-}
-
-/// [`invoked_as`], with the variable supplied.
-fn name_of(value: Option<&str>) -> &'static str {
-    match value {
-        Some(NAME) => NAME,
-        _ => LEGACY_NAME,
-    }
-}
 
 /// The usage an agent is shown when it gets the call wrong, under `name`.
 pub fn usage(name: &str) -> String {
@@ -96,9 +76,9 @@ Use it when something has happened that they would want to be interrupted for."
     )
 }
 
-/// Parse `droppen-notify`'s arguments, under the name it was run as.
+/// Parse `droppen-notify`'s arguments.
 pub fn parse(args: &[String]) -> Result<Options, String> {
-    parse_as(args, invoked_as())
+    parse_as(args, NAME)
 }
 
 /// Parse `droppen-notify`'s arguments; `name` is what the usage calls it.
@@ -279,15 +259,11 @@ mod tests {
     }
 
     #[test]
-    fn the_usage_says_the_name_the_agent_typed() {
-        assert_eq!(name_of(Some("droppen-notify")), "droppen-notify");
-        assert_eq!(name_of(Some("rh-notify")), "rh-notify");
-        assert_eq!(name_of(None), "rh-notify", "a script from before both names were written was rh-notify");
-        assert_eq!(name_of(Some("anything")), "rh-notify");
-        let error = parse_as(&args(&[]), "droppen-notify").expect_err("no title");
+    fn the_usage_names_the_command() {
+        let error = parse(&args(&[])).expect_err("no title");
         assert!(error.contains("usage: droppen-notify <title>"), "{error}");
-        let error = parse_as(&args(&["--help"]), "rh-notify").expect_err("help");
-        assert!(error.starts_with("usage: rh-notify <title>"), "{error}");
+        let error = parse_as(&args(&["--help"]), NAME).expect_err("help");
+        assert!(error.starts_with("usage: droppen-notify <title>"), "{error}");
     }
 
     #[test]

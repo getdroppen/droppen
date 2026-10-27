@@ -45,8 +45,6 @@ droppen-notify "Blocked: which database?" "The schema assumes Postgres but the c
   title, which is usually what you want. Give it a name when several sessions
   are working on one thing.
 
-`rh-notify` is the same command under its old name; use `droppen-notify`.
-
 It exits `0` when the notification went out, and non-zero with a one-line reason
 when it did not. If it says notifications are not configured, that is final for
 this session: say so in the transcript and carry on. Do not retry it, and do not

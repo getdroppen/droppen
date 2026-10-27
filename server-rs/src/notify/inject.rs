@@ -1,11 +1,5 @@
 //! Putting `droppen-notify` and its skill inside a session.
 //!
-//! The command is on the `PATH` under two names, `droppen-notify` and its old
-//! name `rh-notify` (the same script), so an agent — or a habit, or a prompt —
-//! that still says `rh-notify` keeps working. The skill teaches the new name
-//! only, and takes the old skill (`skills/rh-notify`) away, so the CLI lists
-//! the command once.
-//!
 //! Two things have to be true before an agent can nudge, and they are separate
 //! on purpose.
 //!
@@ -46,13 +40,6 @@ use super::{cli, store, token};
 /// The skill's name, which is also its directory and how the CLI lists it.
 const SKILL_NAME: &str = cli::NAME;
 
-/// The skill's old name and directory: taken away wherever the skill is
-/// settled, so a root that had it lists the command once.
-const LEGACY_SKILL_NAME: &str = cli::LEGACY_NAME;
-
-/// The program's names on `PATH`: the same script under each.
-const PROGRAMS: [&str; 2] = [cli::NAME, cli::LEGACY_NAME];
-
 /// `<instance>/session-bin` — the one directory this server adds to a spawn's
 /// `PATH`.
 ///
@@ -79,11 +66,6 @@ pub fn skill_root(env: &Env) -> Option<PathBuf> {
     Some(PathBuf::from(dir).join("skills").join(SKILL_NAME))
 }
 
-/// Where the skill was under its old name, beside [`skill_root`].
-fn legacy_skill_root(root: &Path) -> Option<PathBuf> {
-    Some(root.parent()?.join(LEGACY_SKILL_NAME))
-}
-
 /// The one line of shell between an agent and [`cli::run`].
 ///
 /// `"$@"` is the whole trick: it is the only construct in POSIX shell that
@@ -92,40 +74,31 @@ fn legacy_skill_root(root: &Path) -> Option<PathBuf> {
 /// the model wrote. See [`cli`] for why that matters enough to spend a process
 /// on.
 ///
-/// `name` is the name the script is written under (one of [`PROGRAMS`]); it
-/// tells the binary, in [`cli::NAME_ENV`], so the usage and the errors say the
-/// command the agent typed.
-///
 /// Pure, so the quoting can be asserted against a path with a quote in it —
 /// which is not hypothetical: `$HOME` is whatever the account is called.
-pub fn program_text(binary: &Path, name: &str) -> String {
+pub fn program_text(binary: &Path) -> String {
     // POSIX single quotes take everything literally except a single quote,
     // which is escaped by ending the string, adding an escaped quote, and
     // starting a new one.
     let quoted = binary.to_string_lossy().replace('\'', r"'\''");
-    let also = if name == cli::NAME { cli::LEGACY_NAME } else { cli::NAME };
-    let env = cli::NAME_ENV;
+    let name = cli::NAME;
     format!(
         "#!/bin/sh\n\
          # {name} — tell the person running Droppen something worth being\n\
-         # interrupted for ({also} is the same command). Written by Droppen when\n\
-         # this session started; edits are overwritten on the next spawn.\n\
+         # interrupted for. Written by Droppen when this session started;\n\
+         # edits are overwritten on the next spawn.\n\
          #\n\
          # usage: {name} <title> [body] [--level passive|active|time-sensitive]\n\
-         {env}={name}\n\
-         export {env}\n\
          exec '{quoted}' notify \"$@\"\n"
     )
 }
 
-/// Write the program under both its names, and hand back the directory it is in.
+/// Write the program, and hand back the directory it is in.
 async fn ensure_program(instance: &InstanceDirs) -> std::io::Result<PathBuf> {
     let dir = bin_dir(instance);
     tokio::fs::create_dir_all(&dir).await?;
     let binary = crate::pty_shim::shim_program();
-    for name in PROGRAMS {
-        write_executable(&dir.join(name), program_text(&binary, name).as_bytes()).await?;
-    }
+    write_executable(&dir.join(cli::NAME), program_text(&binary).as_bytes()).await?;
     Ok(dir)
 }
 
@@ -171,13 +144,7 @@ pub const SKILL: &str = include_str!("SKILL.md");
 /// function: a user who turns notifications off has to stop being offered a
 /// tool that can only refuse, and the next spawn is the first moment anything
 /// runs that could tidy up after them.
-///
-/// The skill under its old name goes either way: it named the same command,
-/// and two skills for one command is one too many.
 async fn set_skill(root: &Path, wanted: bool) -> std::io::Result<()> {
-    if let Some(legacy) = legacy_skill_root(root) {
-        remove_dir(&legacy).await?;
-    }
     if !wanted {
         return remove_dir(root).await;
     }
@@ -281,59 +248,37 @@ mod tests {
 
     #[test]
     fn the_program_is_one_line_of_shell_and_quotes_its_binary() {
-        let text = program_text(Path::new("/usr/local/bin/remote-hand-server"), "droppen-notify");
+        let text = program_text(Path::new("/usr/local/bin/remote-hand-server"));
         assert!(text.starts_with("#!/bin/sh\n"));
+        assert!(text.contains("# usage: droppen-notify <title>"), "{text}");
         assert!(text.ends_with("exec '/usr/local/bin/remote-hand-server' notify \"$@\"\n"), "{text}");
 
         // A home directory with a quote in it is a home directory.
-        let text = program_text(Path::new("/Users/o'brien/bin/remote-hand-server"), "droppen-notify");
+        let text = program_text(Path::new("/Users/o'brien/bin/remote-hand-server"));
         assert!(text.contains(r"exec '/Users/o'\''brien/bin/remote-hand-server' notify"), "{text}");
         // Whatever the path, the arguments are passed through untouched.
         assert!(text.contains("\"$@\""), "re-splitting the arguments is the bug this exists to avoid");
     }
 
-    #[test]
-    fn both_names_run_the_same_command_and_say_which_one_was_typed() {
-        let binary = Path::new("/usr/local/bin/remote-hand-server");
-        let new = program_text(binary, "droppen-notify");
-        let old = program_text(binary, "rh-notify");
-        assert!(new.contains("\nDROPPEN_NOTIFY_AS=droppen-notify\nexport DROPPEN_NOTIFY_AS\n"), "{new}");
-        assert!(old.contains("\nDROPPEN_NOTIFY_AS=rh-notify\nexport DROPPEN_NOTIFY_AS\n"), "{old}");
-        assert!(
-            new.contains("# usage: droppen-notify <title>") && new.contains("(rh-notify is the same command)"),
-            "{new}"
-        );
-        assert!(
-            old.contains("# usage: rh-notify <title>") && old.contains("(droppen-notify is the same command)"),
-            "{old}"
-        );
-        let exec = "exec '/usr/local/bin/remote-hand-server' notify \"$@\"\n";
-        assert!(new.ends_with(exec) && old.ends_with(exec), "one command under two names");
-        assert_eq!(PROGRAMS, ["droppen-notify", "rh-notify"]);
-    }
-
     #[cfg(unix)]
     #[tokio::test]
-    async fn the_scripts_run_and_tell_the_binary_their_name() {
+    async fn the_script_runs_and_passes_its_arguments_through() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // A stand-in for the server binary: prints the name it was told and its arguments.
+        // A stand-in for the server binary: prints the arguments it was given.
         let binary = dir.path().join("fake-server");
-        std::fs::write(&binary, "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$DROPPEN_NOTIFY_AS\" \"$1\" \"$2\"\n").expect("fake");
+        std::fs::write(&binary, "#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\"\n").expect("fake");
         std::fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755)).expect("chmod");
-        for name in PROGRAMS {
-            let script = dir.path().join(name);
-            write_executable(&script, program_text(&binary, name).as_bytes()).await.expect("write");
-            let out = std::process::Command::new("/bin/sh")
-                .arg(&script)
-                .arg("a title with $HOME and `ticks`")
-                .output()
-                .expect("run");
-            assert_eq!(
-                String::from_utf8_lossy(&out.stdout),
-                format!("{name}|notify|a title with $HOME and `ticks`\n"),
-                "{name}"
-            );
-        }
+        let script = dir.path().join(cli::NAME);
+        write_executable(&script, program_text(&binary).as_bytes()).await.expect("write");
+        let out = std::process::Command::new("/bin/sh")
+            .arg(&script)
+            .arg("a title with $HOME and `ticks`")
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "notify|a title with $HOME and `ticks`\n"
+        );
     }
 
     #[test]
@@ -375,24 +320,6 @@ mod tests {
 
         set_skill(&root, false).await.expect("remove");
         assert!(!root.exists(), "a channel that is off must stop advertising a tool that can only refuse");
-    }
-
-    #[tokio::test]
-    async fn the_skill_under_its_old_name_is_taken_away_either_way() {
-        for wanted in [true, false] {
-            let dir = tempfile::tempdir().expect("tempdir");
-            let skills = dir.path().join("claude/skills");
-            let legacy = skills.join("rh-notify");
-            std::fs::create_dir_all(&legacy).expect("legacy");
-            std::fs::write(legacy.join("SKILL.md"), "---\nname: rh-notify\n---\n").expect("legacy skill");
-            let other = skills.join("someone-elses");
-            std::fs::create_dir_all(&other).expect("other");
-
-            set_skill(&skills.join("droppen-notify"), wanted).await.expect("settle");
-            assert!(!legacy.exists(), "one skill for one command (wanted: {wanted})");
-            assert_eq!(skills.join("droppen-notify/SKILL.md").exists(), wanted);
-            assert!(other.exists(), "nothing else in the root is touched");
-        }
     }
 
     /// The frontmatter is a contract with the CLI, not prose: a skill whose

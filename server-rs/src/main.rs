@@ -134,8 +134,8 @@ async fn run(args: Vec<String>) -> GotchaResult<()> {
                 .map_err(remote_hand_server::GotchaError::message)
         }
         // Hidden for the same reason `pty-shim` is, and with the same kind of
-        // caller: the `rh-notify` on a session's PATH is one line of shell that
-        // `exec`s this. It is useless without the environment that spawn was
+        // caller: the `droppen-notify` on a session's PATH is one line of shell
+        // that `exec`s this. It is useless without the environment that spawn was
         // given, so a usage string offering it to a person would be offering
         // them a command that always answers "no channel configured".
         Some("notify") => remote_hand_server::notify::cli::run(&args[1..])
@@ -153,13 +153,13 @@ async fn run(args: Vec<String>) -> GotchaResult<()> {
 /// (`remote_hand_server::program`): `droppen: …` with the commands it suggests
 /// as `droppen …`, or `remote-hand: …` exactly as before.
 ///
-/// `notify` is the exception: it is run by a session's `droppen-notify` (or
-/// `rh-notify`) script, and an agent reads its errors under that name.
+/// `notify` is the exception: it is run by a session's `droppen-notify`
+/// script, and an agent reads its errors under that name.
 fn complain(error: &str) {
     let name = Name::invoked();
     let notify = std::env::args().nth(1).as_deref() == Some("notify");
     let prefix = if notify {
-        remote_hand_server::notify::cli::invoked_as()
+        remote_hand_server::notify::cli::NAME
     } else {
         name.error_prefix()
     };
