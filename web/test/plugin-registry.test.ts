@@ -5,25 +5,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ApiClient } from "../src/api/client.js";
+import type { paths } from "../src/api/schema.js";
 import type { PluginStatus } from "../src/plugins/types.js";
 
 const { baselineOf, changedUnderPage, runningStatuses } = await import("../src/plugins/statuses.js");
 const { pluginAlias } = await import("../src/plugins/aliases.js");
 const { installPlugin, uninstallPlugin } = await import("../src/plugins/install-api.js");
+const { default: createClient } = await import("openapi-fetch");
 
+/** Stands in for the instance-wide secret in an entry URL (128 bits of hex in a real one). */
+const KEY = "0".repeat(32);
+
+/** The server's `PluginStatus` for an installed plugin (`docs/plugins/runtime.md` §4). */
 function status(id: string, overrides: Partial<PluginStatus> = {}): PluginStatus {
-  const build = overrides.build ?? "1.0.0-0123456789ab";
+  const build = overrides.build ?? "0.1.0-972944261ff8";
   return {
     id,
-    version: "1.0.0",
+    version: "0.1.0",
     name: { en: id },
     enabled: true,
     compatible: true,
     forced: false,
     reason: null,
     notice: null,
+    notices: [],
     build,
-    entry: `/plugins/key/${id}/${build}/dist/index.js`,
+    entry: `/plugins/${KEY}/${id}/${build}/dist/index.js`,
     aliases: [],
     permissions: ["storage"],
     ...overrides,
@@ -55,7 +62,7 @@ test("an install, an upgrade or an uninstall elsewhere needs a reload; a switch 
   const switched = [status("tasks", { enabled: false, entry: null }), status("notes")];
   assert.equal(changedUnderPage(baseline, switched), false, "turning plugins on and off leaves the code alone");
 
-  const upgraded = [status("tasks", { build: "2.0.0-bbbbbbbbbbbb" }), before[1]!];
+  const upgraded = [status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb" }), before[1]!];
   assert.equal(changedUnderPage(baseline, upgraded), true, "an upgrade elsewhere");
 
   assert.equal(changedUnderPage(baseline, [before[0]!]), true, "an uninstall elsewhere");
@@ -63,16 +70,16 @@ test("an install, an upgrade or an uninstall elsewhere needs a reload; a switch 
 });
 
 test("the page keeps running the build it started with, and does not start a new one", () => {
-  const first = status("tasks", { build: "1.0.0-aaaaaaaaaaaa", entry: "/plugins/key/tasks/1.0.0-aaaaaaaaaaaa/dist/index.js" });
+  const first = status("tasks", { build: "0.1.0-aaaaaaaaaaaa", entry: `/plugins/${KEY}/tasks/0.1.0-aaaaaaaaaaaa/dist/index.js` });
   const baseline = baselineOf([first]);
-  const upgraded = status("tasks", { build: "2.0.0-bbbbbbbbbbbb" });
+  const upgraded = status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb" });
   const running = runningStatuses([upgraded], baseline);
-  assert.deepEqual(running.map((s) => [s.build, s.entry]), [["1.0.0-aaaaaaaaaaaa", "/plugins/key/tasks/1.0.0-aaaaaaaaaaaa/dist/index.js"]], "the old module, not the new one");
+  assert.deepEqual(running.map((s) => [s.build, s.entry]), [["0.1.0-aaaaaaaaaaaa", `/plugins/${KEY}/tasks/0.1.0-aaaaaaaaaaaa/dist/index.js`]], "the old module, not the new one");
 
   const installedElsewhere = runningStatuses([first, status("new")], baseline);
   assert.deepEqual(installedElsewhere.map((s) => s.id), ["tasks"], "a plugin installed elsewhere waits for the reload");
 
-  const turnedOff = runningStatuses([status("tasks", { build: "2.0.0-bbbbbbbbbbbb", enabled: false, entry: null })], baseline);
+  const turnedOff = runningStatuses([status("tasks", { version: "0.2.0", build: "0.2.0-bbbbbbbbbbbb", enabled: false, entry: null })], baseline);
   assert.deepEqual(turnedOff, [], "the current switch still wins");
 });
 
@@ -98,10 +105,28 @@ test("install posts the tarball's bytes to /api/plugins and answers the installe
   assert.equal(await installPlugin(api, file), installed);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.path, "/api/plugins");
-  const init = calls[0]!.init as { body: Blob; bodySerializer: (body: unknown) => BodyInit; params: { header: Record<string, string> } };
+  const init = calls[0]!.init as { body: Blob; bodySerializer: (body: unknown) => BodyInit; headers: Record<string, string> };
   assert.equal(init.body, file, "the bytes, not a JSON encoding of them");
   assert.equal(init.bodySerializer(file), file, "openapi-fetch's JSON default is bypassed");
-  assert.deepEqual(init.params.header, { "content-type": "application/gzip" });
+  assert.deepEqual(init.headers, { "content-type": "application/gzip" });
+});
+
+test("openapi-fetch sends the tarball as bytes, with the gzip content type", async () => {
+  const installed = status("tasks");
+  const seen: Request[] = [];
+  const client = createClient<paths>({
+    baseUrl: "http://device.test",
+    fetch: async (request) => {
+      seen.push(request);
+      return new Response(JSON.stringify(installed), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const bytes = [0x1f, 0x8b, 0x08, 0x00];
+  assert.deepEqual(await installPlugin(client, new Blob([new Uint8Array(bytes)])), installed);
+  assert.equal(seen[0]!.method, "POST");
+  assert.equal(seen[0]!.url, "http://device.test/api/plugins");
+  assert.equal(seen[0]!.headers.get("content-type"), "application/gzip", "not the JSON default");
+  assert.deepEqual([...new Uint8Array(await seen[0]!.clone().arrayBuffer())], bytes, "the tarball's bytes, untouched");
 });
 
 test("uninstall deletes /api/plugins/{id}", async () => {

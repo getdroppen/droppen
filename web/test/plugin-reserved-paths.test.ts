@@ -1,14 +1,10 @@
 // The server refuses an install whose `droppen.aliases` names a top-level
-// path the shell already answers (`docs/plugins/runtime.md` §1), and this
-// test keeps that list in step with the router. The list used to live in
-// `web/build/droppen-plugins.ts` (`RESERVED_PATHS`); with the build-time
-// distribution gone it moves to the Rust side, next to the install checks.
-//
-// TODO(server): `server-rs/crates/droppen-plugin-sdk/reserved-paths.txt` is
-// lane S's to add. Until it is here the test skips, and it starts checking
-// the router automatically once the file lands.
+// path the shell already answers (`docs/plugins/runtime.md` §1). That list
+// lives on the Rust side, next to the install checks
+// (`server-rs/crates/droppen-plugin-sdk/reserved-paths.txt`); this test keeps
+// it in step with the shell's router.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -34,14 +30,10 @@ function reservedPaths(text: string): Set<string> {
   );
 }
 
-test(
-  "no alias may take a path the shell's router already answers",
-  { skip: !existsSync(reservedFile) && `TODO: ${reservedFile} does not exist yet (lane S adds it)` },
-  () => {
-    const reserved = reservedPaths(readFileSync(reservedFile, "utf8"));
-    const router = readFileSync(resolve(webRoot, "src/app/router.tsx"), "utf8");
-    const tops = [...router.matchAll(/getParentRoute: \(\) => rootRoute,\s*path: "([^"/$]+)/g)].map((m) => m[1]!);
-    assert.ok(tops.length >= 8, `found the router's top-level routes: ${tops}`);
-    for (const top of tops) assert.ok(reserved.has(top), `/${top} is reserved`);
-  },
-);
+test("no alias may take a path the shell's router already answers", () => {
+  const reserved = reservedPaths(readFileSync(reservedFile, "utf8"));
+  const router = readFileSync(resolve(webRoot, "src/app/router.tsx"), "utf8");
+  const tops = [...router.matchAll(/getParentRoute: \(\) => rootRoute,\s*path: "([^"/$]+)/g)].map((m) => m[1]!);
+  assert.ok(tops.length >= 8, `found the router's top-level routes: ${tops}`);
+  for (const top of tops) assert.ok(reserved.has(top), `/${top} is reserved`);
+});

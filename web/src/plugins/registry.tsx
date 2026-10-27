@@ -83,7 +83,7 @@ function InstalledPluginRegistry({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const routerRef = useRef(router);
   routerRef.current = router;
-  const feedSettings = useFeedSettings() as { plugins?: PluginStatus[] } | null;
+  const feedSettings = useFeedSettings();
   // Not cached across page loads on purpose: a stale "enabled" would fetch a
   // disabled plugin's code, and a disabled plugin leaves no trace.
   const [statuses, setStatuses] = useState<PluginStatus[] | null>(null);
@@ -108,7 +108,7 @@ function InstalledPluginRegistry({ children }: { children: ReactNode }) {
   const fallback = useQuery({
     queryKey: mq(machine, "plugins"),
     enabled: statuses === null,
-    queryFn: async () => ((await api.GET("/api/plugins")).data?.plugins ?? []) as PluginStatus[],
+    queryFn: async () => (await api.GET("/api/plugins")).data?.plugins ?? [],
     staleTime: 60_000,
   });
   useEffect(() => {

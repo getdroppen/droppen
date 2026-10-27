@@ -46,7 +46,7 @@ function PluginRow({ status }: { status: PluginStatus }) {
         const body = res.error as { error?: string; message?: string } | undefined;
         throw new Error(body?.message ?? body?.error ?? `HTTP ${res.response.status}`);
       }
-      return res.data as PluginStatus;
+      return res.data;
     },
     onSuccess: (next) => registry.adopt(next),
   });
