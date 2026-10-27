@@ -207,7 +207,8 @@ exit 0
 /// The fake Codex implements the bidirectional App Server protocol.
 const FAKE_CODEX: &str = include_str!("fake_codex.py");
 
-static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
+/// The one directory a binary got, and the arguments it was built for.
+static FAKE_BIN: OnceLock<(String, Vec<(String, String)>, PathBuf)> = OnceLock::new();
 
 /// Put fake executables on `PATH`, once per test binary, and return their
 /// directory.
@@ -224,8 +225,12 @@ static FAKE_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// first one initializes could observe the write mid-flight. Removing the
 /// window entirely would mean an environment snapshot taken before `main`, which
 /// Rust's test harness gives no hook for.
+///
+/// Only one directory exists per binary, so a second call with a different
+/// `prefix` or script set panics rather than silently handing back the first
+/// caller's directory.
 pub fn fake_bin(prefix: &str, scripts: &[(&str, &str)]) -> &'static Path {
-    FAKE_BIN.get_or_init(|| {
+    let (built_for, built_scripts, dir) = FAKE_BIN.get_or_init(|| {
         let dir = tempfile::Builder::new().prefix(prefix).tempdir().expect("fake bin dir").keep();
         for (name, body) in scripts {
             let path = dir.join(name);
@@ -240,8 +245,19 @@ pub fn fake_bin(prefix: &str, scripts: &[(&str, &str)]) -> &'static Path {
         // `sh`, `env` and friends stay reachable.
         let existing = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("PATH", format!("{}:{existing}", dir.display()));
-        dir
-    })
+        let scripts = scripts.iter().map(|(name, body)| (name.to_string(), body.to_string())).collect();
+        (prefix.to_string(), scripts, dir)
+    });
+    assert!(
+        built_for.as_str() == prefix,
+        "fake_bin was already built for prefix {built_for:?}, so a call for {prefix:?} would silently reuse the wrong directory"
+    );
+    let wanted: Vec<(String, String)> = scripts.iter().map(|(name, body)| (name.to_string(), body.to_string())).collect();
+    assert!(
+        *built_scripts == wanted,
+        "fake_bin was already built with a different script set, so this call would silently reuse the wrong directory"
+    );
+    dir
 }
 
 fn ensure_fake_clis_on_path() -> &'static Path {
