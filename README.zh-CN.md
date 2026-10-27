@@ -4,7 +4,7 @@
 
 Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
-> Droppen 原名 remote-hand。产品改了名，有些内部名字没改：可执行文件 `remote-hand-server`（`droppen` 是同一个程序的另一个名字）、数据目录 `~/.local/share/remote-hand` 与 `~/.config/remote-hand`、`APP_*` 环境变量都照旧，下文的命令请原样输入。服务端自己的环境变量已改叫 `DROPPEN_*`；原来的 `RH_*` / `REMOTE_HAND_*` 仍然认，用到时提示一次：加上同值的新名字；还可能回滚到改名前的版本时，旧名字也留着。
+> Droppen 原名 remote-hand。产品改了名，有些内部名字没改：可执行文件 `remote-hand-server`（`droppen` 是同一个程序的另一个名字）、数据目录 `~/.local/share/remote-hand` 与 `~/.config/remote-hand`、`APP_*` 环境变量都照旧，下文的命令请原样输入。服务端自己的环境变量已改叫 `DROPPEN_*`；原来的 `RH_*` / `REMOTE_HAND_*` 已弃用，到 v0.2.134 为止仍然认（用到时提示一次），**v0.2.135 起不再生效**：现在就改用同值的 `DROPPEN_*` 名字。
 
 ## 功能
 
@@ -344,8 +344,9 @@ ticket 只活 60 秒。
 > ⚠️ 鉴权不等于可以裸奔上公网:登录是明文 POST,token 也是明文 header。远程访问仍然应该放在
 > TLS 反向代理 / SSH 隧道 / Tailscale 之后。默认绑定 `127.0.0.1`。
 
-环境变量(服务端自己的是 `DROPPEN_*`;改名前的 `RH_*` / `REMOTE_HAND_*` 仍然认,用到时提示一次(加上同值的
-新名字;还可能回滚到改名前的版本时旧名字也留着),两个都设而值不同时以新名为准,见 `server-rs/src/env.rs`):
+环境变量(服务端自己的是 `DROPPEN_*`;改名前的 `RH_*` / `REMOTE_HAND_*` 已弃用,到 v0.2.134 为止仍然认,
+用到时提示一次,v0.2.135 起不再生效——请改用同值的 `DROPPEN_*` 名字;两个都设而值不同时以新名为准,
+见 `server-rs/src/env.rs`):
 
 - `APP_SERVER__HOST` / `APP_SERVER__PORT`:监听地址(默认 `127.0.0.1:8700`)。`APP_` 前缀与
   `__` 分隔是 gotcha 的配置约定。

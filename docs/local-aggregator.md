@@ -1120,8 +1120,8 @@ crate 名不改。本机包名暂不改，只把 `[[bin]]` 改名为 `droppen`�
 | 两个名字 | 同一个二进制，行为不看 `argv[0]`；只有说法看：用 `droppen` 运行时帮助、用法和错误里建议的命令都写 `droppen`，帮助注明旧名仍可用；用旧名运行时一字不改 |
 | `<数据>/bin` 下的托管副本 | **不改名**：仍是 `bin/remote-hand-server` 与 `.prev`、`.bad`、`.staging-*` 阶梯，旁边加一个 `bin/droppen` 相对符号链接（安装脚本加）。长驻的 `up` 监督进程只认旧路径 |
 | 自升级 | 推送式上传，与文件名无关，不改 |
-| 数据与配置目录 | 已有安装永远用旧目录。解析顺序：`DROPPEN_DATA_DIR` > `REMOTE_HAND_DATA_DIR` > 旧目录存在就用旧目录 > `~/.local/share/droppen`。从不自动搬 |
-| 环境变量 | `RH_*`、`APP_*` 不改；`REMOTE_HAND_*` 加 `DROPPEN_*` 别名 |
+| 数据与配置目录 | 已有安装永远用旧目录。解析顺序：`DROPPEN_DATA_DIR` > `REMOTE_HAND_DATA_DIR`（旧名，v0.2.135 起不再生效） > 旧目录存在就用旧目录 > `~/.local/share/droppen`。从不自动搬 |
+| 环境变量 | 服务端自己的名字改为 `DROPPEN_*`；改名前的 `RH_*` / `REMOTE_HAND_*` 已弃用，v0.2.135 起不再生效（`APP_*` 不改） |
 | launchd | 已有的标签与 plist 不动；以后 `droppen service install` 只给新安装写 `app.droppen.<实例>.plist` |
 | 协议标识 | 不改：`rh/v1 …` 标签、`x-rh-*` 头、`"agent":"remote-hand"`、`rh-*` 存储名。三种码读的时候已经同时认 `DR1-`/`DRP1-`/`DRR1-`（和 `RH1-`/`RHP1-`/`RHR1-` 是同一个版本，大小写规则照旧），写出来的仍是 `RH1-`/`RHP1-`/`RHR1-`；什么时候改写新前缀见下面的切换顺序 |
 | 「添加能运行 AI 的电脑」的命令 | `droppen agent enroll …`，作为备用路径 |

@@ -109,8 +109,8 @@ serve 那一个 pid：
   重启**（退出的是 A 的 serve 进程，A 的 supervisor 把它拉起来）；
 - 实例 B 继续跑着旧二进制，直到它自己下一次重启为止；
 - 因此「升级完成」在多实例部署里意味着「每个实例都重启过一次」。要立刻生效就逐个重启，
-  或者干脆给每个实例配一个自己的 `DROPPEN_DATA_DIR`，让它们连二进制也不共享（兼容期内把旧名
-  `REMOTE_HAND_DATA_DIR` 也设成同一个值：回滚到改名前的版本时它只认旧名，否则会落到默认目录里）。
+  或者干脆给每个实例配一个自己的 `DROPPEN_DATA_DIR`，让它们连二进制也不共享（旧名
+  `REMOTE_HAND_DATA_DIR` 已弃用，v0.2.135 起不再生效）。
 
 回滚阶梯（`.prev` → 镜像里那份）同样是共享的：A 触发的回滚会改变 B 下次重启时跑的东西。
 
@@ -144,7 +144,7 @@ to」）。不用写的：IP 地址、`localhost` 和 `*.localhost`、本地网�
   订阅归属于一个 origin，所以这个库按实例分开存：同机第二个实例有自己的密钥和自己的
   设备列表，不会把通知推到另一个实例的 PWA 上。老版本留下的
   `~/.config/remote-hand/push.json` 与实例目录里的 `push.json` 都不再被读入。
-- **`DROPPEN_PUSH_CONTACT`**（旧名 `REMOTE_HAND_PUSH_CONTACT` 也认）覆盖 VAPID 的 `sub`（RFC 8292 §2.1：push service 出事时
+- **`DROPPEN_PUSH_CONTACT`**（旧名 `REMOTE_HAND_PUSH_CONTACT` 已弃用，v0.2.135 起不再生效）覆盖 VAPID 的 `sub`（RFC 8292 §2.1：push service 出事时
   联系谁）。只接受 `mailto:` 或 `https:` 开头的值——Apple 的 push service 会直接拒掉别的
   形式——缺省是项目主页。
 
