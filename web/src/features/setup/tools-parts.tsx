@@ -7,6 +7,7 @@ import { Check, Copy, SquareTerminal } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
+import { Button } from "@/components/ui/button";
 import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
 import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
@@ -67,20 +68,15 @@ export function CopyCommandButton({ command, primary = false, disabled }: { comm
   const { t } = useTranslation();
   const { copied, copy } = useCopy();
   return (
-    <button
-      type="button"
-      data-variant={primary ? "primary" : "secondary"}
+    <Button
+      variant={primary ? "primary" : "secondary"}
       data-guide-primary={primary ? "" : undefined}
       disabled={disabled}
       onClick={() => copy(command)}
-      className={cn(
-        "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 border px-3 text-xs font-medium whitespace-nowrap disabled:pointer-events-none disabled:opacity-40",
-        primary ? "border-fg bg-fg text-bg hover:bg-fg/85" : "border-border-strong bg-bg text-fg hover:bg-hover",
-      )}
     >
       {copied && <Check className="size-3.5" aria-hidden="true" />}
       {copied ? t("Copied") : t("Copy command")}
-    </button>
+    </Button>
   );
 }
 
