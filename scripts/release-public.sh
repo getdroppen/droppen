@@ -126,7 +126,11 @@
 # at least OLD_ASSETS_UNTIL below.
 set -euo pipefail
 
-usage() { sed -n '2,/^# Needs:/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
+RELEASE_DIE_NAME='release-public'
+# shellcheck source=release-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/release-lib.sh"
+
+usage() { release_usage '/^# Needs:/'; }
 
 VERSION=""
 REF=""
@@ -176,9 +180,6 @@ ABOUT_VERSION=0.9.2
 # Strings no public binary may contain: the private repositories' names (the
 # source as it is today, and the closed Hub's repository after the split).
 FORBIDDEN=("Kilerd/remote-hand" "getdroppen/hub")
-
-say() { printf '\n== %s\n' "$*"; }
-die() { printf 'release-public: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)" = Darwin ] || die "this builds macOS binaries and needs a Mac"
 for tool in git cargo rustup lipo shasum tar node npx file; do
@@ -239,7 +240,6 @@ fi
 release_text_allow_ok \
   || die "DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped"
 
-free_gb() { df -Pk "$1" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 mkdir -p "$(dirname "$WORK")"
 FREE=$(free_gb "$(dirname "$WORK")")
 # The build needs roughly 4 GB (two release targets' intermediates and
@@ -253,47 +253,14 @@ if [ "$NODE_VERSION" != "$NVMRC" ] && [ "${DROPPEN_ALLOW_NODE_MISMATCH:-}" != 1 
   die "node is $NODE_VERSION but .nvmrc says $NVMRC: put Node $NVMRC first on PATH (the public web build is reproducible only with it), or set DROPPEN_ALLOW_NODE_MISMATCH=1"
 fi
 
-cleanup() {
-  local status=$?
-  # Each long step runs in a process group of its own (set -m): stop the
-  # group, by its id, so nothing it started lingers. The cargo step first, on
-  # its own; then the Linux build, whose trap deletes its pod as it ends.
-  if [ -n "${WATCHED:-}" ] && kill -0 "$WATCHED" 2>/dev/null; then kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true; fi
-  if [ -n "${LINUX_PID:-}" ] && kill -0 "$LINUX_PID" 2>/dev/null; then
-    kill -TERM -- "-$LINUX_PID" 2>/dev/null || kill -TERM "$LINUX_PID" 2>/dev/null || true
-    wait "$LINUX_PID" 2>/dev/null || true
-  fi
-  if [ "$KEEP_WORK" = 1 ]; then
-    echo "kept the build directory: $WORK" >&2
-  else
-    rm -rf "$WORK"
-  fi
-  exit "$status"
-}
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-# Run a long step in its own process group, and stop that group (by its id)
-# if the volume falls under the floor: other builds share this disk.
+# Each long step runs in a process group of its own (set -m): stop the group,
+# by its id, so nothing it started lingers. The cargo step first, on its own;
+# then the Linux build, whose trap deletes its pod as it ends (release-lib.sh
+# cleanup, run_watched).
 set -m
-run_watched() {
-  "$@" &
-  WATCHED=$!
-  while kill -0 "$WATCHED" 2>/dev/null; do
-    if [ "$(free_gb "$WORK")" -lt "$MIN_FREE_GB" ]; then
-      echo "free space fell below ${MIN_FREE_GB} GB; stopping this step (process group $WATCHED)" >&2
-      kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true
-      wait "$WATCHED" 2>/dev/null || true
-      WATCHED=
-      return 1
-    fi
-    sleep 5
-  done
-  local status=0
-  wait "$WATCHED" || status=$?
-  WATCHED=
-  return "$status"
-}
 
 say "$VERSION from $SHA (rev $REV), ${FREE} GB free, work in $WORK"
 rm -rf "$WORK"
@@ -305,22 +272,11 @@ git -C "$REPO" archive --format=tar "$SHA" | tar -x -C "$WORK/src"
 SRC=$WORK/src
 
 if [ -z "$PREBUILT" ]; then
-  say "rust targets"
-  installed=$(rustup target list --installed)
-  for target in "${TARGETS[@]}"; do
-    grep -qx "$target" <<<"$installed" || rustup target add "$target"
-  done
+  install_rust_targets "${TARGETS[@]}"
 fi
 
 say "web app"
-PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
-mkdir -p "$WORK/shims"
-if ! command -v pnpm >/dev/null || [ "$(pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
-  # Package scripts call `pnpm`; give them the pinned one.
-  printf '#!/bin/sh\nexec npx -y pnpm@%s "$@"\n' "$PNPM_VERSION" > "$WORK/shims/pnpm"
-  chmod +x "$WORK/shims/pnpm"
-fi
-web_env=(env PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
+pnpm_web_env "$SRC"
 if [ -n "$WEB_DIST" ]; then
   # Built once, elsewhere: the very bytes the binaries embed. (CI's
   # web-reproducible jobs keep checking that a build is reproducible.)

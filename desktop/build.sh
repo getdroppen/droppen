@@ -92,7 +92,12 @@
 #                            "Kilerd" only, and leave the names to notarise.sh
 set -euo pipefail
 
-usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
+RELEASE_DIE_NAME='desktop/build.sh'
+RELEASE_WATCH_NICE=1
+# shellcheck source=../scripts/release-lib.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/../scripts/release-lib.sh"
+
+usage() { release_usage '/^set -euo/'; }
 
 REF=""
 WORKTREE=0
@@ -146,9 +151,6 @@ case "$ARCH" in
   x86_64) TARGETS=(x86_64-apple-darwin); TAURI_TARGET=x86_64-apple-darwin; DMG_ARCH=x64 ;;
   *) echo "--arch is universal, aarch64 or x86_64, not $ARCH" >&2; exit 2 ;;
 esac
-
-say() { printf '\n== %s\n' "$*"; }
-die() { printf 'desktop/build.sh: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)" = Darwin ] || die "this builds a macOS app and needs a Mac"
 for tool in git cargo rustup lipo shasum hdiutil codesign ditto; do
@@ -231,7 +233,6 @@ if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT")" ]; then
   die "$OUT is not empty; move it aside or pass --out <new dir>"
 fi
 
-free_gb() { df -Pk "$1" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 mkdir -p "$(dirname "$WORK")"
 FREE=$(free_gb "$(dirname "$WORK")")
 # Two release targets of the server plus two of the app, and node_modules:
@@ -247,40 +248,13 @@ if [ -z "$SIDECAR" ]; then
   fi
 fi
 
-cleanup() {
-  local status=$?
-  if [ -n "${WATCHED:-}" ] && kill -0 "$WATCHED" 2>/dev/null; then kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true; fi
-  if [ "$KEEP_WORK" = 1 ]; then
-    echo "kept the build directory: $WORK" >&2
-  else
-    rm -rf "$WORK"
-  fi
-  exit "$status"
-}
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-# Run a long step in its own process group, niced, and stop that group (by
-# its id) if the volume falls under the floor: other builds share this disk.
+# Long steps run in a process group of their own (run_watched, release-lib.sh),
+# niced, so a step that falls under the disk floor is stopped with everything
+# it started.
 set -m
-run_watched() {
-  nice -n 10 "$@" &
-  WATCHED=$!
-  while kill -0 "$WATCHED" 2>/dev/null; do
-    if [ "$(free_gb "$WORK")" -lt "$MIN_FREE_GB" ]; then
-      echo "free space fell below ${MIN_FREE_GB} GB; stopping this step (process group $WATCHED)" >&2
-      kill -TERM -- "-$WATCHED" 2>/dev/null || kill -TERM "$WATCHED" 2>/dev/null || true
-      wait "$WATCHED" 2>/dev/null || true
-      WATCHED=
-      return 1
-    fi
-    sleep 5
-  done
-  local status=0
-  wait "$WATCHED" || status=$?
-  WATCHED=
-  return "$status"
-}
 
 NOTE=""
 [ "$DIRTY" = 0 ] || NOTE=", plus ${DIRTY} uncommitted changes"
@@ -303,11 +277,7 @@ SRC=$WORK/src
 [ -d "$SRC/desktop/src-tauri" ] || die "$REF has no desktop/ app to build"
 
 if [ "${#FROM_APPS[@]}" = 0 ]; then
-  say "rust targets"
-  installed=$(rustup target list --installed)
-  for target in "${TARGETS[@]}"; do
-    grep -qx "$target" <<<"$installed" || rustup target add "$target"
-  done
+  install_rust_targets "${TARGETS[@]}"
 fi
 
 CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
@@ -355,13 +325,7 @@ if [ -n "$SIDECAR" ]; then
 fi
 if [ -z "$SIDECAR" ] || { [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; }; then
   say "web app"
-  PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$SRC/package.json")
-  mkdir -p "$WORK/shims"
-  if ! command -v pnpm >/dev/null || [ "$(pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
-    printf '#!/bin/sh\nexec npx -y pnpm@%s "$@"\n' "$PNPM_VERSION" > "$WORK/shims/pnpm"
-    chmod +x "$WORK/shims/pnpm"
-  fi
-  web_env=(env PATH="$WORK/shims:$PATH" SOURCE_DATE_EPOCH="$COMMIT_TIME")
+  pnpm_web_env "$SRC"
   run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
 fi
 if [ "$E2E" = 0 ]; then
