@@ -283,7 +283,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
 /// see the module docs of [`crate::feed`] for the frames.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
-/// stands ([`crate::auth::login_ended`]).
+/// stands ([`crate::auth::Auth::watch_login`]).
 pub async fn session_feed_ws(
     State(state): State<AppState>,
     who: crate::auth::MaybeIdentity,
@@ -292,7 +292,7 @@ pub async fn session_feed_ws(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let resume = feed::ResumeFrom::parse(query.since.as_deref(), query.fp.as_deref());
-    let login = crate::auth::login_of(&who);
+    let login = who.login();
     upgrade.on_upgrade(move |socket| run_session_socket(socket, state, source, id, resume, login))
 }
 
@@ -440,7 +440,7 @@ async fn run_session_socket(
     login: Option<(String, String)>,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let ended = crate::auth::login_ended(state.drive.auth.clone(), login);
+    let ended = state.drive.auth.clone().watch_login(login);
     tokio::pin!(ended);
     // Every send below is bounded ([`send_within`]): a client that stops
     // reading would otherwise park this task, and the feed it holds, for good.

@@ -95,7 +95,7 @@ pub async fn kill_terminal(State(state): State<AppState>, ApiPath(id): ApiPath<S
 /// `ParameterProvider`.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
-/// stands ([`crate::auth::login_ended`]): a shell is the last thing to leave
+/// stands ([`crate::auth::Auth::watch_login`]): a shell is the last thing to leave
 /// open for a login that was signed out.
 pub async fn terminal_ws(
     State(state): State<AppState>,
@@ -103,7 +103,7 @@ pub async fn terminal_ws(
     ApiPath(id): ApiPath<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let login = crate::auth::login_of(&who);
+    let login = who.login();
     upgrade.on_upgrade(move |socket| run_terminal_socket(socket, state, id, login))
 }
 
@@ -123,7 +123,7 @@ enum Control {
 
 async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, login: Option<(String, String)>) {
     let (mut sender, mut receiver) = socket.split();
-    let ended = crate::auth::login_ended(state.drive.auth.clone(), login);
+    let ended = state.drive.auth.clone().watch_login(login);
     tokio::pin!(ended);
 
     let Some(mut attachment) = state.terminals.attach(&id) else {

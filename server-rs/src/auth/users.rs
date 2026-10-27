@@ -355,7 +355,7 @@ impl UsersStore {
         self.imported.call_once(|| {
             let path = self.path.clone();
             self.db.import_once(IMPORT_MARKER, || staged_from_json(&path));
-            drain_staged(&self.db, IMPORT_MARKER);
+            self.db.drain_staged_users(IMPORT_MARKER);
 
             // "Considered, nothing to copy": see [`SEED_MARKER`].
             self.db.import_once(SEED_MARKER, || Vec::new());
@@ -542,7 +542,7 @@ impl UsersStore {
                 if inserted == 0 {
                     return Ok(Err(UserError::Duplicate(name.clone())));
                 }
-                write_stamps(tx, &name, &stamps)?;
+                tx.write_user_stamps(&name, &stamps)?;
                 Ok(Ok(()))
             })
             .map_err(store_error)??;
@@ -576,7 +576,7 @@ impl UsersStore {
                     stamps.created_at = now.clone();
                 }
                 stamps.updated_at = now.clone();
-                write_stamps(tx, &name, &stamps)?;
+                tx.write_user_stamps(&name, &stamps)?;
                 Ok(Ok(()))
             })
             .map_err(store_error)??;
@@ -609,7 +609,7 @@ impl UsersStore {
                     .optional()?;
                 let mut stamps = existing.and_then(|raw| serde_json::from_str::<Stamps>(&raw).ok()).unwrap_or_default();
                 stamps.app = true;
-                write_stamps(tx, &name, &stamps)?;
+                tx.write_user_stamps(&name, &stamps)?;
                 Ok(Ok(()))
             })
             .map_err(store_error)??;
@@ -753,9 +753,16 @@ fn epoch_seconds(stamp: &str) -> i64 {
         })
 }
 
-fn write_stamps(tx: &rusqlite::Transaction<'_>, name: &str, stamps: &Stamps) -> rusqlite::Result<()> {
-    let value = serde_json::to_string(stamps).unwrap_or_else(|_| "{}".to_string());
-    crate::db::kv_set_in(tx, STAMPS_SCOPE, name, &value)
+/// The stamps payload, written beside a `users` row in the same transaction.
+trait UserStampsExt {
+    fn write_user_stamps(&self, name: &str, stamps: &Stamps) -> rusqlite::Result<()>;
+}
+
+impl UserStampsExt for rusqlite::Transaction<'_> {
+    fn write_user_stamps(&self, name: &str, stamps: &Stamps) -> rusqlite::Result<()> {
+        let value = serde_json::to_string(stamps).unwrap_or_else(|_| "{}".to_string());
+        crate::db::kv_set_in(self, STAMPS_SCOPE, name, &value)
+    }
 }
 
 /// One row, plus whatever of its payload survived, as the file's shape.
@@ -830,55 +837,57 @@ fn write_mirror(path: &Path, file: &UsersFile) {
     }
 }
 
-/// Move whatever is staged into `users`, and forget it was ever staged.
-///
-/// `INSERT OR IGNORE` rather than `REPLACE`, for [`Db::import_once`]'s reason: a
-/// row that is already there was written by this build and is newer than a file
-/// this build has never read from twice — a crash between staging and draining
-/// must not let the older copy overwrite an edit made since.
-/// Ordered by creation stamp because `kv` hands rows back by key —
-/// alphabetically by name — and the order the rowids are handed out in is the
-/// order the list will come back in for ever after.
-///
-/// Answers with how many accounts it moved, which is zero on every boot after
-/// the first.
-fn drain_staged(db: &Db, scope: &str) -> usize {
-    let staged: Vec<String> = db
-        .read(|conn| {
-            let mut statement = conn.prepare("SELECT value FROM kv WHERE scope = ?1")?;
-            let rows = statement.query_map((scope,), |row| row.get::<_, String>(0))?;
-            Ok(rows.filter_map(Result::ok).collect())
-        })
-        .unwrap_or_default();
-    if staged.is_empty() {
-        return 0;
-    }
-    let mut users: Vec<StoredUser> = staged.iter().filter_map(|raw| serde_json::from_str(raw).ok()).collect();
-    users.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    db.commit("the imported accounts", |tx| {
-        for user in &users {
-            tx.execute(
-                "INSERT OR IGNORE INTO users (name, hash, created_at) VALUES (?1, ?2, ?3)",
-                (&user.name, &user.password_phc, epoch_seconds(&user.created_at)),
-            )?;
-            tx.execute(
-                "INSERT OR IGNORE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-                (
-                    STAMPS_SCOPE,
-                    &user.name,
-                    serde_json::to_string(&Stamps {
-                        created_at: user.created_at.clone(),
-                        updated_at: user.updated_at.clone(),
-                        app: user.app,
-                    })
-                    .unwrap_or_else(|_| "{}".to_string()),
-                ),
-            )?;
+impl Db {
+    /// Move whatever is staged into `users`, and forget it was ever staged.
+    ///
+    /// `INSERT OR IGNORE` rather than `REPLACE`, for [`Db::import_once`]'s
+    /// reason: a row that is already there was written by this build and is
+    /// newer than a file this build has never read from twice — a crash
+    /// between staging and draining must not let the older copy overwrite an
+    /// edit made since. Ordered by creation stamp because `kv` hands rows back
+    /// by key — alphabetically by name — and the order the rowids are handed
+    /// out in is the order the list will come back in for ever after.
+    ///
+    /// Answers with how many accounts it moved, which is zero on every boot
+    /// after the first.
+    fn drain_staged_users(&self, scope: &str) -> usize {
+        let staged: Vec<String> = self
+            .read(|conn| {
+                let mut statement = conn.prepare("SELECT value FROM kv WHERE scope = ?1")?;
+                let rows = statement.query_map((scope,), |row| row.get::<_, String>(0))?;
+                Ok(rows.filter_map(Result::ok).collect())
+            })
+            .unwrap_or_default();
+        if staged.is_empty() {
+            return 0;
         }
-        tx.execute("DELETE FROM kv WHERE scope = ?1", (scope,))?;
-        Ok(())
-    });
-    users.len()
+        let mut users: Vec<StoredUser> = staged.iter().filter_map(|raw| serde_json::from_str(raw).ok()).collect();
+        users.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        self.commit("the imported accounts", |tx| {
+            for user in &users {
+                tx.execute(
+                    "INSERT OR IGNORE INTO users (name, hash, created_at) VALUES (?1, ?2, ?3)",
+                    (&user.name, &user.password_phc, epoch_seconds(&user.created_at)),
+                )?;
+                tx.execute(
+                    "INSERT OR IGNORE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
+                    (
+                        STAMPS_SCOPE,
+                        &user.name,
+                        serde_json::to_string(&Stamps {
+                            created_at: user.created_at.clone(),
+                            updated_at: user.updated_at.clone(),
+                            app: user.app,
+                        })
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    ),
+                )?;
+            }
+            tx.execute("DELETE FROM kv WHERE scope = ?1", (scope,))?;
+            Ok(())
+        });
+        users.len()
+    }
 }
 
 /// This build's argon2id, at the parameters named at the top of the module.

@@ -163,7 +163,7 @@ impl SessionsStore {
         let _guard = self.write_lock.lock().await;
         self.db
             .write(|tx| {
-                prune(tx, epoch_millis(now))?;
+                tx.prune_expired_sessions(epoch_millis(now))?;
                 tx.execute(
                     "INSERT INTO auth_sessions (digest, expires_at, payload) VALUES (?1, ?2, ?3)",
                     (
@@ -217,7 +217,7 @@ impl SessionsStore {
         let stamp = iso8601(now);
         let millis = epoch_millis(now);
         let outcome = self.db.write(|tx| {
-            prune(tx, millis)?;
+            tx.prune_expired_sessions(millis)?;
             let raw: Option<String> = tx
                 .query_row("SELECT payload FROM auth_sessions WHERE digest = ?1", (digest,), |row| row.get(0))
                 .optional()?;
@@ -261,7 +261,7 @@ impl SessionsStore {
     pub async fn revoke(&self, digest: &str) -> bool {
         let _guard = self.write_lock.lock().await;
         let removed = self.db.write(|tx| {
-            prune(tx, now_millis())?;
+            tx.prune_expired_sessions(now_millis())?;
             Ok(tx.execute("DELETE FROM auth_sessions WHERE digest = ?1", (digest,))? > 0)
         });
         let removed = match removed {
@@ -326,7 +326,7 @@ impl SessionsStore {
     /// collected on the way past.
     fn delete_all(&self, digests: &[String]) -> rusqlite::Result<(usize, usize)> {
         self.db.write(|tx| {
-            let pruned = prune(tx, now_millis())?;
+            let pruned = tx.prune_expired_sessions(now_millis())?;
             let mut removed = 0;
             for digest in digests {
                 removed += tx.execute("DELETE FROM auth_sessions WHERE digest = ?1", (digest,))?;
@@ -338,21 +338,28 @@ impl SessionsStore {
     /// The expiry sweep on its own, for the read paths that have nothing else
     /// to change. Returns how many rows it collected.
     fn sweep_expired(&self, now: i64) -> usize {
-        self.db.write(|tx| prune(tx, now)).unwrap_or_else(|error| {
+        self.db.write(|tx| tx.prune_expired_sessions(now)).unwrap_or_else(|error| {
             tracing::warn!(%error, "could not drop the expired login sessions");
             0
         })
     }
 }
 
-/// Drop everything that has already expired.
-///
-/// The one query the `expires_at` column exists for. `<` rather than `<=`
-/// because a session is alive up to and including the instant it names; the
-/// readers use `expires_at > now`, which is the same boundary from the other
-/// side.
-fn prune(tx: &rusqlite::Transaction<'_>, now: i64) -> rusqlite::Result<usize> {
-    tx.execute("DELETE FROM auth_sessions WHERE expires_at < ?1", (now,))
+/// The expiry sweep, on the transaction it runs in.
+trait SessionPruneExt {
+    /// Drop everything that has already expired.
+    ///
+    /// The one query the `expires_at` column exists for. `<` rather than `<=`
+    /// because a session is alive up to and including the instant it names; the
+    /// readers use `expires_at > now`, which is the same boundary from the
+    /// other side.
+    fn prune_expired_sessions(&self, now: i64) -> rusqlite::Result<usize>;
+}
+
+impl SessionPruneExt for rusqlite::Transaction<'_> {
+    fn prune_expired_sessions(&self, now: i64) -> rusqlite::Result<usize> {
+        self.execute("DELETE FROM auth_sessions WHERE expires_at < ?1", (now,))
+    }
 }
 
 fn store_error(error: rusqlite::Error) -> std::io::Error {

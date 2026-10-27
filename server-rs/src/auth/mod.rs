@@ -312,7 +312,7 @@ impl Auth {
     /// The bridged device a request speaks for, if it carries this boot's
     /// internal credential and came from a loopback peer. `None` otherwise.
     fn bridged(&self, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
-        bridged_identity(&self.internal, headers, peer)
+        headers.bridged_identity(&self.internal, peer)
     }
 
     /// The lockout rules this server was configured with.
@@ -349,7 +349,7 @@ impl Auth {
     /// session record, which is what makes `user rm` take effect immediately and
     /// everywhere — including in instances this process knows nothing about.
     async fn identify(&self, headers: &HeaderMap) -> Option<AuthIdentity> {
-        let token = bearer(headers)?;
+        let token = headers.bearer()?;
         let username = self.sessions.resolve(&token).await?;
         if !self.still_valid(&username).await {
             return None;
@@ -373,7 +373,7 @@ impl Auth {
     /// Whether the login `digest` still stands for `user`: the session live
     /// (not signed out, revoked, swept or expired) and its identity still
     /// valid ([`Auth::still_valid`]) — what a long-lived socket opened by that
-    /// login asks again every [`LOGIN_RECHECK`] ([`login_ended`]).
+    /// login asks again every [`LOGIN_RECHECK`] ([`Auth::watch_login`]).
     pub async fn login_stands(&self, user: &str, digest: &str) -> bool {
         self.sessions.alive(digest).as_deref() == Some(user) && self.still_valid(user).await
     }
@@ -393,30 +393,36 @@ impl Auth {
 /// login still stands.
 pub const LOGIN_RECHECK: Duration = Duration::from_secs(5);
 
-/// The login behind a request, for a socket to watch: `(account, digest of its
-/// session)`. `None` for a request no login opened — authentication off, or a
-/// device bridged through Droppen, whose channel the agent ends itself.
-pub fn login_of(who: &MaybeIdentity) -> Option<(String, String)> {
-    who.0
-        .as_ref()
-        .and_then(|identity| identity.token_sha256.clone().map(|digest| (identity.username.clone(), digest)))
+impl MaybeIdentity {
+    /// The login behind a request, for a socket to watch: `(account, digest of
+    /// its session)`. `None` for a request no login opened — authentication
+    /// off, or a device bridged through Droppen, whose channel the agent ends
+    /// itself.
+    pub fn login(&self) -> Option<(String, String)> {
+        self.0
+            .as_ref()
+            .and_then(|identity| identity.token_sha256.clone().map(|digest| (identity.username.clone(), digest)))
+    }
 }
 
-/// Resolves once the login a socket was opened by stops standing — signed
-/// out, revoked, its account removed, or (for the local owner) the device's
-/// first account made — looked at every [`LOGIN_RECHECK`]; never, for a socket
-/// no login opened. The socket's loop selects on it and closes with 4401, so
-/// ending a login ends what it has open too, not only its next request.
-pub async fn login_ended(auth: Arc<Auth>, login: Option<(String, String)>) {
-    let Some((user, digest)) = login else {
-        return std::future::pending().await;
-    };
-    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + LOGIN_RECHECK, LOGIN_RECHECK);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tick.tick().await;
-        if !auth.login_stands(&user, &digest).await {
-            return;
+impl Auth {
+    /// Resolves once the login a socket was opened by stops standing — signed
+    /// out, revoked, its account removed, or (for the local owner) the device's
+    /// first account made — looked at every [`LOGIN_RECHECK`]; never, for a
+    /// socket no login opened. The socket's loop selects on it and closes with
+    /// 4401, so ending a login ends what it has open too, not only its next
+    /// request.
+    pub async fn watch_login(self: Arc<Self>, login: Option<(String, String)>) {
+        let Some((user, digest)) = login else {
+            return std::future::pending().await;
+        };
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + LOGIN_RECHECK, LOGIN_RECHECK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if !self.login_stands(&user, &digest).await {
+                return;
+            }
         }
     }
 }
@@ -429,22 +435,40 @@ pub fn signed_out_frame() -> gotcha::axum::extract::ws::CloseFrame {
     }
 }
 
-/// The identity a request bridged by the cloud agent speaks for: only with
-/// `expected` (this boot's credential) and only from a loopback peer.
-fn bridged_identity(expected: &str, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
-    let offered = headers.get(crate::agent::bridge::CREDENTIAL_HEADER)?.as_bytes();
-    if !peer.is_some_and(|p| p.ip().is_loopback()) {
-        return None;
+/// The credentials this guard reads out of headers, on the headers themselves.
+trait HeaderMapExt {
+    /// The identity a request bridged by the cloud agent speaks for: only with
+    /// `expected` (this boot's credential) and only from a loopback peer.
+    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity>;
+
+    /// Whether this is really a websocket handshake and not a plain `GET` of
+    /// the same path. Without the check, a `?ticket=` would be spendable on any
+    /// request to a `/ws` path.
+    fn is_websocket_upgrade(&self) -> bool;
+}
+
+impl HeaderMapExt for HeaderMap {
+    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
+        let offered = self.get(crate::agent::bridge::CREDENTIAL_HEADER)?.as_bytes();
+        if !peer.is_some_and(|p| p.ip().is_loopback()) {
+            return None;
+        }
+        if !bool::from(subtle::ConstantTimeEq::ct_eq(offered, expected.as_bytes())) {
+            return None;
+        }
+        let device = self.get(crate::agent::bridge::DEVICE_HEADER)?.to_str().ok()?;
+        let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_graphic());
+        valid.then(|| AuthIdentity {
+            username: format!("cloud:{device}"),
+            token_sha256: None,
+        })
     }
-    if !bool::from(subtle::ConstantTimeEq::ct_eq(offered, expected.as_bytes())) {
-        return None;
+
+    fn is_websocket_upgrade(&self) -> bool {
+        self.get(header::UPGRADE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
     }
-    let device = headers.get(crate::agent::bridge::DEVICE_HEADER)?.to_str().ok()?;
-    let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_graphic());
-    valid.then(|| AuthIdentity {
-        username: format!("cloud:{device}"),
-        token_sha256: None,
-    })
 }
 
 /// The already-boxed future [`layer`] hands to axum.
@@ -476,7 +500,7 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // cross-origin request before the real one was ever sent. It goes straight
     // through to `crate::origin`, which answers it without routing.
     if method == Method::OPTIONS {
-        return with_headers(next.run(request).await, &path);
+        return next.run(request).await.with_guard_headers(&path);
     }
 
     // The cloud agent's bridge: honoured only from loopback with this boot's
@@ -550,32 +574,39 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // all asked, with authentication switched off. Everyone else is refused
     // without a word about why; the status route is where a client learns it.
     if identity.is_some() || caller.is_some() || is_exempt || auth.is_off() {
-        return with_headers(next.run(request).await, &path);
+        return next.run(request).await.with_guard_headers(&path);
     }
-    with_headers(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response(), &path)
+    ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response().with_guard_headers(&path)
 }
 
-/// `Referrer-Policy: no-referrer`, on everything this server serves.
-///
-/// Session tokens live in the page's own storage rather than in URLs, so this is
-/// belt and braces — but the page also renders arbitrary text from transcripts,
-/// and a `Referer` header is how a link a model wrote tells a third party which
-/// host and path the person clicked it from.
-///
-/// And no framing by another site, on everything but an embedded app — whose
-/// proxy (`crate::apps::embed`) answers for itself, since the page frames it:
-/// a page somebody else serves must not be able to lay this one, signed in,
-/// under a transparent frame and have its clicks land here.
-fn with_headers(mut response: Response, path: &str) -> Response {
-    let headers = response.headers_mut();
-    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-    if !is_embed(path) {
-        headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
-        if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
-            headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'self'"));
+/// The guard's answer headers, on the response they are for.
+trait ResponseExt {
+    /// `Referrer-Policy: no-referrer`, on everything this server serves.
+    ///
+    /// Session tokens live in the page's own storage rather than in URLs, so
+    /// this is belt and braces — but the page also renders arbitrary text from
+    /// transcripts, and a `Referer` header is how a link a model wrote tells a
+    /// third party which host and path the person clicked it from.
+    ///
+    /// And no framing by another site, on everything but an embedded app —
+    /// whose proxy (`crate::apps::embed`) answers for itself, since the page
+    /// frames it: a page somebody else serves must not be able to lay this
+    /// one, signed in, under a transparent frame and have its clicks land here.
+    fn with_guard_headers(self, path: &str) -> Response;
+}
+
+impl ResponseExt for Response {
+    fn with_guard_headers(mut self, path: &str) -> Response {
+        let headers = self.headers_mut();
+        headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        if !is_embed(path) {
+            headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+            if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+                headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'self'"));
+            }
         }
+        self
     }
-    response
 }
 
 /// Paths that answer without a token.
@@ -613,12 +644,12 @@ fn is_embed(path: &str) -> bool {
 fn ticket_offered(method: &Method, path: &str, uri: &Uri, headers: &HeaderMap) -> Option<(String, TicketScope)> {
     let scope = if method == Method::GET && path == "/api/fs/download" {
         TicketScope::Download
-    } else if method == Method::GET && is_websocket_path(path) && is_upgrade(headers) {
+    } else if method == Method::GET && is_websocket_path(path) && headers.is_websocket_upgrade() {
         TicketScope::Ws
     } else {
         return None;
     };
-    Some((query_param(uri, "ticket")?, scope))
+    Some((uri.query_param("ticket")?, scope))
 }
 
 /// The websocket routes, by path: the three of the app, and the local gateway
@@ -633,44 +664,48 @@ fn is_websocket_path(path: &str) -> bool {
         || (path.starts_with("/api/terminals/") && path.ends_with("/ws"))
 }
 
-/// Whether this is really a websocket handshake and not a plain `GET` of the
-/// same path. Without the check, a `?ticket=` would be spendable on any request
-/// to a `/ws` path.
-fn is_upgrade(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+/// The query string's parameters, read as themselves.
+trait UriExt {
+    /// One query parameter, undecoded.
+    ///
+    /// Both tickets are base64url, whose alphabet needs no percent-encoding, so
+    /// a decoder would only be a way for an encoded ticket to match a stored
+    /// one that is not byte-identical.
+    fn query_param(&self, name: &str) -> Option<String>;
 }
 
-/// One query parameter, undecoded.
-///
-/// Both tickets are base64url, whose alphabet needs no percent-encoding, so a
-/// decoder would only be a way for an encoded ticket to match a stored one that
-/// is not byte-identical.
-fn query_param(uri: &Uri, name: &str) -> Option<String> {
-    uri.query()?
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(key, _)| *key == name)
-        .map(|(_, value)| value.to_string())
-}
-
-/// The token out of `Authorization: Bearer <token>`.
-///
-/// A long-lived token is only ever accepted in this header. It is deliberately
-/// not read from a query parameter or a cookie: the first ends up in proxy logs
-/// and browser history, and the second would make every route forgeable
-/// cross-site unless a second anti-CSRF mechanism were added to carry the weight
-/// the `Authorization` header carries for free.
-fn bearer(headers: &HeaderMap) -> Option<String> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
-        return None;
+impl UriExt for Uri {
+    fn query_param(&self, name: &str) -> Option<String> {
+        self.query()?
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.to_string())
     }
-    let token = token.trim();
-    (!token.is_empty()).then(|| token.to_string())
+}
+
+/// The bearer credential, read from the one header that carries one.
+trait BearerExt {
+    /// The token out of `Authorization: Bearer <token>`.
+    ///
+    /// A long-lived token is only ever accepted in this header. It is
+    /// deliberately not read from a query parameter or a cookie: the first ends
+    /// up in proxy logs and browser history, and the second would make every
+    /// route forgeable cross-site unless a second anti-CSRF mechanism were
+    /// added to carry the weight the `Authorization` header carries for free.
+    fn bearer(&self) -> Option<String>;
+}
+
+impl BearerExt for HeaderMap {
+    fn bearer(&self) -> Option<String> {
+        let value = self.get(header::AUTHORIZATION)?.to_str().ok()?;
+        let (scheme, token) = value.split_once(' ')?;
+        if !scheme.eq_ignore_ascii_case("bearer") {
+            return None;
+        }
+        let token = token.trim();
+        (!token.is_empty()).then(|| token.to_string())
+    }
 }
 
 /// The caller, for a route that requires one.
@@ -735,12 +770,13 @@ mod tests {
 
     #[test]
     fn a_bearer_token_is_read_out_of_the_one_header_that_carries_one() {
-        assert_eq!(bearer(&headers(&[(header::AUTHORIZATION, "Bearer abc")])).as_deref(), Some("abc"));
-        assert_eq!(bearer(&headers(&[(header::AUTHORIZATION, "bearer abc")])).as_deref(), Some("abc"));
-        assert_eq!(bearer(&headers(&[(header::AUTHORIZATION, "Basic abc")])), None);
-        assert_eq!(bearer(&headers(&[(header::AUTHORIZATION, "Bearer")])), None);
-        assert_eq!(bearer(&headers(&[(header::AUTHORIZATION, "Bearer  ")])), None);
-        assert_eq!(bearer(&HeaderMap::new()), None);
+        assert_eq!(headers(&[(header::AUTHORIZATION, "Bearer abc")]).bearer().as_deref(), Some("abc"));
+        assert_eq!(headers(&[(header::AUTHORIZATION, "bearer abc")]).bearer().as_deref(), Some("abc"));
+        assert_eq!(headers(&[(header::AUTHORIZATION, "Basic abc")]).bearer(), None);
+        assert_eq!(headers(&[(header::AUTHORIZATION, "Bearer")]).bearer(), None);
+        assert_eq!(headers(&[(header::AUTHORIZATION, "Bearer  ")])
+            .bearer(), None);
+        assert_eq!(HeaderMap::new().bearer(), None);
     }
 
     #[test]
@@ -854,19 +890,19 @@ mod tests {
         let local6: std::net::SocketAddr = "[::1]:5000".parse().unwrap();
         let remote: std::net::SocketAddr = "192.168.1.9:5000".parse().unwrap();
         assert_eq!(
-            bridged_identity(&cred, &with(&cred, "d-abc"), Some(local)).map(|i| i.username),
+            with(&cred, "d-abc").bridged_identity(&cred, Some(local)).map(|i| i.username),
             Some("cloud:d-abc".to_string())
         );
-        assert!(bridged_identity(&cred, &with(&cred, "d-abc"), Some(local6)).is_some());
-        assert_eq!(bridged_identity(&cred, &with(&cred, "d-abc"), Some(remote)), None, "not from loopback");
-        assert_eq!(bridged_identity(&cred, &with(&cred, "d-abc"), None), None, "no peer address");
+        assert!(with(&cred, "d-abc").bridged_identity(&cred, Some(local6)).is_some());
+        assert_eq!(with(&cred, "d-abc").bridged_identity(&cred, Some(remote)), None, "not from loopback");
+        assert_eq!(with(&cred, "d-abc").bridged_identity(&cred, None), None, "no peer address");
         assert_eq!(
-            bridged_identity(&cred, &with(&"cd".repeat(32), "d-abc"), Some(local)),
+            with(&"cd".repeat(32), "d-abc").bridged_identity(&cred, Some(local)),
             None,
             "another boot's credential"
         );
-        assert_eq!(bridged_identity(&cred, &HeaderMap::new(), Some(local)), None);
-        assert_eq!(bridged_identity(&cred, &with(&cred, ""), Some(local)), None, "no device");
+        assert_eq!(HeaderMap::new().bridged_identity(&cred, Some(local)), None);
+        assert_eq!(with(&cred, "").bridged_identity(&cred, Some(local)), None, "no device");
     }
 
     /// What a long-lived socket waits on: nothing for a socket no login
@@ -878,8 +914,8 @@ mod tests {
         let auth = state.drive.auth.clone();
         let token = auth.sessions.issue(LOCAL_OWNER, None).await.expect("session").token;
         let digest = sessions::digest_of(&token);
-        let watch = tokio::spawn(login_ended(auth.clone(), Some((LOCAL_OWNER.into(), digest))));
-        let nobody = tokio::spawn(login_ended(auth.clone(), None));
+        let watch = tokio::spawn(auth.clone().watch_login(Some((LOCAL_OWNER.into(), digest))));
+        let nobody = tokio::spawn(auth.clone().watch_login(None));
         tokio::time::sleep(LOGIN_RECHECK * 3).await;
         assert!(!watch.is_finished(), "the owner stands while there is no account");
         auth.users.add("ada", "correct horse battery staple").await.expect("account");
@@ -891,9 +927,9 @@ mod tests {
 
     #[test]
     fn a_query_parameter_is_found_wherever_it_sits() {
-        assert_eq!(query_param(&uri("/x?ticket=T"), "ticket").as_deref(), Some("T"));
-        assert_eq!(query_param(&uri("/x?a=1&ticket=T&b=2"), "ticket").as_deref(), Some("T"));
-        assert_eq!(query_param(&uri("/x?ticketing=T"), "ticket"), None);
-        assert_eq!(query_param(&uri("/x"), "ticket"), None);
+        assert_eq!(uri("/x?ticket=T").query_param("ticket").as_deref(), Some("T"));
+        assert_eq!(uri("/x?a=1&ticket=T&b=2").query_param("ticket").as_deref(), Some("T"));
+        assert_eq!(uri("/x?ticketing=T").query_param("ticket"), None);
+        assert_eq!(uri("/x").query_param("ticket"), None);
     }
 }
