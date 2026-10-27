@@ -8,7 +8,7 @@ import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { APP_PATH, publicLink, SIGN_UP_PATH } from "./route";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
@@ -244,7 +244,7 @@ function Compare({ signup }: { signup: SignupMode }) {
           <span role="columnheader" className="max-md:sr-only" />
           {heads.map((h, i) => (
             <span key={h} role="columnheader" className={cn("px-6 py-3 max-md:px-4", i > 0 && "border-l border-border", "md:border-l md:border-border")}>
-              <CapsLabel className="text-fg">{h}</CapsLabel>
+              <CapsLabel className={cn("text-fg", cjkTracking)}>{h}</CapsLabel>
             </span>
           ))}
         </div>
@@ -441,7 +441,7 @@ export default function PricingPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Pricing")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Pricing")}</CapsLabel>
             <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">
               {t("Start free. Go Pro when you need more.")}
             </h1>

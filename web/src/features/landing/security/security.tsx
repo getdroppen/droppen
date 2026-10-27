@@ -5,7 +5,7 @@ import { Info } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
-import { FooterLine, PublicHeader, SECURITY_EMAIL, Section, SectionHead } from "../page-kit";
+import { cjkTracking, FooterLine, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
 import { securityBundles } from "./security-copy";
@@ -245,7 +245,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
       <div role="row" className={cn("grid border-b border-border max-md:hidden", grid)}>
         {heads.map((h, i) => (
           <span key={h} role="columnheader" className={cn("px-6 py-3", i > 0 && "border-l border-border")}>
-            <CapsLabel className="text-fg">{h}</CapsLabel>
+            <CapsLabel className={cn("text-fg", cjkTracking)}>{h}</CapsLabel>
           </span>
         ))}
       </div>
@@ -262,7 +262,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               )}
             >
               {i > 0 && (
-                <CapsLabel size="xs" className="block pb-0.5 md:hidden">
+                <CapsLabel size="xs" className={cn("block pb-0.5 md:hidden", cjkTracking)}>
                   {heads[i]}
                 </CapsLabel>
               )}
@@ -290,7 +290,7 @@ function Hero() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <CapsLabel>{t("Security")}</CapsLabel>
+      <CapsLabel className={cjkTracking}>{t("Security")}</CapsLabel>
       <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
         {t("How Droppen's end-to-end encryption works.")}
       </h1>
@@ -343,7 +343,7 @@ function Definitions() {
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
             {card.rows.map(([label, text]) => (
               <div key={label} className="contents">
-                <dt className="label-caps pt-[3px] text-[10px] leading-[14px] text-faint">{label}</dt>
+                <dt className={cn("label-caps pt-[3px] text-[10px] leading-[14px] text-faint", cjkTracking)}>{label}</dt>
                 <dd className="text-xs leading-5 text-muted">{withConcepts(text!)}</dd>
               </div>
             ))}

@@ -5,9 +5,10 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { SIGNUP_CONFIG } from "@/lib/hub/api";
 import { PLAN_TABLE } from "@/lib/hub/plan";
 import { landingBundles } from "./copy";
-import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { publicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
+import { cn } from "@/lib/cn";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
@@ -96,7 +97,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Privacy notice")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Privacy notice")}</CapsLabel>
             <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
               {t("What we keep, and what we can't see.")}
             </h1>
@@ -240,7 +241,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel>{t("Contact")}</CapsLabel>
+              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions, or a request about your data:")} {mail}
               </p>

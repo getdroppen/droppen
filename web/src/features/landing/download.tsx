@@ -25,7 +25,7 @@ import {
   UNINSTALL_COMMAND,
   WSL_SYSTEMD_URL,
 } from "./get-droppen";
-import { CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
@@ -521,7 +521,7 @@ function End({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) {
     <Section>
       <div className="flex flex-col gap-6 px-6 py-14 max-md:px-4 max-md:py-10 md:flex-row md:items-end md:justify-between">
         <div className="flex flex-col gap-3">
-          <CapsLabel>{t("Ready when you are")}</CapsLabel>
+          <CapsLabel className={cjkTracking}>{t("Ready when you are")}</CapsLabel>
           <p className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">
             {t("Install it, then sign it in to Droppen.")}
           </p>
@@ -646,7 +646,7 @@ export default function DownloadPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Download")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Download")}</CapsLabel>
             <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">
               {t("Install it once, and your AI is on your phone.")}
             </h1>

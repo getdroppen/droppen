@@ -43,11 +43,17 @@ export function Section({ id, children, className }: { id?: string; children: Re
   );
 }
 
+/**
+ * The caps labels' letter spacing is for Latin capitals; Chinese and Japanese
+ * set without it, as their headlines do (产品, not 产 品).
+ */
+export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-normal";
+
 /** A section's head; `label`, the caps line over the title, only where the title does not already say what the section is. */
 export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      {label && <CapsLabel>{label}</CapsLabel>}
+      {label && <CapsLabel className={cjkTracking}>{label}</CapsLabel>}
       <h2 className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
@@ -125,14 +131,14 @@ export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: 
         {nav.length > 0 && (
           <nav aria-label={t("On this page")} className="ml-6 flex items-center gap-5 max-lg:hidden">
             {nav.map((n) => (
-              <a key={n.href} href={n.href} className="label-caps text-2xs text-muted hover:text-fg">
+              <a key={n.href} href={n.href} className={cn("label-caps text-2xs text-muted hover:text-fg", cjkTracking)}>
                 {n.label}
               </a>
             ))}
           </nav>
         )}
         <span className="flex-1" />
-        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="header-pricing" className="label-caps mr-1 text-2xs whitespace-nowrap text-muted hover:text-fg max-sm:hidden" />
+        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="header-pricing" className={cn("label-caps mr-1 text-2xs whitespace-nowrap text-muted hover:text-fg max-sm:hidden", cjkTracking)} />
         <PrefsControls />
         {signedIn ? (
           <a {...publicLink(APP_PATH)} className={secondary}>

@@ -3,11 +3,12 @@ import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { landingBundles } from "../copy";
-import { FooterLine, Points, PublicHeader, SECURITY_EMAIL, Section, SectionHead } from "../page-kit";
+import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
 import { gb, PLAN_NUMBERS } from "../pricing-plans";
 import { PRICING_PATH, PRIVACY_PATH, publicLink } from "../route";
 import { PRIVACY_EMAIL } from "../waitlist";
 import { termsBundles } from "./terms-copy";
+import { cn } from "@/lib/cn";
 
 /*
  * droppen.app/terms: the terms of service of the hosted service, in plain
@@ -89,7 +90,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Terms of Service")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Terms of Service")}</CapsLabel>
             <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
               {t("What you can expect from us, and what we ask of you.")}
             </h1>
@@ -303,7 +304,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel>{t("Contact")}</CapsLabel>
+              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions about these terms, or a request about your account:")} {mail(PRIVACY_EMAIL, "terms-email")}
               </p>
