@@ -14,7 +14,26 @@
  */
 import type { AccountView, PlanView, SignInChange } from "./api";
 import { planView, signInChange } from "./api";
-import { REGISTRATION_TTL_MS, type Registration } from "./plan";
+import { atLimit, type LimitHit, REGISTRATION_TTL_MS, type Registration } from "./plan";
+
+/**
+ * The plan's limit for `key`, read from the hub again first (an addition is
+ * checked against the plan as it stands now); a read that fails keeps the plan
+ * the page had, and `onRefreshError` hears of it (the hub checks too).
+ */
+export async function freshLimit(
+  me: Pick<MeStore, "refresh" | "plan"> | null | undefined,
+  key: Parameters<typeof atLimit>[1],
+  onRefreshError?: (error: unknown) => void,
+): Promise<LimitHit | null> {
+  if (!me) return null;
+  try {
+    await me.refresh();
+  } catch (error) {
+    onRefreshError?.(error);
+  }
+  return atLimit(me.plan, key);
+}
 
 export type MeLink = {
   onControl(fn: (message: Record<string, unknown>) => void): () => void;

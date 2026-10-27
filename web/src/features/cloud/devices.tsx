@@ -42,6 +42,7 @@ import { askedPlace } from "./devices-route";
 import { FirstHostCard } from "./first-host";
 import { sessionPath, shellCourier } from "./hub-shell";
 import { hubShell, useFocusedMachine, useShellMachines } from "@/features/machines/shells";
+import { freshLimit } from "@/lib/hub/me";
 import { MachineNotes, noteRenamed, RenameMachineForm, renameThroughNewChannel, shownName, useMachineStatuses, useRenamed } from "./machine-name";
 import { addAsked } from "./onboarding";
 import { AddDeviceHint } from "./onboarding-hints";
@@ -2509,12 +2510,7 @@ export function ConfirmCandidate({
               // An addition (not a device pairing again): the plan's device
               // limit, freshly read, before anything is signed (§4.3).
               if (me && !account.chain?.deviceRecord(candidate.device)) {
-                try {
-                  await me.refresh();
-                } catch (err) {
-                  console.warn("cloud: /v1/me before adding a device:", err);
-                }
-                const hit = atLimit(me.plan, DEVICES_KEY);
+                const hit = await freshLimit(me, DEVICES_KEY, (err) => console.warn("cloud: /v1/me before adding a device:", err));
                 if (hit) {
                   setLimit(hit);
                   setBusy(false);

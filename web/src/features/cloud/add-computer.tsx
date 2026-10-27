@@ -4,7 +4,7 @@ import { Check, Columns2, Download, ExternalLink, Loader2, RefreshCw } from "luc
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { type EnrollCode, formatEnrollCode } from "@/lib/e2e";
-import { AccountError, type CloudAccount } from "@/lib/hub/account";
+import { AccountError, type CloudAccount, v3NotWritableError } from "@/lib/hub/account";
 import { type AccountView, chainV3Writable } from "@/lib/hub/api";
 import { type DeliveryResult, linkCourier } from "@/lib/hub/deliver";
 import type { HubLink } from "@/lib/hub/link";
@@ -13,10 +13,12 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { type Availability, AVAILABILITY, codeInstallCommand, downloadHref, INSTALL_COMMAND, otherHub, stdinEnrollCommand } from "@/features/landing/get-droppen";
+import { freshLimit } from "@/lib/hub/me";
 import { fileLink, useLatestRelease } from "@/features/landing/release-files";
 import { publicHref } from "@/features/landing/route";
 import { agentHub, appHost } from "@/lib/hub/hosts";
 import { hubShell, useShellMachines } from "@/features/machines/shells";
+import { addHostByCode } from "@/features/link/add-host";
 import { type NewHost, partnerFor, watchNewHost } from "./onboarding";
 import { FirstMachineNote, LimitNote, useMe } from "./plan";
 import { makeSideBySide, shellScreenMaker, SideBySideError } from "./side-by-side";
@@ -104,32 +106,25 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
         // The plan's limit of devices that run AI first (§3.8): at it, nothing is started.
         // The hub checks too (enrollments in progress count), answered below.
         const store = me;
-        if (store) {
-          try {
-            await store.refresh();
-          } catch (error) {
-            console.warn("cloud: /v1/me before adding a machine:", error);
-          }
-          const hit = atLimit(store.plan, HOSTS_KEY);
-          if (hit) return setState({ kind: "limit", hit });
-        }
+        const hit = await freshLimit(store, HOSTS_KEY, (error) => console.warn("cloud: /v1/me before adding a machine:", error));
+        if (hit) return setState({ kind: "limit", hit });
         const before = (account.chain?.hosts() ?? []).filter((m) => m.status.type === "active").length;
         // On a v3 chain the hub must take v3 entries (it gates a new host): said before a code is issued.
-        if (account.chain?.isV3 && !chainV3Writable(store?.view)) throw new AccountError("notWritable", t("Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI."));
-        const { code, expiresMs } = await account.startTimedEnrollment();
-        setState({ kind: "waiting", code, deadline: codeDeadline(Date.now(), expiresMs) });
-        // Read again as it is signed: on a v3 chain the hub must take v3 entries (it gates a new host).
-        const machine = await account.completeEnrollment(code, abort.signal, undefined, undefined, { writable: chainV3Writable(store?.view) });
-        setState({ kind: "key", code });
-        // Its first key was committed and put with the machine: hand it over.
-        const { result } = await account.handOverMachineKey(machine.id, linkCourier(link, account, undefined, hubShell()?.relays));
-        setState({ kind: "done", machine: machine.id, via: result, first: before === 0 });
+        const notWritable = v3NotWritableError(account.chain?.isV3, store?.view);
+        if (notWritable) throw notWritable;
+        const added = await addHostByCode(account, {
+          // Read again as it is signed: on a v3 chain the hub must take v3 entries (it gates a new host).
+          writable: () => chainV3Writable(store?.view),
+          courier: linkCourier(link, account, undefined, hubShell()?.relays),
+          onCode: (code, expiresMs) => setState({ kind: "waiting", code, deadline: codeDeadline(Date.now(), expiresMs) }),
+          onStep: (step) => {
+            if (step === "key") setState((state) => (state.kind === "waiting" ? { kind: "key", code: state.code } : state));
+          },
+          signal: abort.signal,
+        });
+        setState({ kind: "done", machine: added.machine, via: added.result, first: before === 0 });
         // Its usage and copy from now on.
         me?.soon();
-        // The content keys of the devices that accept its control (S1-4), once
-        // its device role signs in — in the background: if it never does here,
-        // it asks for them itself.
-        void account.handHostKeys(machine.id).catch((error: unknown) => console.warn(`could not hand ${machine.id} the other devices' keys (it asks for them itself):`, error));
       } catch (err) {
         const hit = limitOf(err);
         if (hit) return setState({ kind: "limit", hit });

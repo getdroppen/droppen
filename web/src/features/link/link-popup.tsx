@@ -6,10 +6,12 @@ import { cn } from "@/lib/cn";
 import { base32, formatEnrollCode, fromHex, hex, sealLinkReturn, utf8 } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
 import { chainV3Writable } from "@/lib/hub/api";
+import { v3NotWritableError } from "@/lib/hub/account";
+import { freshLimit } from "@/lib/hub/me";
 import { linkCourier } from "@/lib/hub/deliver";
 import { addHost, type AddStep } from "./add-host";
 import type { HubLink } from "@/lib/hub/link";
-import { atLimit, HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
+import { HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
 import { hubShell } from "@/features/machines/shells";
 import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
 import { publicHref } from "@/features/landing/route";
@@ -354,22 +356,16 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
     let handed = false;
     try {
       if (me) {
-        try {
-          await me.refresh();
-        } catch {
-          // The hub checks too.
-        }
+        // The plan's limit, read just now (a failed read keeps the plan the page had: the hub checks too).
+        const hit = await freshLimit(me, HOSTS_KEY);
         // Cancelled meanwhile (the browser hand-off can be): nothing more.
         if (controller.signal.aborted) return;
-        const hit = atLimit(me.plan, HOSTS_KEY);
         if (hit) return setStep({ kind: "limit", hit });
       }
       // Read just now: on a v3 chain the hub must take v3 entries (it gates a new host) — said before any code is issued.
       const writable = chainV3Writable(me?.view);
-      if (account.chain?.isV3 && !writable) {
-        const waiting = me?.view?.chainV3?.waiting ?? [];
-        return fail(new Error(waiting.length ? t("Not available yet: update Droppen on {{hosts}} first.", { hosts: waiting.join(", ") }) : t("Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI.")));
-      }
+      const notWritable = v3NotWritableError(account.chain?.isV3, me?.view, true);
+      if (notWritable) return fail(notWritable);
       const added = await addHost(account, {
         keys: { signKey: fromHex(request.machine.signKey), dhKey: fromHex(request.machine.dhKey) },
         // Every local install runs AI: never a full device (review D1).

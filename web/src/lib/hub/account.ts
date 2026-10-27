@@ -157,7 +157,7 @@ import {
   verifyRotateConfirm,
   WrapError,
 } from "@/lib/e2e";
-import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, hubErrorKind, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
+import { type AccountView, chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, hubErrorKind, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
 import { hubOrigin } from "./config";
 import {
   ChannelUnavailable,
@@ -757,6 +757,24 @@ export interface RenewOptions {
  */
 export function hostAdminRefused(): AccountError {
   return new AccountError("invalidEntry", "a device that runs AI cannot be a full device (yet)", undefined, RULES.hostNotAdmin);
+}
+
+/**
+ * Why a new host cannot be added yet on a chain that holds a v3 entry: the
+ * hub does not take v3 entries now (`chain_v3.writable`). `null` when it does,
+ * or the chain is not v3. `namedWaiting`: name the devices that must update
+ * first (the browser hand-off's page does; the code screen says it plainly).
+ */
+export function v3NotWritableError(
+  chainV3: boolean | undefined,
+  view: Pick<AccountView, "chainV3"> | null | undefined,
+  namedWaiting = false,
+): AccountError | null {
+  if (!chainV3 || chainV3Writable(view)) return null;
+  const waiting = namedWaiting ? (view?.chainV3?.waiting ?? []) : [];
+  return waiting.length
+    ? new AccountError("notWritable", "Not available yet: update Droppen on {{hosts}} first.", undefined, undefined, { hosts: waiting.join(", ") })
+    : new AccountError("notWritable", "Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI.");
 }
 
 /** D1 extended: a device that ran AI (and stopped) is never a full device either (`RULES.ranAiNotAdmin`), as an error whose message is an i18n key. */
