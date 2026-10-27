@@ -8,11 +8,10 @@
          Android's soft keyboard shrink the layout viewport (so 100% height
          follows it). iOS has ignored the token so far: WebKit pans the visual
          viewport to the focused field instead, and lib/kb-native.ts leaves that
-         to it (lib/kb-inset.ts under ?kb=legacy). WebKit's own trunk turned the
-         token on for Apple platforms in Aug 2026 (319118@main). Where a release
-         ships it, the layout viewport, and with it the shell, should shrink
-         above the keyboard as on Android, and neither keyboard handling then
-         has anything to do. -->
+         to it. WebKit's own trunk turned the token on for Apple platforms in
+         Aug 2026 (319118@main). Where a release ships it, the layout viewport,
+         and with it the shell, should shrink above the keyboard as on Android,
+         and lib/kb-native.ts then has nothing to do. -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"

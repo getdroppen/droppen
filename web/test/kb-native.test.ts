@@ -1,10 +1,10 @@
-// The phone keyboard left to WebKit (`lib/kb-native.ts`, the default mode):
+// The phone keyboard left to WebKit (`lib/kb-native.ts`):
 // nothing is sized from the viewport, nothing scrolls the page while a field
 // has focus, and once no field has focus a root still panned by the keyboard
 // is put back at the top.
 //
 // A fake `visualViewport` and window stand in for the browser. The numbers are
-// the owner's iPhone in iOS 27 Chrome, as its readout logged them: a
+// the owner's iPhone in iOS 27 Chrome, measured on the phone: a
 // 711px fixed box, the keyboard raised to a 434px visual viewport, and WebKit's
 // reveal pan animated over several frames, with `innerHeight` shrinking along.
 import assert from "node:assert/strict";
@@ -14,7 +14,6 @@ import {
   holdInView,
   type NativeKbEnv,
   RESET_MS,
-  rootResets,
   startKbNative,
   WATCH_MS,
 } from "../src/lib/kb-native.js";
@@ -304,7 +303,6 @@ test("a page brought back from the background with a pan left over goes back to 
 
 test("desktop and Android: the root never scrolls, so nothing is ever written", () => {
   const page = fakePage();
-  const before = rootResets();
   startKbNative(page.env);
   page.focus(field("TEXTAREA"));
   // Android's keyboard shrinks the layout viewport itself: no pan.
@@ -316,7 +314,6 @@ test("desktop and Android: the root never scrolls, so nothing is ever written", 
   page.winEvents.fire("pageshow");
   page.advance(5000);
   assert.deepEqual(page.scrolls, []);
-  assert.equal(rootResets(), before);
 });
 
 test("the root is put back at the top when the page starts with a pan left over", () => {

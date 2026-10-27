@@ -1,6 +1,5 @@
 /**
- * The soft keyboard, left to the browser (`?kb=native`, the default; the
- * switch is `lib/kb-mode.ts`).
+ * The soft keyboard, left to the browser.
  *
  * The shell is pinned (`body { position: fixed; inset: 0 }`, index.css) and is
  * never resized for a keyboard here. Android shrinks the layout viewport for
@@ -15,9 +14,9 @@
  * keyboard is ever detected, and nothing scrolls the page while a field has
  * focus. The one field WebKit does not reveal is the terminal's (`holdInView`).
  *
- * Measuring the keyboard instead (`lib/kb-inset.ts`, `?kb=legacy`) is what
- * broke on iOS 27. That code took the keyboard to be the gap between
- * `innerHeight` (or the fixed box) and the visual viewport. While the page is
+ * Measuring the keyboard instead is what broke on iOS 27. That code took the
+ * keyboard to be the gap between `innerHeight` (or the fixed box) and the
+ * visual viewport. While the page is
  * panned, `innerHeight` follows the visual viewport down (iOS 26 too). Where
  * the pan lands in one step the gap never reads wrong. iOS 27 animates it over
  * several frames, and `innerHeight` shrinks along with it. So before the
@@ -47,8 +46,6 @@
  * read of `scrollY`.
  */
 
-import { isEditable } from "./kb-inset";
-
 /** A visual viewport scaled past this is pinch-zoomed: its pan is the reader's. */
 const ZOOM_SCALE = 1.05;
 /**
@@ -75,11 +72,10 @@ export interface NativeKbEnv {
   focused: () => Element | null;
 }
 
-let resets = 0;
-
-/** How many times this page has put the root back at the top (`lib/vv-debug.ts` shows it). */
-export function rootResets(): number {
-  return resets;
+/** A field that brings up the soft keyboard (or might: an `<input>` of any type). */
+function isEditable(el: Element): el is HTMLElement {
+  const h = el as HTMLElement;
+  return h.tagName === "TEXTAREA" || h.tagName === "INPUT" || h.tagName === "SELECT" || h.isContentEditable === true;
 }
 
 function browserEnv(): NativeKbEnv {
@@ -120,7 +116,6 @@ export function startKbNative(env: NativeKbEnv = browserEnv()): () => void {
       return;
     }
     win.scrollTo(0, 0);
-    resets += 1;
   };
 
   // Each call starts the checks over, so a run of events (the keyboard's

@@ -7,12 +7,10 @@ import { Markdown, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { autoGrowTextarea, useEnterSendsModifier } from "@/features/sessions/composer-controls";
-import { holdBottomEdge } from "@/features/sessions/transcript-scroll";
 import { takePendingMessage } from "@/features/chat/pending-message";
 import { authHeader, noteUnauthorized } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { isImeKeydown } from "@/lib/ime";
-import { onKeyboardResize } from "@/lib/kb-inset";
 import { useApi, useMachine } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
@@ -135,20 +133,6 @@ export function ApiChatViewInner({ id }: { id: string }) {
     const el = scrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [chat, streaming, pendingUser]);
-
-  // The phone keyboard resizing the shell (`lib/kb-inset.ts`) shortens this
-  // box from below: its bottom edge holds, so the newest message stays just
-  // above the composer rather than under it.
-  useEffect(
-    () =>
-      onKeyboardResize(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        const settle = holdBottomEdge(el, stickToBottom.current);
-        return () => void settle();
-      }),
-    [],
-  );
 
   const submit = () => {
     const message = text.trim();

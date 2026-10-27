@@ -43,7 +43,7 @@ export function isAtBottom(box: ScrollBox, slack = BOTTOM_SLACK_PX): boolean {
 /**
  * Where `scrollTop` goes so the view's bottom edge is `gap` px above the end of
  * the rows again, after the box changed height under it — the phone keyboard
- * opening or closing (`lib/kb-inset.ts`). The bottom edge is the one that
+ * opening or closing. The bottom edge is the one that
  * holds, as in a phone's own messaging apps: `0` keeps a pinned view on the
  * newest row, and a reader partway up keeps the lines just above the composer.
  */

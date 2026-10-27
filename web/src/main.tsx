@@ -25,10 +25,7 @@ import { startBadgeSync } from "./lib/badge";
 // Side-effect import: the module's `beforeinstallprompt` listener has to be in
 // place before the browser fires it, which happens well before React mounts.
 import "./lib/install";
-import { startKbWatch } from "./lib/kb-inset";
-import { kbMode } from "./lib/kb-mode";
 import { startKbNative } from "./lib/kb-native";
-import { startVvDebug } from "./lib/vv-debug";
 import { startLocalOpen } from "./lib/auth";
 import { startLocalShell } from "./lib/machines/shells/local";
 import { registerSw } from "./lib/sw-register";
@@ -41,12 +38,8 @@ const queryClient = new QueryClient({
   },
 });
 
-// The phone keyboard: left to WebKit's own reveal of the focused field, or
-// (`?kb=legacy`) measured and the shell sized above it (`lib/kb-mode.ts`).
-if (kbMode() === "legacy") startKbWatch();
-else startKbNative();
-// Off unless asked for (`?vvdebug=1`): the keyboard's numbers, live on the phone.
-startVvDebug();
+// The phone keyboard: left to WebKit's own reveal of the focused field.
+startKbNative();
 startBadgeSync();
 
 // Served by a remote-hand hub (cloud mode), the app runs behind the hub's

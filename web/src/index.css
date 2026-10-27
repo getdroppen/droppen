@@ -240,30 +240,17 @@ body {
 
 /* The soft keyboard on iOS: WebKit draws it over a layout viewport it never
    shrinks, so `inset: 0` would leave the bottom of the shell — the composer —
-   under it. By default WebKit's own pan to the focused field brings the
-   composer above it (lib/kb-native.ts). Under ?kb=legacy, while it is up,
-   lib/kb-inset.ts pins the shell to the visual viewport instead (the part of
-   the page above the keyboard), and only then is the class set. Android shrinks
-   the layout viewport itself (interactive-widget=resizes-content) and desktop
-   has no keyboard to cover anything: neither ever gets the class. */
-html.kb-open body {
-  top: var(--app-top, 0px);
-  bottom: auto;
-  height: var(--app-height, 100%);
-}
+   under it. WebKit's own pan to the focused field brings the composer above it
+   (lib/kb-native.ts); the shell is never resized for a keyboard. Android
+   shrinks the layout viewport itself (interactive-widget=resizes-content) and
+   desktop has no keyboard to cover anything.
 
-/* The bottom-most chrome (mobile nav bar, session composer) pads itself out of
-   the home-indicator strip that viewport-fit=cover let it slide under. While
-   the soft keyboard is up that strip is covered by the keyboard, so the padding
-   is dead space — under ?kb=legacy, lib/kb-inset.ts sets html.kb-open and it
-   collapses. By default it stays: WebKit's pan ends at the shell's foot, so the
-   strip sits between the composer and the keyboard. */
+   The bottom-most chrome (mobile nav bar, session composer) pads itself out of
+   the home-indicator strip that viewport-fit=cover let it slide under. That
+   padding stays while the keyboard is up: WebKit's pan ends at the shell's
+   foot, so the strip sits between the composer and the keyboard. */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-html.kb-open .pb-safe {
-  padding-bottom: 0;
 }
 
 * {

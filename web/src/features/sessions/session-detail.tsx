@@ -67,7 +67,6 @@ import {
   type FeedState,
 } from "@/features/sessions/session-feed-pool";
 import {
-  holdBottomEdge,
   NO_UNREAD,
   pinAfterScroll,
   pinOnSettle,
@@ -189,7 +188,6 @@ import { sessionKey, type MachineKey, type SessionRef } from "@/lib/machines/key
 import { machineStorageKey, readMachineItem } from "@/lib/machines/storage";
 import { mq } from "@/lib/machines/query";
 import { apiFor, perMachine, transportFor } from "@/lib/machines/registry";
-import { onKeyboardResize } from "@/lib/kb-inset";
 import { useTicker } from "@/lib/ticker";
 import { noteWsFailure } from "@/lib/ws-url";
 
@@ -2606,28 +2604,6 @@ export function SessionDetailInner({
     observer.observe(rows);
     return () => observer.disconnect();
   }, [hasFeed, publishPin]);
-
-  /**
-   * The phone keyboard opening or closing resizes the whole shell
-   * (`lib/kb-inset.ts`), and with it this box, from below. The observer above
-   * would re-stick a pinned view, but a reader partway up would see the lines
-   * they were reading slide under the composer. So the bottom edge holds: the
-   * gap to the end of the rows is measured before the resize and put back
-   * after it (`holdBottomEdge`), a pinned view's gap being none.
-   */
-  useEffect(
-    () =>
-      onKeyboardResize(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        const settle = holdBottomEdge(el, stickToBottom.current);
-        return () => {
-          lastScrollTop.current = settle();
-          publishPin(stickToBottom.current, boxOf(el));
-        };
-      }),
-    [publishPin],
-  );
 
   useLayoutEffect(() => {
     const el = scrollRef.current;

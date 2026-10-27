@@ -101,10 +101,6 @@ export const DEVICE_KEYS = [
   "rh.files.showHidden",
   // The download page's tab chosen in this browser tab (sessionStorage).
   "rh.download.os",
-  // The keyboard readout on this phone (`lib/vv-debug.ts`).
-  "rh.vvdebug",
-  // The keyboard handling picked on this phone (`lib/kb-mode.ts`).
-  "rh.kb",
   // Not storage: the names of a machine's index and status streams.
   "rh.index",
   "rh.status",
