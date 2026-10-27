@@ -31,11 +31,7 @@ pub const MAX_PEERS: usize = 16;
 
 /// Whether direct paths are on for this instance (`DROPPEN_AGENT_DIRECT=0` turns them off).
 pub fn enabled() -> bool {
-    enabled_from(crate::env::var("DROPPEN_AGENT_DIRECT").as_deref())
-}
-
-fn enabled_from(value: Option<&str>) -> bool {
-    !matches!(value.map(str::trim), Some("0" | "false" | "off" | "no"))
+    crate::env::flag_or("DROPPEN_AGENT_DIRECT", true)
 }
 
 /// The peers' options: default-route host candidates and STUN.
@@ -87,12 +83,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_switch_and_the_stun_list_parse() {
-        assert!(enabled_from(None));
-        assert!(enabled_from(Some("1")));
-        for off in ["0", "false", "off", " no "] {
-            assert!(!enabled_from(Some(off)), "{off}");
-        }
+    fn the_stun_list_parses() {
         assert_eq!(stun_from(None), DEFAULT_STUN.map(String::from).to_vec());
         assert!(stun_from(Some("")).is_empty(), "empty: host candidates only");
         assert_eq!(stun_from(Some("stun.example:3478, junk ,")), ["stun.example:3478"]);

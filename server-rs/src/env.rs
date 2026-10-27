@@ -182,10 +182,21 @@ pub fn var_or_empty(name: &str) -> Option<String> {
 /// or `on` (any case), and off for everything else — `0`, `false`, any other
 /// word, an empty value and an unset one alike. Being set is not being on.
 pub fn flag(name: &str) -> bool {
-    matches!(
-        var(name).map(|value| value.to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
+    var(name).is_some_and(|value| truthy(&value))
+}
+
+/// [`flag`] for a switch that is on unless it is explicitly turned off.
+///
+/// `default` answers only when the variable is unset (or empty); a value that
+/// is set but is not one of the on spellings is off, whichever way the default
+/// leans. Being set is not being on.
+pub fn flag_or(name: &str, default: bool) -> bool {
+    var(name).map_or(default, |value| truthy(&value))
+}
+
+/// The on spellings, shared by [`flag`] and [`flag_or`].
+fn truthy(value: &str) -> bool {
+    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
 }
 
 /// What an empty value is.
@@ -286,6 +297,35 @@ mod tests {
         lookup(name, empty, |n| vars.get(n).map(|v| v.to_string()))
     }
 
+    /// The spellings both switch readers use. Each caller used to carry its own
+    /// copy of this table; they all go through [`truthy`] now.
+    #[test]
+    fn a_switch_is_on_only_for_an_explicit_yes() {
+        const NAME: &str = "DROPPEN_TEST_FLAG";
+        std::env::remove_var(NAME);
+        assert!(!flag(NAME), "unset is off");
+        assert!(flag_or(NAME, true), "unset takes the caller's default");
+        assert!(!flag_or(NAME, false));
+        for value in ["1", "true", "TRUE", " yes ", "on", "On"] {
+            std::env::set_var(NAME, value);
+            assert!(flag(NAME), "{value:?} is on");
+            assert!(flag_or(NAME, false), "{value:?} is on whichever way the default leans");
+        }
+        for value in ["0", "false", "FALSE", "off", "no", "enabled"] {
+            std::env::set_var(NAME, value);
+            assert!(!flag(NAME), "{value:?} is off");
+            assert!(!flag_or(NAME, true), "{value:?} is off whichever way the default leans");
+        }
+        // An empty value is unset, so it takes each reader's default.
+        std::env::set_var(NAME, "");
+        assert!(!flag(NAME));
+        assert!(flag_or(NAME, true));
+        assert!(!flag_or(NAME, false));
+        std::env::remove_var(NAME);
+        assert!(!flag(NAME), "unset again is off");
+        assert!(flag_or(NAME, true), "unset again takes the default");
+    }
+
     #[test]
     fn every_new_name_is_its_old_name_under_droppen() {
         let mut seen = BTreeSet::new();
@@ -378,23 +418,6 @@ mod tests {
             (Some(String::new()), Some(OldName::Overridden("RH_AGENT_DIRECT_STUN")))
         );
         assert_eq!(lookup_with(&[], stun, Empty::Set), (None, None));
-    }
-
-    #[test]
-    fn a_switch_is_on_only_for_an_explicit_yes() {
-        const NAME: &str = "DROPPEN_TEST_FLAG";
-        std::env::remove_var(NAME);
-        assert!(!flag(NAME), "unset is off");
-        for value in ["1", "true", "TRUE", " yes ", "on", "On"] {
-            std::env::set_var(NAME, value);
-            assert!(flag(NAME), "{value:?} is on");
-        }
-        for value in ["", "0", "false", "FALSE", "off", "no", "enabled"] {
-            std::env::set_var(NAME, value);
-            assert!(!flag(NAME), "{value:?} is off");
-        }
-        std::env::remove_var(NAME);
-        assert!(!flag(NAME), "unset again is off");
     }
 
     #[test]

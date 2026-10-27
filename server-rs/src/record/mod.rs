@@ -365,7 +365,7 @@ pub struct Recorders {
 impl Recorders {
     /// Read the configuration and name the directory recordings live in.
     pub fn new(paths: Arc<Paths>, instance: &InstanceDirs) -> Self {
-        let on = crate::env::var("DROPPEN_SESSION_LOG").is_none_or(|raw| raw != "0");
+        let on = crate::env::flag_or("DROPPEN_SESSION_LOG", true);
         let max_mb = crate::env::var("DROPPEN_SESSION_LOG_MAX_MB")
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_MAX_MB);

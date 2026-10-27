@@ -78,7 +78,7 @@ const MAX_ORIGIN: usize = 256;
 
 /// Whether this instance attaches to relays (`DROPPEN_AGENT_RELAYS=0` turns it off).
 pub fn enabled() -> bool {
-    !matches!(crate::env::var("DROPPEN_AGENT_RELAYS").as_deref(), Some("0" | "false" | "off" | "no"))
+    crate::env::flag_or("DROPPEN_AGENT_RELAYS", true)
 }
 
 /// Whether relays on loopback may be used, `ws://` among them

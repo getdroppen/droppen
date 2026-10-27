@@ -53,7 +53,7 @@ pub fn with_lock<T>(f: impl FnOnce() -> T) -> T {
 
 /// Whether the controller may run at all (`DROPPEN_AGENT_CONTROL=0` turns it off).
 pub fn enabled() -> bool {
-    crate::env::var("DROPPEN_AGENT_CONTROL").as_deref() != Some("0")
+    crate::env::flag_or("DROPPEN_AGENT_CONTROL", true)
 }
 
 /// Whether the owner wants this computer to control other devices, by

@@ -240,7 +240,7 @@ const CONTROL_STOP: Duration = Duration::from_millis(200);
 
 /// Whether the link may run at all (`DROPPEN_AGENT_LINK=0` turns it off).
 pub fn enabled() -> bool {
-    crate::env::var("DROPPEN_AGENT_LINK").as_deref() != Some("0")
+    crate::env::flag_or("DROPPEN_AGENT_LINK", true)
 }
 
 /// Start the link for this instance's saved agent state (an enrollment in

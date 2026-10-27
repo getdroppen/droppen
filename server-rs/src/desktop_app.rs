@@ -25,29 +25,10 @@
 pub const ENV: &str = "DROPPEN_DESKTOP_APP";
 
 /// Whether this process was started by the desktop app.
+///
+/// The spellings are [`crate::env::flag`]'s, like every other switch: `1`,
+/// `true`, `yes`, `on` (any case) turn it on, and nothing else does. The table
+/// these used to be pinned against now lives with the parser.
 pub fn from_env() -> bool {
-    enabled(crate::env::var(ENV).as_deref())
-}
-
-/// The switch's spellings: `1`, `true`, `yes`, `on` (any case) turn it on.
-pub fn enabled(value: Option<&str>) -> bool {
-    matches!(
-        value.map(|value| value.trim().to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_an_explicit_yes_turns_it_on() {
-        for on in ["1", "true", "TRUE", " yes ", "on"] {
-            assert!(enabled(Some(on)), "{on:?}");
-        }
-        for off in [None, Some(""), Some("0"), Some("false"), Some("off"), Some("desktop")] {
-            assert!(!enabled(off), "{off:?}");
-        }
-    }
+    crate::env::flag(ENV)
 }
