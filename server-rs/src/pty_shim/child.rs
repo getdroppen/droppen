@@ -199,7 +199,7 @@ impl Shim {
     /// it in full. A `vt100` parse that panicked inside [`read_pty`] *while it
     /// held this lock* would poison it: from then on every one of the five
     /// places that take it would panic in turn, the worst being the `HELLO` arm
-    /// of [`mix`], which takes it one line before it writes the reply — so
+    /// of [`Shim::mix`], which takes it one line before it writes the reply — so
     /// every client that dialled would have its task killed before a single
     /// byte went out, and nothing would get past the handshake, while the
     /// socket kept accepting connections the shim never answered.
@@ -387,7 +387,7 @@ pub async fn run(args: Args) -> Result<(), String> {
     // 2. Then, once the reader has recorded the shell's last output, the
     //    status a late client is told at hello and the exit every attached
     //    one is told through its mixer. See [`announce_exit`].
-    announce_exit(&shim, &mut reader, code, DRAIN_GRACE).await;
+    shim.announce_exit(&mut reader, code, DRAIN_GRACE).await;
 
     // 3. The reader is the one thread that can outlive the shell: it sits in
     //    `poll(2)` on a master a grandchild may still hold open. It has had its
@@ -413,33 +413,37 @@ pub async fn run(args: Args) -> Result<(), String> {
     Ok(())
 }
 
-/// Tell every client the shell exited, but only after the reader has recorded
-/// the last of what it wrote — or `grace` has passed.
-///
-/// The shell's status and its last output reach the shim by two roads that do
-/// not wait for each other: `waitpid` on one thread, `read(2)` on the master on
-/// another. A CLI that prints and exits at once — `claude setup-token` printing
-/// its token is exactly that — can have its status in hand, on a busy machine,
-/// while the reader has not yet read the final write. Announcing then sent every client the exit
-/// frame with the token still in the pty buffer, and since a mixer stops at the
-/// exit frame, the token never went out at all: the wizard saw a CLI that exited
-/// without printing one.
-///
-/// So the reader is waited for first. It ends at EOF, which a pty master only
-/// reaches once its buffer is drained and every slave handle is closed, so
-/// everything the shell wrote is in the recorder by then and the mixer's last
-/// pump carries it ahead of the exit frame. `grace` bounds the wait for the case
-/// EOF never comes, a backgrounded grandchild still holding the tty.
-///
-/// The exit code is published after the wait too, not before: a client that
-/// says hello during it would otherwise be handed the backlog so far and the
-/// exit straight after, short of the same final write.
-async fn announce_exit(shim: &Shim, reader: &mut Reader, code: i32, grace: Duration) {
-    // A reader that already ended has dropped its report sender, so this
-    // returns at once whether or not `keep_serving` took the report.
-    let _ = tokio::time::timeout(grace, reader.ended.recv()).await;
-    shim.exit_code.store(i64::from(code), Ordering::SeqCst);
-    shim.broadcast(|| Command::Exit(code));
+impl Shim {
+    /// Tell every client the shell exited, but only after the reader has
+    /// recorded the last of what it wrote — or `grace` has passed.
+    ///
+    /// The shell's status and its last output reach the shim by two roads that
+    /// do not wait for each other: `waitpid` on one thread, `read(2)` on the
+    /// master on another. A CLI that prints and exits at once — `claude
+    /// setup-token` printing its token is exactly that — can have its status in
+    /// hand, on a busy machine, while the reader has not yet read the final
+    /// write. Announcing then sent every client the exit frame with the token
+    /// still in the pty buffer, and since a mixer stops at the exit frame, the
+    /// token never went out at all: the wizard saw a CLI that exited without
+    /// printing one.
+    ///
+    /// So the reader is waited for first. It ends at EOF, which a pty master
+    /// only reaches once its buffer is drained and every slave handle is
+    /// closed, so everything the shell wrote is in the recorder by then and the
+    /// mixer's last pump carries it ahead of the exit frame. `grace` bounds the
+    /// wait for the case EOF never comes, a backgrounded grandchild still
+    /// holding the tty.
+    ///
+    /// The exit code is published after the wait too, not before: a client
+    /// that says hello during it would otherwise be handed the backlog so far
+    /// and the exit straight after, short of the same final write.
+    async fn announce_exit(&self, reader: &mut Reader, code: i32, grace: Duration) {
+        // A reader that already ended has dropped its report sender, so this
+        // returns at once whether or not `keep_serving` took the report.
+        let _ = tokio::time::timeout(grace, reader.ended.recv()).await;
+        self.exit_code.store(i64::from(code), Ordering::SeqCst);
+        self.broadcast(|| Command::Exit(code));
+    }
 }
 
 /// Which of the things the shim waits on happened first.
@@ -650,148 +654,163 @@ fn serve_client(stream: UnixStream, shim: Arc<Shim>) {
         live.fetch_sub(1, Ordering::SeqCst);
     });
 
-    tokio::spawn(mix(shim, command_rx, frames));
+    tokio::spawn(shim.mix(command_rx, frames));
 }
 
-/// One client's state machine: the only place its cursor is read or written.
-///
-/// Keeping the cursor here — rather than in a separate output pump — is what
-/// makes the reattach sequence honest. A snapshot and the output it already
-/// reflects are taken under one lock, output first, so the client can never be
-/// shown a repaint and then the bytes that repaint already contained.
-async fn mix(shim: Arc<Shim>, mut commands: mpsc::UnboundedReceiver<Command>, out: mpsc::UnboundedSender<Option<Frame>>) {
-    let mut total = shim.total.subscribe();
-    let mut cursor = 0u64;
-    let mut attached = false;
+impl Shim {
+    /// One client's state machine: the only place its cursor is read or
+    /// written.
+    ///
+    /// Keeping the cursor here — rather than in a separate output pump — is
+    /// what makes the reattach sequence honest. A snapshot and the output it
+    /// already reflects are taken under one lock, output first, so the client
+    /// can never be shown a repaint and then the bytes that repaint already
+    /// contained.
+    async fn mix(self: Arc<Self>, mut commands: mpsc::UnboundedReceiver<Command>, out: mpsc::UnboundedSender<Option<Frame>>) {
+        let mut total = self.total.subscribe();
+        let mut cursor = 0u64;
+        let mut attached = false;
 
-    loop {
-        tokio::select! {
-            command = commands.recv() => match command {
-                Some(Command::Frame(frame)) => match frame.kind {
-                    proto::HELLO => {
-                        let Some(hello) = frame.parse::<Hello>() else { continue };
-                        let (resume, gap, live) = {
-                            let recorder = shim.recorder();
-                            let ring = recorder.ring();
-                            let (resume, gap) = ring.resume_at(hello.cursor);
-                            (resume, gap, ring.total())
-                        };
-                        if out.send(Some(Frame::json(proto::HELLO, &Hello2 { shell_pid: shim.shell_pid, total: live }))).is_err() {
-                            return;
-                        }
-                        // The gap goes out before the first byte of output, so
-                        // the client can render it in the right place.
-                        if let Some(gap) = gap {
-                            if out.send(Some(Frame::json(proto::GAP, &gap))).is_err() {
+        loop {
+            tokio::select! {
+                command = commands.recv() => match command {
+                    Some(Command::Frame(frame)) => match frame.kind {
+                        proto::HELLO => {
+                            let Some(hello) = frame.parse::<Hello>() else { continue };
+                            let (resume, gap, live) = {
+                                let recorder = self.recorder();
+                                let ring = recorder.ring();
+                                let (resume, gap) = ring.resume_at(hello.cursor);
+                                (resume, gap, ring.total())
+                            };
+                            if out.send(Some(Frame::json(proto::HELLO, &Hello2 { shell_pid: self.shell_pid, total: live }))).is_err() {
+                                return;
+                            }
+                            // The gap goes out before the first byte of output, so
+                            // the client can render it in the right place.
+                            if let Some(gap) = gap {
+                                if out.send(Some(Frame::json(proto::GAP, &gap))).is_err() {
+                                    return;
+                                }
+                            }
+                            cursor = resume;
+                            attached = true;
+                            if !self.pump(&mut cursor, &out) {
+                                return;
+                            }
+                            // A client that arrived after the shell died gets the
+                            // backlog and then the news, in that order.
+                            let code = self.exit_code.load(Ordering::SeqCst);
+                            if code != NOT_EXITED {
+                                let _ = out.send(Some(Frame::json(proto::EXIT, &Exit { code: code as i32 })));
+                                let _ = out.send(None);
                                 return;
                             }
                         }
-                        cursor = resume;
-                        attached = true;
-                        if !pump(&shim, &mut cursor, &out) {
+                        proto::INPUT => {
+                            let _ = self.input.send(frame.payload);
+                        }
+                        proto::RESIZE => {
+                            let Some(size) = frame.parse::<Resize>() else { continue };
+                            self.resize(size);
+                        }
+                        proto::SNAPSHOT => {
+                            // Output first, then the repaint, both from one lock.
+                            let (pending, snapshot, live) = {
+                                let recorder = self.recorder();
+                                (recorder.ring().read_from(cursor), recorder.snapshot(), recorder.ring().total())
+                            };
+                            if !out.send_output(pending) {
+                                return;
+                            }
+                            cursor = live;
+                            if !out.send_snapshot(&snapshot) {
+                                return;
+                            }
+                        }
+                        proto::KILL => terminate_shell(self.shell_pid),
+                        _ => {}
+                    },
+                    Some(Command::Exit(code)) => {
+                        // A client that has not said hello is owed a hello first,
+                        // and the server's handshake reads nothing else: the exit
+                        // frame in its place fails the handshake, the client hangs
+                        // up, and a shim whose only client has come and gone
+                        // unlinks its socket at once, so every retry finds none.
+                        // That is how a shell that exits as it starts (`true`,
+                        // `echo hi`) lost its terminal to a server that dialled in
+                        // the same instant. Nothing is lost by waiting: the exit
+                        // code was published before this was broadcast, so the
+                        // hello that follows is answered with the backlog and then
+                        // the exit (see the `HELLO` arm).
+                        if !attached {
+                            continue;
+                        }
+                        if !self.pump(&mut cursor, &out) {
                             return;
                         }
-                        // A client that arrived after the shell died gets the
-                        // backlog and then the news, in that order.
-                        let code = shim.exit_code.load(Ordering::SeqCst);
-                        if code != NOT_EXITED {
-                            let _ = out.send(Some(Frame::json(proto::EXIT, &Exit { code: code as i32 })));
-                            let _ = out.send(None);
-                            return;
-                        }
-                    }
-                    proto::INPUT => {
-                        let _ = shim.input.send(frame.payload);
-                    }
-                    proto::RESIZE => {
-                        let Some(size) = frame.parse::<Resize>() else { continue };
-                        resize(&shim, size);
-                    }
-                    proto::SNAPSHOT => {
-                        // Output first, then the repaint, both from one lock.
-                        let (pending, snapshot, live) = {
-                            let recorder = shim.recorder();
-                            (recorder.ring().read_from(cursor), recorder.snapshot(), recorder.ring().total())
-                        };
-                        if !send_output(&out, pending) {
-                            return;
-                        }
-                        cursor = live;
-                        if !send_snapshot(&out, &snapshot) {
-                            return;
-                        }
-                    }
-                    proto::KILL => terminate_shell(shim.shell_pid),
-                    _ => {}
-                },
-                Some(Command::Exit(code)) => {
-                    // A client that has not said hello is owed a hello first,
-                    // and the server's handshake reads nothing else: the exit
-                    // frame in its place fails the handshake, the client hangs
-                    // up, and a shim whose only client has come and gone
-                    // unlinks its socket at once, so every retry finds none.
-                    // That is how a shell that exits as it starts (`true`,
-                    // `echo hi`) lost its terminal to a server that dialled in
-                    // the same instant. Nothing is lost by waiting: the exit
-                    // code was published before this was broadcast, so the
-                    // hello that follows is answered with the backlog and then
-                    // the exit (see the `HELLO` arm).
-                    if !attached {
-                        continue;
-                    }
-                    if !pump(&shim, &mut cursor, &out) {
+                        let _ = out.send(Some(Frame::json(proto::EXIT, &Exit { code })));
+                        let _ = out.send(None);
                         return;
                     }
-                    let _ = out.send(Some(Frame::json(proto::EXIT, &Exit { code })));
-                    let _ = out.send(None);
-                    return;
-                }
-                None => return,
-            },
-            changed = total.changed() => {
-                if changed.is_err() {
-                    return;
-                }
-                if attached && !pump(&shim, &mut cursor, &out) {
-                    return;
+                    None => return,
+                },
+                changed = total.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    if attached && !self.pump(&mut cursor, &out) {
+                        return;
+                    }
                 }
             }
         }
     }
 }
 
-/// Send everything the client has not seen. `false` means the client is gone.
-fn pump(shim: &Shim, cursor: &mut u64, out: &mpsc::UnboundedSender<Option<Frame>>) -> bool {
-    let (pending, live) = {
-        let recorder = shim.recorder();
-        (recorder.ring().read_from(*cursor), recorder.ring().total())
-    };
-    *cursor = live;
-    send_output(out, pending)
+impl Shim {
+    /// Send everything the client has not seen. `false` means the client is gone.
+    fn pump(&self, cursor: &mut u64, out: &mpsc::UnboundedSender<Option<Frame>>) -> bool {
+        let (pending, live) = {
+            let recorder = self.recorder();
+            (recorder.ring().read_from(*cursor), recorder.ring().total())
+        };
+        *cursor = live;
+        out.send_output(pending)
+    }
 }
 
-/// Frame output, chunked so one enormous backlog is not one enormous allocation
-/// on the far side.
-fn send_output(out: &mpsc::UnboundedSender<Option<Frame>>, bytes: Vec<u8>) -> bool {
-    if bytes.is_empty() {
-        return true;
-    }
-    for chunk in bytes.chunks(MAX_OUTPUT_FRAME) {
-        if out.send(Some(Frame::raw(proto::OUTPUT, chunk.to_vec()))).is_err() {
-            return false;
-        }
-    }
-    true
+/// Sending frames to one client.
+trait FrameSink {
+    /// Frame output, chunked so one enormous backlog is not one enormous
+    /// allocation on the far side.
+    fn send_output(&self, bytes: Vec<u8>) -> bool;
+
+    /// Send a repaint, split if it has to be. `false` means the client is gone.
+    fn send_snapshot(&self, snapshot: &[u8]) -> bool;
 }
 
-/// Send a repaint, split if it has to be. `false` means the client is gone.
-fn send_snapshot(out: &mpsc::UnboundedSender<Option<Frame>>, snapshot: &[u8]) -> bool {
-    for frame in snapshot_frames(snapshot, MAX_SNAPSHOT_FRAME) {
-        if out.send(Some(frame)).is_err() {
-            return false;
+impl FrameSink for mpsc::UnboundedSender<Option<Frame>> {
+    fn send_output(&self, bytes: Vec<u8>) -> bool {
+        if bytes.is_empty() {
+            return true;
         }
+        for chunk in bytes.chunks(MAX_OUTPUT_FRAME) {
+            if self.send(Some(Frame::raw(proto::OUTPUT, chunk.to_vec()))).is_err() {
+                return false;
+            }
+        }
+        true
     }
-    true
+
+    fn send_snapshot(&self, snapshot: &[u8]) -> bool {
+        for frame in snapshot_frames(snapshot, MAX_SNAPSHOT_FRAME) {
+            if self.send(Some(frame)).is_err() {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Split a repaint into frames of at most `limit` bytes, never cutting through
@@ -828,28 +847,30 @@ fn snapshot_frames(snapshot: &[u8], limit: usize) -> Vec<Frame> {
     frames
 }
 
-/// Resize the pty and the parser that models it.
-fn resize(shim: &Shim, size: Resize) {
-    if size.cols == 0 || size.rows == 0 || size.cols >= 1000 || size.rows >= 1000 {
-        return;
-    }
-    {
-        // Same reasoning as the two locks above. A poisoned master costs a
-        // resize, and a resize must never be the thing that takes a terminal
-        // down.
-        let master = shim.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _ = master.resize(PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
-    }
-    if shim.recorder().resize(size.rows, size.cols) == Parsed::Reset {
-        // The same fault as in [`read_pty`], reached through the other door: a
-        // resize is the only other thing that reaches into the parser.
-        tracing::error!(?size, "pty-shim: the screen model was rebuilt after a resize that panicked");
-        shim.faults.note("the screen model was rebuilt after a resize that panicked");
+impl Shim {
+    /// Resize the pty and the parser that models it.
+    fn resize(&self, size: Resize) {
+        if size.cols == 0 || size.rows == 0 || size.cols >= 1000 || size.rows >= 1000 {
+            return;
+        }
+        {
+            // Same reasoning as the two locks above. A poisoned master costs a
+            // resize, and a resize must never be the thing that takes a
+            // terminal down.
+            let master = self.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _ = master.resize(PtySize {
+                rows: size.rows,
+                cols: size.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
+        }
+        if self.recorder().resize(size.rows, size.cols) == Parsed::Reset {
+            // The same fault as in [`read_pty`], reached through the other door:
+            // a resize is the only other thing that reaches into the parser.
+            tracing::error!(?size, "pty-shim: the screen model was rebuilt after a resize that panicked");
+            self.faults.note("the screen model was rebuilt after a resize that panicked");
+        }
     }
 }
 
@@ -1485,7 +1506,7 @@ mod tests {
     }
 
     /// A shim with a pty and no shell under it: enough for the parts of
-    /// [`mix`] that only need a recorder and one client.
+    /// [`Shim::mix`] that only need a recorder and one client.
     fn test_shim(dir: &Path) -> Arc<Shim> {
         let PtyPair { master, slave } = native_pty_system()
             .openpty(PtySize {
@@ -1535,7 +1556,7 @@ mod tests {
 
         let (commands, command_rx) = mpsc::unbounded_channel::<Command>();
         let (frames, mut frame_rx) = mpsc::unbounded_channel::<Option<Frame>>();
-        tokio::spawn(mix(shim.clone(), command_rx, frames));
+        tokio::spawn(shim.clone().mix(command_rx, frames));
         commands
             .send(Command::Frame(Frame::json(proto::HELLO, &Hello { cursor: 0 })))
             .expect("the mixer is listening");
@@ -1561,7 +1582,7 @@ mod tests {
         let (frames, mut frame_rx) = mpsc::unbounded_channel::<Option<Frame>>();
         // Registered the way `serve_client` registers it, so a broadcast reaches it.
         shim.clients.lock().expect("clients").push(commands.clone());
-        tokio::spawn(mix(shim.clone(), command_rx, frames));
+        tokio::spawn(shim.clone().mix(command_rx, frames));
         commands
             .send(Command::Frame(Frame::json(proto::HELLO, &Hello { cursor: 0 })))
             .expect("the mixer is listening");
@@ -1611,7 +1632,7 @@ mod tests {
         let announcing = tokio::spawn({
             let shim = shim.clone();
             async move {
-                announce_exit(&shim, &mut reader, 0, Duration::from_secs(30)).await;
+                shim.announce_exit(&mut reader, 0, Duration::from_secs(30)).await;
                 reader
             }
         });
@@ -1648,10 +1669,10 @@ mod tests {
         // been read, so the announcement reaches it first.
         shim.clients.lock().expect("clients").push(commands.clone());
         let mut reader = parked_reader();
-        announce_exit(&shim, &mut reader, 7, Duration::from_millis(20)).await;
+        shim.announce_exit(&mut reader, 7, Duration::from_millis(20)).await;
         tokio::task::spawn_blocking(move || reader.stop()).await.expect("the reader stops");
 
-        tokio::spawn(mix(shim.clone(), command_rx, frames));
+        tokio::spawn(shim.clone().mix(command_rx, frames));
         commands
             .send(Command::Frame(Frame::json(proto::HELLO, &Hello { cursor: 0 })))
             .expect("the mixer is listening");
@@ -1673,7 +1694,7 @@ mod tests {
         let mut frame_rx = attached_client(&shim).await;
         let mut reader = parked_reader();
 
-        announce_exit(&shim, &mut reader, 3, Duration::from_millis(20)).await;
+        shim.announce_exit(&mut reader, 3, Duration::from_millis(20)).await;
         let frames = until_half_closed(&mut frame_rx).await;
         tokio::task::spawn_blocking(move || reader.stop()).await.expect("the reader stops");
 

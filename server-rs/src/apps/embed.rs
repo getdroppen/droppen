@@ -126,7 +126,7 @@ where
         };
         let apps = self.apps.clone();
         let client = self.client.clone();
-        Box::pin(async move { Ok(proxy(&apps, &client, request, &id, &path).await) })
+        Box::pin(async move { Ok(apps.proxy(&client, request, &id, &path).await) })
     }
 }
 
@@ -144,51 +144,61 @@ fn split(target: &str) -> Option<(&str, &str)> {
     Some((id, if path.is_empty() { "/" } else { path }))
 }
 
-/// Forward one request to the app `id` names.
-async fn proxy(apps: &Registry, client: &HttpClient, request: Request<Body>, id: &str, path: &str) -> Response<Body> {
-    let Some(port) = apps.port(id) else {
-        return text(StatusCode::NOT_FOUND, NOT_FOUND);
-    };
-    if is_upgrade(request.headers()) {
-        websocket(request, port, path).await
-    } else {
-        http(client, request, port, path).await
+impl Registry {
+    /// Forward one request to the app `id` names.
+    async fn proxy(&self, client: &HttpClient, request: Request<Body>, id: &str, path: &str) -> Response<Body> {
+        let Some(port) = self.port(id) else {
+            return text(StatusCode::NOT_FOUND, NOT_FOUND);
+        };
+        if request.headers().is_upgrade() {
+            websocket(request, port, path).await
+        } else {
+            client.forward(request, port, path).await
+        }
     }
 }
 
-/// Stream a plain request through, and the response back.
-async fn http(client: &HttpClient, request: Request<Body>, port: u16, path: &str) -> Response<Body> {
-    let (parts, body) = request.into_parts();
-    let Some(uri) = upstream_uri(port, path) else {
-        return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
-    };
+/// Forwarding one plain request to an upstream app.
+trait ProxyClient {
+    /// Stream a plain request through, and the response back.
+    async fn forward(&self, request: Request<Body>, port: u16, path: &str) -> Response<Body>;
+}
 
-    let mut outgoing = Request::new(body);
-    *outgoing.method_mut() = parts.method;
-    *outgoing.uri_mut() = uri;
-    *outgoing.version_mut() = Version::HTTP_11;
-    *outgoing.headers_mut() = forwarded(&parts.headers);
-    // An HTTP/1.1 client always sent one; an HTTP/2 one put it in the authority.
-    if !outgoing.headers().contains_key(header::HOST) {
-        if let Ok(host) = HeaderValue::from_str(&format!("127.0.0.1:{port}")) {
-            outgoing.headers_mut().insert(header::HOST, host);
-        }
-    }
-
-    let response = match client.request(outgoing).await {
-        Ok(response) => response,
-        Err(error) => {
-            tracing::debug!(%error, port, "embedded app unreachable");
+impl ProxyClient for HttpClient {
+    async fn forward(&self, request: Request<Body>, port: u16, path: &str) -> Response<Body> {
+        let (parts, body) = request.into_parts();
+        let Some(uri) = upstream_uri(port, path) else {
             return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
-        }
-    };
+        };
 
-    let (parts, body) = response.into_parts();
-    let mut out = Response::new(Body::new(body));
-    *out.status_mut() = parts.status;
-    *out.headers_mut() = forwarded(&parts.headers);
-    reframe(out.headers_mut());
-    out
+        let mut outgoing = Request::new(body);
+        *outgoing.method_mut() = parts.method;
+        *outgoing.uri_mut() = uri;
+        *outgoing.version_mut() = Version::HTTP_11;
+        *outgoing.headers_mut() = parts.headers.forwarded();
+        // An HTTP/1.1 client always sent one; an HTTP/2 one put it in the
+        // authority.
+        if !outgoing.headers().contains_key(header::HOST) {
+            if let Ok(host) = HeaderValue::from_str(&format!("127.0.0.1:{port}")) {
+                outgoing.headers_mut().insert(header::HOST, host);
+            }
+        }
+
+        let response = match self.request(outgoing).await {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::debug!(%error, port, "embedded app unreachable");
+                return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
+            }
+        };
+
+        let (parts, body) = response.into_parts();
+        let mut out = Response::new(Body::new(body));
+        *out.status_mut() = parts.status;
+        *out.headers_mut() = parts.headers.forwarded();
+        out.headers_mut().reframe();
+        out
+    }
 }
 
 /// Splice a websocket to the app, byte for byte.
@@ -215,7 +225,7 @@ async fn websocket(mut request: Request<Body>, port: u16, path: &str) -> Respons
         return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
     }
 
-    let (status, headers, pending) = match read_head(&mut upstream).await {
+    let (status, headers, pending) = match upstream.read_head().await {
         Ok(head) => head,
         Err(error) => {
             tracing::debug!(%error, port, "the embedded app did not answer the handshake");
@@ -246,17 +256,6 @@ async fn websocket(mut request: Request<Body>, port: u16, path: &str) -> Respons
     response
 }
 
-/// Whether this request is asking to leave HTTP behind.
-fn is_upgrade(headers: &HeaderMap) -> bool {
-    headers.contains_key(header::UPGRADE)
-        && headers
-            .get_all(header::CONNECTION)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .flat_map(|value| value.split(','))
-            .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
-}
-
 /// `http://127.0.0.1:{port}{path}`, or `None` if `path` is not a valid target.
 fn upstream_uri(port: u16, path: &str) -> Option<Uri> {
     Uri::builder()
@@ -267,32 +266,55 @@ fn upstream_uri(port: u16, path: &str) -> Option<Uri> {
         .ok()
 }
 
-/// Every header worth forwarding: the hop-by-hop set and anything `Connection`
-/// nominates are this connection's business, not the next one's.
-fn forwarded(source: &HeaderMap) -> HeaderMap {
-    let nominated: HashSet<String> = source
-        .get_all(header::CONNECTION)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(|token| token.trim().to_ascii_lowercase())
-        .collect();
+/// Reading and rewriting the headers of one proxied request.
+trait ProxyHeaders {
+    /// Whether this request is asking to leave HTTP behind.
+    fn is_upgrade(&self) -> bool;
 
-    let mut out = HeaderMap::with_capacity(source.len());
-    for (name, value) in source {
-        let name_str = name.as_str();
-        if HOP_BY_HOP.contains(&name_str) || nominated.contains(name_str) {
-            continue;
-        }
-        out.append(name.clone(), value.clone());
-    }
-    out
+    /// Every header worth forwarding: the hop-by-hop set and anything
+    /// `Connection` nominates are this connection's business, not the next
+    /// one's.
+    fn forwarded(&self) -> HeaderMap;
+
+    /// Replace the app's framing policy with ours.
+    fn reframe(&mut self);
 }
 
-/// Replace the app's framing policy with ours.
-fn reframe(headers: &mut HeaderMap) {
-    headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(FRAME_ANCESTORS));
-    headers.remove(header::X_FRAME_OPTIONS);
+impl ProxyHeaders for HeaderMap {
+    fn is_upgrade(&self) -> bool {
+        self.contains_key(header::UPGRADE)
+            && self
+                .get_all(header::CONNECTION)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+    }
+
+    fn forwarded(&self) -> HeaderMap {
+        let nominated: HashSet<String> = self
+            .get_all(header::CONNECTION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .map(|token| token.trim().to_ascii_lowercase())
+            .collect();
+
+        let mut out = HeaderMap::with_capacity(self.len());
+        for (name, value) in self {
+            let name_str = name.as_str();
+            if HOP_BY_HOP.contains(&name_str) || nominated.contains(name_str) {
+                continue;
+            }
+            out.append(name.clone(), value.clone());
+        }
+        out
+    }
+
+    fn reframe(&mut self) {
+        self.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(FRAME_ANCESTORS));
+        self.remove(header::X_FRAME_OPTIONS);
+    }
 }
 
 /// A plain-text response, the shape both error paths answer with.
@@ -322,9 +344,15 @@ fn request_head(method: &str, path: &str, headers: &HeaderMap) -> Vec<u8> {
     head
 }
 
-/// Read one response head off `stream`, returning it plus whatever bytes of the
-/// body (here: the first websocket frames) came along with it.
-async fn read_head(stream: &mut TcpStream) -> std::io::Result<(StatusCode, HeaderMap, Vec<u8>)> {
+/// Reading a handshake response head off a stream.
+trait HandshakeRead {
+    /// One response head, plus whatever bytes of the body (here: the first
+    /// websocket frames) came along with it.
+    async fn read_head(&mut self) -> std::io::Result<(StatusCode, HeaderMap, Vec<u8>)>;
+}
+
+impl HandshakeRead for TcpStream {
+    async fn read_head(&mut self) -> std::io::Result<(StatusCode, HeaderMap, Vec<u8>)> {
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     loop {
@@ -335,14 +363,15 @@ async fn read_head(stream: &mut TcpStream) -> std::io::Result<(StatusCode, Heade
         if buffer.len() > MAX_HEAD {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "response head too large"));
         }
-        let read = stream.read(&mut chunk).await?;
+        let read = self.read(&mut chunk).await?;
         if read == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "the upstream closed before answering",
             ));
         }
-        buffer.extend_from_slice(&chunk[..read]);
+            buffer.extend_from_slice(&chunk[..read]);
+        }
     }
 }
 
@@ -402,14 +431,14 @@ mod tests {
         headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
 
-        reframe(&mut headers);
+        headers.reframe();
 
         assert_eq!(headers[header::CONTENT_SECURITY_POLICY], FRAME_ANCESTORS);
         assert!(!headers.contains_key(header::X_FRAME_OPTIONS), "it would out-vote the CSP");
         assert_eq!(headers[header::CONTENT_TYPE], "text/html", "nothing else is touched");
 
         let mut absent = HeaderMap::new();
-        reframe(&mut absent);
+        absent.reframe();
         assert_eq!(
             absent[header::CONTENT_SECURITY_POLICY],
             FRAME_ANCESTORS,
@@ -427,7 +456,7 @@ mod tests {
         headers.insert(header::HOST, HeaderValue::from_static("localhost:8700"));
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("12"));
 
-        let out = forwarded(&headers);
+        let out = headers.forwarded();
 
         assert!(!out.contains_key(header::CONNECTION));
         assert!(!out.contains_key(header::UPGRADE));
@@ -444,7 +473,7 @@ mod tests {
             for (name, value) in pairs {
                 headers.insert(name.clone(), HeaderValue::from_static(value));
             }
-            is_upgrade(&headers)
+            headers.is_upgrade()
         };
         assert!(with(&[(header::UPGRADE, "websocket"), (header::CONNECTION, "Upgrade")]));
         assert!(with(&[(header::UPGRADE, "websocket"), (header::CONNECTION, "keep-alive, Upgrade")]));

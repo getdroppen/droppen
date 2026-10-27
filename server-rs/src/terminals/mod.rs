@@ -378,7 +378,7 @@ impl Entry {
         }
         let chunk = std::mem::take(&mut replay.pending);
         replay.buffer.push_str(&chunk);
-        truncate_front(&mut replay.buffer, BUFFER_CAP);
+        replay.buffer.truncate_front(BUFFER_CAP);
         self.broadcast(&chunk);
     }
 
@@ -401,7 +401,7 @@ impl Entry {
     fn announce_exit(&self) {
         let mut replay = self.replay.lock().expect("terminal replay poisoned");
         replay.buffer.push_str(EXIT_NOTE);
-        truncate_front(&mut replay.buffer, BUFFER_CAP);
+        replay.buffer.truncate_front(BUFFER_CAP);
         self.broadcast(EXIT_NOTE);
     }
 
@@ -640,7 +640,7 @@ impl Registry {
             TerminalError::Spawn
         })?;
 
-        let shim_pid = spawn_shim(&sidecars, &spec.command, &spec.args, &workdir, &env, spec.size)
+        let shim_pid = sidecars.spawn_shim( &spec.command, &spec.args, &workdir, &env, spec.size)
             .await
             .map_err(|error| {
                 tracing::error!(%error, command = %spec.command, "cannot spawn a pty shim");
@@ -817,7 +817,7 @@ impl Registry {
         // The repaint is fetched here, before the link task takes over, so the
         // first browser to arrive gets a screen rather than an empty pane that
         // fills in later.
-        let (link, carry) = adopt_snapshot(&entry, link).await;
+        let (link, carry) = entry.adopt_snapshot(link).await;
         start_link(Arc::downgrade(self), entry, link, outbound, None, carry);
         true
     }
@@ -1107,65 +1107,69 @@ impl Drop for Attachment {
     }
 }
 
-/// Spawn a shim, detached, and return its pid.
-///
-/// Every flag here is load-bearing. `process_group(0)` takes the shim out of the
-/// server's process group, so a `kill` aimed at the server — or a shell that
-/// signals the whole group on Ctrl-C — does not take the terminals with it.
-/// `kill_on_drop(false)` keeps tokio from tidying it away when the handle goes.
-/// Null stdio means the shim never holds a descriptor onto anything the server
-/// owns; it speaks over its socket and nothing else.
-async fn spawn_shim(sidecars: &Sidecars, program: &str, args: &[String], workdir: &str, env: &Env, size: Option<(u16, u16)>) -> std::io::Result<u32> {
-    let mut command = tokio::process::Command::new(shim::shim_program());
-    command
-        .arg("pty-shim")
-        .arg("--socket")
-        .arg(sidecars.socket())
-        .arg("--exit-file")
-        .arg(sidecars.exit());
-    // Before the `--`, so the shim opens the pty at this size rather than being
-    // resized into it after the child has already read its width.
-    if let Some((cols, rows)) = size {
-        command.arg("--cols").arg(cols.to_string()).arg("--rows").arg(rows.to_string());
-    }
-    command.arg("--").arg(program).args(args);
-    // A working directory that does not exist would fail the spawn outright, so
-    // the shim inherits the server's own. The recorded `cwd` stays the requested
-    // one either way.
-    if Path::new(workdir).is_dir() {
-        command.current_dir(workdir);
-    }
-    command.env_clear();
-    command.envs(env);
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        // stderr is kept, where the other two are not, because it is where a
-        // panic goes. A shim that dies loudly is easy; one that loses a thread
-        // and keeps running is the failure worth a log, and with stderr pointed
-        // at `/dev/null` the message naming the line that panicked would be gone.
-        // Best effort: a shim that cannot be given a log file is still worth
-        // starting, so this falls back to discarding it.
-        .stderr(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(sidecars.stderr())
-                .map(std::process::Stdio::from)
-                .unwrap_or_else(|_| std::process::Stdio::null()),
-        )
-        .kill_on_drop(false)
-        .process_group(0);
+impl Sidecars {
+    /// Spawn a shim, detached, and return its pid.
+    ///
+    /// Every flag here is load-bearing. `process_group(0)` takes the shim out
+    /// of the server's process group, so a `kill` aimed at the server — or a
+    /// shell that signals the whole group on Ctrl-C — does not take the
+    /// terminals with it. `kill_on_drop(false)` keeps tokio from tidying it
+    /// away when the handle goes. Null stdio means the shim never holds a
+    /// descriptor onto anything the server owns; it speaks over its socket and
+    /// nothing else.
+    async fn spawn_shim(&self, program: &str, args: &[String], workdir: &str, env: &Env, size: Option<(u16, u16)>) -> std::io::Result<u32> {
+        let mut command = tokio::process::Command::new(shim::shim_program());
+        command
+            .arg("pty-shim")
+            .arg("--socket")
+            .arg(self.socket())
+            .arg("--exit-file")
+            .arg(self.exit());
+        // Before the `--`, so the shim opens the pty at this size rather than
+        // being resized into it after the child has already read its width.
+        if let Some((cols, rows)) = size {
+            command.arg("--cols").arg(cols.to_string()).arg("--rows").arg(rows.to_string());
+        }
+        command.arg("--").arg(program).args(args);
+        // A working directory that does not exist would fail the spawn
+        // outright, so the shim inherits the server's own. The recorded `cwd`
+        // stays the requested one either way.
+        if Path::new(workdir).is_dir() {
+            command.current_dir(workdir);
+        }
+        command.env_clear();
+        command.envs(env);
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            // stderr is kept, where the other two are not, because it is where
+            // a panic goes. A shim that dies loudly is easy; one that loses a
+            // thread and keeps running is the failure worth a log, and with
+            // stderr pointed at `/dev/null` the message naming the line that
+            // panicked would be gone. Best effort: a shim that cannot be given
+            // a log file is still worth starting, so this falls back to
+            // discarding it.
+            .stderr(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(self.stderr())
+                    .map(std::process::Stdio::from)
+                    .unwrap_or_else(|_| std::process::Stdio::null()),
+            )
+            .kill_on_drop(false)
+            .process_group(0);
 
-    let mut child = command.spawn()?;
-    let pid = child.id().unwrap_or(0);
-    // Reaped explicitly rather than left to the orphan queue: while this server
-    // lives the shim is its child, and an unreaped exit is a zombie for as long
-    // as the server runs.
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-    Ok(pid)
+        let mut child = command.spawn()?;
+        let pid = child.id().unwrap_or(0);
+        // Reaped explicitly rather than left to the orphan queue: while this
+        // server lives the shim is its child, and an unreaped exit is a zombie
+        // for as long as the server runs.
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        Ok(pid)
+    }
 }
 
 /// `SIGTERM` a shim by pid.
@@ -1234,38 +1238,41 @@ async fn identify(dir: &Path, ids: &[String]) -> Vec<(Meta, Sidecars)> {
     candidates
 }
 
-/// Ask an adopted shim to repaint, and fold everything up to the reply into the
-/// replay buffer.
-///
-/// The exchange is done here, synchronously, rather than left to the link task,
-/// because the terminal is about to be listed: `GET /api/terminals` promising a
-/// terminal whose pane is blank for another few hundred milliseconds is the
-/// restart looking broken at exactly the moment it worked.
-///
-/// Bounded, though. A shim that will not answer must not stop the server from
-/// listening; the terminal is still adopted and simply gets its screen from the
-/// next output the shell produces.
-async fn adopt_snapshot(entry: &Arc<Entry>, mut link: Link) -> (Link, Vec<u8>) {
-    let mut carry = Vec::new();
-    if link.send(&Frame::empty(proto::SNAPSHOT)).await.is_err() {
-        return (link, carry);
-    }
-    let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
-    loop {
-        let Ok(Some(frame)) = tokio::time::timeout_at(deadline, link.recv()).await else {
-            tracing::warn!(id = entry.sidecars.id(), "a shim did not repaint in time; adopting it anyway");
-            break;
-        };
-        // Anything before the repaint is backlog the shim owed us, and it is
-        // folded in exactly as the link task would have folded it.
-        let ingested = ingest(entry, frame, &mut carry, None);
-        if matches!(ingested, Ingested::Repaint | Ingested::Exited(_)) {
-            break;
+impl Entry {
+    /// Ask an adopted shim to repaint, and fold everything up to the reply into the
+    /// replay buffer.
+    ///
+    /// The exchange is done here, synchronously, rather than left to the link task,
+    /// because the terminal is about to be listed: `GET /api/terminals` promising a
+    /// terminal whose pane is blank for another few hundred milliseconds is the
+    /// restart looking broken at exactly the moment it worked.
+    ///
+    /// Bounded, though. A shim that will not answer must not stop the server from
+    /// listening; the terminal is still adopted and simply gets its screen from the
+    /// next output the shell produces.
+    async fn adopt_snapshot(self: &Arc<Self>, mut link: Link) -> (Link, Vec<u8>) {
+        let mut carry = Vec::new();
+        if link.send(&Frame::empty(proto::SNAPSHOT)).await.is_err() {
+            return (link, carry);
         }
+        let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
+        loop {
+            let Ok(Some(frame)) = tokio::time::timeout_at(deadline, link.recv()).await else {
+                tracing::warn!(id = self.sidecars.id(), "a shim did not repaint in time; adopting it anyway");
+                break;
+            };
+            // Anything before the repaint is backlog the shim owed us, and it is
+            // folded in exactly as the link task would have folded it.
+            let ingested = self.ingest( frame, &mut carry, None);
+            if matches!(ingested, Ingested::Repaint | Ingested::Exited(_)) {
+                break;
+            }
+        }
+        self.flush();
+        (link, carry)
     }
-    entry.flush();
-    (link, carry)
 }
+
 
 /// One terminal's link: frames in, frames out, and the reconnect in between.
 #[allow(clippy::too_many_arguments)]
@@ -1292,7 +1299,7 @@ async fn run_link(
                     return;
                 }
                 frame = link.recv() => match frame {
-                    Some(frame) => match ingest(&entry, frame, &mut carry, on_data.as_ref()) {
+                    Some(frame) => match entry.ingest( frame, &mut carry, on_data.as_ref()) {
                         Ingested::Nothing => {}
                         Ingested::Data => {
                             let now = Instant::now();
@@ -1354,7 +1361,7 @@ async fn run_link(
         // types into a terminal that cannot hear them.
         entry.set_linked(false);
         entry.flush();
-        match relink(&entry).await {
+        match entry.relink().await {
             Relinked::Attached(fresh) => {
                 link = fresh;
                 entry.set_linked(true);
@@ -1396,56 +1403,59 @@ enum Ingested {
     Exited(i32),
 }
 
-/// Fold one frame from the shim into the browser-facing stream.
-fn ingest(entry: &Entry, frame: Frame, carry: &mut Vec<u8>, on_data: Option<&DataHook>) -> Ingested {
-    match frame.kind {
-        proto::OUTPUT => {
-            entry.advance(frame.payload.len() as u64);
-            carry.extend_from_slice(&frame.payload);
-            let text = take_utf8(carry);
-            if text.is_empty() {
-                return Ingested::Nothing;
+impl Entry {
+    /// Fold one frame from the shim into the browser-facing stream.
+    fn ingest(&self, frame: Frame, carry: &mut Vec<u8>, on_data: Option<&DataHook>) -> Ingested {
+        match frame.kind {
+            proto::OUTPUT => {
+                self.advance(frame.payload.len() as u64);
+                carry.extend_from_slice(&frame.payload);
+                let text = carry.take_utf8();
+                if text.is_empty() {
+                    return Ingested::Nothing;
+                }
+                // Scanners see the raw stream: coalescing is a transport concern,
+                // and a token could otherwise be split across two flushes for good.
+                if let Some(hook) = on_data {
+                    hook(&text);
+                }
+                self.push_pending(&text);
+                Ingested::Data
             }
-            // Scanners see the raw stream: coalescing is a transport concern,
-            // and a token could otherwise be split across two flushes for good.
-            if let Some(hook) = on_data {
-                hook(&text);
+            proto::GAP => {
+                let Some(gap) = frame.parse::<proto::Gap>() else {
+                    return Ingested::Nothing;
+                };
+                // A partial character from before the gap cannot be completed by
+                // anything after it.
+                carry.clear();
+                self.set_cursor(gap.to);
+                let note = gap_note(gap.lost());
+                tracing::warn!(lost = gap.lost(), "a terminal lost output to its shim's ring");
+                if let Some(hook) = on_data {
+                    hook(&note);
+                }
+                self.push_pending(&note);
+                Ingested::Repaint
             }
-            entry.push_pending(&text);
-            Ingested::Data
+            proto::SNAPSHOT => {
+                // A repaint is self-contained escape sequences, not a continuation
+                // of the output stream, so it neither uses the carry nor advances
+                // the cursor — the shim already sent every byte it reflects.
+                carry.clear();
+                let text = String::from_utf8_lossy(&frame.payload).into_owned();
+                if text.is_empty() {
+                    return Ingested::Nothing;
+                }
+                self.push_pending(&text);
+                Ingested::Repaint
+            }
+            proto::EXIT => Ingested::Exited(frame.parse::<proto::Exit>().map(|exit| exit.code).unwrap_or(-1)),
+            _ => Ingested::Nothing,
         }
-        proto::GAP => {
-            let Some(gap) = frame.parse::<proto::Gap>() else {
-                return Ingested::Nothing;
-            };
-            // A partial character from before the gap cannot be completed by
-            // anything after it.
-            carry.clear();
-            entry.set_cursor(gap.to);
-            let note = gap_note(gap.lost());
-            tracing::warn!(lost = gap.lost(), "a terminal lost output to its shim's ring");
-            if let Some(hook) = on_data {
-                hook(&note);
-            }
-            entry.push_pending(&note);
-            Ingested::Repaint
-        }
-        proto::SNAPSHOT => {
-            // A repaint is self-contained escape sequences, not a continuation
-            // of the output stream, so it neither uses the carry nor advances
-            // the cursor — the shim already sent every byte it reflects.
-            carry.clear();
-            let text = String::from_utf8_lossy(&frame.payload).into_owned();
-            if text.is_empty() {
-                return Ingested::Nothing;
-            }
-            entry.push_pending(&text);
-            Ingested::Repaint
-        }
-        proto::EXIT => Ingested::Exited(frame.parse::<proto::Exit>().map(|exit| exit.code).unwrap_or(-1)),
-        _ => Ingested::Nothing,
     }
 }
+
 
 /// What came of trying to get the link back.
 enum Relinked {
@@ -1457,45 +1467,48 @@ enum Relinked {
     Detached,
 }
 
-/// Reconnect to a shim, backing off, until it answers or is proven gone.
-///
-/// The two exits that are not "reconnected" are what keep this from spinning
-/// forever on a shim that will never come back: a tombstone is the shell saying
-/// how it ended, and a dead pid is the shim having been killed without getting
-/// the chance to. Everything else is a socket that may yet come back — a machine
-/// under load, a filesystem that stalled — and is worth waiting for, because on
-/// the other side of it is a live shell.
-async fn relink(entry: &Arc<Entry>) -> Relinked {
-    let mut delay = RECONNECT_MIN;
-    loop {
-        if entry.detach.is_cancelled() {
-            return Relinked::Detached;
-        }
-        if let Some(tombstone) = entry.sidecars.read_tombstone().await {
-            return Relinked::Exited(tombstone.exit_code);
-        }
-        let shell = entry.shell_pid.load(Ordering::SeqCst);
-        if shell > 1 && !crate::procs::alive(shell) {
-            tracing::warn!(shell_pid = shell, "a terminal's shell is gone and its shim left no exit file");
-            return Relinked::Exited(-1);
-        }
-
-        match client::connect(&entry.sidecars.socket(), entry.cursor.load(Ordering::SeqCst)).await {
-            Ok(link) => {
-                entry.shell_pid.store(link.shell_pid, Ordering::SeqCst);
-                entry.tell(Frame::empty(proto::SNAPSHOT));
-                return Relinked::Attached(link);
+impl Entry {
+    /// Reconnect to a shim, backing off, until it answers or is proven gone.
+    ///
+    /// The two exits that are not "reconnected" are what keep this from spinning
+    /// forever on a shim that will never come back: a tombstone is the shell saying
+    /// how it ended, and a dead pid is the shim having been killed without getting
+    /// the chance to. Everything else is a socket that may yet come back — a machine
+    /// under load, a filesystem that stalled — and is worth waiting for, because on
+    /// the other side of it is a live shell.
+    async fn relink(self: &Arc<Self>) -> Relinked {
+        let mut delay = RECONNECT_MIN;
+        loop {
+            if self.detach.is_cancelled() {
+                return Relinked::Detached;
             }
-            Err(error) => tracing::debug!(%error, "retrying a pty shim link"),
-        }
+            if let Some(tombstone) = self.sidecars.read_tombstone().await {
+                return Relinked::Exited(tombstone.exit_code);
+            }
+            let shell = self.shell_pid.load(Ordering::SeqCst);
+            if shell > 1 && !crate::procs::alive(shell) {
+                tracing::warn!(shell_pid = shell, "a terminal's shell is gone and its shim left no exit file");
+                return Relinked::Exited(-1);
+            }
 
-        tokio::select! {
-            () = entry.detach.cancelled() => return Relinked::Detached,
-            () = tokio::time::sleep(delay) => {}
+            match client::connect(&self.sidecars.socket(), self.cursor.load(Ordering::SeqCst)).await {
+                Ok(link) => {
+                    self.shell_pid.store(link.shell_pid, Ordering::SeqCst);
+                    self.tell(Frame::empty(proto::SNAPSHOT));
+                    return Relinked::Attached(link);
+                }
+                Err(error) => tracing::debug!(%error, "retrying a pty shim link"),
+            }
+
+            tokio::select! {
+                () = self.detach.cancelled() => return Relinked::Detached,
+                () = tokio::time::sleep(delay) => {}
+            }
+            delay = (delay * 2).min(RECONNECT_MAX);
         }
-        delay = (delay * 2).min(RECONNECT_MAX);
     }
 }
+
 
 /// Sweep a killed terminal's sidecars once its shim has confirmed the death.
 ///
@@ -1546,27 +1559,35 @@ async fn deadline(deadline: Option<Instant>) {
 /// A pty read can land anywhere, including the middle of a UTF-8 sequence, and
 /// the frames going out are text — so a naive `from_utf8_lossy` per read would
 /// permanently corrupt any character unlucky enough to straddle two reads.
-fn take_utf8(carry: &mut Vec<u8>) -> String {
-    let mut out = String::new();
-    loop {
-        match std::str::from_utf8(carry) {
-            Ok(text) => {
-                out.push_str(text);
-                carry.clear();
-                return out;
-            }
-            Err(error) => {
-                let valid = error.valid_up_to();
-                out.push_str(std::str::from_utf8(&carry[..valid]).expect("valid_up_to is a char boundary"));
-                match error.error_len() {
-                    // Truncated, not invalid: keep the tail for the next read.
-                    None => {
-                        carry.drain(..valid);
-                        return out;
-                    }
-                    Some(len) => {
-                        out.push('\u{fffd}');
-                        carry.drain(..valid + len);
+trait CarryExt {
+    /// Every complete character, leaving a partial one behind.
+    fn take_utf8(&mut self) -> String;
+}
+
+impl CarryExt for Vec<u8> {
+    fn take_utf8(&mut self) -> String {
+
+        let mut out = String::new();
+        loop {
+            match std::str::from_utf8(self) {
+                Ok(text) => {
+                    out.push_str(text);
+                    self.clear();
+                    return out;
+                }
+                Err(error) => {
+                    let valid = error.valid_up_to();
+                    out.push_str(std::str::from_utf8(&self[..valid]).expect("valid_up_to is a char boundary"));
+                    match error.error_len() {
+                        // Truncated, not invalid: keep the tail for the next read.
+                        None => {
+                            self.drain(..valid);
+                            return out;
+                        }
+                        Some(len) => {
+                            out.push('\u{fffd}');
+                            self.drain(..valid + len);
+                        }
                     }
                 }
             }
@@ -1574,20 +1595,30 @@ fn take_utf8(carry: &mut Vec<u8>) -> String {
     }
 }
 
+
 /// Keep the last `cap` bytes of `text`, cutting on a character boundary.
 ///
 /// This slices bytes, so a buffer holding wide characters keeps somewhat fewer
 /// than `cap` of them. The cap is a memory bound, not part of the contract.
-fn truncate_front(text: &mut String, cap: usize) {
-    if text.len() <= cap {
-        return;
-    }
-    let mut cut = text.len() - cap;
-    while cut < text.len() && !text.is_char_boundary(cut) {
-        cut += 1;
-    }
-    text.drain(..cut);
+trait ReplayTextExt {
+    /// Keep the last `cap` bytes, cutting on a character boundary.
+    fn truncate_front(&mut self, cap: usize);
 }
+
+impl ReplayTextExt for String {
+    fn truncate_front(&mut self, cap: usize) {
+
+        if self.len() <= cap {
+            return;
+        }
+        let mut cut = self.len() - cap;
+        while cut < self.len() && !self.is_char_boundary(cut) {
+            cut += 1;
+        }
+        self.drain(..cut);
+    }
+}
+
 
 /// `terminal N`, unless the caller named it.
 fn default_title(title: Option<&str>, ordinal: usize) -> String {
@@ -1629,30 +1660,30 @@ mod tests {
     fn partial_characters_survive_a_split_read() {
         // "é" is two bytes; feed them one read apart.
         let mut carry = vec![0xc3];
-        assert_eq!(take_utf8(&mut carry), "");
+        assert_eq!(carry.take_utf8(), "");
         carry.push(0xa9);
-        assert_eq!(take_utf8(&mut carry), "é");
+        assert_eq!(carry.take_utf8(), "é");
         assert!(carry.is_empty());
 
         // Genuinely invalid bytes become one replacement character each.
         let mut carry = vec![b'a', 0xff, b'b'];
-        assert_eq!(take_utf8(&mut carry), "a\u{fffd}b");
+        assert_eq!(carry.take_utf8(), "a\u{fffd}b");
     }
 
     #[test]
     fn the_replay_buffer_keeps_its_tail() {
         let mut text = "abcdef".to_string();
-        truncate_front(&mut text, 4);
+        text.truncate_front(4);
         assert_eq!(text, "cdef");
 
         // "aéb" is four bytes; a cap of two lands inside the two-byte "é".
         let mut text = "aéb".to_string();
-        truncate_front(&mut text, 2);
+        text.truncate_front(2);
         assert_eq!(text, "b", "a boundary-crossing cut moves forward, it does not corrupt");
 
         // A cap that happens to land on a boundary keeps everything after it.
         let mut text = "aéb".to_string();
-        truncate_front(&mut text, 3);
+        text.truncate_front(3);
         assert_eq!(text, "éb");
     }
 
@@ -1772,7 +1803,7 @@ mod tests {
 
         entry.advance(10);
         let frame = Frame::json(proto::GAP, &proto::Gap { from: 10, to: 4106 });
-        assert!(matches!(ingest(&entry, frame, &mut carry, None), Ingested::Repaint));
+        assert!(matches!(entry.ingest( frame, &mut carry, None), Ingested::Repaint));
 
         assert_eq!(entry.cursor.load(Ordering::SeqCst), 4106);
         assert_eq!(
@@ -1798,11 +1829,11 @@ mod tests {
         let mut carry = Vec::new();
 
         let frame = Frame::raw(proto::OUTPUT, b"hello".to_vec());
-        assert!(matches!(ingest(&entry, frame, &mut carry, None), Ingested::Data));
+        assert!(matches!(entry.ingest( frame, &mut carry, None), Ingested::Data));
         assert_eq!(entry.cursor.load(Ordering::SeqCst), 5);
 
         let frame = Frame::raw(proto::SNAPSHOT, b"\x1b[H\x1b[Jhello".to_vec());
-        assert!(matches!(ingest(&entry, frame, &mut carry, None), Ingested::Repaint));
+        assert!(matches!(entry.ingest( frame, &mut carry, None), Ingested::Repaint));
         assert_eq!(entry.cursor.load(Ordering::SeqCst), 5, "a repaint is not output");
     }
 

@@ -282,15 +282,18 @@ fn encode_component(value: &str) -> String {
     out
 }
 
-/// The contents-API endpoint for one (ref, path) split, relative to the API root.
-///
-/// Every path segment and the whole ref are re-encoded from their decoded form,
-/// so the ref's slashes travel as `%2F` inside the query and nothing the URL
-/// carried can become a `?`, `&`, `#` or `{owner}` placeholder for `gh`.
-pub fn contents_endpoint(target: &GithubTarget, git_ref: &str, path: &str) -> String {
-    let path = path.split('/').map(encode_component).collect::<Vec<_>>().join("/");
-    format!("repos/{}/{}/contents/{path}?ref={}", target.owner, target.repo, encode_component(git_ref))
+impl GithubTarget {
+    /// The contents-API endpoint for one (ref, path) split, relative to the API root.
+    ///
+    /// Every path segment and the whole ref are re-encoded from their decoded form,
+    /// so the ref's slashes travel as `%2F` inside the query and nothing the URL
+    /// carried can become a `?`, `&`, `#` or `{owner}` placeholder for `gh`.
+    pub fn contents_endpoint(&self, git_ref: &str, path: &str) -> String {
+        let path = path.split('/').map(encode_component).collect::<Vec<_>>().join("/");
+        format!("repos/{}/{}/contents/{path}?ref={}", self.owner, self.repo, encode_component(git_ref))
+    }
 }
+
 
 /// The full argv after `gh`. Passed as a vector to the process — there is no
 /// shell anywhere in between, so nothing in the endpoint is interpreted twice.
@@ -429,20 +432,23 @@ pub struct Image {
     pub mime: &'static str,
 }
 
-/// Walk the (ref, path) splits until one exists, then prove it is an image.
-pub async fn fetch_image<F: Fetch>(fetcher: &F, target: &GithubTarget) -> Result<Image, MediaError> {
-    for (git_ref, path) in target.candidates() {
-        match fetcher.fetch(&contents_endpoint(target, &git_ref, &path)).await {
-            Ok(bytes) => {
-                let mime = sniff_image(&bytes).ok_or(MediaError::NotAnImage)?;
-                return Ok(Image { bytes, mime });
+impl GithubTarget {
+    /// Walk the (ref, path) splits until one exists, then prove it is an image.
+    pub async fn fetch_image<F: Fetch>(&self, fetcher: &F) -> Result<Image, MediaError> {
+        for (git_ref, path) in self.candidates() {
+            match fetcher.fetch(&self.contents_endpoint(&git_ref, &path)).await {
+                Ok(bytes) => {
+                    let mime = sniff_image(&bytes).ok_or(MediaError::NotAnImage)?;
+                    return Ok(Image { bytes, mime });
+                }
+                Err(MediaError::NotFound) => continue,
+                Err(other) => return Err(other),
             }
-            Err(MediaError::NotFound) => continue,
-            Err(other) => return Err(other),
         }
+        Err(MediaError::NotFound)
     }
-    Err(MediaError::NotFound)
 }
+
 
 /// What a failed `gh api` run means, from its exit code and stderr.
 ///
@@ -615,7 +621,7 @@ pub async fn github_image(ApiQuery(query): ApiQuery<GithubMediaQuery>) -> Result
         Some(image) => image,
         None => {
             let gh = GhCli::locate().map_err(MediaError::into_api)?;
-            let image = fetch_image(&gh, &target).await.map_err(MediaError::into_api)?;
+            let image = target.fetch_image(&gh).await.map_err(MediaError::into_api)?;
             CACHE.lock().expect("media cache poisoned").put(key, image.clone(), Instant::now());
             image
         }
@@ -686,7 +692,7 @@ mod tests {
     fn a_raw_token_is_accepted_and_dropped() {
         let target = parse("https://raw.githubusercontent.com/o/r/main/docs/a.png?token=GHSAT0AAAA");
         assert_eq!(target.rest, ["main", "docs", "a.png"]);
-        let endpoint = contents_endpoint(&target, "main", "docs/a.png");
+        let endpoint = target.contents_endpoint( "main", "docs/a.png");
         assert!(!endpoint.contains("token") && !endpoint.contains("GHSAT"), "{endpoint}");
     }
 
@@ -789,11 +795,11 @@ mod tests {
         let target = parse("https://github.com/o/r/blob/main/%E6%88%AA%E5%9B%BE%3F%23%7Bowner%7D.png");
         let (git_ref, path) = &target.candidates()[0];
         assert_eq!(
-            contents_endpoint(&target, git_ref, path),
+            target.contents_endpoint( git_ref, path),
             "repos/o/r/contents/%E6%88%AA%E5%9B%BE%3F%23%7Bowner%7D.png?ref=main"
         );
         assert_eq!(
-            contents_endpoint(&target, "feature/login", "docs/a b.png"),
+            target.contents_endpoint( "feature/login", "docs/a b.png"),
             "repos/o/r/contents/docs/a%20b.png?ref=feature%2Flogin"
         );
     }
@@ -818,7 +824,7 @@ mod tests {
         // for a flag, and `;`/`$()` in it are just bytes in one argument.
         let hostile = parse("https://github.com/o/r/blob/main/%3B%20rm%20-rf%20%24(id).png");
         let (git_ref, path) = &hostile.candidates()[0];
-        let args = gh_args(&contents_endpoint(&hostile, git_ref, path));
+        let args = gh_args(&hostile.contents_endpoint( git_ref, path));
         assert_eq!(args.len(), 8);
         assert!(args[7].starts_with("repos/") && !args[7].contains(' ') && !args[7].contains(';'));
     }
@@ -905,7 +911,7 @@ mod tests {
     async fn a_slash_ref_is_found_by_lengthening_it() {
         let target = parse("https://github.com/o/r/blob/feature/login/a.png");
         let table = Table::new(&[("repos/o/r/contents/a.png?ref=feature%2Flogin", Ok(PNG))]);
-        let image = fetch_image(&table, &target).await.expect("found");
+        let image = target.fetch_image(&table).await.expect("found");
         assert_eq!(image.mime, "image/png");
         assert_eq!(
             *table.asked.lock().unwrap(),
@@ -923,7 +929,7 @@ mod tests {
             "repos/Octo/example-app/contents/pr-47/sidebar-mac-light.png?ref=pr-assets",
             Ok(PNG),
         )]);
-        assert!(fetch_image(&table, &target).await.is_ok());
+        assert!(target.fetch_image(&table).await.is_ok());
         assert_eq!(table.asked.lock().unwrap().len(), 1);
     }
 
@@ -931,14 +937,14 @@ mod tests {
     async fn a_non_image_or_a_hard_failure_stops_the_walk() {
         let target = parse("https://github.com/o/r/blob/main/a/b.png");
         let text = Table::new(&[("repos/o/r/contents/a/b.png?ref=main", Ok(b"<!doctype html><p>hi"))]);
-        assert_eq!(fetch_image(&text, &target).await.unwrap_err(), MediaError::NotAnImage);
+        assert_eq!(target.fetch_image(&text).await.unwrap_err(), MediaError::NotAnImage);
 
         let down = Table::new(&[("repos/o/r/contents/a/b.png?ref=main", Err(MediaError::Unavailable(GH_LOGGED_OUT)))]);
-        assert_eq!(fetch_image(&down, &target).await.unwrap_err(), MediaError::Unavailable(GH_LOGGED_OUT));
+        assert_eq!(target.fetch_image(&down).await.unwrap_err(), MediaError::Unavailable(GH_LOGGED_OUT));
         assert_eq!(down.asked.lock().unwrap().len(), 1, "no point trying a longer ref without a login");
 
         let missing = Table::new(&[]);
-        assert_eq!(fetch_image(&missing, &target).await.unwrap_err(), MediaError::NotFound);
+        assert_eq!(target.fetch_image(&missing).await.unwrap_err(), MediaError::NotFound);
         assert_eq!(missing.asked.lock().unwrap().len(), 2);
     }
 

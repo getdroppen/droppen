@@ -204,17 +204,19 @@ fn spawn_error(kind: AppType, error: &std::io::Error) -> AppError {
     AppError::new(format!("cannot launch {}: {error}", kind.program()))
 }
 
-/// Per-app state (settings DB, "last opened folder", UI layout) and logs, under
-/// the directory this server exclusively owns.
-///
-/// Without a directory of its own every `code-server` shares one state directory
-/// and instances hijack each other's folder on reload. Hanging the root off the
-/// *instance* rather than off `$HOME` settles the same question one level up: two
-/// servers on one home are two instances by construction, holding two different
-/// locks over two disjoint trees, so neither can be handed a path the other has
-/// an editor sitting on.
-fn app_data_root(instance: &InstanceDirs) -> PathBuf {
-    instance.root().join("apps")
+impl InstanceDirs {
+    /// Per-app state (settings DB, "last opened folder", UI layout) and logs, under
+    /// the directory this server exclusively owns.
+    ///
+    /// Without a directory of its own every `code-server` shares one state directory
+    /// and instances hijack each other's folder on reload. Hanging the root off the
+    /// *instance* rather than off `$HOME` settles the same question one level up: two
+    /// servers on one home are two instances by construction, holding two different
+    /// locks over two disjoint trees, so neither can be handed a path the other has
+    /// an editor sitting on.
+    fn app_data_root(&self) -> PathBuf {
+        self.root().join("apps")
+    }
 }
 
 /// Extensions stay in `code-server`'s default directory, so they are installed
@@ -366,12 +368,12 @@ impl Registry {
     /// process is detached, so there is no pipe of ours for it to talk into, and
     /// it may fail long after the request that created it has been answered.
     fn log_path(&self, id: &str) -> PathBuf {
-        app_data_root(&self.instance).join(format!("{id}.log"))
+        self.instance.app_data_root().join(format!("{id}.log"))
     }
 
     /// The `--user-data-dir` an app is given, beside its log.
     fn app_dir(&self, id: &str) -> PathBuf {
-        app_data_root(&self.instance).join(id)
+        self.instance.app_data_root().join(id)
     }
 
     /// Rewrite `apps.json` from `instances`.
@@ -788,7 +790,7 @@ impl Registry {
         // by what is *there* rather than by what the journal still remembers is
         // what stops an app whose record was dropped two boots ago leaking its
         // state directory for ever.
-        let root = app_data_root(&self.instance);
+        let root = self.instance.app_data_root();
         if let Ok(mut entries) = tokio::fs::read_dir(&root).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let name = entry.file_name();
@@ -810,7 +812,7 @@ impl Registry {
     /// Stop an app. `false` means there was no such instance.
     pub async fn close_app(&self, id: &str) -> bool {
         let Some(instance) = self.take(id) else { return false };
-        stop(&instance).await;
+        instance.stop().await;
         true
     }
 
@@ -914,24 +916,26 @@ async fn still_ours(pid: u32, token: Option<&str>, program: &str) -> bool {
     procs::is_same_process(pid, token) && procs::is_running(pid, program).await
 }
 
-/// Ask an instance's process group to stop, if it is still ours to ask.
-///
-/// The guard is only for an *adopted* pid: one this process spawned is still an
-/// unreaped child of ours, and a pid cannot be recycled before it is reaped.
-async fn stop(instance: &Instance) {
-    let Some(pid) = instance.pid else { return };
-    if instance.exited.load(Ordering::SeqCst) {
-        return;
+impl Instance {
+    /// Ask an instance's process group to stop, if it is still ours to ask.
+    ///
+    /// The guard is only for an *adopted* pid: one this process spawned is still an
+    /// unreaped child of ours, and a pid cannot be recycled before it is reaped.
+    async fn stop(&self) {
+        let Some(pid) = self.pid else { return };
+        if self.exited.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.origin == Origin::Adopted && !still_ours(pid, self.pid_token.as_deref(), self.info.kind.program()).await {
+            tracing::warn!(
+                app = %self.info.id,
+                pid,
+                "refusing to signal an adopted pid that is no longer the app it was recorded as"
+            );
+            return;
+        }
+        procs::terminate_group(pid);
     }
-    if instance.origin == Origin::Adopted && !still_ours(pid, instance.pid_token.as_deref(), instance.info.kind.program()).await {
-        tracing::warn!(
-            app = %instance.info.id,
-            pid,
-            "refusing to signal an adopted pid that is no longer the app it was recorded as"
-        );
-        return;
-    }
-    procs::terminate_group(pid);
 }
 
 /// Own the child until it exits, then announce it and tidy up after it.
@@ -1090,9 +1094,9 @@ mod tests {
     #[test]
     fn the_state_directories_hang_off_the_instance_that_owns_them() {
         let dirs = InstanceDirs::new(Path::new("/tmp/data"), "ci-1").expect("instance name");
-        assert_eq!(app_data_root(&dirs), dirs.root().join("apps"));
+        assert_eq!(dirs.app_data_root(), dirs.root().join("apps"));
         assert!(
-            app_data_root(&dirs).starts_with(dirs.root()),
+            dirs.app_data_root().starts_with(dirs.root()),
             "an app's state must be somewhere no other instance can reach"
         );
 
@@ -1209,7 +1213,7 @@ mod tests {
         assert!(matches!(result, Err(AppError::Missing(AppType::Vscode))), "{result:?}");
         assert!(registry.list().is_empty(), "nothing is listed");
         assert!(
-            !app_data_root(&registry.instance).exists(),
+            !registry.instance.app_data_root().exists(),
             "and nothing was made for an app that never had a program to run"
         );
     }

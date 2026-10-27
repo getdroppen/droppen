@@ -83,9 +83,12 @@ fn store(path: &Path) -> Arc<Db> {
     crate::db::at(path.with_file_name("state.db"))
 }
 
-/// A record as the `payload` column holds it: the JSON it has always been.
-fn payload(record: &AppRecord) -> String {
-    serde_json::to_string(record).unwrap_or_else(|_| "null".to_string())
+impl AppRecord {
+    /// This record as the `payload` column holds it: the JSON it has always
+    /// been.
+    fn payload(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "null".to_string())
+    }
 }
 
 /// Every record the database holds, oldest slot first.
@@ -126,7 +129,7 @@ pub fn save(path: &Path, records: &[AppRecord]) {
         for (ordinal, record) in records.iter().enumerate() {
             tx.execute(
                 "INSERT OR REPLACE INTO apps (id, ordinal, payload) VALUES (?1, ?2, ?3)",
-                (&record.id, ordinal as i64, payload(record)),
+                (&record.id, ordinal as i64, record.payload()),
             )?;
         }
         Ok(())

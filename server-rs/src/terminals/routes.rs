@@ -185,10 +185,10 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
             incoming = receiver.next() => {
                 heartbeat.saw_frame();
                 let unreachable = match incoming {
-                    Some(Ok(Message::Text(text))) => handle_control(&attachment, &text),
+                    Some(Ok(Message::Text(text))) => attachment.handle_control(&text),
                     Some(Ok(Message::Binary(bytes))) => {
                         // A binary frame is accepted too, as long as it is UTF-8.
-                        std::str::from_utf8(&bytes).is_ok_and(|text| handle_control(&attachment, text))
+                        std::str::from_utf8(&bytes).is_ok_and(|text| attachment.handle_control(text))
                     }
                     Some(Ok(_)) => false,
                     None | Some(Err(_)) => break,
@@ -274,25 +274,27 @@ async fn close_gracefully(
     }
 }
 
-/// Apply one control frame, and say whether it went nowhere because the link to
-/// the terminal's shim is down.
-///
-/// Only input can answer `true`. A resize that is dropped costs the user nothing
-/// they would notice, and noting it would fire on the size every pane sends the
-/// instant it attaches — turning one honest note into two.
-fn handle_control(attachment: &super::Attachment, text: &str) -> bool {
-    match serde_json::from_str::<Control>(text) {
-        Ok(Control::Input { data }) => !attachment.write(&data),
-        Ok(Control::Resize { cols, rows }) => {
-            // Refused before the cast; `as u16` saturates, so
-            // [`Attachment::resize`]'s `0 < n < 1000` guard would refuse these
-            // too. A fractional size is truncated.
-            if cols.is_finite() && rows.is_finite() && (0.0..1000.0).contains(&cols) && (0.0..1000.0).contains(&rows) {
-                attachment.resize(cols as u16, rows as u16);
+impl super::Attachment {
+    /// Apply one control frame, and say whether it went nowhere because the
+    /// link to the terminal's shim is down.
+    ///
+    /// Only input can answer `true`. A resize that is dropped costs the user
+    /// nothing they would notice, and noting it would fire on the size every
+    /// pane sends the instant it attaches — turning one honest note into two.
+    fn handle_control(&self, text: &str) -> bool {
+        match serde_json::from_str::<Control>(text) {
+            Ok(Control::Input { data }) => !self.write(&data),
+            Ok(Control::Resize { cols, rows }) => {
+                // Refused before the cast; `as u16` saturates, so
+                // [`Attachment::resize`]'s `0 < n < 1000` guard would refuse
+                // these too. A fractional size is truncated.
+                if cols.is_finite() && rows.is_finite() && (0.0..1000.0).contains(&cols) && (0.0..1000.0).contains(&rows) {
+                    self.resize(cols as u16, rows as u16);
+                }
+                false
             }
-            false
+            Err(_) => false,
         }
-        Err(_) => false,
     }
 }
 
