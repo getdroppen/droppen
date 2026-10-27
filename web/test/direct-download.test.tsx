@@ -302,7 +302,7 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   assert.doesNotMatch(robots.replace(/^#.*\n/gm, ""), /Disallow: \/(?!dl\/)/, "nothing else is disallowed");
 });
 
-test("without it (no route, a 503, a failure, or not yet), every download button links the release page, in a new tab", () => {
+test("without it (no route, a 503, a failure, or not yet), the hero's Mac download opens the download page's Mac tab, and the download page's own button the release page", () => {
   assert.equal(APP_DOWNLOAD_URL, RELEASES_URL);
   assert.equal(RELEASES_URL, "https://github.com/getdroppen/droppen/releases/latest");
   // None (the hub said nothing usable), and not yet (asked, no answer: as the page first draws).
@@ -312,12 +312,17 @@ test("without it (no route, a 503, a failure, or not yet), every download button
       <LandingPage hints={HINTS.mac} />
     </I18nextProvider>,
   );
-  const pages = [hero(landing("en", { hints: HINTS.mac, release: null })), hero(landing("en", { hints: HINTS.unknown, release: null })), download("en", { os: "macos-app", release: null }), hero(asking)];
-  for (const html of pages) {
-    const a = html.match(/<a [^>]*data-testid="(hero|app)-download"[^>]*>/)![0];
-    assert.match(a, new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`), a);
+  // The home page never sends its button to another site: until the file is named, it is this site's download page.
+  for (const html of [hero(landing("en", { hints: HINTS.mac, release: null })), hero(landing("en", { hints: HINTS.unknown, release: null })), hero(asking)]) {
+    const a = html.match(/<a [^>]*data-testid="hero-download"[^>]*>/)![0];
+    assert.match(a, /^<a href="\/download\?os=macos-app"/, a);
+    assert.doesNotMatch(a, /target=|github\.com/, a);
     assert.doesNotMatch(html, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   }
+  // The download page is where the file is: its button falls back to the release page.
+  const fallback = download("en", { os: "macos-app", release: null });
+  assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`));
+  assert.doesNotMatch(fallback, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   const page = download("en", { os: "macos-app", release: null });
   assert.ok(text(page).includes("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg"));
   assert.match(page, new RegExp(`<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"`));

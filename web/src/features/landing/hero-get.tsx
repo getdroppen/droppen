@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Download } from "lucide-react";
 import { primary, secondary } from "@/features/cloud/ui";
 import type { SignupMode } from "@/lib/hub/api";
-import type { LatestRelease } from "@/lib/hub/releases";
+import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
 import { CommandLine } from "./page-kit";
@@ -88,6 +88,11 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
   );
 }
 
+/** The Mac App's download: the file once the hub has named it, until then (or when it cannot) the download page's Mac tab, never another site. */
+function macDownload(dmg: ReleaseFile | undefined) {
+  return dmg ? fileLink(dmg) : publicLink(downloadHref("macos-app"));
+}
+
 const row = "flex flex-wrap items-center gap-3";
 const note = "max-w-[34em] text-sm leading-6 text-muted";
 const small = "font-mono text-xs leading-5 text-muted";
@@ -120,8 +125,8 @@ export function HeroGet({
       {offer === "mac" && (
         <>
           <div className={row}>
-            {/* The file itself when the hub named it (GitHub serves it as a download: the page stays), else the release page. */}
-            <a {...fileLink(dmg)} data-variant="primary" data-testid="hero-download" className={primary}>
+            {/* The file itself when the hub named it (a click downloads it: the page stays), else this site's download page, on the Mac's tab. */}
+            <a {...macDownload(dmg)} data-variant="primary" data-testid="hero-download" className={primary}>
               <Download className="size-3.5" />
               {t("Download for Mac")}
             </a>
@@ -179,7 +184,7 @@ export function HeroGet({
           <p data-testid="hero-all" className={small}>
             {t("Get Droppen:")}{" "}
             {availability.app ? (
-              <a {...fileLink(dmg)} data-testid="hero-download" className={quietLink}>
+              <a {...macDownload(dmg)} data-testid="hero-download" className={quietLink}>
                 {t("Download for Mac")}
               </a>
             ) : (
