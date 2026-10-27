@@ -20,12 +20,11 @@ use support::{common, Probe};
 
 /// The session ids one probe's server has recorded as its own, under `source`.
 ///
-/// The registry is a table in that instance's state database —
-/// `owned-sessions.json` is drained into it once on an upgrade and never written
-/// again — and no route exposes it. That is deliberate rather than an oversight:
-/// a sibling must not be able to see, or be told about, what this server made.
-/// So this is the only window onto it, and the tests that use it are the ones
-/// about the registry itself rather than about what it makes the list say.
+/// The registry is a table in that instance's state database, and no route
+/// exposes it. That is deliberate rather than an oversight: a sibling must not
+/// be able to see, or be told about, what this server made. So this is the only
+/// window onto it, and the tests that use it are the ones about the registry
+/// itself rather than about what it makes the list say.
 fn owned(probe: &Probe, source: &str) -> Vec<String> {
     common::rows(
         &probe.instance_db(),

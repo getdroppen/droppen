@@ -13,7 +13,7 @@
 //!
 //! Without a record those two would be external the moment they were created:
 //! the server would refuse to send the *second* message to a session it had just
-//! started. So `instances/<name>/owned-sessions.json` records them, and scope
+//! started. So the instance's `owned_sessions` table records them, and scope
 //! reads "in my root **or** in my registry".
 //!
 //! What the registry deliberately does *not* change is how a session spawns. A
@@ -22,7 +22,7 @@
 //! user's own session in every sense except who is allowed to drive it from here.
 //! Ownership decides *who may resume*; the root decides *which login resumes*.
 //!
-//! The file is per-instance, so a sibling server never inherits these. For a
+//! The registry is per-instance, so a sibling server never inherits these. For a
 //! claude session on the local login that is the whole answer: instance B lists
 //! A's creation under `external`, which is exactly right — it is a session in
 //! the user's own `~/.claude`, B did not make it, and B must not append turns to
@@ -46,15 +46,14 @@
 //! In [`crate::db`], as `owned_sessions`, and the table's shape is the point:
 //! its primary key is `(source, session_id)`, so "the same id under two sources"
 //! — the one thing `{"claude": [...], "codex": [...]}` could always express and
-//! never mean — is not a row that can be written. `owned-sessions.json` is read
-//! exactly once, to drain it into that table, and is never written.
+//! never mean — is not a row that can be written.
 //!
-//! It was written for a while after the move: [`crate::app`] calls this the one
-//! piece of ownership state that cannot be rebuilt from the filesystem, so a
-//! [`crate::supervisor`] demotion to a `.prev` binary that had never heard of
-//! the database would have had nothing at all. No binary that old is left to
-//! demote to. The file stays on disk unread, because dropping one back in is how
-//! a restored backup seeds a fresh database.
+//! `owned-sessions.json` was written for a while after the move: [`crate::app`]
+//! calls this the one piece of ownership state that cannot be rebuilt from the
+//! filesystem, so a [`crate::supervisor`] demotion to a `.prev` binary that had
+//! never heard of the database would have had nothing at all. No binary that
+//! old is left to demote to, and the file is no longer read: one left on disk
+//! is inert.
 //!
 //! Nor is there a write lock any more. Every change here is a single statement —
 //! `INSERT OR IGNORE`, `DELETE` — so the transaction is the whole of the
@@ -62,10 +61,7 @@
 //! their whole-file rewrites of the JSON.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
-
-use serde_json::Value;
 
 use super::{Paths, ServerId, Source};
 use crate::claude_roots::ClaudeRoot;
@@ -114,32 +110,7 @@ impl OwnedSessions {
     }
 }
 
-/// The name this store's one-time drain of `owned-sessions.json` is recorded
-/// under.
-const IMPORT_MARKER: &str = "owned-sessions";
-
-/// What the file says, for the one boot that drains it.
-///
-/// The precedence is the one the read path used to apply on every call: the
-/// registry if there is one, and the codex-only file an earlier build wrote if
-/// there is not. A file that exists but will not parse is *not* a reason to fall
-/// back — it is a registry that has been damaged, and reading the older one
-/// instead would resurrect ownership its author had already replaced.
-/// `local` is the server the drained ids are attributed to: the file is
-/// `instances/<name>/owned-sessions.json`, so every id in it was recorded by
-/// this instance and by nothing else.
-async fn read_owned_file(paths: &Paths, local: &ServerId) -> OwnedSessions {
-    let path = paths.owned_sessions_file();
-    match tokio::fs::read_to_string(&path).await {
-        Ok(raw) => parse(&raw, local).unwrap_or_else(|| {
-            tracing::warn!(path = %path.display(), "the ownership registry is not a registry; treating every such session as external");
-            OwnedSessions::default()
-        }),
-        Err(_) => legacy_codex(&paths.legacy_owned_codex_file(), local).await,
-    }
-}
-
-/// This instance's database, with `owned-sessions.json` drained into it once.
+/// This instance's database.
 ///
 /// No `stat`-keyed parse cache any more, and its absence is deliberate rather
 /// than an oversight. The cache existed because this is read once per session
@@ -148,54 +119,8 @@ async fn read_owned_file(paths: &Paths, local: &ServerId) -> OwnedSessions {
 /// table of tens of rows are cheaper than the `stat` the cache needed to decide
 /// it could skip the parse, and a cache keyed on the file's mtime would now be
 /// keyed on a file nothing writes.
-async fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.instance_db());
-    if db.kv_get(crate::db::scope::IMPORTED, IMPORT_MARKER).is_none() {
-        let local = ServerId::local(paths);
-        import_once(&db, read_owned_file(paths, &local).await);
-    }
-    db
-}
-
-/// [`crate::db::Db::import_once`], for a store whose rows are a table.
-///
-/// Same three properties, same reasons: the mark lands in the transaction that
-/// carries the rows, the file is left on disk untouched, and a registry that was
-/// never written still counts as drained — otherwise a row removed since (by
-/// the boot prune, or by an adoption in an earlier build) would come back after
-/// a restart.
-fn import_once(db: &Db, owned: OwnedSessions) {
-    let count = owned.claude.len() + owned.codex.len();
-    let outcome = db.write(|tx| {
-        let done: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .ok();
-        if done.is_some() {
-            return Ok(false);
-        }
-        for source in [Source::Claude, Source::Codex] {
-            for (id, server) in owned.set(source) {
-                tx.execute(
-                    "INSERT OR IGNORE INTO owned_sessions (source, session_id, server_id) VALUES (?1, ?2, ?3)",
-                    (source.as_str(), id.as_str(), server.as_str()),
-                )?;
-            }
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (crate::db::scope::IMPORTED, IMPORT_MARKER, count.to_string()),
-        )?;
-        Ok(true)
-    });
-    match outcome {
-        Ok(true) => tracing::info!(sessions = count, "imported the ownership registry into the state database"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "cannot import the ownership registry; it stays in its file this boot"),
-    }
+fn store(paths: &Paths) -> Arc<Db> {
+    crate::db::at(paths.instance_db())
 }
 
 /// The sessions this instance created, or an empty registry when there is none.
@@ -206,7 +131,7 @@ fn import_once(db: &Db, owned: OwnedSessions) {
 /// browsable but refuses to be driven.
 pub async fn read(paths: &Paths) -> OwnedSessions {
     let local = ServerId::local(paths);
-    stored(&*store(paths).await, &local)
+    stored(&store(paths), &local)
 }
 
 /// Every row, as a registry.
@@ -253,41 +178,6 @@ fn stored(db: &Db, local: &ServerId) -> OwnedSessions {
     .unwrap_or_default()
 }
 
-/// `{"claude": [...], "codex": [...]}`, or `None` when it is not that.
-///
-/// Every id the file names is attributed to `local`: it is this instance's own
-/// file, in this instance's own directory, and no other server has ever written
-/// to it.
-fn parse(raw: &str, local: &ServerId) -> Option<OwnedSessions> {
-    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(raw) else {
-        return None;
-    };
-    let ids = |key: &str| -> BTreeMap<String, ServerId> {
-        match map.get(key) {
-            Some(Value::Array(ids)) => ids.iter().filter_map(Value::as_str).map(|id| (id.to_owned(), local.clone())).collect(),
-            _ => BTreeMap::new(),
-        }
-    };
-    Some(OwnedSessions {
-        claude: ids("claude"),
-        codex: ids("codex"),
-    })
-}
-
-/// The bare array of codex ids the first version of this file held.
-async fn legacy_codex(path: &Path, local: &ServerId) -> OwnedSessions {
-    let Ok(raw) = tokio::fs::read_to_string(path).await else {
-        return OwnedSessions::default();
-    };
-    match serde_json::from_str::<Value>(&raw) {
-        Ok(Value::Array(ids)) => OwnedSessions {
-            claude: BTreeMap::new(),
-            codex: ids.iter().filter_map(Value::as_str).map(|id| (id.to_owned(), local.clone())).collect(),
-        },
-        _ => OwnedSessions::default(),
-    }
-}
-
 /// Record that this instance created `id`.
 ///
 /// For codex this is called on the *successful* end of the handshake, once the
@@ -312,7 +202,6 @@ pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<
     // the window between the read and the write — and recording an id twice is
     // the ordinary case on a codex re-handshake, not an error.
     let outcome = store(paths)
-        .await
         .write(|tx| {
             tx.execute(
                 "INSERT OR IGNORE INTO owned_sessions (source, session_id, server_id) VALUES (?1, ?2, ?3)",
@@ -338,7 +227,6 @@ pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<
 /// into this server's own root, where the directory answers instead.)
 pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     store(paths)
-        .await
         .write(|tx| tx.execute("DELETE FROM owned_sessions WHERE source = ?1 AND session_id = ?2", (source.as_str(), id)))
         .map(|_| ())
         .map_err(std::io::Error::other)
@@ -421,9 +309,8 @@ mod tests {
         assert!(!owned.contains(Source::Claude, "thread-a"), "one CLI's id is not the other's");
     }
 
-    /// The contract that replaced the mirror: `owned-sessions.json` is an input,
-    /// once, and never an output. A change that wrote it back would be one a
-    /// hand-restored registry could not survive being imported from.
+    /// A change writes the table and nothing else: `owned-sessions.json` is no
+    /// longer read, so a registry left beside the database is inert.
     #[tokio::test]
     async fn no_change_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -432,8 +319,8 @@ mod tests {
         assert!(!paths.owned_sessions_file().exists(), "recording writes the table and nothing else");
         assert!(!paths.owned_sessions_file().with_extension("json.tmp").exists());
 
-        // A registry that appears afterwards is left exactly as found: the
-        // import is long past, and there is no writer left to overwrite it.
+        // A registry that appears afterwards is left exactly as found: nothing
+        // reads it, and there is no writer left to overwrite it.
         let file = paths.owned_sessions_file();
         std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
         let planted = r#"{"claude":["planted"],"codex":[]}"#;
@@ -442,44 +329,6 @@ mod tests {
         forget(&paths, Source::Codex, "thread-a").await.expect("forget");
         assert!(!read(&paths).await.contains(Source::Claude, "planted"), "and it is not adopted");
         assert_eq!(std::fs::read_to_string(&file).expect("read"), planted);
-    }
-
-    /// The codex-only file an earlier build wrote is read under its old name
-    /// until something is recorded, and its ids survive that first write.
-    #[tokio::test]
-    async fn the_codex_only_registry_is_read_and_carried_forward() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = paths(&dir);
-        let legacy = paths.legacy_owned_codex_file();
-        std::fs::create_dir_all(legacy.parent().expect("instance dir")).expect("instance dir");
-        std::fs::write(&legacy, r#"["thread-old"]"#).expect("legacy registry");
-
-        assert!(read(&paths).await.contains(Source::Codex, "thread-old"), "read under the old name");
-        assert!(!paths.owned_sessions_file().exists(), "and nothing is rewritten by a read");
-
-        record(&paths, Source::Claude, "session-new").await.expect("record");
-        let owned = read(&paths).await;
-        assert!(owned.contains(Source::Codex, "thread-old"), "the old ids came across");
-        assert!(owned.contains(Source::Claude, "session-new"));
-
-        // The new file now answers, whatever the old one still says.
-        std::fs::write(&legacy, r#"["thread-gone"]"#).expect("rewrite the legacy registry");
-        assert!(!read(&paths).await.contains(Source::Codex, "thread-gone"));
-    }
-
-    /// The safe direction: a registry nobody can parse disowns its sessions
-    /// rather than claiming ones it cannot vouch for.
-    #[tokio::test]
-    async fn an_unreadable_registry_owns_nothing_and_can_still_be_written() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = paths(&dir);
-        let file = paths.owned_sessions_file();
-        std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
-        std::fs::write(&file, "{ not json at all").expect("garbage");
-
-        assert!(read(&paths).await.is_empty());
-        record(&paths, Source::Codex, "thread-c").await.expect("record over the garbage");
-        assert!(read(&paths).await.contains(Source::Codex, "thread-c"));
     }
 
     /// A claude id is recorded *before* its spawn, so a launch that failed
@@ -512,30 +361,6 @@ mod tests {
         // Idempotent, and a no-op on a registry with nothing to drop.
         prune(&paths).await;
         assert_eq!(read(&paths).await, owned);
-    }
-
-    /// The file is drained exactly once, and never over what has happened since.
-    /// Rows do leave this table — the boot prune drops them, and an adoption in
-    /// an earlier build retired them — so an import that ran twice would put
-    /// back ownership that had been taken away on purpose.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_never_over_newer_rows() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = paths(&dir);
-        let file = paths.owned_sessions_file();
-        std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
-        std::fs::write(&file, r#"{"claude":["adopted"],"codex":[]}"#).expect("seed");
-
-        assert!(read(&paths).await.contains(Source::Claude, "adopted"));
-
-        forget(&paths, Source::Claude, "adopted")
-            .await
-            .expect("retire the row, as an earlier adoption did");
-        std::fs::write(&file, r#"{"claude":["adopted"],"codex":[]}"#).expect("the old file comes back");
-        assert!(
-            !read(&paths).await.contains(Source::Claude, "adopted"),
-            "a forgotten session stays forgotten"
-        );
     }
 
     /// The registry is the one piece of ownership state that cannot be rebuilt

@@ -20,14 +20,18 @@ const SUBAGENT_ID: &str = "99999999-8888-7777-6666-555555555555";
 /// Record a thread as one this server created.
 ///
 /// Codex ownership cannot be read off a path — there is one `~/.codex` — so it
-/// is a registry in the instance directory. A fixture that wants an *owned*
-/// thread plants the `owned-sessions.json` an install upgrading from an older
-/// build would have, which the first boot drains into the registry table; the
-/// server itself writes only the table.
+/// is a registry in the instance database. The server itself writes only the
+/// table, so the fixture inserts the row it would have written.
 fn own_codex_session(home: &Path, id: &str) {
-    let file = remote_hand_server::sessions::Paths::new(home.to_path_buf()).owned_sessions_file();
-    std::fs::create_dir_all(file.parent().expect("instance dir")).expect("instance dir");
-    std::fs::write(&file, serde_json::json!({"codex": [id]}).to_string()).expect("ownership registry");
+    let paths = remote_hand_server::sessions::Paths::new(home.to_path_buf());
+    remote_hand_server::db::at(paths.instance_db())
+        .write(|tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO owned_sessions (source, session_id) VALUES ('codex', ?1)",
+                (id,),
+            )
+        })
+        .expect("seed the ownership registry");
 }
 
 /// One rollout file, in the `sessions/YYYY/MM/DD` tree Codex writes.
