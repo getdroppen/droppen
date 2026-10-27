@@ -1,17 +1,16 @@
-//! The plugin host: which plugins this build bundles, which of them this
-//! instance has on, and each one's private document store.
+//! The plugin host: which plugins this instance has installed, which of them
+//! it has on, where their code is served from, and each one's private document
+//! store.
 //!
 //! # What a plugin is here
 //!
-//! In SDK 0.1 a plugin is a front-end package compiled into the web build
-//! (see `docs/plugins/distribution.md`). It ships no server code; the one
-//! thing the server does for it is keep its documents ([`store`]), behind the
-//! generic routes in [`routes`] that `docs/plugins/storage-protocol.md`
-//! specifies. The build writes `web/dist/plugins/manifest.json` saying which
-//! plugins it bundles; that file is embedded with the rest of the web build
-//! and is the only place this module learns of any plugin. The public build
-//! bundles none, and then all of this is inert: an empty list, and every
-//! `/api/plugins/{id}/…` a `404`.
+//! A plugin is a front-end package installed into one instance at runtime
+//! (`docs/plugins/runtime.md`): `plugin install <file.tgz>`, `POST
+//! /api/plugins`, or Settings › Plugins. It ships no server code; the server
+//! unpacks and checks it ([`install`]), keeps its documents behind the generic
+//! routes in [`routes`], and serves its code to this instance's own pages from
+//! `GET /plugins/<key>/<id>/<build>/<path>` ([`serve`]). The web build carries
+//! no plugin code at all, and is the same build everywhere.
 //!
 //! # On or off
 //!
@@ -22,13 +21,23 @@
 //! 1. the configuration (`[plugins] disable` beats `enable`; see
 //!    [`crate::config::PluginSettings`]), which also makes the switch read-only;
 //! 2. the instance's own decision, a row in its `state.db` (`kv`, scope
-//!    `plugins`), written by the settings page or the CLI;
-//! 3. the distribution's `defaultEnabled`;
-//! 4. off.
+//!    `plugins`), written by the settings page or the CLI — and by an install,
+//!    which switches the plugin on;
+//! 3. off.
 //!
 //! And only ever when the plugin's `engines.droppen` admits this host's SDK. The
 //! decision is read on every call rather than cached, so `remote-hand-server
 //! plugin enable` takes effect on a running server at its next request.
+//!
+//! # The capability key
+//!
+//! A page cannot send its bearer header with `import()`, and a query string
+//! would not survive the plugin's own relative chunk imports, so the code's
+//! URL carries an instance-wide secret as a path segment: 128 bits as hex in
+//! the instance's `state.db`, made on first need and stable across restarts.
+//! It reaches a page only inside [`droppen_plugin_sdk::PluginStatus::entry`],
+//! which only a signed-in, non-cloud caller is given. The asset route compares
+//! it in constant time ([`Plugins::asset`]).
 //!
 //! # Leaving no trace
 //!
@@ -38,24 +47,31 @@
 //! forgotten and reopened rather than written through a handle to a moved file.
 
 pub mod cli;
+pub mod install;
 pub mod routes;
+pub mod serve;
 pub mod store;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod wire;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use droppen_plugin_sdk::{sdk_version, BundledManifest, Doc, DocMeta, DocWrite, Manifest, PluginStatus, PutDoc};
+use droppen_plugin_sdk::{sdk_version, valid_id, Doc, DocMeta, DocWrite, Manifest, PluginStatus, PutDoc};
 use serde::{Deserialize, Serialize};
 
 use crate::db::scope;
 use crate::feed::global::GlobalFeed;
 use crate::sessions::Paths;
+use install::{Installed, InstallError};
 pub use store::{Store, StoreError};
 
-/// Where the build puts the list of bundled plugins, under `web/dist`.
-pub const MANIFEST_ASSET: &str = "plugins/manifest.json";
+/// The `state.db` row holding the capability key, in scope `plugins`.
+///
+/// A key no plugin id can name: ids are lower-case, and this one is not.
+const ASSET_KEY_ROW: &str = "assetKey";
 
 /// Who turned a plugin on or off, and through what.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +85,8 @@ pub enum DecisionReason {
     /// plugin, which turned it on where it had data. Kept for the decisions
     /// that release wrote; nothing writes it now.
     Migrated,
+    /// `plugin install` (or `POST /api/plugins`), which turns a plugin on.
+    Install,
 }
 
 /// An instance's own decision about one plugin, as its `state.db` keeps it.
@@ -87,10 +105,10 @@ pub struct Decision {
 /// Why a plugin call was refused.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PluginError {
-    /// No plugin of that id is bundled with this build (`404 plugin_not_found`).
-    #[error("no plugin {0:?} is bundled with this build")]
+    /// No plugin of that id is installed on this instance (`404 plugin_not_found`).
+    #[error("no plugin {0:?} is installed on this instance")]
     NotFound(String),
-    /// Bundled, but not on here, or incompatible (`404 plugin_disabled`).
+    /// Installed, but not on here, or incompatible (`404 plugin_disabled`).
     #[error("plugin {id:?} is not enabled on this instance{}", .reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())]
     Disabled {
         /// The plugin.
@@ -104,72 +122,37 @@ pub enum PluginError {
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// An install or an uninstall was refused.
+    #[error(transparent)]
+    Install(#[from] InstallError),
 }
 
-/// The bundled manifest of this binary's web build.
-///
-/// Absent — a build without a web bundle, or one made before plugins — means
-/// no plugins. Present but unreadable means no plugins too, and a warning: the
-/// server must not refuse to start over a file only the build writes.
-pub fn embedded_manifest() -> BundledManifest {
-    match crate::static_files::embedded(MANIFEST_ASSET) {
-        None => BundledManifest::default(),
-        Some(bytes) => read_manifest(&bytes),
-    }
-}
-
-/// Read the bundled manifest one plugin at a time: an entry the server cannot
-/// read is left out, loudly, and the others stand.
-fn read_manifest(bytes: &[u8]) -> BundledManifest {
-    match BundledManifest::from_json_lenient(bytes) {
-        Ok((bundled, problems)) => {
-            for problem in problems {
-                tracing::error!(asset = MANIFEST_ASSET, %problem, "a bundled plugin's manifest cannot be read; that plugin is left out");
-            }
-            bundled
-        }
-        Err(error) => {
-            tracing::error!(%error, asset = MANIFEST_ASSET, "the web build's plugin manifest cannot be read; serving no plugins");
-            BundledManifest::default()
-        }
-    }
-}
-
-/// Drop every manifest a host must refuse: one with problems, or a second of an id.
-fn admissible(bundled: BundledManifest) -> Vec<Manifest> {
-    let mut seen = HashSet::new();
-    let mut plugins = Vec::new();
-    for manifest in bundled.plugins {
-        let problems = manifest.problems();
-        if !problems.is_empty() {
-            tracing::warn!(plugin = %manifest.id, ?problems, "a bundled plugin's manifest is refused");
-            continue;
-        }
-        if !seen.insert(manifest.id.clone()) {
-            tracing::warn!(plugin = %manifest.id, "a plugin is bundled twice; keeping the first");
-            continue;
-        }
-        plugins.push(manifest);
-    }
-    plugins
+/// A file of an installed plugin's, as the asset route serves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asset {
+    /// The file's bytes.
+    pub bytes: Vec<u8>,
+    /// Its media type, by extension.
+    pub content_type: &'static str,
 }
 
 /// The plugin host of one instance. One per server, in [`crate::api::AppState`].
 pub struct Plugins {
     instance_dir: PathBuf,
     instance_db: PathBuf,
-    bundled: Vec<Manifest>,
     force_on: BTreeSet<String>,
     force_off: BTreeSet<String>,
     feed: Option<Arc<GlobalFeed>>,
     stores: Mutex<HashMap<String, Arc<Store>>>,
+    /// The capability key, once this process has read or made it.
+    asset_key: Mutex<Option<String>>,
 }
 
 impl std::fmt::Debug for Plugins {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Plugins")
             .field("instance_dir", &self.instance_dir)
-            .field("bundled", &self.bundled.iter().map(|m| m.id.as_str()).collect::<Vec<_>>())
+            .field("installed", &self.installed().iter().map(|package| package.manifest.id.as_str()).collect::<Vec<_>>())
             .finish_non_exhaustive()
     }
 }
@@ -178,47 +161,46 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Whether this request came over the cloud agent's bridge and speaks for a
+/// device (`crate::auth` resolves it from the agent's headers). Nothing of the
+/// plugin host is served to one.
+pub(crate) fn is_cloud(who: &crate::auth::MaybeIdentity) -> bool {
+    who.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"))
+}
+
 impl Plugins {
-    /// A host for the instance whose directory and `state.db` are given, with
-    /// an explicit bundled manifest. Touches nothing on disk.
+    /// A host for the instance whose directory and `state.db` are given.
+    /// Touches nothing on disk.
     pub fn new(
         instance_dir: impl Into<PathBuf>,
         instance_db: impl Into<PathBuf>,
-        bundled: BundledManifest,
         config: &crate::config::PluginSettings,
         feed: Option<Arc<GlobalFeed>>,
     ) -> Self {
         Self {
             instance_dir: instance_dir.into(),
             instance_db: instance_db.into(),
-            bundled: admissible(bundled),
             force_on: config.enabled(),
             force_off: config.disabled(),
             feed,
             stores: Mutex::new(HashMap::new()),
+            asset_key: Mutex::new(None),
         }
     }
 
-    /// The host of the instance `paths` names, with what this binary bundles.
+    /// The host of the instance `paths` names.
     pub fn load(paths: &Paths, config: &crate::config::PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Arc<Self> {
-        let plugins = Self::new(paths.instance_dir(), paths.instance_db(), embedded_manifest(), config, feed);
-        if !plugins.bundled.is_empty() {
-            tracing::info!(
-                plugins = ?plugins.bundled.iter().map(|m| format!("{}@{}", m.id, m.version)).collect::<Vec<_>>(),
-                "bundled plugins"
-            );
-        }
-        Arc::new(plugins)
+        Arc::new(Self::new(paths.instance_dir(), paths.instance_db(), config, feed))
     }
 
-    /// Every plugin this build bundles, in the build's order.
-    pub fn bundled(&self) -> &[Manifest] {
-        &self.bundled
+    /// `<instance>/plugin-packages`: every installed package, by id.
+    pub fn packages_dir(&self) -> PathBuf {
+        install::packages_dir(&self.instance_dir)
     }
 
-    /// One bundled plugin's manifest.
-    pub fn manifest(&self, id: &str) -> Option<&Manifest> {
-        self.bundled.iter().find(|m| m.id.as_str() == id)
+    /// `<instance>/plugin-packages/<id>` — the unpacked package.
+    pub fn package_dir(&self, id: &str) -> PathBuf {
+        install::package_dir(&self.instance_dir, id)
     }
 
     /// `<instance>/plugins/<id>` — everything of one plugin's on this instance.
@@ -236,6 +218,42 @@ impl Plugins {
         &self.instance_dir
     }
 
+    /// Every package installed in this instance, by id.
+    ///
+    /// Read from disk on every call rather than cached: an install or an
+    /// uninstall made by the CLI beside a running server must be seen by that
+    /// server's next request, and the list is a handful of small files.
+    pub fn installed(&self) -> Vec<Installed> {
+        let dir = self.packages_dir();
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut installed = Vec::new();
+        for entry in entries.filter_map(Result::ok) {
+            // Install temporaries start with `.`, which no plugin id may, so
+            // they are passed over here without a word.
+            let Some(id) = entry.file_name().to_str().filter(|id| valid_id(id)).map(str::to_string) else {
+                continue;
+            };
+            match install::read_package(&entry.path()) {
+                Ok(package) => installed.push(package),
+                Err(error) => tracing::warn!(plugin = id, %error, "an installed plugin cannot be read; leaving it out"),
+            }
+        }
+        installed.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
+        installed
+    }
+
+    /// One installed package, if it is there and readable.
+    pub fn installed_package(&self, id: &str) -> Option<Installed> {
+        valid_id(id).then(|| install::read_package(&self.package_dir(id)).ok()).flatten()
+    }
+
+    /// One installed plugin's manifest.
+    pub fn manifest(&self, id: &str) -> Option<Manifest> {
+        self.installed_package(id).map(|package| package.manifest)
+    }
+
     /// The instance's decision about `id`, if it ever made one.
     pub fn decision(&self, id: &str) -> Option<Decision> {
         let raw = crate::db::at(&self.instance_db).kv_get(scope::PLUGINS, id)?;
@@ -249,28 +267,26 @@ impl Plugins {
         crate::db::at(&self.instance_db).kv_set(scope::PLUGINS, id, &value);
     }
 
-    /// Every bundled plugin as this instance sees it, in the build's order.
+    /// Every installed plugin as this instance sees it, by id.
     pub fn status(&self) -> Vec<PluginStatus> {
-        if self.bundled.is_empty() {
-            // The public build: not even the instance database is consulted.
+        let installed = self.installed();
+        if installed.is_empty() {
+            // Nothing installed: not even the instance database is consulted.
             return Vec::new();
         }
-        let decisions = crate::db::at(&self.instance_db).kv_scope(scope::PLUGINS);
-        self.bundled
-            .iter()
-            .map(|manifest| {
-                let decision = decisions.get(manifest.id.as_str()).and_then(|raw| serde_json::from_str(raw).ok());
-                self.evaluate(manifest, decision.as_ref())
-            })
-            .collect()
+        let statuses: Vec<PluginStatus> = installed.iter().map(|package| self.evaluate(package, None)).collect();
+        // The key is made only for a plugin that will actually hand its code
+        // to a page; a list of plugins that are all off needs none.
+        if !statuses.iter().any(|status| status.enabled) {
+            return statuses;
+        }
+        let key = self.asset_key();
+        installed.iter().map(|package| self.evaluate(package, Some(&key))).collect()
     }
 
     /// [`Self::status`], off the async runtime: it reads the instance's
     /// database and lists a directory, and runs on every feed attach.
     pub async fn status_async(self: &Arc<Self>) -> Vec<PluginStatus> {
-        if self.bundled.is_empty() {
-            return Vec::new();
-        }
         let plugins = self.clone();
         tokio::task::spawn_blocking(move || plugins.status()).await.unwrap_or_else(|error| {
             tracing::error!(%error, "cannot read the plugins' status");
@@ -278,29 +294,80 @@ impl Plugins {
         })
     }
 
-    /// One bundled plugin as this instance sees it.
+    /// One installed plugin as this instance sees it.
     pub fn status_of(&self, id: &str) -> Option<PluginStatus> {
-        let manifest = self.manifest(id)?;
-        Some(self.evaluate(manifest, self.decision(id).as_ref()))
+        let package = self.installed_package(id)?;
+        let status = self.evaluate(&package, None);
+        if status.enabled {
+            let key = self.asset_key();
+            return Some(self.evaluate(&package, Some(&key)));
+        }
+        Some(status)
     }
 
-    fn evaluate(&self, manifest: &Manifest, decision: Option<&Decision>) -> PluginStatus {
+    fn evaluate(&self, package: &Installed, key: Option<&str>) -> PluginStatus {
+        let manifest = &package.manifest;
         let id = manifest.id.as_str();
-        let mut status = effective(manifest, self.force_on.contains(id), self.force_off.contains(id), decision);
+        let mut status = effective(manifest, self.force_on.contains(id), self.force_off.contains(id), self.decision(id).as_ref(), &package.build);
+        if status.enabled {
+            if let Some(key) = key {
+                status.entry = Some(entry_url(key, id, &package.build, &package.entry));
+            }
+        }
         status.notices = self.notice_list(id);
         status.notice = (!status.notices.is_empty()).then(|| status.notices.iter().map(|n| n.text.as_str()).collect::<Vec<_>>().join("；"));
         status
     }
 
-    /// Whether `id` is bundled, on here and compatible.
+    /// The instance's capability key, made on first need and remembered for
+    /// the life of the process.
+    fn asset_key(&self) -> String {
+        {
+            let cached = lock(&self.asset_key);
+            if let Some(key) = cached.as_ref() {
+                return key.clone();
+            }
+        }
+        let db = crate::db::at(&self.instance_db);
+        let key = match db.kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key)) {
+            Some(key) => key,
+            None => {
+                let key = random_key();
+                db.kv_set(scope::PLUGINS, ASSET_KEY_ROW, &key);
+                key
+            }
+        };
+        *lock(&self.asset_key) = Some(key.clone());
+        key
+    }
+
+    /// The key if one has already been made — never makes one. The asset route
+    /// asks with this: a request cannot bring a key into existence.
+    fn stored_asset_key(&self) -> Option<String> {
+        {
+            let cached = lock(&self.asset_key);
+            if let Some(key) = cached.as_ref() {
+                return Some(key.clone());
+            }
+        }
+        if !self.instance_db.exists() {
+            // No database, so no key was ever made; do not make one now.
+            return None;
+        }
+        let key = crate::db::at(&self.instance_db).kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key))?;
+        *lock(&self.asset_key) = Some(key.clone());
+        Some(key)
+    }
+
+    /// Whether `id` is installed, on here and compatible.
     pub fn is_enabled(&self, id: &str) -> bool {
         self.status_of(id).is_some_and(|status| status.enabled)
     }
 
-    /// Turn `id` on or off for this instance. Refused for a plugin this build
-    /// does not bundle, and for one the configuration pins.
+    /// Turn `id` on or off for this instance. Refused for a plugin this
+    /// instance has not installed, and for one the configuration pins.
     pub fn set_enabled(&self, id: &str, enabled: bool, by: Option<&str>, reason: DecisionReason) -> Result<PluginStatus, PluginError> {
-        if self.manifest(id).is_none() {
+        if self.installed_package(id).is_none() {
             return Err(PluginError::NotFound(id.to_string()));
         }
         if self.force_on.contains(id) || self.force_off.contains(id) {
@@ -318,6 +385,67 @@ impl Plugins {
         tracing::info!(plugin = id, enabled, ?by, ?reason, "plugin switched");
         self.announce_status();
         self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))
+    }
+
+    /// Unpack and install `tarball` as this instance's copy of its plugin,
+    /// replacing any previous install of the same id and switching it on
+    /// (unless the configuration pins it off).
+    pub fn install(&self, tarball: &[u8], by: Option<&str>) -> Result<PluginStatus, PluginError> {
+        let installed = install::install(&self.instance_dir, tarball)?;
+        let id = installed.manifest.id.as_str().to_string();
+        if !self.force_on.contains(&id) && !self.force_off.contains(&id) {
+            self.record(
+                &id,
+                &Decision {
+                    enabled: true,
+                    by: by.map(str::to_string),
+                    at: store::now(),
+                    reason: DecisionReason::Install,
+                },
+            );
+        }
+        tracing::info!(plugin = %id, build = %installed.build, version = %installed.manifest.version, ?by, "plugin installed");
+        self.announce_status();
+        self.status_of(&id).ok_or(PluginError::NotFound(id))
+    }
+
+    /// Remove the installed package of `id`. Its documents and its on/off
+    /// decision stay for a later install.
+    pub fn uninstall(&self, id: &str) -> Result<(), PluginError> {
+        install::uninstall(&self.instance_dir, id)?;
+        tracing::info!(plugin = id, "plugin uninstalled");
+        self.announce_status();
+        Ok(())
+    }
+
+    /// One file of an installed, enabled plugin at its current build, for the
+    /// asset route — or `None` for every case that route answers `404`: a
+    /// wrong key, an unknown id, an old build, a plugin that is off or
+    /// incompatible, a path outside the package, a directory.
+    pub fn asset(&self, key: &str, id: &str, build: &str, path: &str) -> Option<Asset> {
+        let expected = self.stored_asset_key()?;
+        if key.len() != expected.len() || !bool::from(subtle::ConstantTimeEq::ct_eq(key.as_bytes(), expected.as_bytes())) {
+            return None;
+        }
+        if !valid_id(id) {
+            return None;
+        }
+        let package = self.installed_package(id)?;
+        if package.build != build {
+            return None;
+        }
+        if !self.evaluate(&package, None).enabled {
+            return None;
+        }
+        let file = resolve_inside(&self.package_dir(id), path)?;
+        if !std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_file()) {
+            return None;
+        }
+        let bytes = std::fs::read(&file).ok()?;
+        Some(Asset {
+            bytes,
+            content_type: content_type(path),
+        })
     }
 
     /// The store of a plugin that is on — opened, and made, on first use — or
@@ -441,8 +569,8 @@ fn reset_store(dir: &Path) -> Option<PathBuf> {
 }
 
 /// A plugin's switch, worked out: configuration, then the instance's decision,
-/// then the distribution's default, then off — and on only when compatible.
-pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision: Option<&Decision>) -> PluginStatus {
+/// then off — and on only when compatible.
+pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision: Option<&Decision>, build: &str) -> PluginStatus {
     let host = sdk_version();
     let compatible = manifest.compatible_with(&host);
     let (wanted, why_off, pinned) = if force_off {
@@ -453,11 +581,7 @@ pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision:
         let by = decision.by.as_deref().map(|by| format!(" by {by}")).unwrap_or_default();
         (decision.enabled, Some(format!("turned off on this instance{by}")), false)
     } else {
-        (
-            manifest.default_enabled,
-            Some("off unless turned on for this instance".to_string()),
-            false,
-        )
+        (false, Some("installed, and off until switched on for this instance".to_string()), false)
     };
     let reason = if !compatible {
         Some(format!(
@@ -481,103 +605,175 @@ pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision:
         reason,
         notice: None,
         notices: Vec::new(),
+        build: build.to_string(),
+        entry: None,
+        aliases: manifest.aliases.clone(),
+        permissions: manifest.permissions.clone(),
     }
+}
+
+/// Where a page imports an enabled plugin from: its entry's path inside the
+/// package, percent-encoded segment by segment, under the capability key and
+/// the build.
+pub fn entry_url(key: &str, id: &str, build: &str, entry: &str) -> String {
+    let path: Vec<String> = entry.split('/').map(percent_encode).collect();
+    format!("/plugins/{key}/{id}/{build}/{}", path.join("/"))
+}
+
+/// The unreserved characters as RFC 3986 has them; everything else is
+/// `%XX`. Package paths are normally plain, so this only matters for the few
+/// a plugin could ship with a space or a `#`.
+fn percent_encode(segment: &str) -> String {
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => encoded.push(byte as char),
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+/// A file path inside a package, or `None` for anything that is not one:
+/// absolute, `.` or `..` segments, an empty segment, a backslash (a separator
+/// on Windows), a NUL.
+fn resolve_inside(dir: &Path, path: &str) -> Option<PathBuf> {
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') || path.contains('\0') {
+        return None;
+    }
+    let mut target = dir.to_path_buf();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return None;
+        }
+        target.push(part);
+    }
+    Some(target)
+}
+
+/// The media type of a file inside a package, by extension, as §2 lists them.
+fn content_type(path: &str) -> &'static str {
+    let extension = path.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("js" | "mjs") => "text/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 128 bits as 32 lower-case hex digits.
+fn random_key() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Whether `key` is one this host could have made.
+fn valid_key(key: &str) -> bool {
+    key.len() == 32 && key.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::config::PluginSettings;
+    use crate::plugins::testing::{package, tarball};
     use serde_json::json;
 
-    pub(crate) fn manifest(id: &str, default_enabled: bool) -> Manifest {
-        serde_json::from_value(json!({
-            "id": id,
-            "version": "1.0.0",
-            "name": {"en": id},
-            "engines": {"droppen": "^0.1.0"},
-            "permissions": ["storage"],
-            "defaultEnabled": default_enabled,
-            "package": format!("@droppen/plugin-{id}"),
-        }))
-        .expect("a manifest")
+    /// A valid package of `id`, at `version`, with an entry and a chunk.
+    pub(crate) fn package_bytes(id: &str, version: &str) -> Vec<u8> {
+        tarball(
+            &package(id, version),
+            &[("dist/index.js", b"export default {};\n"), ("dist/page-abc.js", b"export const page = 1;\n")],
+        )
     }
 
-    pub(crate) fn bundle(plugins: Vec<Manifest>) -> BundledManifest {
-        BundledManifest {
-            sdk_version: Some(sdk_version()),
-            distribution: Some("test".into()),
-            plugins,
-        }
-    }
-
-    pub(crate) fn host(dir: &Path, plugins: Vec<Manifest>, config: PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Plugins {
+    pub(crate) fn host(dir: &Path, config: PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Plugins {
         let instance = dir.join("instances").join("t");
-        Plugins::new(instance.clone(), instance.join("state.db"), bundle(plugins), &config, feed)
+        Plugins::new(instance.clone(), instance.join("state.db"), &config, feed)
+    }
+
+    pub(crate) fn installed_host(dir: &Path, ids: &[&str], config: PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Plugins {
+        let plugins = host(dir, config, feed);
+        for id in ids {
+            plugins.install(&package_bytes(id, "0.1.0"), None).expect("installs");
+        }
+        plugins
     }
 
     #[test]
-    fn one_unreadable_entry_in_the_bundled_manifest_drops_only_itself() {
-        let good = serde_json::to_value(manifest("tasks", false)).unwrap();
-        let mut bad = good.clone();
-        bad["id"] = json!("notes");
-        bad["engines"]["droppen"] = json!(">=0.1.0 <0.2.0");
-        let text = serde_json::to_vec(&json!({ "distribution": "mine", "plugins": [bad, good] })).unwrap();
-        let bundled = read_manifest(&text);
-        assert_eq!(bundled.plugins.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["tasks"]);
-        assert!(read_manifest(b"not json").plugins.is_empty());
-    }
-
-    #[test]
-    fn the_switch_is_config_then_decision_then_default_then_off() {
-        let off = manifest("notes", false);
-        let on = manifest("clock", true);
-        let decided = |enabled| Decision {
-            enabled,
-            by: Some("ada".into()),
-            at: "2026-10-17T00:00:00.000Z".into(),
-            reason: DecisionReason::Settings,
-        };
-        assert!(!effective(&off, false, false, None).enabled, "off unless something says otherwise");
-        assert!(effective(&on, false, false, None).enabled, "the distribution's default");
-        assert!(
-            !effective(&on, false, false, Some(&decided(false))).enabled,
-            "the instance beats the default"
-        );
-        assert!(effective(&off, false, false, Some(&decided(true))).enabled);
-        let pinned = effective(&off, true, false, Some(&decided(false)));
-        assert!(pinned.enabled && pinned.forced, "the configuration beats the instance");
-        let both = effective(&on, true, true, Some(&decided(true)));
-        assert!(!both.enabled && both.forced, "disable beats enable");
-        assert!(both.reason.is_some());
-        assert_eq!(effective(&off, false, false, Some(&decided(true))).reason, None, "nothing to explain");
-
-        let mut future = manifest("later", true);
-        future.engines.droppen = "^0.2.0".parse().unwrap();
-        let status = effective(&future, true, false, None);
-        assert!(!status.enabled && !status.compatible, "never on when the host cannot run it");
-        assert!(status.reason.unwrap().contains("^0.2.0"));
-    }
-
-    #[test]
-    fn manifests_with_problems_or_a_repeated_id_are_dropped() {
-        let mut odd = manifest("odd", false);
-        odd.aliases = vec!["no-slash".into()];
+    fn installing_switches_a_plugin_on_and_announces_it() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = host(
-            dir.path(),
-            vec![manifest("tasks", false), odd, manifest("tasks", true)],
-            PluginSettings::default(),
-            None,
-        );
-        assert_eq!(plugins.bundled().iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["tasks"]);
-        assert!(!plugins.bundled()[0].default_enabled, "the first of a repeated id is kept");
+        let feed = GlobalFeed::new();
+        let mut rx = feed.listen();
+        let plugins = host(dir.path(), PluginSettings::default(), Some(feed.clone()));
+        let status = plugins.install(&package_bytes("tasks", "0.1.0"), Some("ada")).unwrap();
+        assert!(status.enabled && status.compatible && !status.forced);
+        assert_eq!(status.version.to_string(), "0.1.0");
+        assert!(status.build.starts_with("0.1.0-") && status.build.len() == 18);
+        let entry = status.entry.expect("an enabled plugin has an entry");
+        assert_eq!(entry, format!("/plugins/{}/tasks/{}/dist/index.js", status_key(&plugins), status.build));
+        assert_eq!(status.aliases, ["/tasks"]);
+        assert_eq!(status.permissions, [droppen_plugin_sdk::Permission::Storage]);
+        let decision = plugins.decision("tasks").unwrap();
+        assert_eq!((decision.enabled, decision.by.as_deref(), decision.reason), (true, Some("ada"), DecisionReason::Install));
+
+        let frame: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(frame["type"], "plugins");
+        assert_eq!(frame["plugins"][0]["build"], json!(status.build));
+        assert_eq!(frame["plugins"][0]["entry"], json!(entry));
+    }
+
+    /// The key the status handed out, read back from the database rather than
+    /// from the struct under test.
+    fn status_key(plugins: &Plugins) -> String {
+        let entry = plugins.status_of("tasks").and_then(|status| status.entry).expect("an entry");
+        entry.strip_prefix("/plugins/").unwrap().split('/').next().unwrap().to_string()
     }
 
     #[test]
-    fn a_public_build_has_nothing_and_touches_nothing() {
+    fn the_capability_key_is_made_once_and_is_stable_for_the_instance() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = host(dir.path(), vec![], PluginSettings::default(), None);
+        let plugins = installed_host(dir.path(), &["tasks"], PluginSettings::default(), None);
+        assert_eq!(status_key(&plugins), status_key(&plugins), "the same key twice");
+        let first = status_key(&plugins);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+
+        // Another process — the CLI, or a restarted server — reads the same row.
+        let other = Plugins::new(plugins.instance_dir(), plugins.instance_dir().join("state.db"), &PluginSettings::default(), None);
+        assert_eq!(status_key(&other), first, "the key survives the process");
+    }
+
+    #[test]
+    fn a_plugin_that_is_off_has_no_entry_and_one_that_is_on_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["tasks"], PluginSettings::default(), None);
+        plugins.set_enabled("tasks", false, None, DecisionReason::Settings).unwrap();
+        let status = plugins.status_of("tasks").unwrap();
+        assert!(!status.enabled && status.entry.is_none(), "off: no URL to load");
+        assert_eq!(status.reason.as_deref(), Some("turned off on this instance"));
+        plugins.set_enabled("tasks", true, None, DecisionReason::Settings).unwrap();
+        assert!(plugins.status_of("tasks").unwrap().entry.is_some());
+    }
+
+    #[test]
+    fn an_instance_with_nothing_installed_has_nothing_and_touches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = host(dir.path(), PluginSettings::default(), None);
         assert!(plugins.status().is_empty());
         assert!(matches!(plugins.get("tasks", "state"), Err(PluginError::NotFound(_))));
         assert!(matches!(
@@ -591,29 +787,32 @@ pub(crate) mod tests {
     fn a_disabled_plugin_never_makes_a_store_and_a_switch_is_seen_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let feed = GlobalFeed::new();
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
+        plugins.set_enabled("notes", false, Some("ada"), DecisionReason::Settings).unwrap();
         let mut rx = feed.listen();
-        let plugins = host(dir.path(), vec![manifest("notes", false)], PluginSettings::default(), Some(feed.clone()));
-        let store = plugins.store_path("notes");
-        assert!(matches!(plugins.get("notes", "state"), Err(PluginError::Disabled { .. })));
-        assert!(matches!(plugins.list("notes", ""), Err(PluginError::Disabled { .. })));
+        let switched = installed_host(dir.path(), &[], PluginSettings::default(), Some(feed.clone()));
+        // The same instance directory, the switch the first host wrote.
+        let store = switched.store_path("notes");
+        assert!(matches!(switched.get("notes", "state"), Err(PluginError::Disabled { .. })));
+        assert!(matches!(switched.list("notes", ""), Err(PluginError::Disabled { .. })));
         assert!(
-            !store.exists() && !plugins.dir("notes").exists(),
+            !store.exists() && !switched.dir("notes").exists(),
             "nothing on disk for a plugin that is off"
         );
 
-        let status = plugins.set_enabled("notes", true, Some("ada"), DecisionReason::Settings).unwrap();
+        let status = switched.set_enabled("notes", true, Some("ada"), DecisionReason::Settings).unwrap();
         assert!(status.enabled);
         let frame: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(frame["type"], "plugins");
         assert_eq!(frame["plugins"][0]["enabled"], json!(true));
-        let decision = plugins.decision("notes").unwrap();
+        let decision = switched.decision("notes").unwrap();
         assert_eq!((decision.by.as_deref(), decision.reason), (Some("ada"), DecisionReason::Settings));
 
         assert!(matches!(
-            plugins.get("notes", "state"),
+            switched.get("notes", "state"),
             Err(PluginError::Store(StoreError::DocNotFound(_)))
         ));
-        let doc = plugins
+        let doc = switched
             .put(
                 "notes",
                 "state",
@@ -630,9 +829,9 @@ pub(crate) mod tests {
         assert!(store.exists());
 
         // Another process (the CLI) turns it off: the next call sees it.
-        let other = host(dir.path(), vec![manifest("notes", false)], PluginSettings::default(), None);
+        let other = host(dir.path(), PluginSettings::default(), None);
         other.set_enabled("notes", false, None, DecisionReason::Cli).unwrap();
-        assert!(matches!(plugins.get("notes", "state"), Err(PluginError::Disabled { .. })));
+        assert!(matches!(switched.get("notes", "state"), Err(PluginError::Disabled { .. })));
     }
 
     #[test]
@@ -642,21 +841,155 @@ pub(crate) mod tests {
             enable: Some("notes,clock".into()),
             disable: Some("clock".into()),
         };
-        let plugins = host(dir.path(), vec![manifest("notes", false), manifest("clock", true)], config, None);
+        let plugins = installed_host(dir.path(), &["notes", "clock"], config, None);
         assert!(matches!(
             plugins.set_enabled("notes", false, None, DecisionReason::Settings),
             Err(PluginError::Forced(_))
         ));
         let status = plugins.status();
-        assert!(status[0].enabled && status[0].forced);
-        assert!(!status[1].enabled && status[1].forced);
+        assert_eq!(status.iter().map(|status| status.id.as_str()).collect::<Vec<_>>(), ["clock", "notes"], "by id");
+        assert!(!status[0].enabled && status[0].forced);
+        assert!(status[0].entry.is_none());
+        assert!(status[1].enabled && status[1].forced);
+        assert!(status[1].entry.is_some(), "a forced-on plugin is served");
         assert!(matches!(plugins.require_enabled("clock"), Err(PluginError::Disabled { .. })));
+    }
+
+    #[test]
+    fn an_install_pinned_off_by_configuration_stays_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = PluginSettings {
+            enable: None,
+            disable: Some("notes".into()),
+        };
+        let plugins = installed_host(dir.path(), &["notes"], config, None);
+        let status = plugins.status_of("notes").unwrap();
+        assert!(!status.enabled && status.forced && status.entry.is_none());
+        assert!(plugins.decision("notes").is_none(), "a pinned plugin's install records no decision");
+    }
+
+    #[test]
+    fn a_reinstall_keeps_the_store_and_an_uninstall_keeps_store_and_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
+        plugins
+            .put(
+                "notes",
+                "state",
+                PutDoc {
+                    expected_revision: None,
+                    value: json!(1),
+                },
+                None,
+            )
+            .unwrap();
+        plugins.install(&package_bytes("notes", "0.2.0"), None).unwrap();
+        assert_eq!(plugins.get("notes", "state").unwrap().value, json!(1), "a reinstall keeps the documents");
+        plugins.set_enabled("notes", false, None, DecisionReason::Settings).unwrap();
+        plugins.uninstall("notes").unwrap();
+        assert!(!plugins.package_dir("notes").exists());
+        assert!(plugins.store_path("notes").exists(), "uninstall removes the package only");
+        assert_eq!(plugins.decision("notes").unwrap().enabled, false, "and keeps the switch");
+        assert!(matches!(plugins.uninstall("notes"), Err(PluginError::Install(InstallError::NotFound(_)))));
+    }
+
+    #[test]
+    fn the_asset_route_answers_only_for_this_key_build_switch_and_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["tasks"], PluginSettings::default(), None);
+        let status = plugins.status_of("tasks").unwrap();
+        let key = status_key(&plugins);
+        let build = status.build.clone();
+        let url = status.entry.unwrap();
+        let path = url
+            .strip_prefix(&format!("/plugins/{key}/tasks/{build}/"))
+            .expect("the entry URL")
+            .to_string();
+        assert_eq!(path, "dist/index.js");
+
+        let asset = plugins.asset(&key, "tasks", &build, &path).expect("the entry");
+        assert_eq!(asset.content_type, "text/javascript");
+        assert_eq!(asset.bytes, b"export default {};\n");
+        assert_eq!(
+            plugins.asset(&key, "tasks", &build, "dist/page-abc.js").unwrap().content_type,
+            "text/javascript"
+        );
+        assert_eq!(plugins.asset(&key, "tasks", &build, "package.json").unwrap().content_type, "application/json");
+
+        let wrong = "0".repeat(32);
+        assert!(plugins.asset(&wrong, "tasks", &build, &path).is_none(), "wrong key");
+        assert!(plugins.asset(&key, "notes", &build, &path).is_none(), "unknown id");
+        assert!(plugins.asset(&key, "tasks", "0.1.0-000000000000", &path).is_none(), "old build");
+        for bad in ["../package.json", "dist/../package.json", "/etc/passwd", "", "dist//index.js", "dist\\index.js"] {
+            assert!(plugins.asset(&key, "tasks", &build, bad).is_none(), "{bad:?}");
+        }
+        assert!(plugins.asset(&key, "tasks", &build, "dist").is_none(), "a directory");
+        assert!(plugins.asset(&key, "tasks", &build, "dist/missing.js").is_none(), "a file that is not there");
+
+        plugins.set_enabled("tasks", false, None, DecisionReason::Settings).unwrap();
+        assert!(plugins.asset(&key, "tasks", &build, &path).is_none(), "a plugin that is off");
+    }
+
+    #[test]
+    fn the_content_types_are_the_contract_s_own() {
+        for (path, kind) in [
+            ("a.js", "text/javascript"),
+            ("a.mjs", "text/javascript"),
+            ("a.css", "text/css"),
+            ("a.json", "application/json"),
+            ("a.svg", "image/svg+xml"),
+            ("a.png", "image/png"),
+            ("a.woff2", "font/woff2"),
+            ("a.WOFF2", "font/woff2"),
+            ("a.wasm", "application/wasm"),
+            ("a.txt", "application/octet-stream"),
+            ("a.tar.gz", "application/octet-stream"),
+            ("no-extension", "application/octet-stream"),
+        ] {
+            assert_eq!(content_type(path), kind, "{path}");
+        }
+    }
+
+    #[test]
+    fn the_switch_is_config_then_decision_then_off() {
+        let manifest: Manifest = serde_json::from_value(json!({
+            "id": "notes",
+            "version": "0.1.0",
+            "name": "notes",
+            "engines": {"droppen": "^0.1.0"},
+            "permissions": ["storage"],
+            "aliases": ["/notes"],
+        }))
+        .unwrap();
+        let decided = |enabled| Decision {
+            enabled,
+            by: Some("ada".into()),
+            at: "2026-10-17T00:00:00.000Z".into(),
+            reason: DecisionReason::Settings,
+        };
+        let build = "0.1.0-0123456789ab";
+        assert!(!effective(&manifest, false, false, None, build).enabled, "off until something says otherwise");
+        assert!(effective(&manifest, false, false, Some(&decided(true)), build).enabled);
+        assert!(!effective(&manifest, false, false, Some(&decided(false)), build).enabled);
+        let pinned = effective(&manifest, true, false, Some(&decided(false)), build);
+        assert!(pinned.enabled && pinned.forced, "the configuration beats the instance");
+        assert!(pinned.entry.is_none(), "a switch cannot make the URL itself");
+        let both = effective(&manifest, true, true, Some(&decided(true)), build);
+        assert!(!both.enabled && both.forced, "disable beats enable");
+        assert!(both.reason.is_some());
+        assert_eq!(effective(&manifest, false, false, Some(&decided(true)), build).reason, None, "nothing to explain");
+
+        let mut future = manifest.clone();
+        future.engines.droppen = "^0.2.0".parse().unwrap();
+        let status = effective(&future, true, false, None, build);
+        assert!(!status.enabled && !status.compatible, "never on when the host cannot run it");
+        assert!(status.reason.unwrap().contains("^0.2.0"));
     }
 
     #[test]
     fn a_store_moved_away_is_reopened_fresh_and_a_reset_one_is_noticed() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = host(dir.path(), vec![manifest("notes", true)], PluginSettings::default(), None);
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
         let put = |expected| PutDoc {
             expected_revision: expected,
             value: json!(1),
@@ -673,5 +1006,14 @@ pub(crate) mod tests {
         std::fs::write(plugins.dir("notes").join("store.corrupt-17-wal"), b"").unwrap();
         let notice = plugins.status_of("notes").unwrap().notice.expect("a notice");
         assert!(notice.contains("store.corrupt-17") && !notice.contains("-wal"), "{notice}");
+    }
+
+    #[test]
+    fn entry_urls_encode_what_a_path_segment_may_not_carry() {
+        assert_eq!(entry_url("k", "tasks", "1.0.0-abcdef012345", "dist/index.js"), "/plugins/k/tasks/1.0.0-abcdef012345/dist/index.js");
+        assert_eq!(
+            entry_url("k", "tasks", "b", "dist/a b#c.js"),
+            "/plugins/k/tasks/b/dist/a%20b%23c.js"
+        );
     }
 }

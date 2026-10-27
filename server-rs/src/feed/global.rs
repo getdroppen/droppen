@@ -735,6 +735,10 @@ mod tests {
                 at: "2026-01-01T00:00:00.000Z".into(),
                 dismissible: true,
             }],
+            build: "0.1.0-0123456789ab".into(),
+            entry: Some("/plugins/key/tasks/0.1.0-0123456789ab/dist/index.js".into()),
+            aliases: vec!["/tasks".into()],
+            permissions: vec![droppen_plugin_sdk::Permission::Storage],
         };
         let frame: serde_json::Value = serde_json::from_str(&settings_frame(
             &paths,

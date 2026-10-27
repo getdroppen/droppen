@@ -1,11 +1,12 @@
-//! `remote-hand-server plugin list|enable|disable|export|import|verify|purge`.
+//! `remote-hand-server plugin list|install|uninstall|enable|disable|export|import|verify|purge`.
 //!
-//! Safe while a server runs, for the reason `user` is: the switches live in
-//! the instance's `state.db` and each store is its own SQLite file, so SQLite
-//! arbitrates between this process and the server, and no instance lock is
-//! taken. A running server reads the switch on every request, so `enable` and
-//! `disable` take effect at once; it is not told about documents this writes
-//! until a client next reads them.
+//! Safe while a server runs, for the reason `user` is: an install swaps a
+//! package directory in place, the switches live in the instance's `state.db`
+//! and each store is its own SQLite file, so SQLite arbitrates between this
+//! process and the server, and no instance lock is taken. A running server
+//! reads the switch on every request and the package list on every status, so
+//! `install`, `uninstall`, `enable` and `disable` take effect at once; it is
+//! not told about documents this writes until a client next reads them.
 //!
 //! The instance is chosen exactly as `user` chooses it — `--instance`, else
 //! `$APP_INSTANCE`, else `default`, and a defaulted instance that does not
@@ -15,13 +16,15 @@ use std::path::Path;
 
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
 
-use super::{embedded_manifest, DecisionReason, PluginError, Plugins, StoreError};
+use super::{DecisionReason, PluginError, Plugins, StoreError};
 use crate::sessions::Paths;
 
 /// What to print when the subcommand does not parse.
 pub const USAGE: &str = "\
 USAGE:
     remote-hand-server plugin list                              [--instance <name>]
+    remote-hand-server plugin install <file.tgz>                [--instance <name>]
+    remote-hand-server plugin uninstall <id>                    [--instance <name>]
     remote-hand-server plugin enable  <id>                      [--instance <name>]
     remote-hand-server plugin disable <id>                      [--instance <name>]
     remote-hand-server plugin export  <id> [--out <file>]       [--instance <name>]
@@ -29,20 +32,26 @@ USAGE:
     remote-hand-server plugin verify  <id>                      [--instance <name>]
     remote-hand-server plugin purge   <id> --yes                [--instance <name>]
 
-`list` shows the plugins this binary bundles and whether each is on for the
-instance. `enable`/`disable` switch one for the instance (the configuration's
-[plugins] enable/disable, or APP_PLUGINS__ENABLE/DISABLE, win over both).
-`export` writes the plugin's documents as JSON (to stdout without --out);
-`import` restores such a file, refusing over existing documents unless
---replace, which keeps the replaced values in their history. `verify` checks a
-plugin's store and its documents. `purge` moves a plugin's data aside to
-plugins/<id>.purged-<time>/; the plugin must be off.
+`list` shows the plugins installed in the instance, the build each was
+installed at, and whether each is on. `install` unpacks and checks a package
+(the tarball `pnpm pack` writes) and switches it on, replacing an installed
+plugin of the same id atomically; `uninstall` removes the code and keeps the
+plugin's documents and its switch. `enable`/`disable` switch one for the
+instance (the configuration's [plugins] enable/disable, or
+APP_PLUGINS__ENABLE/DISABLE, win over both). `export` writes the plugin's
+documents as JSON (to stdout without --out); `import` restores such a file,
+refusing over existing documents unless --replace, which keeps the replaced
+values in their history. `verify` checks a plugin's store and its documents.
+`purge` moves a plugin's data aside to plugins/<id>.purged-<time>/; the plugin
+must be off.
 
 Safe while the server runs.";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     List,
+    Install(String),
+    Uninstall(String),
     Enable(String),
     Disable(String),
     Export { id: String, out: Option<String> },
@@ -66,6 +75,8 @@ fn parse(args: &[String]) -> Result<Action, String> {
     };
     match words.as_slice() {
         ["list"] => Ok(Action::List),
+        ["install", file] if !file.starts_with("--") => Ok(Action::Install(file.to_string())),
+        ["uninstall", _] => Ok(Action::Uninstall(id(words.get(1))?)),
         ["enable", _] => Ok(Action::Enable(id(words.get(1))?)),
         ["disable", _] => Ok(Action::Disable(id(words.get(1))?)),
         ["export", _] => Ok(Action::Export {
@@ -101,7 +112,7 @@ pub async fn run(args: &[String]) -> Result<(), String> {
     let action = parse(&args)?;
     let paths = crate::auth::cli::home_paths(instance.as_deref())?;
     let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
-    let plugins = Plugins::new(paths.instance_dir(), paths.instance_db(), embedded_manifest(), &config.app.plugins, None);
+    let plugins = Plugins::new(paths.instance_dir(), paths.instance_db(), &config.app.plugins, None);
     tokio::task::spawn_blocking(move || execute(&plugins, &paths, action))
         .await
         .map_err(|error| error.to_string())?
@@ -116,13 +127,22 @@ fn refusal(error: PluginError) -> String {
     }
 }
 
+/// One line of what an install left the plugin as, for `plugin install`.
+fn installed_line(status: &droppen_plugin_sdk::PluginStatus) -> String {
+    let state = if status.enabled { "on" } else { "off" };
+    match status.reason.as_deref() {
+        Some(reason) => format!("{state}: {reason}"),
+        None => state.to_string(),
+    }
+}
+
 fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), String> {
     let instance = paths.instance();
     match action {
         Action::List => {
             let statuses = plugins.status();
             if statuses.is_empty() {
-                println!("this build bundles no plugins (instance {instance})");
+                println!("no plugins are installed on instance {instance}");
                 return Ok(());
             }
             println!("instance {instance}:");
@@ -133,7 +153,7 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
                     Some(store) => format!(", {} documents", store.count().map_err(|e| e.to_string())?),
                     None => String::new(),
                 };
-                println!("  {} {} — {state}{pinned}{stored}", status.id, status.version);
+                println!("  {} {} (build {}) — {state}{pinned}{stored}", status.id, status.version, status.build);
                 if let Some(reason) = status.reason {
                     println!("      {reason}");
                 }
@@ -143,8 +163,23 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             }
             Ok(())
         }
+        Action::Install(file) => {
+            let bytes = std::fs::read(&file).map_err(|error| format!("cannot read {file}: {error}"))?;
+            let status = plugins.install(&bytes, None).map_err(refusal)?;
+            println!(
+                "installed {} {} (build {}) on instance {instance}",
+                status.id, status.version, status.build
+            );
+            println!("  {}", installed_line(&status));
+            Ok(())
+        }
+        Action::Uninstall(id) => {
+            plugins.uninstall(&id).map_err(refusal)?;
+            println!("uninstalled {id} on instance {instance}; its documents and switch are kept");
+            Ok(())
+        }
         Action::Enable(id) | Action::Disable(id) if plugins.manifest(&id).is_none() => {
-            Err(format!("this build bundles no plugin {id:?} (instance {instance})"))
+            Err(format!("this instance has no plugin {id:?} installed"))
         }
         Action::Enable(id) => {
             let status = plugins.set_enabled(&id, true, None, DecisionReason::Cli).map_err(refusal)?;
@@ -182,7 +217,7 @@ fn execute(plugins: &Plugins, paths: &Paths, action: Action) -> Result<(), Strin
             }
             Ok(())
         }
-        Action::Import { id, .. } if plugins.manifest(&id).is_none() => Err(format!("this build bundles no plugin {id:?} (instance {instance})")),
+        Action::Import { id, .. } if plugins.manifest(&id).is_none() => Err(format!("this instance has no plugin {id:?} installed")),
         Action::Import { id, file, replace } => {
             let text = std::fs::read_to_string(&file).map_err(|error| format!("cannot read {file}: {error}"))?;
             let export: StoreExport = serde_json::from_str(&text).map_err(|error| format!("{file} is not a plugin export: {error}"))?;
@@ -281,7 +316,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::config::PluginSettings;
-    use crate::plugins::tests::{host, manifest};
+    use crate::plugins::tests::{host, installed_host};
     use serde_json::json;
 
     fn args(line: &str) -> Vec<String> {
@@ -291,6 +326,8 @@ mod tests {
     #[test]
     fn the_subcommands_parse_and_anything_else_is_the_usage() {
         assert_eq!(parse(&args("list")), Ok(Action::List));
+        assert_eq!(parse(&args("install /tmp/tasks.tgz")), Ok(Action::Install("/tmp/tasks.tgz".into())));
+        assert_eq!(parse(&args("uninstall tasks")), Ok(Action::Uninstall("tasks".into())));
         assert_eq!(parse(&args("enable tasks")), Ok(Action::Enable("tasks".into())));
         assert_eq!(
             parse(&args("export tasks --out /tmp/x.json")),
@@ -321,6 +358,9 @@ mod tests {
         for bad in [
             "",
             "list extra",
+            "install",
+            "install --force",
+            "uninstall",
             "enable",
             "import tasks",
             "import tasks a b",
@@ -332,9 +372,24 @@ mod tests {
     }
 
     #[test]
+    fn install_and_uninstall_work_through_the_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = host(dir.path(), PluginSettings::default(), None);
+        let paths = Paths::new(dir.path().to_path_buf());
+        let file = dir.path().join("tasks.tgz");
+        std::fs::write(&file, crate::plugins::tests::package_bytes("tasks", "0.1.0")).unwrap();
+        execute(&plugins, &paths, Action::Install(file.to_string_lossy().into_owned())).unwrap();
+        assert_eq!(plugins.status_of("tasks").unwrap().version.to_string(), "0.1.0");
+        assert_eq!(plugins.status_of("tasks").unwrap().entry.is_some(), true, "an install switches it on");
+        execute(&plugins, &paths, Action::Uninstall("tasks".into())).unwrap();
+        assert!(!plugins.package_dir("tasks").exists());
+        assert!(execute(&plugins, &paths, Action::Uninstall("tasks".into())).unwrap_err().contains("no plugin"));
+    }
+
+    #[test]
     fn purge_wants_the_plugin_off_and_moves_its_data_aside() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = host(dir.path(), vec![manifest("notes", true)], PluginSettings::default(), None);
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
         let paths = Paths::new(dir.path().to_path_buf());
         plugins
             .put(
@@ -365,7 +420,7 @@ mod tests {
     #[test]
     fn an_export_imports_back_and_refuses_to_overwrite_without_replace() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = host(dir.path(), vec![manifest("notes", true)], PluginSettings::default(), None);
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
         let paths = Paths::new(dir.path().to_path_buf());
         for name in ["state", "events/2026-10"] {
             plugins
@@ -402,7 +457,7 @@ mod tests {
         assert_eq!(plugins.history("notes", "state", 0, None).unwrap().versions.len(), 1);
 
         let other_dir = tempfile::tempdir().unwrap();
-        let other = host(other_dir.path(), vec![manifest("notes", true)], PluginSettings::default(), None);
+        let other = installed_host(other_dir.path(), &["notes"], PluginSettings::default(), None);
         execute(&other, &paths, import(false)).unwrap();
         assert_eq!(
             other.get("notes", "events/2026-10").unwrap().revision,

@@ -787,8 +787,9 @@ pub struct Settings {
     pub codex_session_count: usize,
     /// When this server process started, ISO-8601.
     pub server_started_at: String,
-    /// Every plugin this build bundles, as this instance sees it — the same
-    /// list `GET /api/plugins` answers. Empty for a build that bundles none.
+    /// Every plugin installed in this instance, as the instance sees it — the
+    /// same list `GET /api/plugins` answers. Empty when none is installed, and
+    /// empty for a request bridged from droppen.app.
     pub plugins: Vec<crate::plugins::wire::PluginStatus>,
 }
 

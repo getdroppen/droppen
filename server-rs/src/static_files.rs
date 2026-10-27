@@ -148,16 +148,6 @@ fn retiring_worker() -> Response<Body> {
     response
 }
 
-/// One file of the embedded web build, by its path under `web/dist`, or `None`
-/// when this binary has no such file (or no web build at all).
-///
-/// For the server's own reads of what the build produced — today
-/// `plugins/manifest.json`, which says which plugins the build bundles
-/// ([`crate::plugins`]).
-pub fn embedded(path: &str) -> Option<Vec<u8>> {
-    assets::get(path.trim_start_matches('/'))
-}
-
 #[cfg(test)]
 fn respond(path: &str) -> Response<Body> {
     respond_to(path, None, None)
@@ -184,6 +174,15 @@ fn respond_to(path: &str, query: Option<&str>, if_none_match: Option<&str>) -> R
         None if trimmed.starts_with("assets/") => {
             let mut response = Response::new(Body::from("not found"));
             *response.status_mut() = StatusCode::NOT_FOUND;
+            response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        }
+        // A `/plugins/…` request the asset route (`crate::plugins::serve`) did
+        // not match — too few segments, say — must not be handed the shell for
+        // the same reason a missing hashed chunk is not: a module loader would
+        // cache `index.html` under the script's name and feed it to `import()`.
+        None if trimmed.starts_with("plugins/") => {
+            let mut response = json_error(StatusCode::NOT_FOUND, "not found");
             response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             response
         }
@@ -642,6 +641,18 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).is_none(),
             "nothing a loader could take for a script"
         );
+    }
+
+    /// A `/plugins/…` URL the asset route did not match is a `404`, never the
+    /// shell: a module loader would keep the HTML under the chunk's name.
+    #[test]
+    fn an_unmatched_plugin_url_is_a_404_not_the_shell() {
+        for path in ["/plugins/key/tasks", "/plugins/key/tasks/build", "/plugins/"] {
+            let response = get(path);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store", "{path}");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json", "{path}");
+        }
     }
 
     /// Local sign-in (local-aggregator §3.4): the settings page opens the

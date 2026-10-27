@@ -86,6 +86,13 @@ base64 = "0.22"
 # server and a browser compresses a websocket for it. The backend is the one
 # already in the graph.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# Reading a plugin package's tar (`crate::plugins::install`). The gzip half is
+# `flate2` above. Hand-rolling the header parser (ustar, GNU long names, PAX
+# extensions, checksums) would be exactly the kind of security-sensitive parsing
+# a vetted crate should do instead; the installer still reads entries itself,
+# refusing anything but regular files and directories rather than extracting
+# with the tar's own modes and links.
+tar = "0.4"
 
 # Web Push (`crate::push`), hand-rolled on RustCrypto rather than taken from the
 # `web-push` crate: that one reaches ECE and from there `openssl-sys`, and this

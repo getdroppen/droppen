@@ -89,8 +89,8 @@ const API_DESCRIPTION: &str = "Browse local Claude Code and Codex sessions plus 
 #[state]
 #[derive(Clone)]
 pub struct AppState {
-    /// The plugins this build bundles, their per-instance switches and
-    /// document stores.
+    /// The plugins installed in this instance, their switches and document
+    /// stores.
     pub plugins: Arc<crate::plugins::Plugins>,
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
@@ -235,11 +235,21 @@ pub async fn session_detail(
 }
 
 /// Server and data-source information.
+///
+/// A request bridged from droppen.app gets no plugin status — and so no
+/// `entry`, which carries the instance's capability key — for the reason
+/// `docs/plugins/runtime.md` §5 gives: the cloud sees neither the list, the
+/// code nor the documents. The device's own pages still get it.
 #[api(id = "settings", group = "meta", summary = "Server settings")]
-pub async fn settings(State(state): State<AppState>) -> Json<Settings> {
+pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::auth::MaybeIdentity) -> Json<Settings> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
     let (claude_sessions, codex_sessions) = tokio::join!(claude::list_claude_sessions(paths, &bindings), codex::list_codex_sessions(paths));
+    let plugins: Vec<crate::plugins::wire::PluginStatus> = if crate::plugins::is_cloud(&who) {
+        Vec::new()
+    } else {
+        state.plugins.status_async().await.into_iter().map(Into::into).collect()
+    };
     Json(Settings {
         instance: state.instance.name().to_string(),
         server_id: crate::sessions::ServerId::local(paths).to_string(),
@@ -255,7 +265,7 @@ pub async fn settings(State(state): State<AppState>) -> Json<Settings> {
         claude_session_count: claude_sessions.len(),
         codex_session_count: codex_sessions.len(),
         server_started_at: state.started_at.to_string(),
-        plugins: state.plugins.status_async().await.into_iter().map(Into::into).collect(),
+        plugins,
     })
 }
 

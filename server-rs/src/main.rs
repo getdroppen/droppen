@@ -72,9 +72,9 @@ async fn run(args: Vec<String>) -> GotchaResult<()> {
         Some("open") => remote_hand_server::auth::cli::open(&args[1..])
             .await
             .map_err(remote_hand_server::GotchaError::message),
-        // The plugins this build bundles, per instance: switches, and each
-        // one's document store. Outside the server for the reason `user` is,
-        // and safe beside a running one (`crate::plugins::cli`).
+        // The plugins installed in an instance: install, uninstall, switches,
+        // and each one's document store. Outside the server for the reason
+        // `user` is, and safe beside a running one (`crate::plugins::cli`).
         Some("plugin") => remote_hand_server::plugins::cli::run(&args[1..])
             .await
             .map_err(remote_hand_server::GotchaError::message),
@@ -231,11 +231,14 @@ other devices), `agent status` says where it stands, `agent unenroll` leaves.
 `remote-hand-server agent` alone prints the details. An instance that is never
 enrolled serves exactly as before.
 
-`plugin` manages the plugins this binary bundles, for one instance: whether
-each is on (the settings page does the same; `[plugins] enable`/`disable` in the
-configuration, or APP_PLUGINS__ENABLE/DISABLE, pin it), and each one's document
-store under <data>/instances/<instance>/plugins/<id>/ — export it as JSON,
-import such a file back, check it, or move it aside once the plugin is off.
+`plugin` manages the plugins installed in one instance: `install <file.tgz>`
+unpacks and checks a package under <data>/instances/<instance>/plugin-packages/
+and switches it on, `uninstall` removes the code (documents and the switch
+stay), `list` shows each one's build, and `enable`/`disable` switch one (the
+settings page does the same; `[plugins] enable`/`disable` in the configuration,
+or APP_PLUGINS__ENABLE/DISABLE, pin it). Each plugin's document store lives
+under <data>/instances/<instance>/plugins/<id>/ — export it as JSON, import such
+a file back, check it, or move it aside once the plugin is off.
 `remote-hand-server plugin` alone prints the details.
 
 `up` supervises a server: it restarts one on a clean exit (which is how

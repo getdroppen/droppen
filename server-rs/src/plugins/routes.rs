@@ -1,13 +1,23 @@
-//! `/api/plugins/*`: the plugin switches and the document store, over HTTP.
+//! `/api/plugins/*`: installation, the plugin switches and the document
+//! store, over HTTP.
 //!
 //! Registered once and generic — nothing here names a plugin — so the OpenAPI
-//! document is the same whichever plugins a build bundles. Every
+//! document is the same whichever plugins an instance has installed. Every
 //! `/api/plugins/{id}/…` call goes through [`super::Plugins::require_enabled`]
 //! first, so a plugin that is not on answers `404 plugin_disabled` and never
-//! gets a store made for it. The contract is `docs/plugins/storage-protocol.md`.
+//! gets a store made for it. The contract is
+//! `docs/plugins/storage-protocol.md`.
 //!
 //! A document name is one path segment: a client sends `events/2026-10` as
 //! `events%2F2026-10`, and the router hands the handler the decoded name.
+//!
+//! # Not to the cloud
+//!
+//! A request that came over the cloud agent's bridge carries a `cloud:<device>`
+//! identity. Every handler here refuses one with `404 plugin_not_found`, so a
+//! route the bridge's own allowlist ever lets through by mistake still answers
+//! nothing (`docs/plugins/runtime.md` §5). The asset route
+//! ([`super::serve`]) does the same.
 
 use std::sync::Arc;
 
@@ -19,10 +29,11 @@ use gotcha::{api, Either, Json, ParameterProvider, State};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
+use super::install::{InstallError, MAX_TARBALL_BYTES};
 use super::store::{StoreError, MAX_REQUEST_BYTES};
 use super::wire::{
-    PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
-    PluginHistoryQuery, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTooLarge,
+    PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDeleted, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
+    PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody, PluginTooLarge,
 };
 use super::{DecisionReason, PluginError, Plugins};
 use crate::api::error::ApiError;
@@ -33,6 +44,7 @@ use crate::openapi_ext::ExtraResponses;
 use droppen_plugin_sdk::codes;
 
 const LIST: &str = "/api/plugins";
+const PLUGIN: &str = "/api/plugins/{id}";
 const ENABLED: &str = "/api/plugins/{id}/enabled";
 const DOCS: &str = "/api/plugins/{id}/docs";
 const DOC: &str = "/api/plugins/{id}/docs/{name}";
@@ -51,6 +63,13 @@ impl From<PluginError> for ApiError {
             PluginError::Disabled { .. } => coded(StatusCode::NOT_FOUND, codes::PLUGIN_DISABLED, message),
             PluginError::Forced(_) => coded(StatusCode::CONFLICT, codes::FORCED_BY_CONFIG, message),
             PluginError::Store(store) => store.into(),
+            PluginError::Install(InstallError::NotFound(_)) => coded(StatusCode::NOT_FOUND, codes::PLUGIN_NOT_FOUND, message),
+            PluginError::Install(InstallError::TooLarge { message, limit }) => too_large(message, limit),
+            PluginError::Install(InstallError::Refused(_)) => coded(StatusCode::BAD_REQUEST, codes::INVALID_PACKAGE, message),
+            PluginError::Install(InstallError::Failed(_)) => {
+                tracing::error!(%message, "a plugin install failed");
+                coded(StatusCode::INTERNAL_SERVER_ERROR, "failed", message)
+            }
         }
     }
 }
@@ -131,6 +150,27 @@ where
     }
 }
 
+/// The body of `POST /api/plugins`: the package's raw bytes, held to
+/// [`MAX_TARBALL_BYTES`], whose overflow is `413 too_large`.
+pub struct PluginTarball(pub Bytes);
+
+impl<S> FromRequest<S> for PluginTarball
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Bytes::from_request(request, state).await.map(PluginTarball).map_err(|rejection| {
+            if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                too_large(format!("one install may carry {MAX_TARBALL_BYTES} bytes"), MAX_TARBALL_BYTES as u64)
+            } else {
+                coded(StatusCode::BAD_REQUEST, codes::INVALID_PACKAGE, rejection.body_text())
+            }
+        })
+    }
+}
+
 /// Run a blocking store call off the runtime: a write is an fsync.
 async fn blocking<T: Send + 'static>(
     plugins: &Arc<Plugins>,
@@ -147,12 +187,59 @@ fn caller(who: &MaybeIdentity) -> Option<String> {
     who.0.as_ref().map(|identity| identity.username.clone())
 }
 
-/// Every plugin this build bundles, as this instance sees it.
+/// Refuse a request that came over the cloud agent's bridge: a device gets
+/// none of the plugin surface, and the answer is the one an unknown plugin
+/// gets so it learns nothing from the difference.
+fn refuse_cloud(who: &MaybeIdentity) -> Result<(), ApiError> {
+    if super::is_cloud(who) {
+        return Err(coded(
+            StatusCode::NOT_FOUND,
+            codes::PLUGIN_NOT_FOUND,
+            "no plugin is available to a bridged request",
+        ));
+    }
+    Ok(())
+}
+
+/// Every plugin installed in this instance, as this instance sees it.
 #[api(id = "list_plugins", group = "plugins", summary = "List plugins")]
-pub async fn list_plugins(State(state): State<AppState>) -> Json<PluginList> {
-    Json(PluginList {
+pub async fn list_plugins(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
+    refuse_cloud(&who)?;
+    Ok(Json(PluginList {
         plugins: state.plugins.status_async().await.into_iter().map(PluginStatus::from).collect(),
-    })
+    }))
+}
+
+/// Install a plugin package: a gzip'd tar whose entries are under `package/`.
+///
+/// Replaces an installed plugin of the same id, atomically, and switches it
+/// on; a refused package leaves the previous install as it was. The bytes are
+/// the tarball itself, not multipart: `application/gzip` or
+/// `application/octet-stream`.
+#[api(id = "install_plugin", group = "plugins", summary = "Install a plugin")]
+pub async fn install_plugin(
+    State(state): State<AppState>,
+    #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] PluginTarball(tarball): PluginTarball,
+) -> Result<Json<PluginStatus>, ApiError> {
+    refuse_cloud(&who)?;
+    let by = caller(&who);
+    blocking(&state.plugins, move |plugins| plugins.install(&tarball, by.as_deref()))
+        .await
+        .map(|status| Json(status.into()))
+}
+
+/// Uninstall a plugin. Its documents and its on/off decision stay, for a
+/// later install.
+#[api(id = "uninstall_plugin", group = "plugins", summary = "Uninstall a plugin")]
+pub async fn uninstall_plugin(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    #[api(skip)] who: MaybeIdentity,
+) -> Result<PluginDeleted, ApiError> {
+    refuse_cloud(&who)?;
+    blocking(&state.plugins, move |plugins| plugins.uninstall(&id)).await?;
+    Ok(PluginDeleted)
 }
 
 /// Turn a plugin on or off for this instance. Any signed-in user may.
@@ -163,6 +250,7 @@ pub async fn set_plugin_enabled(
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<PluginSwitch>,
 ) -> Result<Json<PluginStatus>, ApiError> {
+    refuse_cloud(&who)?;
     let by = caller(&who);
     blocking(&state.plugins, move |plugins| {
         plugins.set_enabled(&id, body.enabled, by.as_deref(), DecisionReason::Settings)
@@ -177,7 +265,9 @@ pub async fn list_plugin_docs(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<PluginDocQuery>,
+    #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDocList>, ApiError> {
+    refuse_cloud(&who)?;
     let prefix = query.prefix.unwrap_or_default();
     blocking(&state.plugins, move |plugins| plugins.list(&id, &prefix)).await.map(|docs| {
         Json(PluginDocList {
@@ -188,7 +278,12 @@ pub async fn list_plugin_docs(
 
 /// One document.
 #[api(id = "get_plugin_doc", group = "plugins", summary = "Read a plugin document")]
-pub async fn get_plugin_doc(State(state): State<AppState>, ApiPath((id, name)): ApiPath<(String, String)>) -> Result<Json<PluginDoc>, ApiError> {
+pub async fn get_plugin_doc(
+    State(state): State<AppState>,
+    ApiPath((id, name)): ApiPath<(String, String)>,
+    #[api(skip)] who: MaybeIdentity,
+) -> Result<Json<PluginDoc>, ApiError> {
+    refuse_cloud(&who)?;
     blocking(&state.plugins, move |plugins| plugins.get(&id, &name))
         .await
         .map(|doc| Json(doc.into()))
@@ -202,6 +297,7 @@ pub async fn put_plugin_doc(
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginPutDoc>,
 ) -> Result<Json<PluginDoc>, ApiError> {
+    refuse_cloud(&who)?;
     let by = caller(&who);
     blocking(&state.plugins, move |plugins| plugins.put(&id, &name, body.into(), by.as_deref()))
         .await
@@ -216,6 +312,7 @@ pub async fn plugin_batch(
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginBatch>,
 ) -> Result<Json<PluginBatchResult>, ApiError> {
+    refuse_cloud(&who)?;
     let by = caller(&who);
     let writes = body.writes.into_iter().map(Into::into).collect();
     blocking(&state.plugins, move |plugins| plugins.batch(&id, writes, by.as_deref()))
@@ -233,7 +330,9 @@ pub async fn plugin_doc_history(
     State(state): State<AppState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     ApiQuery(query): ApiQuery<PluginHistoryQuery>,
+    #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDocHistory>, ApiError> {
+    refuse_cloud(&who)?;
     let offset = query.offset.unwrap_or(0) as usize;
     let limit = query.limit.map(|limit| limit as usize);
     blocking(&state.plugins, move |plugins| plugins.history(&id, &name, offset, limit))
@@ -251,13 +350,23 @@ pub async fn plugin_doc_history(
 /// The two that carry a document are a sub-router of their own, so the raised
 /// body limit is theirs and no other route's (as `crate::files` does it). The
 /// read of a single document shares its path, and so its sub-router; it has no
-/// body for the limit to matter to.
+/// body for the limit to matter to. The install route gets a sub-router of its
+/// own for its own, larger, limit.
+///
+/// The asset route (`/plugins/…`) is registered here too, so the router claims
+/// it before the SPA fallback can hand a page its shell instead of a module.
 pub fn routes(router: ApiRouter) -> ApiRouter {
     router
         .get(LIST, list_plugins)
+        .delete(PLUGIN, uninstall_plugin)
         .put(ENABLED, set_plugin_enabled)
         .get(DOCS, list_plugin_docs)
         .get(HISTORY, plugin_doc_history)
+        .merge(
+            ApiRouter::default()
+                .post(LIST, install_plugin)
+                .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)),
+        )
         .merge(
             ApiRouter::default()
                 .get(DOC, get_plugin_doc)
@@ -265,14 +374,33 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
                 .post(BATCH, plugin_batch)
                 .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize)),
         )
+        .get(super::serve::ASSET_PATH, super::serve::serve_asset)
+        .head(super::serve::ASSET_PATH, super::serve::serve_asset)
 }
 
 /// Everything gotcha cannot derive about these routes.
 pub fn describe(reg: &mut ExtraResponses) {
-    const OFF: &str = "`plugin_disabled`: the plugin is bundled but not on here (or incompatible); `plugin_not_found`: not bundled";
-    reg.describe("GET", LIST, 200, "Every plugin this build bundles, as this instance sees it")
+    const OFF: &str = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed";
+    reg.describe_final("GET", LIST, 200, "Every plugin installed in this instance, as this instance sees it")
+        .describe("POST", LIST, 200, "The plugin as installed and switched on")
+        .body::<PluginInvalidPackage>("POST", LIST, 400, "`invalid_package`: the package was refused; `message` says why")
+        .body::<PluginTooLarge>("POST", LIST, 413, "`too_large`: the tarball is over 32 MiB")
+        .request_body::<PluginTarballBody>(
+            "POST",
+            LIST,
+            "application/octet-stream",
+            "The plugin package: a gzip'd tar whose entries are under `package/` (`application/gzip` is the same bytes)",
+        )
+        .restatus(
+            "DELETE",
+            PLUGIN,
+            200,
+            204,
+            "The plugin is uninstalled; its documents and its on/off decision are kept",
+        )
+        .error("DELETE", PLUGIN, 404, "`plugin_not_found`: no plugin of that id is installed")
         .describe("PUT", ENABLED, 200, "The plugin's status after the switch")
-        .error("PUT", ENABLED, 404, "`plugin_not_found`: no such plugin is bundled")
+        .error("PUT", ENABLED, 404, "`plugin_not_found`: no plugin of that id is installed")
         .error(
             "PUT",
             ENABLED,
@@ -323,12 +451,12 @@ pub fn describe(reg: &mut ExtraResponses) {
 mod tests {
     use super::*;
     use gotcha::axum::body::Body;
-    use gotcha::axum::routing::get;
+    use gotcha::axum::http::Request;
     use tower_service::Service;
 
     async fn call(router: &mut gotcha::axum::Router, uri: &str) -> (StatusCode, String) {
-        let request = gotcha::axum::http::Request::builder().uri(uri).body(Body::empty()).unwrap();
-        std::future::poll_fn(|cx| <gotcha::axum::Router as Service<gotcha::axum::http::Request<Body>>>::poll_ready(router, cx))
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        std::future::poll_fn(|cx| <gotcha::axum::Router as Service<Request<Body>>>::poll_ready(router, cx))
             .await
             .unwrap();
         let response = router.call(request).await.unwrap();
@@ -337,11 +465,12 @@ mod tests {
         (status, String::from_utf8(body.to_vec()).unwrap())
     }
 
-    /// The router matches on the encoded path and decodes the parameter, so
-    /// `%2F` is one segment going in and a `/` coming out — which is how a
-    /// client names `events/2026-10`.
+    /// The selectors the router matches on the request as sent, and decodes
+    /// for the handler: `%2F` is one segment going in and a `/` coming out,
+    /// which is how a client names `events/2026-10`.
     #[tokio::test]
     async fn a_percent_encoded_name_is_one_segment_and_arrives_decoded() {
+        use gotcha::axum::routing::get;
         let echo = |ApiPath((id, name)): ApiPath<(String, String)>| async move { format!("{id}|{name}") };
         let history = |ApiPath((id, name)): ApiPath<(String, String)>| async move { format!("history {id}|{name}") };
         let mut router = gotcha::axum::Router::new().route(DOC, get(echo)).route(HISTORY, get(history));
@@ -390,6 +519,21 @@ mod tests {
             code(StoreError::Invalid("bad".into()).into()),
             (StatusCode::BAD_REQUEST, "invalid".into())
         );
+        assert_eq!(
+            code(PluginError::Install(InstallError::Refused("no droppen".into())).into()),
+            (StatusCode::BAD_REQUEST, "invalid_package".into())
+        );
+        assert_eq!(
+            code(PluginError::Install(InstallError::NotFound("tasks".into())).into()),
+            (StatusCode::NOT_FOUND, "plugin_not_found".into())
+        );
+        let large: ApiError = PluginError::Install(InstallError::TooLarge {
+            message: "too big".into(),
+            limit: 7,
+        })
+        .into();
+        assert_eq!(large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(large.body()["limit"], json!(7));
         let conflict: ApiError = StoreError::Conflict {
             doc: "state".into(),
             current: None,
@@ -414,7 +558,7 @@ mod tests {
             .route("/put", gotcha::axum::routing::put(accept))
             .layer(gotcha::axum::extract::DefaultBodyLimit::max(64));
         let mut send = |body: String| {
-            let request = gotcha::axum::http::Request::builder()
+            let request = Request::builder()
                 .method("PUT")
                 .uri("/put")
                 .header("content-type", "application/json")
@@ -436,5 +580,118 @@ mod tests {
         assert_eq!(body["limit"], json!(MAX_REQUEST_BYTES));
         let (status, body) = send("{".into()).await;
         assert_eq!((status, body["error"].clone()), (StatusCode::BAD_REQUEST, json!("invalid")));
+    }
+
+    /// The whole HTTP surface of an install: the tarball goes up, the status
+    /// comes back with its entry, the list agrees, and the delete removes it.
+    #[tokio::test]
+    async fn an_install_is_listed_with_its_entry_and_a_delete_uninstalls_it() {
+        use crate::plugins::tests::package_bytes;
+        use crate::plugins::testing::{package, tarball};
+
+        let home = tempfile::tempdir().unwrap();
+        let (state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+        let send = |router: &mut gotcha::axum::Router, method: &'static str, uri: &str, body: Vec<u8>| {
+            let request = Request::builder().method(method).uri(uri).body(Body::from(body)).unwrap();
+            let fut = router.call(request);
+            async move {
+                let response = fut.await.unwrap();
+                let status = response.status();
+                let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                (status, serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default())
+            }
+        };
+
+        let (status, body) = send(&mut router, "POST", LIST, package_bytes("tasks", "0.1.0")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], json!("tasks"));
+        assert_eq!(body["build"].as_str().unwrap().len(), 18);
+        assert_eq!(body["aliases"], json!(["/tasks"]));
+        assert_eq!(body["permissions"], json!(["storage"]));
+        let entry = body["entry"].as_str().expect("an entry").to_string();
+
+        let (status, list) = send(&mut router, "GET", LIST, Vec::new()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["plugins"][0]["entry"], json!(entry));
+
+        // The entry answers over the same router, to a caller with no session:
+        // the key in the path is the credential.
+        let (status, _) = call(&mut router, &entry).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = send(&mut router, "DELETE", "/api/plugins/tasks", Vec::new()).await;
+        assert_eq!((status, body), (StatusCode::NO_CONTENT, serde_json::Value::Null));
+        let (status, list) = send(&mut router, "GET", LIST, Vec::new()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["plugins"], json!([]));
+        let (status, body) = send(&mut router, "DELETE", "/api/plugins/tasks", Vec::new()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], json!("plugin_not_found"));
+
+        // A refused package is 400 invalid_package and changes nothing.
+        let mut broken = package("notes", "0.1.0");
+        broken["droppen"]["id"] = json!("Notes");
+        let (status, body) = send(&mut router, "POST", LIST, tarball(&broken, &[("dist/index.js", b"x")])).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], json!("invalid_package"));
+        assert!(body["message"].as_str().unwrap().contains("is not a plugin id"));
+        let _ = state;
+    }
+
+    #[tokio::test]
+    async fn a_tarball_over_the_limit_is_413_too_large() {
+        use crate::plugins::install::MAX_TARBALL_BYTES;
+        let home = tempfile::tempdir().unwrap();
+        let (_state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+        let request = Request::builder()
+            .method("POST")
+            .uri(LIST)
+            .body(Body::from(vec![0u8; MAX_TARBALL_BYTES + 1]))
+            .unwrap();
+        let response = router.call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"], json!("too_large"));
+        assert_eq!(body["limit"], json!(MAX_TARBALL_BYTES));
+    }
+
+    #[tokio::test]
+    async fn a_cloud_identity_is_refused_everywhere() {
+        use gotcha::axum::extract::Request as ExtractRequest;
+        use gotcha::axum::middleware::Next;
+        use gotcha::axum::response::Response as HttpResponse;
+
+        async fn as_cloud(mut request: ExtractRequest, next: Next) -> HttpResponse<Body> {
+            request.extensions_mut().insert(crate::auth::AuthIdentity {
+                username: "cloud:device-1".into(),
+                token_sha256: None,
+            });
+            next.run(request).await
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let (state, router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+        state.plugins.install(&crate::plugins::tests::package_bytes("tasks", "0.1.0"), None).unwrap();
+        let mut router = router.layer(gotcha::axum::middleware::from_fn(as_cloud));
+        for (method, uri, body) in [
+            ("GET", LIST, Body::empty()),
+            ("POST", LIST, Body::empty()),
+            ("PUT", "/api/plugins/tasks/enabled", Body::from(r#"{"enabled":true}"#)),
+            ("GET", "/api/plugins/tasks/docs", Body::empty()),
+            ("GET", "/api/plugins/tasks/docs/state", Body::empty()),
+            ("DELETE", "/api/plugins/tasks", Body::empty()),
+        ] {
+            let mut builder = Request::builder().method(method).uri(uri);
+            if method == "PUT" {
+                builder = builder.header("content-type", "application/json");
+            }
+            let request = builder.body(body).unwrap();
+            let response = router.call(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            assert_eq!(body["error"], json!("plugin_not_found"), "{method} {uri}");
+        }
     }
 }

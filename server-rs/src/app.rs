@@ -127,8 +127,9 @@ impl GotchaApp for RemoteHandApp {
             drive.injections.attach_listeners(feeds.clone(), global.clone());
             Ok(AppState {
                 cloud: crate::api::cloud::Cloud::new(paths.as_ref().clone()),
-                // Reads only what is compiled in; the disk is touched by the
-                // first request that needs a store, and by `boot` below.
+                // Touches nothing yet: the installed packages are read by the
+                // first status, the instance database by the first switch or
+                // store, and `boot` below.
                 plugins: crate::plugins::Plugins::load(&paths, &plugins_config, Some(global.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
