@@ -18,6 +18,7 @@ import { CODE_PAIRING_WINDOW_MS, HubApiError } from "../src/lib/hub/api.js";
 import { pairingCause, PairingResponder, type ResponderState } from "../src/lib/hub/pairing.js";
 import { clearPairingResume, PAIRING_RESUME_KEY, pairingResume, signInAgainToPair } from "../src/features/cloud/sign-out.js";
 import { browserStorage, FakeKeysHub } from "./fake-keys-hub.js";
+import { MemoryStorage } from "./storage.js";
 
 const made: PairingResponder[] = [];
 test.afterEach(() => {
@@ -62,28 +63,6 @@ async function twoDevices() {
 
 /** Move a device's registration `ms` into the past. */
 const age = (hub: FakeKeysHub, device: string, ms: number) => hub.registeredMs.set(device, hub.now() - ms);
-
-class MemoryStorage {
-  values = new Map<string, string>();
-  get length() {
-    return this.values.size;
-  }
-  key(i: number) {
-    return [...this.values.keys()][i] ?? null;
-  }
-  getItem(k: string) {
-    return this.values.get(k) ?? null;
-  }
-  setItem(k: string, v: string) {
-    this.values.set(k, String(v));
-  }
-  removeItem(k: string) {
-    this.values.delete(k);
-  }
-  clear() {
-    this.values.clear();
-  }
-}
 
 test("every refusal the hub gives a pairing is a cause the screen has words for", () => {
   const e = (status: number, code: string, message = "the hub's own words") => new HubApiError(status, code, message);

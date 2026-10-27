@@ -31,19 +31,8 @@ import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import i18next from "./i18n-all.js";
 import { createV2Genesis, FakeKeysHub } from "./fake-keys-hub.js";
+import { MemoryStorage } from "./storage.js";
 
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 Object.assign(globalThis, { localStorage: new MemoryStorage(), sessionStorage: new MemoryStorage(), location: { pathname: "/account", search: "" } });
 // A browser with WebAuthn (the page offers passkeys only there).
 Object.assign(globalThis, { PublicKeyCredential: function PublicKeyCredential() {} });

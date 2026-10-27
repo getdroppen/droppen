@@ -24,19 +24,7 @@ import {
 } from "../src/features/sessions/new-session.js";
 import { creationAttempt, creationRequest, type NewConversation } from "../src/features/sessions/new-session-flow.js";
 import { LOCAL } from "../src/lib/machines/key.js";
-
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, String(value));
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 const row = (cwd: string | null, createdAt: string, updatedAt: string) => ({ cwd, createdAt, updatedAt });
 

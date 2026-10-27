@@ -20,19 +20,8 @@ import { renewalRunner, setRenewalRunner } from "../src/lib/hub/renewal.js";
 import { homeMachine, homeMachineStore, isOpen, openMachines, perMachine, runtimeFor, shellKind, transportFor } from "../src/lib/machines/registry.js";
 import { MemoryKeyStore } from "../src/lib/e2e/index.js";
 import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, until } from "./stream-fixtures.js";
+import { MemoryStorage } from "./storage.js";
 
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 const storage = new MemoryStorage();
 const reloads: string[] = [];
 Object.assign(globalThis, { localStorage: storage, location: { reload: () => void reloads.push("reload"), pathname: "/sessions", search: "" } });

@@ -25,22 +25,7 @@ import {
 } from "../src/features/files/files-prefs.js";
 import { LOCAL } from "../src/lib/machines/key.js";
 import { machineStorageKey } from "../src/lib/machines/storage.js";
-
-class MemoryStorage implements PrefStorage {
-  readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 const blocked: PrefStorage = {
   getItem: () => {

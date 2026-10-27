@@ -4,23 +4,7 @@
 // language's translations are in, and `<html lang>` says it from that frame.
 import assert from "node:assert/strict";
 import test from "node:test";
-
-/** A `Storage` kept in memory. */
-class MemoryStorage {
-  private values = new Map<string, string>();
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string): void {
-    this.values.set(key, String(value));
-  }
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-  clear(): void {
-    this.values.clear();
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 function stubGlobal(name: string, value: unknown): void {
   Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });

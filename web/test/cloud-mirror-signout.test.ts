@@ -13,6 +13,7 @@ import { cacheSealed, cacheSet, cacheUnseal, cacheWipe } from "../src/lib/local-
 import type { HubShell } from "../src/features/cloud/hub-shell.js";
 import { setHubShell } from "../src/features/machines/shells.js";
 import { clearDeviceCopies, SIGN_OUT_FAILURES_KEY, signOut, takeSignOutFailures } from "../src/features/cloud/sign-out.js";
+import { MemoryStorage } from "./storage.js";
 
 // The default mirror store is memory here: made before IndexedDB is faked.
 const defaultStore = deviceMirrorStore();
@@ -92,19 +93,6 @@ class FakeIdb {
 const idb = new FakeIdb();
 (globalThis as { indexedDB?: unknown }).indexedDB = idb;
 
-class FakeStorage {
-  readonly values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
-
 /** A key store whose mirror key is there to forget. */
 async function storeWithKey(): Promise<MemoryKeyStore> {
   const store = new MemoryKeyStore();
@@ -169,7 +157,7 @@ test("a clear that fails is reported, not swallowed", async () => {
 });
 
 test("sign-out keeps what it could not clear for the sign-in screen, and replaces the page only after every clear", async () => {
-  const session = new FakeStorage();
+  const session = new MemoryStorage();
   const g = globalThis as { sessionStorage?: unknown; location?: unknown };
   g.sessionStorage = session;
   const replaced: string[] = [];
@@ -231,7 +219,7 @@ test("sign-out keeps what it could not clear for the sign-in screen, and replace
 
 test("sign-out from a screen with no account open (keys unreadable, a fork, an error) ends the session it held, and keeps the device keys", async () => {
   const g = globalThis as { sessionStorage?: unknown; location?: unknown };
-  g.sessionStorage = new FakeStorage();
+  g.sessionStorage = new MemoryStorage();
   const replaced: string[] = [];
   g.location = { replace: (url: string) => void replaced.push(url) };
   const ended: string[] = [];

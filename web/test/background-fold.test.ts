@@ -16,18 +16,7 @@ import {
   writeBackgroundPanelOpen,
   type FoldStorage,
 } from "../src/features/sessions/background-prefs.js";
-
-class MemoryStorage implements FoldStorage {
-  readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 const blocked: FoldStorage = {
   getItem: () => {

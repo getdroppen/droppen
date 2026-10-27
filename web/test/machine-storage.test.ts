@@ -30,25 +30,7 @@ import {
   writeMachineItem,
 } from "../src/lib/machines/storage.js";
 import { directTransport } from "../src/lib/transport/index.js";
-
-class MemoryStorage {
-  readonly values = new Map<string, string>();
-  constructor(initial: Record<string, string> = {}) {
-    for (const [k, v] of Object.entries(initial)) this.values.set(k, v);
-  }
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-  snapshot(): Record<string, string> {
-    return Object.fromEntries([...this.values].sort(([a], [b]) => a.localeCompare(b)));
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 /** This browser's own keys, as a browser holds them today. */
 const DEVICE = {

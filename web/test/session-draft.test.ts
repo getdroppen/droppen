@@ -8,22 +8,7 @@ import {
   type DraftStorage,
 } from "../src/features/sessions/session-draft.js";
 import { LOCAL } from "../src/lib/machines/key.js";
-
-class MemoryStorage implements DraftStorage {
-  readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-}
+import { MemoryStorage } from "./storage.js";
 
 test("drafts are isolated by session and empty drafts remove their key", () => {
   const storage = new MemoryStorage();
