@@ -762,6 +762,7 @@ mod tests {
             version: droppen_plugin_sdk::sdk_version(),
             name: droppen_plugin_sdk::LocalizedText::Plain("Tasks".into()),
             enabled: true,
+            switched_on: true,
             compatible: true,
             forced: false,
             reason: None,

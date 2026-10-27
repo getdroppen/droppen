@@ -27,6 +27,7 @@ interface PluginStatus {
   version: string;       // the installed package's version
   name: LocalizedText;   // string | { en, "zh-CN"?, "zh-TW"?, ja? }
   enabled: boolean;      // on for this instance AND compatible
+  switchedOn: boolean;   // on by the configuration or the instance, compatible or not
   compatible: boolean;   // the host satisfies engines.droppen
   forced: boolean;       // the configuration pins it; the switch is read-only
   reason: string | null; // why it is off / incompatible / pinned
@@ -36,7 +37,7 @@ interface PluginStatus {
   entry: string | null;  // "/plugins/<key>/<id>/<build>/<entry>" when enabled and
                          // compatible; null otherwise
   aliases: string[];     // old top-level paths the host redirects to /p/<id>/
-  permissions: string[]; // storage | sessions:read | notify
+  permissions: string[]; // storage | sessions:read | notify — declared, not enforced
 }
 
 interface PluginNotice {

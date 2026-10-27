@@ -4294,6 +4294,12 @@ export interface components {
             permissions: string[];
             /** @description Why it is off, incompatible or pinned, when it is. */
             reason: string | null;
+            /**
+             * @description Switched on (by the configuration or this instance), whether or not
+             *     this host can run it: with `compatible: false`, a plugin a host
+             *     upgrade left behind, which the page names rather than drops.
+             */
+            switchedOn: boolean;
             /** @description The installed package version. */
             version: string;
         };

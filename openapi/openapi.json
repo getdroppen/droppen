@@ -3291,6 +3291,10 @@
             "nullable": true,
             "type": "string"
           },
+          "switchedOn": {
+            "description": "Switched on (by the configuration or this instance), whether or not\nthis host can run it: with `compatible: false`, a plugin a host\nupgrade left behind, which the page names rather than drops.",
+            "type": "boolean"
+          },
           "version": {
             "description": "The installed package version.",
             "type": "string"
@@ -3301,6 +3305,7 @@
           "version",
           "name",
           "enabled",
+          "switchedOn",
           "compatible",
           "forced",
           "reason",

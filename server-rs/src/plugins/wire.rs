@@ -72,6 +72,10 @@ pub struct PluginStatus {
     pub name: PluginName,
     /// On for this instance, and compatible.
     pub enabled: bool,
+    /// Switched on (by the configuration or this instance), whether or not
+    /// this host can run it: with `compatible: false`, a plugin a host
+    /// upgrade left behind, which the page names rather than drops.
+    pub switched_on: bool,
     /// The host satisfies the plugin's `engines.droppen`.
     pub compatible: bool,
     /// The configuration pins it on or off; the switch is read-only.
@@ -129,6 +133,7 @@ impl From<sdk::PluginStatus> for PluginStatus {
             version: status.version.to_string(),
             name: PluginName(status.name),
             enabled: status.enabled,
+            switched_on: status.switched_on,
             compatible: status.compatible,
             forced: status.forced,
             reason: status.reason.into(),
@@ -460,6 +465,7 @@ mod tests {
                     version: "1.2.3".parse().unwrap(),
                     name: name.clone(),
                     enabled: true,
+                    switched_on: true,
                     compatible: true,
                     forced: false,
                     notices: notice

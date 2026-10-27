@@ -639,6 +639,7 @@ pub fn effective(manifest: &Manifest, force_on: bool, force_off: bool, decision:
         version: manifest.version.clone(),
         name: manifest.name.clone(),
         enabled: wanted && compatible,
+        switched_on: wanted,
         compatible,
         forced: pinned,
         reason,
@@ -1098,7 +1099,11 @@ pub(crate) mod tests {
         future.engines.droppen = "^0.2.0".parse().unwrap();
         let status = effective(&future, true, false, None, build);
         assert!(!status.enabled && !status.compatible, "never on when the host cannot run it");
+        assert!(status.switched_on, "but still wanted, so the page can say it needs an update");
         assert!(status.reason.unwrap().contains("^0.2.0"));
+        assert!(effective(&future, false, false, Some(&decided(true)), build).switched_on);
+        assert!(!effective(&future, false, false, Some(&decided(false)), build).switched_on, "switched off: nothing to say");
+        assert!(!effective(&future, true, true, None, build).switched_on, "pinned off");
     }
 
     #[test]

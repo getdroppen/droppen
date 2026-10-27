@@ -141,7 +141,12 @@ pub fn valid_doc_name(name: &str) -> bool {
         })
 }
 
-/// What a plugin asks the host for. Only `storage` is implemented in 0.1.
+/// What a plugin says it uses. Declared and checked against this list at
+/// install, and shown to the user; **not enforced**. A plugin runs in the
+/// host's page with the page's own rights (its origin, its signed-in user's
+/// token), so installing one is trusting it fully, as with any program the
+/// user runs (`docs/plugins/runtime.md` §8). Only `storage` names something
+/// the host offers in 0.1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Permission {
     /// The plugin's document store.
@@ -217,7 +222,7 @@ pub struct Manifest {
     pub name: LocalizedText,
     /// The SDK range the plugin was built against.
     pub engines: Engines,
-    /// What it asks for.
+    /// What it says it uses: declared, not enforced (see [`Permission`]).
     #[serde(default)]
     pub permissions: Vec<Permission>,
     /// Old top-level paths the host redirects to `/p/<id>/`.
@@ -364,6 +369,11 @@ pub struct PluginStatus {
     pub name: LocalizedText,
     /// On for this instance (and compatible).
     pub enabled: bool,
+    /// Switched on — by the configuration or the instance's decision —
+    /// whether or not this host can run it. With `compatible: false`, a
+    /// plugin the user still wants: one a host upgrade left behind, which the
+    /// page names rather than drops.
+    pub switched_on: bool,
     /// The host satisfies the plugin's engine range.
     pub compatible: bool,
     /// The configuration pins it on or off; the switch is read-only.
@@ -387,7 +397,7 @@ pub struct PluginStatus {
     pub entry: Option<String>,
     /// The old top-level paths the host redirects to `/p/<id>/`.
     pub aliases: Vec<String>,
-    /// What it asks the host for.
+    /// What it says it uses: declared, not enforced (see [`Permission`]).
     pub permissions: Vec<Permission>,
 }
 
@@ -567,6 +577,7 @@ mod tests {
             version: semver::Version::new(0, 1, 0),
             name: LocalizedText::Plain("Tasks".into()),
             enabled: true,
+            switched_on: true,
             compatible: true,
             forced: false,
             reason: None,
@@ -584,5 +595,6 @@ mod tests {
         assert_eq!(value["aliases"], json!(["/tasks"]));
         assert_eq!(value["permissions"], json!(["storage"]));
         assert_eq!(value["build"], json!("0.1.0-0123456789ab"));
+        assert_eq!(value["switchedOn"], json!(true));
     }
 }
