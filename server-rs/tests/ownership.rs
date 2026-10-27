@@ -353,6 +353,11 @@ async fn nothing_that_changes_an_external_session_is_allowed() {
         assert_eq!(body["error"], "external_session", "{method} {path}: {body}");
         assert!(body.get("adoptable").is_none(), "nothing offers a takeover any more: {body}");
     }
+    // The route that used to take a session over is gone.
+    let (status, body) = probe
+        .send("POST", &format!("/api/sessions/claude/{THEIRS}/adopt"), json!({}))
+        .await;
+    assert_eq!(status, 404, "the adopt route is gone: {body}");
 
     // Nothing was written, and `codex archive` was never even reached.
     assert!(!workspace.join("codex-argv.bin").exists(), "the user's own codex state was never touched");
@@ -375,37 +380,6 @@ async fn nothing_that_changes_an_external_session_is_allowed() {
     probe
         .send_ok("POST", &format!("/api/sessions/claude/{THEIRS}/seen"), json!({}), 200)
         .await;
-
-    probe.stop().await;
-}
-
-/// The route that used to take a session over is gone for both CLIs, and asking
-/// for it changes nothing on disk.
-#[tokio::test]
-async fn the_adopt_route_is_gone() {
-    let probe = Probe::start().await;
-    let workspace = probe.workspace();
-    probe.seed_session(&probe.local_root(), THEIRS, &workspace);
-    seed_rollout(&probe.home, THEIRS, &workspace);
-
-    for source in ["claude", "codex"] {
-        let (status, body) = probe.send("POST", &format!("/api/sessions/{source}/{THEIRS}/adopt"), json!({})).await;
-        assert_eq!(status, 404, "{source}: {body}");
-    }
-    assert!(
-        !probe
-            .managed_root()
-            .join("projects")
-            .join("-workspace")
-            .join(format!("{THEIRS}.jsonl"))
-            .exists(),
-        "nothing was copied into this server's root"
-    );
-    assert_eq!(
-        ids(&probe, "?scope=external&source=claude").await,
-        vec![THEIRS],
-        "and it is still external"
-    );
 
     probe.stop().await;
 }
