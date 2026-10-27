@@ -150,41 +150,36 @@ export function ProductTour() {
   const root = useRef<HTMLDivElement>(null);
   const tabs = useRef<Partial<Record<TourTab, HTMLButtonElement | null>>>({});
 
-  const copy: Record<TourTab, { label: string; title: string; body: string; alt: string }> = {
+  // Each tab says in one line what its picture shows, in the tab itself: the picture hangs straight off the tab row.
+  const copy: Record<TourTab, { label: string; line: string; alt: string }> = {
     sessions: {
       label: t("Sessions"),
-      title: t("Every session, as it runs"),
-      body: t("The transcript, every tool it ran, and the question it is waiting on. Answer it, and it carries on."),
+      line: t("Answer the question it is waiting on, and it carries on."),
       alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer"),
     },
     split: {
       label: t("Split screen"),
-      title: t("Sessions and terminals, side by side"),
-      body: t("Lay out several panes at once: a session, a terminal, another session, each on whichever computer you choose."),
+      line: t("Sessions and terminals side by side, from any of your computers."),
       alt: t("Droppen with three panes: two sessions and a terminal"),
     },
     terminal: {
       label: t("Terminal"),
-      title: t("A real terminal on any of your computers"),
-      body: t("Open a shell on any computer of yours, from the browser on your phone or anywhere else."),
+      line: t("A shell on any of your computers, from any browser."),
       alt: t("A terminal in Droppen"),
     },
     cloud: {
       label: t("Cloud"),
-      title: t("Every computer on one account"),
-      body: t("my.droppen.app shows every computer on your account, and one list of what needs you across all of them."),
+      line: t("Every computer on your account, and what needs you on all of them."),
       alt: t("my.droppen.app: three computers and the list of what needs you"),
     },
     phone: {
       label: t("Phone"),
-      title: t("Made for the phone in your hand"),
-      body: t("No app to install: open droppen.app, add it to your home screen, and be told when an agent needs you."),
+      line: t("No app to install: add droppen.app to your home screen."),
       alt: t("Droppen on a phone: what needs you, and a session's question"),
     },
     security: {
       label: t("Security"),
-      title: t("Only the devices you let in"),
-      body: t("A new phone or browser gets in only when a device you already have lets it in, with a QR code. End-to-end encrypted."),
+      line: t("A new device gets in only when one you already have lets it in, with a QR code."),
       alt: t("Letting a new device in with a QR code"),
     },
   };
@@ -243,12 +238,13 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "relative flex h-12 items-center justify-center px-4 font-mono text-xs whitespace-nowrap transition-colors max-md:shrink-0",
+                "group relative flex flex-col items-start gap-1 px-5 pt-4 pb-5 text-left transition-colors max-md:w-[220px] max-md:shrink-0 max-md:px-4",
                 i > 0 && "border-l border-border",
-                on ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                on && "bg-raised",
               )}
             >
-              {copy[tab].label}
+              <span className={cn("text-sm leading-5 font-semibold", on ? "text-fg" : "text-muted group-hover:text-fg")}>{copy[tab].label}</span>
+              <span className="text-[13px] leading-5 text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{copy[tab].line}</span>
               {/* The active tab's rule; while the tour advances by itself, it fills up to the next tab. */}
               {on && (
                 <span
@@ -262,12 +258,8 @@ export function ProductTour() {
         })}
       </div>
       <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${active}`} className="flex flex-col">
-        <div className="flex flex-col gap-1 px-6 pt-6 max-md:px-4">
-          <span className="text-[17px] leading-6 font-semibold text-fg">{now.title}</span>
-          <span className="max-w-[46em] text-sm leading-6 text-muted">{now.body}</span>
-        </div>
         <div
-          className="px-10 pt-6 pb-12 max-md:px-4 max-md:pt-5 max-md:pb-8"
+          className="px-10 pt-8 pb-12 max-md:px-4 max-md:pt-5 max-md:pb-8"
           style={{
             backgroundImage: "linear-gradient(var(--color-border) 1px, transparent 1px), linear-gradient(90deg, var(--color-border) 1px, transparent 1px)",
             backgroundSize: "22px 22px",

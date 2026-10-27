@@ -67,7 +67,7 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   for (const line of [
     // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
     "电脑上的 AI，手机上接着用。",
-    "每个会话，实时在眼前",
+    "回答它在等的问题，它就接着干。",
     "三步装好，走到哪都能接手。",
     "本来要走回工位才能做的事，手机上都能做。",
     "所有会话，一个列表",
