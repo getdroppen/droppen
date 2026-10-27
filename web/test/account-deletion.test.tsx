@@ -259,7 +259,7 @@ test("a deletion the hub refuses leaves this browser as it was; one it took leav
   assert.deepEqual(left, ["me@example.test"]);
   assert.deepEqual(sent[0], { token: "dev", confirm: "me@example.test", proof: { currentPassword: "nope" } }, "the address as typed, trimmed");
   // The page's own deletion: the refusal screen waits it out, and the sign-in screen says so once.
-  const app = readFileSync(new URL("../src/features/cloud/cloud-app.tsx", import.meta.url), "utf8");
+  const app = ["cloud-app.tsx", "auth-screen.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8")).join("\n");
   assert.match(app, /if \(deletingAccount\(\)\) return;/);
   const storage = new MemoryStorage();
   markAccountDeleted(storage as never);
@@ -301,7 +301,7 @@ test("leaving a deleted account wipes as a removed device does, and says what co
   }
   const shellSrc = readFileSync(new URL("../src/features/cloud/hub-shell.ts", import.meta.url), "utf8");
   assert.ok(shellSrc.slice(shellSrc.indexOf("export function endHubShell")).includes("hubShell()?.stop();"), "the shared teardown stops the shell");
-  const app = readFileSync(new URL("../src/features/cloud/cloud-app.tsx", import.meta.url), "utf8");
+  const app = ["cloud-app.tsx", "auth-screen.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8")).join("\n");
   assert.match(app, /const failures = await wipeAccountHere\(account, store\);/, "the removed device's wipe is the same one");
 });
 
@@ -377,7 +377,7 @@ test("a session renewal answered 410 account_deleted is the account gone; 403 ac
   const gone = await hub.reload(a);
   assert.equal(gone.refusal, "deleted");
   // The page wipes for `deleted` (and a removal the chain shows), and keeps the keys for any other refusal.
-  const app = readFileSync(new URL("../src/features/cloud/cloud-app.tsx", import.meta.url), "utf8");
+  const app = ["cloud-app.tsx", "auth-screen.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8")).join("\n");
   const refusedFn = app.slice(app.indexOf("const refused = useCallback("), app.indexOf("/** The chain as served conflicts"));
   assert.match(refusedFn, /if \(refusal === "deleted"\) \{\s*const failures = await wipeRemoved\(account, link, store\);\s*return setPhase\(\{ kind: "deleted", failures \}\);/);
   assert.match(app, /case "deleted":\s*return <AccountDeletedScreen failures=\{phase\.failures\} \/>;/);
@@ -400,7 +400,7 @@ test("the words: the new refusals in the reader's language, and the deleted acco
     await i18next.changeLanguage("en");
   }
   // Every string of the screens that say an account was deleted, in every language.
-  const app = readFileSync(new URL("../src/features/cloud/cloud-app.tsx", import.meta.url), "utf8");
+  const app = ["cloud-app.tsx", "auth-screen.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8")).join("\n");
   const keys = [
     "this account was deleted",
     "It no longer exists at Droppen, so this browser forgot its keys and its offline copies. To use Droppen again, sign in to another account or make a new one.",
