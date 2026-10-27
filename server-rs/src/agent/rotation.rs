@@ -8,7 +8,7 @@
 //!   host of its own chain with the keys it runs with, about a chain view
 //!   that is on that chain (409 `not_on_chain` otherwise: the page syncs and
 //!   asks again). A new seed is staged beside the one in use
-//!   (`machine-key.next-<nonce>.json`, [`super::SeedStore::stage`]); the seed
+//!   (`machine-key.next-<nonce>.json`, [`super::FileSeedStore::stage`]); the seed
 //!   in use is never touched. The answer: both keys' signatures over the
 //!   proof ([`rh_proto::chain::host_rotate_body`]) and the DH confirmation
 //!   MAC. The same nonce gets the same answer. A new nonce adds a staging:
@@ -85,7 +85,7 @@ use zeroize::Zeroizing;
 use super::hub::{hex, now_ms, unhex32};
 use super::link::Shared;
 use super::state::AgentState;
-use super::{FileSeedStore, SeedStore, StagedSeed};
+use super::{FileSeedStore, StagedSeed};
 use crate::sessions::Paths;
 
 /// How long `POST /rh/rotate` waits for the hub to stage the proof.

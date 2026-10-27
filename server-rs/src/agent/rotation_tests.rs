@@ -29,7 +29,7 @@ use super::hub::{hex, now_ms, unhex32};
 use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
-use super::{FileSeedStore, SeedStore, StagedSeed, StoredSeed};
+use super::{FileSeedStore, StagedSeed, StoredSeed};
 use crate::sessions::Paths;
 
 fn account_key() -> MachineIdentity {

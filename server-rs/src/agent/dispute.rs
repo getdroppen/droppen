@@ -404,7 +404,7 @@ mod tests {
     use rh_proto::chain::{Action, Assurance, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
 
     use super::*;
-    use crate::agent::{FileSeedStore, SeedStore, StoredSeed};
+    use crate::agent::{FileSeedStore, StoredSeed};
 
     /// m-1's state: a chain that added it with `keys[0]` and renewed it to
     /// each of the others in turn (whoever held the key before signing).
