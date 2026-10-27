@@ -156,6 +156,9 @@ docker run -p 8080:8080 \
   droppen-relay
 ```
 
+The pre-rename names, `RH_RELAY_*`, are deprecated and stop working in
+v0.2.135: set the `DROPPEN_RELAY_*` name with the same value instead.
+
 The Hub accepts the registration token once, on the first start. Keep it set
 afterwards all the same, since it also names the relay, or set
 `DROPPEN_RELAY_ID` instead. The relay's per-address limits need each client's

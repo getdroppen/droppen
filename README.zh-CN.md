@@ -549,6 +549,8 @@ docker run -p 8080:8080 \
   droppen-relay
 ```
 
+改名前的 `RH_RELAY_*` 名字已弃用，v0.2.135 起不再生效：请改用同值的 `DROPPEN_RELAY_*` 名字。
+
 注册令牌只在第一次启动时被 Hub 接受一次；之后也请留着它，因为中继的 id 就取自它，或者改设 `DROPPEN_RELAY_ID`。
 中继按地址限流，要拿到每个客户端自己的地址：放在反向代理后面时设 `DROPPEN_RELAY_TRUST_PROXY=railway`，并让代理用客户端的地址
 **覆盖** `X-Real-IP`（不能把客户端自己带来的值传进来）；在 Fly.io 上设 `fly`（`Fly-Client-IP`）。不设时中继用连接的地址，
