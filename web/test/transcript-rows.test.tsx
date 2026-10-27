@@ -11,8 +11,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { components } from "../src/api/schema.js";
@@ -22,16 +20,16 @@ import {
   modelFallbackOf,
   SyntheticNotice,
 } from "../src/features/sessions/transcript-notices.js";
+import { transcriptItem as item } from "./session-fixtures.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
 
 // English keys are the source strings, so an empty resource bundle renders the
 // same text the untranslated UI does — and asserting on it asserts on the key.
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
 // A subagent card holds a query it does not run until it is opened, so the
@@ -39,28 +37,7 @@ void i18n.use(initReactI18next).init({
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const session = { source: "claude" as const, id: "s1" };
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(
-    <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>
-    </I18nextProvider>,
-  );
-}
-
-function item(over: Partial<TranscriptItem> & Pick<TranscriptItem, "kind">): TranscriptItem {
-  return {
-    detail: null,
-    isError: false,
-    meta: null,
-    question: null,
-    role: "assistant",
-    text: "",
-    timestamp: null,
-    toolName: null,
-    truncated: false,
-    ...over,
-  };
-}
+const draw = pageDraw(i18n, (node) => <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
 
 const call = (over: Partial<TranscriptItem> = {}) =>
   item({ kind: "tool_use", toolName: "Bash", text: "cargo test", toolUseId: "t1", ...over });

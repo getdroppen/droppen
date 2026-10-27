@@ -28,35 +28,9 @@ import {
   type QueueDrainState,
 } from "../src/features/sessions/queue-drain.js";
 import { formatElapsed } from "../src/lib/format.js";
+import { resident, transcriptItem as item } from "./session-fixtures.js";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return {
-    phase: "idle",
-    queued: 0,
-    queuedMessages: [],
-    background: 0,
-    awaitingBackground: false,
-    stalled: false,
-    ...over,
-  };
-}
-
-function item(over: Partial<TranscriptItem> & Pick<TranscriptItem, "kind">): TranscriptItem {
-  return {
-    detail: null,
-    isError: false,
-    meta: null,
-    question: null,
-    role: "assistant",
-    text: "",
-    timestamp: null,
-    toolName: null,
-    truncated: false,
-    ...over,
-  };
-}
 
 function task(id: string, text: string, meta: string | null = null): TranscriptItem {
   return item({ kind: "tool_use", toolName: "Task", agent: `a-${id}`, toolUseId: id, text, meta });

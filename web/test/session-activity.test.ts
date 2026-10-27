@@ -23,40 +23,9 @@ import {
   type BackgroundTask,
   type ResidentInfo,
 } from "../src/features/sessions/session-activity.js";
+import { resident, backgroundTask as task, transcriptItem as item } from "./session-fixtures.js";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return {
-    phase: "idle",
-    queued: 0,
-    queuedMessages: [],
-    background: 0,
-    tasks: [],
-    awaitingBackground: false,
-    stalled: false,
-    ...over,
-  };
-}
-
-function task(over: Partial<BackgroundTask> & Pick<BackgroundTask, "id">): BackgroundTask {
-  return { toolUseId: null, description: null, taskType: null, startedAt: null, ...over };
-}
-
-function item(over: Partial<TranscriptItem> & Pick<TranscriptItem, "kind">): TranscriptItem {
-  return {
-    detail: null,
-    isError: false,
-    meta: null,
-    question: null,
-    role: "assistant",
-    text: "",
-    timestamp: null,
-    toolName: null,
-    truncated: false,
-    ...over,
-  };
-}
 
 /* ── the field, and what stands in for it ───────────────────────────────── */
 

@@ -25,6 +25,7 @@ import {
 import { chunkItems } from "../src/features/sessions/transcript-groups.js";
 import { transcriptRowDeps } from "../src/features/sessions/session-detail.js";
 import type { components } from "../src/api/schema.js";
+import { transcriptItem } from "./session-fixtures.js";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 
@@ -61,20 +62,7 @@ function summary(over: Partial<SessionSummary> = {}): SessionSummary {
   };
 }
 
-function item(text: string): TranscriptItem {
-  return {
-    role: "assistant",
-    kind: "text",
-    text,
-    detail: null,
-    toolName: null,
-    meta: null,
-    isError: false,
-    question: null,
-    timestamp: null,
-    truncated: false,
-  };
-}
+const item = (text: string) => transcriptItem({ text });
 
 function state(over: Partial<FeedState> = {}): FeedState {
   const items = [item("0"), item("1")];

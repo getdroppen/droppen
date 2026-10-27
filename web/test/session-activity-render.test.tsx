@@ -15,9 +15,6 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
 import { ActivityBar, AwaitingBackgroundNotice } from "../src/features/sessions/session-detail.js";
 import { BackgroundTaskPanel } from "../src/features/sessions/background-panel.js";
@@ -27,23 +24,17 @@ import type {
   LiveSubtask,
   ResidentInfo,
 } from "../src/features/sessions/session-activity.js";
+import { resident } from "./session-fixtures.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 // English keys are the source strings, so an empty resource bundle renders the
 // same text the untranslated UI does — and asserting on it asserts on the key.
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return { phase: "idle", queued: 0, background: 0, awaitingBackground: false, stalled: false, ...over };
-}
+const draw = pageDraw(i18n);
 
 /* ── the sidebar badge ──────────────────────────────────────────────────── */
 

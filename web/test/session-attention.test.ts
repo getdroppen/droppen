@@ -23,20 +23,7 @@ import {
   type AttentionRow,
 } from "../src/features/sessions/session-attention.js";
 import { LOCAL } from "../src/lib/machines/key.js";
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return {
-    phase: "idle",
-    queued: 0,
-    queuedMessages: [],
-    background: 0,
-    tasks: [],
-    awaitingBackground: false,
-    stalled: false,
-    turnStartedAt: null,
-    ...over,
-  };
-}
+import { resident } from "./session-fixtures.js";
 
 const idle: AttentionRow = { status: "idle", activity: "idle", unreadCount: 0 };
 const working: AttentionRow = { status: "running", activity: "working", resident: resident({ phase: "working" }), unreadCount: 0 };

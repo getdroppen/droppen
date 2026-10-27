@@ -22,21 +22,9 @@ import {
   shouldTopUpHistory,
   trackUnread,
 } from "../src/features/sessions/transcript-scroll.js";
+import { transcriptItem } from "./session-fixtures.js";
 
-function item(text: string): TranscriptItem {
-  return {
-    role: "assistant",
-    kind: "text",
-    text,
-    detail: null,
-    toolName: null,
-    meta: null,
-    isError: false,
-    question: null,
-    timestamp: null,
-    truncated: false,
-  };
-}
+const item = (text: string) => transcriptItem({ text });
 
 /** Items `from..to`, each named for its absolute index. */
 function itemsFrom(from: number, to: number, suffix = ""): TranscriptItem[] {

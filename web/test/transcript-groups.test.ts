@@ -12,22 +12,9 @@ import {
   pairToolResults,
   runModelOf,
 } from "../src/features/sessions/transcript-groups.js";
+import { transcriptItem as item } from "./session-fixtures.js";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
-
-function item(partial: Partial<TranscriptItem> & Pick<TranscriptItem, "role" | "kind">): TranscriptItem {
-  return {
-    text: "",
-    detail: null,
-    toolName: null,
-    meta: null,
-    isError: false,
-    question: null,
-    timestamp: null,
-    truncated: false,
-    ...partial,
-  };
-}
 
 const text = (role: TranscriptItem["role"], t: string, timestamp: string | null = null) =>
   item({ role, kind: "text", text: t, timestamp });
