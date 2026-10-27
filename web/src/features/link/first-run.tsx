@@ -9,7 +9,7 @@ import { isCloud } from "@/lib/hub/config";
 import { useApi, useMachine } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
 import { machineStorageKey } from "@/lib/machines/storage";
-import { cloudKey, failure, useLinkFlow } from "./link-flow";
+import { cloudStatusQuery, useLinkFlow } from "./link-flow";
 import { startDroppenSignIn } from "./browser-sign-in";
 
 /*
@@ -54,12 +54,7 @@ function FirstRunCard({ className }: { className?: string }) {
   const { flow, opener } = useLinkFlow();
   const [dismissed, setDismissed] = useState(() => dismissedHere(machine));
   const { data: status } = useQuery({
-    queryKey: cloudKey(machine),
-    queryFn: async () => {
-      const res = await api.GET("/api/cloud");
-      if (!res.data) throw await failure(res);
-      return res.data;
-    },
+    ...cloudStatusQuery(machine, api),
     staleTime: 30_000,
   });
   // Only a device that was never signed in, and while no sign-in is under way.

@@ -27,6 +27,18 @@ export async function failure(res: { error?: unknown; response: Response }): Pro
   return Object.assign(new Error(message ?? error.code ?? `HTTP ${res.response.status}`), { code: error.code || undefined });
 }
 
+/** How a page reads `GET /api/cloud`: the one definition of the device's Droppen status query. */
+export function cloudStatusQuery(machine: MachineKey, api: ApiClient) {
+  return {
+    queryKey: cloudKey(machine),
+    queryFn: async () => {
+      const res = await api.GET("/api/cloud");
+      if (!res.data) throw await failure(res);
+      return res.data;
+    },
+  };
+}
+
 interface LinkFlow {
   opener: LinkOpener;
   /** What the page shows of the attempt (the opener's state, or set back to `idle` once it is over). */
@@ -60,12 +72,7 @@ export function linkFlowFor(machine: MachineKey, api: ApiClient, queryClient: Qu
     // The browser hand-off follows the attempt here; shared with Settings → Access → Droppen's own polling.
     status: async () =>
       (await queryClient.fetchQuery({
-        queryKey: cloudKey(machine),
-        queryFn: async () => {
-          const res = await api.GET("/api/cloud");
-          if (!res.data) throw await failure(res);
-          return res.data;
-        },
+        ...cloudStatusQuery(machine, api),
         staleTime: 500,
       })) as HandoffStatus,
     win: typeof window === "undefined" ? NO_WINDOW : undefined,

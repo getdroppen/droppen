@@ -16,7 +16,7 @@ import type { components } from "@/api/schema";
 import { Spinner } from "@/components/ui/spinner";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { BrowserSignInWaiting, startDroppenSignIn } from "@/features/link/browser-sign-in";
-import { cloudKey, failure, useLinkFlow } from "@/features/link/link-flow";
+import { cloudStatusQuery, useLinkFlow } from "@/features/link/link-flow";
 import type { OpenerState } from "@/features/link/opener";
 
 type CloudStatus = components["schemas"]["CloudStatus"];
@@ -89,12 +89,7 @@ export function useGuideSignIn(): GuideSignIn {
   const { flow, setFlow, opener } = useLinkFlow();
   const busy = flow.kind !== "idle" && flow.kind !== "done" && flow.kind !== "error" && flow.kind !== "expired";
   const { data: status } = useQuery({
-    queryKey: cloudKey(machine),
-    queryFn: async () => {
-      const res = await api.GET("/api/cloud");
-      if (!res.data) throw await failure(res);
-      return res.data;
-    },
+    ...cloudStatusQuery(machine, api),
     refetchInterval: (q) => (busy || q.state.data?.state === "enrolling" ? 1000 : false),
   });
   // In the account while the flow waited: the flow is over (as in Settings → Access → Droppen).

@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
 import { hubWebOrigin } from "./handoff";
-import { cloudKey, failure, useLinkFlow } from "./link-flow";
+import { cloudKey, cloudStatusQuery, failure, useLinkFlow } from "./link-flow";
 import type { OpenerState } from "./opener";
 import { BrowserSignInWaiting, startDroppenSignIn } from "./browser-sign-in";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -76,12 +76,7 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
   const busy =
     flow.kind === "starting" || flow.kind === "waiting" || flow.kind === "finishing" || flow.kind === "enrolling" || flow.kind === "blocked" || flow.kind === "browser";
   const { data: status, isPending, error } = useQuery({
-    queryKey: cloudKey(machine),
-    queryFn: async () => {
-      const res = await api.GET("/api/cloud");
-      if (!res.data) throw await failure(res);
-      return res.data;
-    },
+    ...cloudStatusQuery(machine, api),
     refetchInterval: (q) => (busy || q.state.data?.state === "enrolling" ? 1000 : 5000),
   });
 

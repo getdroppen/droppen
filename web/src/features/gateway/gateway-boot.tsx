@@ -17,7 +17,7 @@
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { cloudKey, failure } from "@/features/link/link-flow";
+import { cloudKey, cloudStatusQuery } from "@/features/link/link-flow";
 import { currentUser } from "@/lib/auth";
 import { GatewayLink } from "@/lib/gateway/link";
 import { LOCAL } from "@/lib/machines/key";
@@ -46,12 +46,7 @@ const loadGatewayShell = () => import("./gateway-shell");
 export function GatewayBoot({ loadShell = loadGatewayShell, retryMs = RECHECK_MS }: { loadShell?: () => Promise<Pick<typeof import("./gateway-shell"), "startGatewayShell">>; retryMs?: number } = {}) {
   const queryClient = useQueryClient();
   const { data } = useQuery({
-    queryKey: cloudKey(LOCAL),
-    queryFn: async () => {
-      const res = await apiFor(LOCAL).GET("/api/cloud");
-      if (!res.data) throw await failure(res);
-      return res.data;
-    },
+    ...cloudStatusQuery(LOCAL, apiFor(LOCAL)),
     refetchInterval: RECHECK_MS,
     retry: false,
   });
