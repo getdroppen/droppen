@@ -36,8 +36,12 @@
 //! URL carries an instance-wide secret as a path segment: 128 bits as hex in
 //! the instance's `state.db`, made on first need and stable across restarts.
 //! It reaches a page only inside [`droppen_plugin_sdk::PluginStatus::entry`],
-//! which only a signed-in, non-cloud caller is given. The asset route compares
-//! it in constant time ([`Plugins::asset`]).
+//! and that only through a signed-in, non-cloud caller: the `/api/plugins…`
+//! handlers and the asset route refuse a bridged (`cloud:`) identity, the
+//! feed's own per-subscriber filter (`feed::global`) hands a `cloud:`
+//! subscriber `plugins: []`, and `agent::bridge` refuses the plugin paths for
+//! a device before they reach this server. The asset route compares the key
+//! in constant time ([`Plugins::asset`]).
 //!
 //! # Leaving no trace
 //!
@@ -332,9 +336,20 @@ impl Plugins {
         let key = match db.kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key)) {
             Some(key) => key,
             None => {
-                let key = random_key();
-                db.kv_set(scope::PLUGINS, ASSET_KEY_ROW, &key);
-                key
+                // Two first asks may both make a key; only one row can win.
+                // `INSERT OR IGNORE` then read back makes both answers agree,
+                // so every URL any client holds names the same secret.
+                let generated = random_key();
+                db.kv_set_if_absent(scope::PLUGINS, ASSET_KEY_ROW, &generated);
+                match db.kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key)) {
+                    Some(key) => key,
+                    None => {
+                        // An unreadable row, or a read-only database: use what
+                        // this process made and try to leave it behind.
+                        db.kv_set(scope::PLUGINS, ASSET_KEY_ROW, &generated);
+                        generated
+                    }
+                }
             }
         };
         *lock(&self.asset_key) = Some(key.clone());
@@ -437,11 +452,28 @@ impl Plugins {
         if !self.evaluate(&package, None).enabled {
             return None;
         }
-        let file = resolve_inside(&self.package_dir(id), path)?;
-        if !std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_file()) {
+        if install::is_record_path(path) {
+            return None;
+        }
+        let dir = self.package_dir(id);
+        let file = resolve_inside(&dir, path)?;
+        // Resolve both through the filesystem, not just the last component: a
+        // symlink in the middle of the path (installs never make one, but the
+        // directory may have been changed by hand) must not reach outside the
+        // package. `starts_with` is component-wise, so `/a/bc` is not under
+        // `/a/b`.
+        let dir = std::fs::canonicalize(&dir).ok()?;
+        let file = std::fs::canonicalize(&file).ok()?;
+        if !file.starts_with(&dir) || !std::fs::metadata(&file).is_ok_and(|meta| meta.is_file()) {
             return None;
         }
         let bytes = std::fs::read(&file).ok()?;
+        // The URL names one build's bytes and is cached immutable: if a swap
+        // landed between the first look and this read, the record no longer
+        // says `build`, and these bytes must not go out under that URL.
+        if install::recorded_build(&dir).as_deref() != Some(build) {
+            return None;
+        }
         Some(Asset {
             bytes,
             content_type: content_type(path),
@@ -925,9 +957,51 @@ pub(crate) mod tests {
         }
         assert!(plugins.asset(&key, "tasks", &build, "dist").is_none(), "a directory");
         assert!(plugins.asset(&key, "tasks", &build, "dist/missing.js").is_none(), "a file that is not there");
+        for record in [".droppen-install.json", ".DROPPEN-INSTALL.JSON", "dist/.droppen-install.json"] {
+            assert!(plugins.asset(&key, "tasks", &build, record).is_none(), "the install record: {record}");
+        }
 
         plugins.set_enabled("tasks", false, None, DecisionReason::Settings).unwrap();
         assert!(plugins.asset(&key, "tasks", &build, &path).is_none(), "a plugin that is off");
+    }
+
+    /// Installs never create symlinks, but a package directory changed by hand
+    /// could; a path through one must not reach outside the package.
+    #[test]
+    fn an_asset_path_through_a_symlink_does_not_leave_the_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["tasks"], PluginSettings::default(), None);
+        let status = plugins.status_of("tasks").unwrap();
+        let key = status_key(&plugins);
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        std::os::unix::fs::symlink(&outside, plugins.package_dir("tasks").join("dist").join("link")).unwrap();
+
+        assert!(plugins.asset(&key, "tasks", &status.build, "dist/link/secret.txt").is_none());
+        assert!(plugins.asset(&key, "tasks", &status.build, "dist/link").is_none());
+    }
+
+    /// The key is made by whichever caller asks first; two of them must not
+    /// each make one. `INSERT OR IGNORE` + read-back is what makes them agree.
+    #[test]
+    fn two_first_asks_for_the_capability_key_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        // Forced on, so no switch has to be written (and no status read has
+        // made the key already) before the race.
+        let config = PluginSettings {
+            enable: Some("tasks".into()),
+            disable: None,
+        };
+        let plugins = Arc::new(host(dir.path(), config, None));
+        // Place the package without `Plugins::install`, which would make the
+        // key itself.
+        crate::plugins::install::install(plugins.instance_dir(), &package_bytes("tasks", "0.1.0")).unwrap();
+
+        let (first, second) = (plugins.clone(), plugins.clone());
+        let first = std::thread::spawn(move || first.status_of("tasks").unwrap().entry.unwrap());
+        let second = std::thread::spawn(move || second.status_of("tasks").unwrap().entry.unwrap());
+        assert_eq!(first.join().unwrap(), second.join().unwrap());
     }
 
     #[test]

@@ -114,6 +114,22 @@ impl Db {
         });
     }
 
+    /// Write one value only if its key is not there yet, leaving whatever is
+    /// there untouched.
+    ///
+    /// For a value two callers may both try to make first — the plugin host's
+    /// capability key — where the loser must read back the winner's rather
+    /// than overwrite it (`crate::plugins::Plugins::asset_key`).
+    pub fn kv_set_if_absent(&self, scope: &str, key: &str, value: &str) {
+        self.commit("a setting", |tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())",
+                (scope, key, value),
+            )?;
+            Ok(())
+        });
+    }
+
     /// Forget one key. Forgetting what is not there is not an error.
     pub fn kv_remove(&self, scope: &str, key: &str) {
         self.commit("a removal", |tx| {

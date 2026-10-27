@@ -24,6 +24,8 @@ use std::sync::Arc;
 use gotcha::axum::body::Bytes;
 use gotcha::axum::extract::{FromRequest, Request};
 use gotcha::axum::http::StatusCode;
+use gotcha::axum::middleware::Next;
+use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::{Parameter, RequestBody};
 use gotcha::{api, Either, Json, ParameterProvider, State};
 use serde::de::DeserializeOwned;
@@ -66,9 +68,11 @@ impl From<PluginError> for ApiError {
             PluginError::Install(InstallError::NotFound(_)) => coded(StatusCode::NOT_FOUND, codes::PLUGIN_NOT_FOUND, message),
             PluginError::Install(InstallError::TooLarge { message, limit }) => too_large(message, limit),
             PluginError::Install(InstallError::Refused(_)) => coded(StatusCode::BAD_REQUEST, codes::INVALID_PACKAGE, message),
-            PluginError::Install(InstallError::Failed(_)) => {
-                tracing::error!(%message, "a plugin install failed");
-                coded(StatusCode::INTERNAL_SERVER_ERROR, "failed", message)
+            PluginError::Install(InstallError::Failed(detail)) => {
+                // The detail names this instance's directories; the log is
+                // where an operator can see it, the body is not.
+                tracing::error!(%detail, "a plugin install failed");
+                coded(StatusCode::INTERNAL_SERVER_ERROR, "failed", "the install failed; the server log says why")
             }
         }
     }
@@ -199,6 +203,31 @@ fn refuse_cloud(who: &MaybeIdentity) -> Result<(), ApiError> {
         ));
     }
     Ok(())
+}
+
+/// [`refuse_cloud`], before the request's body is parsed.
+///
+/// A handler's arguments — including a JSON body — are extracted before its
+/// first line runs, so a malformed body from a device would otherwise be
+/// answered `400` before the handler could refuse it. This layer sits inside
+/// the authentication guard (which has put the identity in the request
+/// extensions by now) and outside every extractor, so a device gets the same
+/// `404 plugin_not_found` whatever it sent. The handler-level check stays as
+/// the second lock on the same door.
+async fn refuse_cloud_requests(request: Request, next: Next) -> Response {
+    if request
+        .extensions()
+        .get::<crate::auth::AuthIdentity>()
+        .is_some_and(|identity| identity.username.starts_with("cloud:"))
+    {
+        return coded(
+            StatusCode::NOT_FOUND,
+            codes::PLUGIN_NOT_FOUND,
+            "no plugin is available to a bridged request",
+        )
+        .into_response();
+    }
+    next.run(request).await
 }
 
 /// Every plugin installed in this instance, as this instance sees it.
@@ -355,8 +384,12 @@ pub async fn plugin_doc_history(
 ///
 /// The asset route (`/plugins/…`) is registered here too, so the router claims
 /// it before the SPA fallback can hand a page its shell instead of a module.
+///
+/// The whole plugin surface is one sub-router with [`refuse_cloud_requests`]
+/// over it, so a bridged request is turned away before any body is parsed;
+/// the routers are then merged into the API's.
 pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
+    let plugins = ApiRouter::default()
         .get(LIST, list_plugins)
         .delete(PLUGIN, uninstall_plugin)
         .put(ENABLED, set_plugin_enabled)
@@ -376,6 +409,8 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         )
         .get(super::serve::ASSET_PATH, super::serve::serve_asset)
         .head(super::serve::ASSET_PATH, super::serve::serve_asset)
+        .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
+    router.merge(plugins)
 }
 
 /// Everything gotcha cannot derive about these routes.
@@ -551,6 +586,21 @@ mod tests {
         assert_eq!(large.body(), &json!({"error": "too_large", "message": "big", "limit": 7}));
     }
 
+    /// A failed install's `500` names no instance directory: the detail goes
+    /// to the log, where an operator can see it.
+    #[test]
+    fn a_failed_install_does_not_put_instance_paths_in_its_body() {
+        let error: ApiError = PluginError::Install(InstallError::Failed(
+            "/home/someone/.local/share/remote-hand/instances/t/plugin-packages/.tmp-1: disk full".into(),
+        ))
+        .into();
+        assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.body()["error"], json!("failed"));
+        let message = error.body()["message"].as_str().unwrap_or_default();
+        assert!(!message.contains('/'), "{message:?}");
+        assert!(!message.contains(".local"), "{message:?}");
+    }
+
     #[tokio::test]
     async fn an_oversized_body_is_the_stores_413_and_bad_json_is_invalid() {
         let accept = |PluginJson(body): PluginJson<PluginPutDoc>| async move { body.value.to_string() };
@@ -670,23 +720,32 @@ mod tests {
             next.run(request).await
         }
 
+        // The handler-level check is the second lock on the same door.
+        let cloud = MaybeIdentity(Some(crate::auth::AuthIdentity {
+            username: "cloud:device-1".into(),
+            token_sha256: None,
+        }));
+        let refused = refuse_cloud(&cloud).expect_err("a bridged identity is refused");
+        assert_eq!((refused.status(), refused.body()["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
+        assert!(refuse_cloud(&MaybeIdentity(None)).is_ok());
+
         let home = tempfile::tempdir().unwrap();
         let (state, router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
         state.plugins.install(&crate::plugins::tests::package_bytes("tasks", "0.1.0"), None).unwrap();
         let mut router = router.layer(gotcha::axum::middleware::from_fn(as_cloud));
+        // Empty or malformed bodies on purpose: the refusal must come before
+        // the extractors, so these are 404 and never 400.
         for (method, uri, body) in [
             ("GET", LIST, Body::empty()),
             ("POST", LIST, Body::empty()),
-            ("PUT", "/api/plugins/tasks/enabled", Body::from(r#"{"enabled":true}"#)),
+            ("PUT", "/api/plugins/tasks/enabled", Body::empty()),
+            ("PUT", "/api/plugins/tasks/docs/state", Body::empty()),
+            ("POST", "/api/plugins/tasks/batch", Body::empty()),
             ("GET", "/api/plugins/tasks/docs", Body::empty()),
             ("GET", "/api/plugins/tasks/docs/state", Body::empty()),
             ("DELETE", "/api/plugins/tasks", Body::empty()),
         ] {
-            let mut builder = Request::builder().method(method).uri(uri);
-            if method == "PUT" {
-                builder = builder.header("content-type", "application/json");
-            }
-            let request = builder.body(body).unwrap();
+            let request = Request::builder().method(method).uri(uri).body(body).unwrap();
             let response = router.call(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
             let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();

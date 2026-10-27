@@ -19,13 +19,36 @@
 //! created afresh as regular files, so a mode bit or a link cannot survive
 //! the trip.
 //!
+//! # Bounds a malicious tarball cannot argue with
+//!
+//! The tar crate reads GNU long-name and PAX header bodies whole, before this
+//! module ever sees an entry, so the *decompressed stream itself* is held to
+//! [`MAX_DECOMPRESSED_BYTES`] — the unpacked limit plus header headroom — by
+//! a [`Read::take`] around the gzip decoder. A header that claims gigabytes
+//! can therefore cost at most that much memory, and an entry whose path comes
+//! out of one is refused before the path is ever copied into a message
+//! ([`MAX_ENTRY_PATH`], and every echoed path is shortened). An entry that is
+//! not a regular file may not carry a size at all: a directory header with a
+//! 33 GiB size field is refused at the header, not skipped through.
+//!
 //! # The swap
 //!
 //! One version per plugin per instance. An install unpacks into a temporary
-//! directory beside the final one, checks everything there, and only then
-//! moves the old directory aside and the new one in. A refusal — anywhere
-//! before that last step — removes the temporary directory and leaves the
+//! directory beside the final one and checks everything there. The swap
+//! itself is one `renameatx_np(RENAME_SWAP)` (macOS) or
+//! `renameat2(RENAME_EXCHANGE)` (Linux) where the filesystem takes it, so the
+//! package directory names a complete package at every instant and a crash has
+//! nothing to put back; elsewhere, and where the kernel refuses the exchange,
+//! the old directory is moved aside first and a sweep restores it. A refusal
+//! anywhere before the swap removes the temporary directory and leaves the
 //! previous install exactly as it was.
+//!
+//! Installs and uninstalls take a per-instance `flock` on
+//! `plugin-packages/.lock`, so two processes — the server and the CLI, or two
+//! requests — serialize rather than race over the same id. The same lock
+//! guards a sweep of `.tmp-*` and `.old-*` leftovers: a temporary directory is
+//! removed, and an `.old-<id>.<uuid>` whose `<id>` is missing is put back
+//! (the fallback swap's crash window), or removed when the id is there again.
 //!
 //! # The install record
 //!
@@ -35,7 +58,10 @@
 //! `package.json`. Reading an installed package back — for `GET /api/plugins`,
 //! the feed, or the asset route — needs that record as well as
 //! `package.json`; a directory without one is not an install, and is left
-//! out with a warning rather than served.
+//! out with a warning rather than served. The file is the host's, not the
+//! package's: a package that ships one (in any case; APFS would treat
+//! `.DROPPEN-INSTALL.JSON` as the same name) is refused, and the asset route
+//! never serves it.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -49,8 +75,23 @@ use sha2::{Digest, Sha256};
 pub const MAX_TARBALL_BYTES: usize = 32 * 1024 * 1024;
 /// The most a package may unpack to, across its regular files.
 pub const MAX_UNPACKED_BYTES: u64 = 64 * 1024 * 1024;
+/// The most the *decompressed tar stream* may be, headers and padding
+/// included. The unpacked limit plus headroom for 2,000 headers, their
+/// padding and the long-name/PAX bodies tar reads before yielding an entry.
+pub const MAX_DECOMPRESSED_BYTES: u64 = MAX_UNPACKED_BYTES + 16 * 1024 * 1024;
 /// The most regular files a package may hold.
 pub const MAX_FILES: usize = 2_000;
+/// The longest tar entry path this host will even look at. A path over the
+/// platform's `PATH_MAX` could not be created anyway, and a GNU long-name
+/// header can otherwise hand this module megabytes of "path".
+const MAX_ENTRY_PATH: usize = 4_096;
+/// How much of an echoed path a refusal message carries. The path is the
+/// attacker's, and the message goes back in a `400` body.
+const SHOWN_PATH_BYTES: usize = 200;
+/// The longest refusal message a package's own text may stretch to. Every
+/// `Refused` message goes back in a `400` body, and a package can put a
+/// megabyte-long name in its `package.json` as readily as in a tar header.
+const MAX_MESSAGE_CHARS: usize = 512;
 /// A bound on every entry, directories included. A 32 MiB tarball can hold at
 /// most 65,536 headers; this only keeps a directory-heavy one from turning
 /// into that many syscalls before the file count has a chance to refuse it.
@@ -61,6 +102,8 @@ const RECORD_FILE: &str = ".droppen-install.json";
 const RECORD_FORMAT: &str = "droppen.plugin-install.v1";
 /// What every entry of a `pnpm pack` tarball starts with.
 const PREFIX: &str = "package/";
+/// The lock serializing installs and uninstalls of one instance's packages.
+const LOCK_FILE: &str = ".lock";
 
 /// Why an install or a removal was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +184,10 @@ pub fn install(instance_dir: &Path, tarball: &[u8]) -> Result<Installed, Install
     let sha256 = hex(&Sha256::digest(tarball));
     let parent = packages_dir(instance_dir);
     fs::create_dir_all(&parent).map_err(|error| failed(format!("cannot make {}: {error}", parent.display())))?;
+    // Held for the whole install: the sweep, the unpack and the swap. The CLI
+    // takes the same lock, so it serializes with a running server.
+    let _lock = lock_packages(&parent)?;
+    sweep_stale(&parent);
 
     let temp = parent.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
     let guard = TempDir::new(&temp);
@@ -162,7 +209,7 @@ pub fn install(instance_dir: &Path, tarball: &[u8]) -> Result<Installed, Install
     fs::write(temp.join(RECORD_FILE), encoded)
         .map_err(|error| failed(format!("cannot write the install record: {error}")))?;
 
-    swap_into_place(&temp, &package_dir(instance_dir, &id))?;
+    swap_into_place(&temp, &package_dir(instance_dir, &id), &id, &parent)?;
     guard.keep();
 
     Ok(Installed {
@@ -173,16 +220,46 @@ pub fn install(instance_dir: &Path, tarball: &[u8]) -> Result<Installed, Install
 }
 
 /// Remove an installed package. Its documents and its on/off decision stay.
+///
+/// The directory is renamed aside under the lock first, so the id stops naming
+/// a package even if removing the bytes fails (the leftover is swept later).
 pub fn uninstall(instance_dir: &Path, id: &str) -> Result<(), InstallError> {
     if !valid_id(id) {
         return Err(InstallError::NotFound(format!("no plugin {id:?} is installed")));
     }
+    let parent = packages_dir(instance_dir);
+    if !parent.exists() {
+        return Err(InstallError::NotFound(format!("no plugin {id:?} is installed")));
+    }
+    let _lock = lock_packages(&parent)?;
+    sweep_stale(&parent);
     let dir = package_dir(instance_dir, id);
     match fs::symlink_metadata(&dir) {
         Ok(meta) if meta.is_dir() => {}
         _ => return Err(InstallError::NotFound(format!("no plugin {id:?} is installed"))),
     }
-    fs::remove_dir_all(&dir).map_err(|error| failed(format!("cannot remove {}: {error}", dir.display())))
+    let aside = parent.join(format!(".old-{id}.{}", uuid::Uuid::new_v4()));
+    fs::rename(&dir, &aside).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            InstallError::NotFound(format!("no plugin {id:?} is installed"))
+        } else {
+            failed(format!("cannot move {} aside: {error}", dir.display()))
+        }
+    })?;
+    if let Err(error) = fs::remove_dir_all(&aside) {
+        tracing::warn!(path = %aside.display(), %error, "cannot remove an uninstalled plugin package; it is swept later");
+    }
+    Ok(())
+}
+
+/// The build an installed package records right now, if the record reads.
+///
+/// The asset route asks again after reading a file: a swap that lands between
+/// its first look and its read must not let the new build's bytes go out under
+/// the old (immutable) URL.
+pub fn recorded_build(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(dir.join(RECORD_FILE)).ok()?;
+    serde_json::from_str::<Record>(&text).ok().map(|record| record.build)
 }
 
 /// Read one installed package back. `Err` means the directory is not an
@@ -232,58 +309,79 @@ pub fn read_package(dir: &Path) -> Result<Installed, String> {
 /// Read, check and unpack the tarball into `into`, returning the manifest it
 /// declares and its entry's relative path.
 fn unpack(tarball: &[u8], into: &Path) -> Result<(Manifest, String), InstallError> {
+    // The bound has to sit under the tar reader: tar-rs reads a long-name or
+    // PAX header body whole before it yields the entry it describes.
     let decoder = flate2::read::GzDecoder::new(tarball);
-    let mut archive = tar::Archive::new(decoder);
+    let mut stream = decoder.take(MAX_DECOMPRESSED_BYTES);
     let mut files = 0usize;
     let mut entries = 0usize;
     let mut unpacked = 0u64;
     let mut seen = std::collections::HashSet::new();
-
-    for entry in archive.entries().map_err(|error| refused(format!("not a gzip'd tar: {error}")))? {
-        let mut entry = entry.map_err(|error| refused(format!("not a gzip'd tar: {error}")))?;
-        entries += 1;
-        if entries > MAX_ENTRIES {
-            return Err(refused(format!("more than {MAX_ENTRIES} entries")));
-        }
-        let raw = entry.path_bytes();
-        let shown = String::from_utf8_lossy(&raw).into_owned();
-        let kind = entry.header().entry_type();
-        if !(kind.is_file() || kind.is_dir()) {
-            return Err(refused(format!("{shown} is not a regular file or a directory")));
-        }
-        let path = package_path(shown.as_ref())?;
-        if path.is_empty() {
-            continue;
-        }
-        if path == RECORD_FILE {
-            return Err(refused(format!("{shown} is reserved for the install's own record")));
-        }
-        if !seen.insert(path.clone()) {
-            return Err(refused(format!("{shown} appears twice")));
-        }
-        let size = entry.size();
-        if kind.is_file() {
-            files += 1;
-            if files > MAX_FILES {
-                return Err(refused(format!("more than {MAX_FILES} files")));
+    {
+        let mut archive = tar::Archive::new(&mut stream);
+        for entry in archive.entries().map_err(|error| refused(format!("not a gzip'd tar: {error}")))? {
+            let mut entry = entry.map_err(|error| refused(format!("not a gzip'd tar: {error}")))?;
+            entries += 1;
+            if entries > MAX_ENTRIES {
+                return Err(refused(format!("more than {MAX_ENTRIES} entries")));
             }
-            unpacked = unpacked.saturating_add(size);
-            if unpacked > MAX_UNPACKED_BYTES {
-                return Err(too_large(
-                    format!("the package unpacks to more than {MAX_UNPACKED_BYTES} bytes"),
-                    MAX_UNPACKED_BYTES,
-                ));
+            let raw = entry.path_bytes();
+            if raw.len() > MAX_ENTRY_PATH {
+                return Err(refused(format!("an entry's path is over {MAX_ENTRY_PATH} bytes")));
             }
-            write_file(into, &path, &mut entry, size).map_err(|error| refused(format!("{shown}: {error}")))?;
-        } else {
-            fs::create_dir_all(into.join(Path::new(&path))).map_err(|error| refused(format!("{shown}: {error}")))?;
+            // The whole path is used to name the file; only `shown` — the same
+            // path, shortened — goes into messages.
+            let name = String::from_utf8_lossy(&raw).into_owned();
+            let shown = describe_path(&raw);
+            let kind = entry.header().entry_type();
+            if !(kind.is_file() || kind.is_dir()) {
+                return Err(refused(format!("{shown} is not a regular file or a directory")));
+            }
+            let size = entry.size();
+            if !kind.is_file() && size != 0 {
+                // A directory or a link header with a size would have tar skip
+                // that many bytes: the 33 GiB directory trick. A real one is 0.
+                return Err(refused(format!("{shown} carries data but is not a regular file")));
+            }
+            let path = package_path(&name, &shown)?;
+            if path.is_empty() {
+                continue;
+            }
+            if is_record_name(&path) {
+                return Err(refused(format!("{shown} is reserved for the install's own record")));
+            }
+            if !seen.insert(path.clone()) {
+                return Err(refused(format!("{shown} appears twice")));
+            }
+            if kind.is_file() {
+                files += 1;
+                if files > MAX_FILES {
+                    return Err(refused(format!("more than {MAX_FILES} files")));
+                }
+                unpacked = unpacked.saturating_add(size);
+                if unpacked > MAX_UNPACKED_BYTES {
+                    return Err(too_large(
+                        format!("the package unpacks to more than {MAX_UNPACKED_BYTES} bytes"),
+                        MAX_UNPACKED_BYTES,
+                    ));
+                }
+                write_file(into, &path, &mut entry, size).map_err(|error| refused(format!("{shown}: {error}")))?;
+            } else {
+                fs::create_dir_all(into.join(Path::new(&path))).map_err(|error| refused(format!("{shown}: {error}")))?;
+            }
         }
+    }
+    if stream.limit() == 0 {
+        return Err(too_large(
+            format!("the package decompresses to more than {MAX_DECOMPRESSED_BYTES} bytes"),
+            MAX_DECOMPRESSED_BYTES,
+        ));
     }
 
     let package_file = into.join("package.json");
     let bytes = fs::read(&package_file).map_err(|_| refused("the package has no package/package.json".to_string()))?;
     let package: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| refused(format!("package/package.json: {error}")))?;
-    let manifest = manifest_of(&package).map_err(InstallError::Refused)?;
+    let manifest = manifest_of(&package).map_err(|message| refused(message))?;
     if !manifest.compatible_with(&sdk_version()) {
         return Err(refused(format!(
             "it needs Droppen plugin SDK {}; this host implements {}",
@@ -291,22 +389,49 @@ fn unpack(tarball: &[u8], into: &Path) -> Result<(Manifest, String), InstallErro
             sdk_version()
         )));
     }
-    let entry = entry_of(&package, into).map_err(InstallError::Refused)?;
+    let entry = entry_of(&package, into).map_err(|message| refused(message))?;
     Ok((manifest, entry))
 }
 
+/// An entry path as a refusal may echo it: at most [`SHOWN_PATH_BYTES`], with
+/// an ellipsis when it was longer. The path is the attacker's and the message
+/// travels back in a `400` body.
+fn describe_path(raw: &[u8]) -> String {
+    let cut = raw.len().min(SHOWN_PATH_BYTES);
+    let mut text = String::from_utf8_lossy(&raw[..cut]).into_owned();
+    if raw.len() > cut {
+        text.push('…');
+    }
+    text
+}
+
+/// Whether `path` is the install record's own name at the package root.
+/// Case-insensitive because APFS and NTFS are: a package could otherwise ship
+/// `.DROPPEN-INSTALL.JSON` and collide with the record this host writes.
+fn is_record_name(path: &str) -> bool {
+    !path.contains('/') && is_record_path(path)
+}
+
+/// Whether any segment of `path` is the install record's name, in any case.
+/// The asset route refuses these: the record is the host's bookkeeping, not
+/// the package's code.
+pub fn is_record_path(path: &str) -> bool {
+    path.split('/').any(|segment| segment.eq_ignore_ascii_case(RECORD_FILE))
+}
+
 /// One entry's path under the package directory, `/`-separated, or `""` for
-/// the `package/` directory itself.
-fn package_path(name: &str) -> Result<String, InstallError> {
+/// the `package/` directory itself. `name` is the whole path; `shown` is the
+/// same path shortened for the refusal messages.
+fn package_path(name: &str, shown: &str) -> Result<String, InstallError> {
     // `/` is the only separator an npm tarball uses; a backslash would be one
     // on Windows, where the same name would mean a different path.
     if name.contains('\\') || name.contains('\0') {
-        return Err(refused(format!("{name:?} is not a path a package may carry")));
+        return Err(refused(format!("{shown:?} is not a path a package may carry")));
     }
     if name.starts_with('/') {
-        return Err(refused(format!("{name:?} is an absolute path")));
+        return Err(refused(format!("{shown:?} is an absolute path")));
     }
-    let stripped = name.strip_prefix(PREFIX).ok_or_else(|| refused(format!("{name:?} is not under package/")))?;
+    let stripped = name.strip_prefix(PREFIX).ok_or_else(|| refused(format!("{shown:?} is not under package/")))?;
     if stripped.is_empty() {
         return Ok(String::new());
     }
@@ -314,12 +439,12 @@ fn package_path(name: &str) -> Result<String, InstallError> {
     for part in stripped.split('/') {
         match part {
             "" | "." => {}
-            ".." => return Err(refused(format!("{name:?} steps out of the package"))),
+            ".." => return Err(refused(format!("{shown:?} steps out of the package"))),
             part => parts.push(part),
         }
     }
     if parts.is_empty() {
-        return Err(refused(format!("{name:?} does not name a file inside the package")));
+        return Err(refused(format!("{shown:?} does not name a file inside the package")));
     }
     Ok(parts.join("/"))
 }
@@ -453,36 +578,159 @@ fn resolve_entry(dir: &Path, rel: &str) -> Result<String, String> {
     Ok(entry)
 }
 
-/// Move `temp` to `final_dir`, keeping the old directory until the new one is
-/// in place. A failure restores the old one.
-fn swap_into_place(temp: &Path, final_dir: &Path) -> Result<(), InstallError> {
-    let parent = final_dir.parent().expect("a package directory has a parent");
-    let old = parent.join(format!(".old-{}", uuid::Uuid::new_v4()));
-    let had_old = match fs::symlink_metadata(final_dir) {
-        Ok(_) => {
-            fs::rename(final_dir, &old)
-                .map_err(|error| failed(format!("cannot move {} aside: {error}", final_dir.display())))?;
-            true
-        }
-        Err(_) => false,
-    };
-    match fs::rename(temp, final_dir) {
+/// Move `temp` to `final_dir`, replacing what is there in one step where the
+/// filesystem can, and by a move-aside + sweep elsewhere.
+fn swap_into_place(temp: &Path, final_dir: &Path, id: &str, parent: &Path) -> Result<(), InstallError> {
+    if fs::symlink_metadata(final_dir).is_err() {
+        return fs::rename(temp, final_dir)
+            .map_err(|error| failed(format!("cannot move the new package into {}: {error}", final_dir.display())));
+    }
+    match exchange(temp, final_dir) {
         Ok(()) => {
-            if had_old {
-                if let Err(error) = fs::remove_dir_all(&old) {
-                    tracing::warn!(path = %old.display(), %error, "cannot remove the replaced plugin package");
-                }
+            // `temp` now holds the previous package; removing it is cleanup,
+            // not part of the swap.
+            if let Err(error) = fs::remove_dir_all(temp) {
+                tracing::warn!(path = %temp.display(), %error, "cannot remove the replaced plugin package; it is swept later");
             }
             Ok(())
         }
         Err(error) => {
-            if had_old {
-                if let Err(restore) = fs::rename(&old, final_dir) {
-                    tracing::error!(path = %final_dir.display(), %restore, "cannot put the previous plugin package back");
+            tracing::warn!(path = %final_dir.display(), %error, "the filesystem will not exchange directories; moving the old one aside instead");
+            // `.old-<id>.<uuid>`: the id is what the sweep needs to put it
+            // back if a crash lands between the two renames.
+            let old = parent.join(format!(".old-{id}.{}", uuid::Uuid::new_v4()));
+            fs::rename(final_dir, &old)
+                .map_err(|error| failed(format!("cannot move the old package aside: {error}")))?;
+            match fs::rename(temp, final_dir) {
+                Ok(()) => {
+                    if let Err(error) = fs::remove_dir_all(&old) {
+                        tracing::warn!(path = %old.display(), %error, "cannot remove the replaced plugin package; it is swept later");
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    if let Err(restore) = fs::rename(&old, final_dir) {
+                        tracing::error!(path = %final_dir.display(), %restore, "cannot put the previous plugin package back; the sweep will");
+                    }
+                    Err(failed(format!("cannot move the new package into {}: {error}", final_dir.display())))
                 }
             }
-            Err(failed(format!("cannot move the new package into {}: {error}", final_dir.display())))
         }
+    }
+}
+
+/// Exchange two directory names in one operation, or fail if this platform or
+/// filesystem cannot. Linux and macOS both can; the fallback in
+/// [`swap_into_place`] covers the rest.
+#[cfg(target_os = "linux")]
+fn exchange(left: &Path, right: &Path) -> io::Result<()> {
+    let left = c_path(left)?;
+    let right = c_path(right)?;
+    // SAFETY: both pointers are NUL-terminated strings owned for the call.
+    let result = unsafe { libc::renameat2(libc::AT_FDCWD, left.as_ptr(), libc::AT_FDCWD, right.as_ptr(), libc::RENAME_EXCHANGE) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn exchange(left: &Path, right: &Path) -> io::Result<()> {
+    let left = c_path(left)?;
+    let right = c_path(right)?;
+    // SAFETY: both pointers are NUL-terminated strings owned for the call.
+    let result = unsafe { libc::renameatx_np(libc::AT_FDCWD, left.as_ptr(), libc::AT_FDCWD, right.as_ptr(), libc::RENAME_SWAP) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn exchange(_left: &Path, _right: &Path) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "no atomic directory exchange on this platform"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a path with a NUL"))
+}
+
+/// One instance's packages are installed and removed one at a time: a `flock`
+/// on `plugin-packages/.lock`, which the CLI takes too, so a running server
+/// and `plugin install` cannot both be unpacking into the same id.
+struct PackagesLock {
+    #[allow(dead_code)]
+    file: fs::File,
+}
+
+fn lock_packages(parent: &Path) -> Result<PackagesLock, InstallError> {
+    use std::os::unix::io::AsRawFd;
+    let path = parent.join(LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| failed(format!("cannot open {}: {error}", path.display())))?;
+    loop {
+        // SAFETY: `file` is an open descriptor this process owns for the call,
+        // and LOCK_EX takes no other arguments.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(PackagesLock { file });
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(failed(format!("cannot lock {}: {error}", path.display())));
+        }
+    }
+}
+
+/// Clean up what a crash or an interrupted install left beside the packages:
+/// temporary directories go, and an `.old-<id>.<uuid>` whose id is missing is
+/// put back (a fallback swap that died between its two renames).
+///
+/// Called with the packages lock held, so nothing is moving underneath it.
+fn sweep_stale(parent: &Path) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if name.starts_with(".tmp-") {
+            remove_tree(&path);
+            continue;
+        }
+        let Some(rest) = name.strip_prefix(".old-") else {
+            continue;
+        };
+        if let Some((id, _uuid)) = rest.split_once('.') {
+            if valid_id(id) {
+                let target = parent.join(id);
+                if !target.exists() && fs::rename(&path, &target).is_ok() {
+                    tracing::info!(plugin = id, "put back a plugin package an interrupted install had moved aside");
+                    continue;
+                }
+            }
+        }
+        remove_tree(&path);
+    }
+}
+
+fn remove_tree(path: &Path) {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => {
+            let _ = fs::remove_dir_all(path);
+        }
+        Ok(_) => {
+            let _ = fs::remove_file(path);
+        }
+        Err(_) => {}
     }
 }
 
@@ -518,7 +766,13 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn refused(message: impl Into<String>) -> InstallError {
-    InstallError::Refused(message.into())
+    let mut message = message.into();
+    if message.chars().count() > MAX_MESSAGE_CHARS {
+        let cut = message.char_indices().nth(MAX_MESSAGE_CHARS).map_or(message.len(), |(index, _)| index);
+        message.truncate(cut);
+        message.push('…');
+    }
+    InstallError::Refused(message)
 }
 
 fn failed(message: impl Into<String>) -> InstallError {
@@ -553,11 +807,8 @@ mod tests {
             Err(other) => panic!("expected a refusal, got {other:?}"),
             Ok(installed) => panic!("expected a refusal, installed {}", installed.manifest.id),
         };
-        assert!(
-            !packages_dir(&instance).exists() || read_dir_names(&packages_dir(&instance)).is_empty(),
-            "{message:?} left something behind: {:?}",
-            read_dir_names(&packages_dir(&instance))
-        );
+        let leftovers = leftover_work_dirs(&instance);
+        assert!(leftovers.is_empty(), "{message:?} left something behind: {leftovers:?}");
         message
     }
 
@@ -593,13 +844,17 @@ mod tests {
         assert!(install(&instance, &tarball(&broken, &[("dist/index.js", b"three")])).is_err());
         let after = read_package(&package_dir(&instance, "tasks")).unwrap();
         assert_eq!(after, second, "the refused install left 0.2.0 in place");
-        let leftovers: Vec<String> = fs::read_dir(packages_dir(&instance))
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with('.'))
-            .collect();
+        let leftovers = leftover_work_dirs(&instance);
         assert!(leftovers.is_empty(), "no temporary directory outlived the install: {leftovers:?}");
+    }
+
+    /// `.tmp-*` and `.old-*` entries left beside the packages (the `.lock` is
+    /// expected and is not one).
+    fn leftover_work_dirs(instance: &Path) -> Vec<String> {
+        read_dir_names(&packages_dir(instance))
+            .into_iter()
+            .filter(|name| name.starts_with(".tmp-") || name.starts_with(".old-"))
+            .collect()
     }
 
     #[test]
@@ -608,8 +863,150 @@ mod tests {
         install(&instance, &tarball(&package("tasks", "0.1.0"), &[("dist/index.js", b"x")])).unwrap();
         uninstall(&instance, "tasks").unwrap();
         assert!(!package_dir(&instance, "tasks").exists());
+        assert!(leftover_work_dirs(&instance).is_empty(), "the renamed-aside copy was removed too");
         assert!(matches!(uninstall(&instance, "tasks"), Err(InstallError::NotFound(_))));
         assert!(matches!(uninstall(&instance, "../x"), Err(InstallError::NotFound(_))));
+    }
+
+    #[test]
+    fn a_package_may_not_ship_the_install_record_in_any_case() {
+        for name in [".droppen-install.json", ".DROPPEN-INSTALL.JSON"] {
+            let message = refusal(&crate::plugins::testing::raw_tarball(&[
+                Entry::file("package/package.json", package("tasks", "0.1.0").to_string().into_bytes()),
+                Entry::file(format!("package/{name}"), b"{}"),
+            ]));
+            assert!(message.contains("reserved for the install's own record"), "{name}: {message}");
+        }
+    }
+
+    /// tar-rs reads a GNU long-name header body whole before yielding an
+    /// entry, so a header that claims a gigabyte is the bomb the decompressed
+    /// bound exists for. The refusal must be short (the body is not echoed)
+    /// and must not take long.
+    #[test]
+    fn a_gnu_long_name_header_that_claims_a_gigabyte_is_refused_cheaply() {
+        let started = std::time::Instant::now();
+        let message = refusal(&crate::plugins::testing::raw_tarball(&[Entry::long_name(
+            vec![b'a'; 2 * 1024 * 1024],
+            1024 * 1024 * 1024,
+        )]));
+        assert!(message.len() < 1024, "the refusal echoed the header body: {} bytes", message.len());
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    }
+
+    /// The same header carrying a real (not lying) name: tar hands this module
+    /// the whole path, and it must be refused by length rather than copied.
+    #[test]
+    fn a_path_from_a_long_name_header_is_refused_by_length() {
+        let mut name = b"package/".to_vec();
+        name.extend(std::iter::repeat(b'a').take(MAX_ENTRY_PATH + 1));
+        name.extend_from_slice(b".js");
+        let declared = name.len() as u64;
+        let message = refusal(&crate::plugins::testing::raw_tarball(&[
+            Entry::long_name(name, declared),
+            Entry::file("package/short.js", b"x"),
+        ]));
+        assert!(message.contains("path is over"), "{message}");
+        assert!(message.len() < 1024, "the refusal echoed the path: {} bytes", message.len());
+    }
+
+    /// A path over the 200-byte message cap but under the refusal limit is
+    /// still the path the file is extracted to: only messages are shortened.
+    #[test]
+    fn a_long_but_legal_path_is_used_whole() {
+        let (_dir, instance) = temp();
+        // Over the 200-byte message cap, with every component under NAME_MAX.
+        let deep = format!("dist/{}/{}.js", "a".repeat(120), "b".repeat(120));
+        let mut pkg = package("tasks", "0.1.0");
+        pkg["exports"] = serde_json::json!({ ".": format!("./{deep}") });
+        let long = format!("package/{deep}");
+        let entries = vec![
+            Entry::long_name(long.clone().into_bytes(), long.len() as u64),
+            Entry::file("package/short.js", b"export default {};\n".to_vec()),
+            Entry::file("package/package.json", serde_json::to_vec(&pkg).unwrap()),
+        ];
+        let installed = install(&instance, &crate::plugins::testing::raw_tarball(&entries)).unwrap();
+        assert_eq!(installed.entry, deep);
+        assert!(package_dir(&instance, "tasks").join(&deep).is_file(), "the whole name was written");
+    }
+
+    /// The same cap holds for package.json's own strings: a header is not the
+    /// only place a megabyte-long name can hide.
+    #[test]
+    fn a_huge_name_in_package_json_is_not_echoed() {
+        let mut pkg = package("tasks", "0.1.0");
+        pkg.as_object_mut().expect("an object").remove("exports");
+        pkg["main"] = serde_json::json!(format!("{}.js", "a".repeat(1024 * 1024)));
+        let message = refusal(&tarball(&pkg, &[("dist/index.js", b"x")]));
+        assert!(message.len() < 1024, "the refusal echoed the entry: {} bytes", message.len());
+    }
+
+    /// A directory header with a 33 GiB size would have tar skip 33 GiB of
+    /// stream. The header is refused before any of it is read.
+    #[test]
+    fn a_directory_header_with_a_huge_size_is_refused_at_the_header() {
+        let started = std::time::Instant::now();
+        let message = refusal(&crate::plugins::testing::raw_tarball(&[Entry::dir_with_size(
+            "package/dist",
+            33 * 1024 * 1024 * 1024,
+        )]));
+        assert!(message.contains("carries data but is not a regular file"), "{message}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    }
+
+    /// Two installs of one id at once serialize on `plugin-packages/.lock`:
+    /// both succeed, one package is left, and no work directory survives.
+    #[test]
+    fn installs_of_one_id_from_two_threads_leave_one_whole_package() {
+        let (_dir, instance) = temp();
+        let one = tarball(&package("tasks", "0.1.0"), &[("dist/index.js", b"one")]);
+        let two = tarball(&package("tasks", "0.2.0"), &[("dist/index.js", b"two")]);
+        for _ in 0..50 {
+            let (first_instance, second_instance) = (instance.clone(), instance.clone());
+            let (first_bytes, second_bytes) = (one.clone(), two.clone());
+            let first = std::thread::spawn(move || install(&first_instance, &first_bytes));
+            let second = std::thread::spawn(move || install(&second_instance, &second_bytes));
+            let first = first.join().unwrap();
+            let second = second.join().unwrap();
+            assert!(first.is_ok(), "{first:?}");
+            assert!(second.is_ok(), "{second:?}");
+            let read = read_package(&package_dir(&instance, "tasks")).expect("one whole package");
+            assert!(matches!(read.manifest.version.to_string().as_str(), "0.1.0" | "0.2.0"), "{}", read.manifest.version);
+        }
+        assert!(leftover_work_dirs(&instance).is_empty());
+    }
+
+    /// The one-step swap the install relies on where the platform has it; a
+    /// filesystem that refuses falls back, but this host's does not.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_platform_can_exchange_two_directories_in_one_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        fs::create_dir_all(left.join("was-left")).unwrap();
+        fs::create_dir_all(right.join("was-right")).unwrap();
+        exchange(&left, &right).expect("the platform exchanges directories");
+        assert!(left.join("was-right").is_dir(), "the contents swapped");
+        assert!(right.join("was-left").is_dir());
+    }
+
+    /// An interrupted fallback swap leaves `.old-<id>.<uuid>`; the next
+    /// install puts it back, and stale temporaries go.
+    #[test]
+    fn a_sweep_restores_an_orphaned_old_copy_and_removes_stale_temporaries() {
+        let (_dir, instance) = temp();
+        install(&instance, &tarball(&package("tasks", "0.1.0"), &[("dist/index.js", b"one")])).unwrap();
+        let parent = packages_dir(&instance);
+        let orphan = parent.join(".old-tasks.00000000-0000-4000-8000-000000000000");
+        fs::rename(package_dir(&instance, "tasks"), &orphan).unwrap();
+        fs::create_dir_all(parent.join(".tmp-deadbeef")).unwrap();
+
+        install(&instance, &tarball(&package("other", "0.1.0"), &[("dist/index.js", b"x")])).unwrap();
+        assert!(package_dir(&instance, "tasks").exists(), "the orphaned copy was put back");
+        assert!(!orphan.exists());
+        assert!(!parent.join(".tmp-deadbeef").exists());
+        assert!(leftover_work_dirs(&instance).is_empty());
     }
 
     #[test]

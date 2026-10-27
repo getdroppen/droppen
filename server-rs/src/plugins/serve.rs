@@ -20,11 +20,14 @@
 //! cannot ask for a session — `import()` has no place to put a header — so it
 //! is the path's own capability that authenticates it, exactly once per
 //! plugin build. The guard still runs, and still resolves a bridged identity
-//! when a request carries the agent's headers; the handler refuses that
-//! identity below, so a request that came in over droppen.app gets nothing
+//! when a request carries the agent's headers; the plugin router's cloud
+//! layer refuses that identity before this handler runs, and the handler
+//! refuses it again, so a request that came in over droppen.app gets nothing
 //! even with the right key. The secret never leaves this server's own pages:
-//! it is given to `/api/plugins` callers and feed subscribers, which the
-//! bridge's allowlist and lane-specific filtering keep away from `cloud:`.
+//! it is given to `/api/plugins` callers and to feed subscribers, the feed's
+//! per-subscriber filter (`feed::global`, which hands a `cloud:` subscriber
+//! `plugins: []`) keeps it out of the cloud's frames, and `agent::bridge`
+//! refuses plugin paths for a device before they are ever forwarded here.
 //!
 //! # What is answered
 //!
@@ -233,6 +236,8 @@ mod tests {
         let response = call(&mut router, &entry).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(&body[..], br#"{"error":"plugin_not_found"}"#);
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON refusal");
+        assert_eq!(body["error"], serde_json::json!("plugin_not_found"));
+        assert!(body.get("entry").is_none(), "nothing about the plugin comes back");
     }
 }
