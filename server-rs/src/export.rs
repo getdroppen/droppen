@@ -15,7 +15,6 @@ use std::path::PathBuf;
 
 use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::{GotchaError, GotchaResult};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Fetch `/openapi.json` from a throwaway in-process server and write it out.
 pub async fn export_openapi(out: Option<PathBuf>) -> GotchaResult<()> {
@@ -56,7 +55,15 @@ pub async fn export_openapi(out: Option<PathBuf>) -> GotchaResult<()> {
 }
 
 async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
-    let body = http_get(addr, "/openapi.json").await?;
+    let url = format!("http://{addr}/openapi.json");
+    let body = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("GET {url}: {e}"))?;
     let value: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("/openapi.json is not JSON: {e}"))?;
     // Re-serialize rather than passing the response through: `serde_json`'s map
     // is a `BTreeMap`, so this both pretty-prints and gives a stable key order,
@@ -64,25 +71,4 @@ async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
     let mut pretty = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     pretty.push('\n');
     Ok(pretty)
-}
-
-/// A one-shot HTTP/1.1 GET.
-///
-/// A full client (reqwest and its TLS stack) would be a large dependency for a
-/// single plaintext request to a loopback port this process just opened.
-async fn http_get(addr: std::net::SocketAddr, path: &str) -> Result<String, String> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.map_err(|e| format!("connect: {e}"))?;
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAccept: application/json\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.map_err(|e| format!("write: {e}"))?;
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.map_err(|e| format!("read: {e}"))?;
-    let text = String::from_utf8(raw).map_err(|e| format!("non-utf8 response: {e}"))?;
-
-    let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| "malformed HTTP response".to_string())?;
-    let status = head.lines().next().unwrap_or_default();
-    if !status.contains(" 200 ") {
-        return Err(format!("GET {path} -> {status}"));
-    }
-    Ok(body.to_string())
 }
