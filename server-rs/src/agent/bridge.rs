@@ -697,43 +697,13 @@ async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &
     };
     let path = head.path.split(['?', '#']).next().unwrap_or_default().to_string();
     let (status, json) = local.handle(device, &head.method, &path, &body).await;
-    let writer = stream.writer();
-    let head = ResponseHead {
-        status,
-        headers: vec![("content-type".into(), "application/json".into())],
-    };
-    if !send_head(&writer, &head).await {
-        return;
-    }
-    let _ = writer.send(&bridge::message(Kind::Binary, json.to_string().as_bytes())).await;
-    writer.close(CLOSE_DONE);
+    answer(stream, (status, json)).await;
 }
 
 async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loopback, local: &dyn Local) {
-    let mut reader = MessageReader::new();
-    let mut body = Vec::new();
-    // The request body, up to `End`.
-    'body: loop {
-        match stream.recv().await {
-            Some(StreamEvent::Data(data)) => {
-                reader.push(&data);
-                loop {
-                    match reader.next_message() {
-                        Ok(Some((Kind::End, _))) => break 'body,
-                        Ok(Some((Kind::Binary | Kind::Text, chunk))) => {
-                            body.extend_from_slice(&chunk);
-                            if body.len() > MAX_BODY {
-                                return stream.close(CLOSE_BAD_REQUEST);
-                            }
-                        }
-                        Ok(Some((Kind::Head, _))) | Err(_) => return stream.close(CLOSE_BAD_REQUEST),
-                        Ok(None) => break,
-                    }
-                }
-            }
-            Some(StreamEvent::Closed(_)) | None => return,
-        }
-    }
+    let Some(body) = request_body(&mut stream, MAX_BODY).await else {
+        return;
+    };
     let Some(stream) = still_served(stream, &head, device, local).await else {
         return;
     };
