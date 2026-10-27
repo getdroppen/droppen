@@ -30,7 +30,7 @@ use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use crate::time::now_ms;
 use super::transcript::title_line;
-use super::util::{make_item, parse_attachment_suffix, read_head_lines, read_tail_lines, try_parse, ItemKind, LossyLines, Role, TranscriptItem};
+use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, user_text_item, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{iso8601, mtime_ms, owned_sessions, CliChoice, Paths, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::openapi_ext::Nullable;
 
@@ -843,15 +843,7 @@ fn push_message(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<Strin
             items.push(by_model(make_item(role, ItemKind::Text, text, timestamp), model));
             continue;
         }
-        let split = parse_attachment_suffix(text);
-        let mut item = make_item(role, ItemKind::Text, &split.text, timestamp);
-        if !split.images.is_empty() {
-            item.images = Some(split.images);
-        }
-        if !split.files.is_empty() {
-            item.files = Some(split.files);
-        }
-        items.push(item);
+        items.push(user_text_item(text, timestamp));
     }
 }
 

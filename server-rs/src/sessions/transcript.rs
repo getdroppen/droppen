@@ -13,8 +13,8 @@ use serde_json::{Map, Value};
 
 use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
 use super::util::{
-    clip, first_line_of, is_image_ext, make_item, make_tool_item, parse_attachment_suffix, try_parse, ItemKind, LossyLines, PatchHunk, Role,
-    ToolDisplay, TranscriptItem, DETAIL_LIMIT,
+    clip, first_line_of, is_image_ext, make_item, make_tool_item, try_parse, user_text_item, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay,
+    TranscriptItem, DETAIL_LIMIT,
 };
 use crate::openapi_ext::Nullable;
 
@@ -260,13 +260,8 @@ fn clamped_timestamp(items: &[TranscriptItem], timestamp: Option<&str>) -> Optio
 /// English. Falls back to a boundary of its own when the real one is not in
 /// this window, because dropping it would lose the summary entirely.
 fn attach_compact_summary(items: &mut [TranscriptItem], summary: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
-    let (detail, truncated) = clip(summary.trim(), DETAIL_LIMIT);
-    if let Some(last) = items.last_mut() {
-        if last.kind == ItemKind::Compact && last.detail.0.is_none() {
-            last.detail = Nullable(Some(detail));
-            last.truncated = truncated;
-            return None;
-        }
+    if attach_detail(items, ItemKind::Compact, summary) {
+        return None;
     }
     Some(make_tool_item(
         Role::System,
@@ -278,6 +273,23 @@ fn attach_compact_summary(items: &mut [TranscriptItem], summary: &str, timestamp
         },
         timestamp,
     ))
+}
+
+/// Hang `body` on the last item, when that item is an unanswered `kind` chip.
+///
+/// A CLI writes the summary or the output as an entry of its own, right after
+/// the line it answers. Folded there it reads as one event; two items put the
+/// text on a row that never says what it belongs to. Returns whether it was
+/// folded, so the caller can fall back to an item of its own.
+fn attach_detail(items: &mut [TranscriptItem], kind: ItemKind, body: &str) -> bool {
+    let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
+    let Some(last) = items.last_mut() else { return false };
+    if last.kind != kind || last.detail.0.is_some() {
+        return false;
+    }
+    last.detail = Nullable(Some(detail));
+    last.truncated = truncated;
+    true
 }
 
 /// What one text block of a `user` entry turned into.
@@ -295,13 +307,8 @@ enum UserLine {
 /// Two items would put the output on a row that never says which command
 /// printed it; folded into the command's own chip it reads as one event.
 fn attach_command_output(items: &mut [TranscriptItem], body: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
-    let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
-    if let Some(last) = items.last_mut() {
-        if last.kind == ItemKind::Command && last.detail.0.is_none() {
-            last.detail = Nullable(Some(detail));
-            last.truncated = truncated;
-            return None;
-        }
+    if attach_detail(items, ItemKind::Command, body) {
+        return None;
     }
     // Output whose command fell outside this window still has to show up.
     Some(make_item(Role::System, ItemKind::Text, body, timestamp))
@@ -330,6 +337,44 @@ fn queued_prompt_text(attachment: &Json) -> Option<String> {
     }
 }
 
+/// The message a `queued_command` attachment carries, when it is somebody's.
+///
+/// The CLI's input queue holds the user's steers, slash commands, its own task
+/// notifications, and other agents' hand-backs. The notifications are the one
+/// thing that must stay invisible; everything else is a message.
+struct QueuedMessage {
+    /// The message text, with the inline base64 images dropped (the CLI's
+    /// `[Image #N]` markers remain).
+    text: String,
+    /// The `from` of a peer origin, when another agent wrote it. `Some(None)`
+    /// is a peer that did not name itself; `None` is the user.
+    peer_from: Option<Option<String>>,
+}
+
+impl QueuedMessage {
+    /// Whether another agent wrote this rather than the user: its origin says
+    /// so, or it is wrapped in the `<agent-message` envelope.
+    fn from_peer(&self) -> bool {
+        self.peer_from.is_some() || self.text.trim_start().starts_with("<agent-message")
+    }
+}
+
+fn queued_message(entry: &Json) -> Option<QueuedMessage> {
+    let attachment = entry.get("attachment").and_then(Value::as_object)?;
+    if attachment.get("type").and_then(Value::as_str) != Some("queued_command")
+        || attachment.get("commandMode").and_then(Value::as_str) == Some("task-notification")
+    {
+        return None;
+    }
+    let text = queued_prompt_text(attachment)?;
+    let peer_from = attachment
+        .get("origin")
+        .and_then(Value::as_object)
+        .filter(|origin| origin.get("kind").and_then(Value::as_str) == Some("peer"))
+        .map(|origin| origin.get("from").and_then(Value::as_str).map(str::to_owned));
+    Some(QueuedMessage { text, peer_from })
+}
+
 /// A message that reached the CLI while a turn was already in flight.
 ///
 /// The CLI absorbs such a message into the running turn as a steer, and never
@@ -347,27 +392,16 @@ fn queued_prompt_text(attachment: &Json) -> Option<String> {
 /// for them; those carry `commandMode: "task-notification"` and are the one
 /// thing here that must stay invisible.
 fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine> {
-    let attachment = entry.get("attachment").and_then(Value::as_object)?;
-    if attachment.get("type").and_then(Value::as_str) != Some("queued_command") {
-        return None;
-    }
-    if attachment.get("commandMode").and_then(Value::as_str) == Some("task-notification") {
-        return None;
-    }
-    let text = queued_prompt_text(attachment)?;
+    let queued = queued_message(entry)?;
     // Another agent's report rides the same queue with the same mode; its
     // `origin` is what says it is not the user. See `peer_message_item`.
-    let peer = attachment
-        .get("origin")
-        .and_then(Value::as_object)
-        .filter(|origin| origin.get("kind").and_then(Value::as_str) == Some("peer"));
-    if peer.is_some() || text.trim_start().starts_with("<agent-message") {
-        let from = peer.and_then(|origin| origin.get("from")).and_then(Value::as_str);
-        return Some(UserLine::Item(Box::new(peer_message_item(&text, from, timestamp))));
+    if queued.from_peer() {
+        let from = queued.peer_from.flatten();
+        return Some(UserLine::Item(Box::new(peer_message_item(&queued.text, from.as_deref(), timestamp))));
     }
     // The queue also carries slash commands and, defensively, notification text
     // under some other mode; `claude_user_item` already classifies all of those.
-    claude_user_item(&text, timestamp)
+    claude_user_item(&queued.text, timestamp)
 }
 
 /// The words of a person's message the CLI folded into a running turn, when
@@ -385,24 +419,18 @@ fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine
 /// it — see `inject::resident::Driver::absorb`.
 pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
     let entry = entry.as_object()?;
-    if entry.get("type").and_then(Value::as_str) != Some("attachment") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
-        return None;
-    }
-    let attachment = entry.get("attachment").and_then(Value::as_object)?;
-    if attachment.get("type").and_then(Value::as_str) != Some("queued_command")
-        || attachment.get("commandMode").and_then(Value::as_str) == Some("task-notification")
-        || attachment.get("isMeta") == Some(&Value::Bool(true))
+    if entry.get("type").and_then(Value::as_str) != Some("attachment")
+        || entry.get("isSidechain") == Some(&Value::Bool(true))
+        || entry
+            .get("attachment")
+            .and_then(Value::as_object)
+            .and_then(|attachment| attachment.get("isMeta"))
+            == Some(&Value::Bool(true))
     {
         return None;
     }
-    let peer = attachment
-        .get("origin")
-        .and_then(Value::as_object)
-        .and_then(|origin| origin.get("kind"))
-        .and_then(Value::as_str)
-        == Some("peer");
-    let text = queued_prompt_text(attachment)?;
-    (!peer && !text.trim_start().starts_with("<agent-message")).then_some(text)
+    let queued = queued_message(entry)?;
+    (!queued.from_peer()).then_some(queued.text)
 }
 
 /// User entries carry several kinds of machine chatter (slash-command metadata,
@@ -452,18 +480,7 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>) -> Option<UserLine>
     if text.starts_with("<task-notification>") {
         return Some(UserLine::Item(Box::new(task_notification_item(text, timestamp))));
     }
-    let split = parse_attachment_suffix(raw_text);
-    if !split.images.is_empty() || !split.files.is_empty() {
-        let mut item = make_item(Role::User, ItemKind::Text, &split.text, timestamp);
-        if !split.images.is_empty() {
-            item.images = Some(split.images);
-        }
-        if !split.files.is_empty() {
-            item.files = Some(split.files);
-        }
-        return Some(UserLine::Item(Box::new(item)));
-    }
-    Some(UserLine::Item(Box::new(make_item(Role::User, ItemKind::Text, raw_text, timestamp))))
+    Some(UserLine::Item(Box::new(user_text_item(raw_text, timestamp))))
 }
 
 /// The diff hunks a transcript entry recorded alongside its tool result.

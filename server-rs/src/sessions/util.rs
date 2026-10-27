@@ -636,6 +636,23 @@ pub fn try_parse(line: &str) -> Option<serde_json::Map<String, serde_json::Value
     }
 }
 
+/// A user's text as one item, with the CLI's attachment suffix turned into the
+/// image thumbnails and file chips it names.
+///
+/// Both CLIs append the same suffix to a message that carried files, and the
+/// paths in it are the only record of what was attached.
+pub fn user_text_item(raw_text: &str, timestamp: Option<&str>) -> TranscriptItem {
+    let split = parse_attachment_suffix(raw_text);
+    let mut item = make_item(Role::User, ItemKind::Text, &split.text, timestamp);
+    if !split.images.is_empty() {
+        item.images = Some(split.images);
+    }
+    if !split.files.is_empty() {
+        item.files = Some(split.files);
+    }
+    item
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
