@@ -280,10 +280,10 @@ async fn the_application_server_key_is_minted_once_and_handed_out_as_a_point() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // `push.json` was `0600` because it held the private half. It no longer
-        // holds anything — the mode has to have moved with the secret rather
-        // than lapsed, so it is the database that is asserted on, and the file
-        // that is asserted *absent*. A key sitting world-readable beside a
+        // `push.json` was `0600` because it held the private half. Nothing reads
+        // or writes it any more — the mode has to have moved with the secret
+        // rather than lapsed, so it is the database that is asserted on, and the
+        // file that is asserted *absent*. A key sitting world-readable beside a
         // locked database would be the exact regression this pins.
         let mode = std::fs::metadata(probe.instance_db()).expect("state.db").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "the database holds the private half now");

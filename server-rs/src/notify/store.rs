@@ -15,15 +15,13 @@
 //! That also ends the race the two servers had over the file, which no mutex in
 //! either process could have arbitrated.
 //!
-//! `notify.json` is read exactly once, by the import on the first boot after the
-//! upgrade, and never written again. It was a mirror for one version, `0600` and
-//! byte for byte as before, so that a `.prev` binary which had never heard of
-//! this database would still find the endpoint and the secret — a regenerated
-//! secret refuses every session token already in flight. The rollback floor has
-//! since risen to a build that reads the database, and a second copy of a
-//! signing secret is not a thing to keep on disk for a reason that no longer
-//! exists. The file is left where it is rather than deleted: it is inert, and it
-//! is the cheapest way to seed a database that has to be rebuilt from scratch.
+//! `notify.json` was a mirror for one version, `0600` and byte for byte as
+//! before, so that a `.prev` binary which had never heard of this database would
+//! still find the endpoint and the secret — a regenerated secret refuses every
+//! session token already in flight. The rollback floor has since risen to a
+//! build that reads the database, and a second copy of a signing secret is not a
+//! thing to keep on disk for a reason that no longer exists. Nothing reads the
+//! file any more.
 //!
 //! Two of the three configured fields are secrets, which is why the one copy
 //! that is left — the database — is `0600` (see [`crate::db::Db`]), the same
@@ -41,7 +39,6 @@
 //! Neither ever leaves the server: [`StoredNotify::info`] is the only view a
 //! route may return, and it carries an *origin* and two booleans.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -115,37 +112,14 @@ impl StoredNotify {
     }
 }
 
-/// Where the file the import drains lives.
-pub fn notify_file(paths: &Paths) -> PathBuf {
-    paths.config_dir().join("notify.json")
-}
-
 /// The one row whose value is not the string it stands for. `STRICT` makes
 /// every column here TEXT, so the document's one boolean is spelled the way it
 /// is on the wire.
 const ENABLED: &str = "enabled";
 
-/// The database, with `notify.json` drained into it if nobody has yet.
+/// The machine-wide database the channel lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::NOTIFY, || {
-        let stored = from_value(&parse_file(paths));
-        vec![
-            (ENABLED.to_string(), stored.enabled.to_string()),
-            ("endpoint".to_string(), stored.endpoint),
-            ("baseUrl".to_string(), stored.base_url),
-            ("secret".to_string(), stored.secret),
-        ]
-    });
-    db
-}
-
-/// The file, parsed. Read exactly once per install, by the import.
-fn parse_file(paths: &Paths) -> Value {
-    std::fs::read_to_string(notify_file(paths))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or(Value::Null)
+    crate::db::at(paths.config_db())
 }
 
 /// Map a parsed document onto the store's shape.
@@ -305,8 +279,7 @@ mod tests {
     #[tokio::test]
     async fn a_corrupt_secret_is_an_error_not_a_silent_rotation() {
         let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(notify_file(&paths), r#"{"secret":"not base64url!!"}"#).expect("seed");
+        crate::db::at(paths.config_db()).kv_set(scope::NOTIFY, "secret", "not base64url!!");
         assert!(secret(&paths).await.is_err(), "re-minting here would silently refuse every live session");
     }
 
@@ -320,49 +293,6 @@ mod tests {
         assert!(data.enabled);
         assert_eq!(data.endpoint, "");
         assert_eq!(data.base_url, "https://rh.example");
-    }
-
-    #[tokio::test]
-    async fn a_malformed_file_is_imported_as_nothing_configured() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(notify_file(&paths), "{not json").expect("seed");
-        assert_eq!(read(&paths).await, StoredNotify::default());
-    }
-
-    /// The file is drained on the first look and never consulted again. If it
-    /// were re-read, a channel the user has since silenced would turn itself
-    /// back on at the next boot — and, worse, an older `secret` would come back
-    /// and refuse every token minted since. It is also never written, so what a
-    /// second read would find is whatever a person last put there.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(
-            notify_file(&paths),
-            r#"{"enabled":true,"endpoint":"https://api.day.app/FAKEBARKDEVICEKEY0Wc31","baseUrl":"https://rh.example","secret":"abc"}"#,
-        )
-        .expect("seed");
-
-        let data = read(&paths).await;
-        assert!(data.enabled, "what was configured before the upgrade is configured after it");
-        assert_eq!(data.endpoint, "https://api.day.app/FAKEBARKDEVICEKEY0Wc31");
-        assert_eq!(data.base_url, "https://rh.example");
-        assert_eq!(data.secret, "abc");
-
-        std::fs::write(
-            notify_file(&paths),
-            r#"{"enabled":false,"endpoint":"https://elsewhere.test/x","secret":"zzz"}"#,
-        )
-        .expect("re-seed");
-        let data = read(&paths).await;
-        assert!(data.enabled, "the import does not run a second time");
-        assert_eq!(data.endpoint, "https://api.day.app/FAKEBARKDEVICEKEY0Wc31");
-        assert_eq!(data.secret, "abc");
-
-        update(&paths, |data| data.enabled = false).await.expect("silence");
-        assert!(!read(&paths).await.enabled, "and silencing it stays silenced");
     }
 
     #[tokio::test]
@@ -402,8 +332,9 @@ mod tests {
             .expect("update");
         secret(&paths).await.expect("mint");
 
-        assert!(!notify_file(&paths).exists(), "no file is created where there was none");
-        assert!(!notify_file(&paths).with_extension("json.tmp").exists());
+        let file = paths.config_dir().join("notify.json");
+        assert!(!file.exists(), "no file is created where there was none");
+        assert!(!file.with_extension("json.tmp").exists());
 
         #[cfg(unix)]
         {
@@ -413,22 +344,4 @@ mod tests {
         }
     }
 
-    /// A file left over from before the upgrade is an input, once, and never an
-    /// output — which is what makes a hand-restored `notify.json` a safe thing
-    /// to drop next to an empty database.
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        let before = "{\n  \"enabled\": true,\n  \"endpoint\": \"https://api.day.app/FAKEBARKDEVICEKEY0Wc31\",\n  \"baseUrl\": \"\",\n  \"secret\": \"abc\"\n}\n";
-        std::fs::write(notify_file(&paths), before).expect("seed");
-
-        update(&paths, |data| data.enabled = false).await.expect("silence");
-        assert!(!read(&paths).await.enabled);
-        assert_eq!(
-            std::fs::read_to_string(notify_file(&paths)).expect("read"),
-            before,
-            "byte for byte as it was found, import and change notwithstanding"
-        );
-    }
 }

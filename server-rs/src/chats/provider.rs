@@ -17,19 +17,15 @@
 //!   the key is simply gone, silently, with the settings panel showing "no key
 //!   configured" and no way to know it was ever there. The three rows land in
 //!   one transaction, which has no such state.
-//! * **`chat-provider.json` is read once and never written.** The import drains
-//!   it on the first boot after the upgrade and nothing touches it again. It was
-//!   a mirror for one version, kept `0600` and byte-compatible with the
-//!   TypeScript store so that a `.prev` binary which had never heard of the
-//!   database would still find the key; the rollback floor has since risen to a
-//!   build that reads the database, and a second copy of an API key is not a
-//!   thing to keep on disk for a reason that no longer exists. The remaining
-//!   copy is the database, which is `0600` for exactly the reason the file was;
-//!   see [`crate::db::Db`]. The file itself is left where it is rather than
-//!   deleted — it is inert, and it is the cheapest way to seed a database that
-//!   has to be rebuilt from scratch.
+//! * **the key has one copy.** `chat-provider.json` was a mirror for one
+//!   version, kept `0600` and byte-compatible with the TypeScript store so that
+//!   a `.prev` binary which had never heard of the database would still find the
+//!   key; the rollback floor has since risen to a build that reads the database,
+//!   and a second copy of an API key is not a thing to keep on disk for a reason
+//!   that no longer exists. Nothing reads the file any more. The remaining copy
+//!   is the database, which is `0600` for exactly the reason the file was; see
+//!   [`crate::db::Db`].
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -99,45 +95,18 @@ pub struct ChatModelList {
     pub models: Vec<String>,
 }
 
-/// Where the file the import drains lives.
-///
-/// `~/.config/remote-hand/chat-provider.json` — [`Paths::config_dir`] is the
-/// overridable spelling of the TypeScript's `join(homedir(), ".config", …)`.
-pub fn provider_file(paths: &Paths) -> PathBuf {
-    paths.config_dir().join("chat-provider.json")
-}
-
-/// The database, with `chat-provider.json` drained into it if nobody has yet.
+/// The database the provider configuration lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::CHAT_PROVIDER, || {
-        let stored = provider_from_value(&parse_file(paths));
-        vec![
-            ("baseUrl".to_string(), stored.base_url),
-            ("apiKey".to_string(), stored.api_key),
-            ("model".to_string(), stored.model),
-        ]
-    });
-    db
-}
-
-/// The file, parsed. Read exactly once per install, by the import.
-fn parse_file(paths: &Paths) -> Value {
-    std::fs::read_to_string(provider_file(paths))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or(Value::Null)
+    crate::db::at(paths.config_db())
 }
 
 /// The three fields out of arbitrary JSON, coercing anything unusable to `""`.
 ///
-/// Split out from [`read_provider`] because this — not the I/O — is the part
-/// worth pinning down, the split [`crate::prefs`] and [`crate::attention::seen`]
-/// both make. Malformed input reads as "nothing configured" rather than as an
-/// error: the settings panel has to stay usable so the user can fix it. The
-/// per-field coercion mirrors the TypeScript's
-/// `typeof raw.baseUrl === "string" ? raw.baseUrl : ""`, so a hand-edited file
-/// with a number in it degrades the same way on both servers.
+/// The rows come back through this reader, so a hand-edited value degrades the
+/// same way the file's reader did: malformed input reads as "nothing
+/// configured" rather than as an error, because the settings panel has to stay
+/// usable so the user can fix it. The per-field coercion mirrors the
+/// TypeScript's `typeof raw.baseUrl === "string" ? raw.baseUrl : ""`.
 fn provider_from_value(raw: &Value) -> StoredProvider {
     let field = |key: &str| raw.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     StoredProvider {
@@ -329,29 +298,9 @@ mod tests {
             .await
             .expect("update");
 
-        let path = provider_file(&chats.paths);
+        let path = chats.paths.config_dir().join("chat-provider.json");
         assert!(!path.exists(), "no file is created where there was none");
         assert!(!path.with_extension("json.tmp").exists());
-    }
-
-    /// A file left over from before the upgrade is an input, once, and never an
-    /// output — which is what makes a hand-restored `chat-provider.json` a safe
-    /// thing to drop next to an empty database.
-    #[tokio::test]
-    async fn a_pre_existing_file_is_read_and_then_left_untouched() {
-        let (_home, chats) = chats();
-        let path = provider_file(&chats.paths);
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
-        let before = "{\n  \"baseUrl\": \"https://api.example.test/v1\",\n  \"apiKey\": \"sk-from-the-file\",\n  \"model\": \"gpt-4o\"\n}\n";
-        std::fs::write(&path, before).expect("seed");
-
-        chats.update_provider(&patch(None, Some("sk-typed-since"), None)).await.expect("update");
-        assert_eq!(read_provider(&chats.paths).await.api_key, "sk-typed-since");
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read"),
-            before,
-            "byte for byte as it was found, import and re-key notwithstanding"
-        );
     }
 
     #[tokio::test]
@@ -413,47 +362,6 @@ mod tests {
         assert_eq!(mixed.base_url, "https://api.example.test/v1");
         assert_eq!(mixed.api_key, "");
         assert_eq!(mixed.model, "gpt-4o");
-    }
-
-    #[tokio::test]
-    async fn a_corrupt_file_is_imported_as_nothing_configured() {
-        let (_home, chats) = chats();
-        let path = provider_file(&chats.paths);
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
-        std::fs::write(&path, "not json at all").expect("seed");
-        assert_eq!(read_provider(&chats.paths).await, StoredProvider::default());
-    }
-
-    /// The file is drained on the first look and never consulted again. If it
-    /// were re-read, a key the user has since cleared would be handed back by
-    /// the file that still held it — which for a secret is the wrong direction
-    /// twice over.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
-        let (_home, chats) = chats();
-        let path = provider_file(&chats.paths);
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
-        std::fs::write(
-            &path,
-            r#"{"baseUrl":"https://api.example.test/v1","apiKey":"sk-from-the-file","model":"gpt-4o"}"#,
-        )
-        .expect("seed");
-
-        assert_eq!(
-            read_provider(&chats.paths).await.api_key,
-            "sk-from-the-file",
-            "the key survives the upgrade"
-        );
-
-        std::fs::write(&path, r#"{"baseUrl":"https://elsewhere.test","apiKey":"sk-edited","model":"other"}"#).expect("re-seed");
-        assert_eq!(
-            read_provider(&chats.paths).await.api_key,
-            "sk-from-the-file",
-            "the import does not run a second time"
-        );
-
-        chats.update_provider(&patch(None, Some(""), None)).await.expect("clear");
-        assert_eq!(read_provider(&chats.paths).await.api_key, "", "and a cleared key stays cleared");
     }
 
     #[tokio::test]

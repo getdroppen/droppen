@@ -30,23 +30,18 @@
 //! the subscriptions are rows in `push_subscriptions` keyed by that same
 //! endpoint, so a re-subscribe is an `UPSERT` rather than a rewrite of every
 //! device; the VAPID private scalar is one string, so it is a `kv` row under
-//! [`scope::PUSH`]. `push.json` itself is read exactly once, to drain it into
-//! those two places, and is never written again.
+//! [`scope::PUSH`].
 //!
-//! It was written for a while after the move — a [`crate::supervisor`] demotion
-//! to a `.prev` binary that had never heard of the database would otherwise have
-//! come up with no devices and no key, and a fresh key unsubscribes every device
-//! there is. No binary that old is left to demote to, so the file is an input
-//! only. It is deliberately not deleted: dropping one back in is how a restored
-//! backup seeds a fresh database.
+//! `push.json` was written for a while after the move — a [`crate::supervisor`]
+//! demotion to a `.prev` binary that had never heard of the database would
+//! otherwise have come up with no devices and no key, and a fresh key
+//! unsubscribes every device there is. No binary that old is left to demote to,
+//! so nothing reads the file any more.
 //!
 //! The `0600` rule moves with the key rather than lapsing: the database holds
 //! the same scalar and is kept at `0600` for exactly this class of value (see
 //! `Db::keep_to_ourselves`), so there is no longer a plaintext copy of it beside
 //! the database at all.
-
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use p256::ecdsa::SigningKey;
 use serde::{Deserialize, Serialize};
@@ -117,93 +112,11 @@ pub struct PushFile {
     pub subscriptions: Vec<Subscription>,
 }
 
-fn file(paths: &Paths) -> PathBuf {
-    paths.push_file()
-}
-
-/// The name this store's one-time drain of `push.json` is recorded under.
-const IMPORT_MARKER: &str = "push";
-
 /// The `kv` key the VAPID private scalar lives under, inside [`scope::PUSH`].
 ///
-/// Spelled as the JSON field is, so a person holding `sqlite3` and a memory of
+/// Spelled as the JSON field was, so a person holding `sqlite3` and a memory of
 /// `push.json` finds the same word in both places.
 const VAPID_PRIVATE: &str = "vapidPrivate";
-
-/// What `push.json` says, for the one boot that drains it.
-///
-/// A missing, unreadable or unparseable file reads as empty — which means no
-/// subscriptions and therefore no notifications, never an error on a route that
-/// has something else to do. That tolerance has not changed, only moved: it used
-/// to guard every read and now it guards the import.
-async fn read_push_file(paths: &Paths) -> PushFile {
-    let Ok(raw) = tokio::fs::read_to_string(file(paths)).await else {
-        return PushFile::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_default()
-}
-
-/// This instance's database, with `push.json` drained into it once.
-async fn store(paths: &Paths) -> Arc<Db> {
-    let db = crate::db::at(paths.instance_db());
-    if db.kv_get(scope::IMPORTED, IMPORT_MARKER).is_none() {
-        import_once(&db, read_push_file(paths).await);
-    }
-    db
-}
-
-/// [`Db::import_once`], for a file whose two halves land in two places.
-///
-/// One marker and one transaction for both, because they are one file: a key
-/// imported without its subscriptions would be a server signing for devices it
-/// has forgotten, and subscriptions imported without their key would be signed
-/// for by a freshly minted one, which every push service would reject. The three
-/// properties `Db::import_once` documents are kept exactly — the mark lands with
-/// the rows, `push.json` is left on disk untouched, and a file that was never
-/// there still counts as drained.
-fn import_once(db: &Db, data: PushFile) {
-    let count = data.subscriptions.len();
-    let outcome = db.write(|tx| {
-        // Re-checked inside the transaction: two servers can boot at once, and
-        // the loser must not import a stale key over the one the winner minted.
-        let done: Option<String> = tx
-            .query_row(
-                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (scope::IMPORTED, IMPORT_MARKER),
-                |row| row.get(0),
-            )
-            .ok();
-        if done.is_some() {
-            return Ok(false);
-        }
-        if let Some(private) = data.vapid_private.as_deref() {
-            // Stored exactly as the file held it, malformed or not: whether it
-            // is a P-256 scalar is `vapid_key`'s question, and answering it here
-            // would turn a corrupt key into a silent rotation — the one thing
-            // that store refuses to do.
-            tx.execute(
-                "INSERT OR IGNORE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-                (scope::PUSH, VAPID_PRIVATE, private),
-            )?;
-        }
-        for subscription in &data.subscriptions {
-            tx.execute(
-                "INSERT OR IGNORE INTO push_subscriptions (endpoint, payload) VALUES (?1, ?2)",
-                (&subscription.endpoint, encode(subscription)),
-            )?;
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (scope::IMPORTED, IMPORT_MARKER, count.to_string()),
-        )?;
-        Ok(true)
-    });
-    match outcome {
-        Ok(true) => tracing::info!(subscriptions = count, "imported push.json into the state database"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "cannot import push.json; the devices stay in the file this boot"),
-    }
-}
 
 /// A subscription as the `payload` column holds it: the JSON it has always been.
 fn encode(subscription: &Subscription) -> String {
@@ -234,7 +147,7 @@ fn current(db: &Db) -> PushFile {
 
 /// Everything stored, as the file used to hold it.
 pub async fn read(paths: &Paths) -> PushFile {
-    current(&*store(paths).await)
+    current(&crate::db::at(paths.instance_db()))
 }
 
 /// The VAPID signing key, generating and persisting one on first use.
@@ -245,7 +158,7 @@ pub async fn read(paths: &Paths) -> PushFile {
 /// surprising way to lose every device at once.
 pub async fn vapid_key(paths: &Paths) -> std::io::Result<SigningKey> {
     let _guard = WRITE_LOCK.lock().await;
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     if let Some(encoded) = db.kv_get(scope::PUSH, VAPID_PRIVATE) {
         return ece::b64url_decode(&encoded)
             .and_then(|bytes| SigningKey::from_slice(&bytes).ok())
@@ -276,7 +189,7 @@ pub async fn vapid_public(paths: &Paths) -> std::io::Result<String> {
 
 /// Store a subscription, replacing any earlier one with the same endpoint.
 pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: String, label: Option<String>) -> std::io::Result<()> {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let now = iso8601(std::time::SystemTime::now());
     db.write(|tx| {
         let stored: Option<Subscription> = tx
@@ -329,7 +242,7 @@ pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: Strin
 /// Forget a subscription. `Ok(false)` when there was nothing to forget, which is
 /// not an error — an unsubscribe is allowed to be idempotent.
 pub async fn remove(paths: &Paths, endpoint: &str) -> std::io::Result<bool> {
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let removed = db
         .write(|tx| tx.execute("DELETE FROM push_subscriptions WHERE endpoint = ?1", (endpoint,)))
         .map_err(std::io::Error::other)?;
@@ -351,7 +264,7 @@ pub async fn subscriptions(paths: &Paths) -> Vec<Subscription> {
 /// subscriptions were forgotten.
 pub async fn renew_vapid(paths: &Paths) -> std::io::Result<usize> {
     let _guard = WRITE_LOCK.lock().await;
-    let db = store(paths).await;
+    let db = crate::db::at(paths.instance_db());
     let key = SigningKey::random(&mut rand::rngs::OsRng);
     db.write(|tx| {
         let forgotten = tx.execute("DELETE FROM push_subscriptions", [])?;
@@ -477,8 +390,7 @@ mod tests {
     #[tokio::test]
     async fn a_corrupt_private_key_is_an_error_not_a_silent_rotation() {
         let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.push_file().parent().expect("parent")).expect("instance dir");
-        std::fs::write(paths.push_file(), r#"{"vapidPrivate":"not-a-scalar","subscriptions":[]}"#).expect("seed");
+        crate::db::at(paths.instance_db()).kv_set(scope::PUSH, VAPID_PRIVATE, "not-a-scalar");
         assert!(vapid_key(&paths).await.is_err(), "regenerating here would drop every device");
     }
 
@@ -510,9 +422,8 @@ mod tests {
         assert_eq!(mode, 0o600);
     }
 
-    /// The contract that replaced the mirror: `push.json` is an input, once, and
-    /// never an output. A change that wrote it back would be one a hand-restored
-    /// file could not survive being imported from.
+    /// Nothing writes a `push.json` back: the database is the only copy of the
+    /// key and the devices, and a file left over from an older build is inert.
     #[tokio::test]
     async fn no_change_writes_the_file_back() {
         let (_dir, paths) = paths();
@@ -535,37 +446,6 @@ mod tests {
         assert!(!paths.push_file().with_extension("json.tmp").exists());
     }
 
-    /// The file is drained exactly once, and never over what has happened since.
-    /// A subscription the send path reaped after a `410` must not come back on
-    /// the next boot to fail every notification again.
-    #[tokio::test]
-    async fn the_file_is_imported_once_and_never_over_newer_rows() {
-        let (_dir, paths) = paths();
-        let (p256dh, auth) = valid_keys();
-        let private = ece::b64url(&SigningKey::random(&mut rand::rngs::OsRng).to_bytes());
-        std::fs::create_dir_all(paths.push_file().parent().expect("parent")).expect("instance dir");
-        let seeded = serde_json::to_string(&PushFile {
-            vapid_private: Some(private.clone()),
-            subscriptions: vec![Subscription {
-                endpoint: "https://push.example/a".into(),
-                p256dh,
-                auth,
-                created_at: "2026-01-01T00:00:00.000Z".into(),
-                label: None,
-            }],
-        })
-        .expect("encode");
-        std::fs::write(paths.push_file(), &seeded).expect("seed");
-
-        let stored = read(&paths).await;
-        assert_eq!(stored.vapid_private.as_deref(), Some(private.as_str()), "the key came across");
-        assert_eq!(stored.subscriptions.len(), 1);
-
-        assert!(remove(&paths, "https://push.example/a").await.expect("the send path reaps it"));
-        std::fs::write(paths.push_file(), &seeded).expect("the old file comes back");
-        assert!(subscriptions(&paths).await.is_empty(), "a reaped device stays reaped");
-    }
-
     /// What a restart is, from the store's point of view. The key matters most:
     /// a VAPID scalar that did not survive one would unsubscribe every device.
     #[tokio::test]
@@ -586,16 +466,6 @@ mod tests {
             .expect("the row is there too");
         assert_eq!(endpoint, "https://push.example/a");
         assert_eq!(vapid_public(&paths).await.expect("reuse"), minted, "and it is still the same key");
-    }
-
-    #[tokio::test]
-    async fn a_malformed_file_reads_as_empty_rather_than_failing() {
-        let (_dir, paths) = paths();
-        std::fs::create_dir_all(paths.push_file().parent().expect("parent")).expect("instance dir");
-        std::fs::write(paths.push_file(), "{not json").expect("seed");
-        let data = read(&paths).await;
-        assert!(data.subscriptions.is_empty());
-        assert!(data.vapid_private.is_none());
     }
 
     #[test]

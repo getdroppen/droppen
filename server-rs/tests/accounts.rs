@@ -178,10 +178,10 @@ async fn a_start_choosing_its_model_gets_a_login_and_a_model_that_land_together(
 /// Where the OAuth token is kept, and who else on this machine can read it.
 ///
 /// This used to be about `accounts.json` — its bytes, and its `0600`. The file
-/// is not written any more, which moves the security property rather than
-/// retiring it: the token is in the database now, so that is what has to be
-/// `0600`, and the file has to be *absent* rather than left behind holding a
-/// second, world-readable copy of the same secret.
+/// is neither read nor written any more, which moves the security property
+/// rather than retiring it: the token is in the database now, so that is what
+/// has to be `0600`, and the file has to be *absent* rather than left behind
+/// holding a second, world-readable copy of the same secret.
 #[tokio::test]
 async fn the_store_that_holds_the_token_is_private_to_its_owner() {
     let probe = Probe::start().await;
