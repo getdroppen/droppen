@@ -85,7 +85,6 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "no device {{id}} that runs AI in the chain": "裝置鏈裡沒有可執行 AI 的裝置 {{id}}",
   "{{id}} never ran AI: add it as a device that runs AI instead": "{{id}} 從未執行過 AI：請改為把它作為可執行 AI 的裝置新增",
   "{{host}} is not a device of the account that runs AI": "{{host}} 不是這個帳戶裡可執行 AI 的裝置",
-  "back to {{name}}": "返回 {{name}}",
   "add a browser or phone": "新增瀏覽器或手機",
   "add a device that runs AI": "新增可執行 AI 的裝置",
   // 「我的设备」 as one page (features/cloud/devices.tsx, device-row.tsx, plan.tsx): adding, this device, the usage, a row's badges, details and menu.

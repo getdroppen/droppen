@@ -85,7 +85,6 @@ export const cloudDevicesJa: Record<string, string> = {
   "no device {{id}} that runs AI in the chain": "デバイスチェーンに AI を実行できるデバイス {{id}} はありません",
   "{{id}} never ran AI: add it as a device that runs AI instead": "{{id}} は AI を実行したことがありません：AI を実行できるデバイスとして追加してください",
   "{{host}} is not a device of the account that runs AI": "{{host}} はこのアカウントの AI を実行できるデバイスではありません",
-  "back to {{name}}": "{{name}} に戻る",
   "add a browser or phone": "ブラウザかスマートフォンを追加",
   "add a device that runs AI": "AI を実行できるデバイスを追加",
   // 「我的设备」 as one page (features/cloud/devices.tsx, device-row.tsx, plan.tsx): adding, this device, the usage, a row's badges, details and menu.
