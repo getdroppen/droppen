@@ -157,21 +157,22 @@ pub(super) fn diff_of(old_text: &str, new_text: &str) -> String {
     removed.chain(added).collect::<Vec<_>>().join("\n")
 }
 
-/// The fold of a checklist tool: one line per item, `[x]` when done, `[~]` while
-/// in progress and `[ ]` otherwise.
+/// The fold of a checklist tool: one line per item, `[x]` when done, `[~]` for
+/// one of `in_progress` and `[ ]` otherwise.
 ///
 /// Claude's `TodoWrite` and Codex's `update_plan` are the same board in two
-/// shapes, so the marks and the joining are written once.
+/// shapes and spell the in-progress state differently, so each caller names the
+/// statuses its CLI writes.
 pub(super) trait ChecklistLinesExt: Iterator + Sized {
-    fn checklist_lines(self) -> String;
+    fn checklist_lines(self, in_progress: &[&str]) -> String;
 }
 
 impl<S: AsRef<str>, T: AsRef<str>, I: Iterator<Item = (S, T)>> ChecklistLinesExt for I {
-    fn checklist_lines(self) -> String {
+    fn checklist_lines(self, in_progress: &[&str]) -> String {
         self.map(|(status, text)| {
             let mark = match status.as_ref() {
                 "completed" => "[x]",
-                "in_progress" | "inProgress" => "[~]",
+                status if in_progress.contains(&status) => "[~]",
                 _ => "[ ]",
             };
             format!("{mark} {}", text.as_ref())
@@ -274,7 +275,7 @@ pub fn display_claude_tool_use(name: &str, input: &Json) -> ToolDisplay {
                     let status = todo.get("status").and_then(Value::as_str).unwrap_or("").to_string();
                     (status, as_display_string(todo.get("content")))
                 })
-                .checklist_lines();
+                .checklist_lines(&["in_progress"]);
             ToolDisplay::call(tool_name, format!("{} todos", todos.len()), None, (!lines.is_empty()).then_some(lines))
         }
         "Agent" | "Task" => {

@@ -627,7 +627,7 @@ fn plan_call(steps: &[Step], explanation: Option<String>) -> ToolDisplay {
     let lines = steps
         .iter()
         .map(|step| (step.status.as_str(), step.text.as_str()))
-        .checklist_lines();
+        .checklist_lines(&["in_progress", "inProgress"]);
     ToolDisplay::call("update_plan", text, explanation, (!lines.is_empty()).then_some(lines))
 }
 
