@@ -51,7 +51,7 @@
 //! that has moved on.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use gotcha::Schematic;
 use rusqlite::OptionalExtension;
@@ -220,7 +220,7 @@ fn entries(questions: &Value) -> Vec<QuestionEntry> {
 pub struct Questions {
     db: Arc<Db>,
     /// When the last prune ran.
-    pruned_ms: Mutex<i64>,
+    prune_gate: crate::db::PruneGate,
 }
 
 const COLUMNS: &str = "request_id, session_id, tool_use_id, questions, state, answer, delivery, answered_by, answered_ms, created_ms";
@@ -246,7 +246,7 @@ impl Questions {
     pub fn new(db: Arc<Db>) -> Self {
         Self {
             db,
-            pruned_ms: Mutex::new(i64::MIN),
+            prune_gate: crate::db::PruneGate::new(PRUNE_EVERY_MS),
         }
     }
 
@@ -427,14 +427,9 @@ impl Questions {
     }
 
     fn prune_now_and_then(&self, now: i64) {
-        {
-            let mut last = self.pruned_ms.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if now.saturating_sub(*last) < PRUNE_EVERY_MS {
-                return;
-            }
-            *last = now;
+        if self.prune_gate.due(now) {
+            self.prune(now);
         }
-        self.prune(now);
     }
 }
 
@@ -727,9 +722,7 @@ pub fn answered_tool_uses(line: &Value) -> Vec<String> {
 }
 
 /// Epoch milliseconds, the clock every column here is kept in.
-pub fn now_ms() -> i64 {
-    crate::accounts::rest::now_ms()
-}
+pub use crate::time::now_ms;
 
 #[cfg(test)]
 mod tests {
