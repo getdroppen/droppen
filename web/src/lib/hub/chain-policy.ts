@@ -44,6 +44,15 @@ import type { ControllersRecord } from "./streams";
  */
 export const MAX_KEPT_DISPUTES = 512;
 
+/**
+ * Whether device `id` ever held the user key, by the chain's entries rather
+ * than its flags now: a full v2 device, a v3 admin, a device given the
+ * account by `setAdmin true`, or one that came back with the recovery words.
+ * A device that held it once may still hold a copy, so removing or demoting
+ * it is a user-key loss and the newest epoch is stale until a new one is
+ * issued ({@link lastUserKeyLoss}, {@link userKeyStale}) — whatever the
+ * device may do now.
+ */
 export function heldUserKey(chain: ChainState, id: string): boolean {
   for (const e of chain.allEntries()) {
     const a = e.draft.action;

@@ -45,7 +45,7 @@ export {
  * — the server that served the page in the local shell, the main device on
  * droppen.app — whichever machines a view is about.
  */
-const pageApi = () => apiFor(homeMachine());
+export const pageApi = () => apiFor(homeMachine());
 
 /**
  * Whether `machine` is the one the page's login — its token, its tickets, the
@@ -75,7 +75,7 @@ export type AuthStatus = Pick<WireAuthStatus, "authRequired" | "user" | "desktop
 };
 type CommandEnv = components["schemas"]["CommandEnv"];
 type LoginResult = components["schemas"]["LoginResult"];
-type TicketScope = components["schemas"]["TicketScope"];
+export type TicketScope = components["schemas"]["TicketScope"];
 
 /**
  * Where the token lives. No instance name in the key: `localStorage` is already

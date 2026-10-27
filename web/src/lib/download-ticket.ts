@@ -6,18 +6,11 @@
  * callers that want it, and repairs a ticket an image reports dead.
  *
  * The token itself — who the page is, and whether this server wants a login —
- * stays in `auth.ts`; this file asks it (`getToken`, `authRequired`) and the
- * page's home machine's client for the mint.
+ * stays in `auth.ts`; this file asks it for the token, whether a login is
+ * required, and the page's home machine's client (`pageApi`).
  */
 import { ApiError } from "@/api/errors";
-import type { components } from "@/api/schema";
-import { apiFor, homeMachine } from "@/lib/machines/registry";
-import { authRequired, getToken } from "./auth";
-
-/** The login is the page's own: its home machine's (`lib/machines/registry.ts`), as in `auth.ts`. */
-const pageApi = () => apiFor(homeMachine());
-
-type TicketScope = components["schemas"]["TicketScope"];
+import { authRequired, getToken, pageApi, type TicketScope } from "./auth";
 
 // ---------------------------------------------------------------------------
 // Tickets

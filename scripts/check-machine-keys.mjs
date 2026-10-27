@@ -107,7 +107,6 @@ const deviceKey = (key) => DEVICE_KEYS.some((allowed) => (allowed.endsWith(".") 
 const HOME_ALLOWED = [
   "lib/machines/",
   "lib/auth.ts",
-  "lib/download-ticket.ts",
   "app/root-layout.tsx",
   "app/global-feed.tsx",
   "features/cloud/",
