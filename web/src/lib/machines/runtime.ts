@@ -13,7 +13,7 @@
 import type { ApiClient } from "@/api/client";
 import type { Transport } from "@/lib/transport/types";
 import type { MachineKey } from "./key";
-import type { Store } from "./store";
+import { shallowEqual, type Store } from "./store";
 
 /** What the page knows about a machine, without asking it anything. */
 export interface MachineInfo {
@@ -47,6 +47,18 @@ export interface MachineInfo {
    * (S1-7; S2 opens channels). Nothing new can be started on it here.
    */
   readonly readOnly?: boolean;
+}
+
+/**
+ * Whether two {@link MachineInfo} say the same thing of a machine: every field
+ * shallow-compared, the path by its own fields (a fresh object on every read).
+ */
+export function sameMachineInfo(a: MachineInfo, b: MachineInfo): boolean {
+  if (a === b) return true;
+  const { path: pathA, ...restA } = a;
+  const { path: pathB, ...restB } = b;
+  if (!shallowEqual(restA, restB)) return false;
+  return pathA?.kind === pathB?.kind && pathA?.relay === pathB?.relay && pathA?.rttMs === pathB?.rttMs;
 }
 
 /** One machine as the page reaches it. */

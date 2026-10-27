@@ -35,7 +35,7 @@ import { MachineMirror, type MirrorSeal, type Transact } from "@/lib/hub/mirror"
 import { machineDisplayName } from "@/lib/hub/streams";
 import { LOCAL, type MachineKey } from "@/lib/machines/key";
 import { type MachineDriver, runtimeFor } from "@/lib/machines/registry";
-import type { AppShell, MachineInfo, MachineRuntime } from "@/lib/machines/runtime";
+import { type AppShell, type MachineInfo, type MachineRuntime, sameMachineInfo } from "@/lib/machines/runtime";
 import { closeGatewayMachine, leaveGatewayShell, openGatewayMachine } from "@/lib/machines/shells/gateway";
 import { gatewayShell, setGatewayShell } from "@/features/machines/shells";
 import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
@@ -64,21 +64,6 @@ const NO_SEAL: MirrorSeal = {
 
 /** No store at all: every read finds nothing, every write goes nowhere. */
 const NOWHERE: Transact = async () => undefined;
-
-function sameInfo(a: MachineInfo, b: MachineInfo): boolean {
-  return (
-    a.key === b.key &&
-    a.name === b.name &&
-    a.state === b.state &&
-    a.since === b.since &&
-    a.copyAsOf === b.copyAsOf &&
-    a.agentVersion === b.agentVersion &&
-    a.os === b.os &&
-    a.canManage === b.canManage &&
-    a.live === b.live &&
-    a.readOnly === b.readOnly
-  );
-}
 
 export interface GatewayShellOptions {
   /** Who `/api/auth/status` says is signed in, on a device's copy (the page's own local account). */
@@ -122,7 +107,7 @@ export class GatewayMachine implements MachineDriver {
     const online = () => this.device.state === "online";
     this.sessions = copySessions(key, this.mirror, { online, now: opts.now });
     this.transport = offlineTransport(this.mirror, { user: opts.user, messages: gatewayMessages, machineOnline: online });
-    this.info = createStore(this.read(), sameInfo);
+    this.info = createStore(this.read(), sameMachineInfo);
     this.offMirror = this.mirror.onChange((change) => {
       if (change.kind !== "session") this.refresh();
     });
