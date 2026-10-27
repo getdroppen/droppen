@@ -4051,7 +4051,7 @@ export class CloudAccount {
    * chain's `hostKeyNext` rule): the new key is put into the keyring, sealed
    * to the devices still let in and handed to the agent (`courier`) — and the
    * host renews its identity key (`hostsToRotate`; an older agent: it should
-   * be re-enrolled, `hostsToReEnroll`). A host that must renew its own first
+   * be re-enrolled, `reEnrollCulprits`). A host that must renew its own first
    * is never let in ({@link mustRenewFirst}).
    */
   async setAccept(host: string, from: Accept, courier: MachineKeyCourier = NO_COURIER): Promise<AcceptChange> {
@@ -5418,7 +5418,7 @@ export class CloudAccount {
 
   /**
    * The current hosts to re-enroll for a new identity (review D3; see
-   * {@link hostsToReEnroll}): those with a warning this browser was not told
+   * {@link reEnrollCulprits}): those with a warning this browser was not told
    * to drop ({@link reEnrollWarnings}, {@link dismissReEnroll}), what the
    * hosts' statuses say now (`controllersOf`) taken in. A host that renews
    * its identity key instead ({@link renews}) is none of them.
@@ -6393,34 +6393,87 @@ export function rotationDueIn(chain: ChainState): boolean {
  * `rotate/1`, a v2 account: docs/host-identity-rotation.md §7 decision 7):
  * the others renew it instead ({@link hostsToRotate}).
  */
-export function hostsToReEnroll(chain: ChainState): Set<string> {
-  return new Set(reEnrollCulprits(chain).keys());
+export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, number>> {
+  const culprits = new Map<string, Map<string, number>>();
+  const hosts = chain.hosts().filter((h) => h.status.type === "active");
+  replayChain(chain, {
+    // As this list has always read it: every recovery join is an admin.
+    recoveryJoin3Admin: () => true,
+    lost: (_replay, seq, device, who) => {
+      for (const h of hosts) {
+        if (seq <= h.addedSeq || !who(h.info.id)) continue;
+        let devices = culprits.get(h.info.id);
+        if (!devices) culprits.set(h.info.id, (devices = new Map()));
+        devices.set(device, seq);
+      }
+    },
+    afterEntry: (replay) => {
+      // A device let back in (an accept list that names it again, made an admin again) is not lost any more.
+      for (const [host, devices] of culprits) for (const d of [...devices.keys()]) if (replay.could(d, host)) devices.delete(d);
+    },
+  });
+  for (const [host, devices] of [...culprits]) if (devices.size === 0) culprits.delete(host);
+  return culprits;
+}
+
+/** One device as a replay over the chain ({@link replayChain}) follows it. */
+interface ReplayDevice {
+  admin: boolean;
+  active: boolean;
+  /** Whether the chain says it is a host now. */
+  host: boolean;
+  /** The seq that added it. */
+  addedSeq: number;
+}
+
+/** The device and accept state a replay keeps, as its hooks read it. */
+interface ChainReplay {
+  devs: Map<string, ReplayDevice>;
+  accept: Map<string, Accept>;
+  /** Whether `device` may control `host` now. */
+  could(device: string, host: string): boolean;
+  /** `host`'s accept list now (the admins', when it narrowed none). */
+  policy(host: string): Accept;
+}
+
+/** What a caller hears as {@link replayChain} goes. */
+interface ChainReplayHooks {
+  /** Whether a `recoveryJoin3` device is an admin here. */
+  recoveryJoin3Admin(flags: { admin: boolean }): boolean;
+  /** `device` lost control of every host `who` names (the predicate was true at the loss). */
+  lost(replay: ChainReplay, seq: number, device: string, who: (host: string) => boolean): void;
+  /** After each entry: what a later loss or admission makes no longer lost. */
+  afterEntry?(replay: ChainReplay, seq: number): void;
+  /** A `setAccept` entry, before the list is replaced (an admission may start here). */
+  setAccept?(replay: ChainReplay, seq: number, host: string, before: Accept, from: Accept): void;
+  /** A `setHost` entry, after the accept list it drops when it stops being a host. */
+  setHost?(seq: number, id: string, host: boolean): void;
+  /** A `rotateHostKey` entry (a renewal clears what the new identity key cannot be a pass to). */
+  rotate?(seq: number, action: Extract<Action, { type: "rotateHostKey" }>): void;
+  /** A `renewalPause` entry, its start or its end. */
+  pause?(replay: ChainReplay, seq: number, action: Extract<Action, { type: "renewalPause" }>): void;
+  /** A device removed (its hosts keep what it may have taken; the device itself is gone). */
+  removed?(seq: number, device: string): void;
 }
 
 /**
- * {@link hostsToReEnroll}, by device: per current host due, each device that
- * could control it and no longer can, with the chain seq it last lost that.
- * A device let back in (an accept list that names it again, made an admin
- * again) is not lost any more: it leaves the list, and a later loss is a
- * new one.
+ * One pass over the chain's device and accept entries: who may control each
+ * host, and every loss of that control — the state both the re-enroll list
+ * ({@link reEnrollCulprits}) and the rotation list ({@link hostsToRotate})
+ * are built from, so the two cannot disagree about what the chain says.
  */
-export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, number>> {
-  type Dev = { admin: boolean; active: boolean };
-  const devs = new Map<string, Dev>();
+function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainReplay {
+  const devs = new Map<string, ReplayDevice>();
   const accept = new Map<string, Accept>();
-  const culprits = new Map<string, Map<string, number>>();
-  const hosts = chain.hosts().filter((h) => h.status.type === "active");
-  const could = (d: string, host: string) => {
-    const r = devs.get(d);
-    return !!r && r.active && d !== host && (r.admin || acceptNames(accept.get(host) ?? { type: "admins" }, d));
-  };
-  const lost = (seq: number, device: string, who: (host: string) => boolean) => {
-    for (const h of hosts) {
-      if (seq <= h.addedSeq || !who(h.info.id)) continue;
-      let devices = culprits.get(h.info.id);
-      if (!devices) culprits.set(h.info.id, (devices = new Map()));
-      devices.set(device, seq);
-    }
+  const policy = (host: string) => accept.get(host) ?? ({ type: "admins" } as Accept);
+  const replay: ChainReplay = {
+    devs,
+    accept,
+    policy,
+    could: (d, host) => {
+      const r = devs.get(d);
+      return !!r && r.active && d !== host && (r.admin || acceptNames(policy(host), d));
+    },
   };
   for (const e of chain.allEntries()) {
     const seq = e.draft.seq;
@@ -6429,20 +6482,22 @@ export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, num
     switch (a.type) {
       case "genesis":
       case "addDevice":
-        devs.set(a.device.id, { admin: a.device.full, active: true });
+        devs.set(a.device.id, { admin: a.device.full, active: true, host: false, addedSeq: seq });
         break;
       case "genesis3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: true });
+        devs.set(a.device.id, { admin: a.device.flags.admin, active: true, host: a.device.flags.host, addedSeq: seq });
         break;
       case "addDevice3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: signer.type !== "passkey" });
+        devs.set(a.device.id, { admin: a.device.flags.admin, active: signer.type !== "passkey", host: a.device.flags.host, addedSeq: seq });
         break;
       case "addMachine":
-        devs.set(a.machine.id, { admin: false, active: true });
+        devs.set(a.machine.id, { admin: false, active: true, host: true, addedSeq: seq });
         break;
       case "recoveryJoin":
+        devs.set(a.device.id, { admin: true, active: false, host: false, addedSeq: seq });
+        break;
       case "recoveryJoin3":
-        devs.set(a.device.id, { admin: true, active: false });
+        devs.set(a.device.id, { admin: hooks.recoveryJoin3Admin(a.device.flags), active: false, host: a.device.flags.host, addedSeq: seq });
         break;
       case "approveDevice":
       case "activateRecovered":
@@ -6454,37 +6509,48 @@ export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, num
       case "setAdmin": {
         const r = devs.get(a.id);
         if (!r) break;
-        if (!a.admin) lost(seq, a.id, (h) => could(a.id, h) && !acceptNames(accept.get(h) ?? { type: "admins" }, a.id));
+        if (!a.admin) hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h) && !acceptNames(policy(h), a.id));
         r.admin = a.admin;
         break;
       }
       case "setAccept": {
-        const before = accept.get(a.host) ?? { type: "admins" };
+        const before = policy(a.host);
         for (const [d, r] of devs) {
-          if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) lost(seq, d, (h) => h === a.host);
+          if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) hooks.lost(replay, seq, d, (h) => h === a.host);
         }
+        hooks.setAccept?.(replay, seq, a.host, before, a.from);
         if (a.from.type === "admins") accept.delete(a.host);
         else accept.set(a.host, a.from);
         break;
       }
-      case "setHost":
+      case "setHost": {
+        const r = devs.get(a.id);
+        if (r) r.host = a.host;
         if (!a.host) accept.delete(a.id);
+        hooks.setHost?.(seq, a.id, a.host);
         break;
+      }
       case "removeDevice":
       case "removeMachine":
       case "removeDevice3": {
-        lost(seq, a.id, (h) => could(a.id, h));
+        hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h));
         const r = devs.get(a.id);
         if (r) r.active = false;
+        hooks.removed?.(seq, a.id);
         break;
       }
+      case "rotateHostKey":
+        hooks.rotate?.(seq, a);
+        break;
+      case "renewalPause":
+        hooks.pause?.(replay, seq, a);
+        break;
       default:
         break;
     }
-    for (const [host, devices] of culprits) for (const d of [...devices.keys()]) if (could(d, host)) devices.delete(d);
+    hooks.afterEntry?.(replay, seq);
   }
-  for (const [host, devices] of [...culprits]) if (devices.size === 0) culprits.delete(host);
-  return culprits;
+  return replay;
 }
 
 /** Why a current host should renew its identity key ({@link hostsToRotate}). */
@@ -6673,7 +6739,7 @@ export function renewalHelps(x: Exposure): boolean {
  * The current hosts whose identity key may have been copied, each with why
  * (docs/host-identity-rotation.md §4.1, §7 decisions 3 and 8):
  *
- * - the losses {@link hostsToReEnroll} counts — after the host joined, a
+ * - the losses {@link reEnrollCulprits} counts — after the host joined, a
  *   device that could control it (an admin, or one its list named) was
  *   removed, demoted without being named, or shut out of its list; a device
  *   let back in is not lost any more;
@@ -6697,171 +6763,105 @@ export function renewalHelps(x: Exposure): boolean {
  * edited that record.
  */
 export function hostsToRotate(chain: ChainState, renews: (host: string) => boolean = () => true): Map<string, Exposure> {
-  type Dev = { admin: boolean; active: boolean; host: boolean; addedSeq: number };
-  const devs = new Map<string, Dev>();
-  const accept = new Map<string, Accept>();
   /** Per host, since when its list has named each device (`*`: since it let every device in). */
   const admitted = new Map<string, Map<string, number>>();
   /** Per host, its latest renewal. */
   const renewedAt = new Map<string, number>();
   const exposed = new Map<string, { since: number; lost: Map<string, number>; via: Map<string, number> }>();
-  const policy = (host: string) => accept.get(host) ?? ({ type: "admins" } as Accept);
   /** The renewal pauses open at this point of the chain (§3.4 rule 10): by op, the edges each takes out of its hosts' lists. */
   const pauses = new Map<string, PauseRemoval[]>();
   const paused = (host: string, id: string) => [...pauses.values()].some((rs) => rs.some((r) => r.host === host && r.ids.includes(id)));
-  const could = (d: string, host: string) => {
-    const r = devs.get(d);
-    return !!r && r.active && d !== host && (r.admin || acceptNames(policy(host), d));
-  };
   /** Since when `host`'s list has let `id` in, as the overlay of open pauses leaves it (`undefined`: it does not now). */
-  const admittedSince = (host: string, id: string): number | undefined => {
-    if (!acceptNames(policy(host), id) || paused(host, id)) return undefined;
+  const admittedSince = (replay: ChainReplay, host: string, id: string): number | undefined => {
+    if (!acceptNames(replay.policy(host), id) || paused(host, id)) return undefined;
     const since = admitted.get(host);
     const named = since?.get(id);
     if (named !== undefined) return named;
     const all = since?.get("*");
-    return all === undefined ? undefined : Math.max(all, devs.get(id)?.addedSeq ?? 0);
+    return all === undefined ? undefined : Math.max(all, replay.devs.get(id)?.addedSeq ?? 0);
   };
   const entry = (host: string, seq: number) => {
     let x = exposed.get(host);
     if (!x) exposed.set(host, (x = { since: seq, lost: new Map(), via: new Map() }));
     return x;
   };
-  const lost = (seq: number, device: string, who: (host: string) => boolean) => {
-    for (const [h, r] of devs) {
-      if (!r.active || !r.host || h === device || !who(h)) continue;
-      entry(h, seq).lost.set(device, seq);
-    }
-  };
-  for (const e of chain.allEntries()) {
-    const seq = e.draft.seq;
-    const signer = e.draft.signer;
-    const a = e.draft.action;
-    switch (a.type) {
-      case "genesis":
-      case "addDevice":
-        devs.set(a.device.id, { admin: a.device.full, active: true, host: false, addedSeq: seq });
-        break;
-      case "genesis3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: true, host: a.device.flags.host, addedSeq: seq });
-        break;
-      case "addDevice3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: signer.type !== "passkey", host: a.device.flags.host, addedSeq: seq });
-        break;
-      case "addMachine":
-        devs.set(a.machine.id, { admin: false, active: true, host: true, addedSeq: seq });
-        break;
-      case "recoveryJoin":
-        devs.set(a.device.id, { admin: true, active: false, host: false, addedSeq: seq });
-        break;
-      case "recoveryJoin3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: false, host: a.device.flags.host, addedSeq: seq });
-        break;
-      case "approveDevice":
-      case "activateRecovered":
-      case "passkeyActivate": {
-        const r = devs.get(a.id);
-        if (r) r.active = true;
-        break;
+  replayChain(chain, {
+    recoveryJoin3Admin: (flags) => flags.admin,
+    lost: (replay, seq, device, who) => {
+      for (const [h, r] of replay.devs) {
+        if (!r.active || !r.host || h === device || !who(h)) continue;
+        entry(h, seq).lost.set(device, seq);
       }
-      case "setAdmin": {
-        const r = devs.get(a.id);
-        if (!r) break;
-        if (!a.admin) lost(seq, a.id, (h) => could(a.id, h) && !acceptNames(policy(h), a.id));
-        r.admin = a.admin;
-        break;
+    },
+    setAccept: (replay, seq, host, before, from) => {
+      // Since when it lets each one in: kept for those it let in already, this entry for the rest.
+      const was = admitted.get(host) ?? new Map<string, number>();
+      const now = new Map<string, number>();
+      if (from.type === "all") now.set("*", before.type === "all" ? (was.get("*") ?? seq) : seq);
+      if (from.type === "devices") for (const id of from.ids) now.set(id, admittedSince(replay, host, id) ?? seq);
+      admitted.set(host, now);
+    },
+    setHost: (seq, id, host) => {
+      // Its list goes with it; what it may have been copied stays (its identity key is the same when it runs AI again).
+      if (!host) admitted.delete(id);
+    },
+    rotate: (seq, action) => {
+      // A new identity: nothing anyone copied up to the view its seed was staged on is a pass to it any more. A loss
+      // after `staged_seq` is no remedy of this one (§4.1 「清除」): the seed was made before it.
+      const upTo = Math.min(action.rotation.stagedSeq, seq);
+      const x = exposed.get(action.rotation.host);
+      if (x) {
+        for (const [d, at] of [...x.lost]) if (at <= upTo) x.lost.delete(d);
+        for (const [d, at] of [...x.via]) if (at <= upTo) x.via.delete(d);
+        if (x.lost.size === 0 && x.via.size === 0) exposed.delete(action.rotation.host);
+        else x.since = Math.min(...x.lost.values(), ...x.via.values());
       }
-      case "setAccept": {
-        const before = policy(a.host);
-        for (const [d, r] of devs) {
-          if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) lost(seq, d, (h) => h === a.host);
-        }
-        // Since when it lets each one in: kept for those it let in already, this entry for the rest.
-        const was = admitted.get(a.host) ?? new Map<string, number>();
-        const now = new Map<string, number>();
-        if (a.from.type === "all") now.set("*", before.type === "all" ? (was.get("*") ?? seq) : seq);
-        if (a.from.type === "devices") for (const id of a.from.ids) now.set(id, admittedSince(a.host, id) ?? seq);
-        admitted.set(a.host, now);
-        if (a.from.type === "admins") accept.delete(a.host);
-        else accept.set(a.host, a.from);
-        break;
+      renewedAt.set(action.rotation.host, upTo);
+    },
+    pause: (replay, seq, action) => {
+      const op = hex(action.op);
+      if (action.phase === PAUSE_START) {
+        pauses.set(op, action.removals.map((r) => ({ host: r.host, ids: [...r.ids] })));
+        return;
       }
-      case "setHost": {
-        const r = devs.get(a.id);
-        if (r) r.host = a.host;
-        // Its list goes with it; what it may have been copied stays (its identity key is the same when it runs AI again).
-        if (!a.host) {
-          accept.delete(a.id);
-          admitted.delete(a.id);
-        }
-        break;
+      // Ended (completed or cancelled): each edge it held and no other open pause holds is let in again — now, as an
+      // addition to the list after any renewal before it (§4.1: an exposed host let back in exposes again).
+      const removals = pauses.get(op) ?? [];
+      pauses.delete(op);
+      for (const r of removals) {
+        const since = admitted.get(r.host);
+        if (!since) continue;
+        for (const id of r.ids) if (!paused(r.host, id) && acceptNames(replay.policy(r.host), id)) since.set(id, seq);
       }
-      case "removeDevice":
-      case "removeMachine":
-      case "removeDevice3": {
-        lost(seq, a.id, (h) => could(a.id, h));
-        const r = devs.get(a.id);
-        if (r) r.active = false;
-        exposed.delete(a.id);
-        break;
-      }
-      case "rotateHostKey": {
-        // A new identity: nothing anyone copied up to the view its seed was staged on is a pass to it any more. A loss
-        // after `staged_seq` is no remedy of this one (§4.1 「清除」): the seed was made before it.
-        const upTo = Math.min(a.rotation.stagedSeq, seq);
-        const x = exposed.get(a.rotation.host);
-        if (x) {
-          for (const [d, at] of [...x.lost]) if (at <= upTo) x.lost.delete(d);
-          for (const [d, at] of [...x.via]) if (at <= upTo) x.via.delete(d);
-          if (x.lost.size === 0 && x.via.size === 0) exposed.delete(a.rotation.host);
-          else x.since = Math.min(...x.lost.values(), ...x.via.values());
-        }
-        renewedAt.set(a.rotation.host, upTo);
-        break;
-      }
-      case "renewalPause": {
-        const op = hex(a.op);
-        if (a.phase === PAUSE_START) {
-          pauses.set(op, a.removals.map((r) => ({ host: r.host, ids: [...r.ids] })));
-          break;
-        }
-        // Ended (completed or cancelled): each edge it held and no other open pause holds is let in again — now, as an
-        // addition to the list after any renewal before it (§4.1: an exposed host let back in exposes again).
-        const removals = pauses.get(op) ?? [];
-        pauses.delete(op);
-        for (const r of removals) {
-          const since = admitted.get(r.host);
-          if (!since) continue;
-          for (const id of r.ids) if (!paused(r.host, id) && acceptNames(policy(r.host), id)) since.set(id, seq);
-        }
-        break;
-      }
-      default:
-        break;
-    }
-    // A device let back in is not lost any more.
-    for (const [host, x] of exposed) for (const d of [...x.lost.keys()]) if (could(d, host)) x.lost.delete(d);
-    for (const [host, x] of [...exposed]) if (x.lost.size === 0 && x.via.size === 0) exposed.delete(host);
-    // Transitively, until nothing changes: a host that lets an exposed one that can renew control it (X → H → H2 …) —
-    // unless it renewed after that one was exposed and let in already (§4.1: the copy cannot reach its new key).
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const [source, sx] of [...exposed]) {
-        if (!renews(source)) continue;
-        for (const [h, r] of devs) {
-          if (!r.active || !r.host || h === source) continue;
-          const since = admittedSince(h, source);
-          if (since === undefined) continue;
-          const renewed = renewedAt.get(h);
-          if (renewed !== undefined && sx.since <= renewed && since <= renewed) continue;
-          const x = exposed.get(h);
-          if (x?.via.has(source)) continue;
-          entry(h, seq).via.set(source, seq);
-          changed = true;
+    },
+    removed: (_seq, device) => {
+      exposed.delete(device);
+    },
+    afterEntry: (replay, seq) => {
+      // A device let back in is not lost any more.
+      for (const [host, x] of exposed) for (const d of [...x.lost.keys()]) if (replay.could(d, host)) x.lost.delete(d);
+      for (const [host, x] of [...exposed]) if (x.lost.size === 0 && x.via.size === 0) exposed.delete(host);
+      // Transitively, until nothing changes: a host that lets an exposed one that can renew control it (X → H → H2 …) —
+      // unless it renewed after that one was exposed and let in already (§4.1: the copy cannot reach its new key).
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const [source, sx] of [...exposed]) {
+          if (!renews(source)) continue;
+          for (const [h, r] of replay.devs) {
+            if (!r.active || !r.host || h === source) continue;
+            const since = admittedSince(replay, h, source);
+            if (since === undefined) continue;
+            const renewed = renewedAt.get(h);
+            if (renewed !== undefined && sx.since <= renewed && since <= renewed) continue;
+            const x = exposed.get(h);
+            if (x?.via.has(source)) continue;
+            entry(h, seq).via.set(source, seq);
+            changed = true;
+          }
         }
       }
-    }
-  }
+    },
+  });
   // What no renewal helps: letting an exposed host that cannot renew control it — or a host in that state (§4.1 case 3).
   const blocked = new Map<string, Map<string, number>>();
   const stuck = new Set([...exposed.keys()].filter((h) => !renews(h)));

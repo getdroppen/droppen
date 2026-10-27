@@ -39,7 +39,6 @@ import {
   type CloudAccount,
   hasRunAi,
   heldUserKey,
-  hostsToReEnroll,
   joinAction,
   reEnrollCulprits,
   reEnrollEvidence,
@@ -800,7 +799,7 @@ test("D3: what a host's own record says of a device it should be re-enrolled for
   assert.deepEqual(evidence(controllers(a, { [c.deviceId]: 5_000 })), [[c.deviceId, "connected", false]]);
   assert.deepEqual(evidence(controllers(a, {})), [[c.deviceId, "connected", false]], "kept: a later record that leaves it out cannot unsay it");
   assert.deepEqual([...(await hub.reload(a)).reEnrollWarnings().get("m-1")!.map((l) => l.evidence.kind)], ["connected"], "kept for the account in this browser");
-  assert.deepEqual([...hostsToReEnroll(a.chain!)], ["m-1"]);
+  assert.deepEqual([...reEnrollCulprits(a.chain!).keys()], ["m-1"]);
 });
 
 test("D3: a person can say a device never connected — two phones removed before any record — kept, shown quietly, undone", async () => {
@@ -822,7 +821,7 @@ test("D3: a person can say a device never connected — two phones removed befor
     [true, true],
     "still listed, dismissed",
   );
-  assert.deepEqual([...hostsToReEnroll(a.chain!)], ["m-1"], "the chain's own answer is unchanged");
+  assert.deepEqual([...reEnrollCulprits(a.chain!).keys()], ["m-1"], "the chain's own answer is unchanged");
   // Kept for the account: the same browser after a reload.
   const again = await hub.reload(a);
   assert.deepEqual([...again.reEnrollDue()], []);

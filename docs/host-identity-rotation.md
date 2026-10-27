@@ -54,7 +54,7 @@
 | 它怎么连别人 | 别的 agent 用 `authorize_device(id, dh)` 按链准入，控制权看 `authorize_control` | `C/rh-proto/src/chain.rs`、`C/rh-proto/src/handshake.rs` | 同上 |
 | 运行中的身份 | `Shared.identity: Arc<MachineIdentity>` 一次运行内不变；S1-1 已能在进程内停、起链接 | `S/agent/link.rs`、`S/agent/control.rs` | 换钥 = 进程内重启链接与控制端 |
 | 一个 id 只留一条连接 | 同一 id 后登录的顶掉先登录的（4001）。中继也一样。agent 不特别对待 4001 | Hub 一侧（`docs/hub-api/`）、`C/rh-relay/src/server.rs` | 窗口规则建在它上面（§3.3）；4001 可当克隆信号 |
-| 今天的提示 | `hostsToReEnroll` 只看**直接**能控制的设备，提示「先移除，再重新添加」。再用 host 自己记的 `controllers` 收窄（聚合器文档 D3） | `W/lib/hub/account.ts`、`W/features/cloud/devices.tsx` | 换成自动换钥；补上传递（§4.1） |
+| 今天的提示 | `reEnrollCulprits` 只看**直接**能控制的设备，提示「先移除，再重新添加」。再用 host 自己记的 `controllers` 收窄（聚合器文档 D3） | `W/lib/hub/account.ts`、`W/features/cloud/devices.tsx` | 换成自动换钥；补上传递（§4.1） |
 | 移除时的 `MK` 轮换 | `removeDevice` → `rotate(…, {userKey: false})`。新 `MK` 封给 host **当前**的 DH 钥，持旧种子的人照样打得开（D3） | `W/lib/hub/account.ts`、`W/lib/hub/deliver.ts` | 换钥那一批再给一轮、只封给新钥 |
 | 按纪元命名的流 | 一次轮换立刻给索引与状态改名，会话按新名字重建（带重加密时立即），旧名字确认被取代后才删 | `S/agent/streams/naming.rs` | 换钥沿用它，新流头只用新钥签 |
 | 心跳流头 | 每条流每 5 分钟重签一次流头（`HEARTBEAT_EVERY`，每轮至多 20 条） | `S/agent/streams/mod.rs` | 换钥后几分钟内，每条流都有新钥签的头 |
@@ -511,7 +511,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 
 ### 4.1 触发
 
-`hostsToRotate(chain)` 取代 `hostsToReEnroll`，位置 `W/lib/hub/account.ts`。
+`hostsToRotate(chain)` 取代了旧的 re-enroll 提示（`reEnrollCulprits` 仍按设备列出同一批损失），位置 `W/lib/hub/account.ts`。
 
 **沿用今天的三种「失去」**（某台设备曾能控制这台 host，而后不能了）：
 
