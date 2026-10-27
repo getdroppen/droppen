@@ -678,12 +678,6 @@ pub struct AccountsStore {
 const MAX_SECRET_LENGTH: usize = 4096;
 const MAX_LABEL_LENGTH: usize = 100;
 const MAX_BASE_URL_LENGTH: usize = 512;
-/// Below this, a stored "secret" is more likely to be a word than a credential,
-/// and replacing every occurrence of it would shred the text it appears in.
-///
-/// Only reachable by a hand-edited row: every credential a person can type in
-/// goes through [`normalize_secret`], and the shortest real one is far longer.
-const MIN_REDACTABLE_SECRET: usize = 8;
 
 fn sha256_hex(value: &str) -> String {
     let digest = Sha256::digest(value.as_bytes());
@@ -1426,23 +1420,10 @@ impl AccountsStore {
         // a token: a block is a credential in as many pieces as the user typed,
         // and a CLI refused by one of them quotes that one back. Keys are left
         // alone — a variable *name* is not a secret, and blanking it would make
-        // the complaint unreadable.
-        let mut secrets: Vec<String> = self
-            .snapshot()
-            .accounts
-            .iter()
-            .flat_map(StoredAccount::secrets)
-            .filter(|secret| secret.len() >= MIN_REDACTABLE_SECRET)
-            .cloned()
-            .collect();
-        secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
-        let mut redacted = text.to_string();
-        for secret in secrets {
-            if redacted.contains(&secret) {
-                redacted = redacted.replace(&secret, "[redacted]");
-            }
-        }
-        redacted
+        // the complaint unreadable. The longest-first rule lives with the
+        // helper, so this layer and the probe's cannot drift.
+        let secrets: Vec<String> = self.snapshot().accounts.iter().flat_map(StoredAccount::secrets).cloned().collect();
+        crate::process_env::redact_values(text, secrets.iter().map(String::as_str))
     }
 
     /// The one place a stored secret is read for a spawn.

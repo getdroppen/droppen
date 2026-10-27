@@ -37,8 +37,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::process_env::{apply_env, claude_env, clean_env, clean_env_bare, redact_secrets, resolve_on_path};
-use crate::quota::is_rate_limited;
+use crate::process_env::{apply_env, claude_env, clean_env, clean_env_bare, redact_secrets, redact_values, resolve_on_path};
+use crate::quota::{is_rate_limited, mentions_status};
 use crate::sessions::Paths;
 
 use super::store::{launch_for, AccountLaunch, AccountProvider, Credential, CLAUDE_BASE_URL_ENV};
@@ -103,7 +103,7 @@ fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
     // ones that look like credentials. The pattern still runs, for the ones this probe
     // was never handed — a `CLAUDE_CONFIG_DIR` login the CLI mentions, a key in
     // the CLI's own diagnostics.
-    let raw = secrets.iter().fold(raw.to_string(), |text, secret| by_value(&text, secret));
+    let raw = redact_values(raw, secrets.iter().copied());
     let text = redact_secrets(&raw)
         .lines()
         .map(str::trim)
@@ -122,22 +122,6 @@ fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
     }
     text[..cut].to_string()
 }
-
-/// Take one known credential out of a piece of text.
-///
-/// The same rule as
-/// [`crate::accounts::store::AccountsStore::redact_known_secrets`], for the one
-/// credential that is not in the store yet — a `POST /api/accounts` that is
-/// about to be refused never stores anything, and its reason is still shown.
-fn by_value(text: &str, secret: &str) -> String {
-    if secret.len() < MIN_REDACTABLE_SECRET || !text.contains(secret) {
-        return text.to_string();
-    }
-    text.replace(secret, "[redacted]")
-}
-
-/// Below this a "secret" is more likely to be a word; see the store's own copy.
-const MIN_REDACTABLE_SECRET: usize = 8;
 
 /// Where a probe runs: a config directory with no login of its own, plus an
 /// empty working directory so the CLI adopts no project of the user's.
@@ -372,7 +356,7 @@ fn is_codex_refusal(text: &str) -> bool {
         "missing bearer",
         "invalid api key",
     ];
-    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401")
+    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None)
 }
 
 /// Whether the CLI's complaint is about the *credential* rather than about
@@ -396,24 +380,7 @@ fn is_credential_refusal(text: &str) -> bool {
         "/login",
         "not logged in",
     ];
-    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401") || mentions_status(&lower, "403")
-}
-
-/// Whether `lower` contains `code` as a standalone HTTP status rather than as
-/// three digits inside a longer number, a path or a token count.
-fn mentions_status(lower: &str, code: &str) -> bool {
-    let bytes = lower.as_bytes();
-    let mut from = 0;
-    while let Some(rel) = lower[from..].find(code) {
-        let start = from + rel;
-        let end = start + code.len();
-        let bounded = (start == 0 || !bytes[start - 1].is_ascii_digit()) && (end == bytes.len() || !bytes[end].is_ascii_digit());
-        if bounded {
-            return true;
-        }
-        from = end;
-    }
-    false
+    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None) || mentions_status(&lower, "403", None)
 }
 
 #[cfg(test)]

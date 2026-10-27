@@ -462,27 +462,35 @@ const STATUS_WINDOW: usize = 32;
 /// that is over its limit is a *working* account.
 pub fn is_rate_limited(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains("too many requests") || mentions_status_429(&lower)
+    lower.contains("too many requests") || mentions_status(&lower, "429", Some((&STATUS_MARKERS, STATUS_WINDOW)))
 }
 
-/// Whether `lower` contains `429` as a standalone HTTP status code: bounded by
-/// non-digits, so a longer number cannot match, and within [`STATUS_WINDOW`] of a
-/// status marker, so a coincidental `429` in prose does not.
-fn mentions_status_429(lower: &str) -> bool {
+/// Whether `lower` contains `code` as a standalone HTTP status code: bounded by
+/// non-digits, so a longer number cannot match. With `near`, the code also has
+/// to sit within that many bytes of one of the given markers — the narrow rule
+/// for `429`, where a coincidental number in prose must not back an account
+/// off, and the plain rule for `401`/`403`, where the status is evidence by
+/// itself.
+pub(crate) fn mentions_status(lower: &str, code: &str, near: Option<(&[&str], usize)>) -> bool {
     let bytes = lower.as_bytes();
     let mut from = 0;
-    while let Some(rel) = lower[from..].find("429") {
+    while let Some(rel) = lower[from..].find(code) {
         let start = from + rel;
-        let end = start + 3;
+        let end = start + code.len();
         let bounded = (start == 0 || !bytes[start - 1].is_ascii_digit()) && (end == bytes.len() || !bytes[end].is_ascii_digit());
         if bounded {
-            let ctx_start = start.saturating_sub(STATUS_WINDOW);
-            let ctx_end = (end + STATUS_WINDOW).min(bytes.len());
-            // Slicing on bytes may cut a multi-byte char at the window edge;
-            // `from_utf8_lossy` tolerates it and the markers are all ASCII.
-            let context = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]);
-            if STATUS_MARKERS.iter().any(|marker| context.contains(marker)) {
-                return true;
+            match near {
+                None => return true,
+                Some((markers, window)) => {
+                    let ctx_start = start.saturating_sub(window);
+                    let ctx_end = (end + window).min(bytes.len());
+                    // Slicing on bytes may cut a multi-byte char at the window edge;
+                    // `from_utf8_lossy` tolerates it and the markers are all ASCII.
+                    let context = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]);
+                    if markers.iter().any(|marker| context.contains(marker)) {
+                        return true;
+                    }
+                }
             }
         }
         from = end;

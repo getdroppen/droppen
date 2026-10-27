@@ -234,6 +234,32 @@ pub fn redact_secrets(text: &str) -> String {
     .into_owned()
 }
 
+/// Below this, a "secret" is more likely to be a word than a credential, and
+/// replacing every occurrence of it would shred the text it appears in.
+///
+/// Only reachable through a hand-edited row or a caller passing something odd:
+/// every credential a person can type in goes through `normalize_secret`, and
+/// the shortest real one is far longer.
+const MIN_REDACTABLE_SECRET: usize = 8;
+
+/// Take every known value out of `text`, longest first.
+///
+/// The exact-value layer of [`redact_secrets`]: a caller that holds the
+/// credential itself — the account store, the probe that is about to refuse
+/// one — does not have to guess at its shape. Longest first so a value that
+/// contains another is not left behind as a readable tail.
+pub fn redact_values<'a>(text: &str, values: impl IntoIterator<Item = &'a str>) -> String {
+    let mut values: Vec<&str> = values.into_iter().filter(|value| value.len() >= MIN_REDACTABLE_SECRET).collect();
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    let mut redacted = text.to_string();
+    for value in values {
+        if redacted.contains(value) {
+            redacted = redacted.replace(value, "[redacted]");
+        }
+    }
+    redacted
+}
+
 /// Whether the file at `path` is executable by this process.
 fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
