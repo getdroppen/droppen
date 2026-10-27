@@ -20,6 +20,7 @@
  * whose edge cases differ between browsers.
  */
 import { type Bytes, concat, copy, equal, fromHex, hex, utf8 } from "./bytes";
+import { decodeLe, inv0, isSquare, P as FIELD_P } from "./field";
 
 export const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");
 export const X25519_PKCS8_PREFIX = fromHex("302e020100300506032b656e04220420");
@@ -179,20 +180,7 @@ export async function ed25519VerifyStrict(key: Uint8Array, message: Uint8Array, 
   }
 }
 
-const FIELD_P = 2n ** 255n - 19n;
 const EDWARDS_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
-
-function modPow(base: bigint, exp: bigint): bigint {
-  let result = 1n;
-  let b = base % FIELD_P;
-  let e = exp;
-  while (e > 0n) {
-    if (e & 1n) result = (result * b) % FIELD_P;
-    b = (b * b) % FIELD_P;
-    e >>= 1n;
-  }
-  return result;
-}
 
 /**
  * Whether a canonical encoding names a point on the curve: x² = (y² - 1) / (d·y² + 1)
@@ -200,14 +188,11 @@ function modPow(base: bigint, exp: bigint): bigint {
  * as a public key, so this is checked here rather than left to them.
  */
 function ed25519PointDecodes(key: Uint8Array): boolean {
-  let y = 0n;
-  for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(i === 31 ? key[i]! & 0x7f : key[i]!);
+  // The top bit is the encoding's sign, not part of y.
+  const y = decodeLe(Uint8Array.from(key, (b, i) => (i === 31 ? b & 0x7f : b)));
   const y2 = (y * y) % FIELD_P;
-  const u = (y2 - 1n + FIELD_P) % FIELD_P;
-  const v = (EDWARDS_D * y2 + 1n) % FIELD_P;
-  const x2 = (u * modPow(v, FIELD_P - 2n)) % FIELD_P;
-  if (x2 === 0n) return true;
-  return modPow(x2, (FIELD_P - 1n) / 2n) === 1n;
+  const x2 = (((y2 - 1n + FIELD_P) % FIELD_P) * inv0((EDWARDS_D * y2 + 1n) % FIELD_P)) % FIELD_P;
+  return x2 === 0n || isSquare(x2);
 }
 
 /** Whether `key` decodes as an Ed25519 point that is not of small order. */
