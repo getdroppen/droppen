@@ -1,5 +1,5 @@
 // The cross-device wiring mounted for real (`docs/local-aggregator.md` §6.5,
-// §6.7 M-2): React renders into a stand-in DOM (`fake-dom.ts`), effects run,
+// §6.7 M-2): React renders into a real DOM (jsdom), effects run,
 // and what is pinned is what a person would see and what the shell is told —
 // a pane of a device the page does not have, holds as panes mount, change
 // and go, the list feed a view of another device starts, and the
@@ -9,14 +9,10 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
-
-const container = installFakeDom();
+import test from "node:test";
+import { type FakeNode, installLiveDom, findAll } from "./live-dom.js";
 // Every render, update and unmount here goes through React's `act` (below).
-(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
-// Query caches, feeds and React's scheduler keep timers this file does not own: once every test has run, go.
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom({ act: true });
 /**
  * Let `ms` pass for what runs outside React (a router's navigation), then
  * return once React has drawn all it was set off to draw and run the effects
@@ -126,7 +122,7 @@ test("B1a: the local page reading a screen arranged on droppen.app shows another
   assert.match(text(), /this device is not on this page/);
   assert.match(text(), /Open this screen on droppen\.app/, "the local page says where to see it");
   assert.match(text(), /d-elsewhere/, "and which device it is");
-  assert.equal((container as FakeNode).findAll("data-pane-missing-device").length, 1);
+  assert.equal(findAll(container, "data-pane-missing-device").length, 1);
 });
 
 test("B1b: a device leaving droppen.app while a pane shows it turns the pane into a not-on-this-page one, not a crash", async (t) => {
@@ -156,7 +152,7 @@ test("B1c: a picker naming a device gone from the page picks from the routed vie
   const { errors } = await mount(withQueries(<PaneLeafContent content={content} onChange={noop} onClose={noop} defaultMachine="m-b" />));
   await flush();
   assert.deepEqual(errors, []);
-  const trigger = (container as FakeNode).findAll("data-testid").find((n) => n.getAttribute("data-testid") === "device-picker");
+  const trigger = findAll(container, "data-testid").find((n) => n.getAttribute("data-testid") === "device-picker");
   assert.ok(trigger, "the device picker is there");
   assert.equal(trigger.textContent.trim(), "studio", "on the routed view's device, not the gone one");
 });
@@ -188,7 +184,7 @@ test("a pane whose content fails to draw keeps the failure to itself", async (t)
   await flush();
   assert.match(text(), /the other pane/, "the rest of the page draws");
   assert.match(text(), /this pane could not be drawn/);
-  assert.equal((container as FakeNode).findAll("data-pane-failed").length, 1);
+  assert.equal(findAll(container, "data-pane-failed").length, 1);
   state = { ...state };
 });
 
@@ -436,13 +432,13 @@ test("S2: font size and language are set on the main device's settings, and anot
   assert.match(onMain.text(), /font size/);
   assert.match(onMain.text(), /language/);
   assert.match(onMain.text(), /subagent tree/, "the opt-in for the session list's subagents");
-  assert.equal((container as FakeNode).findAll("data-appearance-on-main").length, 0);
+  assert.equal(findAll(container, "data-appearance-on-main").length, 0);
   await onMain.root.unmount();
   const onOther = await draw("m-b");
   await flush();
   assert.doesNotMatch(onOther.text(), /font size/);
   assert.match(onOther.text(), /follow the main device/);
-  assert.equal((container as FakeNode).findAll("data-appearance-on-main").length, 1);
+  assert.equal(findAll(container, "data-appearance-on-main").length, 1);
 });
 
 test("S1: the page draws at an address with escaped characters: the router caught up compares the address as the browser writes it", async (t) => {

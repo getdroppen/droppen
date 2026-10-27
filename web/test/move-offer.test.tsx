@@ -4,15 +4,14 @@
 // click, how each outcome leaves it — and the other tabs of the origin, which
 // reload when a device arrives (and only on another page's word).
 //
-// React renders into a stand-in DOM (`fake-dom.ts`) where effects run.
+// React renders into a real DOM (jsdom) where effects run.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { type FakeNode, find, installLiveDom, waitFor } from "./live-dom.js";
 
 Object.assign(globalThis, { location: { origin: "https://my.droppen.test", pathname: "/signin", search: "", hash: "", reload: () => undefined, replace: () => undefined } });
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
@@ -24,21 +23,6 @@ type MoveOutcome = import("../src/features/move/index.js").MoveOutcome;
 type MoveEvent = import("../src/lib/move/types.js").MoveEvent;
 
 const flush = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(done: () => boolean, ms = 5_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!done()) {
-    if (Date.now() > end) throw new Error("timed out waiting");
-    await flush(5);
-  }
-}
-function find(node: FakeNode, match: (n: FakeNode) => boolean): FakeNode | null {
-  if (match(node)) return node;
-  for (const c of node.childNodes) {
-    const hit = find(c, match);
-    if (hit) return hit;
-  }
-  return null;
-}
 const byTestId = (id: string) => find(container, (n) => n.getAttribute?.("data-testid") === id);
 const click = (id: string) => {
   const node = byTestId(id);
@@ -65,17 +49,17 @@ test("the sign-in screen offers to bring the device over, and a pull from its cl
   );
   try {
     // No device here: the offer is there, above the form.
-    await until(() => byTestId("bring-it-over") !== null && byTestId("auth-email") !== null);
+    await waitFor(() => byTestId("bring-it-over") !== null && byTestId("auth-email") !== null);
     assert.match((container as FakeNode).textContent, /Used Droppen at droppen\.test in this browser\?/);
     click("bring-it-over");
     assert.deepEqual(pulls, [{ legacy: "https://droppen.test" }], "the pull starts from the click, for the hub's origin");
     answer({ kind: "failed", message: "droppen.test could not sign in" });
-    await until(() => byTestId("bring-it-over-error") !== null);
+    await waitFor(() => byTestId("bring-it-over-error") !== null);
     assert.match((container as FakeNode).textContent, /droppen\.test could not sign in/);
     assert.equal(moved, 0);
     click("bring-it-over");
     answer({ kind: "moved" });
-    await until(() => moved === 1);
+    await waitFor(() => moved === 1);
   } finally {
     root.unmount();
   }
@@ -102,17 +86,17 @@ test("the offer is on the sign-in tab only: sign-up makes a new account, which h
     handlers.onClick({});
   };
   try {
-    await until(() => byTestId("auth-email") !== null);
+    await waitFor(() => byTestId("auth-email") !== null);
     await flush(50);
     assert.equal(byTestId("bring-it-over"), null, "not on sign-up");
     assert.doesNotMatch((container as FakeNode).textContent, /Used Droppen at/);
     // Over to sign-in: there it is.
     press(tab("sign in"));
-    await until(() => byTestId("bring-it-over") !== null);
+    await waitFor(() => byTestId("bring-it-over") !== null);
     assert.match((container as FakeNode).textContent, /Used Droppen at droppen\.test in this browser\?/);
     // And back to sign-up: gone again.
     press(tab("sign up"));
-    await until(() => byTestId("bring-it-over") === null);
+    await waitFor(() => byTestId("bring-it-over") === null);
   } finally {
     root.unmount();
     place.pathname = was;
@@ -167,7 +151,7 @@ test("the tabs channel: another page hears a move, the page that said it does no
   const stopHere = mine.subscribe((e) => heardHere.push(e));
   const stopThere = theirs.subscribe((e) => heardThere.push(e));
   mine.post({ t: "arrived", account: "acct-1" });
-  await until(() => heardThere.length === 1);
+  await waitFor(() => heardThere.length === 1);
   await flush(50);
   assert.deepEqual(heardThere, [{ t: "arrived", account: "acct-1" }]);
   assert.deepEqual(heardHere, [], "a page does not hear itself");

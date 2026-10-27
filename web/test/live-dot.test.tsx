@@ -25,9 +25,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LiveDot } from "../src/components/live-dot.js";
 import type { components } from "../src/api/schema.js";
@@ -39,46 +36,28 @@ import type {
   LiveSubtask,
   ResidentInfo,
 } from "../src/features/sessions/session-activity.js";
+import { resident, transcriptItem as item } from "./session-fixtures.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
 
 // English keys are the source strings, so an empty resource bundle renders the
 // same text the untranslated UI does — and asserting on it asserts on the key.
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
 // A subagent card holds a query it does not run until it is opened, so the
 // client here never fetches — it exists because `useQuery` needs one.
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(
-    <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>
-    </I18nextProvider>,
-  );
-}
+const draw = pageDraw(i18n, (node) => <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
 
 /** The whole point, in one assertion: alive to a reader, still to the compositor. */
 function assertLiveButStill(html: string, what: string) {
   assert.doesNotMatch(html, /animate-/, `${what} must not run a CSS animation`);
   assert.match(html, /data-live/, `${what} must still say it is running`);
-}
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return {
-    phase: "idle",
-    queued: 0,
-    queuedMessages: [],
-    background: 0,
-    awaitingBackground: false,
-    stalled: false,
-    ...over,
-  };
 }
 
 function subtask(over: Partial<LiveSubtask> = {}): LiveSubtask {
@@ -90,21 +69,6 @@ function subtask(over: Partial<LiveSubtask> = {}): LiveSubtask {
     background: false,
     startedAt: null,
     detail: null,
-    ...over,
-  };
-}
-
-function item(over: Partial<TranscriptItem> & Pick<TranscriptItem, "kind">): TranscriptItem {
-  return {
-    detail: null,
-    isError: false,
-    meta: null,
-    question: null,
-    role: "assistant",
-    text: "",
-    timestamp: null,
-    toolName: null,
-    truncated: false,
     ...over,
   };
 }

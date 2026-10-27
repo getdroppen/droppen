@@ -1,5 +1,5 @@
 // Step 03 and the hand-off mounted for real (`features/setup/first-step.tsx`,
-// `first-session.ts`): React renders into a stand-in DOM (`fake-dom.ts`), the
+// `first-session.ts`): React renders into a real DOM (jsdom), the
 // device answers through a recording transport, and what is pinned is what
 // the device is asked — the recent folders, the practice folder made when
 // it is picked, and never a search of the disk — and that the
@@ -11,15 +11,15 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
 import { report, tool } from "./setup-fixtures.js";
+import { domTree, type FakeNode, installLiveDom, propsOf, until } from "./live-dom.js";
 
-const container = installFakeDom();
+const container = installLiveDom();
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");
 Object.assign(window as object, { addEventListener: () => undefined, removeEventListener: () => undefined });
-after(() => void setTimeout(() => process.exit(), 50));
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+const { first } = domTree(container);
 
 const i18next = (await import("i18next")).default;
 const { initReactI18next } = await import("react-i18next");
@@ -129,29 +129,7 @@ async function mount(path: string, extra: React.ReactNode = null) {
   return { root: reactRoot, routes, errors, settle };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const all = () => walk(container as FakeNode);
-const first = (match: (node: FakeNode) => boolean) => all().find(match);
 const byTestId = (id: string) => first((n) => n.getAttribute("data-testid") === id);
-const propsOf = (node: FakeNode | undefined): Record<string, (...args: unknown[]) => unknown> => {
-  assert.ok(node, "the element is on the page");
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-  assert.ok(key, "rendered by React");
-  return (node as unknown as Record<string, Record<string, (...args: unknown[]) => unknown>>)[key];
-};
-async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 150; i++) {
-    if (check()) return;
-    await flush(20);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 
 /** Step 03 as the guide holds it. */
 function Step({ onUi }: { onUi: (ui: FirstUi) => void }) {

@@ -1,6 +1,6 @@
 // The main device is the account's (`docs/local-aggregator.md` §6.5, kept on
 // the hub: `docs/hub-api/http.md` `/v1/main-device`), drawn for real: React
-// renders into a stand-in DOM (`fake-dom.ts`) a tree keyed by the home as
+// renders into a real DOM (jsdom) a tree keyed by the home as
 // `app/root-layout.tsx` is, under a real `HubShell` told by a stand-in link
 // what the hub says. Pinned: what the page shows before the hub answers (this
 // browser's copy), the account's arriving, a change from another device
@@ -11,8 +11,9 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { makeI18n } from "./render.js";
+import { type FakeNode, installLiveDom, waitFor } from "./live-dom.js";
 
 const place = { pathname: "/sessions", search: "", reload: () => undefined };
 Object.assign(globalThis, {
@@ -26,22 +27,13 @@ Object.assign(globalThis, {
     },
   },
 });
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 const flush = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Wait until `done()` holds (React renders when it gets to it: a loaded machine takes longer), or fail. */
-async function until(done: () => boolean, ms = 5_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!done()) {
-    if (Date.now() > end) throw new Error("timed out waiting");
-    await flush(5);
-  }
-}
 
 const { createRoot } = await import("react-dom/client");
 const { QueryClient } = await import("@tanstack/react-query");
-const i18next = (await import("i18next")).default;
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { HubShell } = await import("../src/features/cloud/hub-shell.js");
 const { MainDeviceConfirm } = await import("../src/features/cloud/cloud-bar.js");
 const { MachineProvider, useHomeMachine, useMachine } = await import("../src/lib/machines/context.js");
@@ -136,12 +128,12 @@ test("the page draws this browser's copy until the hub says the account's main d
   const trees: string[] = [];
   const { root, errors, text } = mount(<Keyed trees={trees} />);
   t.after(() => root.unmount());
-  await until(() => text() !== "");
+  await waitFor(() => text() !== "");
   assert.deepEqual(errors, []);
   assert.equal(text(), "screens of m-a", "before the hub answers: this browser's copy");
   // Signed in on the link: the account's is m-b (chosen on another device).
   link.control({ t: "main_device", machine: "m-b", set_ms: 10 });
-  await until(() => text() === "screens of m-b");
+  await waitFor(() => text() === "screens of m-b");
   assert.deepEqual(trees, ["m-a", "m-b"], "one new tree");
   assert.equal(place.pathname, "/m/m-a/terminals", "the page in view kept: m-a's terminals, under m-a's own address now");
   assert.equal(localStorage.getItem("rh.hub.home.a-1"), "m-b", "the browser's copy follows");
@@ -152,7 +144,7 @@ test("the page draws this browser's copy until the hub says the account's main d
   assert.deepEqual(trees, ["m-a", "m-b"]);
   // Another device of the account moves it back: followed.
   link.control({ t: "main_device", machine: "m-a", set_ms: 12 });
-  await until(() => text() === "screens of m-a");
+  await waitFor(() => text() === "screens of m-a");
   assert.deepEqual(trees, ["m-a", "m-b", "m-a"]);
   assert.equal(place.pathname, "/terminals");
   assert.deepEqual(writes, [], "the hub's word is not written back");
@@ -168,10 +160,10 @@ test("upgrading: the hub has none, so this browser's main device is offered for 
   const trees: string[] = [];
   const { root, text } = mount(<Keyed trees={trees} />);
   t.after(() => root.unmount());
-  await until(() => text() !== "");
+  await waitFor(() => text() !== "");
   assert.equal(text(), "screens of m-b");
   link.control({ t: "main_device", machine: null, set_ms: null });
-  await until(() => text() === "screens of m-c");
+  await waitFor(() => text() === "screens of m-c");
   assert.deepEqual(writes, [{ machine: "m-b", ifUnset: true }]);
   assert.deepEqual(trees, ["m-b", "m-c"]);
 });
@@ -186,7 +178,7 @@ test("offline or an older hub: no word from it, and the page keeps this browser'
   const trees: string[] = [];
   const { root, text } = mount(<Keyed trees={trees} />);
   t.after(() => root.unmount());
-  await until(() => text() !== "");
+  await waitFor(() => text() !== "");
   await flush(60);
   assert.equal(text(), "screens of m-b");
   assert.deepEqual(trees, ["m-b"]);
@@ -194,18 +186,16 @@ test("offline or an older hub: no word from it, and the page keeps this browser'
 });
 
 test("「设为主设备」 says the change is made on all of the person's devices, in every language, and never says machine or computer", async (t) => {
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({
+  const i18n = makeI18n({
     lng: "en",
     resources: {
       en: { translation: {} },
       "zh-CN": { translation: crossDeviceZhCN },
       "zh-TW": { translation: crossDeviceZhTW },
-      ja: { translation: crossDeviceJa },
+      ja: { translation: crossDeviceJa }
     },
-    interpolation: { escapeValue: false },
     keySeparator: false,
-    nsSeparator: false,
+    nsSeparator: false
   });
   const said: Record<string, string> = {};
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
@@ -215,7 +205,7 @@ test("「设为主设备」 says the change is made on all of the person's devic
         <MainDeviceConfirm next="studio" old="laptop" onConfirm={() => undefined} onCancel={() => undefined} />
       </I18nextProvider>,
     );
-    await until(() => text() !== "");
+    await waitFor(() => text() !== "");
     said[lng] = text();
     root.unmount();
   }

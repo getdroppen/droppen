@@ -11,11 +11,10 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after, afterEach, type TestContext } from "node:test";
-import { installFakeDom } from "./fake-dom.js";
+import test, { afterEach, type TestContext } from "node:test";
+import { installLiveDom } from "./live-dom.js";
 
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 /** Let the promises the page set going settle, without a timer. */
 const settle = () =>
   React.act(async () => {

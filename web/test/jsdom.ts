@@ -1,7 +1,6 @@
 // A real DOM (jsdom) for the tests that drive a control the way a person does
-// — pointer, keys, focus — which the stand-in of `fake-dom.ts` cannot: Base UI's
-// select needs focus management, `matches`, real events and a document to
-// portal into. Still no layout: every box measures 0×0, so what is pinned
+// — pointer, keys, focus: Base UI's select needs focus management, `matches`,
+// real events and a document to portal into. Still no layout: every box measures 0×0, so what is pinned
 // here is behaviour and markup; a test about where a popup lands lays out the
 // boxes it needs itself (`select-placement.test.tsx`).
 //

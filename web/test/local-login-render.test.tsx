@@ -1,5 +1,5 @@
 // A Claude session on the user's own login, when that login has stopped
-// working — mounted for real into the stand-in DOM (`fake-dom.ts`), the device
+// working — mounted for real into a real DOM (jsdom), the device
 // answering through a recording transport:
 //
 // - the account rows label a signed-out local login and say how to fix it,
@@ -16,21 +16,14 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { domTree, type FakeNode, installLiveDom, propsOf, until } from "./live-dom.js";
 
-const container = installFakeDom();
+const container = installLiveDom();
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");
-after(() => void setTimeout(() => process.exit(), 50));
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+const { first } = domTree(container);
 /** Wait for the page to show something, rather than for a fixed time: the device answers when it answers. */
-async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 100; i++) {
-    if (check()) return;
-    await flush(20);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 
 const i18next = (await import("i18next")).default;
 const { initReactI18next } = await import("react-i18next");
@@ -128,22 +121,7 @@ async function mount(node: React.ReactNode) {
   return { root, errors };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const all = () => walk(container as FakeNode);
-const first = (match: (node: FakeNode) => boolean) => all().find(match);
 const text = () => (container as FakeNode).textContent;
-const propsOf = (node: FakeNode | undefined): Record<string, (...args: unknown[]) => unknown> => {
-  assert.ok(node, "the element is on the page");
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-  assert.ok(key, "rendered by React");
-  return (node as unknown as Record<string, Record<string, (...args: unknown[]) => unknown>>)[key];
-};
 const button = (label: RegExp) => first((n) => n.nodeName === "BUTTON" && label.test(n.textContent));
 
 test("the account rows name a signed-out local login, say how to fix it, and keep it a choice", async (t) => {

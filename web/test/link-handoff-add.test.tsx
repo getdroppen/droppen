@@ -1,5 +1,5 @@
 // droppen.app's consent page answering a browser hand-off (docs/local-aggregator.md
-// §4.9), clicked for real — mounted into the stand-in DOM (`fake-dom.ts`) with
+// §4.9), clicked for real — mounted into a real DOM (jsdom) with
 // an account that answers `/v1/me` and issues codes when asked:
 //
 // - the tab that hands the code over is opened in the click, and closed again
@@ -12,21 +12,13 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { installLiveDom, until, walk } from "./live-dom.js";
 
 // The page is droppen.app's `/link`.
 (globalThis as { location?: unknown }).location = { origin: "https://droppen.app", pathname: "/link", hash: "", search: "", href: "https://droppen.app/link" };
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 100; i++) {
-    if (check()) return;
-    await flush(20);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 
 const i18next = (await import("i18next")).default;
 const { initReactI18next } = await import("react-i18next");
@@ -103,14 +95,7 @@ function account(hosts: number, limit: number | null, issue: () => Promise<unkno
   return { value, asked };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const byTestId = (id: string) => walk(container as FakeNode).find((n) => n.getAttribute("data-testid") === id);
+const byTestId = (id: string) => walk(container).find((n) => n.getAttribute("data-testid") === id);
 function click(id: string) {
   const node = byTestId(id);
   assert.ok(node, `${id} is on the page`);

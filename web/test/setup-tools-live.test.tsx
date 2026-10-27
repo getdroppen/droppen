@@ -1,5 +1,5 @@
 // Step 01 mounted for real (`features/setup/tools-step.tsx`): React renders
-// into a stand-in DOM (`fake-dom.ts`), the device answers through a recording
+// into a real DOM (jsdom), the device answers through a recording
 // transport, and what is pinned is what a person sees and what the device is
 // sent — a sign-in that lands turns the card ready with its toast, a finished
 // install turns into the next state, a task still running when the guide
@@ -11,10 +11,10 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test from "node:test";
 import { register } from "node:module";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
 import { commands, quota, report, task, tool } from "./setup-fixtures.js";
+import { domTree, eventually, type FakeNode, installLiveDom, propsOf, walk } from "./live-dom.js";
 
 // The terminal view imports xterm, which needs a browser: the same stand-in
 // this file has always used.
@@ -24,7 +24,7 @@ register(
   )}`,
 );
 
-const container = installFakeDom();
+const container = installLiveDom();
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");
 // The page's own listeners, kept so a test can press a key on the page.
 const windowListeners: { type: string; fn: (event: unknown) => void; capture: boolean }[] = [];
@@ -37,8 +37,8 @@ Object.assign(window as object, {
   },
 });
 // The terminal itself needs a browser (xterm): a pane that draws nothing stands in, inside the real frame around it.
-after(() => void setTimeout(() => process.exit(), 50));
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+const { all, first } = domTree(container);
 
 const i18next = (await import("i18next")).default;
 const { initReactI18next } = await import("react-i18next");
@@ -125,31 +125,9 @@ async function mount(onUi?: (ui: ToolsUi) => void) {
   return { root, queries };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const all = () => walk(container as FakeNode);
 const find = (match: (node: FakeNode) => boolean) => all().find(match);
 const byTestId = (id: string, within?: FakeNode) => (within ? walk(within) : all()).find((n) => n.getAttribute("data-testid") === id);
 const cardOf = (id: string) => find((n) => n.getAttribute("data-tool") === id);
-const propsOf = (node: FakeNode | undefined): Record<string, (...args: unknown[]) => unknown> => {
-  assert.ok(node, "the element is on the page");
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-  assert.ok(key, "rendered by React");
-  return (node as unknown as Record<string, Record<string, (...args: unknown[]) => unknown>>)[key];
-};
-async function until(check: () => boolean, ms = 5000) {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) return false;
-    await flush(50);
-  }
-  return true;
-}
 
 test("a sign-in that lands: the card turns ready, and the toast says so", async (t) => {
   const sent: Sent[] = [];
@@ -166,8 +144,8 @@ test("a sign-in that lands: the card turns ready, and the toast says so", async 
   dismissSetupToast();
   const { root } = await mount();
   t.after(() => root.unmount());
-  assert.ok(await until(() => cardOf("claude")?.getAttribute("data-state") === "signingIn"));
-  assert.ok(await until(() => cardOf("claude")?.getAttribute("data-state") === "ready"), "ready without a reload");
+  assert.ok(await eventually(() => cardOf("claude")?.getAttribute("data-state") === "signingIn"));
+  assert.ok(await eventually(() => cardOf("claude")?.getAttribute("data-state") === "ready"), "ready without a reload");
   assert.ok(sent.some((s) => s.path === "/api/setup/tools/claude/login"), "the cheap sign-in check was asked");
   assert.equal(setupToastNow()?.text, SIGNED_IN_TOAST.claude);
   assert.equal(sent.filter((s) => s.path === "/api/setup/tools/codex/login").length, 0, "only the tool signing in is checked");
@@ -185,8 +163,8 @@ test("an install that finishes: polled while it runs, the card moves on to signi
   );
   const { root } = await mount();
   t.after(() => root.unmount());
-  assert.ok(await until(() => cardOf("claude")?.getAttribute("data-state") === "installing"));
-  assert.ok(await until(() => cardOf("claude")?.getAttribute("data-state") === "signedOut"), "the next state, from the next detection");
+  assert.ok(await eventually(() => cardOf("claude")?.getAttribute("data-state") === "installing"));
+  assert.ok(await eventually(() => cardOf("claude")?.getAttribute("data-state") === "signedOut"), "the next state, from the next detection");
   assert.ok(polls >= 2);
   const before = polls;
   await flush(2300);
@@ -203,7 +181,7 @@ test("a task still running when the guide opens again shows its terminal, withou
   t.after(() => void (Object.getPrototypeOf(container).focus = realFocus));
   const { root } = await mount();
   t.after(() => root.unmount());
-  await until(() => find((n) => n.getAttribute("data-setup-terminal") === "t-live") !== undefined);
+  assert.ok(await eventually(() => find((n) => n.getAttribute("data-setup-terminal") === "t-live") !== undefined), "the running task's terminal attaches");
   const region = find((n) => n.getAttribute("data-setup-terminal") === "t-live");
   assert.ok(region, "the running task's terminal, attached again");
   assert.equal(region.getAttribute("role"), "region");
@@ -215,7 +193,7 @@ test("F6 moves the focus between the terminal and the action bar, and the CLI ne
   open(device([], () => report(tool("claude", "missing", { task: task("claude", "install", { terminalId: "t-f6" }) }), tool("codex", "ready"))));
   const { root } = await mount();
   t.after(() => root.unmount());
-  await until(() => windowListeners.some((l) => l.type === "keydown" && l.capture));
+  assert.ok(await eventually(() => windowListeners.some((l) => l.type === "keydown" && l.capture)), "the page catches F6 before xterm sees it");
   const listener = windowListeners.find((l) => l.type === "keydown" && l.capture);
   assert.ok(listener, "caught before xterm sees it");
   // The page as a browser would query it: the terminal region with xterm's input, and the action bar with its primary.
@@ -234,8 +212,9 @@ test("F6 moves the focus between the terminal and the action bar, and the CLI ne
   Object.assign(doc, {
     querySelectorAll: (sel: string) => (sel === "[data-setup-terminal]" ? [region] : []),
     querySelector: (sel: string) => (sel.includes("action-bar") ? bar : null),
-    activeElement: doc.body,
   });
+  // jsdom's `activeElement` is a getter without a setter: an own writable one shadows it.
+  Object.defineProperty(doc, "activeElement", { configurable: true, writable: true, value: doc.body });
   t.after(() => Object.assign(doc, { querySelectorAll: restore.all, querySelector: restore.one }));
   const press = (shiftKey = false) => {
     const event = { key: "F6", shiftKey, altKey: false, metaKey: false, ctrlKey: false, prevented: false, stopped: false, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
@@ -271,7 +250,7 @@ test("an OpenAI API key goes in the sign-in request's body and nowhere else: not
   const uis: ToolsUi[] = [];
   const { root, queries } = await mount((ui) => uis.push(ui));
   t.after(() => root.unmount());
-  await until(() => byTestId("use-api-key", cardOf("codex")) !== undefined);
+  assert.ok(await eventually(() => byTestId("use-api-key", cardOf("codex")) !== undefined), "the API-key entry opens");
   propsOf(byTestId("use-api-key", cardOf("codex"))).onClick!();
   await flush();
   const input = () => byTestId("apikey-input");
@@ -288,5 +267,5 @@ test("an OpenAI API key goes in the sign-in request's body and nowhere else: not
   assert.ok(!JSON.stringify(uis).includes(KEY), "never in the guide's state");
   assert.ok(!JSON.stringify(queries.getQueryCache().getAll().map((q) => q.state.data)).includes(KEY), "never in the cache");
   assert.ok(!all().some((n) => n.getAttribute("value") === KEY || n.textContent.includes(KEY)), "never on the page");
-  assert.ok(await until(() => cardOf("codex")?.getAttribute("data-state") === "ready"), "and the card turns ready");
+  assert.ok(await eventually(() => cardOf("codex")?.getAttribute("data-state") === "ready"), "and the card turns ready");
 });

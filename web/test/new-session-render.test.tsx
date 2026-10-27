@@ -1,5 +1,5 @@
 // The new-session view mounted for real (`features/sessions/new-session-view.tsx`):
-// React renders into a stand-in DOM (`fake-dom.ts`), the device answers
+// React renders into a real DOM (jsdom), the device answers
 // through a recording transport, and what is pinned is what a person sees and
 // what the device is sent — a pasted picture in the composer, the start
 // request carrying the first message's attachments, the view turning into the
@@ -13,10 +13,10 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { domTree, type FakeNode, installLiveDom, propsOf, until, walk } from "./live-dom.js";
 
-const container = installFakeDom();
+const container = installLiveDom();
 // Relative requests (`new Request("/api/uploads")`) resolve as on a page.
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");
 // The page's own listeners, kept so a test can press a key on the page.
@@ -28,9 +28,8 @@ Object.assign(window as object, {
     if (at >= 0) windowListeners.splice(at, 1);
   },
 });
-// Query caches, feeds and React's scheduler keep timers this file does not own: once every test has run, go.
-after(() => void setTimeout(() => process.exit(), 50));
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+const { all, first } = domTree(container);
 
 // After the stand-in DOM: React and the app's modules read it as they load.
 const i18next = (await import("i18next")).default;
@@ -190,22 +189,7 @@ async function mount(path: string, extra: React.ReactNode = null, queryOptions: 
   return { root, errors, routes, history, settle };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const all = () => walk(container as FakeNode);
-const first = (match: (node: FakeNode) => boolean) => all().find(match);
 /** The props React gave an element, so a test can do what a browser's event would. */
-const propsOf = (node: FakeNode | undefined): Record<string, (...args: unknown[]) => unknown> => {
-  assert.ok(node, "the element is on the page");
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-  assert.ok(key, "rendered by React");
-  return (node as unknown as Record<string, Record<string, (...args: unknown[]) => unknown>>)[key];
-};
 const textarea = () => first((n) => n.nodeName === "TEXTAREA");
 const sendButton = () => first((n) => n.getAttribute("data-variant") === "primary");
 const type = (text: string) => propsOf(textarea()).onChange!({ target: { value: text } });
@@ -433,13 +417,6 @@ const accountChip = () => first((n) => n.nodeName === "BUTTON" && n.getAttribute
 const notice = () => first((n) => n.hasAttribute("data-local-signed-out"));
 /** Wait for the page to show something, rather than for a fixed time: the device answers when it answers.
  * Up to 10 s: it returns as soon as the page shows it, and a busy CI runner can take more than 2 s. */
-async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 500; i++) {
-    if (check()) return;
-    await flush(20);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 
 const startBody = (sent: Sent[]) => sent.find((s) => s.path === "/api/sessions/new")?.body as Record<string, unknown>;
 
@@ -732,7 +709,7 @@ test("one column: the question, the composer under it, the directories under tha
   assert.doesNotMatch(parts[0]!.textContent, /home\/demo/, "no path strip: the folder chip and the list say where");
   assert.equal(parts[1]?.getAttribute("aria-hidden"), "true", "the room above the question");
   // Sized by the view, never by the composer: typing or pasting moves nothing above the composer.
-  assert.equal(parts[1]?.style.height, "max(1rem, calc(50% - 12rem))");
+  assert.equal((propsOf(parts[1]).style as { height: string }).height, "max(1rem, calc(50% - 12rem))");
   assert.ok(parts[2]?.hasAttribute("data-new-session-title"));
   assert.match(parts[2]!.textContent, /Where do you want to start\?/);
   assert.ok(parts[3]?.hasAttribute("data-new-session-composer"));

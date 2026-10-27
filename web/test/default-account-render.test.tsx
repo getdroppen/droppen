@@ -1,6 +1,6 @@
 // A new instant chat, a new scheduled task and the default in Settings, when
-// the local login is signed out — mounted for real into the stand-in DOM
-// (`fake-dom.ts`), the device answering through a recording transport. Chats
+// the local login is signed out — mounted for real into a real DOM (jsdom),
+// the device answering through a recording transport. Chats
 // and tasks start with no account named, so they run on the server's start
 // rule (`accounts::rotation::start_for`): the default; the local login when
 // somebody chose it; else the local login unless it is signed out, when a free
@@ -13,16 +13,13 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { FakeNode, installFakeDom } from "./fake-dom.js";
+import test from "node:test";
+import { domTree, installLiveDom, propsOf, until, type FakeNode } from "./live-dom.js";
 
-const container = installFakeDom();
-// The schedule form's controls ask an element whether it matches a selector;
-// the stand-in page has no selector engine, and nothing here matches.
-(FakeNode.prototype as unknown as { matches?: () => boolean }).matches ??= () => false;
+const container = installLiveDom();
 (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalOrigin.1")] = new URL("http://device.test");
-after(() => void setTimeout(() => process.exit(), 50));
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+const { all, first } = domTree(container);
 
 const i18next = (await import("i18next")).default;
 const { initReactI18next } = await import("react-i18next");
@@ -141,29 +138,7 @@ async function mount(node: React.ReactNode, queryOptions: Record<string, unknown
   return { root, errors };
 }
 
-function walk(node: FakeNode, out: FakeNode[] = []): FakeNode[] {
-  for (const child of node.childNodes) {
-    out.push(child);
-    walk(child, out);
-  }
-  return out;
-}
-const all = () => walk(container as FakeNode);
-const first = (match: (node: FakeNode) => boolean) => all().find(match);
 const text = () => (container as FakeNode).textContent;
-const propsOf = (node: FakeNode | undefined): Record<string, (...args: unknown[]) => unknown> => {
-  assert.ok(node, "the element is on the page");
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-  assert.ok(key, "rendered by React");
-  return (node as unknown as Record<string, Record<string, (...args: unknown[]) => unknown>>)[key];
-};
-async function until(what: string, check: () => boolean) {
-  for (let i = 0; i < 100; i++) {
-    if (check()) return;
-    await flush(20);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 const accountChip = () => first((n) => n.nodeName === "BUTTON" && n.getAttribute("aria-label") === "account");
 const notice = () => first((n) => n.hasAttribute("data-local-signed-out"));
 const modelQueries = (sent: Sent[]) => sent.filter((s) => s.path === "/api/models").map((s) => new URLSearchParams(s.query).get("accountId"));

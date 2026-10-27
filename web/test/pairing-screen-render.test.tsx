@@ -5,17 +5,16 @@
 // (and asking nothing of it); "sign in again" handing over the tab it was
 // on; and the sign-in screen saying why the reader is back there.
 //
-// React renders into a stand-in DOM (`fake-dom.ts`) where effects run; the
+// React renders into a real DOM (jsdom) where effects run; the
 // static states are drawn with `react-dom/server`. `import * as React`
 // because the test directory is outside the tsconfig's `include`.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { type FakeNode, find, installLiveDom, waitFor } from "./live-dom.js";
 
 Object.assign(globalThis, { location: { pathname: "/", search: "", hash: "", reload: () => undefined, replace: () => undefined } });
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 
 const { createRoot } = await import("react-dom/client");
 const { renderToStaticMarkup } = await import("react-dom/server");
@@ -30,13 +29,6 @@ type PairingCause = import("../src/lib/hub/pairing.js").PairingCause;
 
 const MIN = 60_000;
 const flush = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(done: () => boolean, ms = 5_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!done()) {
-    if (Date.now() > end) throw new Error("timed out waiting");
-    await flush(5);
-  }
-}
 
 /** Text without markup, as a reader sees it. */
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ");
@@ -210,14 +202,6 @@ function browser(opts: { registeredAgoMs: number | null; openPairing?: () => Pro
   return { account: account as unknown as CloudAccount, calls };
 }
 
-function find(node: FakeNode, match: (n: FakeNode) => boolean): FakeNode | null {
-  if (match(node)) return node;
-  for (const c of node.childNodes) {
-    const hit = find(c, match);
-    if (hit) return hit;
-  }
-  return null;
-}
 
 /** Press a button as React would hear it: its own `onClick`. */
 function press(action: string): void {
@@ -241,7 +225,7 @@ test("back from signing in again on the code tab, the window shut already: said 
   const asked: string[] = [];
   const m = await mount(<PairingScreen account={account} onPaired={noop} onPending={noop} onSignOut={noop} onSignInAgain={(mode) => void asked.push(mode)} />, "zh-CN");
   try {
-    await until(() => m.shown().includes("这个浏览器登录已超过 30 分钟"));
+    await waitFor(() => m.shown().includes("这个浏览器登录已超过 30 分钟"));
     assert.ok(m.shown().includes("需要重新登录才能用数字码"));
     assert.equal(sessionStorage.getItem(PAIRING_RESUME_KEY), null, "read once");
     await flush(50);
@@ -250,7 +234,7 @@ test("back from signing in again on the code tab, the window shut already: said 
     assert.deepEqual(asked, ["code"], "comes back to the code tab");
     // The QR code needs no window.
     press("useQr");
-    await until(() => m.shown().includes("scan this code") || m.shown().includes("扫描这个二维码"));
+    await waitFor(() => m.shown().includes("scan this code") || m.shown().includes("扫描这个二维码"));
     assert.equal(calls.openPairing, 0);
     assert.deepEqual(m.errors, []);
   } finally {
@@ -263,9 +247,9 @@ test("the code tab with the window open: a code, its countdown, and the window's
   const { account, calls } = browser({ registeredAgoMs: 27 * MIN });
   const m = await mount(<PairingScreen account={account} onPaired={noop} onPending={noop} onSignOut={noop} />);
   try {
-    await until(() => /waiting for the code to be entered: \d+:\d\d left, once/.test(m.shown()));
+    await waitFor(() => /waiting for the code to be entered: \d+:\d\d left, once/.test(m.shown()));
     assert.match(m.shown(), /(10:00|9:5\d) left, once/);
-    await until(() => /In 2:\d\d a new code needs a fresh sign-in/.test(m.shown()));
+    await waitFor(() => /In 2:\d\d a new code needs a fresh sign-in/.test(m.shown()));
     assert.equal(calls.openPairing, 1);
   } finally {
     m.root.unmount();
@@ -288,12 +272,12 @@ test("the window shuts while a code is open: to the QR code and back, the code i
   const { account, calls } = browser({ registeredAgoMs: 30 * MIN - 16_000 });
   const m = await mount(<PairingScreen account={account} onPaired={noop} onPending={noop} onSignOut={noop} />);
   try {
-    await until(() => /left, once/.test(m.shown()));
-    await until(() => /In 0:1[0-5] a new code needs a fresh sign-in/.test(m.shown()) || m.shown().includes("This code still works"));
+    await waitFor(() => /left, once/.test(m.shown()));
+    await waitFor(() => /In 0:1[0-5] a new code needs a fresh sign-in/.test(m.shown()) || m.shown().includes("This code still works"));
     tab("QR code");
-    await until(() => m.shown().includes("scan this code"));
+    await waitFor(() => m.shown().includes("scan this code"));
     tab("use a code instead");
-    await until(() => /left, once/.test(m.shown()) || m.shown().includes("sign in again to use a code"));
+    await waitFor(() => /left, once/.test(m.shown()) || m.shown().includes("sign in again to use a code"));
     assert.match(m.shown(), /left, once/, "the open code, not the closed window");
     assert.equal(calls.openPairing, 1, "the same code: none asked for");
     assert.deepEqual(m.errors, []);
@@ -310,11 +294,11 @@ test("too many codes open in the account: said in words, start again or the QR c
   });
   const m = await mount(<PairingScreen account={account} onPaired={noop} onPending={noop} onSignOut={noop} />);
   try {
-    await until(() => m.shown().includes("too many codes are open"));
+    await waitFor(() => m.shown().includes("too many codes are open"));
     assert.doesNotMatch(m.shown(), HUB_WORDS);
     assert.ok(find(container, (n) => n.getAttribute?.("data-action") === "restart"));
     press("useQr");
-    await until(() => m.shown().includes("scan this code"));
+    await waitFor(() => m.shown().includes("scan this code"));
   } finally {
     m.root.unmount();
   }
@@ -329,7 +313,7 @@ test("the hub refuses a code as past the window although the screen could not te
   const asked: string[] = [];
   const m = await mount(<PairingScreen account={account} onPaired={noop} onPending={noop} onSignOut={noop} onSignInAgain={(mode) => void asked.push(mode)} />, "zh-CN");
   try {
-    await until(() => m.shown().includes("需要重新登录才能用数字码"));
+    await waitFor(() => m.shown().includes("需要重新登录才能用数字码"));
     assert.ok(m.shown().includes("重新登录"));
     assert.doesNotMatch(m.shown(), HUB_WORDS);
     assert.ok(!find(container, (n) => n.getAttribute?.("data-action") === "restart"), "no 重新开始: it would be refused again");
@@ -345,7 +329,7 @@ test("a device that manages the account has no window: its code tab opens a code
   const { account, calls } = browser({ registeredAgoMs: 3 * 24 * 60 * MIN, again: true, isAdmin: true });
   const m = await mount(<PairingScreen account={account} again onPaired={noop} onPending={noop} onSignOut={noop} />);
   try {
-    await until(() => /left, once/.test(m.shown()));
+    await waitFor(() => /left, once/.test(m.shown()));
     assert.equal(calls.openPairing, 1);
     assert.doesNotMatch(m.shown(), /fresh sign-in|sign in again/);
   } finally {

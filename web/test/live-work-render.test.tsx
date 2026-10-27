@@ -17,9 +17,6 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
-import { renderToStaticMarkup } from "react-dom/server";
 import { BackgroundTaskPanel } from "../src/features/sessions/background-panel.js";
 import {
   ServerQueueList,
@@ -28,6 +25,8 @@ import {
   QueueRefusal,
 } from "../src/features/sessions/server-queue.js";
 import type { LiveSubtask, ResidentInfo } from "../src/features/sessions/session-activity.js";
+import { resident } from "./session-fixtures.js";
+import { makeI18n, pageDraw } from "./render.js";
 
 test("the sidebar has no extra working/background summary strip", () => {
   const source = readFileSync(new URL("../src/features/sessions/sessions-layout.tsx", import.meta.url), "utf8");
@@ -37,16 +36,12 @@ test("the sidebar has no extra working/background summary strip", () => {
 
 // English keys are the source strings, so an empty resource bundle renders the
 // same text the untranslated UI does — and asserting on it asserts on the key.
-const i18n = i18next.createInstance();
-void i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} } },
-  interpolation: { escapeValue: false },
+  resources: { en: { translation: {} } }
 });
 
-function draw(node: React.ReactElement): string {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
-}
+const draw = pageDraw(i18n);
 
 /** A fixed clock, so "running 12m" is a fact rather than a race. */
 const NOW = Date.parse("2026-08-30T04:00:00Z");
@@ -60,18 +55,6 @@ function subtask(over: Partial<LiveSubtask> = {}): LiveSubtask {
     background: false,
     startedAt: null,
     detail: null,
-    ...over,
-  };
-}
-
-function resident(over: Partial<ResidentInfo> = {}): ResidentInfo {
-  return {
-    phase: "idle",
-    queued: 0,
-    queuedMessages: [],
-    background: 0,
-    awaitingBackground: false,
-    stalled: false,
     ...over,
   };
 }

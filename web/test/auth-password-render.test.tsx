@@ -6,17 +6,16 @@
 // optional (it may still give a plan) and behind a link — opened for the
 // person by a refused invite too.
 //
-// React renders into a stand-in DOM (`fake-dom.ts`) where effects run.
+// React renders into a real DOM (jsdom) where effects run.
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import test from "node:test";
+import { type FakeNode, find, installLiveDom, waitFor } from "./live-dom.js";
 
 Object.assign(globalThis, { location: { pathname: "/", search: "", hash: "", reload: () => undefined, replace: () => undefined } });
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
@@ -25,22 +24,7 @@ const { AuthScreen } = await import("../src/features/cloud/cloud-app.js");
 
 const noop = () => undefined;
 const flush = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(done: () => boolean, ms = 5_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!done()) {
-    if (Date.now() > end) throw new Error("timed out waiting");
-    await flush(5);
-  }
-}
 
-function find(node: FakeNode, match: (n: FakeNode) => boolean): FakeNode | null {
-  if (match(node)) return node;
-  for (const c of node.childNodes) {
-    const hit = find(c, match);
-    if (hit) return hit;
-  }
-  return null;
-}
 
 /** The handlers React gave `node` (`onChange`, `onSubmit`, …). */
 function props(node: FakeNode | null): Record<string, (e: unknown) => void> {
@@ -68,12 +52,12 @@ test("sign-up: a password under 10 characters is said on the form and never sent
     </I18nextProvider>,
   );
   try {
-    await until(() => byTestId("auth-password") !== null && byTestId("password-submit") !== null);
+    await waitFor(() => byTestId("auth-password") !== null && byTestId("password-submit") !== null);
     type("auth-email", "me@example.test");
     type("auth-password", "short-pw1");
     await flush();
     submit();
-    await until(() => (container as FakeNode).textContent.includes("密码至少需要 10 个字符"));
+    await waitFor(() => (container as FakeNode).textContent.includes("密码至少需要 10 个字符"));
     assert.deepEqual(sent, [], "not sent: the hub would refuse it");
     assert.doesNotMatch((container as FakeNode).textContent, /邮箱地址/, "the e-mail is not blamed");
     // Characters, not bytes: four of them are twelve bytes, and still too few.
@@ -85,7 +69,7 @@ test("sign-up: a password under 10 characters is said on the form and never sent
     type("auth-password", "long-enough");
     await flush();
     submit();
-    await until(() => sent.length === 1);
+    await waitFor(() => sent.length === 1);
     assert.deepEqual(sent, [{ email: "me@example.test", password: "long-enough" }]);
   } finally {
     root.unmount();
@@ -111,18 +95,18 @@ test("sign-up: the optional invite code waits behind a link; a refused invite op
         <AuthScreen api={api as never} onSignedIn={noop} initialMode="signup" />
       </I18nextProvider>,
     );
-    await until(() => byTestId("password-submit") !== null);
+    await waitFor(() => byTestId("password-submit") !== null);
     return root;
   };
   try {
     // Open: no field until the person asks for it.
     let root = await open();
     try {
-      await until(() => byTestId("show-invite") !== null);
+      await waitFor(() => byTestId("show-invite") !== null);
       assert.equal(byTestId("auth-invite"), null);
       assert.ok(words().includes("have an invite code?"));
       props(byTestId("show-invite")).onClick({});
-      await until(() => byTestId("auth-invite") !== null);
+      await waitFor(() => byTestId("auth-invite") !== null);
       assert.equal(byTestId("show-invite"), null);
       assert.ok(words().includes("invite code (optional)"));
       type("auth-invite", "INVITE-1");
@@ -130,7 +114,7 @@ test("sign-up: the optional invite code waits behind a link; a refused invite op
       type("auth-password", "long-enough");
       await flush();
       submit();
-      await until(() => sent.length === 1);
+      await waitFor(() => sent.length === 1);
       assert.deepEqual(sent, ["INVITE-1"], "an invite given in open mode is sent");
     } finally {
       root.unmount();
@@ -138,12 +122,12 @@ test("sign-up: the optional invite code waits behind a link; a refused invite op
     // A refused invite opens the field to try another; the code stays optional.
     root = await open();
     try {
-      await until(() => byTestId("show-invite") !== null);
+      await waitFor(() => byTestId("show-invite") !== null);
       type("auth-email", "me@example.test");
       type("auth-password", "long-enough");
       await flush();
       submit();
-      await until(() => byTestId("auth-invite") !== null);
+      await waitFor(() => byTestId("auth-invite") !== null);
       assert.deepEqual(sent, ["INVITE-1", undefined], "none was given");
       assert.ok(words().includes("that invite code is unknown, used up or expired"));
       assert.ok(words().includes("invite code (optional)"));

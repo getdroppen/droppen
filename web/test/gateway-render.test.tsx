@@ -14,19 +14,18 @@
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { installFakeDom, type FakeNode } from "./fake-dom.js";
+import { makeI18n } from "./render.js";
+import { type FakeNode, findAll, installLiveDom, until } from "./live-dom.js";
 
-const container = installFakeDom();
-after(() => void setTimeout(() => process.exit(), 50));
+const container = installLiveDom();
 const flush = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const router = await import("@tanstack/react-router");
-const i18next = (await import("i18next")).default;
-const { I18nextProvider, initReactI18next } = await import("react-i18next");
+const { I18nextProvider } = await import("react-i18next");
 const { SessionsLayout, SessionsIndex } = await import("../src/features/sessions/sessions-layout.js");
 const { DeviceFilterBar, chipNote, saveDeviceChoice } = await import("../src/features/sessions/device-filter.js");
 const { DevicePicker, readOnlyHere } = await import("../src/features/machines/device-picker.js");
@@ -46,13 +45,11 @@ const { zhCN } = await import("../src/i18n/zh-CN.js");
 const { cloudDevicesZhCN } = await import("../src/i18n/cloud-devices.js");
 type MachineInfo = import("../src/lib/machines/runtime.js").MachineInfo;
 
-const i18n = i18next.createInstance();
-await i18n.use(initReactI18next).init({
+const i18n = makeI18n({
   lng: "en",
   resources: { en: { translation: {} }, "zh-CN": { translation: { ...linkZhCN, ...cloudDevicesZhCN, ...crossDeviceZhCN, ...zhCN } } },
-  interpolation: { escapeValue: false },
   keySeparator: false,
-  nsSeparator: false,
+  nsSeparator: false
 });
 
 const now = Date.now();
@@ -163,7 +160,7 @@ function mount(lng = "en") {
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { root, errors, loaded: app.load(), text: () => (container as FakeNode).textContent, find: (attr: string) => (container as FakeNode).findAll(attr) };
+  return { root, errors, loaded: app.load(), text: () => (container as FakeNode).textContent, find: (attr: string) => findAll(container, attr) };
 }
 
 test("the local app alone: no device bar, no ledger — the list as it always was", async (t) => {
@@ -191,6 +188,7 @@ test("with the gateway's devices: the bar says each device and how current an of
   await loaded;
   await flush(100);
   assert.deepEqual(errors, []);
+  await until("the device bar", () => find("data-testid").some((n) => n.getAttribute("data-testid") === "device-filter"));
   const bar = find("data-testid").find((n) => n.getAttribute("data-testid") === "device-filter");
   assert.ok(bar, "the device bar is there");
   const choices = find("data-device-choice").map((n) => n.getAttribute("data-device-choice"));
