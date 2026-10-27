@@ -109,6 +109,9 @@ jobs:
              named like a required check (web, server, secrets-scan, web-reproducible,
              llm-security-review, DCO, web-tests, no-skip-markers), which could report a
              passing check in place of the real one.
+           - Logic that skips a required job (CI change detection): a changed-path map, a
+             job-level `if`, or an output that can leave a required check green without the
+             job having run.
            - Cryptography and keys: weakened end-to-end encryption, key or nonce reuse, private
              keys or session secrets leaving the device, logged, or sent to the Hub or relay;
              signature or chain checks skipped, weakened or made optional; rollback or

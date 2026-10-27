@@ -27,7 +27,6 @@ jobs:
       ui_audit: ${{ steps.detect.outputs.ui_audit || 'true' }}
       web_reproducible: ${{ steps.detect.outputs.web_reproducible || 'true' }}
       server: ${{ steps.detect.outputs.server || 'true' }}
-      open_boundary: ${{ steps.detect.outputs.open_boundary || 'true' }}
       release_tooling: ${{ steps.detect.outputs.release_tooling || 'true' }}
       desktop_core: ${{ steps.detect.outputs.desktop_core || 'true' }}
     steps:
@@ -44,7 +43,7 @@ jobs:
 
   web:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +94,7 @@ jobs:
     # job would never create `web-tests (1/2/3)` and their required checks
     # would stay pending. The legs always start; every step below is gated
     # instead, so an unnecessary shard still reports success.
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -125,7 +124,7 @@ jobs:
   # this before it merges.
   ui-audit:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.ui_audit == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.ui_audit == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +144,7 @@ jobs:
   # while this holds (docs/web-integrity.md).
   web-reproducible:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -198,10 +197,10 @@ jobs:
   # release's macOS job requires it, and this finds out before a tag does.
   web-reproducible-macos:
     needs: [changes, web-reproducible]
-    # As before, only after the Linux run succeeded; `always()` keeps the
+    # As before, only after the Linux run succeeded; `!cancelled()` keeps the
     # detector's own failure from hiding this job (then the first disjunct is
     # true and the Linux job is the gate).
-    if: always() && needs.web-reproducible.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true')
+    if: ${{ !cancelled() && needs.web-reproducible.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.web_reproducible == 'true') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +222,7 @@ jobs:
 
   server:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     # A public repository's ubuntu-latest runner is 4 CPUs and 16 GiB, free
     # and unlimited; the two-core figures this file used to assume made the
     # build and the tests wait on half the machine. It stays GitHub-hosted:
@@ -296,22 +295,6 @@ jobs:
           if [ -d target ]; then du -sh target; fi
 
 
-  # The open-source boundary, which `server` also runs: the check scans
-  # web/src, web/test, packages/plugin-sdk/src, scripts, the open crates and
-  # .github, so it runs whenever any of those change instead of waiting for a
-  # server change. ubuntu-latest already has cargo, and `cargo metadata
-  # --no-deps` is all the check needs: no toolchain is installed here.
-  open-boundary:
-    needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.open_boundary == 'true')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server-rs
-    steps:
-      - uses: actions/checkout@v4
-      - run: node ../scripts/check-open-boundary.mjs
-
   # The release tooling's own checks that no other job runs: the personal-name
   # rule of scripts/release-public.sh's text checks (scripts/release-text-
   # check.sh), and the release workflow's tool helpers. The node release tests
@@ -320,7 +303,7 @@ jobs:
   # credentials, no build.
   release-tooling:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.release_tooling == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.release_tooling == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -336,7 +319,7 @@ jobs:
   # it reliable there.
   desktop-core:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.desktop_core == 'true')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop_core == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -364,6 +347,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # The open-source boundary (docs/local-aggregator.md §2.1), in the job
+      # that always runs and is a required check: the scan covers web/src,
+      # web/test, packages/plugin-sdk/src, scripts, the open crates and
+      # .github, and a red result must block the merge whichever side changed.
+      # ubuntu-latest already has cargo; `cargo metadata --no-deps` is all the
+      # check runs.
+      - name: The open-source boundary
+        run: node scripts/check-open-boundary.mjs
       - name: Install gitleaks
         run: |
           tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
