@@ -5,13 +5,12 @@
 //! now ([`RENAMED`] lists every one with its old name). The server reads them
 //! through [`var`], which takes the new name and, when that is unset, the old
 //! one — so a launchd plist, a unit or a shell profile written before the
-//! rename keeps working:
+//! rename keeps working until v0.2.135, when the old names are removed:
 //!
 //! * a value is trimmed, and an empty one is unset, as it always was;
 //! * only the old name is set: its value is used, and the server says once that
-//!   the old name is deprecated — add the new name with the same value, and
-//!   keep the old one while a rollback to a version from before the rename is
-//!   possible (such a version reads only the old name);
+//!   the old name is deprecated and stops working in v0.2.135 — add the new
+//!   name with the same value;
 //! * both are set, to different values: the new one is used, and that is said
 //!   once; to the same value (the switch-over), nothing is said.
 //!
@@ -21,21 +20,22 @@
 //! never to stdout, where `user list`, `setup-code` and `--version` print the
 //! answer a script reads.
 //!
-//! The variables one Droppen program sets for another ([`Kind::Handoff`]: `up`
-//! for the server it runs, the desktop app for its server, a server for a
-//! session's `droppen-notify`) are written under both names ([`with_old_name`]),
-//! because either side may be the older program — an `up` from before a
-//! self-upgrade runs every server after it — and read under both without a
-//! word: an old name there was set by an older Droppen, not by anybody's
-//! configuration, so there is nothing for a person to rename. When the two
-//! differ, the old name wins: only a program from before the rename writes
-//! one without the other, over a new name it inherited from further out.
+//! Until v0.2.135, the variables one Droppen program sets for another
+//! ([`Kind::Handoff`]: `up` for the server it runs, the desktop app for its
+//! server, a server for a session's `droppen-notify`) are written under both
+//! names ([`with_old_name`]), because either side may be the older program —
+//! an `up` from before a self-upgrade runs every server after it — and read
+//! under both without a word: an old name there was set by an older Droppen,
+//! not by anybody's configuration, so there is nothing for a person to
+//! rename. When the two differ, the old name wins: only a program from before
+//! the rename writes one without the other, over a new name it inherited from
+//! further out.
 //!
-//! A program that may start an *older* server — `up`, which runs `.prev`
-//! after a rollback — also hands it every setting it was given under a new
-//! name under the old one ([`settings_under_old_names`]): a server from before
-//! the rename would otherwise miss `DROPPEN_DATA_DIR` and run on the default
-//! install's files.
+//! Until v0.2.135, a program that may start an *older* server — `up`, which
+//! runs `.prev` after a rollback — also hands it every setting it was given
+//! under a new name under the old one ([`settings_under_old_names`]): a server
+//! from before the rename would otherwise miss `DROPPEN_DATA_DIR` and run on
+//! the default install's files.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -245,10 +245,10 @@ fn notice(noticed: &Mutex<BTreeSet<&'static str>>, name: &str, old: &OldName) ->
         return None;
     }
     Some(match old {
-        OldName::Used(_) => format!(
-            "{was} is deprecated: add {name} with the same value (and keep {was} while a rollback to a version from before the rename is possible)"
+        OldName::Used(_) => format!("{was} is deprecated: add {name} with the same value; {was} stops working in v0.2.135"),
+        OldName::Overridden(_) => format!(
+            "{name} and the deprecated {was} are both set, to different values: {name} is used; remove {was} (it stops working in v0.2.135)"
         ),
-        OldName::Overridden(_) => format!("{name} and the deprecated {was} are both set, to different values: {name} is used; remove {was}"),
     })
 }
 
@@ -377,13 +377,13 @@ mod tests {
         let line = notice(&noticed, "DROPPEN_DATA_DIR", &used).expect("the first time");
         assert_eq!(
             line,
-            "REMOTE_HAND_DATA_DIR is deprecated: add DROPPEN_DATA_DIR with the same value (and keep REMOTE_HAND_DATA_DIR while a rollback to a version from before the rename is possible)"
+            "REMOTE_HAND_DATA_DIR is deprecated: add DROPPEN_DATA_DIR with the same value; REMOTE_HAND_DATA_DIR stops working in v0.2.135"
         );
         assert_eq!(notice(&noticed, "DROPPEN_DATA_DIR", &used), None, "once");
         let line = notice(&noticed, "DROPPEN_STALL_MS", &OldName::Overridden("RH_STALL_MS")).expect("another name");
         assert_eq!(
             line,
-            "DROPPEN_STALL_MS and the deprecated RH_STALL_MS are both set, to different values: DROPPEN_STALL_MS is used; remove RH_STALL_MS"
+            "DROPPEN_STALL_MS and the deprecated RH_STALL_MS are both set, to different values: DROPPEN_STALL_MS is used; remove RH_STALL_MS (it stops working in v0.2.135)"
         );
         assert_eq!(notice(&noticed, "DROPPEN_STALL_MS", &OldName::Overridden("RH_STALL_MS")), None);
     }

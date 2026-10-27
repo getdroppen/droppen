@@ -1,8 +1,9 @@
 //! The rename to Droppen: the server reads
 //! `DROPPEN_*` first and the old `REMOTE_HAND_*` / `RH_*` names when those are
-//! unset, saying once per old name that it is deprecated — by name, never by
-//! value, and never on stdout; and what one Droppen program hands another is
-//! written under both names and read under either without a word.
+//! unset, saying once per old name that it is deprecated and stops working in
+//! v0.2.135 — by name, never by value, and never on stdout; and what one
+//! Droppen program hands another is written under both names and read under
+//! either without a word.
 //!
 //! Checked on the binary, each process started with nothing in its
 //! environment but what the case sets (so no case sees another's variables,
@@ -180,7 +181,10 @@ fn a_server_with_only_the_old_names_still_works_and_says_so_once() {
         ("RH_SESSION_LOG", "DROPPEN_SESSION_LOG"),
     ] {
         assert_eq!(deprecations(&said, old), 1, "{old}: {said}");
-        assert!(said.contains(&format!("{old} is deprecated: add {new} with the same value")), "{said}");
+        assert!(
+            said.contains(&format!("{old} is deprecated: add {new} with the same value; {old} stops working in v0.2.135")),
+            "{said}"
+        );
     }
     for handoff in ["RH_DESKTOP_APP", "RH_SUPERVISED"] {
         assert!(!said.contains(handoff), "{handoff} is a handoff, not a setting: {said}");
