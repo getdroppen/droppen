@@ -12,7 +12,7 @@ license = "AGPL-3.0-only"
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-path"]
 
 [features]
 default = ["embed"]
@@ -37,6 +37,9 @@ rh-client = { path = "crates/rh-client" }
 # The plugin contract (manifest, ids, document-store wire format). The host
 # links it; it links nothing of the host's — see the crate's own manifest.
 droppen-plugin-sdk = { path = "crates/droppen-plugin-sdk" }
+# The PATH rule the setup guide rebuilds at boot: shared with the desktop app
+# (`desktop/core/src/env_path.rs`), which is not part of this workspace.
+droppen-path = { path = "crates/droppen-path" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to

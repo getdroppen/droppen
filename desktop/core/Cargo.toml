@@ -7,6 +7,9 @@ license.workspace = true
 description = "The Droppen desktop app's shell logic, without Tauri: port, PATH, sidecar lifecycle, local credentials, login"
 
 [dependencies]
+# The PATH rule the server follows too (`server-rs/crates/droppen-path`):
+# dependency-free, so neither workspace pulls in the other.
+droppen-path = { path = "../../server-rs/crates/droppen-path" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
