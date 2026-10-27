@@ -15,7 +15,6 @@ Errors are `{ "error": <code>, "message"?: string, ... }`.
 |---|---|---|
 | `GET /api/plugins` | — | `200 { plugins: PluginStatus[] }` — every plugin this build bundles |
 | `PUT /api/plugins/{id}/enabled` | `{ enabled: boolean }` | `200 PluginStatus`; `404 plugin_not_found`; `409 forced_by_config` |
-| `DELETE /api/plugins/{id}/notices/{notice}` | — | `200 PluginStatus` without that notice; `404` no such plugin or notice; `400 invalid` for a notice that goes away by itself |
 
 ```ts
 interface PluginStatus {
@@ -31,20 +30,19 @@ interface PluginStatus {
 }
 
 interface PluginNotice {
-  id: string;            // what DELETE …/notices/{notice} names
-  kind: string;          // import | writeBack | reconcile | storeReset
+  id: string;            // stable while the notice exists
+  kind: string;          // storeReset
   text: string;
   at: string;
-  dismissible: boolean;  // a problem still there (a failing write-back) is not
+  dismissible: boolean;  // a store reset is not: it goes when its files are cleared
 }
 ```
 
-Notices are kept in the instance's database (a restart does not hide them),
-logged at error level, and announced to open clients with a `plugins` frame.
-They add up: a second event does not replace the first. The shell lists them
-above the plugin's page and flags them in its panes. An event (a merged
-ledger) is dismissed one at a time; a state (a failing write-back) cannot be,
-and goes when the problem does.
+Notices are announced to open clients with a `plugins` frame. The shell lists
+them above the plugin's page and flags them in its panes. Today the only one
+is `storeReset`, computed from the `store.corrupt-<time>` files beside a store
+that had to be set aside; it does not stop the plugin working, cannot be
+dismissed, and goes away when those files are cleared.
 
 `GET /api/settings` and the global feed's `settings` frame carry the same list
 as `plugins`. After a switch changes, the feed sends
@@ -130,7 +128,7 @@ remote-hand-server plugin list                     [--instance <name>]
 remote-hand-server plugin enable  <id>             [--instance <name>]
 remote-hand-server plugin disable <id>             [--instance <name>]
 remote-hand-server plugin export  <id> [--out <file>]
-remote-hand-server plugin import  <id> [<file>] [--replace]
+remote-hand-server plugin import  <id> <file> [--replace]
 remote-hand-server plugin verify  <id>
 remote-hand-server plugin purge   <id> --yes
 ```
