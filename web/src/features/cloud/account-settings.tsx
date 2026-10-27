@@ -46,12 +46,11 @@ import type { HubLink } from "@/lib/hub/link";
 import { fromBase64Url, pageCredentials, passkeyAdd, passkeyCancelled, passkeyPrf, passkeyReauth, signalUnknownCredential } from "@/lib/hub/passkey";
 import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { AccountNotices, PendingRecoveryBanner, useAccountVersion } from "./devices";
-import { VerifyEmailBanner } from "./email-verify";
+import { AccountAlerts } from "./account-alerts";
+import { useAccountVersion } from "./devices";
 import { askRemoval, takeAskedRemoval } from "./devices-route";
 import { AccountName, openMyDevices } from "./my-devices";
-import { PendingPasskeyBanner } from "./passkey-join";
-import { SignInChangeAlerts, useMe } from "./plan";
+import { useMe } from "./plan";
 import { RecoveryWords } from "./recovery";
 import { SignOutChoice } from "./sign-out-dialog";
 import { deleteAccount } from "./sign-out";
@@ -91,18 +90,15 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
         </>
       }
     >
-      <PendingPasskeyBanner
+      <AccountAlerts
         account={account}
         link={link}
+        where="account"
         onRemovePasskey={(credHash) => {
           askRemoval(credHash);
           setAsked((n) => n + 1);
         }}
       />
-      <PendingRecoveryBanner account={account} link={link} />
-      <SignInChangeAlerts account={account} link={link} />
-      <VerifyEmailBanner account={account} />
-      <AccountNotices account={account} link={link} />
       <AccountPanel key={asked} account={account} link={link} onWords={setWords} />
     </CloudPage>
   );

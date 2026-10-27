@@ -100,7 +100,8 @@ test("one page whatever the account has: the list of every device, devices that 
   place.search = "";
   const frame = readFileSync(new URL("../src/features/cloud/my-devices.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(frame, /TabsList|DevicesViewSwitch|DevicesDashboard/, "no filter, no dashboard");
-  assert.equal(frame.match(/<AccountNotices /g)?.length, 1, "the account's notices, once, above the list");
+  const alerts = readFileSync(new URL("../src/features/cloud/account-alerts.tsx", import.meta.url), "utf8");
+  assert.equal(alerts.match(/<AccountNotices /g)?.length, 1, "the account's notices, once, above the list");
 });
 
 test("the bar has one way to 「我的设备」 — 「设备」, a grid — and nothing else leaves the app for a machine list", () => {

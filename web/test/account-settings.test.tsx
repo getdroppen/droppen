@@ -440,10 +440,12 @@ test("/account is the shell's other page with no device in view; the bar and 「
   assert.ok(button.includes(">my account<"));
   const bar = readFileSync(new URL("../src/features/cloud/cloud-bar.tsx", import.meta.url), "utf8");
   assert.equal(bar.match(/<AccountButton \/>/g)?.length, 1);
-  assert.equal(bar.match(/<PendingPasskeyBanner /g)?.length, 1, "the bar says when a device asks to join");
+  assert.equal(bar.match(/<AccountAlerts [^>]*where="bar"/g)?.length, 1, "the bar says when a device asks to join");
+  const alerts = readFileSync(new URL("../src/features/cloud/account-alerts.tsx", import.meta.url), "utf8");
+  assert.equal(alerts.match(/<PendingPasskeyBanner /g)?.length, 1, "the shared stack says it, once");
   const frame = readFileSync(new URL("../src/features/cloud/my-devices.tsx", import.meta.url), "utf8");
   assert.match(frame, /data-testid="my-devices-account"/);
-  assert.equal(frame.match(/<PendingPasskeyBanner /g)?.length, 1);
+  assert.equal(frame.match(/<AccountAlerts [^>]*where="devices"/g)?.length, 1);
   const app = readFileSync(new URL("../src/features/cloud/cloud-app.tsx", import.meta.url), "utf8");
   assert.match(app, /isAccountPath\(pathname\)\) return <AccountScreen /);
 });
@@ -556,9 +558,11 @@ test("the notice: what changed, from which device, when — for every kind", () 
   assert.ok(plan.includes('account.standing !== "active" || !account.isAdmin'));
   const settings = readFileSync(new URL("../src/features/cloud/account-settings.tsx", import.meta.url), "utf8");
   assert.ok(settings.includes("const head = me?.signInChangeHead ?? 0;"), "the settings read their list again when a change is heard");
+  const alerts = readFileSync(new URL("../src/features/cloud/account-alerts.tsx", import.meta.url), "utf8");
+  assert.equal(alerts.match(/<SignInChangeAlerts /g)?.length, 1, "the shared stack shows it, once");
   for (const f of ["cloud-bar.tsx", "my-devices.tsx", "account-settings.tsx"]) {
     const src = readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8");
-    assert.equal(src.match(/<SignInChangeAlerts /g)?.length, 1, f);
+    assert.equal(src.match(/<AccountAlerts\b/g)?.length, 1, f);
   }
 });
 

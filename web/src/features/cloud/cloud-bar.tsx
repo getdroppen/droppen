@@ -25,12 +25,11 @@ import {
   useRelayPool,
 } from "./context";
 import { useCloudMode } from "@/features/machines/copy-mode";
-import { ChainAlerts, PendingRecoveryBanner } from "./devices";
+import { AccountAlerts } from "./account-alerts";
 import { AccountButton, DevicesButton, openAccount, openMyDevices, removePasskeyThere } from "./my-devices";
-import { PendingPasskeyBanner } from "./passkey-join";
 import { cityName, noticeText } from "./relays";
 import { BarMachineName } from "./machine-name";
-import { RegisteredDeviceAlerts, SignInChangeAlerts, storageFullText, useMe } from "./plan";
+import { storageFullText, useMe } from "./plan";
 import { CompatBadge } from "./browser-support";
 import { storageView } from "@/lib/hub/plan";
 import { SignOutChoice } from "./sign-out-dialog";
@@ -166,11 +165,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
           )}
         </SignOutChoice>
       </div>
-      <PendingPasskeyBanner account={shell.account} link={shell.link} onRemovePasskey={removePasskeyThere} />
-      <PendingRecoveryBanner account={shell.account} link={shell.link} />
-      <ChainAlerts account={shell.account} link={shell.link} />
-      <RegisteredDeviceAlerts account={shell.account} link={shell.link} />
-      <SignInChangeAlerts account={shell.account} link={shell.link} onReview={() => openAccount()} />
+      <AccountAlerts account={shell.account} link={shell.link} where="bar" onRemovePasskey={removePasskeyThere} onReview={() => openAccount()} />
       <PushMovedNotice />
       {keyState === "behind" && <OldKeyNotice onRetry={() => machine.recheckKey(true)} />}
       {channel === "error" && machine.channel.blocked && <BlockedNotice kind={machine.channel.blocked} />}

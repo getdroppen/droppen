@@ -30,11 +30,10 @@ import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { unreadAcross } from "@/features/machines/needs-you";
 import { UnreadSignals } from "@/features/machines/unread-signals";
 import { ACCOUNT_PATH, askedPlace, askRemoval, DEVICES_PATH, isAccountPath } from "./devices-route";
-import { AccountNotices, ChainAlerts, DevicesPanel, PendingRecoveryBanner, useAccountVersion } from "./devices";
-import { PendingPasskeyBanner } from "./passkey-join";
-import { VerifyEmailBanner } from "./email-verify";
+import { AccountAlerts } from "./account-alerts";
+import { DevicesPanel, useAccountVersion } from "./devices";
 import { hubShell, useShellMachines } from "@/features/machines/shells";
-import { PlanBanner, RegisteredDeviceAlerts, SignInChangeAlerts, useMe } from "./plan";
+import { useMe } from "./plan";
 import { SignOutChoice } from "./sign-out-dialog";
 import { CloudPage, quiet } from "./ui";
 
@@ -199,14 +198,7 @@ function MyDevicesFrame({ account, link, children }: { account: CloudAccount; li
       }
     >
       <UnreadSignals unread={unreadAcross(lists)} />
-      <PendingPasskeyBanner account={account} link={link} onRemovePasskey={removePasskeyThere} />
-      <PendingRecoveryBanner account={account} link={link} />
-      <ChainAlerts account={account} link={link} />
-      <RegisteredDeviceAlerts account={account} link={link} />
-      <SignInChangeAlerts account={account} link={link} onReview={() => openAccount()} />
-      <VerifyEmailBanner account={account} />
-      <PlanBanner account={account} link={link} />
-      <AccountNotices account={account} link={link} />
+      <AccountAlerts account={account} link={link} where="devices" onRemovePasskey={removePasskeyThere} onReview={() => openAccount()} />
       {children}
     </CloudPage>
   );
