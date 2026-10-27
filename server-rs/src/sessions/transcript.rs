@@ -634,12 +634,14 @@ impl SubagentFilesExt for Path {
 /// "no such agent" for work that is sitting right there, silently skipping a
 /// whole class of children. One level of subdirectory is what the CLI uses and what this searches.
 pub async fn find_subagent_file(session_file: &Path, agent_id: &str) -> Option<PathBuf> {
-    session_file
+    let file = session_file
         .subagent_files()
         .await
         .into_iter()
-        .find(|file| file.kind == SubagentFileKind::Transcript && file.agent_id == agent_id)
-        .map(|file| file.path)
+        .find(|file| file.kind == SubagentFileKind::Transcript && file.agent_id == agent_id)?;
+    // A dangling link is not a transcript: answering with its path would turn
+    // the route's 404 into an empty 200.
+    tokio::fs::metadata(&file.path).await.ok().map(|_| file.path)
 }
 
 impl SubagentMeta {
@@ -726,7 +728,10 @@ pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
                 entry.absorb(meta);
             }
             SubagentFileKind::Transcript => {
-                let stat = tokio::fs::metadata(&path).await.ok();
+                // Not following the link: the entry names the agent's own file,
+                // and a symlink there is described by its own stat, as a
+                // directory listing describes it.
+                let stat = tokio::fs::symlink_metadata(&path).await.ok();
                 let entry = found.entry(agent_id.clone()).or_insert_with(|| AgentEntry::new(&agent_id));
                 entry.has_transcript = true;
                 entry.transcript_path = Some(path);
@@ -1899,6 +1904,59 @@ mod tests {
         let result = items.iter().find(|item| item.kind == ItemKind::ToolResult).expect("the result");
         assert_eq!(call.agent.as_deref(), Some("abc"));
         assert_eq!(result.agent.as_deref(), Some("abc"), "the verdict is the subagent's too");
+    }
+
+    /// A workflow's agent is filed under `subagents/workflows/`, and its meta
+    /// still names the `Task` call that spawned it. The call has to carry the
+    /// mark, or the work behind it has no entry point from the session.
+    #[tokio::test]
+    async fn a_workflow_agents_call_is_tagged_from_its_nested_meta() {
+        let (dir, path) = write_jsonl(&[
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_wf","name":"Task","input":{"description":"explore"}}]}}"#,
+        ]);
+        let nested = subagent_dir(&path).join("workflows");
+        std::fs::create_dir_all(&nested).expect("workflows dir");
+        std::fs::write(
+            nested.join("agent-wf1.meta.json"),
+            serde_json::json!({"toolUseId": "toolu_wf", "agentType": "Explore", "spawnDepth": 1}).to_string(),
+        )
+        .expect("meta");
+        std::fs::write(
+            nested.join("agent-wf1.jsonl"),
+            "{\"type\":\"assistant\",\"isSidechain\":true,\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"found it\"}]}}\n",
+        )
+        .expect("transcript");
+
+        let items = parse_claude_transcript(&crate::sessions::Paths::new(dir.path().to_path_buf()), &path, false)
+            .await
+            .expect("parse");
+        let call = items.iter().find(|item| item.kind == ItemKind::ToolUse).expect("the call");
+        assert_eq!(call.agent.as_deref(), Some("wf1"), "the nested meta tags the call that spawned it");
+    }
+
+    /// A dangling `agent-*.jsonl` link names no transcript. Answering with its
+    /// path would serve an empty transcript where the route must say 404.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_broken_agent_link_is_not_a_transcript() {
+        let (dir, path) = write_jsonl(&[]);
+        let agents = subagent_dir(&path);
+        std::fs::create_dir_all(&agents).expect("subagents dir");
+        std::os::unix::fs::symlink(agents.join("missing.jsonl"), agents.join("agent-gone.jsonl")).expect("symlink");
+
+        assert!(
+            find_subagent_file(&path, "gone").await.is_none(),
+            "a link whose target is absent is not an agent transcript"
+        );
+        let listed = list_session_agents(&path).await;
+        let entry = listed.iter().find(|agent| agent.agent_id == "gone").expect("the entry is listed");
+        assert!(entry.has_transcript);
+        assert_eq!(
+            entry.bytes,
+            agents.join("missing.jsonl").as_os_str().len() as u64,
+            "the link's own size, as the directory listing reports it"
+        );
+        let _ = dir;
     }
 
     /// A grandchild's `toolUseId` names a call in its *parent agent's*
