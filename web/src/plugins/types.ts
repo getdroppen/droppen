@@ -23,10 +23,10 @@ export interface PluginStatus {
 /** One thing the host wants the user to see about a plugin. */
 export interface PluginNotice {
   id: string;
-  /** `import`, `writeBack`, `reconcile`, `storeReset`. */
+  /** `storeReset`. */
   kind: string;
   text: string;
   at: string;
-  /** A problem still there (a failing write-back) is not: it goes when fixed. */
+  /** A store reset is not: it goes when the user clears its file. */
   dismissible: boolean;
 }

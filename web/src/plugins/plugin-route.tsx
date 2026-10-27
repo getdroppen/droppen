@@ -3,9 +3,8 @@
  * `RouteContribution.path` prefix of the rest of the path.
  */
 import { localize } from "@droppen/plugin-sdk";
-import { useMutation } from "@tanstack/react-query";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { Puzzle, X } from "lucide-react";
+import { Puzzle } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
@@ -14,7 +13,6 @@ import { hostLocale } from "./host";
 import { usePluginRegistry } from "./registry";
 import type { PluginStatus } from "./types";
 import { matchRoute } from "./routing";
-import { useApi } from "@/lib/machines/context";
 
 /** A plugin page that cannot be shown, and why. */
 export function PluginUnavailable({ message, detail }: { message: string; detail?: string }) {
@@ -36,22 +34,11 @@ export function PluginUnavailable({ message, detail }: { message: string; detail
 }
 
 /**
- * A plugin's notices (a failing Excel write-back, a merged ledger), above its
- * own page where they cannot be missed. Each that may be dismissed is, one by
- * one; a problem still there stays until it is fixed.
+ * A plugin's notices (a store that had to be reset), above its own page where
+ * they cannot be missed. A problem still there stays until it is fixed.
  */
 export function PluginNotices({ status }: { status: PluginStatus }) {
-  const api = useApi();
   const { t } = useTranslation();
-  const registry = usePluginRegistry();
-  const dismiss = useMutation({
-    mutationFn: async (notice: string) => {
-      const res = await api.DELETE("/api/plugins/{id}/notices/{notice}", { params: { path: { id: status.id, notice } } });
-      if (!res.data) throw new Error((res.error as { message?: string } | undefined)?.message ?? `HTTP ${res.response.status}`);
-      return res.data as PluginStatus;
-    },
-    onSuccess: (next) => registry.adopt(next),
-  });
   const notices = status.notices ?? (status.notice ? [{ id: "", kind: "", text: status.notice, at: "", dismissible: false }] : []);
   if (!notices.length) return null;
   return (
@@ -59,20 +46,7 @@ export function PluginNotices({ status }: { status: PluginStatus }) {
       {notices.map((notice) => (
         <div key={notice.id || notice.text} className="flex items-start gap-2 border-b border-border px-3 py-2 text-xs text-danger last:border-b-0">
           <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{notice.text}</span>
-          {notice.dismissible ? (
-            <button
-              type="button"
-              onClick={() => dismiss.mutate(notice.id)}
-              disabled={dismiss.isPending}
-              title={t("got it")}
-              aria-label={t("got it")}
-              className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
-            >
-              <X className="size-3.5" />
-            </button>
-          ) : (
-            <span className="shrink-0 font-mono text-2xs text-faint">{t("until fixed")}</span>
-          )}
+          <span className="shrink-0 font-mono text-2xs text-faint">{t("until fixed")}</span>
         </div>
       ))}
     </div>

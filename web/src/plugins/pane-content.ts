@@ -3,11 +3,9 @@
  *
  * A pane that shows plugin content is `{kind: "plugin", plugin, pane, state?}`.
  * Layouts saved before plugins existed hold `{kind: "tasks"}`; that is read as
- * the tasks plugin's checklist pane, forever. Until the release that stops
- * writing back to the old Excel ledger, the checklist is also *saved* in the
- * old form, so a layout saved now still means something to the previous
- * binary a rollback would start (whose sanitizer turns unknown kinds into an
- * empty picker).
+ * the tasks plugin's checklist pane, forever. The checklist is also *saved* in
+ * the old form, so a layout saved now still means something to a previous
+ * binary (whose sanitizer turns unknown kinds into an empty picker).
  */
 import type { PaneState } from "@droppen/plugin-sdk";
 
