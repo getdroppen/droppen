@@ -722,14 +722,12 @@ export class HubShell implements AppShell {
     globalThis.addEventListener?.("popstate", popped);
     this.offs.push(() => globalThis.removeEventListener?.("popstate", popped));
     // The main device until the hub says the account's: the one this browser
-    // remembers (its copy of the account's), else — upgrading from a build
-    // where the home followed the device in view — the one last in view, so
-    // the screens and plain addresses of before open where they did; else,
-    // on a browser that remembers neither, the account's first device that
-    // runs AI, in the chain's order (§6.5): the same on every browser, not
-    // whichever happens to be opened first.
+    // remembers (its copy of the account's); else, on a browser that
+    // remembers none, the account's first device that runs AI, in the
+    // chain's order (§6.5): the same on every browser, not whichever happens
+    // to be opened first.
     const account = this.opts.account.account;
-    const remembered = [mainMachine(account), selectedMachine(account)].find((key): key is string => !!key && this.held.has(key)) ?? null;
+    const remembered = mainMachine(account);
     this.fresh = remembered === null;
     const main = remembered ?? this.active().find((key) => this.held.has(key)) ?? null;
     if (main) this.moveMain(main, remembered === null);

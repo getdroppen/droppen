@@ -268,10 +268,10 @@ test("the chain gaining a machine opens it; losing the one in view goes back to 
   const { link, account, shell } = world([{ id: "m-a" }, { id: "m-b" }]);
   link.set("m-a", "offline");
   link.set("m-b", "offline");
-  storage.setItem("rh.hub.machine.a-1", "m-b");
+  storage.setItem("rh.hub.home.a-1", "m-b");
   shell.start();
   t.after(() => shell.stop());
-  assert.equal(shell.focus.get(), "m-b", "the machine last in view, brought back");
+  assert.equal(shell.focus.get(), "m-b", "the main device, brought back");
   assert.equal(homeMachine(), "m-b");
 
   const disposed: string[] = [];
@@ -622,9 +622,9 @@ test("「我的设备」 is /devices: the app's address is kept to go back to, a
   // `/devices` opens on 「我的设备」 even with a machine remembered from last time.
   place.pathname = "/devices";
   const second = world([{ id: "m-a" }]);
-  storage.setItem("rh.hub.machine.a-1", "m-a");
+  storage.setItem("rh.hub.home.a-1", "m-a");
   second.shell.start();
-  assert.equal(mainMachine("a-1"), "m-a", "upgrading: the device last in view becomes the main device");
+  assert.equal(mainMachine("a-1"), "m-a", "the main device, remembered by this browser");
   t.after(() => second.shell.stop());
   assert.equal(second.shell.focus.get(), null);
   assert.equal(place.pathname, "/devices");
@@ -636,8 +636,8 @@ test("the account's settings are /account, a page of the shell like 「我的设
   const { place, back } = addressBar(t);
   // Opened at /account (a reload, a link), with a device remembered: the page, not the device.
   place.pathname = "/account";
-  storage.setItem("rh.hub.machine.a-1", "m-a");
   const { shell } = world([{ id: "m-a" }]);
+  storage.setItem("rh.hub.home.a-1", "m-a");
   shell.start();
   t.after(() => shell.stop());
   assert.equal(shell.focus.get(), null);
