@@ -106,19 +106,14 @@ export function DevicesButton() {
 export interface MyDevicesProps {
   account: CloudAccount;
   link: HubLink;
-  origin: string;
-  /** Open a device that runs AI (the app on it). */
-  onSelect?: (machine: string) => void;
-  /** Open a device that runs AI on one of its pages (a session, its terminals). */
-  onOpenAt?: (machine: string, path: string) => void;
 }
 
-export function MyDevicesScreen({ account, link, origin, onSelect, onOpenAt }: MyDevicesProps) {
+export function MyDevicesScreen({ account, link }: MyDevicesProps) {
   useAccountVersion(account);
   useAskedPlace();
   return (
-    <MyDevicesFrame account={account} link={link} onBack={onSelect}>
-      <DevicesPanel account={account} link={link} origin={origin} onSelect={onSelect} onOpenAt={onOpenAt} />
+    <MyDevicesFrame account={account} link={link}>
+      <DevicesPanel account={account} link={link} />
     </MyDevicesFrame>
   );
 }
@@ -161,7 +156,7 @@ export function AccountName({ account, link }: { account: CloudAccount; link: Hu
 }
 
 /** The page around the list: the bar's account and way back, the account's alerts and notices. */
-function MyDevicesFrame({ account, link, onBack, children }: { account: CloudAccount; link: HubLink; onBack?: (machine: string) => void; children: ReactNode }) {
+function MyDevicesFrame({ account, link, children }: { account: CloudAccount; link: HubLink; children: ReactNode }) {
   const { t } = useTranslation();
   // The tab and the badge: only devices that are up (`unreadAcross`), read off their copies.
   const lists = useDeviceSessions();
@@ -181,7 +176,7 @@ function MyDevicesFrame({ account, link, onBack, children }: { account: CloudAcc
               className={cn(quiet, "h-7 min-w-0 px-2")}
               title={t("back to {{name}}", { name: backName })}
               aria-label={t("back to {{name}}", { name: backName })}
-              onClick={() => (onBack ? onBack(back) : shell?.select(back))}
+              onClick={() => shell?.select(back)}
             >
               <ArrowLeft className="size-3.5 shrink-0" />
               <span className="max-w-40 truncate max-sm:hidden">{backName}</span>

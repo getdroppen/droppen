@@ -207,12 +207,6 @@ function ResendLine({ state }: { state: ResendState | undefined }) {
 export interface DevicesPanelProps {
   account: CloudAccount;
   link: HubLink;
-  /** The hub's origin, for the 「添加可运行 AI 的设备」 guide's one-time code. */
-  origin?: string;
-  /** Open a device that runs AI (the app on it). */
-  onSelect?: (machine: string) => void;
-  /** Open a device that runs AI on one of its pages (a session, its terminals). */
-  onOpenAt?: (machine: string, path: string) => void;
 }
 
 /**
@@ -220,7 +214,7 @@ export interface DevicesPanelProps {
  * of the account as one list — the ones that run AI among them, each with
  * the way into it — and what can be done with them.
  */
-export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: DevicesPanelProps) {
+export function DevicesPanel({ account, link }: DevicesPanelProps) {
   const { t } = useTranslation();
   useAccountVersion(account);
   usePresenceVersion(link);
@@ -312,8 +306,8 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
     }
   };
   const courier = () => shellCourier(link, account);
-  const open = (id: string) => (onSelect ? onSelect(id) : shell?.select(id));
-  const openAt = (id: string, path: string) => (onOpenAt ? onOpenAt(id, path) : shell?.openAt(id, path));
+  const open = (id: string) => shell?.select(id);
+  const openAt = (id: string, path: string) => shell?.openAt(id, path);
   const listOf = new Map(lists.map((l) => [l.machine, l]));
   const view = (d: DeviceRecord): DeviceRowView => {
     const id = d.info.id;
@@ -624,7 +618,7 @@ export function DevicesPanel({ account, link, origin, onSelect, onOpenAt }: Devi
           <AddComputer
             account={account}
             link={link}
-            origin={origin ?? hubOrigin() ?? ""}
+            origin={hubOrigin() ?? ""}
             onDone={() => setSection({ kind: "list" })}
             pairWith={pairWith}
             initialMode={section.code ? "code" : "guide"}

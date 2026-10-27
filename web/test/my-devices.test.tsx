@@ -79,7 +79,7 @@ function account(hosts: number, others = 1) {
 function shown(acct: ReturnType<typeof account>) {
   let out: React.ReactElement | null = null;
   function Probe() {
-    out = MyDevicesScreen({ account: acct as never, link: {} as never, origin: "wss://hub.example" }) as React.ReactElement;
+    out = MyDevicesScreen({ account: acct as never, link: {} as never }) as React.ReactElement;
     return null;
   }
   draw(<Probe />);
@@ -92,7 +92,12 @@ test("one page whatever the account has: the list of every device, devices that 
   for (const acct of [account(2, 3), account(0, 2)]) {
     const page = shown(acct);
     assert.equal(page.body, DevicesPanel);
-    assert.equal(page.props.origin, "wss://hub.example", "the guide's one-time code needs the hub");
+    assert.deepEqual(Object.keys(page.props).sort(), ["account", "link"], "the panel reads the hub origin itself (hubOrigin())");
+    assert.match(
+      readFileSync(new URL("../src/features/cloud/devices.tsx", import.meta.url), "utf8"),
+      /origin=\{hubOrigin\(\) \?\? ""\}/,
+      "the guide's one-time code takes the hub from the page's marker",
+    );
   }
   // The same with a link of the old filter in the address.
   place.search = "?view=ai";

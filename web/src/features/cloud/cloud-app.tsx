@@ -475,7 +475,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     case "shell":
       if (onLink) return <LinkFlow account={phase.account} link={phase.link} />;
       return (
-        <ShellView shell={phase.shell} origin={origin}>
+        <ShellView shell={phase.shell}>
           {children}
         </ShellView>
       );
@@ -1299,12 +1299,12 @@ export function GenesisScreen({ account, onDone }: { account: CloudAccount; onDo
  * a session or a terminal picked on the dashboard opens on its own machine
  * (`HubShell.openAt`).
  */
-function ShellView({ shell, origin, children }: { shell: HubShell; origin: string; children: ReactNode }) {
+function ShellView({ shell, children }: { shell: HubShell; children: ReactNode }) {
   const focus = useStore(shell.focus);
   const pathname = usePathname();
   if (focus !== null) return <>{children}</>;
   // The account's settings: the other page with no device in view (`devices-route.ts`).
   if (isAccountPath(pathname)) return <AccountScreen account={shell.account} link={shell.link} />;
-  return <MyDevicesScreen account={shell.account} link={shell.link} origin={origin} onSelect={(id) => shell.select(id)} onOpenAt={(id, path) => shell.openAt(id, path)} />;
+  return <MyDevicesScreen account={shell.account} link={shell.link} />;
 }
 
