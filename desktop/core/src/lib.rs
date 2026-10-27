@@ -72,7 +72,3 @@ pub const BUNDLE_ID: &str = identity::THIS.bundle_id;
 /// The server binary's name, as Tauri bundles it beside the app's own
 /// executable (`Contents/MacOS/remote-hand-server`).
 pub const SIDECAR_NAME: &str = "remote-hand-server";
-
-/// The `localStorage` key the web app keeps its bearer token under
-/// (`web/src/lib/auth.ts`, `TOKEN_KEY`).
-pub const WEB_TOKEN_KEY: &str = "rh.auth.token";

@@ -24,7 +24,6 @@
 //! | `js <code>` | runs `code` in the main window's page (for setting up a case) |
 //! | `probe` | reports the [`probe`]'s reading of the page now, without a page load (the first-run guide's steps are one page) |
 //! | `update-check` | what *Check for Updates…* does: an asked-for check |
-//! | `update-menu` | chooses the update menu item, whatever it says now |
 //! | `update-notes` | chooses *Release Notes* |
 //! | `menu-snapshot <file.png>` | opens the menu-bar menu, writes it to a PNG, closes it |
 //!
@@ -190,13 +189,8 @@ fn run<R: Runtime>(app: &AppHandle<R>, reply: &Reply, command: &str) {
             crate::updater::check(app, true);
             reply.send(json!({ "command": "update-check", "ok": true }));
         }
-        "update-menu" | "update-notes" => {
-            let id = if verb == "update-menu" {
-                crate::updater::MENU_ID
-            } else {
-                crate::updater::NOTES_ID
-            };
-            crate::updater::menu_chosen(app, id);
+        "update-notes" => {
+            crate::updater::menu_chosen(app, crate::updater::NOTES_ID);
             reply.send(json!({ "command": verb, "ok": true }));
         }
         "menu-snapshot" => menu_snapshot(app, reply, PathBuf::from(argument.trim())),

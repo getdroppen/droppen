@@ -44,9 +44,6 @@ pub const RELEASES_REPO: &str = "getdroppen/droppen";
 /// `src-tauri/tauri.conf.json`, `plugins.updater.endpoints`).
 pub const ENDPOINT: &str = "https://github.com/getdroppen/droppen/releases/latest/download/latest.json";
 
-/// The manifest's file name on a release.
-pub const MANIFEST: &str = "latest.json";
-
 /// The update archive's file name on a release.
 pub const ARCHIVE: &str = "Droppen.app.tar.gz";
 

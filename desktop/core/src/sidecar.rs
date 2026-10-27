@@ -35,7 +35,6 @@
 //! but only if the process with that pid is still running that same executable,
 //! so a recycled pid is never signalled.
 
-use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -584,11 +583,6 @@ pub fn plist_bundle_id(plist: &str) -> Option<String> {
     let start = after.find("<string>")? + "<string>".len();
     let end = after[start..].find("</string>")?;
     Some(after[start..start + end].trim().to_string())
-}
-
-/// Open the server log for a one-off command's output (`user …`).
-pub fn log_file(path: &Path) -> io::Result<File> {
-    crate::logging::open_append(path)
 }
 
 #[cfg(test)]
