@@ -150,12 +150,13 @@ pub struct UnsubscribeBody {
 /// endpoint would only ever be a mistake or an attempt to make this server post
 /// to something on its own host. The send-path integration tests set it to reach
 /// a loopback listener over a real socket, and it is also useful while diagnosing
-/// locally — but it is never on unless a deployment says so.
+/// locally — but it is never on unless a deployment says so in so many words:
+/// `1`, `true`, `yes` or `on` (any case), never `0`, `false` or an empty value.
 const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_PUSH_ALLOW_INSECURE_ENDPOINT";
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
-    crate::env::var(ALLOW_INSECURE_ENDPOINT_ENV).is_some()
+    crate::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
 }
 
 /// Whether an endpoint is somewhere this server is willing to send to.
@@ -722,6 +723,18 @@ mod tests {
         assert!(!endpoint_is_acceptable("file:///etc/passwd"));
         assert!(!endpoint_is_acceptable("not a url"));
         assert!(!endpoint_is_acceptable(""));
+    }
+
+    #[test]
+    fn a_switch_set_to_off_is_off() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        for value in ["0", "false", "", "no", "off"] {
+            std::env::set_var(ALLOW_INSECURE_ENDPOINT_ENV, value);
+            assert!(!insecure_endpoints_allowed(), "{value:?}");
+            assert!(!endpoint_is_acceptable("http://127.0.0.1:9999/push"), "{value:?}");
+        }
+        std::env::remove_var(ALLOW_INSECURE_ENDPOINT_ENV);
+        assert!(!insecure_endpoints_allowed(), "unset");
     }
 
     #[test]

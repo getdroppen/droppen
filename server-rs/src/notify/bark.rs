@@ -38,7 +38,7 @@ const DEFAULT_SERVER: &str = "https://api.day.app";
 /// notification endpoints, and a deployment that wants one and not the other
 /// should be able to say so. Off in production, where a plain-HTTP endpoint
 /// could only be a mistake or an attempt to make this server post to something
-/// on its own host.
+/// on its own host; on only for `1`, `true`, `yes` or `on` (any case).
 pub const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_NOTIFY_ALLOW_INSECURE_ENDPOINT";
 
 /// One shared client, for [`crate::push`]'s reason: building one means building
@@ -60,7 +60,7 @@ static CLIENT: std::sync::LazyLock<Option<reqwest::Client>> = std::sync::LazyLoc
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
-    crate::env::var(ALLOW_INSECURE_ENDPOINT_ENV).is_some()
+    crate::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
 }
 
 /// What the user typed, turned into the URL a nudge is POSTed to.
@@ -237,6 +237,10 @@ pub async fn send(endpoint: &str, nudge: &Nudge) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::notify::Level;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that read or mutate the process-global opt-in.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn every_shape_a_person_has_in_their_clipboard_normalises() {
@@ -302,6 +306,7 @@ mod tests {
 
     #[test]
     fn plain_http_is_refused_unless_it_is_loopback_and_opted_in() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         assert!(endpoint_is_acceptable("https://api.day.app/AbCd1234"));
         assert!(!endpoint_is_acceptable("ftp://api.day.app/AbCd1234"));
         assert!(!endpoint_is_acceptable("nonsense"));
@@ -314,6 +319,18 @@ mod tests {
             !endpoint_is_acceptable("http://bark.example.com/AbCd1234"),
             "a remote plain-http endpoint is never acceptable"
         );
+    }
+
+    #[test]
+    fn a_switch_set_to_off_is_off() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        for value in ["0", "false", "", "no", "off"] {
+            std::env::set_var(ALLOW_INSECURE_ENDPOINT_ENV, value);
+            assert!(!insecure_endpoints_allowed(), "{value:?}");
+            assert!(!endpoint_is_acceptable("http://127.0.0.1:9331/AbCd1234"), "{value:?}");
+        }
+        std::env::remove_var(ALLOW_INSECURE_ENDPOINT_ENV);
+        assert!(!insecure_endpoints_allowed(), "unset");
     }
 
     #[test]

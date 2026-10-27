@@ -178,6 +178,16 @@ pub fn var_or_empty(name: &str) -> Option<String> {
     read(name, Empty::Set)
 }
 
+/// A switch read through [`var`]: on only for an explicit `1`, `true`, `yes`
+/// or `on` (any case), and off for everything else — `0`, `false`, any other
+/// word, an empty value and an unset one alike. Being set is not being on.
+pub fn flag(name: &str) -> bool {
+    matches!(
+        var(name).map(|value| value.to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 /// What an empty value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Empty {
@@ -368,6 +378,23 @@ mod tests {
             (Some(String::new()), Some(OldName::Overridden("RH_AGENT_DIRECT_STUN")))
         );
         assert_eq!(lookup_with(&[], stun, Empty::Set), (None, None));
+    }
+
+    #[test]
+    fn a_switch_is_on_only_for_an_explicit_yes() {
+        const NAME: &str = "DROPPEN_TEST_FLAG";
+        std::env::remove_var(NAME);
+        assert!(!flag(NAME), "unset is off");
+        for value in ["1", "true", "TRUE", " yes ", "on", "On"] {
+            std::env::set_var(NAME, value);
+            assert!(flag(NAME), "{value:?} is on");
+        }
+        for value in ["", "0", "false", "FALSE", "off", "no", "enabled"] {
+            std::env::set_var(NAME, value);
+            assert!(!flag(NAME), "{value:?} is off");
+        }
+        std::env::remove_var(NAME);
+        assert!(!flag(NAME), "unset again is off");
     }
 
     #[test]
