@@ -164,57 +164,67 @@ pub struct Prefs {
     pub subagent_tree: SubagentTree,
 }
 
-/// One field of a parsed preferences file, or its default.
-///
-/// Going through `serde_json::from_value` keeps the recognised spellings in the
-/// enum's serde attributes rather than repeating them here, so the wire values
-/// and the fallback rule cannot drift apart.
-fn field<T: DeserializeOwned + Default>(raw: &Value, key: &str) -> T {
-    raw.get(key)
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .unwrap_or_default()
+/// Reading a parsed preferences object.
+trait PrefsValueExt {
+    /// One field of a parsed preferences file, or its default.
+    ///
+    /// Going through `serde_json::from_value` keeps the recognised spellings in
+    /// the enum's serde attributes rather than repeating them here, so the wire
+    /// values and the fallback rule cannot drift apart.
+    fn prefs_field<T: DeserializeOwned + Default>(&self, key: &str) -> T;
+
+    /// Map a parsed preferences file onto [`Prefs`], field by field.
+    ///
+    /// This — not the I/O — is the part with behaviour worth pinning down.
+    fn prefs_from_value(&self) -> Prefs;
 }
 
-/// Map a parsed preferences file onto [`Prefs`], field by field.
-///
-/// Split out from [`read_prefs`] because this — not the I/O — is the part with
-/// behaviour worth pinning down.
-fn prefs_from_value(raw: &Value) -> Prefs {
-    Prefs {
-        session_grouping: field(raw, "sessionGrouping"),
-        composer_send: field(raw, "composerSend"),
-        font_size: field(raw, "fontSize"),
-        language: field(raw, "language"),
-        transcript_style: field(raw, "transcriptStyle"),
-        math: field(raw, "math"),
-        diagrams: field(raw, "diagrams"),
-        subagent_tree: field(raw, "subagentTree"),
+impl PrefsValueExt for Value {
+    fn prefs_field<T: DeserializeOwned + Default>(&self, key: &str) -> T {
+        self.get(key)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    fn prefs_from_value(&self) -> Prefs {
+        Prefs {
+            session_grouping: self.prefs_field("sessionGrouping"),
+            composer_send: self.prefs_field("composerSend"),
+            font_size: self.prefs_field("fontSize"),
+            language: self.prefs_field("language"),
+            transcript_style: self.prefs_field("transcriptStyle"),
+            math: self.prefs_field("math"),
+            diagrams: self.prefs_field("diagrams"),
+            subagent_tree: self.prefs_field("subagentTree"),
+        }
     }
 }
 
-/// The database, with `prefs.json` drained into it if nobody has yet.
-fn store(paths: &Paths) -> std::sync::Arc<crate::db::Db> {
-    let db = crate::db::at(paths.config_db());
-    db.import_once(scope::PREFS, || {
-        // Only string values cross: a field of the wrong JSON type would read as
-        // its default anyway, and importing it would put a value in the table
-        // that nothing can ever parse.
-        let Value::Object(map) = parse_file(paths) else {
-            return Vec::new();
-        };
-        map.into_iter()
-            .filter_map(|(key, value)| Some((key, value.as_str()?.to_string())))
-            .collect()
-    });
-    db
-}
+impl Paths {
+    /// The database, with `prefs.json` drained into it if nobody has yet.
+    fn store(&self) -> std::sync::Arc<crate::db::Db> {
+        let db = crate::db::at(self.config_db());
+        db.import_once(scope::PREFS, || {
+            // Only string values cross: a field of the wrong JSON type would read
+            // as its default anyway, and importing it would put a value in the
+            // table that nothing can ever parse.
+            let Value::Object(map) = self.parse_file() else {
+                return Vec::new();
+            };
+            map.into_iter()
+                .filter_map(|(key, value)| Some((key, value.as_str()?.to_string())))
+                .collect()
+        });
+        db
+    }
 
-/// The file, parsed. Read exactly once per install, by the import.
-fn parse_file(paths: &Paths) -> Value {
-    std::fs::read_to_string(paths.prefs_file())
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or(Value::Null)
+    /// The file, parsed. Read exactly once per install, by the import.
+    fn parse_file(&self) -> Value {
+        std::fs::read_to_string(self.prefs_file())
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(Value::Null)
+    }
 }
 
 /// The stored preferences; an empty store reads as the defaults.
@@ -224,9 +234,9 @@ fn parse_file(paths: &Paths) -> Value {
 /// rule and the recognised spellings in exactly one place — a setting saved by a
 /// newer client and a setting hand-edited into nonsense degrade identically.
 pub async fn read_prefs(paths: &Paths) -> Prefs {
-    let stored = store(paths).kv_scope(scope::PREFS);
+    let stored = paths.store().kv_scope(scope::PREFS);
     let raw = Value::Object(stored.into_iter().map(|(key, value)| (key, Value::String(value))).collect());
-    prefs_from_value(&raw)
+    raw.prefs_from_value()
 }
 
 /// Persist the preferences, in one transaction.
@@ -235,19 +245,27 @@ pub async fn read_prefs(paths: &Paths) -> Prefs {
 /// `500` and that path is part of the contract. Only the encode of a struct of
 /// enums can fail, which is to say nothing can; the commit itself logs rather
 /// than returns, as every other store's does.
-pub async fn write_prefs(paths: &Paths, prefs: &Prefs) -> std::io::Result<()> {
-    let encoded = serde_json::to_value(prefs).map_err(std::io::Error::other)?;
-    let rows: Vec<(String, String)> = encoded
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
-        .collect();
-    // Replaced whole rather than upserted field by field, because that is what
-    // this route means: the client PUTs the entire object, and a setting it
-    // omitted is a setting it wants at its default.
-    store(paths).kv_replace_scope(scope::PREFS, rows.iter().map(|(key, value)| (key.as_str(), value.as_str())));
-    Ok(())
+impl Paths {
+    /// Persist the preferences, in one transaction.
+    ///
+    /// Still `io::Result` because [`put_prefs`] turns its error into the route's
+    /// `500` and that path is part of the contract. Only the encode of a struct
+    /// of enums can fail, which is to say nothing can; the commit itself logs
+    /// rather than returns, as every other store's does.
+    pub async fn write_prefs(&self, prefs: &Prefs) -> std::io::Result<()> {
+        let encoded = serde_json::to_value(prefs).map_err(std::io::Error::other)?;
+        let rows: Vec<(String, String)> = encoded
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+            .collect();
+        // Replaced whole rather than upserted field by field, because that is
+        // what this route means: the client PUTs the entire object, and a
+        // setting it omitted is a setting it wants at its default.
+        self.store().kv_replace_scope(scope::PREFS, rows.iter().map(|(key, value)| (key.as_str(), value.as_str())));
+        Ok(())
+    }
 }
 
 /// The stored UI preferences.
@@ -260,7 +278,7 @@ pub async fn get_prefs(State(state): State<AppState>) -> Json<Prefs> {
 #[api(id = "put_prefs", group = "prefs", summary = "Update UI preferences")]
 pub async fn put_prefs(State(state): State<AppState>, ApiJson(prefs): ApiJson<Prefs>) -> Result<Json<Prefs>, ApiError> {
     let before = read_prefs(state.paths.as_ref()).await;
-    write_prefs(state.paths.as_ref(), &prefs)
+    state.paths.write_prefs(&prefs)
         .await
         .map_err(|error| ApiError::internal(format!("failed to write prefs: {error}")))?;
     // The one setting the server itself acts on: every open list is re-sent,
@@ -294,7 +312,7 @@ mod tests {
 
     #[test]
     fn a_missing_file_reads_as_the_defaults() {
-        let prefs = prefs_from_value(&Value::Null);
+        let prefs = (Value::Null).prefs_from_value();
         assert_eq!(prefs, Prefs::default());
         assert_eq!(prefs.session_grouping, SessionGrouping::Flat);
         assert_eq!(prefs.composer_send, ComposerSend::Enter);
@@ -318,7 +336,7 @@ mod tests {
             "diagrams": "source",
             "subagentTree": "on",
         });
-        let prefs = prefs_from_value(&raw);
+        let prefs = (raw).prefs_from_value();
         assert_eq!(prefs.subagent_tree, SubagentTree::On);
         assert_eq!(prefs.session_grouping, SessionGrouping::Directory);
         assert_eq!(prefs.composer_send, ComposerSend::Modifier);
@@ -337,7 +355,7 @@ mod tests {
             "language": 42,
             "transcriptStyle": "bubble",
         });
-        let prefs = prefs_from_value(&raw);
+        let prefs = (raw).prefs_from_value();
         assert_eq!(prefs.font_size, FontSize::Default, "an unknown size falls back on its own");
         assert_eq!(prefs.language, Language::Auto, "so does a value of the wrong JSON type");
         assert_eq!(prefs.composer_send, ComposerSend::Enter, "an absent field is a default");
@@ -348,7 +366,7 @@ mod tests {
     #[test]
     fn a_file_that_is_not_an_object_reads_as_the_defaults() {
         for raw in [serde_json::json!("nonsense"), serde_json::json!([1, 2]), serde_json::json!(7)] {
-            assert_eq!(prefs_from_value(&raw), Prefs::default());
+            assert_eq!((raw).prefs_from_value(), Prefs::default());
         }
     }
 
@@ -436,7 +454,7 @@ mod tests {
         let (_dir, paths) = paths();
         assert_eq!(read_prefs(&paths).await, Prefs::default(), "an empty store is the defaults");
 
-        write_prefs(&paths, &saved()).await.expect("write");
+        (&paths).write_prefs(&saved()).await.expect("write");
         assert_eq!(read_prefs(&paths).await, saved());
         assert!(!paths.prefs_file().exists(), "no file is created where there was none");
     }
@@ -449,7 +467,7 @@ mod tests {
         std::fs::write(paths.prefs_file(), before).expect("seed");
 
         assert_eq!(read_prefs(&paths).await.language, Language::Ja, "the import read it");
-        write_prefs(&paths, &Prefs::default()).await.expect("write");
+        (&paths).write_prefs(&Prefs::default()).await.expect("write");
         assert_eq!(read_prefs(&paths).await.language, Language::Auto, "and the save took");
         assert_eq!(
             std::fs::read_to_string(paths.prefs_file()).expect("read"),
@@ -492,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn a_setting_is_still_there_through_a_fresh_connection() {
         let (_dir, paths) = paths();
-        write_prefs(&paths, &saved()).await.expect("write");
+        (&paths).write_prefs(&saved()).await.expect("write");
 
         let reopened = crate::db::Db::open(paths.config_db());
         assert_eq!(reopened.kv_scope(scope::PREFS).get("language").map(String::as_str), Some("ja"));
