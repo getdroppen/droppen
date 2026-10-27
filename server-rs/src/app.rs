@@ -255,26 +255,6 @@ impl RemoteHandApp {
                 // servers could be reading is an owner's move, so it sits behind
                 // the same lock every adoption below does.
                 crate::claude_roots::migrate_legacy_managed_root(&paths);
-                // Same shape, one directory over: the layouts and the push
-                // subscriptions used to be shared by every instance and are now
-                // this one's own. A copy, so the file the older build still
-                // reads is left alone. Before the router exists, because the
-                // first `GET /api/screens` must already see what this instance
-                // inherited.
-                //
-                // The desktop app's instance is the exception for the layouts
-                // (`instance::Heir::DesktopApp`), and an app an older build
-                // already gave them to has them taken back here, untouched ones
-                // only (`screens::forget_inherited`).
-                let heir = if state.desktop_app {
-                    crate::instance::Heir::DesktopApp
-                } else {
-                    crate::instance::Heir::CommandLine
-                };
-                crate::instance::migrate_shared_sidecars(&paths, heir);
-                if state.desktop_app {
-                    crate::screens::forget_inherited(&paths).await;
-                }
                 // After the move, so a legacy root's leftovers are swept too:
                 // an adoption (a feature earlier builds had) interrupted between
                 // its copy and its rename left a full transcript nothing will

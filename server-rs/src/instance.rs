@@ -45,9 +45,11 @@
 //! the shims are: what they hold only means something to the server that wrote
 //! it.
 //!
-//! * `screens.json` — a saved layout's leaves name terminal and resident session
-//!   ids that are instance-private, so a shared file shows each instance the
-//!   other's screens full of dead panes, and the last writer erases both.
+//! * `screens.json` — the layouts an older build saved. Their leaves name
+//!   terminal and resident session ids that are instance-private, so a shared
+//!   file showed each instance the other's screens full of dead panes, and the
+//!   last writer erased both. Layouts are rows in the instance database now, and
+//!   the file is not read at all.
 //! * `push.json` — the VAPID keypair and the browser subscriptions granted to
 //!   *one origin*. Sharing it has the second instance signing with the first
 //!   one's identity and delivering its notifications to the first one's PWA.
@@ -57,11 +59,10 @@
 //!   fired by every one of them, so one nine-o'clock task becomes one session per
 //!   instance.
 //!
-//! All three therefore live under `<data>/instances/<name>/`, and
-//! [`migrate_shared_sidecars`] copies the pre-instance file in once for the two
-//! that had one — the schedule was never anything but instance-scoped, so there
-//! is nothing to inherit — except the layouts into the desktop app's instance,
-//! which never shared them ([`Heir::DesktopApp`]).
+//! All three therefore live under `<data>/instances/<name>/`. The upgrade floor
+//! is 0.2.125, whose first boot already copied the shared `screens.json` and
+//! `push.json` into its instance, so the copy hop is gone: an install older than
+//! that does not inherit the shared files.
 //!
 //! `users.json` — the local accounts — joined them, later and for a different
 //! reason. The three above are per-instance because a shared one would be
@@ -168,151 +169,6 @@ pub fn valid_name(name: &str) -> bool {
 /// `the_paths_and_the_instance_dirs_agree_on_the_root` pins that they do not.
 pub fn instance_root(data_dir: &Path, name: &str) -> PathBuf {
     data_dir.join("instances").join(name)
-}
-
-/// What boot did with one sidecar that used to be shared by every instance.
-///
-/// Returned rather than logged-and-forgotten for the same reason
-/// [`crate::claude_roots::LegacyMigration`] is: a test can assert the decision
-/// instead of a directory listing three different outcomes could produce.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidecarMigration {
-    /// This instance already has its own file. The shared one is never read
-    /// again — the two have diverged, and that is the point.
-    AlreadyOurs,
-    /// There was no pre-instance file to inherit.
-    Nothing,
-    /// The shared file's contents are now this instance's own.
-    Copied,
-    /// The copy failed; the instance starts from an empty file.
-    Failed,
-    /// Not inherited on purpose: this instance never shared the file (see
-    /// [`Heir::DesktopApp`]).
-    NotInherited,
-}
-
-/// Who is booting into an instance, as far as the shared sidecars care.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Heir {
-    /// A command-line install (`up`, `serve`, a launchd agent): an instance
-    /// that may well predate the move to per-instance sidecars, and inherits
-    /// what it used to share.
-    CommandLine,
-    /// The Droppen desktop app's own instance ([`crate::desktop_app`]).
-    ///
-    /// It was born long after layouts became per-instance, so the shared
-    /// `screens.json` was never its own: what is in it are the command-line
-    /// instances' screens, whose panes name their terminals and sessions. Copied
-    /// in, they showed up in the app's rail as a row of identical grid icons,
-    /// every pane dead. It does not inherit them.
-    DesktopApp,
-}
-
-/// What [`migrate_shared_sidecars`] did, one field per file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SidecarMigrations {
-    /// `screens.json`.
-    pub screens: SidecarMigration,
-    /// `push.json`.
-    pub push: SidecarMigration,
-}
-
-/// Let this instance inherit the sidecars that used to be shared, once.
-///
-/// `screens.json` and `push.json` lived under the config directory until they
-/// became instance-scoped (see this module's header for why they had to). Every
-/// existing install has its layouts and its subscribed devices in that one file,
-/// and an upgrade that silently emptied both would look like data loss — so the
-/// first boot of each instance takes a copy.
-///
-/// A **copy**, not a move, and this is the whole of the design: the legacy file
-/// is left exactly as it was, so a sibling instance still running an older build
-/// keeps working, and each instance that upgrades inherits the same starting
-/// state and then diverges. Idempotent by construction — the copy only happens
-/// when the instance's own file does not exist, so the second boot finds
-/// [`SidecarMigration::AlreadyOurs`] and touches nothing. Nothing is ever
-/// written back to the legacy path.
-///
-/// `push.json` holds a private key, so it is copied through `open`'s mode at
-/// `0600`, never at the umask's; the same rule [`crate::push::store`] writes it
-/// under in the first place.
-///
-/// The desktop app's instance ([`Heir::DesktopApp`]) takes `push.json` like
-/// any other and leaves `screens.json` where it is.
-///
-/// **Call while holding the instance lock**, like every other owner's move at
-/// boot: it writes into a directory another server would otherwise be reading.
-pub fn migrate_shared_sidecars(paths: &crate::sessions::Paths, heir: Heir) -> SidecarMigrations {
-    SidecarMigrations {
-        screens: match heir {
-            Heir::CommandLine => inherit_sidecar(&paths.legacy_screens_file(), &paths.screens_file(), 0o644, "screens"),
-            Heir::DesktopApp => SidecarMigration::NotInherited,
-        },
-        push: inherit_sidecar(&paths.legacy_push_file(), &paths.push_file(), 0o600, "push"),
-    }
-}
-
-/// Copy one legacy sidecar into the instance directory if — and only if — this
-/// instance has none of its own.
-fn inherit_sidecar(legacy: &Path, owned: &Path, mode: u32, what: &str) -> SidecarMigration {
-    if owned.exists() {
-        return SidecarMigration::AlreadyOurs;
-    }
-    if !legacy.is_file() {
-        return SidecarMigration::Nothing;
-    }
-    match copy_at_mode(legacy, owned, mode) {
-        Ok(()) => {
-            tracing::info!(
-                what,
-                from = %legacy.display(),
-                to = %owned.display(),
-                "{what} is now per-instance; inherited the shared file once (the original is left in place)"
-            );
-            SidecarMigration::Copied
-        }
-        Err(error) => {
-            tracing::error!(
-                what,
-                from = %legacy.display(),
-                to = %owned.display(),
-                %error,
-                "cannot inherit the shared {what} file; this instance starts from an empty one"
-            );
-            SidecarMigration::Failed
-        }
-    }
-}
-
-/// Copy `from` to a *new* `to`, creating it at `mode`.
-///
-/// `create_new` rather than `create`: the caller has already decided the
-/// destination is absent, and if something wrote it in between, that file is
-/// this instance's own and must win over a legacy copy.
-#[cfg(unix)]
-fn copy_at_mode(from: &Path, to: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let body = std::fs::read(from)?;
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    // The mode is given to `open` rather than applied afterwards, so a file that
-    // holds a private key is never world-readable, not even for an instant.
-    let mut handle = std::fs::OpenOptions::new().write(true).create_new(true).mode(mode).open(to)?;
-    handle.write_all(&body)?;
-    handle.flush()
-}
-
-#[cfg(not(unix))]
-fn copy_at_mode(from: &Path, to: &Path, _mode: u32) -> std::io::Result<()> {
-    let body = std::fs::read(from)?;
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut handle = std::fs::OpenOptions::new().write(true).create_new(true).open(to)?;
-    handle.write_all(&body)?;
-    handle.flush()
 }
 
 /// One instance's directory, and every path inside it later phases will want.
@@ -766,136 +622,22 @@ mod tests {
         assert!(matches!(error, LockLost::Replaced { .. }), "{error:?}");
     }
 
-    /// The two sidecars that moved must move for *every* instance: a path that
+    /// The sidecars that moved must move for *every* instance: a path that
     /// still went through the config directory would be the shared file again.
     #[test]
     fn the_moved_sidecars_are_disjoint_between_instances() {
         let a = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "a");
         let b = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "b");
 
-        assert_eq!(a.screens_file(), a.instance_dir().join("screens.json"));
         assert_eq!(a.push_file(), a.instance_dir().join("push.json"));
-        assert_ne!(a.screens_file(), b.screens_file());
         assert_ne!(a.push_file(), b.push_file());
-
-        // The legacy names are the shared ones, and stay that way: they are what
-        // the migration reads and what an older build still writes.
-        assert_eq!(a.legacy_screens_file(), b.legacy_screens_file());
-        assert_eq!(a.legacy_push_file(), b.legacy_push_file());
-        assert_eq!(a.legacy_screens_file(), a.config_dir().join("screens.json"));
+        assert_ne!(a.scheduled_tasks_file(), b.scheduled_tasks_file());
 
         // And the sidecars that are shared by design did not move with them.
         assert_eq!(a.prefs_file(), b.prefs_file());
         assert_eq!(a.titles_file(), b.titles_file());
         assert_eq!(a.seen_file(), b.seen_file());
         assert_eq!(a.archived_file(), b.archived_file());
-    }
-
-    #[test]
-    fn a_shared_sidecar_is_inherited_once_and_then_diverges() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::sessions::Paths::for_instance(home.path().to_path_buf(), "ci-1");
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.legacy_screens_file(), r#"{"version":1,"screens":[{"id":"old"}]}"#).expect("seed screens");
-        std::fs::write(paths.legacy_push_file(), r#"{"vapidPrivate":"k","subscriptions":[]}"#).expect("seed push");
-
-        let done = migrate_shared_sidecars(&paths, Heir::CommandLine);
-        assert_eq!(done.screens, SidecarMigration::Copied);
-        assert_eq!(done.push, SidecarMigration::Copied);
-        assert_eq!(
-            std::fs::read_to_string(paths.screens_file()).expect("screens"),
-            r#"{"version":1,"screens":[{"id":"old"}]}"#,
-            "the instance starts from what the shared file held"
-        );
-        assert_eq!(
-            std::fs::read_to_string(paths.push_file()).expect("push"),
-            r#"{"vapidPrivate":"k","subscriptions":[]}"#
-        );
-        assert!(
-            paths.legacy_screens_file().is_file(),
-            "a copy: an older sibling build still reads the original"
-        );
-        assert!(paths.legacy_push_file().is_file());
-
-        // From here the two files are unrelated. A second boot must not put the
-        // shared file back over what this instance has since written.
-        std::fs::write(paths.screens_file(), r#"{"version":1,"screens":[]}"#).expect("rewrite");
-        std::fs::write(paths.legacy_screens_file(), r#"{"version":1,"screens":[{"id":"newer"}]}"#).expect("sibling writes");
-        let again = migrate_shared_sidecars(&paths, Heir::CommandLine);
-        assert_eq!(again.screens, SidecarMigration::AlreadyOurs);
-        assert_eq!(again.push, SidecarMigration::AlreadyOurs);
-        assert_eq!(
-            std::fs::read_to_string(paths.screens_file()).expect("screens"),
-            r#"{"version":1,"screens":[]}"#,
-            "the instance's own file wins, deleted screens stay deleted"
-        );
-    }
-
-    /// The desktop app's instance never shared `screens.json`: the command-line
-    /// instances' layouts stay theirs, and its rail starts empty.
-    #[test]
-    fn the_desktop_app_does_not_inherit_the_shared_screens() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::sessions::Paths::for_instance(home.path().to_path_buf(), "droppen-app");
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(
-            paths.legacy_screens_file(),
-            r#"{"version":1,"screens":[{"id":"screen-1"},{"id":"screen-2"}]}"#,
-        )
-        .expect("seed screens");
-        std::fs::write(paths.legacy_push_file(), r#"{"vapidPrivate":"k","subscriptions":[]}"#).expect("seed push");
-
-        let done = migrate_shared_sidecars(&paths, Heir::DesktopApp);
-        assert_eq!(done.screens, SidecarMigration::NotInherited);
-        assert!(!paths.screens_file().exists(), "no copy of somebody else's layouts");
-        assert_eq!(done.push, SidecarMigration::Copied, "push.json is inherited as before");
-        assert!(paths.legacy_screens_file().is_file(), "and the shared file is left alone");
-    }
-
-    /// The inherited `push.json` holds the VAPID private key, so the copy must
-    /// land at `0600` — not at whatever the umask happens to allow.
-    #[test]
-    #[cfg(unix)]
-    fn the_inherited_push_file_is_created_already_unreadable() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::sessions::Paths::for_instance(home.path().to_path_buf(), "ci-2");
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.legacy_push_file(), r#"{"vapidPrivate":"k","subscriptions":[]}"#).expect("seed push");
-        // A world-readable original must not become a world-readable copy.
-        std::fs::set_permissions(paths.legacy_push_file(), std::fs::Permissions::from_mode(0o644)).expect("chmod");
-
-        // Pin the umask so this asserts on `open`'s mode rather than on whatever
-        // the machine running the tests happens to default to.
-        // SAFETY: `umask` is always safe to call; the previous value is restored.
-        let previous = unsafe { libc::umask(0o022) };
-        let done = migrate_shared_sidecars(&paths, Heir::CommandLine);
-        // SAFETY: as above.
-        unsafe { libc::umask(previous) };
-
-        assert_eq!(done.push, SidecarMigration::Copied);
-        let mode = std::fs::metadata(paths.push_file()).expect("stat").permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "the key must never be readable by anyone else");
-    }
-
-    #[test]
-    fn an_instance_with_its_own_file_never_reads_the_shared_one() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::sessions::Paths::for_instance(home.path().to_path_buf(), "ci-3");
-        std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::create_dir_all(paths.instance_dir()).expect("instance dir");
-        std::fs::write(paths.legacy_screens_file(), r#"{"version":1,"screens":[{"id":"shared"}]}"#).expect("seed");
-        std::fs::write(paths.screens_file(), r#"{"version":1,"screens":[{"id":"mine"}]}"#).expect("seed");
-
-        let done = migrate_shared_sidecars(&paths, Heir::CommandLine);
-        assert_eq!(done.screens, SidecarMigration::AlreadyOurs);
-        assert_eq!(done.push, SidecarMigration::Nothing, "and nothing to inherit is not a failure");
-        assert_eq!(
-            std::fs::read_to_string(paths.screens_file()).expect("screens"),
-            r#"{"version":1,"screens":[{"id":"mine"}]}"#
-        );
-        assert!(!paths.push_file().exists(), "an absent legacy file leaves an absent one here");
     }
 
     #[test]
