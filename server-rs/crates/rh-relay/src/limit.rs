@@ -218,13 +218,15 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
 
     /// Forget every key there is nothing more to count against — its every
     /// window refilled since its last request, so a new key would answer
-    /// the same — and every key whose last request is [`FORGET_AFTER`] old
+    /// the same — and every key whose last request is `older_than` old
     /// by the next sweep ([`SWEEP_EVERY`]), whatever its windows (one in
     /// debt, after a request that cost more than its window holds): how
-    /// many went. Called every [`SWEEP_EVERY`], no key outlives
-    /// [`FORGET_AFTER`]; a key still counting (not refilled, and asked
-    /// within the day) is never forgotten, so no limit is reset early.
-    pub fn forget_old(&self, now: Instant) -> usize {
+    /// many went. Called every [`SWEEP_EVERY`] with `older_than` at most
+    /// [`FORGET_AFTER`], no key outlives that age; a key still counting
+    /// (not refilled, and asked within it) is never forgotten, so no limit
+    /// is reset early. [`FORGET_AFTER`] is the age when the privacy notice's
+    /// day is the bound, which is every caller in this binary.
+    pub fn forget_old(&self, now: Instant, older_than: Duration) -> usize {
         let mut table = self.table.lock().expect("rate table");
         let before = table.len();
         table.retain(|_, (buckets, last)| {
@@ -232,7 +234,7 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
             if *last > now {
                 return true;
             }
-            let old = now.saturating_duration_since(*last) + SWEEP_EVERY >= FORGET_AFTER;
+            let old = now.saturating_duration_since(*last) + SWEEP_EVERY >= older_than;
             !old && !buckets.iter_mut().all(|b| b.full(now))
         });
         before - table.len()
@@ -323,7 +325,7 @@ mod tests {
         // The same through a table: a sweep with an older clock, then a request.
         let k: Keyed<u32> = Keyed::new(&[(1, Duration::from_secs(20))]);
         k.allow(&1, t + Duration::from_secs(10)).unwrap();
-        assert_eq!(k.forget_old(t), 0, "still counting");
+        assert_eq!(k.forget_old(t, FORGET_AFTER), 0, "still counting");
         assert!(k.allow(&1, t + Duration::from_secs(25)).is_err(), "refilled once, from 10 s");
         assert!(k.allow(&1, t + Duration::from_secs(31)).is_ok());
     }
@@ -350,9 +352,9 @@ mod tests {
         // A minute's window: gone once it refilled, not before.
         let k: Keyed<u32> = Keyed::new(&[(1, minute)]);
         k.allow(&1, t).unwrap();
-        assert_eq!(k.forget_old(t + Duration::from_secs(30)), 0, "still counting");
+        assert_eq!(k.forget_old(t + Duration::from_secs(30), FORGET_AFTER), 0, "still counting");
         assert!(k.allow(&1, t + Duration::from_secs(30)).is_err(), "and still limited");
-        assert_eq!(k.forget_old(t + Duration::from_secs(90)), 1, "refilled: nothing more to count");
+        assert_eq!(k.forget_old(t + Duration::from_secs(90), FORGET_AFTER), 1, "refilled: nothing more to count");
         assert!(k.is_empty());
         // Two windows (the relay's upgrades), a burst spent: gone once both refilled.
         let k: Keyed<u32> = Keyed::new(&[(60, minute), (20, Duration::from_secs(20))]);
@@ -360,29 +362,46 @@ mod tests {
             k.allow(&1, t).unwrap();
         }
         assert!(k.allow(&1, t).is_err(), "the burst is spent");
-        assert_eq!(k.forget_old(t + Duration::from_secs(10)), 0, "still counting");
-        assert_eq!(k.forget_old(t + Duration::from_secs(21)), 1, "both refilled");
+        assert_eq!(k.forget_old(t + Duration::from_secs(10), FORGET_AFTER), 0, "still counting");
+        assert_eq!(k.forget_old(t + Duration::from_secs(21), FORGET_AFTER), 1, "both refilled");
         // A day's window, partly spent: gone once refilled, not before.
         let k: Keyed<u32> = Keyed::new(&[(5, hour), (10, FORGET_AFTER)]);
         for _ in 0..6 {
             k.allow(&1, t).unwrap_or(());
         }
-        assert_eq!(k.forget_old(t + 11 * hour), 0, "five of ten spent: not refilled 11 hours on");
-        assert_eq!(k.forget_old(t + 12 * hour + Duration::from_secs(1)), 1, "refilled");
+        assert_eq!(k.forget_old(t + 11 * hour, FORGET_AFTER), 0, "five of ten spent: not refilled 11 hours on");
+        assert_eq!(k.forget_old(t + 12 * hour + Duration::from_secs(1), FORGET_AFTER), 1, "refilled");
         // In debt, a key would take two days to refill: it goes by a day all
         // the same, at the last sweep before the day is up.
         let k: Keyed<u32> = Keyed::new(&[(1, FORGET_AFTER)]);
         k.allow_n(&1, 2.0, t).unwrap();
-        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY - Duration::from_secs(1)), 0);
-        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY), 1, "a day after its last request, at most");
+        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY - Duration::from_secs(1), FORGET_AFTER), 0);
+        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY, FORGET_AFTER), 1, "a day after its last request, at most");
         // A request since keeps a key; the rest of the table goes.
         let k: Keyed<u32> = Keyed::new(&[(1, FORGET_AFTER)]);
         for i in 0..100 {
             k.allow(&i, t).unwrap();
         }
         let _ = k.allow(&7, t + 12 * hour);
-        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY), 99, "but the one asked since");
+        assert_eq!(k.forget_old(t + FORGET_AFTER - SWEEP_EVERY, FORGET_AFTER), 99, "but the one asked since");
         assert_eq!(k.len(), 1);
+    }
+
+    /// The age a key goes at is the caller's (the hub sweeps its tables with
+    /// its own day): a key still counting is held until that age, then gone
+    /// at the last sweep before it.
+    #[test]
+    fn a_key_goes_at_the_age_the_caller_gives() {
+        let t = Instant::now();
+        let hour = Duration::from_secs(60 * 60);
+        let k: Keyed<u32> = Keyed::new(&[(1, FORGET_AFTER)]);
+        k.allow(&1, t).unwrap();
+        assert_eq!(k.forget_old(t + hour, FORGET_AFTER), 0, "still counting, and within the day");
+        assert_eq!(k.forget_old(t + hour + SWEEP_EVERY, hour), 1, "at the age given, whatever the window");
+        // The idle rule is unchanged: a refilled window goes before the age.
+        let k: Keyed<u32> = Keyed::new(&[(1, Duration::from_secs(60))]);
+        k.allow(&1, t).unwrap();
+        assert_eq!(k.forget_old(t + Duration::from_secs(61), FORGET_AFTER), 1, "refilled long before the day");
     }
 
     #[test]

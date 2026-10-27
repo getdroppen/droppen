@@ -33,7 +33,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::config::{hex, unhex, TrustProxy};
-use crate::limit::{address_key, Keyed};
+use crate::limit::{address_key, Keyed, FORGET_AFTER};
 use crate::server::Server;
 
 /// The per-address limits on what anyone may ask before signing in.
@@ -56,7 +56,7 @@ impl UnauthLimits {
     /// Forget the addresses there is nothing more to count against
     /// ([`Keyed::forget_old`]): how many went.
     pub fn forget_old(&self, now: Instant) -> usize {
-        self.ping.forget_old(now) + self.upgrades.forget_old(now)
+        self.ping.forget_old(now, FORGET_AFTER) + self.upgrades.forget_old(now, FORGET_AFTER)
     }
 }
 
