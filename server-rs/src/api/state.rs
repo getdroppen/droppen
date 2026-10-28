@@ -9,6 +9,7 @@ use gotcha::axum::extract::FromRef;
 
 use super::AppState;
 use crate::http::app_window::AppWindow;
+use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
 use crate::files::FilesState;
@@ -137,6 +138,17 @@ impl FromRef<AppState> for SetupState {
             accounts: state.drive.accounts.clone(),
             paths: state.drive.paths.clone(),
             desktop_app: state.desktop_app,
+        }
+    }
+}
+
+impl FromRef<AppState> for ModelsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            models: state.drive.models.clone(),
+            injections: state.drive.injections.clone(),
+            accounts: state.drive.accounts.clone(),
         }
     }
 }

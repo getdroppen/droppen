@@ -418,7 +418,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::feed::global::routes(router);
     let router = crate::files::FilesState::routes(router);
     let router = crate::media::routes(router);
-    let router = crate::models::routes(router);
+    let router = crate::models::ModelsState::routes(router);
     let router = crate::notify::NotifyState::routes(router);
     let router = crate::plugins::routes::PluginsState::routes(router);
     let router = crate::prefs::PrefsState::routes(router);

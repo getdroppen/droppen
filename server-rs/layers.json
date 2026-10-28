@@ -365,7 +365,6 @@
         "cloud -> api",
         "drive -> api",
         "feed -> api",
-        "models -> api",
         "terminals -> api"
       ]
     },

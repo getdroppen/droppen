@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 
+use gotcha::axum::extract::FromRef;
 use gotcha::axum::http::StatusCode;
 use gotcha::{api, GotchaContext, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
@@ -521,7 +522,7 @@ pub async fn account_start(State(state): State<AppState>, ApiQuery(query): ApiQu
     let state = &state;
     let mut lists = futures_util::stream::iter(inputs.start_order())
         .map(|login| async move {
-            let models = crate::models::model_ids(state, source, login.as_deref()).await;
+            let models = crate::models::model_ids(&crate::models::ModelsState::from_ref(state), source, login.as_deref()).await;
             (login, models)
         })
         .buffered(START_PROBES);
