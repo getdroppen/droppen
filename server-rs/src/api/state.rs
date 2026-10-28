@@ -8,6 +8,7 @@
 use gotcha::axum::extract::FromRef;
 
 use super::AppState;
+use crate::http::app_window::AppWindow;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
 use crate::files::FilesState;
@@ -19,6 +20,15 @@ use crate::schedule::ScheduleState;
 use crate::screens::ScreensState;
 use crate::selfupdate::SelfUpdateState;
 use crate::stats::StatsState;
+
+impl AppState {
+    /// The desktop app's window as this server knows it: the port cell
+    /// [`crate::setup::Setup::set_listen_port`] fills, and `desktop_app`, read
+    /// now.
+    pub fn window(&self) -> AppWindow {
+        AppWindow::new(self.setup.listen_port_cell(), self.desktop_app)
+    }
+}
 
 impl FromRef<AppState> for PluginsState {
     fn from_ref(state: &AppState) -> Self {

@@ -15,7 +15,7 @@
 //!   tests run none of them;
 //! * [`commands`] / [`tasks`] — the whitelisted installs, updates and
 //!   sign-ins, and the terminals they run in, for the desktop app only
-//!   ([`app_caller`]);
+//!   ([`AppWindow::app_caller`](crate::http::app_window::AppWindow::app_caller));
 //! * [`progress`] — where the guide stands, kept here rather than in the
 //!   page, whose origin moves with the port;
 //! * [`folders`] — step 03's folders: recent ones, and a practice folder.
@@ -52,21 +52,17 @@ pub mod runner;
 pub mod shell;
 pub mod tasks;
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gotcha::axum::extract::FromRequestParts;
-use gotcha::axum::http::request::Parts;
-use gotcha::axum::http::{header, StatusCode};
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiRouter, AppState};
-use crate::http::identity::AuthIdentity;
 use crate::db::scope;
+use crate::http::app_window::Caller;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -464,8 +460,9 @@ pub struct Setup {
     /// The last sign-in poll per tool.
     logins: Mutex<tasks::LoginCache>,
     /// The port this server listens on, once it does: what a request from the
-    /// app's own window names as its `Host` and `Origin` ([`app_caller`]).
-    listen_port: OnceLock<u16>,
+    /// app's own window names as its `Host` and `Origin`
+    /// ([`AppWindow`](crate::http::app_window::AppWindow)).
+    listen_port: Arc<OnceLock<u16>>,
 }
 
 impl std::fmt::Debug for Setup {
@@ -506,7 +503,7 @@ impl Setup {
             generation: AtomicU64::new(0),
             tasks: Mutex::new(tasks::Tasks::default()),
             logins: Mutex::new(tasks::LoginCache::new()),
-            listen_port: OnceLock::new(),
+            listen_port: Arc::new(OnceLock::new()),
         })
     }
 
@@ -520,9 +517,10 @@ impl Setup {
         let _ = self.listen_port.set(port);
     }
 
-    /// The port this server listens on, if it has been recorded.
-    pub fn listen_port(&self) -> Option<u16> {
-        self.listen_port.get().copied()
+    /// The cell [`Self::set_listen_port`] fills, for the desktop-window gate
+    /// ([`AppWindow`](crate::http::app_window::AppWindow)) to read the port from.
+    pub fn listen_port_cell(&self) -> Arc<OnceLock<u16>> {
+        self.listen_port.clone()
     }
 
     /// The directories the user adopted, in the order they were adopted, as
@@ -712,106 +710,6 @@ impl Setup {
 
 // -------------------------------------------------------------------- routes
 
-/// Who sent a request and what it says about where it was made: what the
-/// gate on the app-only routes reads ([`app_caller`]).
-///
-/// Annotate the parameter `#[api(skip)]`: it contributes nothing to the
-/// OpenAPI document.
-#[derive(Debug, Clone, Default)]
-pub struct Caller {
-    /// The peer's address, when the listener recorded one (`crate::app`
-    /// serves with connect info; a router driven without a socket has none).
-    pub peer: Option<SocketAddr>,
-    /// Who it is signed in as, if anyone.
-    pub identity: Option<AuthIdentity>,
-    /// Its `Origin` header.
-    pub origin: Option<String>,
-    /// Its `Host` header (or the request target's authority).
-    pub host: Option<String>,
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for Caller {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let text = |name| parts.headers.get(name).and_then(|value: &header::HeaderValue| value.to_str().ok()).map(str::to_string);
-        Ok(Caller {
-            peer: parts
-                .extensions
-                .get::<gotcha::axum::extract::ConnectInfo<SocketAddr>>()
-                .map(|info| info.0),
-            identity: parts.extensions.get::<AuthIdentity>().cloned(),
-            origin: text(header::ORIGIN),
-            host: text(header::HOST).or_else(|| parts.uri.authority().map(|authority| authority.to_string())),
-        })
-    }
-}
-
-/// Whether a request is the desktop app's own window talking to its own
-/// server. Every one of these must hold:
-///
-/// * the app runs this server;
-/// * the peer is this device (loopback);
-/// * the caller is signed in — the app's window always is, with the login the
-///   app owns — and is not a device linked through the Droppen bridge
-///   (`cloud:<device>`, which also arrives over loopback);
-/// * it was addressed to `127.0.0.1:<this server's port>` (`Host`) and, when it
-///   says where it was made (`Origin`), was made by a page at exactly
-///   `http://127.0.0.1:<port>`, the address the app opens its window at.
-///
-/// The last one is what loopback alone cannot tell: a page on another site
-/// whose name was re-pointed at 127.0.0.1 (DNS rebinding) names its own host,
-/// and so does a browser elsewhere reaching this port through a tunnel or a
-/// reverse proxy (`tailscale serve`, `cloudflared`, `ssh -R`), whose requests
-/// arrive over loopback too. `require_origin` is for the routes that act: a
-/// browser always sends `Origin` on a `POST` from a page.
-fn from_app_window(state: &AppState, caller: &Caller, require_origin: bool) -> bool {
-    let Some(port) = state.setup.listen_port() else {
-        return false;
-    };
-    let local = caller.peer.is_some_and(|peer| match peer.ip() {
-        std::net::IpAddr::V4(ip) => ip.is_loopback(),
-        std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(ip.is_loopback(), |ip| ip.is_loopback()),
-    });
-    let signed_in = caller
-        .identity
-        .as_ref()
-        .is_some_and(|identity| !identity.username.starts_with("cloud:"));
-    let own = format!("127.0.0.1:{port}");
-    let addressed_here = caller.host.as_deref() == Some(own.as_str());
-    let made_here = match caller.origin.as_deref() {
-        Some(origin) => origin == format!("http://{own}"),
-        None => !require_origin,
-    };
-    state.desktop_app && local && signed_in && addressed_here && made_here
-}
-
-/// Whether this caller may install and sign in from here — what the tools
-/// report says as `canInstall`. A page's own `GET` carries no `Origin`, so
-/// one is not required here; the routes that act require it ([`app_caller`]).
-pub fn local_app_request(state: &AppState, caller: &Caller) -> bool {
-    from_app_window(state, caller, false)
-}
-
-/// The gate on every route that installs, updates, signs in or rewrites the
-/// `PATH`: `403 {"error":"app_only"}` unless the request is the app's own
-/// window, `Origin` included ([`from_app_window`]).
-///
-/// A browser on another device — a phone, a laptop on the LAN, a device linked
-/// through Droppen, a page reaching this port through a tunnel — must not be
-/// able to start an installer on this one. What this cannot yet tell apart is
-/// the app's window from another browser on the same Mac signed in to the same
-/// server at the same address. The local web access work adds the
-/// app-internal account (`user add --app`, `droppen-app`) the app signs in
-/// with, and once it exists this check also requires that identity.
-pub fn app_caller(state: &AppState, caller: &Caller) -> Result<(), ApiError> {
-    if from_app_window(state, caller, true) {
-        Ok(())
-    } else {
-        Err(ApiError::new(StatusCode::FORBIDDEN, "app_only"))
-    }
-}
-
 /// The tool a path segment names, or `400 {"error":"unknown_tool"}`.
 fn tool_of(raw: &str) -> Result<ToolId, ApiError> {
     ToolId::parse(raw).ok_or_else(|| ApiError::bad_request("unknown_tool"))
@@ -820,7 +718,7 @@ fn tool_of(raw: &str) -> Result<ToolId, ApiError> {
 /// Which AI tools this device has, and whether each is ready.
 #[api(id = "setup_tools", group = "setup", summary = "Report which AI tools are ready")]
 pub async fn tools_report(State(state): State<AppState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
-    let can_install = local_app_request(&state, &caller);
+    let can_install = state.window().local_app_request(&caller);
     Json(state.setup.report(&state, can_install).await)
 }
 
@@ -835,7 +733,7 @@ pub async fn rescan_tools(
     #[api(skip)] caller: Caller,
     ApiJson(body): ApiJson<RescanRequest>,
 ) -> Result<Json<ToolsReport>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     state.setup.read_shell(body.patient.0.unwrap_or(false), true).await;
     state.setup.detection(true).await;
     Ok(Json(state.setup.report(&state, true).await))
@@ -863,7 +761,7 @@ pub async fn install_tool(
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Install, &body.method).await
 }
 
@@ -875,7 +773,7 @@ pub async fn update_tool(
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Update, &body.method).await
 }
 
@@ -888,7 +786,7 @@ pub async fn login_tool(
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolLoginRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     let tool = tool_of(&tool)?;
     let entry = commands::find(tool.into(), TaskKind::Login, &body.mode).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
     if entry.method == "apikey" {
@@ -912,7 +810,7 @@ pub async fn install_git(
     State(state): State<AppState>,
     #[api(skip)] caller: Caller,
 ) -> Result<Created<GitInstallStarted>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     let entry = commands::find(commands::CommandTool::Git, TaskKind::Install, "apple").expect("whitelisted");
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
     Ok(Created(GitInstallStarted {
@@ -929,7 +827,7 @@ pub async fn use_tool(
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolUseRequest>,
 ) -> Result<Json<ToolsReport>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     state.setup.adopt(tool_of(&tool)?, &body.path)?;
     state.setup.detection(true).await;
     Ok(Json(state.setup.report(&state, true).await))
@@ -1075,6 +973,9 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::http::identity::AuthIdentity;
+    use gotcha::axum::http::StatusCode;
+    use std::net::SocketAddr;
     use droppen_base::process_env::Env;
     use runner::fixture::Fixture;
     use runner::RunOutput;
@@ -1356,22 +1257,22 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         let port = 58123;
-        assert!(app_caller(&state, &window(port)).is_err(), "not run by the desktop app");
+        assert!(state.window().app_caller(&window(port)).is_err(), "not run by the desktop app");
         state.desktop_app = true;
-        assert!(app_caller(&state, &window(port)).is_err(), "before the server listens, nothing is its window");
+        assert!(state.window().app_caller(&window(port)).is_err(), "before the server listens, nothing is its window");
         state.setup.set_listen_port(port);
 
-        assert!(app_caller(&state, &window(port)).is_ok());
+        assert!(state.window().app_caller(&window(port)).is_ok());
         for peer in ["[::1]:50123", "[::ffff:127.0.0.1]:50123"] {
             let caller = Caller {
                 peer: Some(peer.parse().expect("address")),
                 ..window(port)
             };
-            assert!(app_caller(&state, &caller).is_ok(), "{peer}");
+            assert!(state.window().app_caller(&caller).is_ok(), "{peer}");
         }
 
         let refused = |caller: Caller, why: &str| {
-            let error = app_caller(&state, &caller).expect_err(why);
+            let error = state.window().app_caller(&caller).expect_err(why);
             assert_eq!(error.status(), StatusCode::FORBIDDEN, "{why}");
             assert_eq!(error.body()["error"], "app_only", "{why}");
         };
@@ -1429,16 +1330,15 @@ pub(crate) mod tests {
 
         // The report's `canInstall`: a page's own GET says no Origin, and
         // needs none; everything else still holds.
-        assert!(local_app_request(&state, &Caller { origin: None, ..window(port) }));
-        assert!(!local_app_request(
-            &state,
+        assert!(state.window().local_app_request(&Caller { origin: None, ..window(port) }));
+        assert!(!state.window().local_app_request(
             &Caller {
                 origin: None,
                 host: Some("evil.example:58123".into()),
                 ..window(port)
             }
         ));
-        assert!(!local_app_request(&state, &Caller { identity: None, ..window(port) }));
+        assert!(!state.window().local_app_request(&Caller { identity: None, ..window(port) }));
     }
 
     /// Through the real router and its guard, from a real loopback socket.

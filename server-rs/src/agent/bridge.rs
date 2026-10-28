@@ -353,7 +353,7 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         // terminal could tell. Re-reading the login shell into every child's
         // PATH, installing, signing in and adopting a binary change what runs
         // here (and the server refuses them to anything but the desktop app's
-        // own window on this computer anyway, `setup::app_caller`).
+        // own window on this computer anyway, `http::app_window`).
         ("GET", "/api/setup/tools", Use),
         ("POST", "/api/setup/tools/rescan", Posture),
         ("GET", "/api/setup/commands", Use),

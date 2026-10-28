@@ -13,6 +13,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+pub mod app_window;
 pub mod bridge;
 pub mod created;
 pub mod error;

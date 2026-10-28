@@ -30,7 +30,7 @@
 //! [`submit_setup_token_code`] and is typed into the pty.
 //!
 //! The one exception is the desktop app asking its own server from this very
-//! device ([`crate::setup::app_caller`]):
+//! device ([`AppWindow::app_caller`](crate::http::app_window::AppWindow::app_caller)):
 //! there the browser the CLI opens *is* the user's, so the stubs are left out
 //! and the authorization page simply opens. The URL is still scraped and shown,
 //! as the fallback for a browser that did not come up.
@@ -967,13 +967,13 @@ fn expire_later(wizards: Weak<Captures>, capture_id: String) {
 #[api(id = "start_setup_token", group = "accounts", summary = "Start the setup-token wizard")]
 pub async fn start_setup_token(
     State(state): State<AppState>,
-    #[api(skip)] caller: crate::setup::Caller,
+    #[api(skip)] caller: crate::http::app_window::Caller,
     ApiJson(body): ApiJson<SetupTokenStart>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     // `z.string().min(1).max(100)`, which fails in the validator before the
     // TypeScript handler runs — so it is a 400 there too, undocumented.
     super::require_label(&body.label)?;
-    let open_browser = crate::setup::app_caller(&state, &caller).is_ok();
+    let open_browser = state.window().app_caller(&caller).is_ok();
     start(state.drive.clone(), state.terminals.clone(), Target::New(body.label), open_browser)
         .await
         .map(Created)
@@ -988,7 +988,7 @@ pub async fn start_setup_token(
 #[api(id = "reauth_account", group = "accounts", summary = "Re-authorize an account")]
 pub async fn reauth_account(
     State(state): State<AppState>,
-    #[api(skip)] caller: crate::setup::Caller,
+    #[api(skip)] caller: crate::http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     super::require_uuid(&id)?;
@@ -1010,7 +1010,7 @@ pub async fn reauth_account(
         id: account.id,
         label: account.label,
     };
-    let open_browser = crate::setup::app_caller(&state, &caller).is_ok();
+    let open_browser = state.window().app_caller(&caller).is_ok();
     start(state.drive.clone(), state.terminals.clone(), target, open_browser)
         .await
         .map(Created)
