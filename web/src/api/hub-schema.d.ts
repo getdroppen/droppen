@@ -69,7 +69,7 @@ export interface paths {
         /**
          * Revoke Device
          * @description `DELETE /v1/devices/{id}` → `204`: a current full device revokes a device
-         *     registered with the password alone that never joined the chain (#4: the
+         *     registered with the password alone that never joined the chain (the
          *     devices page lists the waiting ones, each with one tap to revoke it) —
          *     its place in the day's registrations given back ([`db::register_device`])
          *     — through [`revoke_waiting_device`]. `204` for one revoked already;
@@ -359,8 +359,8 @@ export interface paths {
         /**
          * Close Pairing
          * @description The device that opened a pairing may close (burn) it, and so may any
-         *     current full device of the account (M2 re-review #28: pairings someone
-         *     opened with the password alone could otherwise sit in all four places).
+         *     current full device of the account: pairings someone opened with the
+         *     password alone could otherwise sit in all four places.
          */
         delete: operations["close_pairing"];
         options?: never;
@@ -430,7 +430,7 @@ export interface paths {
          * Passkey Add Options
          * @description `POST /v1/passkeys/add/options {current_password? | passkey?}` →
          *     `{challenge, options}`: once it is proved still the person
-         *     ([`reauthenticate`]: a passkey of the account's, or its current
+         *     ([`Hub::reauthenticate`]: a passkey of the account's, or its current
          *     password), a challenge bound to the account and this device, and creation
          *     options under the account's user handle with its passkeys excluded.
          *     Without that proof a browser left signed in could add a passkey of
@@ -481,12 +481,12 @@ export interface paths {
          *     Nothing is stored. (Adding a passkey to an account takes a device
          *     session: [`add_options`].)
          *
-         *     **Whether the e-mail is taken is not said here** (pre-launch review):
-         *     it used to be, `409 email_taken` before any passkey existed, which made
-         *     this the cheapest way to ask the hub whether an address has an account —
-         *     one attempt from the address's share, no account made, no mail sent, no
-         *     trace for the address's owner. Now it answers a taken e-mail as any
-         *     other, and [`signup`] says `409 email_taken` where the password sign-up
+         *     **Whether the e-mail is taken is not said here**: answering
+         *     `409 email_taken` before any passkey exists would make this the cheapest
+         *     way to ask the hub whether an address has an account — one attempt from
+         *     the address's share, no account made, no mail sent, no trace for the
+         *     address's owner. It answers a taken e-mail as any other, and [`signup`]
+         *     says `409 email_taken` where the password sign-up
          *     does: when the account would be made, with a passkey made and verified
          *     first, and the challenge spent. The cost: a person signing up with a
          *     taken e-mail is left a passkey for no account in their authenticator.
@@ -539,7 +539,7 @@ export interface paths {
          * Remove Passkey
          * @description `DELETE /v1/passkeys/{id} {current_password? | passkey? | grant?}` →
          *     `{id, removed: true}`, once it is proved still the person
-         *     ([`reauthenticate`]) — or with a `grant` this device was given for this
+         *     ([`Hub::reauthenticate`]) — or with a `grant` this device was given for this
          *     passkey, below. **The proof comes first**: a wrong one is `403
          *     reauth_failed` whatever the passkey's state, and learns nothing of it.
          *     Never the account's last way to sign in (`409 last_credential`, §3.6),
@@ -578,7 +578,7 @@ export interface paths {
          * @description `PUT /v1/password {password, current_password? | passkey?}` →
          *     `{password: true}`: the account's password set (an account made with a
          *     passkey has none) or changed (§3.6) — after proving it is still the
-         *     person ([`reauthenticate`]: a passkey of the account's, or the current
+         *     person ([`Hub::reauthenticate`]: a passkey of the account's, or the current
          *     password where there is one). Recorded and told like every change
          *     ([`record`]): `password_set` or `password_changed`, by whether the account
          *     had one under the lock. A current full device.
@@ -590,7 +590,7 @@ export interface paths {
          * @description `DELETE /v1/password {current_password? | passkey?}` → `{password:
          *     false}`: the account signs in with its passkeys only — refused without
          *     one (`409 last_credential`, §3.6), and only after proving it is still the
-         *     person ([`reauthenticate`]). Recorded and told like every change
+         *     person ([`Hub::reauthenticate`]). Recorded and told like every change
          *     ([`record`]). A current full device.
          */
         delete: operations["delete_password"];
@@ -702,8 +702,8 @@ export interface paths {
          *     `requested_ms`). A row that is not the one named is left as it is: `409
          *     rotation_in_progress` while it is another attempt or staging (one opened
          *     on top of the named mark included), else `200 {}` — the one named is gone
-         *     already. No body, or `{}`: whatever the host has, as before there was a
-         *     body. Both fields, or anything else: `400 bad_request`.
+         *     already. No body, or `{}`: whatever the host has. Both fields, or anything
+         *     else: `400 bad_request`.
          */
         delete: operations["delete_rotation"];
         options?: never;
@@ -781,27 +781,6 @@ export interface paths {
          *     be verified, and whether passkeys are offered.
          */
         post: operations["signup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/signup/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Signup Config
-         * @description `GET /v1/signup/config`, typed. The route replaced the `Json<Value>` handler
-         *     in [`crate::api`]; the JSON is the same.
-         */
-        get: operations["get_signup_config"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -965,11 +944,6 @@ export interface components {
             current_password?: string | null;
             passkey?: components["schemas"]["ReauthPasskey"];
         };
-        /** @description A deleted account's address hold, in days. */
-        Deletion: {
-            /** @description Days the address is held. */
-            email_hold_days: number;
-        };
         /**
          * @description `POST /v1/rotations/{host}/disputes {seq, entry_hash, sig}` — no session:
          *     the retired key's signature is the credential (§3.8 「证据：退役钥签的争议
@@ -981,9 +955,9 @@ export interface components {
          *     "disputed"}`), and — when it disputes a renewal not confirmed on the
          *     device with none confirmed on the device after it — it isolates the host.
          *     Decided, kept and applied under the account's chain lock, in one
-         *     transaction (Codex #6). Only a statement that verifies is charged to the
-         *     host's limit; anything else only to the sender's address (R6 re-review
-         *     N1: junk cannot use up the real host's statement).
+         *     transaction. Only a statement that verifies is charged to the host's
+         *     limit; anything else only to the sender's address, so junk cannot use up
+         *     the real host's statement.
          *     200 `{ok: true}`; 404 `no_such_renewal`; 410 `host_removed` (stop
          *     sending); 422 `invalid_dispute`; 429.
          *     `POST /v1/rotations/{host}/disputes`: the statement was taken.
@@ -1039,7 +1013,7 @@ export interface components {
          *     are AEAD-bound to their account, machine and epochs, and every key in them
          *     must match the chain's commitment besides; write-once names bound to their
          *     writer keep a device from crowding out, replacing or squatting what
-         *     another writes (M2 re-review #27).
+         *     another writes.
          *     `PUT /v1/keys/{name}`: the name and whether this call stored it (the same
          *     bytes again is a retry: `stored: false`).
          */
@@ -1199,8 +1173,7 @@ export interface components {
         };
         /**
          * @description `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
-         *     (The account's policy is its chain's: `SetRenewalPolicy`.)
-         *     `/v1/me`'s `rotations`: whether renewals are on, T, and each host's state.
+         *     The account's policy is its chain's (`SetRenewalPolicy`).
          */
         MeRotations: {
             active: components["schemas"]["MeRotationActive"][];
@@ -1360,11 +1333,6 @@ export interface components {
             /** @description `on` or `off`: whether this passkey unlocks a slot of the chain. */
             unlock: string;
         };
-        /** @description The passkey relying party the browser binds credentials to. */
-        Passkeys: {
-            /** @description The relying party id (`droppen.app`). */
-            rp_id: string;
-        };
         /** @description `PUT`/`DELETE /v1/password`: whether the account has a password now. */
         PasswordState: {
             password: boolean;
@@ -1431,7 +1399,7 @@ export interface components {
          */
         PresenceState: "online" | "offline" | "unknown";
         /**
-         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+         * @description Proof it is still the person, as a body ([`Hub::reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
          *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
          */
@@ -1471,10 +1439,7 @@ export interface components {
         };
         /**
          * @description `PATCH /v1/relays/prefs {standby?}` → `{standby}`: the account's relay
-         *     preferences, set by a current device of its chain. Not security-sensitive
-         *     (which relays carry ciphertext); a change fills or trims the set at once
-         *     ([`Hub::fill_set`]) and its agents hear of it.
-         *     `PATCH /v1/relays/prefs`: the account's relay preferences.
+         *     preferences, set by a current device of its chain.
          */
         RelayPrefs: {
             standby: boolean;
@@ -1491,13 +1456,8 @@ export interface components {
             reason: string;
         };
         /**
-         * @description A host's `Rotation` object (`GET /v1/rotations`, `PUT`). While it is an
-         *     `attempt` or `staged`, `nonce_hash` is its attempt's (the hex the `PUT`
-         *     that opened it sent): what a page names to withdraw that attempt and no
-         *     other ([`delete`]), as `requested_ms` names a `pending` mark.
-         *     One host's renewal, as `GET /v1/rotations` and `PUT /v1/rotations/{host}`
-         *     show it. The fields a state does not carry are omitted, as the JSON always
-         *     did.
+         * @description One host's renewal, as `GET /v1/rotations` and `PUT /v1/rotations/{host}`
+         *     show it. The fields a state does not carry are omitted.
          */
         RotationHost: {
             /** @description 0 or 1 (`Assurance`). */
@@ -1523,8 +1483,7 @@ export interface components {
         /** @description `PUT /v1/rotations/{host}`: the host's state, or `{}` when nothing changed. */
         RotationPut: components["schemas"]["RotationHost"] | components["schemas"]["Empty"];
         /**
-         * @description The account's renewals as `GET /v1/rotations` gives them.
-         *     `GET /v1/rotations`: the hub's clock, the policy, each host's state and
+         * @description `GET /v1/rotations`: the hub's clock, the policy, each host's state and
          *     the disputes kept.
          */
         RotationsView: {
@@ -1558,7 +1517,10 @@ export interface components {
             email: string;
             /** @description Required with `DROPPEN_HUB_SIGNUP=invite`; optional (and may give a plan) when open. */
             invite?: string | null;
-            /** @description The language mail is written in. */
+            /**
+             * @description The page's language, recorded with the account. The verification
+             *     mail itself is written in English.
+             */
             lang?: string | null;
             password: string;
             /** @description The Turnstile widget's token (when Turnstile is on). */
@@ -1589,27 +1551,6 @@ export interface components {
             expires_ms: number;
             token: string;
         };
-        /**
-         * @description `GET /v1/signup/config`: what the sign-up page needs to draw its form.
-         *     Field order and `null`s match the `Json<Value>` it replaces (the open
-         *     clients read it; a missing field is a contract change). The order is
-         *     alphabetical because that `Value` came from `serde_json`'s `BTreeMap`,
-         *     and `tests/golden/single_host.txt` compares the body byte for byte.
-         */
-        SignupConfig: {
-            /** @description How long a deleted account's address cannot sign up again. */
-            deletion: components["schemas"]["Deletion"];
-            /** @description Whether an invite code is required. */
-            invite_required: boolean;
-            /** @description Passkeys' relying party, when passkeys are offered. */
-            passkeys?: components["schemas"]["Passkeys"];
-            /** @description `invite`, `open` or `closed`. */
-            signup: string;
-            /** @description Turnstile's widget, when it is on. */
-            turnstile?: components["schemas"]["Turnstile"];
-            /** @description `required` or `off`. */
-            verification: string;
-        };
         /** @description Why one relay got no ticket. */
         TicketRefusal: {
             account_set?: string[];
@@ -1628,13 +1569,6 @@ export interface components {
         Tickets: {
             errors: components["schemas"]["TicketRefusal"][];
             tickets: components["schemas"]["IssuedTicket"][];
-        };
-        /** @description The Turnstile widget the sign-up page renders (alphabetical, as above). */
-        Turnstile: {
-            /** @description The origin the widget's page is served on. */
-            origin: string;
-            /** @description Cloudflare's public site key. */
-            site_key: string;
         };
         /**
          * @description The link's token (from the page at `/verify`, which read it from the
@@ -2535,7 +2469,7 @@ export interface operations {
             cookie?: never;
         };
         /**
-         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+         * @description Proof it is still the person, as a body ([`Hub::reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
          *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
          */
@@ -2666,7 +2600,7 @@ export interface operations {
             cookie?: never;
         };
         /**
-         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+         * @description Proof it is still the person, as a body ([`Hub::reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
          *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
          */
@@ -2772,7 +2706,7 @@ export interface operations {
             cookie?: never;
         };
         /**
-         * @description Proof it is still the person, as a body ([`reauthenticate`]): adding or
+         * @description Proof it is still the person, as a body ([`Hub::reauthenticate`]): adding or
          *     removing a passkey, removing the password — or, removing a passkey only,
          *     the `grant` an earlier proof was given with `409 unlock_on` ([`remove`]).
          */
@@ -3122,26 +3056,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-        };
-    };
-    get_signup_config: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description default return */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SignupConfig"];
                 };
             };
         };
