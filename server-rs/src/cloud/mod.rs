@@ -112,6 +112,12 @@ impl Cloud {
         self.changed.subscribe()
     }
 
+    /// The aggregator's switch, for the link to hand to its device role:
+    /// this server's `cloud.json` ([`LinkFile::wants_aggregator`]).
+    pub fn aggregator_switch(&self) -> Arc<dyn crate::aggregator::Switch> {
+        Arc::new(LinkFile::of(&self.paths))
+    }
+
 }
 
 impl Cloud {
@@ -1499,6 +1505,7 @@ mod tests {
             credential: "test".into(),
             drive: state.drive.clone(),
             cancel: tokio_util::sync::CancellationToken::new(),
+            aggregator_switch: state.cloud.aggregator_switch(),
         });
         let base = format!("http://{addr}");
         let client = reqwest::Client::new();
@@ -1621,6 +1628,7 @@ mod tests {
             credential: "test".into(),
             drive: state.drive.clone(),
             cancel: tokio_util::sync::CancellationToken::new(),
+            aggregator_switch: state.cloud.aggregator_switch(),
         });
         state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
         if enroll {
@@ -1975,5 +1983,49 @@ mod tests {
         let file: CloudFile = serde_json::from_slice(&std::fs::read(LinkFile::of(&paths).path()).unwrap()).unwrap();
         assert_eq!(file.owner.as_deref(), Some("ada"));
         assert_eq!(file.accounts_since.get("ada"), Some(&t));
+    }
+
+    #[test]
+    fn the_owner_decides_whether_this_computer_controls_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "wanttest");
+        std::fs::create_dir_all(paths.instance_dir()).unwrap();
+        let file = crate::cloud::LinkFile::of(&paths).path();
+        // Enrolled from the command line: no file, on.
+        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
+        let write = |v: serde_json::Value| std::fs::write(&file, v.to_string()).unwrap();
+        // Signed in from the local settings, with aggregation (the default): on.
+        write(serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 5}));
+        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
+        // Without it, or turned off by a release from before (no `aggregatorOff`): off.
+        write(serde_json::json!({"owner": "alice", "aggregate": false, "linkedAt": 5}));
+        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
+        // Turned off: off, whatever else.
+        write(serde_json::json!({"aggregate": true, "aggregatorOff": true}));
+        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
+        // A file with no sign-in in it (an owner set before any): on.
+        write(serde_json::json!({"remoteAccess": {}}));
+        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
+        // A file that does not parse may be the owner's "off": off (N3).
+        std::fs::write(&file, b"{\"aggregatorOff\": tr").unwrap();
+        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
+    }
+
+    /// The aggregator's [`crate::aggregator::Switch`] is `cloud.json` as it is
+    /// when asked: one value follows every change of the file.
+    #[test]
+    fn the_aggregators_switch_reads_the_file_on_every_ask() {
+        use crate::aggregator::Switch;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "switchtest");
+        std::fs::create_dir_all(paths.instance_dir()).unwrap();
+        let switch = LinkFile::of(&paths);
+        assert!(switch.is_on(), "no file: on");
+        std::fs::write(switch.path(), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        assert!(!switch.is_on(), "turned off");
+        std::fs::write(switch.path(), br#"{"aggregate": true}"#).unwrap();
+        assert!(switch.is_on(), "on again");
+        std::fs::write(switch.path(), b"{\"aggregatorOff\": tr").unwrap();
+        assert!(!switch.is_on(), "does not parse: off");
     }
 }

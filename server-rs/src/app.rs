@@ -331,6 +331,7 @@ impl RemoteHandApp {
         let cloud = state.cloud.control.clone();
         let link_settings = state.cloud.clone();
         let drive_for_link = state.drive.clone();
+        let aggregator_switch = state.cloud.aggregator_switch();
         let setup = state.setup.clone();
         let cleanups = Cleanups {
             feeds: state.feeds.clone(),
@@ -462,6 +463,7 @@ impl RemoteHandApp {
                 credential: auth_for_link.internal_credential().to_string(),
                 drive: drive_for_link,
                 cancel: cancel.clone(),
+                aggregator_switch,
             });
             // A device linked to Droppen reaches other devices from its page;
             // with authentication off that page answers anyone, so the link

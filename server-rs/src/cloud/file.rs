@@ -183,6 +183,13 @@ impl LinkFile {
     }
 }
 
+/// The aggregator's switch is this file, read again on every ask.
+impl crate::aggregator::Switch for LinkFile {
+    fn is_on(&self) -> bool {
+        self.wants_aggregator()
+    }
+}
+
 /// `cloud.json` does not read: off, said once per process.
 fn unreadable(path: &std::path::Path, error: &str) -> bool {
     static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
