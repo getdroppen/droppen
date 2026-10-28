@@ -52,10 +52,9 @@ use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::access::{self, Want};
-use super::controller::{view, View};
 use super::live::{Key, LiveCopies, Published, Slot};
 use super::store::{CopyStore, Kind, Row};
-use crate::agent::state::AgentState;
+use super::{Enrollment, View};
 use crate::paths::Paths;
 
 /// A session copy larger than this (its folded JSON) is not kept: its row
@@ -152,8 +151,8 @@ pub struct Env {
     pub paths: Paths,
     /// The machine key: this device's one identity.
     pub identity: Arc<MachineIdentity>,
-    /// The link's agent state, with its verified chain.
-    pub state: Arc<Mutex<AgentState>>,
+    /// The link's enrollment, with its verified chain.
+    pub enrollment: Arc<dyn Enrollment>,
     /// Bumped whenever the chain advanced.
     pub chain: watch::Receiver<u64>,
     /// The keys, from the controller.
@@ -861,7 +860,7 @@ impl Copies {
         if !self.env.paths.wants_aggregator() {
             return None;
         }
-        let view = view(&self.env.state)?;
+        let view = self.env.enrollment.view()?;
         let ring = self.env.keys.borrow().clone()?;
         if ring.account != view.account || ring.device != view.me {
             return None;
@@ -1730,6 +1729,7 @@ impl Live {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::state::AgentState;
 
     #[test]
     fn keys_say_their_epochs_and_nothing_else() {
@@ -1820,7 +1820,7 @@ mod tests {
         let env = Env {
             paths: paths.clone(),
             identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
-            state: Arc::new(Mutex::new(AgentState::enrolling("ws://127.0.0.1:1", "a-1", "m-me", [0; 16], 1))),
+            enrollment: Arc::new(Mutex::new(AgentState::enrolling("ws://127.0.0.1:1", "a-1", "m-me", [0; 16], 1))),
             chain: watch::channel(0).1,
             keys: watch::channel(None).1,
             nudge: Arc::default(),

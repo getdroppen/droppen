@@ -48,7 +48,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::hub::{DeviceClient, HubError, Mail};
 use super::keys::HostKeys;
-use crate::agent::state::AgentState;
+use super::{Enrollment, View};
 use crate::paths::Paths;
 
 /// A round while a key is missing.
@@ -157,8 +157,8 @@ pub struct Env {
     pub paths: Paths,
     /// The machine key: this device's one identity.
     pub identity: Arc<MachineIdentity>,
-    /// The link's agent state, with its verified chain.
-    pub state: Arc<Mutex<AgentState>>,
+    /// The link's enrollment, with its verified chain.
+    pub enrollment: Arc<dyn Enrollment>,
     /// Bumped whenever the chain advanced.
     pub chain: watch::Receiver<u64>,
     /// The link's token (a child of it): the controller stops with the link.
@@ -175,34 +175,6 @@ pub struct Env {
     /// Whether the device role may sign in now ([`super::SignInGate`]);
     /// `None`: always.
     pub may_sign_in: Option<super::SignInGate>,
-}
-
-/// What a round sees of the agent state.
-#[derive(Clone)]
-pub(super) struct View {
-    /// The hub (`wss://…`).
-    pub hub: String,
-    /// The account.
-    pub account: String,
-    /// This computer's id.
-    pub me: String,
-    /// The verified chain.
-    pub chain: ChainState,
-}
-
-/// The enrollment as the agent state has it, while this computer is a
-/// current device of it.
-pub(super) fn view(state: &Mutex<AgentState>) -> Option<View> {
-    let st = state.lock().expect("agent state");
-    if !st.enrolled() || st.removed() {
-        return None;
-    }
-    Some(View {
-        hub: st.hub.clone(),
-        account: st.account.clone(),
-        me: st.machine.clone(),
-        chain: st.chain.clone()?,
-    })
 }
 
 /// What to do with one mail. Its `Debug` never prints a key (security
@@ -408,7 +380,7 @@ impl Controller {
         if !self.env.paths.wants_aggregator() {
             return self.idle(None);
         }
-        let Some(view) = view(&self.env.state) else {
+        let Some(view) = self.env.enrollment.view() else {
             return self.idle(None);
         };
         if let Some((account, device, at)) = &self.hub_removed {
@@ -797,6 +769,7 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::state::AgentState;
     use rh_proto::chain::{Accept, Action, ChainClock, Flags, KeyCommit, KeyCommits, Signer};
     use rh_proto::keys::DhKeypair;
     use rh_proto::sig::{HubLogin, LoginRole};
@@ -1168,7 +1141,7 @@ mod tests {
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
             identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
-            state: state.clone(),
+            enrollment: state.clone(),
             chain,
             cancel: cancel.clone(),
             status: status.clone(),
@@ -1282,7 +1255,7 @@ mod tests {
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
             identity: Arc::new(identity),
-            state: state.clone(),
+            enrollment: state.clone(),
             chain,
             cancel: cancel.clone(),
             status: status.clone(),

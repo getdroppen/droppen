@@ -202,7 +202,7 @@ pub fn start(
         let controller = tokio::spawn(crate::aggregator::controller::run(crate::aggregator::controller::Env {
             paths: paths.clone(),
             identity: shared.identity.clone(),
-            state: shared.state.clone(),
+            enrollment: shared.state.clone(),
             chain: shared.chain_version.subscribe(),
             cancel: shared.cancel.child_token(),
             status: control_status.clone(),
@@ -214,7 +214,7 @@ pub fn start(
         let copies = tokio::spawn(crate::aggregator::copies::run(crate::aggregator::copies::Env {
             paths: paths.clone(),
             identity: shared.identity.clone(),
-            state: shared.state.clone(),
+            enrollment: shared.state.clone(),
             chain: shared.chain_version.subscribe(),
             keys,
             nudge,
