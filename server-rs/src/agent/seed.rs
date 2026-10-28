@@ -99,7 +99,7 @@ pub struct FileSeedStore {
 
 impl FileSeedStore {
     /// The file for this instance: `<instance dir>/agent/machine-key.json`.
-    pub fn for_instance(files: &AgentFiles) -> Self {
+    pub(in crate::agent) fn for_instance(files: &AgentFiles) -> Self {
         Self {
             path: files.machine_key(),
         }

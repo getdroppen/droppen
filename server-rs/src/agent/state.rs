@@ -741,7 +741,7 @@ struct KeysFile {
 
 impl AgentFiles {
     /// Store machine-key epoch `epoch`.
-    pub fn store_machine_key(&self, epoch: u32, key: &[u8]) -> Result<(), String> {
+    pub(in crate::agent) fn store_machine_key(&self, epoch: u32, key: &[u8]) -> Result<(), String> {
         let path = self.keys();
         let mut file: KeysFile = match std::fs::read(&path) {
             Ok(bytes) => {
@@ -757,7 +757,7 @@ impl AgentFiles {
     }
 
     /// Every machine-key epoch this agent holds (empty until a device delivered one).
-    pub fn load_machine_keys(&self) -> Result<BTreeMap<u32, Zeroizing<[u8; 32]>>, String> {
+    pub(in crate::agent) fn load_machine_keys(&self) -> Result<BTreeMap<u32, Zeroizing<[u8; 32]>>, String> {
         let path = self.keys();
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => Zeroizing::new(bytes),
@@ -784,7 +784,7 @@ impl AgentFiles {
     /// (`streams.db`). A new enrollment mints a new machine id with new keys;
     /// the old file's epochs must never be what the writer seals under.
     /// Gone files are fine.
-    pub fn forget_enrollment_leftovers(&self) -> Result<(), String> {
+    pub(in crate::agent) fn forget_enrollment_leftovers(&self) -> Result<(), String> {
         let store = self.streams_db();
         // The process's connection to the old store goes with it, or the next
         // open would hand it back (the file deleted, its rows not).
@@ -807,7 +807,7 @@ impl AgentFiles {
 
     /// Whether this instance has agent state (`agent/state.json`): enrollment
     /// state is per instance.
-    pub fn has_state(&self) -> bool {
+    pub(in crate::agent) fn has_state(&self) -> bool {
         self.state().exists()
     }
 }

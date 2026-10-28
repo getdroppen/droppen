@@ -1025,7 +1025,7 @@ impl AgentFiles {
     /// ([`Verdict::Foreign`]). Never one the chain renewed to a key it staged —
     /// its own renewal, to be taken, not wiped — nor one whose
     /// renewal a staged seed that does not read may hold ([`Verdict::Unreadable`]).
-    pub fn seed_retired(&self, identity: &MachineIdentity) -> bool {
+    pub(in crate::agent) fn seed_retired(&self, identity: &MachineIdentity) -> bool {
         if self.seed_archived(identity) {
             return true;
         }
@@ -1036,7 +1036,7 @@ impl AgentFiles {
 
 impl AgentFiles {
     /// Whether `identity`'s seed is one [`re_enroll_fresh`] archived.
-    pub fn seed_archived(&self, identity: &MachineIdentity) -> bool {
+    pub(in crate::agent) fn seed_archived(&self, identity: &MachineIdentity) -> bool {
         let key = self.machine_key();
         let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else { return false };
         entries.filter_map(Result::ok).any(|e| {
@@ -1312,7 +1312,7 @@ impl AgentFiles {
     /// [`Status`] from this instance's files: the staged seed beside the key in
     /// use, and `st` (none when not enrolled). Reads only; nothing is made or
     /// forgotten here (another process — `agent status` — may call it).
-    pub fn rotation_status(&self, st: Option<&AgentState>, now: u64) -> Status {
+    pub(in crate::agent) fn rotation_status(&self, st: Option<&AgentState>, now: u64) -> Status {
         let idle = || Status {
             state: "idle".into(),
             ..Status::default()
