@@ -2,15 +2,17 @@ import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { chipOpacity, ease, place, pointAt, type Pt, setAttr, setHidden, span, useLoop, useReducedMotion, useSize } from "./motion";
 import { CipherChip, InkMark, Ledger, ledgerH, LiveDot, MessageRow, OffSquare, Source, Stage, useRowRefs, WEIGHT, Wire, WireLock } from "./kit";
-import { type Chip, chipLabel, drawRow, type Message, type Shown, textOf } from "./story";
+import { type Chip, drawRow, type Message, type Shown, textOf } from "./story";
 
 /*
  * "Readable with the computer off": the computer goes off, and the phone
- * fetches the session's sealed pages from the store behind Droppen Hub, one
- * at a time: each page's ciphertext rides to Droppen Hub (which shows just
- * that ciphertext) and on to the phone, where the same ciphertext opens in
- * place into its line. Read-only: sending and terminals wait for the
- * machine. The cards are ledgers, as in the app; every wire is straight.
+ * fetches the session's pages from the encrypted copy behind Droppen Hub, one
+ * at a time: each page rides sealed (a padlocked packet, no words) through
+ * Droppen Hub to the phone, where it opens into its line of the transcript,
+ * readable as ever. Read-only: sending and terminals wait for the computer.
+ * The cards are ledgers, as in the app; every wire is straight. What the
+ * reader sees is the session, not ciphertext: the encryption is the
+ * packets' padlocks and the copy's "Droppen can't read it".
  */
 
 export const OFFLINE_LOOP = 9;
@@ -22,14 +24,13 @@ const PAGES = OFFLINE_STARTS;
 const TRIP = 1.2;
 /** The share of a trip spent between the store and Droppen Hub (the rest is on to the phone). */
 const LEG = 0.4;
-/** The ciphertext of each page, as the store keeps it and Droppen Hub hands it over. */
-export const OFFLINE_CIPHERS = ["4f1c 9a20 77de", "b03e 51c8 2d94"] as const;
 /** From here to the end of the loop every copy is the last one again (dimmed): the loop starts over. */
 const RESET = LOOP - 0.5;
 
 export interface OfflineFrame {
   off: boolean;
-  hub: Shown;
+  /** Droppen Hub is passing a page on: its card lit, else dimmed. */
+  passing: boolean;
   /** The phone's transcript, a row per page. */
   rows: Shown[];
   chips: Chip[];
@@ -38,25 +39,21 @@ export interface OfflineFrame {
 /** What the offline copy shows at `t` seconds into its loop. */
 export function offlineFrame(t: number): OfflineFrame {
   const chips: Chip[] = [];
-  // Droppen Hub: the ciphertext of the page it is handing over, from the moment the page reaches it.
-  let hub: Shown = { msg: PAGES.length - 1, kind: "cipher", dim: true };
+  let passing = false;
   const rows: Shown[] = PAGES.map((start, i) => {
     const trip = span(t, start, start + TRIP);
-    if (trip > 0 && trip < 1) chips.push({ msg: i, wire: trip < LEG ? "storeHub" : "hubDevice", at: trip < LEG ? ease(trip / LEG) : ease((trip - LEG) / (1 - LEG)) });
-    if (t >= start + TRIP * LEG && t < RESET) hub = { msg: i, kind: "cipher", dim: false };
+    if (trip > 0 && trip < 1) {
+      chips.push({ msg: i, wire: trip < LEG ? "storeHub" : "hubDevice", at: trip < LEG ? ease(trip / LEG) : ease((trip - LEG) / (1 - LEG)) });
+      passing = true;
+    }
     const arrive = start + TRIP;
-    // Before its page arrives a row still reads (its last copy), dimmed; then the page's ciphertext opens in place.
+    // Before its page arrives a row still reads (the phone's last copy), dimmed; then it is the fresh page, opened on the phone.
     if (t < arrive || t >= RESET) return { msg: i, kind: "plain", dim: true };
-    if (t < arrive + 0.25) return { msg: i, kind: "cipher", lock: "shut" };
-    if (t < arrive + 1.0) return { msg: i, kind: "open", p: span(t, arrive + 0.25, arrive + 1.0), lock: "open" };
+    if (t < arrive + 1.0) return { msg: i, kind: "plain", lock: "open" };
     if (t < arrive + 1.7) return { msg: i, kind: "plain", lock: "open", lockOpacity: 1 - span(t, arrive + 1.0, arrive + 1.7) };
     return { msg: i, kind: "plain" };
   });
-  // The page before is passed on: dimmed in Droppen Hub as soon as the next one leaves the store.
-  PAGES.forEach((start, i) => {
-    if (i > 0 && t >= start && t < start + TRIP * LEG) hub = { msg: i - 1, kind: "cipher", dim: true };
-  });
-  return { off: t >= OFF, hub, rows, chips };
+  return { off: t >= OFF, passing, rows, chips };
 }
 
 /** The still frame (reduced motion): both pages opened on the phone, the last one's padlock open beside it. */
@@ -97,9 +94,14 @@ export function offlineLocks(L: Layout): Pt[] {
 
 const HUB_W = 156;
 
+/** The phone card's width in a row: room for its longest message row in every language (English's, 254px). */
+const DEVICE_W = 280;
+/** Below this the three cards and their gaps do not fit in a row with the phone at `DEVICE_W`: they stack. */
+const ROW_MIN_W = 740;
+
 export function offlineLayout(w: number): Layout {
   const pad = 12;
-  if (w < 560) {
+  if (w < ROW_MIN_W) {
     // The computer on top; Droppen with the store beside it; the phone below.
     const machine = { x: pad, y: pad, w: w - 2 * pad, h: ledgerH(1) };
     const hub = { x: pad, y: machine.y + machine.h + 44, w: Math.min(HUB_W, Math.round(w * 0.42)), h: ledgerH(1) };
@@ -120,8 +122,8 @@ export function offlineLayout(w: number): Layout {
     };
   }
   const gap = 36;
-  const machineW = Math.min(208, Math.round(w * 0.3));
-  const deviceW = Math.min(224, Math.round(w * 0.32));
+  const machineW = Math.min(208, Math.round(w * 0.28));
+  const deviceW = Math.min(DEVICE_W, w - 2 * pad - machineW - HUB_W - 2 * gap);
   const x0 = Math.round((w - (machineW + HUB_W + deviceW + 2 * gap)) / 2);
   const top = 24;
   const mid = top + Math.round(ledgerH(2) / 2);
@@ -156,14 +158,15 @@ export function OfflineCopy() {
   const machineRow = useRef<HTMLSpanElement>(null);
   const offRow = useRef<HTMLSpanElement>(null);
   const machineWire = useRef<SVGPathElement>(null);
-  const hub = useRowRefs();
+  const hubCard = useRef<HTMLDivElement>(null);
   const rows = [useRowRefs(), useRowRefs()] as const;
   const chips = useRef<(SVGGElement | null)[]>([]);
 
   const roles = ["USER", "CLAUDE"];
+  // Plaintext only: the phone shows the session as it was, and nothing on the way shows any words.
   const messages: Message[] = [
-    { p: t("make it ink"), c: OFFLINE_CIPHERS[0] },
-    { p: t("done, tests pass"), c: OFFLINE_CIPHERS[1] },
+    { p: t("darken the sign-in button"), c: "" },
+    { p: t("done, tests pass"), c: "" },
   ];
   const titles = { shut: t("encrypted locally"), open: t("decrypted locally") };
   const onlineRow = t("online");
@@ -175,7 +178,7 @@ export function OfflineCopy() {
     setHidden(machineRow.current, f.off);
     setHidden(offRow.current, !f.off);
     setAttr(machineWire.current, "stroke-dasharray", f.off ? WEIGHT.fallback.dash : "none");
-    drawRow(hub, f.hub, messages, tick);
+    setAttr(hubCard.current, "data-dim", f.passing ? "false" : "true");
     f.rows.forEach((row, i) => drawRow(rows[i]!, row, messages, tick));
     const wires: Record<string, Pt[]> = { storeHub: L.storeHub, hubDevice: L.hubDevice };
     PAGES.forEach((_, i) => {
@@ -213,7 +216,7 @@ export function OfflineCopy() {
         </>
       }
       over={PAGES.map((_, i) => (
-        <CipherChip key={i} ref={(el) => void (chips.current[i] = el)} label={chipLabel(messages[i]!.c)} />
+        <CipherChip key={i} ref={(el) => void (chips.current[i] = el)} />
       ))}
     >
       <div ref={machineCard} data-off="false" className="contents">
@@ -241,28 +244,31 @@ export function OfflineCopy() {
                 {onlineRow}
               </span>
               <span ref={offRow} hidden data-signal="offline" className="text-danger">
-                {t("computer off · {{time}}", { time: "14:00" })}
+                {t("offline since {{time}}", { time: "14:00" })}
               </span>
             </span>,
           ]}
         />
       </div>
-      <Ledger
-        box={L.hub}
-        ink
-        head={
-          <>
-            <InkMark size={14} />
-            Droppen Hub
-          </>
-        }
-        rows={[
-          // The page it is handing over, as Droppen Hub has it: ciphertext.
-          <MessageRow key="p" refs={hub} lock={false} className="text-[13px] font-medium tabular-nums">
-            {textOf(first.hub, messages)}
-          </MessageRow>,
-        ]}
-      />
+      <div ref={hubCard} data-dim={first.passing ? "false" : "true"} className="contents">
+        <Ledger
+          box={L.hub}
+          ink
+          className="transition-opacity duration-300 [[data-dim=true]>&]:opacity-60"
+          head={
+            <>
+              <InkMark size={14} />
+              Droppen Hub
+            </>
+          }
+          rows={[
+            // What it does with a page: passes it on, sealed as it came.
+            <span key="p" className="opacity-80">
+              {t("hands the copy to your phone")}
+            </span>,
+          ]}
+        />
+      </div>
       <Ledger
         box={L.store}
         head={
@@ -272,7 +278,7 @@ export function OfflineCopy() {
         }
         rows={[
           <span key="c" className="text-fg">
-            {t("Droppen can't read it")}
+            {t("Droppen can't decrypt it")}
           </span>,
         ]}
       />

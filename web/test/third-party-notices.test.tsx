@@ -139,10 +139,10 @@ test("every public page's footer links the notices the build writes and the sour
     nsSeparator: false
   });
   const words = {
-    en: ["Third-party licences", "Source code"],
-    "zh-CN": ["第三方许可证", "源代码"],
-    "zh-TW": ["第三方授權", "原始碼"],
-    ja: ["サードパーティのライセンス", "ソースコード"],
+    en: ["Third-party notices", "Client source code"],
+    "zh-CN": ["第三方软件声明", "客户端源代码"],
+    "zh-TW": ["第三方軟體聲明", "客戶端原始碼"],
+    ja: ["サードパーティ通知", "クライアントのソースコード"],
   };
   for (const [lng, [label, source]] of Object.entries(words)) {
     void i18n.changeLanguage(lng);

@@ -65,7 +65,7 @@ function useSourceRev(): string {
 export function RepoLink({ path, children }: { path: string; children?: ReactNode }) {
   const rev = useSourceRev();
   return (
-    <a href={repoHref(path, rev)} className="text-fg underline underline-offset-4 hover:no-underline">
+    <a href={repoHref(path, rev)} className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
       {children ?? path}
     </a>
   );

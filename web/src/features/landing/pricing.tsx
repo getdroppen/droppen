@@ -1,8 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { Check, Minus } from "lucide-react";
-import { CapsLabel } from "@/components/ui/caps-label";
+import { Check } from "lucide-react";
 import { primary, secondary } from "@/features/cloud/ui";
 import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
@@ -20,7 +19,9 @@ import { type WaitlistState, WaitlistForm } from "./waitlist";
  * chunk, in the landing page's drafting-sheet language.
  *
  * Product words, not implementation: devices that run AI, all your devices,
- * how far back your phone can read while a device is off, a month's
+ * how many days your phone can read while a device is offline (the cloud's
+ * copy expires once a device has been offline that long: docs/relay-and-plans.md
+ * §3.4), a month's
  * transfer through our servers. Every number is a plan's own
  * (`pricing-plans.ts`, held to the hub's plans by a test), and every plan
  * is end-to-end encrypted alike — the page says so on each.
@@ -99,7 +100,7 @@ function PlanCard({
 function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: SignupMode; onChoose: (plan: WaitlistPlan) => void }) {
   const { t } = useTranslation();
   const { free, pro } = PLAN_NUMBERS;
-  const encrypted = t("End-to-end encrypted: we can't see your code");
+  const encrypted = t("End-to-end encrypted: we can't read your sessions, code or terminals");
   // To the form, with the plan chosen (the anchor scrolls; the form takes the focus).
   // The plans' one primary action: signing up where anyone can, else Pro's waitlist.
   const freeLeads = signup === "open" && !signedIn;
@@ -123,8 +124,8 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           }
           lead={t("Droppen on the device your AI runs on, and nothing in the cloud.")}
           points={[
-            t("1 device that runs AI: this one"),
-            t("Use it from any browser on the same network"),
+            t("1 device that runs AI: the one Droppen is installed on"),
+            t("Use it in a browser on that device, or on another device on the same network"),
             t("Nothing goes through our servers"),
             encrypted,
           ]}
@@ -163,9 +164,9 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           lead={t("Your AI on your phone, wherever you are.")}
           points={[
             t("{{n}} devices that run AI", { n: free.hosts }),
-            t("{{n}} devices in all, phones and browsers included", { n: free.devices }),
-            t("Read the last {{n}} days on your phone while a device is off", { n: free.retentionDays }),
-            t("{{n}} GB a month through our servers, then slower", { n: gb(free.transferBytes) }),
+            t("{{n}} devices in all, including those that run AI, phones and browsers", { n: free.devices }),
+            t("While a device that runs AI is offline, read its last {{n}} days of sessions on your phone", { n: free.retentionDays }),
+            t("{{n}} GB a month through our servers, then {{kb}} KB/s until the next month", { n: gb(free.transferBytes), kb: THROTTLED_KB_PER_SEC }),
             encrypted,
           ]}
         />
@@ -189,11 +190,11 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
             </a>
           }
           aside={<span className="font-mono text-2xs leading-4 text-faint">{t("Payments are not open yet: we'll e-mail you when they are.")}</span>}
-          lead={t("Everything in Free, plus:")}
+          lead={t("Everything in Free, with higher limits:")}
           points={[
             t("{{n}} devices that run AI", { n: pro.hosts }),
-            t("{{n}} devices in all, phones and browsers included", { n: pro.devices }),
-            t("Read the last {{n}} days on your phone while a device is off", { n: pro.retentionDays }),
+            t("{{n}} devices in all, including those that run AI, phones and browsers", { n: pro.devices }),
+            t("While a device that runs AI is offline, read its last {{n}} days of sessions on your phone", { n: pro.retentionDays }),
             t("{{n}} GB a month through our servers, then billed by use, at full speed", { n: gb(pro.transferBytes) }),
           ]}
         />
@@ -212,28 +213,26 @@ function Compare({ signup }: { signup: SignupMode }) {
       <span className="sr-only">{t("included")}</span>
     </>
   );
-  const none = (
-    <>
-      <Minus aria-hidden="true" className="size-4 text-faint" />
-      <span className="sr-only">{t("not included")}</span>
-    </>
-  );
   const rows: { name: string; values: [ReactNode, ReactNode, ReactNode] }[] = [
     {
       name: t("Price"),
       values: [t("Free forever, no account"), signup === "invite" ? t("Free; sign-up by invite for now") : signup === "closed" ? t("Free; sign-up is closed for now") : t("Free, with an account"), t("${{monthly}} a month, or ${{yearly}} a year", { monthly: PRO_PRICE.monthly, yearly: PRO_PRICE.yearly })],
     },
-    { name: t("Devices that run AI"), values: [t("1: this device"), String(free.hosts), String(pro.hosts)] },
-    { name: t("All your devices, phones and browsers included"), values: [t("This device, and browsers on the same network"), String(free.devices), String(pro.devices)] },
+    { name: t("Devices that run AI"), values: [t("1: the device Droppen is installed on"), String(free.hosts), String(pro.hosts)] },
+    { name: t("All your devices, including those that run AI, phones and browsers"), values: [t("That device, and browsers on the same network"), String(free.devices), String(pro.devices)] },
     {
-      name: t("How far back your phone can read while a device is off"),
-      values: [none, t("{{n}} days", { n: free.retentionDays }), t("{{n}} days", { n: pro.retentionDays })],
+      name: t("Days of sessions your phone can read while a device that runs AI is offline"),
+      values: [t("None: nothing is kept in the cloud"), t("{{n}} days", { n: free.retentionDays }), t("{{n}} days", { n: pro.retentionDays })],
     },
     {
       name: t("A month's transfer through our servers"),
-      values: [none, t("{{n}} GB, then slower", { n: gb(free.transferBytes) }), t("{{n}} GB, then billed by use", { n: gb(pro.transferBytes) })],
+      values: [
+        t("Nothing goes through our servers"),
+        t("{{n}} GB, then {{kb}} KB/s", { n: gb(free.transferBytes), kb: THROTTLED_KB_PER_SEC }),
+        t("{{n}} GB, then billed by use", { n: gb(pro.transferBytes) }),
+      ],
     },
-    { name: t("End-to-end encrypted: we can't see your code"), values: [yes, yes, yes] },
+    { name: t("End-to-end encrypted: we can't read your sessions, code or terminals"), values: [yes, yes, yes] },
   ];
   const heads = [t("Local only"), t("Free"), "Pro"];
   return (
@@ -243,8 +242,9 @@ function Compare({ signup }: { signup: SignupMode }) {
         <div role="row" className="grid grid-cols-3 border-b border-border md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
           <span role="columnheader" className="max-md:sr-only" />
           {heads.map((h, i) => (
-            <span key={h} role="columnheader" className={cn("px-6 py-3 max-md:px-4", i > 0 && "border-l border-border", "md:border-l md:border-border")}>
-              <CapsLabel className="text-fg">{h}</CapsLabel>
+            // The plans' names as their cards write them: in capitals, 「PRO」 read as another word beside 「免费版」.
+            <span key={h} role="columnheader" className={cn("px-6 py-3 text-[13px] leading-5 font-semibold text-fg max-md:px-4", i > 0 && "border-l border-border", "md:border-l md:border-border")}>
+              {h}
             </span>
           ))}
         </div>
@@ -270,7 +270,7 @@ function Compare({ signup }: { signup: SignupMode }) {
         ))}
       </div>
       <p data-testid="compare-note" className="border-t border-border px-6 py-3.5 text-xs leading-5 text-muted max-md:px-4">
-        {t("A device off for longer than that has its copy in the cloud deleted: what is on the device stays, and its last {{free}} days ({{pro}} on Pro) come back once it is online.", {
+        {t("Free keeps an encrypted copy of each device's last {{free}} days of sessions in the cloud, Pro its last {{pro}}. A device offline for longer than that has its cloud copy deleted: what is on the device is not affected, and those days are uploaded again once it is back online.", {
           free: free.retentionDays,
           pro: pro.retentionDays,
         })}
@@ -339,22 +339,22 @@ function Faq() {
       ),
     },
     {
-      q: t("What if a device stays off for longer?"),
+      q: t("What if a device stays offline for longer?"),
       a: t(
-        "On Free your phone can read a device's last {{free}} days while it is off, on Pro its last {{pro}}. A device off for longer than that has its encrypted copy in the cloud deleted: what is on the device itself is not affected, and its recent days are uploaded again once it is back online.",
+        "On Free your phone can read a device's last {{free}} days of sessions while it is offline, on Pro its last {{pro}}. A device offline for longer than that has its encrypted copy in the cloud deleted: what is on the device itself is not affected, and its recent sessions are uploaded again once it is back online.",
         { free: free.retentionDays, pro: pro.retentionDays },
       ),
     },
     {
       q: t("What does “local only” mean?"),
       a: t(
-        "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want your AI on your phone from anywhere, and all your devices on one screen.",
+        "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want to reach your AI from your phone anywhere, and the sessions of all your devices in one list.",
       ),
     },
     {
       q: t("Can I host it myself?"),
       a: t(
-        "The Droppen app and server are licensed under the AGPL-3.0, and local only needs nothing from us. Their source code is at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.",
+        "Local only runs entirely on your own devices and needs nothing from us. The Droppen client is open source under the AGPL-3.0, at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.",
       ),
     },
     {
@@ -439,16 +439,17 @@ export default function PricingPage({
     <div data-testid="pricing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Pricing")}</CapsLabel>
             <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">
               {t("Start free. Go Pro when you need more.")}
             </h1>
             <p className="max-w-[40em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
-              {t("Every plan is end-to-end encrypted: we can't see your code on any of them. A plan only decides how many devices you connect, how far back your phone can read while a device is off, and how much our servers carry for you each month.")}
+              {t(
+                "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.",
+              )}
             </p>
-            <p className="font-mono text-2xs text-faint">{t("Prices in US dollars.")}</p>
+            <p className="font-mono text-2xs text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
           </div>
           <Plans signedIn={signedIn} signup={signup} onChoose={setPlan} />
           <Compare signup={signup} />

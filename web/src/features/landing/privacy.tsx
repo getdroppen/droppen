@@ -5,9 +5,10 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { SIGNUP_CONFIG } from "@/lib/hub/api";
 import { PLAN_TABLE } from "@/lib/hub/plan";
 import { landingBundles } from "./copy";
-import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { publicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
+import { cn } from "@/lib/cn";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
@@ -26,7 +27,7 @@ import { PRIVACY_EMAIL } from "./waitlist";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-25";
+export const PRIVACY_UPDATED = "2026-10-28";
 
 /** How long droppen.app keeps a deleted account's address hash (droppen.app's `SIGNUP_CONFIG.deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = SIGNUP_CONFIG.deletion?.emailHoldDays ?? 0;
@@ -94,9 +95,9 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
     <div data-testid="privacy" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Privacy notice")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Privacy notice")}</CapsLabel>
             <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
               {t("What we keep, and what we can't see.")}
             </h1>
@@ -227,7 +228,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 <Block
                   title={t("How long we keep it")}
                   items={[
-                    t("The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.", {
+                    t("The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device offline for longer than that has its copy deleted.", {
                       free: PLAN_TABLE.free!.retentionDays,
                       pro: PLAN_TABLE.pro!.retentionDays,
                       internal: PLAN_TABLE.internal!.retentionDays,
@@ -240,7 +241,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel>{t("Contact")}</CapsLabel>
+              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions, or a request about your data:")} {mail}
               </p>

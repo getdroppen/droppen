@@ -142,7 +142,10 @@ function landing(lng: string, opts: { hints?: EnvironmentHints; signedIn?: boole
 function hero(html: string): string {
   const from = html.indexOf('data-testid="hero-get"');
   assert.ok(from >= 0, "the hero's actions are there");
-  return html.slice(html.lastIndexOf("<div", from), html.indexOf('data-diagram="hero"', from));
+  // Up to the product tour under the hero.
+  const to = html.indexOf('id="tour"', from);
+  assert.ok(to > from, "the product tour follows the hero");
+  return html.slice(html.lastIndexOf("<div", from), to);
 }
 
 function download(
@@ -240,7 +243,7 @@ test("with the hub's answer, every download button is a plain link to the file i
   const page = download("en", { os: "macos-app" });
   assert.ok(text(page).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
   // Downloaded, opened, then signed in from inside the App (`APP_SIGN_IN_AVAILABLE`): never "coming in an update".
-  assert.ok(text(page).includes("Click Sign in to Droppen in the app"));
+  assert.ok(text(page).includes("Sign in to Droppen from the app"));
   assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
   // The release page beside it, for the checksums and the other files: that release's.
   assert.match(page, /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
@@ -299,7 +302,7 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   assert.doesNotMatch(robots.replace(/^#.*\n/gm, ""), /Disallow: \/(?!dl\/)/, "nothing else is disallowed");
 });
 
-test("without it (no route, a 503, a failure, or not yet), every download button links the release page, in a new tab", () => {
+test("without it (no route, a 503, a failure, or not yet), the hero's Mac download opens the download page's Mac tab, and the download page's own button the release page", () => {
   assert.equal(APP_DOWNLOAD_URL, RELEASES_URL);
   assert.equal(RELEASES_URL, "https://github.com/getdroppen/droppen/releases/latest");
   // None (the hub said nothing usable), and not yet (asked, no answer: as the page first draws).
@@ -309,12 +312,17 @@ test("without it (no route, a 503, a failure, or not yet), every download button
       <LandingPage hints={HINTS.mac} />
     </I18nextProvider>,
   );
-  const pages = [hero(landing("en", { hints: HINTS.mac, release: null })), hero(landing("en", { hints: HINTS.unknown, release: null })), download("en", { os: "macos-app", release: null }), hero(asking)];
-  for (const html of pages) {
-    const a = html.match(/<a [^>]*data-testid="(hero|app)-download"[^>]*>/)![0];
-    assert.match(a, new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`), a);
+  // The home page never sends its button to another site: until the file is named, it is this site's download page.
+  for (const html of [hero(landing("en", { hints: HINTS.mac, release: null })), hero(landing("en", { hints: HINTS.unknown, release: null })), hero(asking)]) {
+    const a = html.match(/<a [^>]*data-testid="hero-download"[^>]*>/)![0];
+    assert.match(a, /^<a href="\/download\?os=macos-app"/, a);
+    assert.doesNotMatch(a, /target=|github\.com/, a);
     assert.doesNotMatch(html, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   }
+  // The download page is where the file is: its button falls back to the release page.
+  const fallback = download("en", { os: "macos-app", release: null });
+  assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`));
+  assert.doesNotMatch(fallback, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   const page = download("en", { os: "macos-app", release: null });
   assert.ok(text(page).includes("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg"));
   assert.match(page, new RegExp(`<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"`));
@@ -429,6 +437,10 @@ test("the Linux tab says the processor and links its tarball after the command, 
   const unknown = download("en", { os: "linux", hints: HINTS.linux });
   assert.doesNotMatch(unknown, /data-testid="linux-cpu"/, "nothing said when nothing is known");
   assert.equal(tarballs(unknown).length, 2, "both, when the processor is not known");
+  // Read on a Mac (Apple silicon is aarch64 too): its processor says nothing about a server's.
+  const mac = download("en", { os: "linux", hints: HINTS.mac, cpu: "aarch64" });
+  assert.doesNotMatch(mac, /data-testid="linux-cpu"/, "no processor named off Linux");
+  assert.equal(tarballs(mac).length, 2, "both, for whichever server it is");
   assert.deepEqual(tarballs(download("en", { os: "linux", hints: HINTS.linux, cpu: "x86_64", release: null })), [], "none without the hub's answer");
 });
 
@@ -440,8 +452,11 @@ test("the download page opens on the detected tab without ?os=; a device it cann
   const unknown = download("en", { hints: HINTS.unknown });
   assert.match(unknown, /data-testid="environments" data-os="macos-app"/);
   assert.doesNotMatch(unknown, /data-detected=|data-testid="detected"/);
-  assert.ok(text(unknown).includes("Pick the device your AI runs on: every way is one click away."));
-  assert.ok(!text(unknown).includes("We picked the way for the device you are on"));
+  // A phone marks no computer: it installs nothing, and is told where to open the page.
+  const phone = download("en", { hints: HINTS.phone });
+  assert.doesNotMatch(phone, /data-testid="detected"/);
+  assert.match(phone, /data-testid="on-a-phone"/);
+  assert.doesNotMatch(unknown, /data-testid="on-a-phone"/);
   // Windows: no app, droppen.app in this browser, and the Mac and Linux ways for a server.
   const windows = download("en", { hints: HINTS.windows });
   assert.match(windows, /data-testid="to-macos-app"/);
@@ -449,18 +464,19 @@ test("the download page opens on the detected tab without ?os=; a device it cann
   assert.equal(primaries(windows), 1);
 });
 
-test("the hero on a Mac: 「Download for Mac」 is the one primary action, the file itself; the release page and the other systems beside it", () => {
+test("the hero on a Mac: 「Download for Mac」 is the one primary action, the file itself; the other systems beside it, and the checksums one click further", () => {
   const html = landing("en", { hints: HINTS.mac });
   const h = hero(html);
   assert.match(h, /data-offer="mac"/);
   assert.match(h, new RegExp(`<a href="${esc(`${DL}Droppen-0.2.129.dmg`)}" data-variant="primary" data-testid="hero-download"[^>]*>.*Download for Mac</a>`));
   assert.equal(primaries(html), 1, "one primary on the page");
   assert.ok(text(h).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
-  assert.match(h, new RegExp(`<a href="${esc(RELEASE.releasesPage)}" target="_blank" rel="noopener noreferrer" data-testid="hero-release-link"`));
+  // The checksums and the release's other files are the download page's (`other systems`), not the hero's.
+  assert.doesNotMatch(h, /data-testid="hero-release-link"/);
   assert.match(h, /<a href="\/download" data-testid="hero-other-systems"/);
-  // The account's ways in stay, as secondaries.
-  assert.match(h, /<a href="\/signup" class="[^"]*">Get started<\/a>/);
-  assert.match(h, /<a href="\/signin"/);
+  // Sign-up stays, as the secondary; signing in is the header's and the footer's.
+  assert.match(h, /<a href="\/signup" class="[^"]*">Create a free account<\/a>/);
+  assert.doesNotMatch(h, /href="\/signin"/);
   assert.doesNotMatch(h, /data-testid="hero-install-command"/);
   // Signed in: the download, and back into the app.
   const signedIn = hero(landing("en", { hints: HINTS.mac, signedIn: true }));
@@ -494,7 +510,7 @@ test("the hero on Windows and on a phone: droppen.app in the browser is the prim
   const w = hero(windows);
   assert.match(w, /data-offer="windows"/);
   assert.ok(text(w).includes("No Windows app yet. Droppen works in this browser"));
-  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Get started<\/a>/);
+  assert.match(w, /<a href="\/signup" data-variant="primary"[^>]*>Create a free account<\/a>/);
   assert.match(w, /<a href="\/download\?os=macos-app" data-testid="hero-mac-tab"/);
   assert.match(w, /<a href="\/download\?os=linux" data-testid="hero-linux-tab"/);
   assert.doesNotMatch(w, /Droppen-0\.2\.129\.dmg|github\.com/, "no Mac file for a Windows device");
@@ -528,15 +544,15 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["No Windows app yet."], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "其他系统", "校验值和其他文件"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
-    "zh-TW": { mac: ["下載 Mac 版", "其他系統"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Windows 版 App 還沒有。"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
-    ja: { mac: ["Mac 版をダウンロード", "ほかの OS"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Windows 版アプリはまだありません。"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
+    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Windows 版 App 还没有。"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Windows 版 App 還沒有。"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
+    ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Windows 版アプリはまだありません。"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
   };
   for (const [lng, devices] of Object.entries(said)) {
     for (const [device, lines] of Object.entries(devices)) {
       const words = text(hero(landing(lng, { hints: HINTS[device as keyof typeof HINTS] })));
       for (const line of lines) assert.ok(words.includes(line), `${lng} ${device}: ${line}`);
-      if (lng !== "en") assert.doesNotMatch(words, /Download for Mac|No Windows app yet|Paste it into|Get Droppen:|other systems|Or download it/, `${lng} ${device}`);
+      if (lng !== "en") assert.doesNotMatch(words, /Download for Mac|No Windows app yet|Paste it into|Get Droppen:|other platforms|Or download it/, `${lng} ${device}`);
       assert.doesNotMatch(words, /Hub|relay|中继|中繼|中継|NAT|STUN|p50|ciphertext|密文|暗号文/, `${lng} ${device}`);
     }
   }

@@ -20,163 +20,175 @@ type Bundle = Record<string, string>;
 
 export const downloadZhCN: Bundle = {
   "Download Droppen": "下载 Droppen",
-  "Download Droppen — your AI, on your phone": "下载 Droppen — 你的 AI，手机上接着用",
-  "Get Droppen for the device Claude Code and Codex run on: the Mac app, or one line for a server. Sign it in, and it is on your phone.":
-    "给跑 Claude Code 和 Codex 的设备装上 Droppen：Mac 用 App，服务器一行命令。登录之后，手机上就能接着用。",
+  "Install Droppen on the Mac or Linux device where Claude Code or Codex runs: the Mac app, or one command. Your phone needs only the browser.":
+    "在运行 Claude Code 或 Codex 的 Mac 或 Linux 设备上安装 Droppen：Mac 应用，或一条命令。手机只需浏览器。",
 
   // Hero
   "Download": "下载",
-  "Install it once, and your AI is on your phone.": "装一次，你的 AI 就到了手机上。",
-  "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
-    "Droppen 跟 Claude Code、Codex 一起跑在你的设备上。打开它、登录 Droppen，这台设备就到了你的手机上，也能和你的其他设备放进同一个屏幕。",
-  "We picked the way for the device you are on; every other way is one click away.": "已按你现在用的设备选好方式，其它系统点一下就能切换。",
-  "Pick the device your AI runs on: every way is one click away.": "选一下跑 AI 的设备：每种方式点一下就能切换。",
+  "Install Droppen on the device that runs your AI.": "在运行 AI 的设备上安装 Droppen。",
+  "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.":
+    "Droppen 安装在运行 Claude Code 或 Codex 的 Mac 或 Linux 设备上，与它们一同运行。手机和其他设备无需安装：在浏览器中打开 {{app}}，即可查看所有会话、回答 AI 的提问、发送指令和打开终端。",
+  "A Droppen account. Sign-up needs an invite code.": "一个 Droppen 账户。注册需要邀请码。",
+  "How to install on a Mac": "在 Mac 上的安装方式",
 
   // The tabs
   "Choose your system": "选择你的系统",
-  "Mac · App": "Mac · App",
-  "Mac · background": "Mac · 后台运行",
+  "Linux": "Linux",
   "Linux server": "Linux 服务器",
   "Windows": "Windows",
   "Phone / tablet": "手机 / 平板",
-  "Detected": "推荐",
+  "Detected": "当前设备",
 
   // Mac · App
   "Droppen for Mac": "Mac 版 Droppen",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page. Then sign it in to Droppen from inside the app.":
-    "打开 App，Droppen 就在你的 Mac 上跑起来了：不用终端，也没有登录页。然后在 App 里登录 Droppen 就行。",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page.": "打开 App，Droppen 就在你的 Mac 上跑起来了：不用终端，也没有登录页。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
+    "打开 App，Droppen 即在这台 Mac 上运行，无需终端，也无需设置本地密码。要在手机和其他设备上使用，请在 App 内登录 Droppen。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "打开 App，Droppen 即在这台 Mac 上运行，无需终端，也无需设置本地密码。",
   "The App is coming soon": "App 即将推出",
-  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.": "在它推出之前，可以先让 Droppen 在 Mac 后台运行：一行命令，登录方式一样。",
+  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.": "App 推出之前，可以先以后台服务在 Mac 上运行 Droppen：只需一条命令，登录方式相同。",
   "copy the command": "复制命令",
   "the steps for running it in the background": "查看后台运行的步骤",
   "Download Droppen App (macOS)": "下载 Droppen App（macOS）",
-  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 及以上 · 通用版：Apple 芯片和 Intel 都能用 · Droppen-<版本>.dmg",
-  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 及以上 · 通用版：Apple 芯片和 Intel 都能用",
+  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 及以上 · 通用版，支持 Apple 芯片和 Intel · Droppen-<版本>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 及以上 · 通用版，支持 Apple 芯片和 Intel",
   "release notes, checksums and other files": "更新说明、校验值和其他文件",
   "Open the .dmg": "打开 .dmg",
-  "The file you just downloaded, from Downloads.": "就是刚下载好的那个文件，在「下载」文件夹里。",
+  "The file you just downloaded, from Downloads.": "在「下载」文件夹中打开刚下载的文件。",
   "Drag Droppen to Applications": "把 Droppen 拖进「应用程序」",
-  "Like any other Mac app.": "和装其他 Mac App 一样。",
+  "Like any other Mac app.": "与安装其他 Mac 应用的方式相同。",
   "Open Droppen": "打开 Droppen",
   "It opens a short setup guide, four steps.": "它会打开一个四步的设置向导。",
-  "Click Sign in to Droppen in the app": "在 App 里点「登录 Droppen」",
-  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
-    "在向导第 02 步「在哪里用」选「在手机和其它设备上也能用」，再点「登录 Droppen」（之后也可以在「设置 → 访问 → Droppen」里找到）。会弹出 {{app}} 窗口：登录后点「加入这台设备」。",
+  "Sign in to Droppen from the app": "在 App 内登录 Droppen",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.":
+    "在设置向导的「在哪里用」一步，选择「在手机和其它设备上也能用」，再点击「登录 Droppen」。浏览器会打开 {{app}}：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。之后也可以在「设置 → 访问 → Droppen」中登录。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
-    "想在手机上用？在 App 里登录 Droppen 的功能会在后续更新中推出。在那之前，App 先在这台 Mac 上运行 Droppen。",
+    "在手机上使用：在 App 内登录 Droppen 的功能将在后续更新中提供。在此之前，App 仅在这台 Mac 上运行 Droppen。",
 
   // Mac · background
-  "Droppen in the background on a Mac": "让 Droppen 在 Mac 后台运行",
-  "For a Mac that stays on as a server, or if you would rather use the terminal: one line, then everything else happens in the browser.":
-    "适合一直开着、当服务器用的 Mac，或者你更习惯终端：一行命令，剩下的都在浏览器里完成。",
-  "Paste it into Terminal on that Mac.": "粘贴到那台 Mac 的「终端」里运行。",
-  "It installs and starts at login": "安装，并设为登录时启动",
-  "The script installs Droppen, starts it now and at every login, and creates your first local login: it prints it, or asks you to choose one.":
-    "脚本会安装 Droppen，现在就启动，以后每次登录也会自动启动；同时创建第一个本地登录：要么直接打印出来，要么请你自己设一个。",
-  "Its page opens": "它的页面自动打开",
-  "Your browser opens Droppen on that device. Sign in with the local login: everything already works there, with no account.":
-    "浏览器会打开这台设备上的 Droppen。用本地登录进去，所有功能已经能用，不需要账号。",
+  "Droppen in the background on a Mac": "在 Mac 上以后台服务运行 Droppen",
+  "For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.":
+    "适用于长期开机、用作服务器的 Mac，或习惯使用终端的用户。一条命令完成安装，之后在浏览器中把这台 Mac 加入你的账户。",
+  "Paste it into Terminal on that Mac.": "在这台 Mac 的「终端」中粘贴并运行。",
+  "It installs and starts at login": "安装并设为登录时启动",
+  "The script installs Droppen, starts it now and at every login, and creates the local page's first account under your user name. It asks you to choose a password (at least 12 characters), or generates one when run without a terminal.":
+    "脚本会安装 Droppen 并立即启动，此后每次登录时自动启动；同时以你的系统用户名为本地页面创建第一个账户。脚本会请你设置密码（至少 12 个字符）；在没有终端的环境中运行时，会自动生成密码。",
+  "The local page opens": "打开本地页面",
+  "Your browser opens Droppen's local page. Sign in with that account: everything works there without a Droppen account. To use it from your phone, continue with the next step.":
+    "浏览器会打开 Droppen 的本地页面。用上一步的账户登录，无需 Droppen 账户即可使用全部功能。要在手机上使用，请继续下一步。",
   "Sign in to Droppen": "登录 Droppen",
-  "Click Sign in to Droppen on that page. A {{app}} window opens: sign in, check the fingerprint matches, and add the device.":
-    "在那个页面上点「登录 Droppen」，会弹出 {{app}} 的窗口：登录，核对两边的指纹一致，再把这台设备加进来。",
-  "It is in my devices": "出现在「我的设备」里",
-  "Within seconds it is online in my devices, on every phone and browser of your account. Add another device the same way, and put both on one screen.":
-    "几秒钟后，它就在「我的设备」里上线了，你账户里的每部手机、每个浏览器都看得到。再用同样的方法加一台设备，就能把两台放进同一个屏幕。",
+  "On the local page, click Sign in to Droppen. A {{app}} window opens: sign in, check that its fingerprint matches the one on the local page, then click add this device.":
+    "在本地页面上点击「登录 Droppen」，会弹出 {{app}} 窗口。登录后，核对窗口中的指纹与本地页面上显示的一致，再点击「加入这台设备」。",
+  "It is in my devices": "出现在「我的设备」中",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.":
+    "几秒钟后，这台设备会在「我的设备」中显示为在线，账户中的每部手机和每个浏览器都能看到它。按同样的步骤添加更多设备后，所有设备上的会话会汇总在同一个列表中。",
 
   // Linux server
   "Droppen on a Linux server": "在 Linux 服务器上运行 Droppen",
-  "Run your AI on a server that never sleeps, and watch it from your phone. No browser needed on the server: it joins your account with a one-time code.":
-    "让 AI 跑在从不休眠的服务器上，在手机上看着它干活。服务器上不需要浏览器：用一次性注册码就能加入你的账户。",
+  "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
+    "让 AI 在常开的服务器上运行，并在手机上查看进度、回答它的提问。服务器上无需浏览器，使用一次性注册码即可加入你的账户。",
   "coming": "即将支持",
-  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 支持（服务器上不需要浏览器）正在路上。在那之前，可以先在 Mac 上运行 Droppen。",
+  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.":
+    "Linux 支持（服务器上无需浏览器）尚未推出。在此之前，可以在 Mac 上运行 Droppen。",
   "run it in the background on a Mac": "改为在 Mac 后台运行",
-  "This browser reports Linux on {{arch}}.": "这个浏览器报告的系统是 {{arch}} 架构的 Linux。",
+  "This browser reports Linux on {{arch}}.": "当前浏览器运行在 {{arch}} 架构的 Linux 上。",
   "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen 的 Linux 版本支持 x86_64 和 aarch64。",
   "<code>": "<注册码>",
-  "Replace <code> with a one-time code: on {{app}}, open my devices → add a device that runs AI → show a one-time code.":
-    "把 <注册码> 换成一次性注册码：在 {{app}} 打开「我的设备 → 添加可运行 AI 的设备 → 显示一次性注册码」。",
-  "Get a one-time code": "拿一个一次性注册码",
-  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.": "在 {{app}}：「我的设备 → 添加可运行 AI 的设备 → 显示一次性注册码」。10 分钟内有效，只能用一次。",
+  "Replace <code> with the one-time code from step 01 below.": "把命令中的 <注册码> 替换为下方第 01 步获取的一次性注册码。",
+  "Get a one-time code": "获取一次性注册码",
+  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.":
+    "在 {{app}} 打开「我的设备 → 添加可运行 AI 的设备 → 显示一次性注册码」。注册码 10 分钟内有效，仅可使用一次。",
   "Run the command on the server": "在服务器上运行命令",
-  "It installs Droppen, starts it as a service, and joins your account with the code.": "它会安装 Droppen、作为服务启动，并用注册码加入你的账户。",
-  "Within seconds it is online in my devices, on every phone and browser of your account.": "几秒钟后，它就在「我的设备」里上线了，你账户里的每部手机、每个浏览器都看得到。",
+  "The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out.":
+    "脚本会安装 Droppen，以你的用户身份作为 systemd 用户服务启动（不使用 root），并用注册码加入你的账户。如果脚本结束时给出提示，请执行 sudo loginctl enable-linger，使服务在退出登录后继续运行。",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account.": "几秒钟后，这台设备会在「我的设备」中显示为在线，账户中的每部手机和每个浏览器都能看到它。",
 
   // Windows
   "Droppen on Windows": "Windows 版 Droppen",
-  "Not supported yet: it is on its way. On Windows you can already watch and answer your AI.": "暂不支持，正在路上。不过在 Windows 上现在就能看 AI 干活、回答它的提问。",
-  "not yet": "暂不支持",
-  "What works on Windows today:": "在 Windows 上现在就能做的：",
-  "Control your other devices from this browser: sign in at {{app}}.": "在这个浏览器里控制你的其他设备：登录 {{app}} 就行。",
-  "Run the AI on a Mac, with the Droppen App.": "让 AI 跑在 Mac 上，用 Droppen App。",
-  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "让 AI 跑在 Mac 上：现在可以后台运行，App 也快来了。",
-  "Run the AI on a Linux server, or in WSL with systemd turned on.": "让 AI 跑在 Linux 服务器上，或者开启了 systemd 的 WSL 里。",
-  "how to turn on systemd in WSL": "如何在 WSL 里开启 systemd",
-  "Once Linux is supported: a Linux server, or WSL.": "等 Linux 支持上线后：Linux 服务器，或者 WSL。",
-  "use {{app}} in this browser": "在这个浏览器里用 {{app}}",
-  "the Mac options": "看看 Mac 的方式",
-  "the Linux server options": "看看 Linux 服务器的方式",
+  "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
+    "Droppen 暂不支持在 Windows 上运行。目前可以在 Windows 的浏览器中查看 AI 的进度并回答它的提问。",
+  "What works on Windows today:": "目前在 Windows 上可以：",
+  "Control your other devices from this browser: sign in at {{app}}.": "登录 {{app}}，在这个浏览器中控制你的其他设备。",
+  "Run the AI on a Mac, with the Droppen App.": "在 Mac 上运行 AI：使用 Droppen App。",
+  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "在 Mac 上运行 AI：目前以后台服务运行，Droppen App 即将推出。",
+  "Run the AI on a Linux server, or in WSL with systemd turned on.": "在 Linux 服务器或已开启 systemd 的 WSL 中运行 AI。",
+  "how to turn on systemd in WSL": "如何在 WSL 中开启 systemd",
+  "Once Linux is supported: a Linux server, or WSL.": "Linux 支持推出后：可使用 Linux 服务器或 WSL。",
+  "use {{app}} in this browser": "在这个浏览器中打开 {{app}}",
+  "the Mac options": "Mac 安装方式",
+  "the Linux server options": "Linux 服务器安装方式",
 
   // Phone / tablet
-  "On your phone, Droppen is the remote control": "在手机上，Droppen 是遥控器",
-  "The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put {{app}} on your home screen and it opens like an app.":
-    "AI 跑在你的 Mac 或服务器上，手机负责看它干活、回答它的提问、打开终端。把 {{app}} 加到主屏幕，用起来就像一个 App。",
+  "Then, use it from your phone": "安装之后，在手机上使用",
+  "Open {{app}} in your phone's browser and sign in to the same account.": "在手机浏览器中打开 {{app}}，登录同一个账户。",
   "open {{app}}": "打开 {{app}}",
-  "iPhone and iPad (Safari)": "iPhone 和 iPad（Safari）",
-  "Open {{app}} in Safari, tap Share, then Add to Home Screen.": "在 Safari 里打开 {{app}}，点「分享」，再点「添加到主屏幕」。",
-  "Android (Chrome)": "Android（Chrome）",
-  "Open {{app}} in Chrome, tap ⋮, then Add to Home screen or Install app.": "在 Chrome 里打开 {{app}}，点 ⋮，再点「添加到主屏幕」或「安装应用」。",
+  "Open {{app}} on your phone": "在手机上打开 {{app}}",
+  "iPhone and iPad: in Safari, tap Share, then Add to Home Screen. Android: in Chrome, tap ⋮, then Add to Home screen or Install app. Then you can turn on notifications.":
+    "iPhone 和 iPad：在 Safari 中点「分享」，再点「添加到主屏幕」。Android：在 Chrome 中点 ⋮，再点「添加到主屏幕」或「安装应用」。添加后即可开启通知。",
+  "Add it to the home screen": "添加到主屏幕",
+  "On a device already in your account, open my devices → add a browser or phone, then scan the QR code the phone shows, or enter its number code.":
+    "在已加入账户的设备上，打开「我的设备 → 添加浏览器或手机」，扫描手机上显示的二维码，或输入数字码。",
   "Install it where your AI runs": "装在跑 AI 的设备上",
-  "Droppen itself goes on the device your AI runs on. Open this page there:": "Droppen 本身要装在跑 AI 的那台设备上。在那台设备上打开这个页面：",
+  "You are on a phone. To install, open this page on the device that runs your AI:": "你正在使用手机。请在运行 AI 的设备上打开此页面进行安装：",
   "copy": "复制",
 
   // System requirements
-  "System requirements": "系统要求",
-  "What it runs on": "能装在哪里",
+  "Approve the phone": "批准这部手机",
+  "What gets installed, and how to verify it": "安装了什么，以及如何核对",
   "Mac": "Mac",
-  "The Droppen App: macOS 13 or later, Apple silicon or Intel, one universal download": "Droppen App：macOS 13 及以上，Apple 芯片或 Intel 都能用，一个通用安装包",
-  "Apple silicon or Intel: in the background today, the Droppen App soon": "Apple 芯片或 Intel：现在可以后台运行，App 即将推出",
-  "The install command; no browser needed on the server": "一行安装命令，服务器上不需要浏览器",
-  "not yet, on its way": "暂不支持，正在路上",
-  "to control your devices, in the browser: iPhone, iPad, Android": "在浏览器里控制你的设备：iPhone、iPad、Android",
-  "Claude Code or Codex": "Claude Code 或 Codex",
-  "installed and signed in on that device: Droppen runs them, it does not replace them": "在那台设备上装好并登录：Droppen 负责运行它们，不替代它们",
+  "Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.": "使用 Developer ID 签名并经 Apple 公证；只安装为对应版本签名的更新。",
+  "Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.": "以当前用户身份运行，从不使用 root；安装前先核对发布文件的 SHA-256 校验值。",
+  "For a command-line install: a launchd user agent on macOS, a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo is used only to set up and manage that service.":
+    "命令行安装：macOS 上为 launchd 用户代理，Linux 上为 systemd 用户服务。在 Linux 上加 --system 可改为开机启动的系统服务，Droppen 仍以你的用户身份运行；sudo 仅用于配置和管理该服务。",
+  "Listens only on 127.0.0.1 and reaches Droppen over outbound connections, so there is no inbound port to open. A command-line install uses port 8700, or the next free port.":
+    "只在 127.0.0.1 上监听，通过出站连接接入 Droppen，无需开放入站端口。命令行安装使用 8700 端口，被占用时改用下一个空闲端口。",
+  "Mac app (recommended)": "Mac 应用（推荐）",
+  "Command line": "命令行",
+  "Claude Code or Codex, installed and signed in on that device": "该设备上已安装并登录 Claude Code 或 Codex",
 
   // Manual download and checksums
   "Manual download": "手动下载",
-  "Want to see what you install? Download it by hand.": "想先看清楚装的是什么？手动下载也行。",
-  "Every release is on GitHub, with the SHA-256 checksum of each file next to it.": "每个版本都发布在 GitHub 上，每个文件旁边都附有它的 SHA-256 校验值。",
-  "latest release on GitHub": "GitHub 上的最新版本",
-  "Check the file before you open it:": "打开之前先核对文件：",
-  "The number it prints must be the one the release lists. The install script makes the same check before it installs anything.":
-    "打印出来的值必须和发布页上列的一致。安装脚本在安装前也会做同样的核对。",
+  "macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)":
+    "macOS 13 及以上（Apple 芯片或 Intel），或 Linux（x86_64、aarch64，glibc 2.28 及以上）",
+  "A free Droppen account. You can also create one when you sign in to Droppen on the device.": "一个免费的 Droppen 账户，也可以在设备上登录 Droppen 时创建。",
+  "the latest release on GitHub (getdroppen/droppen)": "GitHub 上的最新版本（getdroppen/droppen）",
+  "Before you open the .dmg or extract the .tar.gz, check it in a terminal:": "打开 .dmg 或解压 .tar.gz 之前，先在终端中核对文件：",
+  "The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.":
+    "输出的校验值必须与发布页 SHA256SUMS 中该文件的值一致；不一致时请勿安装。安装脚本在安装前也会执行同样的核对。",
 
   // Uninstall
-  "Uninstall": "卸载",
-  "Leaving takes three steps, too.": "卸载也只要三步。",
-  "Remove it from your account": "从账户里移除",
-  "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
-    "在 {{app}} 的「我的设备」里移除这台设备。密钥会随之轮换，之后写下的内容它都打不开。",
-  "Disconnect it": "断开连接",
-  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台设备上，「设置 → 访问 → Droppen → 断开这台设备」会删除它本地的 Droppen 密钥。",
+  "Updating and uninstalling": "更新与卸载",
+  "The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.":
+    "Mac 应用会自动检查更新。命令行安装的设备，再次运行安装命令即可原地升级，数据保留。",
+  "Remove it from your account": "从账户中移除",
+  "On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.":
+    "在 {{app}} 的「我的设备」中移除这台设备。它持有过的所有密钥都会更换，之后写入的内容它无法解密。",
+  "Disconnect it": "在设备上断开连接",
+  "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.":
+    "在那台设备上打开 Droppen 的「设置 → 访问 → Droppen → 断开这台设备」，删除保存在设备上的 Droppen 密钥。仅从账户中移除，不会删除这些密钥。",
   "Remove the program": "删除程序",
-  "The App: quit Droppen and drag it from Applications to the Trash.": "App：退出 Droppen，把它从「应用程序」拖进废纸篓。",
-  "In the background: run the install script again with --uninstall:": "后台运行：加上 --uninstall 再运行一次安装脚本：",
-  "Run the install script again with --uninstall:": "加上 --uninstall 再运行一次安装脚本：",
+  "The App: quit Droppen and drag it from Applications to the Trash.": "Mac 应用：退出 Droppen，将它从「应用程序」文件夹拖到废纸篓。",
+  "Command-line install (Mac or Linux): run this on that device, as the user who installed it:": "命令行安装（Mac 或 Linux）：在那台设备上，以安装时的用户运行：",
+  "Run this on that device, as the user who installed it:": "在那台设备上，以安装时的用户运行：",
+  "It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.":
+    "该命令会停止并移除服务和程序，保留数据；结束时会列出数据所在目录，以及删除数据的命令。",
 
   // The end of the page
-  "Ready when you are": "准备好了就开始",
-  "Install it, then sign it in to Droppen.": "装好，再登录 Droppen。",
-  "No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.": "还没有账号？先用邀请码注册，或者在设备登录时弹出的 {{app}} 窗口里注册。",
-  "No account yet? Sign up first, or in the {{app}} window when you sign the device in.": "还没有账号？先注册，或者在设备登录时弹出的 {{app}} 窗口里注册。",
-  "No account yet? Sign-up is closed for now: join the waitlist.": "还没有账号？目前暂停注册，可以先加入等候名单。",
+  "Before you install:": "安装前需要：",
+  "Mac app": "Mac 应用",
+  "A Droppen account. Sign-up is closed for now.": "一个 Droppen 账户。目前暂停注册。",
   "Open my devices": "打开「我的设备」",
-  "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登录之后，它就在「我的设备」里了。再用同样的方法加一台设备，就能在一个屏里同时看两台。",
+  "You are signed in.": "你已登录。",
 
   // The home page's hero: the way onto the device reading it (hero-get.tsx)
   "Download for Mac": "下载 Mac 版",
-  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 及以上 · Apple 芯片和 Intel 都能用",
-  "other systems": "其他系统",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 及以上 · 支持 Apple 芯片和 Intel",
+  "Install script": "安装脚本",
+  "Background service": "后台服务",
+  "Network": "网络",
+  "Encryption": "加密",
+  "End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.":
+    "在你的设备之间端到端加密：Droppen Hub 和 Droppen 中继都不持有能解密你的会话的密钥。",
+  "To update, run the install command again: it upgrades in place and keeps your data.": "要更新，再次运行安装命令即可原地升级，数据保留。",
   "checksums and other files": "校验值和其他文件",
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在这台设备的终端里粘贴运行：Droppen 会自动安装、启动，并打开它的页面。",
   "A server with no browser?": "服务器上没有浏览器？",
@@ -191,152 +203,164 @@ export const downloadZhCN: Bundle = {
 
 export const downloadZhTW: Bundle = {
   "Download Droppen": "下載 Droppen",
-  "Download Droppen — your AI, on your phone": "下載 Droppen — 你的 AI，手機上接著用",
-  "Get Droppen for the device Claude Code and Codex run on: the Mac app, or one line for a server. Sign it in, and it is on your phone.":
-    "替執行 Claude Code 和 Codex 的裝置裝上 Droppen：Mac 用 App，伺服器一行指令。登入之後，手機上就能接著用。",
+  "Install Droppen on the Mac or Linux device where Claude Code or Codex runs: the Mac app, or one command. Your phone needs only the browser.":
+    "在執行 Claude Code 或 Codex 的 Mac 或 Linux 裝置上安裝 Droppen：Mac 應用程式，或一行指令。手機只需瀏覽器。",
 
   "Download": "下載",
-  "Install it once, and your AI is on your phone.": "裝一次，你的 AI 就到了手機上。",
-  "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
-    "Droppen 跟 Claude Code、Codex 一起在你的裝置上執行。打開它、登入 Droppen，這台裝置就到了你的手機上，也能和你的其他裝置放進同一個畫面。",
-  "We picked the way for the device you are on; every other way is one click away.": "已依你現在用的裝置選好方式，其他系統點一下就能切換。",
-  "Pick the device your AI runs on: every way is one click away.": "選一下跑 AI 的裝置：每種方式點一下就能切換。",
+  "Install Droppen on the device that runs your AI.": "在執行 AI 的裝置上安裝 Droppen。",
+  "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.":
+    "Droppen 安裝在執行 Claude Code 或 Codex 的 Mac 或 Linux 裝置上，與它們一同執行。手機和其他裝置無需安裝：在瀏覽器中打開 {{app}}，即可查看所有工作階段、回答 AI 的提問、傳送指令和開啟終端機。",
+  "A Droppen account. Sign-up needs an invite code.": "一個 Droppen 帳戶。註冊需要邀請碼。",
+  "How to install on a Mac": "在 Mac 上的安裝方式",
 
   "Choose your system": "選擇你的系統",
-  "Mac · App": "Mac · App",
-  "Mac · background": "Mac · 背景執行",
+  "Linux": "Linux",
   "Linux server": "Linux 伺服器",
   "Windows": "Windows",
   "Phone / tablet": "手機 / 平板",
-  "Detected": "推薦",
+  "Detected": "目前裝置",
 
   "Droppen for Mac": "Mac 版 Droppen",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page. Then sign it in to Droppen from inside the app.":
-    "打開 App，Droppen 就在你的 Mac 上執行了：不用終端機，也沒有登入頁。接著在 App 裡登入 Droppen 就好。",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page.": "打開 App，Droppen 就在你的 Mac 上執行了：不用終端機，也沒有登入頁。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
+    "打開 App，Droppen 即在這台 Mac 上執行，無需終端機，也無需設定本地密碼。要在手機和其他裝置上使用，請在 App 內登入 Droppen。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "打開 App，Droppen 即在這台 Mac 上執行，無需終端機，也無需設定本地密碼。",
   "The App is coming soon": "App 即將推出",
-  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.": "在它推出之前，可以先讓 Droppen 在 Mac 背景執行：一行指令，登入方式一樣。",
+  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.": "App 推出之前，可以先以背景服務在 Mac 上執行 Droppen：只需一行指令，登入方式相同。",
   "copy the command": "複製指令",
   "the steps for running it in the background": "查看背景執行的步驟",
   "Download Droppen App (macOS)": "下載 Droppen App（macOS）",
-  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 以上 · 通用版：Apple 晶片和 Intel 都能用 · Droppen-<版本>.dmg",
-  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 以上 · 通用版：Apple 晶片和 Intel 都能用",
+  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "需要 macOS 13 以上 · 通用版，支援 Apple 晶片和 Intel · Droppen-<版本>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "需要 macOS 13 以上 · 通用版，支援 Apple 晶片和 Intel",
   "release notes, checksums and other files": "更新說明、校驗值和其他檔案",
   "Open the .dmg": "打開 .dmg",
-  "The file you just downloaded, from Downloads.": "就是剛下載好的那個檔案，在「下載項目」資料夾裡。",
+  "The file you just downloaded, from Downloads.": "在「下載項目」資料夾中打開剛下載的檔案。",
   "Drag Droppen to Applications": "把 Droppen 拖進「應用程式」",
-  "Like any other Mac app.": "和安裝其他 Mac App 一樣。",
+  "Like any other Mac app.": "與安裝其他 Mac 應用程式的方式相同。",
   "Open Droppen": "打開 Droppen",
   "It opens a short setup guide, four steps.": "它會打開一個四步的設定引導。",
-  "Click Sign in to Droppen in the app": "在 App 裡點「登入 Droppen」",
-  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
-    "在引導第 02 步「在哪裡用」選「在手機和其他裝置上也能用」，再點「登入 Droppen」（之後也可以在「設定 → 存取 → Droppen」裡找到）。會彈出 {{app}} 視窗：登入後點「加入這台裝置」。",
+  "Sign in to Droppen from the app": "在 App 內登入 Droppen",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.":
+    "在設定引導的「在哪裡用」一步，選擇「在手機和其他裝置上也能用」，再點擊「登入 Droppen」。瀏覽器會打開 {{app}}：登入後，核對指紋與 App 中顯示的一致，再點擊「加入這台裝置」。之後也可以在「設定 → 存取 → Droppen」中登入。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
-    "想在手機上用？在 App 裡登入 Droppen 的功能會在後續更新中推出。在那之前，App 先在這台 Mac 上執行 Droppen。",
+    "在手機上使用：在 App 內登入 Droppen 的功能將在後續更新中提供。在此之前，App 僅在這台 Mac 上執行 Droppen。",
 
-  "Droppen in the background on a Mac": "讓 Droppen 在 Mac 背景執行",
-  "For a Mac that stays on as a server, or if you would rather use the terminal: one line, then everything else happens in the browser.":
-    "適合一直開著、當伺服器用的 Mac，或者你更習慣終端機：一行指令，剩下的都在瀏覽器裡完成。",
-  "Paste it into Terminal on that Mac.": "貼到那台 Mac 的「終端機」裡執行。",
-  "It installs and starts at login": "安裝，並設為登入時啟動",
-  "The script installs Droppen, starts it now and at every login, and creates your first local login: it prints it, or asks you to choose one.":
-    "腳本會安裝 Droppen，現在就啟動，之後每次登入也會自動啟動；同時建立第一個本地登入：直接印出來，或請你自己設定一個。",
-  "Its page opens": "它的頁面自動打開",
-  "Your browser opens Droppen on that device. Sign in with the local login: everything already works there, with no account.":
-    "瀏覽器會打開這台裝置上的 Droppen。用本地登入進去，所有功能都已經能用，不需要帳號。",
+  "Droppen in the background on a Mac": "在 Mac 上以背景服務執行 Droppen",
+  "For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.":
+    "適用於長期開機、作為伺服器使用的 Mac，或習慣使用終端機的使用者。一行指令完成安裝，之後在瀏覽器中把這台 Mac 加入你的帳戶。",
+  "Paste it into Terminal on that Mac.": "在這台 Mac 的「終端機」中貼上並執行。",
+  "It installs and starts at login": "安裝並設為登入時啟動",
+  "The script installs Droppen, starts it now and at every login, and creates the local page's first account under your user name. It asks you to choose a password (at least 12 characters), or generates one when run without a terminal.":
+    "腳本會安裝 Droppen 並立即啟動，此後每次登入時自動啟動；同時以你的系統使用者名稱為本地頁面建立第一個帳戶。腳本會請你設定密碼（至少 12 個字元）；在沒有終端機的環境中執行時，會自動產生密碼。",
+  "The local page opens": "打開本地頁面",
+  "Your browser opens Droppen's local page. Sign in with that account: everything works there without a Droppen account. To use it from your phone, continue with the next step.":
+    "瀏覽器會打開 Droppen 的本地頁面。用上一步的帳戶登入，無需 Droppen 帳戶即可使用全部功能。要在手機上使用，請繼續下一步。",
   "Sign in to Droppen": "登入 Droppen",
-  "Click Sign in to Droppen on that page. A {{app}} window opens: sign in, check the fingerprint matches, and add the device.":
-    "在那個頁面上點「登入 Droppen」，會彈出 {{app}} 的視窗：登入，核對兩邊的指紋一致，再把這台裝置加進來。",
-  "It is in my devices": "出現在「我的裝置」裡",
-  "Within seconds it is online in my devices, on every phone and browser of your account. Add another device the same way, and put both on one screen.":
-    "幾秒鐘後，它就在「我的裝置」裡上線了，你帳戶裡的每支手機、每個瀏覽器都看得到。再用同樣的方法加一台裝置，就能把兩台放進同一個畫面。",
+  "On the local page, click Sign in to Droppen. A {{app}} window opens: sign in, check that its fingerprint matches the one on the local page, then click add this device.":
+    "在本地頁面上點擊「登入 Droppen」，會彈出 {{app}} 視窗。登入後，核對視窗中的指紋與本地頁面上顯示的一致，再點擊「加入這台裝置」。",
+  "It is in my devices": "出現在「我的裝置」中",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.":
+    "幾秒鐘後，這台裝置會在「我的裝置」中顯示為上線，帳戶中的每支手機和每個瀏覽器都能看到它。按同樣的步驟新增更多裝置後，所有裝置上的工作階段會彙整在同一個列表中。",
 
   "Droppen on a Linux server": "在 Linux 伺服器上執行 Droppen",
-  "Run your AI on a server that never sleeps, and watch it from your phone. No browser needed on the server: it joins your account with a one-time code.":
-    "讓 AI 在從不休眠的伺服器上執行，在手機上看著它工作。伺服器上不需要瀏覽器：用一次性註冊碼就能加入你的帳戶。",
+  "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
+    "讓 AI 在常開的伺服器上執行，並在手機上查看進度、回答它的提問。伺服器上無需瀏覽器，使用一次性註冊碼即可加入你的帳戶。",
   "coming": "即將支援",
-  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 支援（伺服器上不需要瀏覽器）正在路上。在那之前，可以先在 Mac 上執行 Droppen。",
+  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.":
+    "Linux 支援（伺服器上無需瀏覽器）尚未推出。在此之前，可以在 Mac 上執行 Droppen。",
   "run it in the background on a Mac": "改為在 Mac 背景執行",
-  "This browser reports Linux on {{arch}}.": "這個瀏覽器回報的系統是 {{arch}} 架構的 Linux。",
+  "This browser reports Linux on {{arch}}.": "目前瀏覽器執行在 {{arch}} 架構的 Linux 上。",
   "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen 的 Linux 版本支援 x86_64 和 aarch64。",
   "<code>": "<註冊碼>",
-  "Replace <code> with a one-time code: on {{app}}, open my devices → add a device that runs AI → show a one-time code.":
-    "把 <註冊碼> 換成一次性註冊碼：在 {{app}} 打開「我的裝置 → 新增可執行 AI 的裝置 → 顯示一次性註冊碼」。",
-  "Get a one-time code": "拿一個一次性註冊碼",
-  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.": "在 {{app}}：「我的裝置 → 新增可執行 AI 的裝置 → 顯示一次性註冊碼」。10 分鐘內有效，只能用一次。",
+  "Replace <code> with the one-time code from step 01 below.": "把指令中的 <註冊碼> 替換為下方第 01 步取得的一次性註冊碼。",
+  "Get a one-time code": "取得一次性註冊碼",
+  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.":
+    "在 {{app}} 打開「我的裝置 → 新增可執行 AI 的裝置 → 顯示一次性註冊碼」。註冊碼 10 分鐘內有效，僅可使用一次。",
   "Run the command on the server": "在伺服器上執行指令",
-  "It installs Droppen, starts it as a service, and joins your account with the code.": "它會安裝 Droppen、作為服務啟動，並用註冊碼加入你的帳戶。",
-  "Within seconds it is online in my devices, on every phone and browser of your account.": "幾秒鐘後，它就在「我的裝置」裡上線了，你帳戶裡的每支手機、每個瀏覽器都看得到。",
+  "The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out.":
+    "腳本會安裝 Droppen，以你的使用者身分作為 systemd 使用者服務啟動（不使用 root），並用註冊碼加入你的帳戶。如果腳本結束時給出提示，請執行 sudo loginctl enable-linger，使服務在登出後繼續執行。",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account.": "幾秒鐘後，這台裝置會在「我的裝置」中顯示為上線，帳戶中的每支手機和每個瀏覽器都能看到它。",
 
   "Droppen on Windows": "Windows 版 Droppen",
-  "Not supported yet: it is on its way. On Windows you can already watch and answer your AI.": "暫不支援，正在路上。不過在 Windows 上現在就能看 AI 工作、回答它的提問。",
-  "not yet": "暫不支援",
-  "What works on Windows today:": "在 Windows 上現在就能做的：",
-  "Control your other devices from this browser: sign in at {{app}}.": "在這個瀏覽器裡控制你的其他裝置：登入 {{app}} 就好。",
-  "Run the AI on a Mac, with the Droppen App.": "讓 AI 在 Mac 上執行，用 Droppen App。",
-  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "讓 AI 在 Mac 上執行：現在可以背景執行，App 也快來了。",
-  "Run the AI on a Linux server, or in WSL with systemd turned on.": "讓 AI 在 Linux 伺服器上執行，或者在開啟了 systemd 的 WSL 裡。",
-  "how to turn on systemd in WSL": "如何在 WSL 裡開啟 systemd",
-  "Once Linux is supported: a Linux server, or WSL.": "等 Linux 支援上線後：Linux 伺服器，或者 WSL。",
-  "use {{app}} in this browser": "在這個瀏覽器裡用 {{app}}",
-  "the Mac options": "看看 Mac 的方式",
-  "the Linux server options": "看看 Linux 伺服器的方式",
+  "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
+    "Droppen 暫不支援在 Windows 上執行。目前可以在 Windows 的瀏覽器中查看 AI 的進度並回答它的提問。",
+  "What works on Windows today:": "目前在 Windows 上可以：",
+  "Control your other devices from this browser: sign in at {{app}}.": "登入 {{app}}，在這個瀏覽器中控制你的其他裝置。",
+  "Run the AI on a Mac, with the Droppen App.": "在 Mac 上執行 AI：使用 Droppen App。",
+  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "在 Mac 上執行 AI：目前以背景服務執行，Droppen App 即將推出。",
+  "Run the AI on a Linux server, or in WSL with systemd turned on.": "在 Linux 伺服器或已開啟 systemd 的 WSL 中執行 AI。",
+  "how to turn on systemd in WSL": "如何在 WSL 中開啟 systemd",
+  "Once Linux is supported: a Linux server, or WSL.": "Linux 支援推出後：可使用 Linux 伺服器或 WSL。",
+  "use {{app}} in this browser": "在這個瀏覽器中打開 {{app}}",
+  "the Mac options": "Mac 安裝方式",
+  "the Linux server options": "Linux 伺服器安裝方式",
 
-  "On your phone, Droppen is the remote control": "在手機上，Droppen 是遙控器",
-  "The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put {{app}} on your home screen and it opens like an app.":
-    "AI 在你的 Mac 或伺服器上執行，手機負責看它工作、回答它的提問、打開終端機。把 {{app}} 加到主畫面，用起來就像一個 App。",
+  "Then, use it from your phone": "安裝之後，在手機上使用",
+  "Open {{app}} in your phone's browser and sign in to the same account.": "在手機瀏覽器中打開 {{app}}，登入同一個帳戶。",
   "open {{app}}": "打開 {{app}}",
-  "iPhone and iPad (Safari)": "iPhone 和 iPad（Safari）",
-  "Open {{app}} in Safari, tap Share, then Add to Home Screen.": "在 Safari 裡打開 {{app}}，點「分享」，再點「加入主畫面」。",
-  "Android (Chrome)": "Android（Chrome）",
-  "Open {{app}} in Chrome, tap ⋮, then Add to Home screen or Install app.": "在 Chrome 裡打開 {{app}}，點 ⋮，再點「新增至主畫面」或「安裝應用程式」。",
+  "Open {{app}} on your phone": "在手機上打開 {{app}}",
+  "iPhone and iPad: in Safari, tap Share, then Add to Home Screen. Android: in Chrome, tap ⋮, then Add to Home screen or Install app. Then you can turn on notifications.":
+    "iPhone 和 iPad：在 Safari 中點「分享」，再點「加入主畫面」。Android：在 Chrome 中點 ⋮，再點「加到主畫面」或「安裝應用程式」。加入後即可開啟通知。",
+  "Add it to the home screen": "加入主畫面",
+  "On a device already in your account, open my devices → add a browser or phone, then scan the QR code the phone shows, or enter its number code.":
+    "在已加入帳戶的裝置上，打開「我的裝置 → 新增瀏覽器或手機」，掃描手機上顯示的 QR 碼，或輸入數字碼。",
   "Install it where your AI runs": "裝在執行 AI 的裝置上",
-  "Droppen itself goes on the device your AI runs on. Open this page there:": "Droppen 本身要裝在執行 AI 的那台裝置上。在那台裝置上打開這個頁面：",
+  "You are on a phone. To install, open this page on the device that runs your AI:": "你正在使用手機。請在執行 AI 的裝置上打開此頁面進行安裝：",
   "copy": "複製",
 
-  "System requirements": "系統需求",
-  "What it runs on": "能裝在哪裡",
+  "Approve the phone": "核准這支手機",
+  "What gets installed, and how to verify it": "安裝了什麼，以及如何核對",
   "Mac": "Mac",
-  "The Droppen App: macOS 13 or later, Apple silicon or Intel, one universal download": "Droppen App：macOS 13 以上，Apple 晶片或 Intel 都能用，一個通用安裝檔",
-  "Apple silicon or Intel: in the background today, the Droppen App soon": "Apple 晶片或 Intel：現在可以背景執行，App 即將推出",
-  "The install command; no browser needed on the server": "一行安裝指令，伺服器上不需要瀏覽器",
-  "not yet, on its way": "暫不支援，正在路上",
-  "to control your devices, in the browser: iPhone, iPad, Android": "在瀏覽器裡控制你的裝置：iPhone、iPad、Android",
-  "Claude Code or Codex": "Claude Code 或 Codex",
-  "installed and signed in on that device: Droppen runs them, it does not replace them": "在那台裝置上安裝並登入：Droppen 負責執行它們，不取代它們",
+  "Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.": "使用 Developer ID 簽署並經 Apple 公證；只安裝為對應版本簽署的更新。",
+  "Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.": "以目前使用者身分執行，從不使用 root；安裝前先核對發布檔案的 SHA-256 校驗值。",
+  "For a command-line install: a launchd user agent on macOS, a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo is used only to set up and manage that service.":
+    "命令列安裝：macOS 上為 launchd 使用者代理，Linux 上為 systemd 使用者服務。在 Linux 上加 --system 可改為開機啟動的系統服務，Droppen 仍以你的使用者身分執行；sudo 僅用於設定和管理該服務。",
+  "Listens only on 127.0.0.1 and reaches Droppen over outbound connections, so there is no inbound port to open. A command-line install uses port 8700, or the next free port.":
+    "只在 127.0.0.1 上監聽，透過對外連線接入 Droppen，無需開放對內連接埠。命令列安裝使用 8700 連接埠，被佔用時改用下一個空閒連接埠。",
+  "Mac app (recommended)": "Mac 應用程式（推薦）",
+  "Command line": "命令列",
+  "Claude Code or Codex, installed and signed in on that device": "該裝置上已安裝並登入 Claude Code 或 Codex",
 
   "Manual download": "手動下載",
-  "Want to see what you install? Download it by hand.": "想先看清楚裝的是什麼？手動下載也可以。",
-  "Every release is on GitHub, with the SHA-256 checksum of each file next to it.": "每個版本都發布在 GitHub 上，每個檔案旁邊都附有它的 SHA-256 校驗值。",
-  "latest release on GitHub": "GitHub 上的最新版本",
-  "Check the file before you open it:": "打開之前先核對檔案：",
-  "The number it prints must be the one the release lists. The install script makes the same check before it installs anything.":
-    "印出來的值必須和發布頁上列的一致。安裝腳本在安裝前也會做同樣的核對。",
+  "macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)":
+    "macOS 13 以上（Apple 晶片或 Intel），或 Linux（x86_64、aarch64，glibc 2.28 以上）",
+  "A free Droppen account. You can also create one when you sign in to Droppen on the device.": "一個免費的 Droppen 帳戶，也可以在裝置上登入 Droppen 時建立。",
+  "the latest release on GitHub (getdroppen/droppen)": "GitHub 上的最新版本（getdroppen/droppen）",
+  "Before you open the .dmg or extract the .tar.gz, check it in a terminal:": "打開 .dmg 或解壓 .tar.gz 之前，先在終端機中核對檔案：",
+  "The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.":
+    "輸出的校驗值必須與發布頁 SHA256SUMS 中該檔案的值一致；不一致時請勿安裝。安裝腳本在安裝前也會執行同樣的核對。",
 
-  "Uninstall": "解除安裝",
-  "Leaving takes three steps, too.": "解除安裝也只要三步。",
-  "Remove it from your account": "從帳戶裡移除",
-  "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
-    "在 {{app}} 的「我的裝置」裡移除這台裝置。金鑰會隨之輪換，之後寫下的內容它都打不開。",
-  "Disconnect it": "中斷連線",
-  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.": "在那台裝置上，「設定 → 存取 → Droppen → 中斷這台裝置」會刪除它本地的 Droppen 金鑰。",
+  "Updating and uninstalling": "更新與解除安裝",
+  "The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.":
+    "Mac 應用程式會自動檢查更新。以命令列安裝的裝置，再次執行安裝指令即可原地升級，資料保留。",
+  "Remove it from your account": "從帳戶中移除",
+  "On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.":
+    "在 {{app}} 的「我的裝置」中移除這台裝置。它持有過的所有金鑰都會更換，之後寫入的內容它無法解密。",
+  "Disconnect it": "在裝置上中斷連線",
+  "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.":
+    "在那台裝置上打開 Droppen 的「設定 → 存取 → Droppen → 中斷這台裝置」，刪除儲存在裝置上的 Droppen 金鑰。僅從帳戶中移除，不會刪除這些金鑰。",
   "Remove the program": "刪除程式",
-  "The App: quit Droppen and drag it from Applications to the Trash.": "App：結束 Droppen，把它從「應用程式」拖進垃圾桶。",
-  "In the background: run the install script again with --uninstall:": "背景執行：加上 --uninstall 再執行一次安裝腳本：",
-  "Run the install script again with --uninstall:": "加上 --uninstall 再執行一次安裝腳本：",
+  "The App: quit Droppen and drag it from Applications to the Trash.": "Mac 應用程式：結束 Droppen，將它從「應用程式」資料夾拖到垃圾桶。",
+  "Command-line install (Mac or Linux): run this on that device, as the user who installed it:": "命令列安裝（Mac 或 Linux）：在那台裝置上，以安裝時的使用者執行：",
+  "Run this on that device, as the user who installed it:": "在那台裝置上，以安裝時的使用者執行：",
+  "It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.":
+    "該指令會停止並移除服務和程式，保留資料；結束時會列出資料所在目錄，以及刪除資料的指令。",
 
-  "Ready when you are": "準備好了就開始",
-  "Install it, then sign it in to Droppen.": "裝好，再登入 Droppen。",
-  "No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.": "還沒有帳號？先用邀請碼註冊，或在裝置登入時彈出的 {{app}} 視窗裡註冊。",
-  "No account yet? Sign up first, or in the {{app}} window when you sign the device in.": "還沒有帳號？先註冊，或在裝置登入時彈出的 {{app}} 視窗裡註冊。",
-  "No account yet? Sign-up is closed for now: join the waitlist.": "還沒有帳號？目前暫停註冊，可以先加入等候名單。",
+  "Before you install:": "安裝前需要：",
+  "Mac app": "Mac 應用程式",
+  "A Droppen account. Sign-up is closed for now.": "一個 Droppen 帳戶。目前暫停註冊。",
   "Open my devices": "打開「我的裝置」",
-  "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.": "登入之後，它就在「我的裝置」裡了。再用同樣的方法加一台裝置，就能在一個畫面裡同時看兩台。",
+  "You are signed in.": "你已登入。",
 
   // The home page's hero: the way onto the device reading it (hero-get.tsx)
   "Download for Mac": "下載 Mac 版",
-  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 以上 · Apple 晶片和 Intel 都能用",
-  "other systems": "其他系統",
+  "macOS 13 or later · Apple silicon and Intel": "需要 macOS 13 以上 · 支援 Apple 晶片和 Intel",
+  "Install script": "安裝腳本",
+  "Background service": "背景服務",
+  "Network": "網路",
+  "Encryption": "加密",
+  "End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.":
+    "在你的裝置之間端對端加密：Droppen Hub 和 Droppen 中繼都不持有能解密你的工作階段的金鑰。",
+  "To update, run the install command again: it upgrades in place and keeps your data.": "要更新，再次執行安裝指令即可原地升級，資料保留。",
   "checksums and other files": "校驗值和其他檔案",
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在這台裝置的終端機裡貼上執行：Droppen 會自動安裝、啟動，並打開它的頁面。",
   "A server with no browser?": "伺服器上沒有瀏覽器？",
@@ -351,157 +375,169 @@ export const downloadZhTW: Bundle = {
 
 export const downloadJa: Bundle = {
   "Download Droppen": "Droppen をダウンロード",
-  "Download Droppen — your AI, on your phone": "Droppen をダウンロード — あなたの AI を、スマホで",
-  "Get Droppen for the device Claude Code and Codex run on: the Mac app, or one line for a server. Sign it in, and it is on your phone.":
-    "Claude Code と Codex が動くデバイスに Droppen を。Mac はアプリ、サーバーはコマンド 1 行。サインインすれば、スマホで続きから使えます。",
+  "Install Droppen on the Mac or Linux device where Claude Code or Codex runs: the Mac app, or one command. Your phone needs only the browser.":
+    "Claude Code か Codex が動く Mac や Linux のデバイスに Droppen をインストール。Mac アプリか、コマンド 1 行で。スマホはブラウザだけで使えます。",
 
   "Download": "ダウンロード",
-  "Install it once, and your AI is on your phone.": "一度入れれば、あなたの AI がスマホに。",
-  "Droppen runs next to Claude Code and Codex on your device. Open it, sign it in to Droppen, and that device is on your phone, and side by side with your other devices on one screen.":
-    "Droppen は、あなたのデバイスで Claude Code や Codex と一緒に動きます。開いて Droppen にサインインすれば、そのデバイスがスマホから使え、ほかのデバイスとひとつの画面に並べられます。",
-  "We picked the way for the device you are on; every other way is one click away.": "今お使いのデバイスに合う方法を選んであります。ほかの OS もワンクリックで切り替えられます。",
-  "Pick the device your AI runs on: every way is one click away.": "AI を動かすデバイスを選んでください。どの方法もワンクリックで切り替えられます。",
+  "Install Droppen on the device that runs your AI.": "AI が動くデバイスに Droppen をインストール。",
+  "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.":
+    "Droppen は、Claude Code か Codex が動く Mac や Linux のデバイスに、それらと並べてインストールします。スマホやほかのデバイスにはインストール不要です。ブラウザで {{app}} を開けば、すべてのセッションを確認し、AI の質問に答え、指示を送り、ターミナルを開けます。",
+  "A Droppen account. Sign-up needs an invite code.": "Droppen アカウント。登録には招待コードが必要です。",
+  "How to install on a Mac": "Mac でのインストール方法",
 
   "Choose your system": "システムを選ぶ",
-  "Mac · App": "Mac・アプリ",
-  "Mac · background": "Mac・バックグラウンド",
+  "Linux": "Linux",
   "Linux server": "Linux サーバー",
   "Windows": "Windows",
   "Phone / tablet": "スマホ / タブレット",
-  "Detected": "おすすめ",
+  "Detected": "このデバイス",
 
   "Droppen for Mac": "Mac 版 Droppen",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page. Then sign it in to Droppen from inside the app.":
-    "アプリを開けば、Mac で Droppen が動き出します。ターミナルもログイン画面もいりません。あとはアプリから Droppen にサインインするだけ。",
-  "Open the app and Droppen is running on your Mac: no terminal, no login page.": "アプリを開けば、Mac で Droppen が動き出します。ターミナルもログイン画面もいりません。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
+    "アプリを開くと、この Mac で Droppen が動きます。ターミナルもローカルのパスワードも不要です。スマホやほかのデバイスから使うには、アプリから Droppen にサインインします。",
+  "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "アプリを開くと、この Mac で Droppen が動きます。ターミナルもローカルのパスワードも不要です。",
   "The App is coming soon": "アプリは近日公開",
-  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.": "公開までは、Mac のバックグラウンドで Droppen を動かせます。コマンド 1 行、サインインの手順は同じです。",
+  "Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.":
+    "公開までは、Mac のバックグラウンドサービスとして Droppen を動かせます。コマンドは 1 行、サインインの手順は同じです。",
   "copy the command": "コマンドをコピー",
   "the steps for running it in the background": "バックグラウンドで動かす手順を見る",
   "Download Droppen App (macOS)": "Droppen アプリをダウンロード（macOS）",
-  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "macOS 13 以降 · ユニバーサル：Apple シリコンと Intel の両方に対応 · Droppen-<バージョン>.dmg",
-  "macOS 13 or later · Universal: Apple silicon and Intel": "macOS 13 以降 · ユニバーサル：Apple シリコンと Intel の両方に対応",
-  "release notes, checksums and other files": "リリースノート・チェックサム・ほかのファイル",
+  "macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg": "macOS 13 以降 · ユニバーサル版（Apple シリコンと Intel に対応）· Droppen-<バージョン>.dmg",
+  "macOS 13 or later · Universal: Apple silicon and Intel": "macOS 13 以降 · ユニバーサル版（Apple シリコンと Intel に対応）",
+  "release notes, checksums and other files": "リリースノート、チェックサム、その他のファイル",
   "Open the .dmg": ".dmg を開く",
-  "The file you just downloaded, from Downloads.": "「ダウンロード」フォルダにある、いまダウンロードしたファイルです。",
+  "The file you just downloaded, from Downloads.": "「ダウンロード」フォルダにある、ダウンロードしたファイルを開きます。",
   "Drag Droppen to Applications": "Droppen を「アプリケーション」にドラッグ",
-  "Like any other Mac app.": "ほかの Mac アプリと同じです。",
+  "Like any other Mac app.": "ほかの Mac アプリと同じ手順です。",
   "Open Droppen": "Droppen を開く",
   "It opens a short setup guide, four steps.": "4 ステップの短いセットアップガイドが開きます。",
-  "Click Sign in to Droppen in the app": "アプリで「Droppen にサインイン」を押す",
-  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.":
-    "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します（あとからは「設定 → アクセス → Droppen」）。{{app}} のウィンドウが開くので、サインインして「このデバイスを追加」を押します。",
+  "Sign in to Droppen from the app": "アプリから Droppen にサインイン",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.":
+    "セットアップガイドの「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します。ブラウザで {{app}} が開くので、サインインし、フィンガープリントがアプリの表示と一致することを確かめてから「このデバイスを追加」を押します。あとからは「設定 → アクセス → Droppen」でもサインインできます。",
   "Using it from your phone: signing in to Droppen from the app is coming in an update. Until then, the app runs Droppen on this Mac.":
-    "スマホから使う場合：アプリからの Droppen へのサインインは、今後のアップデートで対応します。それまでは、アプリはこの Mac で Droppen を動かします。",
+    "スマホから使う場合：アプリからの Droppen へのサインインは、今後のアップデートで対応します。それまでは、アプリはこの Mac でのみ Droppen を動かします。",
 
-  "Droppen in the background on a Mac": "Mac のバックグラウンドで Droppen を動かす",
-  "For a Mac that stays on as a server, or if you would rather use the terminal: one line, then everything else happens in the browser.":
-    "サーバーとして常時動かす Mac や、ターミナル派の方に。コマンド 1 行で、あとはすべてブラウザで完了します。",
+  "Droppen in the background on a Mac": "Mac でバックグラウンドサービスとして Droppen を動かす",
+  "For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.":
+    "サーバーとして常時稼働させる Mac や、ターミナルを使いたい方向けです。コマンド 1 行で Droppen をインストールし、ブラウザでこの Mac をアカウントに追加します。",
   "Paste it into Terminal on that Mac.": "その Mac の「ターミナル」に貼り付けて実行します。",
-  "It installs and starts at login": "インストールし、ログイン時に起動",
-  "The script installs Droppen, starts it now and at every login, and creates your first local login: it prints it, or asks you to choose one.":
-    "スクリプトが Droppen をインストールし、すぐに、そして毎回のログイン時に起動します。最初のローカルログインも作ります。表示されるか、自分で決めるよう求められます。",
-  "Its page opens": "ページが開く",
-  "Your browser opens Droppen on that device. Sign in with the local login: everything already works there, with no account.":
-    "ブラウザでそのデバイスの Droppen が開きます。ローカルログインで入れば、アカウントなしですべて使えます。",
+  "It installs and starts at login": "インストールしてログイン時に起動",
+  "The script installs Droppen, starts it now and at every login, and creates the local page's first account under your user name. It asks you to choose a password (at least 12 characters), or generates one when run without a terminal.":
+    "スクリプトが Droppen をインストールしてすぐに起動し、以後はログインのたびに起動します。あわせて、ローカルページの最初のアカウントをシステムのユーザー名で作成します。パスワードは自分で設定するよう求められます（12 文字以上）。ターミナルなしで実行した場合は自動で生成されます。",
+  "The local page opens": "ローカルページが開く",
+  "Your browser opens Droppen's local page. Sign in with that account: everything works there without a Droppen account. To use it from your phone, continue with the next step.":
+    "ブラウザで Droppen のローカルページが開きます。そのアカウントでログインすれば、Droppen アカウントなしですべての機能を使えます。スマホから使うには、次のステップに進みます。",
   "Sign in to Droppen": "Droppen にサインイン",
-  "Click Sign in to Droppen on that page. A {{app}} window opens: sign in, check the fingerprint matches, and add the device.":
-    "そのページで「Droppen にサインイン」を押すと、{{app}} のウィンドウが開きます。サインインし、フィンガープリントが一致することを確かめて、デバイスを追加します。",
-  "It is in my devices": "「マイデバイス」に現れる",
-  "Within seconds it is online in my devices, on every phone and browser of your account. Add another device the same way, and put both on one screen.":
-    "数秒で「マイデバイス」にオンラインで現れ、アカウントのすべてのスマホとブラウザから見えます。同じ手順でもう 1 台追加すれば、2 台をひとつの画面に並べられます。",
+  "On the local page, click Sign in to Droppen. A {{app}} window opens: sign in, check that its fingerprint matches the one on the local page, then click add this device.":
+    "ローカルページで「Droppen にサインイン」を押すと、{{app}} のウィンドウが開きます。サインインし、フィンガープリントがローカルページの表示と一致することを確かめてから「このデバイスを追加」を押します。",
+  "It is in my devices": "「マイデバイス」に表示される",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.":
+    "数秒で「マイデバイス」にオンラインと表示され、アカウントのすべてのスマホとブラウザから見えるようになります。同じ手順でデバイスを追加すると、すべてのデバイスのセッションがひとつのリストにまとまります。",
 
   "Droppen on a Linux server": "Linux サーバーで Droppen を動かす",
-  "Run your AI on a server that never sleeps, and watch it from your phone. No browser needed on the server: it joins your account with a one-time code.":
-    "眠らないサーバーで AI を動かし、スマホから見守れます。サーバーにブラウザは不要。ワンタイムコードでアカウントに加わります。",
+  "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
+    "常時稼働のサーバーで AI を動かし、スマホから進み具合を確認して質問に答えられます。サーバーにブラウザは不要で、ワンタイムコードでアカウントに追加します。",
   "coming": "近日対応",
-  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.": "Linux 対応（サーバーにブラウザ不要）は準備中です。それまでは Mac で Droppen を動かせます。",
+  "Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.":
+    "Linux 対応（サーバーにブラウザ不要）はまだ提供していません。それまでは Mac で Droppen を動かせます。",
   "run it in the background on a Mac": "Mac のバックグラウンドで動かす",
-  "This browser reports Linux on {{arch}}.": "このブラウザは {{arch}} の Linux と報告しています。",
+  "This browser reports Linux on {{arch}}.": "このブラウザは {{arch}} の Linux で動いています。",
   "Droppen's Linux builds are for x86_64 and aarch64.": "Droppen の Linux 版は x86_64 と aarch64 に対応しています。",
   "<code>": "<コード>",
-  "Replace <code> with a one-time code: on {{app}}, open my devices → add a device that runs AI → show a one-time code.":
-    "<コード> をワンタイムコードに置き換えます。{{app}} で「マイデバイス → AI を実行できるデバイスを追加 → ワンタイムコードを表示」を開きます。",
+  "Replace <code> with the one-time code from step 01 below.": "<コード> を、下のステップ 01 で取得したワンタイムコードに置き換えます。",
   "Get a one-time code": "ワンタイムコードを取得",
-  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.": "{{app}} で「マイデバイス → AI を実行できるデバイスを追加 → ワンタイムコードを表示」。有効期間は 10 分、1 回限りです。",
+  "On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.":
+    "{{app}} で「マイデバイス → AI を実行できるデバイスを追加 → ワンタイムコードを表示」を開きます。コードの有効期間は 10 分で、使えるのは 1 回だけです。",
   "Run the command on the server": "サーバーでコマンドを実行",
-  "It installs Droppen, starts it as a service, and joins your account with the code.": "Droppen をインストールしてサービスとして起動し、コードでアカウントに加わります。",
-  "Within seconds it is online in my devices, on every phone and browser of your account.": "数秒で「マイデバイス」にオンラインで現れ、アカウントのすべてのスマホとブラウザから見えます。",
+  "The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out.":
+    "スクリプトが Droppen をインストールし、root ではなく自分のユーザーで systemd のユーザーサービスとして起動して、コードでアカウントに追加します。最後に案内が表示された場合は、sudo loginctl enable-linger を実行すると、ログアウト後も動き続けます。",
+  "Within seconds it shows as online in my devices, on every phone and browser in your account.":
+    "数秒で「マイデバイス」にオンラインと表示され、アカウントのすべてのスマホとブラウザから見えるようになります。",
 
   "Droppen on Windows": "Windows 版 Droppen",
-  "Not supported yet: it is on its way. On Windows you can already watch and answer your AI.": "まだ対応していませんが、準備中です。Windows からでも、AI の作業を見たり質問に答えたりはもうできます。",
-  "not yet": "未対応",
-  "What works on Windows today:": "Windows で今すぐできること：",
-  "Control your other devices from this browser: sign in at {{app}}.": "このブラウザでほかのデバイスを操作する：{{app}} にサインインするだけ。",
-  "Run the AI on a Mac, with the Droppen App.": "AI は Mac で動かす：Droppen アプリで。",
-  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "AI は Mac で動かす：今はバックグラウンドで、もうすぐアプリでも。",
-  "Run the AI on a Linux server, or in WSL with systemd turned on.": "AI は Linux サーバーか、systemd を有効にした WSL で動かす。",
+  "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
+    "Droppen はまだ Windows では動きません。Windows のブラウザからでも、AI の進み具合を確認し、質問に答えることはできます。",
+  "What works on Windows today:": "Windows で現在できること：",
+  "Control your other devices from this browser: sign in at {{app}}.": "{{app}} にサインインし、このブラウザからほかのデバイスを操作する。",
+  "Run the AI on a Mac, with the Droppen App.": "Mac で AI を動かす：Droppen アプリを使う。",
+  "Run the AI on a Mac: in the background today, with the Droppen App soon.": "Mac で AI を動かす：現在はバックグラウンドサービスで。Droppen アプリは近日公開。",
+  "Run the AI on a Linux server, or in WSL with systemd turned on.": "Linux サーバーか、systemd を有効にした WSL で AI を動かす。",
   "how to turn on systemd in WSL": "WSL で systemd を有効にする方法",
   "Once Linux is supported: a Linux server, or WSL.": "Linux 対応後は、Linux サーバーか WSL で。",
-  "use {{app}} in this browser": "このブラウザで {{app}} を使う",
-  "the Mac options": "Mac の方法を見る",
-  "the Linux server options": "Linux サーバーの方法を見る",
+  "use {{app}} in this browser": "このブラウザで {{app}} を開く",
+  "the Mac options": "Mac でのインストール方法",
+  "the Linux server options": "Linux サーバーでのインストール方法",
 
-  "On your phone, Droppen is the remote control": "スマホでは、Droppen はリモコンです",
-  "The AI runs on your Mac or server; your phone watches it work, answers its questions and opens a terminal. Put {{app}} on your home screen and it opens like an app.":
-    "AI は Mac やサーバーで動き、スマホでその作業を見て、質問に答え、ターミナルを開きます。{{app}} をホーム画面に追加すれば、アプリのように開けます。",
+  "Then, use it from your phone": "インストールしたら、スマホで使う",
+  "Open {{app}} in your phone's browser and sign in to the same account.": "スマホのブラウザで {{app}} を開き、同じアカウントでログインします。",
   "open {{app}}": "{{app}} を開く",
-  "iPhone and iPad (Safari)": "iPhone と iPad（Safari）",
-  "Open {{app}} in Safari, tap Share, then Add to Home Screen.": "Safari で {{app}} を開き、「共有」から「ホーム画面に追加」をタップします。",
-  "Android (Chrome)": "Android（Chrome）",
-  "Open {{app}} in Chrome, tap ⋮, then Add to Home screen or Install app.": "Chrome で {{app}} を開き、⋮ から「ホーム画面に追加」または「アプリをインストール」をタップします。",
+  "Open {{app}} on your phone": "スマホで {{app}} を開く",
+  "iPhone and iPad: in Safari, tap Share, then Add to Home Screen. Android: in Chrome, tap ⋮, then Add to Home screen or Install app. Then you can turn on notifications.":
+    "iPhone と iPad：Safari で「共有」→「ホーム画面に追加」。Android：Chrome で ⋮ →「ホーム画面に追加」か「アプリをインストール」。追加すると通知をオンにできます。",
+  "Add it to the home screen": "ホーム画面に追加",
+  "On a device already in your account, open my devices → add a browser or phone, then scan the QR code the phone shows, or enter its number code.":
+    "このアカウントの既存のデバイスで「マイデバイス → ブラウザかスマートフォンを追加」を開き、スマホに表示された QR コードを読み取るか、数字コードを入力します。",
   "Install it where your AI runs": "AI を動かすデバイスにインストール",
-  "Droppen itself goes on the device your AI runs on. Open this page there:": "Droppen 本体は AI を動かすデバイスに入れます。そのデバイスでこのページを開いてください：",
+  "You are on a phone. To install, open this page on the device that runs your AI:": "いまスマホで見ています。インストールするには、AI が動くデバイスでこのページを開いてください：",
   "copy": "コピー",
 
-  "System requirements": "動作環境",
-  "What it runs on": "対応環境",
+  "Approve the phone": "スマホを承認する",
+  "What gets installed, and how to verify it": "インストールされるものと、その確認方法",
   "Mac": "Mac",
-  "The Droppen App: macOS 13 or later, Apple silicon or Intel, one universal download": "Droppen アプリ：macOS 13 以降、Apple シリコンと Intel に対応したユニバーサル版",
-  "Apple silicon or Intel: in the background today, the Droppen App soon": "Apple シリコンまたは Intel：今はバックグラウンドで、アプリは近日公開",
-  "The install command; no browser needed on the server": "インストールコマンドで。サーバーにブラウザは不要",
-  "not yet, on its way": "未対応（準備中）",
-  "to control your devices, in the browser: iPhone, iPad, Android": "ブラウザからデバイスを操作：iPhone、iPad、Android",
-  "Claude Code or Codex": "Claude Code または Codex",
-  "installed and signed in on that device: Droppen runs them, it does not replace them":
-    "そのデバイスにインストールしてサインイン済みであること。Droppen はそれらを動かすもので、置き換えるものではありません",
+  "Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.":
+    "Developer ID で署名され、Apple の公証を受けています。そのバージョン向けに署名された更新だけをインストールします。",
+  "Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.":
+    "実行したユーザーとして動き、root では動きません。インストール前にリリースの SHA-256 チェックサムを照合します。",
+  "For a command-line install: a launchd user agent on macOS, a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo is used only to set up and manage that service.":
+    "コマンドラインでのインストール：macOS では launchd のユーザーエージェント、Linux では systemd のユーザーサービスとして動きます。Linux で --system を付けると起動時に開始するシステムサービスになり、その場合も自分のユーザーで動きます。sudo はそのサービスの設定と管理にだけ使います。",
+  "Listens only on 127.0.0.1 and reaches Droppen over outbound connections, so there is no inbound port to open. A command-line install uses port 8700, or the next free port.":
+    "127.0.0.1 でのみ待ち受け、Droppen には外向きの接続でつながるため、開ける必要のある受信ポートはありません。コマンドラインでのインストールではポート 8700 を使い、使用中なら次の空きポートを使います。",
+  "Mac app (recommended)": "Mac アプリ（推奨）",
+  "Command line": "コマンドライン",
+  "Claude Code or Codex, installed and signed in on that device": "そのデバイスに Claude Code か Codex がインストールされ、ログイン済みであること",
 
   "Manual download": "手動ダウンロード",
-  "Want to see what you install? Download it by hand.": "何をインストールするか確かめたいなら、手動でダウンロードできます。",
-  "Every release is on GitHub, with the SHA-256 checksum of each file next to it.": "すべてのリリースは GitHub にあり、各ファイルの SHA-256 チェックサムが添えられています。",
-  "latest release on GitHub": "GitHub の最新リリース",
-  "Check the file before you open it:": "開く前にファイルを確認します：",
-  "The number it prints must be the one the release lists. The install script makes the same check before it installs anything.":
-    "表示された値がリリースに載っている値と一致すれば OK です。インストールスクリプトも、インストール前に同じ確認をします。",
+  "macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)":
+    "macOS 13 以降（Apple シリコンまたは Intel）、または Linux（x86_64、aarch64、glibc 2.28 以降）",
+  "A free Droppen account. You can also create one when you sign in to Droppen on the device.": "無料の Droppen アカウント。デバイスで Droppen にサインインするときに作成することもできます。",
+  "the latest release on GitHub (getdroppen/droppen)": "GitHub の最新リリース（getdroppen/droppen）",
+  "Before you open the .dmg or extract the .tar.gz, check it in a terminal:": ".dmg を開く前、または .tar.gz を展開する前に、ターミナルでファイルを確認します：",
+  "The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.":
+    "表示されたチェックサムが、リリースの SHA256SUMS にあるそのファイルの値と一致することを確かめます。一致しない場合はインストールしないでください。インストールスクリプトも、インストール前に同じ確認をします。",
 
-  "Uninstall": "アンインストール",
-  "Leaving takes three steps, too.": "やめるときも 3 ステップです。",
+  "Updating and uninstalling": "アップデートとアンインストール",
+  "The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.":
+    "Mac アプリはアップデートを自動で確認します。コマンドラインでインストールした場合は、インストールコマンドをもう一度実行すると、データを残したままアップデートされます。",
   "Remove it from your account": "アカウントから削除する",
-  "On {{app}}, open my devices and remove the device. Its keys are rotated, so it cannot open anything written afterwards.":
-    "{{app}} の「マイデバイス」でそのデバイスを削除します。鍵がローテーションされ、以後に書かれた内容は開けなくなります。",
-  "Disconnect it": "接続を解除する",
-  "On the device, Settings → Access → Droppen → Disconnect this device deletes its Droppen keys there.":
-    "そのデバイスで「設定 → アクセス → Droppen → このデバイスの接続を解除」を選ぶと、そこにある Droppen の鍵が削除されます。",
+  "On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.":
+    "{{app}} の「マイデバイス」でそのデバイスを削除します。そのデバイスが持っていた鍵はすべて新しいものに替わり、以後に書かれた内容は復号できません。",
+  "Disconnect it": "デバイスで接続を解除する",
+  "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.":
+    "そのデバイスで Droppen の「設定 → アクセス → Droppen → このデバイスの接続を解除」を選び、デバイスに保存された Droppen の鍵を削除します。アカウントから削除するだけでは、これらの鍵は残ります。",
   "Remove the program": "プログラムを削除する",
-  "The App: quit Droppen and drag it from Applications to the Trash.": "アプリ：Droppen を終了し、「アプリケーション」からゴミ箱にドラッグします。",
-  "In the background: run the install script again with --uninstall:": "バックグラウンド版：インストールスクリプトを --uninstall 付きでもう一度実行します：",
-  "Run the install script again with --uninstall:": "インストールスクリプトを --uninstall 付きでもう一度実行します：",
+  "The App: quit Droppen and drag it from Applications to the Trash.": "Mac アプリ：Droppen を終了し、「アプリケーション」フォルダからゴミ箱にドラッグします。",
+  "Command-line install (Mac or Linux): run this on that device, as the user who installed it:":
+    "コマンドラインでのインストール（Mac または Linux）：そのデバイスで、インストールしたユーザーとして実行します：",
+  "Run this on that device, as the user who installed it:": "そのデバイスで、インストールしたユーザーとして実行します：",
+  "It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.":
+    "サービスとプログラムを停止して削除し、データは残します。最後に、データの場所とそれを削除するコマンドが表示されます。",
 
-  "Ready when you are": "準備ができたら",
-  "Install it, then sign it in to Droppen.": "インストールして、Droppen にサインイン。",
-  "No account yet? Sign up with your invite code first, or in the {{app}} window when you sign the device in.":
-    "アカウントがまだなら、先に招待コードで登録するか、デバイスをサインインするときに開く {{app}} のウィンドウで登録できます。",
-  "No account yet? Sign up first, or in the {{app}} window when you sign the device in.":
-    "アカウントがまだなら、先に登録するか、デバイスをサインインするときに開く {{app}} のウィンドウで登録できます。",
-  "No account yet? Sign-up is closed for now: join the waitlist.": "アカウントがまだの方へ：現在は新規登録を停止しています。ウェイトリストにご登録ください。",
+  "Before you install:": "インストールの前に必要なもの：",
+  "Mac app": "Mac アプリ",
+  "A Droppen account. Sign-up is closed for now.": "Droppen アカウント。現在、新規登録を停止しています。",
   "Open my devices": "「マイデバイス」を開く",
-  "Once it is signed in, it is in my devices: add another device the same way to see both on one screen.":
-    "サインインすれば「マイデバイス」に入ります。同じ手順でもう 1 台追加すれば、2 台をひとつの画面で見られます。",
+  "You are signed in.": "ログインしています。",
 
   // The home page's hero: the way onto the device reading it (hero-get.tsx)
   "Download for Mac": "Mac 版をダウンロード",
   "macOS 13 or later · Apple silicon and Intel": "macOS 13 以降 · Apple シリコンと Intel に対応",
-  "other systems": "ほかの OS",
+  "Install script": "インストールスクリプト",
+  "Background service": "バックグラウンドサービス",
+  "Network": "ネットワーク",
+  "Encryption": "暗号化",
+  "End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.":
+    "デバイス間でエンドツーエンド暗号化されます。Droppen Hub も Droppen リレーも、セッションを復号できる鍵を持っていません。",
+  "To update, run the install command again: it upgrades in place and keeps your data.": "アップデートするには、インストールコマンドをもう一度実行します。データを残したままアップデートされます。",
   "checksums and other files": "チェックサムとほかのファイル",
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "このデバイスのターミナルに貼り付けて実行すると、Droppen がインストールされ、起動してページが開きます。",
   "A server with no browser?": "ブラウザのないサーバーなら？",

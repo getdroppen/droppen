@@ -5,6 +5,7 @@ import { Check, Minus, Pin } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { BLOCKS, type BlockId, type FormulaBlock, type Kind, KINDS, type Lang, LANGS, PARTIES, type Party, type Roles, TERMS, type Words } from "./formula-data";
 import { type Analysis, analyze, flowOf, type Lit, lights } from "./formula-model";
+import { cjkTracking } from "../page-kit";
 
 /*
  * The formulas of droppen.app/security, explorable (data: `formula-data.ts`,
@@ -194,7 +195,7 @@ function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; tex
       aria-pressed={pinned === "1"}
       aria-describedby={hidden ? `${descId(term)} ${hiddenId(hidden)}` : descId(term)}
       className={cn(
-        "cursor-help decoration-1 underline-offset-[3px] outline-offset-1 transition-[background-color,color,outline-color] duration-100 motion-reduce:transition-none",
+        "cursor-help whitespace-nowrap decoration-1 underline-offset-[3px] outline-offset-1 transition-[background-color,color,outline-color] duration-100 motion-reduce:transition-none",
         KIND_CLASS[kind],
         LIT_CLASS[lit],
         hidden && HIDDEN_CLASS,
@@ -346,7 +347,7 @@ function ConceptCard({ concept, pinned }: { concept: ConceptId; pinned: boolean 
     <>
       <div className="flex items-baseline gap-2">
         <span className="text-xs leading-[18px] font-semibold text-fg">{words.name}</span>
-        <span className="label-caps text-[10px] leading-[14px] text-muted">{t("Term")}</span>
+        <span className={cn("label-caps text-[10px] leading-[14px] text-muted", cjkTracking)}>{t("Term")}</span>
         {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-[18px] text-fg">{words.says}</p>
@@ -373,7 +374,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
     <div data-formula-tools="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-sans">
       {roles && (
         <>
-          <span id={labelId} className="label-caps text-[10px] leading-[14px] text-faint">
+          <span id={labelId} className={cn("label-caps text-[10px] leading-[14px] text-faint", cjkTracking)}>
             {t("View as")}
           </span>
           <div
@@ -419,7 +420,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
         aria-expanded={showLegend}
         aria-controls={legendId}
         onClick={onLegend}
-        className="ml-auto label-caps text-[10px] leading-[14px] text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg"
+        className={cn("ml-auto label-caps text-[10px] leading-[14px] text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg", cjkTracking)}
       >
         {t("Legend")}
       </button>
@@ -476,7 +477,7 @@ export function Formula({ block }: { block: BlockId }) {
     next?.focus();
   };
   return (
-    <div data-formula={block} className="flex max-w-[46em] flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
+    <div data-formula={block} className="flex flex-col gap-2 border-l border-border-strong py-0.5 pl-3">
       <Tools block={block} legendId={legendId} showLegend={legend} onLegend={() => setLegend((on) => !on)} />
       <Legend id={legendId} open={legend} />
       <div
@@ -621,7 +622,7 @@ function TermCard({ occ, pinned }: { occ: string; pinned: boolean }) {
     <>
       <div className="flex items-baseline gap-2">
         <code className={cn("font-mono text-xs decoration-1 underline-offset-[3px]", KIND_CLASS[def.kind])}>{o.text}</code>
-        <span className="label-caps text-[10px] leading-[14px] text-muted">{kinds[def.kind]}</span>
+        <span className={cn("label-caps text-[10px] leading-[14px] text-muted", cjkTracking)}>{kinds[def.kind]}</span>
         {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-[18px] text-fg">{say(def.says, lang)}</p>

@@ -2,11 +2,14 @@
 // in cloud mode, and the paths that move sign-in and sign-up off the root.
 //
 // What these pin: the page says what it is, in zh-CN first and in en, zh-TW
-// and ja, with every string on it translated; it carries exactly one primary
-// action, and its links go to /signup and /signin; its numbers are the
-// measured ones and it makes no absolute claims; only the bare root is the
-// landing page; and the diagrams' moving parts keep their promises (a sealed
-// line keeps its width, the direct path's demo delivers every key in order).
+// and ja, with every string on it translated and in its own words (never an
+// app translation of the same key); it shows the product first (the tour of
+// screenshots) and says end-to-end encryption once, near the end; it calls
+// only the client open source; it carries exactly one primary action, and
+// its links go to /signup and /signin; its numbers are the measured ones and
+// it makes no absolute claims; only the bare root is the landing page; and
+// the diagrams' moving parts keep their promises (a sealed line keeps its
+// width, the direct path's demo delivers every key in order).
 //
 // `react-dom/server` with no DOM, like the other render tests.
 import * as React from "react";
@@ -18,11 +21,11 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { heroALayout, heroAWires } from "../src/features/landing/hero-a.js";
+import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
-import { JOURNEY_STEPS, journeyLayout, journeyWires, stepAt } from "../src/features/landing/journey.js";
 import LandingPage from "../src/features/landing/landing.js";
+import { PLAN_NUMBERS } from "../src/features/landing/pricing-plans.js";
 import { cipherOf, corners, pointAt, type Pt, seal, wide } from "../src/features/landing/motion.js";
 import { APP_PATH, bootRoute, isAuthPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
 import type { SignupMode } from "../src/lib/hub/api.js";
@@ -62,32 +65,66 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   const html = draw("zh-CN");
   const words = text(html);
   for (const line of [
-    // The three selling points: your computer's AI on your phone, every device on one screen, code only you can read.
+    // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
     "电脑上的 AI，手机上接着用。",
-    "多台设备，一个屏",
-    "你的代码，只有你看得到。",
+    "Claude Code 和 Codex 仍在你自己的电脑上运行。",
+    "三步完成设置，离开电脑也能继续。",
+    "不在电脑前，这些事也能在手机上处理。",
+    "所有电脑，一个列表",
+    "你的代码，Droppen 无法读取。",
     // The deep sections, each headed by what it gets you.
-    "在手机上打字，照样跟手。",
-    "电脑合上了，会话照样能看。",
-    "我们能看到什么、看不到什么，一条条写清楚。",
-    "开始使用",
+    "在手机上输入，响应及时。",
+    "电脑离线时，会话仍可查看。",
+    "免费注册",
     "登录",
-    "公开测试版",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
-  // The sections the header links to.
-  for (const id of ["journey", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`));
+  // The sections the header links to, in the page's order: the product first, encryption last.
+  const at = (id: string) => html.indexOf(`id="${id}"`);
+  const order = ["tour", "how", "features", "direct", "offline", "security"];
+  for (const id of order) assert.ok(at(id) > 0, id);
+  assert.deepEqual([...order].sort((a, b) => at(a) - at(b)), order);
+  for (const id of order) assert.match(html, new RegExp(`<a href="#${id}"|id="${id}"`));
+});
+
+test("every public page's header links the site's other pages and the client's source, not the page's own sections", () => {
+  for (const lng of ["en", "zh-CN"]) {
+    const header = draw(lng).slice(0, draw(lng).indexOf("<main"));
+    for (const [path, testId] of [["/download", "header-download"], ["/pricing", "header-pricing"], ["/security", "header-security"]]) {
+      assert.match(header, new RegExp(`<a href="${path}"[^>]*data-testid="${testId}"`), `${lng}: ${path}`);
+    }
+    assert.match(header, /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="header-source"/, lng);
+    assert.doesNotMatch(header, /href="#/, `${lng}: no anchors into the page`);
+  }
+  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>下载<\/a>/);
+});
+
+test("privacy is said once: not in the header, not in the hero's numbers, one section near the end and the rest on /security", () => {
+  for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
+    const html = draw(lng);
+    const header = html.slice(0, html.indexOf("<main"));
+    assert.doesNotMatch(header, /href="#journey"|href="#privacy"/, lng);
+    // The hero, up to the tour: it sells, and encryption is one word in its proof line.
+    const hero = text(html.slice(html.indexOf("<main"), html.indexOf('id="tour"')));
+    assert.doesNotMatch(hero, /recovery words|keys on our servers|恢复词|復原詞|リカバリーワード|密文|ciphertext|暗号文/, lng);
+    // The one section on it comes after everything the product does, and links to the whole account of it.
+    assert.ok(html.indexOf('id="security"') > html.indexOf('id="offline"'), lng);
+    assert.match(html, /<a href="\/security"[^>]*data-testid="landing-security"/, lng);
+  }
+  // No line-by-line ledger of what we can and cannot see: that is /security's.
+  assert.doesNotMatch(text(draw("en")), /What we can see|What we cannot see|Who holds the keys/);
 });
 
 test("one primary action, and the calls to action go to sign-up and sign-in", () => {
   const html = draw("en");
   const primaries = html.match(/data-variant="primary"/g) ?? [];
   assert.equal(primaries.length, 1, "one primary per page (docs/ui-spec.md V10)");
-  assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Get started<\/a>/);
-  assert.ok((html.match(/<a href="\/signin"/g) ?? []).length >= 2, "sign-in in the header and the hero");
+  assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Create a free account<\/a>/);
+  // Signing in is the header's and the end's; the hero does not offer it a second time.
+  assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 2, "sign-in in the header and at the end");
   // The page ends on the same call to action, as a secondary.
-  assert.equal((html.match(/<a href="\/signup"[^>]*>Get started<\/a>/g) ?? []).length, 2, "get started in the hero and at the end");
+  assert.equal((html.match(/<a href="\/signup"[^>]*>Create a free account<\/a>/g) ?? []).length, 2, "sign-up in the hero and at the end");
 });
 
 test("signed in, the landing page is still the landing page, with a way back into the app instead of sign-in and sign-up", () => {
@@ -104,16 +141,16 @@ test("signed in, the landing page is still the landing page, with a way back int
     assert.equal((html.match(new RegExp(`<a href="${APP_PATH}"`, "g")) ?? []).length, 2, lng);
     assert.match(html, app(open, true), `${lng}: the hero's primary opens the app`);
     assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1, `${lng}: one primary`);
-    assert.match(html, new RegExp(`<a href="#journey"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
+    assert.match(html, new RegExp(`<a href="#how"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
     // Nothing asks someone signed in to sign in or sign up.
     assert.doesNotMatch(html, /href="\/sign(in|up)"/, lng);
     // The page itself is all there.
-    for (const id of ["journey", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
+    for (const id of ["tour", "how", "features", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
   }
   const words = text(draw("zh-CN", { signedIn: true }));
-  for (const gone of ["注册已开放。", "开始使用", "AI 接着干活，你可以走开了。"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
+  for (const gone of ["台运行 AI 的电脑免费", "免费注册", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
   assert.ok(!text(draw("zh-CN", { signedIn: true, signup: "invite" })).includes("注册需要邀请码。"), "by invite too");
-  assert.ok(text(draw("zh-CN")).includes("注册已开放。"), "signed out keeps the sign-up prompt");
+  assert.ok(text(draw("zh-CN")).includes("免费注册"), "signed out keeps the sign-up prompt");
 });
 
 test("routing: `/` is the landing page signed in or not; the app keeps its own routes and starts at its start", () => {
@@ -150,16 +187,37 @@ test("routing: `/` is the landing page signed in or not; the app keeps its own r
 
 test("the numbers are the measured ones, and nothing claims more than the build does", () => {
   const words = text(draw("en"));
-  for (const n of ["1–2 ms", "63–73 ms", "215–227 ms", "1.5 s", "two in three", "30 days"]) assert.ok(words.includes(n), `missing: ${n}`);
+  for (const n of ["63–73 ms", "215–227 ms", "1.5 s"]) assert.ok(words.includes(n), `missing: ${n}`);
+  // What a phone can read while the computer is off: the plan's window (the agent syncs min(30 days, the plan's retention)).
+  assert.ok(words.includes(`the last ${PLAN_NUMBERS.free.retentionDays} days (${PLAN_NUMBERS.pro.retentionDays} on Pro)`));
   assert.match(words, /internal security reviews, not an external audit/);
-  // Only stored data is padded; live connections are not (as /security and /privacy say).
-  assert.match(words, /stored data is padded to fixed sizes, live connections are not/);
-  assert.doesNotMatch(words, /in padded sizes/);
-  assert.match(words, /Droppen is in beta\./);
-  for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /open[- ]source/i, /military[- ]grade/i, /100% secure/i]) {
+  assert.match(words, /Droppen is in beta[.:]/);
+  for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
+});
+
+test("only the client is called open source: the hub never is, and nothing says all of Droppen is", () => {
+  const en = text(draw("en"));
+  assert.match(en, /open-source client/i);
+  assert.match(en, /Droppen Hub is not open source/);
+  // Every mention is the client's, or says the hub is not.
+  for (const mention of en.match(/[^.:;]*open[- ]source[^.:;]*/gi) ?? []) {
+    assert.match(mention, /client|command-line program|Droppen Hub is not/i, mention);
+  }
+  assert.doesNotMatch(en, /Droppen is open[- ]source|open[- ]source (service|platform)/i);
+  for (const [lng, client, all] of [
+    ["zh-CN", "客户端开源", /Droppen 开源|全部开源|完全开源/],
+    ["zh-TW", "客戶端開源", /Droppen 開源|全部開源|完全開源/],
+    ["ja", "クライアントはオープンソース", /Droppen はオープンソース|すべてオープンソース/],
+  ] as const) {
+    const words = text(draw(lng));
+    assert.ok(words.includes(client), lng);
+    assert.doesNotMatch(words, all, lng);
+  }
+  // The link goes to the source.
+  assert.match(draw("en"), /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="landing-source"/);
 });
 
 test("open sign-up by default: no invite wording; the invite wording only where the hub says sign-up is by invite, and \"closed for now\" where it is closed", () => {
@@ -168,36 +226,31 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     const html = draw("en", { signup });
     const words = text(html);
     assert.doesNotMatch(words, /invite/i, `${signup}: no invite`);
-    assert.ok(words.includes("Public beta: sign-up is open."));
-    assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
+    // The first screen sells the product, not its price: no plans, no link to them (the header and the footer have one).
+    assert.doesNotMatch(words, /Public beta|Free for up to|See pricing/, `${signup}: no plans in the hero`);
+    assert.doesNotMatch(html, /data-testid="hero-pricing"/);
     assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
-    assert.ok(words.includes("Public beta"));
-    assert.ok(words.includes("Sign up with your e-mail, connect your computer, and pick up from your phone."));
-    assert.match(html, /<a href="\/signup"[^>]*>Get started<\/a>/);
+    assert.match(html, /<a href="\/signup"[^>]*>Create a free account<\/a>/);
   }
   for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
     assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
   }
-  assert.ok(text(draw("zh-CN")).includes("公开测试版，注册已开放。"));
+  for (const lng of ["zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), /公开测试版|公開測試版|パブリックベータ|查看定价|查看定價|料金を見る/, `${lng}: no plans in the hero`);
   // By invite: as before — the code, and the waitlist for those without one.
   const invited = draw("en", { signup: "invite" });
   assert.ok(text(invited).includes("Invite-only for now: sign-up needs an invite code."));
   assert.match(invited, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
   assert.doesNotMatch(invited, /data-testid="hero-pricing"/);
-  assert.ok(text(invited).includes("Invite-only beta"));
-  assert.ok(text(invited).includes("Sign up with your invite code, connect your computer, and pick up from your phone."));
-  assert.ok(text(draw("zh-CN", { signup: "invite" })).includes("邀请制测试版"));
   // Closed: closed for now, and the waitlist; no invite code and nothing to sign up with.
   const closed = draw("en", { signup: "closed" });
   assert.ok(text(closed).includes("Sign-up is closed for now."));
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>Join the waitlist<\/a>/);
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
-  assert.ok(text(closed).includes("Beta"));
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
-  assert.doesNotMatch(closed, /href="\/signup"|Get started/);
+  assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
   assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>Join the waitlist<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
   assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
-  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Get started<\/a>/, signup);
+  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Create a free account<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
     assert.ok(words.includes(line), `${lng}: ${line}`);
@@ -233,24 +286,40 @@ test("every string on the page is translated into zh-CN, zh-TW and ja", () => {
   assert.deepEqual(Object.keys(landingBundles.ja).sort(), Object.keys(landingBundles["zh-CN"]).sort());
 });
 
+test("the home page's words are its own: no key it draws is one the app translates differently", async () => {
+  // The landing bundle is added without overwriting (`landing.tsx`), so a key the app already has shows the app's wording.
+  // Every language loaded: the app fetches a language's tables only when it first shows it.
+  const { default: appI18n } = await import("./i18n-all.js");
+  const home = ["landing.tsx", "product-tour.tsx"].flatMap((file) => [
+    ...readFileSync(new URL(`../src/features/landing/${file}`, import.meta.url), "utf8").matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g),
+  ]).map((m) => JSON.parse(`"${m[1]}"`) as string);
+  for (const lng of ["zh-CN", "zh-TW", "ja"] as const) {
+    const appTable = (appI18n.store.data[lng]?.translation ?? {}) as Record<string, string>;
+    assert.ok(Object.keys(appTable).length > 500, `${lng}: the app's table is loaded`);
+    for (const key of home) {
+      if (key in appTable && key in landingBundles[lng]) assert.equal(appTable[key], landingBundles[lng][key], `${lng}: the app's "${appTable[key]}" hides the page's "${landingBundles[lng][key]}" for ${key}`);
+    }
+  }
+});
+
 test("the page reads in zh-TW and ja", () => {
   const tw = text(draw("zh-TW"));
   assert.ok(tw.includes("電腦上的 AI，手機上接著用。"));
-  assert.ok(tw.includes("你的程式碼，只有你看得到。"));
-  assert.ok(tw.includes("多台裝置，一個畫面"));
+  assert.ok(tw.includes("你的程式碼，Droppen 無法讀取。"));
+  assert.ok(tw.includes("所有電腦，一個清單"));
   assert.ok(tw.includes("登入"));
   const jp = text(draw("ja"));
   assert.ok(jp.includes("コンピュータの AI を、スマホで続きから。"));
-  assert.ok(jp.includes("あなたのコードは、あなたにしか見えない。"));
-  assert.ok(jp.includes("すべてのデバイスを、ひとつの画面で"));
-  assert.ok(jp.includes("はじめる"));
-  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Your code, for your eyes only|Lid closed|What we can see/);
+  assert.ok(jp.includes("あなたのコードを、Droppen は読めません。"));
+  assert.ok(jp.includes("すべてのコンピュータを、ひとつのリストで"));
+  assert.ok(jp.includes("無料で登録"));
+  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Droppen can't read your code|stay readable|Three steps|Run the migration/);
 });
 
 test("the hero sells before it explains: no Hub, relay, NAT, STUN, p50 or ciphertext in its words", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
     const html = draw(lng);
-    const copy = text(html.slice(html.indexOf("<h1"), html.indexOf('data-diagram="hero"')));
+    const copy = text(html.slice(html.indexOf("<h1"), html.indexOf('id="tour"')));
     assert.ok(copy.length > 40, lng);
     assert.doesNotMatch(copy, /Hub|relay|中继|中繼|中継|NAT|STUN|p50|ciphertext|密文|暗号文/, lng);
   }
@@ -302,10 +371,7 @@ test("a wide character is one a monospace box gives two columns", () => {
   assert.deepEqual([..."测试、テスト。한글　ok"].map(wide), [true, true, true, true, true, true, true, true, true, true, false, false]);
 });
 
-test("the journey's steps follow the loop, and packets follow their wires", () => {
-  assert.equal(stepAt(0), 0);
-  assert.equal(stepAt(JOURNEY_STEPS[1]), 1);
-  assert.equal(stepAt(JOURNEY_STEPS[3] + 1), 3);
+test("packets follow their wires", () => {
   const wire = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }];
   assert.deepEqual(pointAt(wire, 0.5), { x: 10, y: 0 });
   assert.deepEqual(pointAt(wire, 0.75), { x: 10, y: 5 });
@@ -401,23 +467,6 @@ function checkWires(name: string, wires: Pt[][], boxes: Rect[]) {
 
 test("every diagram is right-angled: each wire straight or a single L, through no card or label", () => {
   for (const w of [288, 358, 379, 498, 597, 610, 645, 704, 1100, 1150]) {
-    const H = heroALayout(w);
-    checkWires(`hero ${w}`, heroAWires(H), [H.computer, H.droppen, H.phone]);
-    // The direct path: straight, its name riding it, clear of Droppen's card.
-    assert.equal(corners(H.direct), 0, `hero ${w}: the direct path is straight`);
-    assert.ok(H.direct.every((p) => p.x === H.directLabel.x) || H.direct.every((p) => p.y === H.directLabel.y));
-    assert.ok(!crosses(H.direct[0]!, H.direct[1]!, H.droppen), `hero ${w}: the direct path skips Droppen`);
-    // The label box (at most 96 × 20) sits on the direct line and on nothing else.
-    const label = { x: H.directLabel.x - 48, y: H.directLabel.y - 10, w: 96, h: 20 };
-    for (const b of [H.computer, H.droppen, H.phone]) {
-      const overlap = Math.min(label.x + label.w, b.x + b.w) - Math.max(label.x, b.x) > 0 && Math.min(label.y + label.h, b.y + b.h) - Math.max(label.y, b.y) > 0;
-      assert.ok(!overlap, `hero ${w}: the direct label sits on a card`);
-    }
-    for (const wire of [H.toHub, H.toPhone]) for (let k = 1; k < wire.length; k++) assert.ok(!crosses(wire[k - 1]!, wire[k]!, label), `hero ${w}: a relay wire runs through the direct label`);
-
-    const J = journeyLayout(w);
-    checkWires(`journey ${w}`, journeyWires(J), [J.machine, J.droppen, J.phone, J.store]);
-
     const D = directLayout(w);
     checkWires(`direct ${w}`, directWires(D), [D.device, D.machine, around(D.hub, DIRECT_HUB), ...D.labels]);
 
@@ -426,38 +475,63 @@ test("every diagram is right-angled: each wire straight or a single L, through n
   }
 });
 
-test("the hero has three compact cards: computer and phone on one row with the direct line between, the Droppen relay below", () => {
-  for (const w of [600, 645, 760, 1150]) {
-    const H = heroALayout(w);
-    assert.equal(H.computer.w, 184, "cards do not grow with the screen");
-    assert.equal(H.phone.w, 184);
-    assert.ok(H.droppen.w >= 190 && H.droppen.w <= 220, `Droppen relay ${H.droppen.w}px`);
-    assert.equal(H.computer.y, H.phone.y, "computer and phone share a row");
-    assert.ok(H.droppen.y > H.computer.y + H.computer.h, "the Droppen relay below them");
-    assert.ok(H.computer.x < H.droppen.x && H.droppen.x + H.droppen.w < H.phone.x + H.phone.w, "between them");
-    assert.ok(Math.abs(H.computer.x - (w - (H.phone.x + H.phone.w))) <= 1, "centred");
-    // Two rows each: a title and one line.
-    for (const card of [H.computer, H.droppen, H.phone]) assert.equal(card.h, 26 + 23 + 2);
+test("every diagram's cards stay inside it, at every width a pane can have, and the phone's rows have room", () => {
+  // The panes run from a 288px phone to about 830px beside the text in the 1360px column.
+  for (let w = 288; w <= 900; w += 2) {
+    const D = directLayout(w);
+    const O = offlineLayout(w);
+    for (const [name, r] of [
+      ["direct device", D.device],
+      ["direct computer", D.machine],
+      ["direct relay", around(D.hub, DIRECT_HUB)],
+      ["offline computer", O.machine],
+      ["offline hub", O.hub],
+      ["offline store", O.store],
+      ["offline phone", O.device],
+    ] as const) {
+      assert.ok(r.x >= 0 && r.x + r.w <= w, `${name} at ${w}: ${r.x}..${r.x + r.w}`);
+    }
+    // The longest message row (English, "darken the sign-in button") needs 254px.
+    assert.ok(O.device.w >= 254, `offline phone at ${w}: ${O.device.w}px`);
   }
 });
 
-test("the hero's first frame: the last message on both ends, the Droppen relay's ciphertext, and a padlock on every wire leaving the computer", () => {
+test("the tour shows the product: six tabs of real screenshots, each in its frame, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
-  const hero = html.slice(html.indexOf('data-diagram="hero"'), html.indexOf("1–2 ms"));
-  const words = text(hero);
-  // The middle card is titled for what it shows: all Droppen sees is the ciphertext.
-  for (const line of ["你的电脑", "Droppen 看到的", "5c1e 88d0 a3f7", "你的手机", "直连 63 ms", "中继 220 ms"]) assert.ok(words.includes(line), `missing: ${line}`);
-  // The computer and the phone both show the message delivered last (测试全部通过); no blank row anywhere.
-  assert.equal(words.split("测试全部通过").length - 1, 2);
-  assert.equal((hero.match(/data-wire-lock/g) ?? []).length, 2, "a padlock on the direct line and on the way to the relay");
-  assert.match(hero, /<title>本地加密<\/title>/);
-  assert.doesNotMatch(words, /明文|看得到|看不到|钥匙|CLAUDE|工作中/);
-  // Every diagram's wires leaving the sender carry a padlock.
-  for (const name of ["journey", "direct", "offline"]) {
+  const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
+  // The tabs, the first one shown; not a carousel: nothing in the tour moves by itself.
+  assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
+  assert.doesNotMatch(tour, /animate-/);
+  assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
+  for (const label of ["会话", "多栏", "终端", "我的设备", "手机", "添加设备"]) assert.ok(text(tour).includes(label), label);
+  // Its picture in both themes, the light one described.
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);
+  // Chinese pages show the app in Chinese, every other page in English.
+  assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
+  assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
+});
+
+test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {
+  const files = readdirSync(new URL("../public/tour/", import.meta.url)).sort();
+  const shown = TOUR_TABS.flatMap((tab) =>
+    TOUR_SHOTS[tab].shots.flatMap((shot) => ["zh-CN", "en"].flatMap((lng) => (["light", "dark"] as const).map((theme) => tourShot(shot, lng, theme).replace("/tour/", "")))),
+  );
+  assert.deepEqual(files, [...new Set(shown)].sort());
+});
+
+test("the diagrams that carry content mark what is encrypted where: a padlock on every wire leaving the sender", () => {
+  const html = draw("zh-CN");
+  for (const name of ["direct", "offline"]) {
     const from = html.indexOf(`data-diagram="${name}"`);
     assert.ok(from > 0, name);
     assert.ok(html.slice(from, from + 20000).includes("data-wire-lock"), `${name}: a padlock on the wire leaving the sender`);
   }
+  // The offline copy shows the session, not ciphertext: no hex groups anywhere on the page.
+  assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
+  // The speed figure opens on the phone on 4G, the case its headline is about.
+  const direct = html.slice(html.indexOf('data-diagram="direct"') - 3000, html.indexOf('data-diagram="direct"'));
+  assert.match(direct, /aria-selected="true"[^>]*>手机 · 4G 网络</);
 });
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {
@@ -475,16 +549,18 @@ test("no region is named anywhere on the page: the relay is Droppen's, wherever 
   }
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), region, lng);
   assert.doesNotMatch(readFileSync(new URL("../index.html", import.meta.url), "utf8"), region);
-  // The prose introduces both, where it draws the line: Droppen Hub finds your computers, Droppen relays pass ciphertext on.
-  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 只负责找到你的电脑、保管加密副本，Droppen 中继只负责转发密文"));
-  assert.ok(text(draw("en")).includes("Droppen Hub only finds your computers and keeps their encrypted copies; Droppen relays only pass ciphertext on"));
+  // The encryption card draws the line between them: Droppen Hub keeps the encrypted copies, Droppen relays pass ciphertext on.
+  assert.ok(text(draw("zh-CN")).includes("Droppen Hub 保存的只是加密副本，Droppen 中继转发的只是加密数据"));
+  assert.ok(text(draw("en")).includes("Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext"));
 });
 
 test("the diagrams show product properties, not implementation trivia, and call the relay a Droppen relay", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
-    const words = text(draw(lng));
-    // No versions, fingerprints, ids, session counts, unread counts or page hashes on the cards.
-    assert.doesNotMatch(words, /agent 0\.|m-5vln|d-7c1e|fingerprint|指纹|指紋|unread|未读|未讀|未読|page #/, lng);
+    const html = draw(lng);
+    const words = text(html);
+    // No versions, fingerprints, ids, session counts, unread counts or page hashes on the diagrams' cards.
+    const diagrams = text(html.slice(html.indexOf('id="direct"'), html.indexOf('id="security"')));
+    assert.doesNotMatch(diagrams, /agent 0\.|m-5vln|d-7c1e|fingerprint|指纹|指紋|unread|未读|未讀|未読|page #/, lng);
     // Never a lower-case "hub"; Droppen Hub is still there, for the sealed pages it keeps.
     assert.doesNotMatch(words, /(?<![A-Za-z])hub(?![A-Za-z])/, `${lng}: lower-case hub`);
     assert.doesNotMatch(words, /Japan(?!ese)|日本(?!語)/, `${lng}: a country`);
@@ -494,7 +570,6 @@ test("the diagrams show product properties, not implementation trivia, and call 
 
 test("whatever is about the path names a Droppen relay, never Droppen Hub: the hub forwards nothing", () => {
   const relay = { en: "Droppen relay", "zh-CN": "Droppen 中继", "zh-TW": "Droppen 中繼", ja: "Droppen 中継" } as const;
-  const tag = { en: "relay 220 ms", "zh-CN": "中继 220 ms", "zh-TW": "中繼 220 ms", ja: "中継 220 ms" } as const;
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"] as const) {
     const html = draw(lng);
     const between = (from: string, to: string) => {
@@ -502,17 +577,11 @@ test("whatever is about the path names a Droppen relay, never Droppen Hub: the h
       assert.ok(start > 0, `${lng}: ${from}`);
       return text(html.slice(start, html.indexOf(to, start)));
     };
-    const parts = {
-      // The hero's figure, the journey's figure, and the whole direct-path section (its prose, readouts and status).
-      hero: between('data-diagram="hero"', "1–2 ms"),
-      journey: between('data-diagram="journey"', 'id="direct"'),
-      direct: between('id="direct"', 'data-diagram="offline"'),
-    };
-    for (const [name, words] of Object.entries(parts)) {
-      assert.doesNotMatch(words, /Hub/, `${lng} ${name}: the path goes through a relay`);
-      // The hero's middle card is titled for what Droppen sees; the deeper diagrams name the relay.
-      if (name !== "hero") assert.ok(words.includes(relay[lng]), `${lng} ${name}: the relay's card`);
-    }
-    for (const name of ["hero", "journey"] as const) assert.ok(parts[name].includes(tag[lng]), `${lng} ${name}: the round trip through the relay`);
+    // The whole direct-path section, its prose, readouts and status: a relay, never the hub.
+    const direct = between('id="direct"', 'data-diagram="offline"');
+    assert.doesNotMatch(direct, /Hub/, `${lng}: the path goes through a relay`);
+    assert.ok(direct.includes(relay[lng]), `${lng}: the relay's card`);
+    // The hero names neither: it is about your sessions, not the path.
+    assert.doesNotMatch(text(html.slice(html.indexOf("<main"), html.indexOf('id="tour"'))), /Hub|relay|中继|中繼|中継/, `${lng}: the hero`);
   }
 });

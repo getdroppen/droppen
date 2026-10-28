@@ -7,6 +7,7 @@ import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
 import { publicLink, PRIVACY_PATH } from "./route";
+import { cjkTracking } from "./page-kit";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
@@ -88,7 +89,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1.5">
-        <CapsLabel>{t("Plan")}</CapsLabel>
+        <CapsLabel className={cjkTracking}>{t("Plan")}</CapsLabel>
       </legend>
       <div className="grid grid-cols-2 gap-px border border-border-strong bg-border-strong">
         {options.map((o) => (
@@ -169,7 +170,7 @@ export function WaitlistForm({
     <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
       {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
       <label className="flex flex-col gap-1.5">
-        <CapsLabel>{t("E-mail address")}</CapsLabel>
+        <CapsLabel className={cjkTracking}>{t("E-mail address")}</CapsLabel>
         <input
           id="waitlist-email"
           type="email"

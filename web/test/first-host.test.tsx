@@ -175,8 +175,8 @@ test("on a Mac: the App's .dmg itself, the one primary action, then install it, 
     "Open Droppen",
     "It opens a short setup guide, four steps.",
     "Sign in to Droppen in the App",
-    // Where the App's guide has it: its step 02, the card the App names so — and where it is after the guide.
-    "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A droppen.app window opens: sign in, then click add this device.",
+    // Where the App's guide has it: its Where to use it step, through the browser, the fingerprint checked — and where it is after the guide.
+    "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens droppen.app: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.",
     "Keep this page open: it notices the new device by itself.",
     "Is that window's browser new to your account?",
   ])
@@ -301,9 +301,9 @@ test("the card reads in zh-CN, zh-TW and ja, on every kind of device, and says �
         "下载 Mac 版 Droppen",
         "在 App 里点「登录 Droppen」",
         "它会打开一个四步的设置向导。",
-        // The App's own words for its step 02 and its card (i18n/welcome.ts).
-        "在向导第 02 步「在哪里用」选「在手机和其它设备上也能用」，再点「登录 Droppen」",
-        "会弹出 droppen.app 窗口：登录后点「加入这台设备」。",
+        // The App's own words for its guide's step and its card (i18n/welcome.ts), through the browser.
+        "在设置向导的「在哪里用」一步，选择「在手机和其它设备上也能用」，再点击「登录 Droppen」",
+        "浏览器会打开 droppen.app：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。",
       ],
       linux: ["在那台设备的终端里运行：", "复制命令", "再点「登录 Droppen」", "那台设备没有浏览器（比如服务器）？", "用一次性注册码"],
       windows: ["暂时还没有 Windows 版 App。", "开启了 systemd 的 WSL 也可以", "如何在 WSL 里开启 systemd", "在 Mac 上安装", "在 Linux 或 WSL 上安装"],
@@ -316,7 +316,7 @@ test("the card reads in zh-CN, zh-TW and ja, on every kind of device, and says �
       phone: ["裝在執行 AI 的那台裝置上。", "複製連結"],
     },
     ja: {
-      mac: ["AI を動かすデバイスをつなぐ", "そのデバイスに Claude Code か Codex がインストール済みで、サインインしていること。", "Mac 版 Droppen をダウンロード", "アプリで「Droppen にサインイン」", "ガイドのステップ 02「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び", "ここやスマートフォンから"],
+      mac: ["AI を動かすデバイスをつなぐ", "そのデバイスに Claude Code か Codex がインストール済みで、サインインしていること。", "Mac 版 Droppen をダウンロード", "アプリで「Droppen にサインイン」", "セットアップガイドの「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び", "ここやスマートフォンから"],
       linux: ["そのデバイスのターミナルで実行します：", "コマンドをコピー", "ワンタイムコードを使う"],
       windows: ["Windows 版アプリはまだありません。", "systemd を有効にした WSL でも可"],
       phone: ["AI を動かすデバイスに入れましょう。", "リンクをコピー"],

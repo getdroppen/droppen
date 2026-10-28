@@ -13,7 +13,7 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
 
 /*
  * The public pages' frame, in the landing page's drafting-sheet language: a
- * sticky header over a 1152px framed column, hairline
+ * sticky header over a 1360px framed column, hairline
  * sections with registration marks at their seams, and the one-line footer.
  * The landing page (`landing.tsx`), the download page (`download.tsx`), the
  * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`), the
@@ -43,22 +43,30 @@ export function Section({ id, children, className }: { id?: string; children: Re
   );
 }
 
-export function SectionHead({ label, title, lead, className }: { label: string; title: ReactNode; lead?: ReactNode; className?: string }) {
+/**
+ * The caps labels' letter spacing is for Latin capitals; Chinese and Japanese
+ * set without it, as their headlines do (产品, not 产 品).
+ */
+export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-normal";
+
+/** A section's head; `label`, the caps line over the title, only where the title does not already say what the section is. */
+export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      <CapsLabel>{label}</CapsLabel>
+      {label && <CapsLabel className={cjkTracking}>{label}</CapsLabel>}
       <h2 className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
 }
 
-export function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
+/** A list of points; `large`: the landing page's reading size (14px), else the 12px of the denser pages. */
+export function Points({ items, className, render, large }: { items: string[]; className?: string; render?: (item: string) => ReactNode; large?: boolean }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
-        <li key={item} className="flex gap-2.5 text-xs leading-5 text-muted">
-          <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
+        <li key={item} className={cn("flex gap-2.5 text-muted", large ? "text-sm leading-6 text-pretty" : "text-xs leading-5")}>
+          <span className={cn("size-1.5 shrink-0 bg-fg", large ? "mt-[9px]" : "mt-[7px]")} />
           <span>{render ? render(item) : item}</span>
         </li>
       ))}
@@ -106,31 +114,50 @@ function PageLink({ path, label, className, testId }: { path: string; label: str
   );
 }
 
+/** GitHub's mark (Octicons' mark-github, MIT), for the header's link to the client's source. */
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="currentColor">
+      <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
+    </svg>
+  );
+}
+
 /**
- * The public pages' header: the mark (home), the page's own anchors, pricing
- * (from 640px: below, the footer has it), language and theme, and the way in
+ * The public pages' header: the mark (home), the site's other pages (download,
+ * pricing, security; from 768px, below which the footer has them), the
+ * client's source on GitHub (from 640px), language and theme, and the way in
  * (or back into the app).
  */
-export function PublicHeader({ signedIn, nav = [] }: { signedIn: boolean; nav?: { href: string; label: string }[] }) {
+export function PublicHeader({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
+  const pages = [
+    { path: DOWNLOAD_PATH, label: t("Download"), testId: "header-download" },
+    { path: PRICING_PATH, label: t("Pricing"), testId: "header-pricing" },
+    { path: SECURITY_PATH, label: t("Security"), testId: "header-security" },
+  ];
   return (
     <header className="sticky top-0 z-40 h-14 shrink-0 border-b border-border bg-bg md:px-8">
-      <div className="relative mx-auto flex h-full max-w-[1152px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
+      <div className="relative mx-auto flex h-full max-w-[1360px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
         <a {...publicLink("/")} className="flex items-center gap-3" aria-label="Droppen">
           <BrandMark size={20} />
           <span className="font-mono text-sm font-medium text-fg">Droppen</span>
         </a>
-        {nav.length > 0 && (
-          <nav aria-label={t("On this page")} className="ml-6 flex items-center gap-5 max-lg:hidden">
-            {nav.map((n) => (
-              <a key={n.href} href={n.href} className="label-caps text-2xs text-muted hover:text-fg">
-                {n.label}
-              </a>
-            ))}
-          </nav>
-        )}
+        <nav aria-label={t("Site navigation")} className="ml-6 flex items-center gap-5 max-md:hidden">
+          {pages.map((page) => (
+            <PageLink key={page.path} path={page.path} label={page.label} testId={page.testId} className={cn("label-caps text-2xs whitespace-nowrap text-muted hover:text-fg", cjkTracking)} />
+          ))}
+        </nav>
         <span className="flex-1" />
-        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="header-pricing" className="label-caps mr-1 text-2xs whitespace-nowrap text-muted hover:text-fg max-sm:hidden" />
+        <a
+          href={SOURCE_URL}
+          data-testid="header-source"
+          aria-label={t("Client source code")}
+          title={t("Client source code")}
+          className="flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted hover:bg-hover hover:text-fg max-sm:hidden"
+        >
+          <GitHubMark className="size-4" />
+        </a>
         <PrefsControls />
         {signedIn ? (
           <a {...publicLink(APP_PATH)} className={secondary}>
@@ -182,12 +209,16 @@ export function FooterLine() {
         <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        {/* Who to write to: the terms' contact part, its addresses for the account and for security. */}
+        <a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+          {t("Contact")}
+        </a>
         <a href={SOURCE_URL} data-testid="footer-source" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Source code")}
+          {t("Client source code")}
         </a>
         {/* Every build writes it (web/build/third-party-notices.mjs): the licences of the packages in this page. */}
         <a href={NOTICES_PATH} data-testid="footer-licences" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Third-party licences")}
+          {t("Third-party notices")}
         </a>
       </div>
     </Section>

@@ -98,27 +98,29 @@ const part = (html: string, from: string, to?: string) => {
 test("the pricing page leads with what you get, in zh-CN first", () => {
   const words = text(draw("zh-CN"));
   for (const line of [
-    "先免费用起来，不够再升 Pro。",
-    "每个方案都端到端加密，哪个方案我们都看不到你的代码。",
+    "免费开始，需要更多时升级 Pro。",
+    "所有方案均端到端加密：无论哪个方案，我们都无法读取你的会话、代码和终端。",
+    "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
     "仅本地",
     "免费版",
-    "不管人在哪，手机上都能接着用 AI。",
-    "免费版的全部，再加上：",
+    "无论身在何处，都能在手机上使用你的 AI。",
+    "包含免费版的全部功能，额度更高：",
     "3 台可运行 AI 的设备",
     "20 台可运行 AI 的设备",
-    "设备总共 8 台，手机、浏览器都算在内",
-    "设备关机时，手机上能看最近 7 天的会话",
-    "设备关机时，手机上能看最近 30 天的会话",
-    "每月经我们服务器转发 10 GB，超出后限速",
-    "每月经我们服务器转发 100 GB，超出部分按量计费，不限速",
+    "共 8 台设备，含可运行 AI 的设备、手机和浏览器",
+    "可运行 AI 的设备离线时，手机上可查看它最近 7 天的会话",
+    "可运行 AI 的设备离线时，手机上可查看它最近 30 天的会话",
+    "每月经我们的服务器转发 10 GB，超出后限速至 256 KB/s，直到下个月",
+    "每月经我们的服务器转发 100 GB，超出部分不限速，按量计费",
     "或每年 $96，省 20%",
     "加入等候名单",
-    "每个方案包含什么",
-    "留下邮箱，Pro 开放时我们写信给你。",
-    "每月的流量用完了会怎样？",
+    "各方案包含的内容",
+    "留下邮箱，Pro 开放购买时我们会发邮件通知你。",
+    "每月流量额度用完后会怎样？",
     "「仅本地」是什么意思？",
-    "可以自己部署吗？",
-    "什么时候能付费开通 Pro？",
+    "可以自行部署吗？",
+    "Droppen 客户端以 AGPL-3.0 开源",
+    "何时可以付费开通 Pro？",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
@@ -132,22 +134,28 @@ test("in English, and every number on the page is a plan's own", () => {
   for (const line of [
     "Start free. Go Pro when you need more.",
     "Local only",
-    "Everything in Free, plus:",
+    "Everything in Free, with higher limits:",
     `${free.hosts} devices that run AI`,
     `${pro.hosts} devices that run AI`,
-    `${free.devices} devices in all, phones and browsers included`,
-    `${pro.devices} devices in all, phones and browsers included`,
-    `Read the last ${free.retentionDays} days on your phone while a device is off`,
-    `Read the last ${pro.retentionDays} days on your phone while a device is off`,
-    `${gb(free.transferBytes)} GB a month through our servers, then slower`,
+    `${free.devices} devices in all, including those that run AI, phones and browsers`,
+    `${pro.devices} devices in all, including those that run AI, phones and browsers`,
+    `While a device that runs AI is offline, read its last ${free.retentionDays} days of sessions on your phone`,
+    `While a device that runs AI is offline, read its last ${pro.retentionDays} days of sessions on your phone`,
+    `${gb(free.transferBytes)} GB a month through our servers, then ${THROTTLED_KB_PER_SEC} KB/s until the next month`,
+    `${gb(free.transferBytes)} GB, then ${THROTTLED_KB_PER_SEC} KB/s`,
     `${gb(pro.transferBytes)} GB a month through our servers, then billed by use, at full speed`,
     `$${PRO_PRICE.monthly} USD / month`,
     `or $${PRO_PRICE.yearly} a year: save ${yearlySaving()}%`,
     `$${PRO_PRICE.monthly} a month, or $${PRO_PRICE.yearly} a year`,
     `past ${gb(free.transferBytes)} GB that traffic slows to ${THROTTLED_KB_PER_SEC} KB/s`,
     `past ${gb(pro.transferBytes)} GB is billed by use`,
-    "End-to-end encrypted: we can't see your code",
-    "Prices in US dollars.",
+    "End-to-end encrypted: we can't read your sessions, code or terminals",
+    "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.",
+    // The cloud's copy expires once a device has been offline that long (docs/relay-and-plans.md §3.4): offline, not off.
+    `Free keeps an encrypted copy of each device's last ${free.retentionDays} days of sessions in the cloud, Pro its last ${pro.retentionDays}.`,
+    "What if a device stays offline for longer?",
+    // Only the client is open source: Droppen Hub is not.
+    "The Droppen client is open source under the AGPL-3.0",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
@@ -378,9 +386,9 @@ test("the hub client joins with POST /v1/waitlist, with no session and only what
 
 test("the page reads in zh-TW and ja, with nothing left in English", () => {
   const tw = text(draw("zh-TW"));
-  for (const line of ["先免費用起來，不夠再升 Pro。", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "每個方案包含什麼", "可以自己架設嗎？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
+  for (const line of ["免費開始，需要更多時升級 Pro。", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
   const jp = text(draw("ja"));
-  for (const line of ["まずは無料で。足りなくなったら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
+  for (const line of ["無料で始めて、必要になったら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
   for (const words of [tw, jp, text(draw("zh-CN"))]) {
     assert.doesNotMatch(words, /Join the waitlist|Start free|Local only|Everything in Free|What each plan includes|Before you choose|devices that run AI/);
   }
@@ -423,16 +431,16 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="header-pricing"[^>]*>Pricing<\/a>/, `${name}: the header`);
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="footer-pricing"/, `${name}: the footer`);
     assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>Privacy notice<\/a>/, `${name}: the footer`);
+    assert.match(html, /<a href="\/terms#contact"[^>]*data-testid="footer-contact"[^>]*>Contact<\/a>/, `${name}: who to write to`);
   }
-  // Below 640px the header has no room for it: there, the landing page's hero links the plans itself (by invite: the waitlist).
-  assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>), /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See the plans<\/a>/);
+  // The landing page's hero does not link the plans (the first screen sells the product, not its price; the owner's call, 2026-10-28): the header and the footer do. By invite, the hero links the waitlist.
+  assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>), /data-testid="hero-pricing"/);
   assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /<a href="\/pricing#waitlist"[^>]*data-testid="hero-waitlist"[^>]*>No code yet\? Join the waitlist<\/a>/);
   assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signedIn /></I18nextProvider>), /data-testid="hero-(waitlist|pricing)"/);
   void i18n.changeLanguage("zh-CN");
   const cn = renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>);
   assert.match(cn, /data-testid="header-pricing"[^>]*>定价<\/a>/);
   assert.match(cn, /data-testid="footer-privacy"[^>]*>隐私说明<\/a>/);
-  assert.match(cn, /data-testid="hero-pricing"[^>]*>查看各个方案<\/a>/);
   assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /data-testid="hero-waitlist"[^>]*>还没有邀请码？加入等候名单<\/a>/);
 });
 
@@ -472,7 +480,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   }
   assert.doesNotMatch(words, /in padded sizes/);
   assert.doesNotMatch(words, /a matter of minutes/, "the ids are kept as long as the address's hash, not minutes");
-  assert.equal(PRIVACY_UPDATED, "2026-10-25");
+  assert.equal(PRIVACY_UPDATED, "2026-10-28");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));

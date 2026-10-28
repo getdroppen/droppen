@@ -1,10 +1,12 @@
 @import "tailwindcss";
 
-/* The UI audit fixture (`web/ui-audit`, run by `scripts/ui-audit`) renders the
-   real components outside the app. It is not a source of production CSS: its
-   classes are already used by `web/src`, and scanning it would change the
-   built stylesheet (and its hash) for no product reason. */
+/* The UI audit fixture (`web/ui-audit`, run by `scripts/ui-audit`) and the
+   product tour's (`web/tour`, run by `scripts/landing-shots/cloud`) render the
+   real components outside the app. They are not a source of production CSS:
+   their classes are already used by `web/src`, and scanning them would change
+   the built stylesheet (and its hash) for no product reason. */
 @source not "../ui-audit";
+@source not "../tour";
 
 /* Pane width, not viewport width: three desktop panes need the same compact
    preview navigation as a phone. No second file-browser implementation. */

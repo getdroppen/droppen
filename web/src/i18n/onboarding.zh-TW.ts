@@ -56,7 +56,7 @@ export const onboardingZhTW: Record<string, string> = {
   "Open the .dmg and drag Droppen to Applications.": "打開 .dmg，把 Droppen 拖進「應用程式」。",
   "Open Droppen": "打開 Droppen",
   "It opens a short setup guide, four steps.": "它會打開一個四步的設定引導。",
-  "In the guide's step 02 (Where to use it), choose “On my phone and other devices too”, then Sign in to Droppen (later: Settings → Access → Droppen). A {{app}} window opens: sign in, then click add this device.": "在引導第 02 步「在哪裡用」選「在手機和其他裝置上也能用」，再點「登入 Droppen」（之後也可以在「設定 → 存取 → Droppen」裡找到）。會彈出 {{app}} 視窗：登入後點「加入這台裝置」。",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.": "在設定引導的「在哪裡用」一步，選擇「在手機和其他裝置上也能用」，再點擊「登入 Droppen」。瀏覽器會打開 {{app}}：登入後，核對指紋與 App 中顯示的一致，再點擊「加入這台裝置」。之後也可以在「設定 → 存取 → Droppen」中登入。",
   "Sign in to Droppen in the App": "在 App 裡點「登入 Droppen」",
   "A {{app}} window opens: sign in, then click add this device.": "會彈出 {{app}} 視窗：登入後點「加入這台裝置」。",
   "Open Terminal on that Mac and run:": "在那台 Mac 上打開「終端機」執行：",

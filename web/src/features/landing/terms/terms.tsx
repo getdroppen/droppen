@@ -3,11 +3,12 @@ import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { landingBundles } from "../copy";
-import { FooterLine, Points, PublicHeader, SECURITY_EMAIL, Section, SectionHead } from "../page-kit";
+import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
 import { gb, PLAN_NUMBERS } from "../pricing-plans";
 import { PRICING_PATH, PRIVACY_PATH, publicLink } from "../route";
 import { PRIVACY_EMAIL } from "../waitlist";
 import { termsBundles } from "./terms-copy";
+import { cn } from "@/lib/cn";
 
 /*
  * droppen.app/terms: the terms of service of the hosted service, in plain
@@ -35,7 +36,7 @@ for (const bundles of [landingBundles, termsBundles]) {
 }
 
 /** When the terms last changed, as the page says it. */
-export const TERMS_UPDATED = "2026-10-23";
+export const TERMS_UPDATED = "2026-10-28";
 
 /** The minimum age to use droppen.app, in years (the owner's word). */
 export const MINIMUM_AGE = 16;
@@ -77,6 +78,11 @@ function useDocumentMeta() {
 export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
   useDocumentMeta();
+  // Arrived at a part of the page (`/terms#contact`, the footer's 「联系我们」): the page was not there to scroll to yet.
+  useEffect(() => {
+    const id = location.hash.slice(1);
+    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
+  }, []);
   const free = PLAN_NUMBERS.free;
   const mail = (email: string, testId: string) => (
     <a href={`mailto:${email}`} data-testid={testId} className={linkClass}>
@@ -87,9 +93,9 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
     <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
-        <main className="mx-auto max-w-[1152px] md:border-x md:border-border">
+        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel>{t("Terms of Service")}</CapsLabel>
+            <CapsLabel className={cjkTracking}>{t("Terms of Service")}</CapsLabel>
             <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
               {t("What you can expect from us, and what we ask of you.")}
             </h1>
@@ -165,7 +171,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
                   title={t("What we don't do")}
                   items={[
                     t("We don't provide AI tools, models, or accounts with their providers: Droppen connects you to the ones on your devices."),
-                    t("We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is off; a device off for longer than your plan allows has that copy deleted. Keep your own copies of what matters."),
+                    t("We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is offline; a device offline for longer than your plan allows has that copy deleted. Keep your own copies of what matters."),
                   ]}
                 />
               }
@@ -203,7 +209,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
                 <Block
                   title={t("Today")}
                   items={[
-                    t("The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is off, and {{gb}} GB a month through our servers, then slower.", {
+                    t("The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is offline, and {{gb}} GB a month through our servers, then slower.", {
                       hosts: free.hosts,
                       devices: free.devices,
                       days: free.retentionDays,
@@ -303,7 +309,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel>{t("Contact")}</CapsLabel>
+              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions about these terms, or a request about your account:")} {mail(PRIVACY_EMAIL, "terms-email")}
               </p>

@@ -137,10 +137,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "AI ツールやモデル、その提供元のアカウントは提供しません。Droppen は、あなたのデバイスにあるものにつなぐだけです。",
   ],
   [
-    "We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is off; a device off for longer than your plan allows has that copy deleted. Keep your own copies of what matters.",
-    "我们不替你备份。云端的加密副本只是让你在设备关机时能看最近的会话；设备关机超过你的方案允许的天数，这份副本就会被删除。重要的东西请自己留好备份。",
-    "我們不替你備份。雲端的加密副本只是讓你在裝置關機時能看最近的工作階段；裝置關機超過你的方案允許的天數，這份副本就會被刪除。重要的東西請自己留好備份。",
-    "作業内容のバックアップは行いません。クラウドの暗号化コピーは、デバイスの電源が切れている間に最近のセッションを読むためのもので、プランで決まった日数より長く電源が切れたデバイスは、そのコピーが削除されます。大切なものは自分でコピーを残してください。",
+    "We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is offline; a device offline for longer than your plan allows has that copy deleted. Keep your own copies of what matters.",
+    "我们不替你备份。云端的加密副本只是让你在设备离线时能看最近的会话；设备离线超过你的方案允许的天数，这份副本就会被删除。重要的东西请自己留好备份。",
+    "我們不替你備份。雲端的加密副本只是讓你在裝置離線時能看最近的工作階段；裝置離線超過你的方案允許的天數，這份副本就會被刪除。重要的東西請自己留好備份。",
+    "作業内容のバックアップは行いません。クラウドの暗号化コピーは、デバイスがオフラインの間に最近のセッションを読むためのもので、プランで決まった日数より長くオフラインのデバイスは、そのコピーが削除されます。大切なものは自分でコピーを残してください。",
   ],
 
   // Acceptable use
@@ -190,10 +190,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ["Plans, and how they may change", "方案，以及它们可能怎么变", "方案，以及它們可能怎麼變", "プランと、その変更"],
   ["Today", "现在的方案", "現在的方案", "現在のプラン"],
   [
-    "The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is off, and {{gb}} GB a month through our servers, then slower.",
-    "免费版包含：{{hosts}} 台可运行 AI 的设备，设备总共 {{devices}} 台，设备关机时能看最近 {{days}} 天的会话，每月经我们服务器转发 {{gb}} GB，超出后限速。",
-    "免費版包含：{{hosts}} 台可執行 AI 的裝置，裝置總共 {{devices}} 台，裝置關機時能看最近 {{days}} 天的工作階段，每月經我們伺服器轉送 {{gb}} GB，超出後限速。",
-    "無料プランに含まれるのは、AI を実行できるデバイス {{hosts}} 台、デバイスは全部で {{devices}} 台、デバイスの電源が切れていても直近 {{days}} 日分のセッションを読めること、私たちのサーバー経由の転送は月 {{gb}} GB まで（超えると低速に）です。",
+    "The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is offline, and {{gb}} GB a month through our servers, then slower.",
+    "免费版包含：{{hosts}} 台可运行 AI 的设备，设备总共 {{devices}} 台，设备离线时能看最近 {{days}} 天的会话，每月经我们服务器转发 {{gb}} GB，超出后限速。",
+    "免費版包含：{{hosts}} 台可執行 AI 的裝置，裝置總共 {{devices}} 台，裝置離線時能看最近 {{days}} 天的工作階段，每月經我們伺服器轉送 {{gb}} GB，超出後限速。",
+    "無料プランに含まれるのは、AI を実行できるデバイス {{hosts}} 台、デバイスは全部で {{devices}} 台、デバイスがオフラインでも直近 {{days}} 日分のセッションを読めること、私たちのサーバー経由の転送は月 {{gb}} GB まで（超えると低速に）です。",
   ],
   [
     "Pro is not on sale yet. Nothing is charged unless you choose to pay, and you see the price and how billing works before you do.",

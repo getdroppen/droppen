@@ -105,7 +105,7 @@ test("every public page links it: the footer everywhere, the landing page's secu
   for (const [name, element] of Object.entries(pages)) {
     assert.match(render(element, "en"), /<a href="\/security"[^>]*data-testid="footer-security"[^>]*>Security<\/a>/, `${name}: the footer`);
   }
-  assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works, in detail<\/a>/);
+  assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works<\/a>/);
   assert.match(render(<PrivacyPage />, "en"), /<a href="\/security"[^>]*data-testid="privacy-security"[^>]*>How the encryption works, in detail<\/a>/);
   assert.match(render(<PrivacyPage />, "zh-CN"), /data-testid="privacy-security"[^>]*>加密是怎么做的：详细说明<\/a>/);
   // On its own page the footer link says where you are.
@@ -156,8 +156,8 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 test("the page reads in each language, with nothing left in English but the code it quotes", () => {
   const lines = {
     en: ["How Droppen's end-to-end encryption works.", "Your devices hold the keys. Our servers carry ciphertext.", "One signed list decides who is in your account.", "Renewing the identity key of a device that runs AI.", "Don't take our word for it."],
-    "zh-CN": ["Droppen 的端到端加密，是怎么做的。", "钥匙在你手里，我们只经手密文。", "谁属于你的账户，一份签名名单说了算。", "更换可运行 AI 的设备的身份密钥。", "别只听我们说。", "测试中"],
-    "zh-TW": ["Droppen 的端對端加密，是怎麼做的。", "金鑰在你手上，我們只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "測試中"],
+    "zh-CN": ["Droppen 端到端加密的工作原理。", "钥匙由你的设备持有，我们的服务器只经手密文。", "哪些设备属于你的账户，由一份签名名单决定。", "更换可运行 AI 的设备的身份密钥。", "请自行核实我们的说法。", "测试中"],
+    "zh-TW": ["Droppen 端對端加密的運作原理。", "金鑰由你的裝置持有，我們的伺服器只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "測試中"],
     ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "テスト中"],
   };
   for (const [lng, want] of Object.entries(lines)) {
@@ -185,10 +185,10 @@ test("only what ships is described as live: the renewal is in testing, a passkey
   const words = text(page);
   // Switched on at droppen.app, in testing, and what its test there showed; never called stable, nor "not live" any more.
   const renewal = text(page.slice(page.indexOf('id="renewal"'), page.indexOf('id="renewal-why"')));
-  assert.ok(renewal.includes("Switched on at droppen.app since 2026-10-23 (Hub), in early testing; Droppen 0.2.127 has the web app's side and that of the device that runs AI. It is still being tested"));
+  assert.ok(renewal.includes("Switched on at droppen.app since 2026-10-23 (Hub), in early testing; parts of it may still change. Droppen 0.2.127 includes both the web app's side and the side of the device that runs AI."));
   assert.ok(renewal.includes("A test on droppen.app on 2026-10-23 (Hub) showed:"));
   // What is the Hub's and the service's, not this repository's, says so (the sources section says what the mark means).
-  assert.ok(words.includes("Droppen Hub is closed, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub)."));
+  assert.ok(words.includes("Droppen Hub is not open source, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub)."));
   for (const marked of ["sign-in session a password does (Hub)", "any sign-in that does not voids the staging (Hub)", "Your account (Hub)", "every request and connection (Hub)"]) {
     assert.ok(words.includes(marked), marked);
   }
@@ -217,7 +217,7 @@ test("only what ships is described as live: the renewal is in testing, a passkey
 test("the web-delivery gap is said plainly: a modified page can do anything the browser can, and export its keys", () => {
   const words = text(draw("en"));
   assert.ok(words.includes("WebCrypto's non-extractable keys do not stop code on the same origin"));
-  assert.ok(words.includes("Served to you once, do anything this browser can: read all history"));
+  assert.ok(words.includes("Served to you once, it can do anything this browser can: read all history"));
   assert.ok(words.includes("export this browser's private keys and user keys"));
   // The Hub's own row says it serves the page, and its Cannot list holds only through the protocol.
   assert.ok(words.includes("Serve a modified page to a browser that uses my.droppen.app"));
@@ -300,7 +300,7 @@ test("the markup: key terms bold, a reason after a term muted, list items in a r
 test("enumerations render as lists and key terms in bold: the Hub's Cannot cell, in en and zh-CN", () => {
   const cases = [
     { lng: "en", lead: "Through the protocol alone:", first: "decrypt content", term: "forge commands", why: " (only devices on the chain are admitted, and the first message asks for nothing)" },
-    { lng: "zh-CN", lead: "仅凭协议本身：", first: "解密内容", term: "伪造命令", why: "（只有链上的设备能被准入，首包不带请求）" },
+    { lng: "zh-CN", lead: "仅凭协议本身，它无法：", first: "解密内容", term: "伪造命令", why: "（只准入链上的设备，且首个消息不提出任何请求）" },
   ];
   for (const { lng, lead, first, term, why } of cases) {
     const html = draw(lng);

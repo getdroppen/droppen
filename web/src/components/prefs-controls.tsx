@@ -40,7 +40,7 @@ export function PrefsControls() {
       <LanguageMenu value={language} onChoose={chooseLanguage} look="public">
         <Menu.Trigger aria-label={t("language")} title={t("language")} className={cn(control, "px-2.5 font-mono text-2xs")}>
           <Globe className="size-3.5" />
-          <span>{active.id}</span>
+          <span lang={active.id}>{active.label}</span>
         </Menu.Trigger>
       </LanguageMenu>
       <button
