@@ -995,9 +995,9 @@ impl AccountsStore {
     /// The machine's own logins, from this instance's rests and the machine's
     /// shared reading of the local login. Two small reads, no spawn.
     pub fn local_logins(&self) -> super::local_login::LocalLogins {
-        let reading = crate::quota::UsageLogin::Local
+        let reading = super::quota::UsageLogin::Local
             .reading_file(&self.paths)
-            .map(|path| crate::quota::readings::load(&path))
+            .map(|path| super::quota::readings::load(&path))
             .unwrap_or_default();
         let mut logins = super::local_login::local_logins(&self.limit_log(), &reading, super::rest::now_ms());
         logins.claude.is_default = self.local_is_default(AccountProvider::Claude);

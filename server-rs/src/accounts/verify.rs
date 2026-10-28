@@ -39,8 +39,8 @@ use std::time::Duration;
 
 use crate::paths::Paths;
 use crate::process_env::{apply_env, claude_env, clean_env, clean_env_bare, redact_secrets, redact_values, resolve_on_path};
-use crate::quota::{is_rate_limited, mentions_status};
 
+use super::quota::{is_rate_limited, mentions_status};
 use super::store::{launch_for, AccountLaunch, AccountProvider, Credential, CLAUDE_BASE_URL_ENV};
 
 /// The prompt the probe sends. Short on purpose: it is billed like any other.

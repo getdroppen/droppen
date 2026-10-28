@@ -48,12 +48,12 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use super::limits::{LimitClass, SCOPE_ALL};
+use super::quota::readings::UsageLogin;
+use super::quota::{QuotaCache, QuotaWindow};
 use super::rest::iso_ms;
 use super::store::{Account, AccountProvider, AccountRef, AccountsStore};
 use crate::db::Db;
 use crate::openapi_ext::Nullable;
-use crate::quota::readings::UsageLogin;
-use crate::quota::{QuotaCache, QuotaWindow};
 
 /// At most this many automatic switches for one message and the continuations
 /// that follow it. Three accounts refusing in a row is not bad luck.
@@ -234,7 +234,7 @@ impl Window {
     }
 }
 
-/// The weekly window of one family, as [`crate::quota::readings`] labels it.
+/// The weekly window of one family, as [`super::quota::readings`] labels it.
 fn family_window(family: &str) -> Option<&'static str> {
     match family {
         "fable" => Some("weekly (Fable)"),

@@ -139,7 +139,7 @@ impl RunOutput {
 }
 
 /// One request to a short-lived `codex app-server` (see
-/// [`crate::quota::codex::app_server_call`]).
+/// [`crate::accounts::quota::codex::app_server_call`]).
 #[derive(Clone)]
 pub struct RpcCall {
     /// The `codex` binary to start.
@@ -182,7 +182,7 @@ impl Runner for SystemRunner {
     }
 
     fn rpc(&self, call: RpcCall) -> BoxFuture<'static, Option<serde_json::Value>> {
-        Box::pin(async move { crate::quota::codex::app_server_call(&call.program, &call.cwd, &call.env, call.method, call.timeout).await })
+        Box::pin(async move { crate::accounts::quota::codex::app_server_call(&call.program, &call.cwd, &call.env, call.method, call.timeout).await })
     }
 }
 

@@ -431,7 +431,7 @@ fn response_overrides() -> ExtraResponses {
     crate::plugins::routes::describe(&mut reg);
     crate::prefs::describe(&mut reg);
     crate::push::describe(&mut reg);
-    crate::quota::describe(&mut reg);
+    crate::accounts::quota::describe(&mut reg);
     crate::schedule::describe(&mut reg);
     crate::screens::describe(&mut reg);
     crate::selfupdate::describe(&mut reg);
@@ -465,7 +465,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::plugins::routes::routes(router);
     let router = crate::prefs::routes(router);
     let router = crate::push::routes(router);
-    let router = crate::quota::routes(router);
+    let router = crate::accounts::quota::routes(router);
     let router = crate::schedule::routes(router);
     let router = crate::screens::routes(router);
     let router = crate::selfupdate::routes(router);

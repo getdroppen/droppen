@@ -1147,7 +1147,7 @@ pub struct InjectionRegistry {
     /// resident's claude writes is a reading of the login it runs on, and the
     /// driver files it here. The same handle [`crate::drive::Drive::quota`]
     /// serves the panel from, so a reading is on the panel the moment it lands.
-    quota: Arc<crate::quota::QuotaCache>,
+    quota: Arc<crate::accounts::quota::QuotaCache>,
     /// This server's name, so the keys below can say whose they are.
     ///
     /// Only ever this process' own: everything keyed by it is in memory and
@@ -1327,7 +1327,7 @@ impl InjectionRegistry {
         paths: Arc<Paths>,
         instance: &InstanceDirs,
         accounts: Arc<crate::accounts::store::AccountsStore>,
-        quota: Arc<crate::quota::QuotaCache>,
+        quota: Arc<crate::accounts::quota::QuotaCache>,
     ) -> Arc<Self> {
         let receipts = Arc::new(receipts::Receipts::new(crate::db::at(paths.instance_db())));
         let questions = Arc::new(questions::Questions::new(crate::db::at(paths.instance_db())));
@@ -2467,7 +2467,7 @@ mod tests {
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
-            Arc::new(crate::quota::QuotaCache::new(paths)),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
         );
 
         // Alive, and emphatically not an agent run: the developer's `make`,

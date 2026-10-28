@@ -10,6 +10,7 @@
 
 pub mod limits;
 pub mod local_login;
+pub mod quota;
 pub mod rest;
 pub mod rotation;
 pub mod setup_token;

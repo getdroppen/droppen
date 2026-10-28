@@ -14,7 +14,7 @@
 //!   `auth`, indefinitely ([`super::rest`]);
 //! * **the `/usage` fallback probe**, which runs against the local login too and
 //!   files `not_logged_in` when the CLI answers with nothing
-//!   ([`crate::quota::readings`]);
+//!   ([`super::quota::readings`]);
 //! * **a reading.** Every window a session or a probe read for the local login
 //!   was read by a login that worked at that instant.
 //!
@@ -31,9 +31,9 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use super::limits::LimitClass;
+use super::quota::readings::SharedReading;
+use super::quota::QuotaProbeError;
 use super::rest::{AccountRest, LimitLog, LOCAL_CLAUDE, LOCAL_CODEX};
-use crate::quota::readings::SharedReading;
-use crate::quota::QuotaProbeError;
 
 /// Whether the machine's own login can start a session right now, as far as
 /// this server can tell.
@@ -127,9 +127,9 @@ pub fn local_logins(log: &LimitLog, local_reading: &SharedReading, now: i64) -> 
 mod tests {
     use super::*;
     use crate::accounts::limits::Verdict;
+    use crate::accounts::quota::{QuotaReadingSource, QuotaWindow};
     use crate::accounts::rest::Observation;
     use crate::db::Db;
-    use crate::quota::{QuotaReadingSource, QuotaWindow};
     use std::sync::Arc;
 
     const MINUTE: i64 = 60_000;

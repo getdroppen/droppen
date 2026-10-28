@@ -69,11 +69,11 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::accounts::limits::{self, LimitClass, Verdict};
+use crate::accounts::quota::readings::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, RotationOutcome, RotationTrigger, Wait};
 use crate::accounts::store::{AccountProvider, AccountRef};
 use crate::openapi_ext::Optional;
-use crate::quota::readings::RateLimitWindows;
 use crate::process_env::Env;
 use crate::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
@@ -3097,7 +3097,7 @@ impl Driver {
     /// Every event carries them, `allowed` as much as `rejected`, and they are
     /// the reading the quota panel now lives on: made by the credential actually
     /// being billed, at no cost, and with no second login to keep alive. See
-    /// [`crate::quota::readings`].
+    /// [`crate::accounts::quota::readings`].
     async fn note_usage(&self, info: &Value) {
         let windows = info.windows_from_rate_limit_info();
         if windows.is_empty() {
@@ -3107,7 +3107,7 @@ impl Driver {
             tracing::debug!(session = %self.id, "a quota reading from a session on the managed root's own login; not filed");
             return;
         };
-        if let crate::quota::UsageLogin::Account(id) = &login {
+        if let crate::accounts::quota::UsageLogin::Account(id) = &login {
             // Only for an account that still exists: a reading must not
             // recreate the directory of one deleted under a running session.
             if self.registry.accounts.get(id).await.is_none() {
@@ -3132,7 +3132,7 @@ impl Driver {
     /// is nobody's to file under. The root is read off the recipe's environment
     /// when this server started the process, and off where the transcript lives
     /// when it inherited one.
-    async fn usage_login(&self) -> Option<crate::quota::UsageLogin> {
+    async fn usage_login(&self) -> Option<crate::accounts::quota::UsageLogin> {
         let account = match &self.live {
             Some(live) => live.account.clone(),
             None => self.registry.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
@@ -3144,7 +3144,7 @@ impl Driver {
                 .await
                 .map(|found| found.root),
         };
-        crate::quota::readings::session_login(account.as_deref(), root)
+        crate::accounts::quota::readings::session_login(account.as_deref(), root)
     }
 
     /// Record a refused `rate_limit_event`. Recording only.
@@ -3686,7 +3686,7 @@ impl Driver {
         let own: Vec<rotation::Window> = self
             .registry
             .quota
-            .cached(&crate::quota::UsageLogin::Account(from_id.clone()))
+            .cached(&crate::accounts::quota::UsageLogin::Account(from_id.clone()))
             .windows
             .iter()
             .map(rotation::Window::from_quota)
@@ -7073,9 +7073,9 @@ mod tests {
     /// server really builds for each kind of spawn.
     #[test]
     fn a_usage_reading_goes_to_the_login_the_process_runs_on() {
+        use crate::accounts::quota::readings::session_login;
+        use crate::accounts::quota::UsageLogin;
         use crate::paths::ClaudeRoot;
-        use crate::quota::readings::session_login;
-        use crate::quota::UsageLogin;
 
         let local = crate::process_env::claude_env_bare();
         let managed = crate::process_env::claude_env([("CLAUDE_CONFIG_DIR", "/data/instances/default/claude")]);
@@ -7157,7 +7157,7 @@ mod tests {
             receipts: Arc::new(crate::inject::receipts::Receipts::new(crate::db::at(paths.instance_db()))),
             questions: Arc::new(crate::inject::questions::Questions::new(crate::db::at(paths.instance_db()))),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
-            quota: Arc::new(crate::quota::QuotaCache::new(paths.clone())),
+            quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
             server: crate::sessions::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
             acp_servers: Mutex::new(HashMap::new()),
@@ -8418,10 +8418,10 @@ done
         let file = harness.registry.paths.data_dir().join("local-usage.json");
         until("the reading to be filed", || file.is_file()).await;
 
-        let reading = harness.registry.quota.cached(&crate::quota::UsageLogin::Local);
+        let reading = harness.registry.quota.cached(&crate::accounts::quota::UsageLogin::Local);
         let windows: Vec<(&str, f64)> = reading.windows.iter().map(|w| (w.label.as_str(), w.used_percent)).collect();
         assert_eq!(windows, [("5h", 19.0), ("weekly", 46.0)]);
-        assert_eq!(reading.source, Some(crate::quota::QuotaReadingSource::Session));
+        assert_eq!(reading.source, Some(crate::accounts::quota::QuotaReadingSource::Session));
         assert!(reading.updated_at.is_some());
     }
 
@@ -11352,7 +11352,7 @@ done
         let windows = info.windows_from_rate_limit_info();
         registry
             .quota
-            .ingest_session(crate::quota::UsageLogin::Account(account.to_string()), windows);
+            .ingest_session(crate::accounts::quota::UsageLogin::Account(account.to_string()), windows);
     }
 
     /// The whole of a move ahead of a limit, on the everyday case: a turn ends
@@ -12230,7 +12230,7 @@ done
             wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.registry.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
-            quota: Arc::new(crate::quota::QuotaCache::new(paths.clone())),
+            quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
