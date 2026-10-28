@@ -992,7 +992,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "core-foundation 0.10.1",
- "droppen-path",
+ "droppen-search-path",
  "getrandom 0.3.4",
  "libc",
  "log",
@@ -1007,7 +1007,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "droppen-path"
+name = "droppen-search-path"
 version = "0.1.0"
 
 [[package]]

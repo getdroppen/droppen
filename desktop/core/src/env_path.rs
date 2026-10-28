@@ -17,7 +17,7 @@
 //! folders adopted in Settings after all of it (`server-rs/src/setup`).
 //!
 //! The rule itself ([`base_dirs`], [`build`]) lives in the dependency-free
-//! `droppen-path` crate, shared with the server
+//! `droppen-search-path` crate, shared with the server
 //! (`server-rs/src/setup/locate.rs`), so the two cannot drift apart.
 
 use std::io::Read;
@@ -26,9 +26,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-// The PATH rule itself lives in `droppen-path`, shared with the server's
-// setup guide (`server-rs/src/setup/locate.rs`).
-pub use droppen_path::{base_dirs, build};
+// The PATH rule itself lives in `droppen-search-path`, shared with the
+// server's setup guide (`server-rs/src/setup/locate.rs`).
+pub use droppen_search_path::{base_dirs, build};
 
 /// What `$SHELL -ilc` says `PATH` is, or `None` if it would not say in time.
 ///

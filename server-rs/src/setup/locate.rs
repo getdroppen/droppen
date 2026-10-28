@@ -2,8 +2,9 @@
 //!
 //! Three questions with filesystem answers and no processes:
 //!
-//! * **The `PATH`.** [`base_dirs`] and [`build`] come from `droppen-path`, the
-//!   one rule the desktop app (`desktop/core/src/env_path.rs`) uses too; the
+//! * **The `PATH`.** [`base_dirs`] and [`build`] come from
+//!   `droppen-search-path`, the one rule the desktop app
+//!   (`desktop/core/src/env_path.rs`) uses too; the
 //!   command-line installer's launchd agent gets the same (`scripts/install.sh`
 //!   `service_path`): the login shell's `PATH` first, then the base
 //!   directories. The app builds its server's `PATH` this way at launch; the
@@ -24,8 +25,9 @@ use std::path::{Path, PathBuf};
 use super::{FoundVia, InstallMethod, ToolFound, ToolId};
 use droppen_base::process_env::{resolve_on_path, Env};
 
-// The PATH rule itself lives in `droppen-path`, shared with the desktop app.
-pub use droppen_path::{base_dirs, build};
+// The PATH rule itself lives in `droppen-search-path`, shared with the desktop
+// app.
+pub use droppen_search_path::{base_dirs, build};
 
 /// `path` followed by each directory of `more` it does not have yet, whether
 /// or not it exists.
