@@ -788,7 +788,7 @@ async fn session(
     .sign(shared.identity.signing_key())
     .map_err(|e| e.to_string())?;
     sink.send(Message::Text(
-        super::traffic::relay_value(json!({"t": "login", "ticket": ticket, "time_ms": time_ms, "sig": hex(&sig)}))
+        crate::aggregator::traffic::relay_value(json!({"t": "login", "ticket": ticket, "time_ms": time_ms, "sig": hex(&sig)}))
             .to_string()
             .into(),
     ))
@@ -811,7 +811,7 @@ async fn session(
 
     let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
     let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, super::traffic::relay_out);
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, crate::aggregator::traffic::relay_out);
     let mut chain = shared.chain_version.subscribe();
     let mut routes: Routes = HashMap::new();
     let mut pending = Pending::new();
@@ -846,7 +846,7 @@ async fn session(
                         channels.store(routes.len(), Ordering::Relaxed);
                     }
                     Message::Text(text) => {
-                        let Ok(v) = serde_json::from_str::<Value>(super::traffic::relay_in(text.as_str())) else { continue };
+                        let Ok(v) = serde_json::from_str::<Value>(crate::aggregator::traffic::relay_in(text.as_str())) else { continue };
                         match v["t"].as_str() {
                             Some("goaway") => tracing::info!(relay = %id, reason = %v["reason"], "the relay is draining"),
                             Some("error") => tracing::warn!(relay = %id, code = %v["code"], message = %v["message"], "the relay reported an error"),

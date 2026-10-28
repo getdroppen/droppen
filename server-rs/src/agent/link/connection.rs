@@ -605,7 +605,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     // One writer for the socket: frames from every channel, and control text.
     let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
     let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, super::traffic::agent_out);
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, crate::aggregator::traffic::agent_out);
 
     // The streams' writer has this connection only while this machine runs
     // AI in its account (and is told again whenever the chain changes that).
@@ -667,7 +667,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         shared.rotation.heard();
         match message {
             Message::Text(text) => {
-                if let Ok(value) = serde_json::from_str::<Value>(super::traffic::agent_in(text.as_str())) {
+                if let Ok(value) = serde_json::from_str::<Value>(crate::aggregator::traffic::agent_in(text.as_str())) {
                     on_control(shared, &value, &text_tx);
                 }
             }
