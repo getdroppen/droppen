@@ -359,8 +359,8 @@ function Contents() {
     { id: "overview", title: t("Overview"), line: t("What Droppen Hub and the relays see, and what they never see.") },
     { id: "chain", title: t("The device chain"), line: t("The signed list every device checks for itself.") },
     { id: "keys", title: t("Keys"), line: t("Every key, where it lives, how it is delivered, and the recovery words.") },
-    { id: "channels", title: t("Channels and relays"), line: t("Noise end to end, through a relay, Droppen Hub or a direct path.") },
-    { id: "offline", title: t("Offline copies"), line: t("Encrypted streams with signed heads, readable while a device is off.") },
+    { id: "channels", title: t("Channels and relays"), line: t("Noise end to end, through a Droppen relay or a direct path.") },
+    { id: "offline", title: t("Offline copies"), line: t("Encrypted streams with signed heads, readable while a device is offline.") },
     { id: "renewal", title: t("Identity renewal"), line: t("Replacing the identity key of a device that runs AI."), chip: t("In testing") },
     { id: "threats", title: t("Threat model"), line: t("What a hostile Hub, a thief or the network can and cannot do.") },
     { id: "verify", title: t("Verify it yourself"), line: t("Algorithms, labels, code, test vectors, and how to report a flaw.") },
@@ -403,12 +403,12 @@ function Overview() {
   const devices = { title: t("Your browsers and phones"), lines: [t("device key · user key"), t("encrypt and decrypt here")] };
   const relay = { title: t("Droppen relay"), lines: [t("copies frames, keeps nothing"), t("none of your keys")] };
   const host = { title: t("A device that runs AI"), lines: [t("identity key · content keys"), t("the AI and its transcripts")] };
-  const hub = { title: "Droppen Hub", lines: [t("device chain · mail · encrypted copies"), t("channels no relay carries"), t("none of your keys")] };
+  const hub = { title: "Droppen Hub", lines: [t("device chain · mail · encrypted copies"), t("none of your keys")] };
   const wire = t("Noise ciphertext");
   const e2e = t("one end-to-end channel: Noise IK");
   const sealed = t("sealed records · signed heads");
   const copy = t("encrypted copy");
-  const label = t("Your browsers and phones and a device that runs AI share one end-to-end channel through a Droppen relay, or through Droppen Hub where no relay carries it; the device that runs AI also leaves sealed records with Droppen Hub, which your browsers and phones read back as an encrypted copy. Neither server holds any of your keys.");
+  const label = t("Your browsers and phones and a device that runs AI share one end-to-end channel through a Droppen relay; the device that runs AI also leaves sealed records with Droppen Hub, which your browsers and phones read back as an encrypted copy. Neither server holds any of your keys.");
   const card = (x: number, y: number, w: number, h: number, c: { title: string; lines: string[] }) => (
     <g key={c.title}>
       <rect x={x + 0.5} y={y + 0.5} width={w} height={h} className="fill-bg stroke-border-strong" strokeWidth={1} />
@@ -424,7 +424,7 @@ function Overview() {
   );
   return (
     <div className="border-t border-border" data-diagram="security-overview">
-      <svg viewBox="0 0 1040 320" role="img" aria-label={label} className="block w-full max-md:hidden">
+      <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="block w-full max-md:hidden">
         {/* The end-to-end span over the three. */}
         <path d="M140.5 34v8M900.5 34v8M140.5 34.5H900.5" className="stroke-muted" strokeWidth={1} fill="none" />
         <text x={520} y={26} textAnchor="middle" className="fill-fg font-mono text-[11px]">
@@ -449,7 +449,7 @@ function Overview() {
         {card(24, 48, 232, 88, devices)}
         {card(404, 48, 232, 88, relay)}
         {card(784, 48, 232, 88, host)}
-        {card(404, 200, 232, 104, hub)}
+        {card(404, 200, 232, 88, hub)}
       </svg>
       <ol className="flex flex-col gap-0 px-4 py-5 md:hidden" aria-label={label}>
         {[
@@ -487,7 +487,7 @@ function OverviewSection() {
         <SectionHead
           label={`01 · ${t("Overview")}`}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
-          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on, and Droppen Hub does so where no relay carries the channel. Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
+          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
         />
         <Overview />
         <Topic n="1.1" title={t("What Droppen Hub sees, and what it never sees")}>
@@ -503,7 +503,7 @@ function OverviewSection() {
                 t("**The device chain**: which devices belong to the account, which of them run AI, and which device added which."),
                 t("Which device that runs AI is the account's **main device**."),
                 t("For **what it stores encrypted** (session streams and their pages, sealed key mail, keyring entries):\n- how many\n- how large\n- when written\n- which device wrote each\n- which device each piece of mail is for\n- which device reads which stream, and when"),
-                t("Which device **opens a channel** to which device that runs AI, through which relay or through Droppen Hub itself, and the **sizes and timing** of that traffic, which is not padded: when you work, how much output there is, and the rhythm of typing in a terminal."),
+                t("From the relays' metering reports, **how many bytes** each account's channels carried in each minute. The **sizes and timing** of a single channel's traffic, which is not padded (when you work, how much output there is, the rhythm of typing in a terminal), are seen by the relay that carries it ([[section 07|threats]])."),
               ],
             }}
             right={{
@@ -684,7 +684,7 @@ function ChannelsSection() {
         <SectionHead
           label={`04 · ${t("Channels and relays")}`}
           title={withConcepts(t("Every channel is end to end, whichever path it takes."))}
-          lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay, or Droppen Hub where no relay carries the channel, only forwards its frames; when the two ends can reach each other, the same channel can also take a direct path."))}
+          lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay only forwards its frames, and Droppen Hub carries no channel (Hub); when the two ends can reach each other, the same channel can also take a direct path."))}
         />
         <Topic n="4.1" title={t("The handshake")}>
           <P>{t("Noise IK with X25519, AES-256-GCM and SHA-256: WebCrypto in the browser, the snow library in Rust. The browser starts it with the other side's static public key, taken from the chain, and the other side admits the browser by its own copy of the chain. The prologue **binds the account and both ids**, so neither a relay nor Droppen Hub can **splice two sessions together**. Keys are renewed every hour or every 2^20 messages, whichever comes first.")}</P>
@@ -716,7 +716,7 @@ function OfflineSection() {
       <MentionScope>
         <SectionHead
           label={`05 · ${t("Offline copies")}`}
-          title={withConcepts(t("History that you, and only you, can read while the device that runs AI is off."))}
+          title={withConcepts(t("History that you, and only you, can read while the device that runs AI is offline."))}
           lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by the device that runs AI covers it: each record is authenticated under the stream key and linked to the one before, and the signed head gives the newest link value."))}
         />
         <Topic n="5.1" title={t("Records")}>
@@ -777,7 +777,7 @@ function RenewalSection() {
               title: t("Automatic"),
               items: [
                 t("**Stops a copy that is not in use** at that moment: the common case of a lost phone, an old browser, or a script that copied a file."),
-                t("**Cannot tell** the real device from a copy that is online while the real one is off. With an honest Droppen Hub that case is not silent: when the real device comes back, it reads the renewal on its own chain, raises its alarm and disputes it. For a hostile Hub, see [[6.7|renewal-hub]]."),
+                t("**Cannot tell** the real device from a copy that is online while the real one is offline. With an honest Droppen Hub that case is not silent: when the real device comes back, it reads the renewal on its own chain, raises its alarm and disputes it. For a hostile Hub, see [[6.7|renewal-hub]]."),
               ],
             }}
             right={{
@@ -806,7 +806,7 @@ function RenewalSection() {
         </Topic>
         <Topic id="renewal-groups" n="6.6" title={t("Exposed groups: controllers first, and a pause")}>
           <P>{t("If a lost device could control A, and A may control B, a copy of A's key reaches B as well: **B is exposed too**. **Controllers renew first**: when B lets A in, A renews before B, so by the time B renews, A's old key is already useless.")}</P>
-          <P>{t("Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first **writes a pause**, an entry of kind 22 (RenewalPause), that names each control edge it removes (a device that runs AI and one device on its accept list). Every verifier, and every device that runs AI on every path (Hub, relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge with an end still exposed is carried into a new pause in the same batch. A pause **only ever takes access away**, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.")}</P>
+          <P>{t("Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first **writes a pause**, an entry of kind 22 (RenewalPause), that names each control edge it removes (a device that runs AI and one device on its accept list). Every verifier, and every device that runs AI on every path (relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge with an end still exposed is carried into a new pause in the same batch. A pause **only ever takes access away**, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.")}</P>
         </Topic>
         <Topic id="renewal-hub" n="6.7" title={t("What a hostile Hub can and cannot do here")}>
           <Pair
@@ -841,7 +841,7 @@ function ThreatsSection() {
   const rows = [
     [
       t("Droppen Hub, or whoever runs or compels it"),
-      t("- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**"),
+      t("- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**"),
       t("Through the protocol alone:\n- **decrypt content**\n- **forge commands** (only devices on the chain are admitted, and the first message asks for nothing)\n- **add a device of its own**\n- **slip in keys** (they are sender-authenticated and committed on the chain)\n- **forge or quietly change records** (signed heads)\n- **take over a device that runs AI with a new genesis** (it pinned the account key)"),
     ],
     [t("A Droppen relay"), t("- See **ids, IP addresses, and the sizes and timing** of the channels it carries\n- **Drop them**"), t("- **Read or change them**\n- **Splice two sessions together** (the prologue binds both ids)")],

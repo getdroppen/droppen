@@ -80,10 +80,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "チャネルと中継",
   ],
   [
-    "Noise end to end, through a relay, Droppen Hub or a direct path.",
-    "以 Noise 协议端到端加密，经 Droppen 中继、Droppen Hub 或直连传输。",
-    "以 Noise 協定端對端加密，經 Droppen 中繼、Droppen Hub 或直連傳輸。",
-    "Noise プロトコルによるエンドツーエンド暗号化。経路は Droppen 中継、Droppen Hub、または直結。",
+    "Noise end to end, through a Droppen relay or a direct path.",
+    "以 Noise 协议端到端加密，经 Droppen 中继或直连传输。",
+    "以 Noise 協定端對端加密，經 Droppen 中繼或直連傳輸。",
+    "Noise プロトコルによるエンドツーエンド暗号化。経路は Droppen 中継、または直結。",
   ],
   [
     "Offline copies",
@@ -92,10 +92,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "オフラインコピー",
   ],
   [
-    "Encrypted streams with signed heads, readable while a device is off.",
-    "带签名流头的加密流，设备关机时仍可读取。",
-    "帶簽章串流頭的加密串流，裝置關機時仍可讀取。",
-    "署名付きヘッドを持つ暗号化ストリーム。デバイスがオフでも読めます。",
+    "Encrypted streams with signed heads, readable while a device is offline.",
+    "带签名流头的加密流，设备离线时仍可读取。",
+    "帶簽章串流頭的加密串流，裝置離線時仍可讀取。",
+    "署名付きヘッドを持つ暗号化ストリーム。デバイスがオフラインでも読めます。",
   ],
   [
     "Identity renewal",
@@ -194,12 +194,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "デバイスチェーン · 鍵メール · 暗号化コピー",
   ],
   [
-    "channels no relay carries",
-    "中继未承载的通道",
-    "中繼未承載的通道",
-    "中継が運ばないチャネル",
-  ],
-  [
     "Noise ciphertext",
     "Noise 密文",
     "Noise 密文",
@@ -218,10 +212,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "封印したレコード · 署名付きヘッド",
   ],
   [
-    "Your browsers and phones and a device that runs AI share one end-to-end channel through a Droppen relay, or through Droppen Hub where no relay carries it; the device that runs AI also leaves sealed records with Droppen Hub, which your browsers and phones read back as an encrypted copy. Neither server holds any of your keys.",
-    "你的浏览器、手机与可运行 AI 的设备之间，经 Droppen 中继（无中继承载时经 Droppen Hub）共用一条端到端通道；可运行 AI 的设备还把封装好的记录交给 Droppen Hub 保管，你的浏览器和手机再将其作为加密副本读回。两种服务器都不持有你的任何钥匙。",
-    "你的瀏覽器、手機與可執行 AI 的裝置之間，經 Droppen 中繼（無中繼承載時經 Droppen Hub）共用一條端對端通道；可執行 AI 的裝置還把封裝好的紀錄交給 Droppen Hub 保管，你的瀏覽器和手機再將其作為加密副本讀回。兩種伺服器都不持有你的任何金鑰。",
-    "ブラウザやスマホと AI を実行できるデバイスは、Droppen 中継（中継が運ばない場合は Droppen Hub）を経由する 1 本のエンドツーエンドのチャネルでつながります。AI を実行できるデバイスは封印したレコードを Droppen Hub に預け、ブラウザやスマホはそれを暗号化コピーとして読み戻します。どちらのサーバーもあなたの鍵を持ちません。",
+    "Your browsers and phones and a device that runs AI share one end-to-end channel through a Droppen relay; the device that runs AI also leaves sealed records with Droppen Hub, which your browsers and phones read back as an encrypted copy. Neither server holds any of your keys.",
+    "你的浏览器、手机与可运行 AI 的设备之间，经 Droppen 中继共用一条端到端通道；可运行 AI 的设备还把封装好的记录交给 Droppen Hub 保管，你的浏览器和手机再将其作为加密副本读回。两种服务器都不持有你的任何钥匙。",
+    "你的瀏覽器、手機與可執行 AI 的裝置之間，經 Droppen 中繼共用一條端對端通道；可執行 AI 的裝置還把封裝好的紀錄交給 Droppen Hub 保管，你的瀏覽器和手機再將其作為加密副本讀回。兩種伺服器都不持有你的任何金鑰。",
+    "ブラウザやスマホと AI を実行できるデバイスは、Droppen 中継を経由する 1 本のエンドツーエンドのチャネルでつながります。AI を実行できるデバイスは封印したレコードを Droppen Hub に預け、ブラウザやスマホはそれを暗号化コピーとして読み戻します。どちらのサーバーもあなたの鍵を持ちません。",
   ],
   [
     "Your devices hold the keys. Our servers carry ciphertext.",
@@ -230,10 +224,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。",
   ],
   [
-    "Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on, and Droppen Hub does so where no relay carries the channel. Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub).",
-    "Claude Code 和 Codex 运行在你的可运行 AI 的设备上（协议中称为 host），你的浏览器和手机通过端到端加密的通道控制它们。Droppen Hub（droppen.app）保管你的账户、设备链和加密副本，并在 my.droppen.app 提供网页版。通道中的密文由 Droppen 中继转发；若某条通道没有中继承载，则由 Droppen Hub 转发。两者都不持有任何能解密的钥匙。Droppen Hub 不开源：依赖其自身行为或策略的说法，均标注（Hub）。",
-    "Claude Code 和 Codex 在你的可執行 AI 的裝置上執行（協定中稱為 host），你的瀏覽器和手機透過端對端加密的通道控制它們。Droppen Hub（droppen.app）保管你的帳戶、裝置鏈和加密副本，並在 my.droppen.app 提供網頁版。通道中的密文由 Droppen 中繼轉送；若某條通道沒有中繼承載，則由 Droppen Hub 轉送。兩者都不持有任何能解密的金鑰。Droppen Hub 不開源：依賴其自身行為或政策的說法，均標註（Hub）。",
-    "Claude Code と Codex は、AI を実行できるあなたのデバイス（プロトコル上は host）で動き、ブラウザやスマホはエンドツーエンドで暗号化されたチャネルでそれを操作します。Droppen Hub（droppen.app）はアカウント、デバイスチェーン、暗号化コピーを預かり、my.droppen.app でウェブアプリを配信します。チャネルの暗号文は Droppen 中継が渡し、中継が運ばないチャネルでは Droppen Hub が渡します。どちらも、何かを復号できる鍵は持っていません。Droppen Hub はソースコードを公開していないため、その振る舞いや方針に依る記述には（Hub）と記しています。",
+    "Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub).",
+    "Claude Code 和 Codex 运行在你的可运行 AI 的设备上（协议中称为 host），你的浏览器和手机通过端到端加密的通道控制它们。Droppen Hub（droppen.app）保管你的账户、设备链和加密副本，并在 my.droppen.app 提供网页版。通道中的密文由 Droppen 中继转发，Droppen Hub 不承载任何通道（Hub）。两者都不持有任何能解密的钥匙。Droppen Hub 不开源：依赖其自身行为或策略的说法，均标注（Hub）。",
+    "Claude Code 和 Codex 在你的可執行 AI 的裝置上執行（協定中稱為 host），你的瀏覽器和手機透過端對端加密的通道控制它們。Droppen Hub（droppen.app）保管你的帳戶、裝置鏈和加密副本，並在 my.droppen.app 提供網頁版。通道中的密文由 Droppen 中繼轉送，Droppen Hub 不承載任何通道（Hub）。兩者都不持有任何能解密的金鑰。Droppen Hub 不開源：依賴其自身行為或政策的說法，均標註（Hub）。",
+    "Claude Code と Codex は、AI を実行できるあなたのデバイス（プロトコル上は host）で動き、ブラウザやスマホはエンドツーエンドで暗号化されたチャネルでそれを操作します。Droppen Hub（droppen.app）はアカウント、デバイスチェーン、暗号化コピーを預かり、my.droppen.app でウェブアプリを配信します。チャネルの暗号文は Droppen 中継が渡し、Droppen Hub はチャネルを運びません（Hub）。どちらも、何かを復号できる鍵は持っていません。Droppen Hub はソースコードを公開していないため、その振る舞いや方針に依る記述には（Hub）と記しています。",
   ],
   [
     "What Droppen Hub sees, and what it never sees",
@@ -296,10 +290,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "預かっている**暗号化データ**（セッションのストリームとそのページ、封印された鍵メール、キーリングの項目）について：\n- 件数\n- サイズ\n- 書き込み時刻\n- どのデバイスが書いたか\n- 各鍵メールがどのデバイス宛てか\n- どのデバイスがいつどのストリームを読むか",
   ],
   [
-    "Which device **opens a channel** to which device that runs AI, through which relay or through Droppen Hub itself, and the **sizes and timing** of that traffic, which is not padded: when you work, how much output there is, and the rhythm of typing in a terminal.",
-    "哪台设备经哪个中继（或经 Droppen Hub 本身）向哪台可运行 AI 的设备**建立通道**，以及这些流量的**大小与时序**。实时流量不做填充，因此可从中看出你何时在工作、输出量多少，以及终端中的打字节奏。",
-    "哪台裝置經哪個中繼（或經 Droppen Hub 本身）向哪台可執行 AI 的裝置**建立通道**，以及這些流量的**大小與時序**。即時流量不做填充，因此可從中看出你何時在工作、輸出量多少，以及終端機中的打字節奏。",
-    "どのデバイスが、どの中継（または Droppen Hub 自身）を経由して、AI を実行できるどのデバイスに**チャネルを開くか**。そしてその通信の**サイズとタイミング**。これはパディングされないので、いつ作業しているか、出力がどれくらいか、ターミナルでの打鍵のリズムがわかります。",
+    "From the relays' metering reports, **how many bytes** each account's channels carried in each minute. The **sizes and timing** of a single channel's traffic, which is not padded (when you work, how much output there is, the rhythm of typing in a terminal), are seen by the relay that carries it ([[section 07|threats]]).",
+    "来自中继的计量报告：每个账户的通道每分钟传输了**多少字节**。单条通道流量的**大小与时序**由承载它的中继看到（见[[第 07 节|threats]]）；这些流量不做填充，可从中看出你何时在工作、输出量多少，以及终端中的打字节奏。",
+    "來自中繼的計量報告：每個帳戶的通道每分鐘傳輸了**多少位元組**。單條通道流量的**大小與時序**由承載它的中繼看到（見[[第 07 節|threats]]）；這些流量不做填充，可從中看出你何時在工作、輸出量多少，以及終端機中的打字節奏。",
+    "中継の計量レポートから、各アカウントのチャネルが 1 分ごとに運んだ**バイト数**。個々のチャネルの通信の**サイズとタイミング**は、それを運ぶ中継に見えます（[[07 節|threats]]）。この通信はパディングされないので、いつ作業しているか、出力がどれくらいか、ターミナルでの打鍵のリズムがわかります。",
   ],
   [
     "What it never sees",
@@ -950,10 +944,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "どの経路でも、チャネルはすべてエンドツーエンド。",
   ],
   [
-    "Your device and a device that runs AI talk over one Noise channel. A Droppen relay, or Droppen Hub where no relay carries the channel, only forwards its frames; when the two ends can reach each other, the same channel can also take a direct path.",
-    "你的设备与可运行 AI 的设备之间通过一条 Noise 通道通信。Droppen 中继（没有中继承载这条通道时，则是 Droppen Hub）只转发它的帧；两端能够直接互通时，同一条通道还可以增加一条直连路径。",
-    "你的裝置與可執行 AI 的裝置之間透過一條 Noise 通道通訊。Droppen 中繼（沒有中繼承載這條通道時，則是 Droppen Hub）只轉送它的幀；兩端能夠直接互通時，同一條通道還可以增加一條直連路徑。",
-    "あなたのデバイスと AI を実行できるデバイスは、1 本の Noise チャネルで話します。Droppen 中継（中継が運ばない場合は Droppen Hub）はそのフレームを渡すだけです。両端が直接届く場合は、同じチャネルが直結の経路も使えます。",
+    "Your device and a device that runs AI talk over one Noise channel. A Droppen relay only forwards its frames, and Droppen Hub carries no channel (Hub); when the two ends can reach each other, the same channel can also take a direct path.",
+    "你的设备与可运行 AI 的设备之间通过一条 Noise 通道通信。Droppen 中继只转发它的帧，Droppen Hub 不承载任何通道（Hub）；两端能够直接互通时，同一条通道还可以增加一条直连路径。",
+    "你的裝置與可執行 AI 的裝置之間透過一條 Noise 通道通訊。Droppen 中繼只轉送它的幀，Droppen Hub 不承載任何通道（Hub）；兩端能夠直接互通時，同一條通道還可以增加一條直連路徑。",
+    "あなたのデバイスと AI を実行できるデバイスは、1 本の Noise チャネルで話します。Droppen 中継はそのフレームを渡すだけで、Droppen Hub はチャネルを運びません（Hub）。両端が直接届く場合は、同じチャネルが直結の経路も使えます。",
   ],
   [
     "The handshake",
@@ -1040,10 +1034,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "両端が直接届く場合、チャネルに WebRTC の DataChannel が加わります。そのシグナリング（オファー、候補、DTLS のフィンガープリント）は **Noise チャネルの中を通り**、DataChannel の上では新しい Noise IK ハンドシェイクを行います。そのプロローグは双方の DTLS フィンガープリントと中継側チャネルのハンドシェイクに結び付けられ、受け入れのルールも同じです。直結の経路はチャネルが閉じると一緒に閉じます。STUN サーバー（Cloudflare、Google）には**各端の公開アドレスが見えます**。TURN は使いません。あるデバイスで「直接接続を許可」をオフにすれば、そのデバイスと AI を実行できるあなたのデバイスが互いの IP アドレスを知ることはありません。",
   ],
   [
-    "History that you, and only you, can read while the device that runs AI is off.",
-    "可运行 AI 的设备关机时也能读取的历史，而且只有你能读。",
-    "可執行 AI 的裝置關機時也能讀取的歷史，而且只有你能讀。",
-    "AI を実行できるデバイスがオフでも読める履歴。読めるのはあなただけです。",
+    "History that you, and only you, can read while the device that runs AI is offline.",
+    "可运行 AI 的设备离线时也能读取的历史，而且只有你能读。",
+    "可執行 AI 的裝置離線時也能讀取的歷史，而且只有你能讀。",
+    "AI を実行できるデバイスがオフラインでも読める履歴。読めるのはあなただけです。",
   ],
   [
     "A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by the device that runs AI covers it: each record is authenticated under the stream key and linked to the one before, and the signed head gives the newest link value.",
@@ -1190,10 +1184,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "その時点で**使われていないコピーを止めます**。なくしたスマホ、使わなくなったブラウザ、ファイルをコピーしたスクリプトといった、よくあるケースです。",
   ],
   [
-    "**Cannot tell** the real device from a copy that is online while the real one is off. With an honest Droppen Hub that case is not silent: when the real device comes back, it reads the renewal on its own chain, raises its alarm and disputes it. For a hostile Hub, see [[6.7|renewal-hub]].",
-    "**无法区分**真设备与在真设备关机期间在线的副本。在诚实的 Droppen Hub 下，这种情况并非无声无息：真设备重新上线后，会在自己的链上读到这次更换，发出告警并提出争议。恶意 Hub 的情形见 [[6.7|renewal-hub]]。",
-    "**無法區分**真裝置與在真裝置關機期間在線的副本。在誠實的 Droppen Hub 下，這種情況並非無聲無息：真裝置重新上線後，會在自己的鏈上讀到這次更換，發出警示並提出爭議。惡意 Hub 的情形見 [[6.7|renewal-hub]]。",
-    "本物がオフの間にオンラインになっているコピーとは**区別できません**。誠実な Droppen Hub なら、その場合も気づかれずには済みません。本物のデバイスは戻ると自分のチェーンでその更新を読み、警告を出し、異議を唱えます。悪意ある Hub については [[6.7|renewal-hub]] を参照してください。",
+    "**Cannot tell** the real device from a copy that is online while the real one is offline. With an honest Droppen Hub that case is not silent: when the real device comes back, it reads the renewal on its own chain, raises its alarm and disputes it. For a hostile Hub, see [[6.7|renewal-hub]].",
+    "**无法区分**真设备与在真设备离线期间在线的副本。在诚实的 Droppen Hub 下，这种情况并非无声无息：真设备重新上线后，会在自己的链上读到这次更换，发出告警并提出争议。恶意 Hub 的情形见 [[6.7|renewal-hub]]。",
+    "**無法區分**真裝置與在真裝置離線期間在線的副本。在誠實的 Droppen Hub 下，這種情況並非無聲無息：真裝置重新上線後，會在自己的鏈上讀到這次更換，發出警示並提出爭議。惡意 Hub 的情形見 [[6.7|renewal-hub]]。",
+    "本物がオフラインの間にオンラインになっているコピーとは**区別できません**。誠実な Droppen Hub なら、その場合も気づかれずには済みません。本物のデバイスは戻ると自分のチェーンでその更新を読み、警告を出し、異議を唱えます。悪意ある Hub については [[6.7|renewal-hub]] を参照してください。",
   ],
   [
     "Confirmed on the device",
@@ -1268,10 +1262,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "失ったデバイスが A を操作でき、A が B を操作できるなら、A の鍵のコピーは B にも届きます。**B も露出しています**。**操作する側から先に更新します**。B が A を受け入れているなら A が B より先に更新するので、B が更新するころには A の古い鍵はもう役に立ちません。",
   ],
   [
-    "Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first **writes a pause**, an entry of kind 22 (RenewalPause), that names each control edge it removes (a device that runs AI and one device on its accept list). Every verifier, and every device that runs AI on every path (Hub, relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge with an end still exposed is carried into a new pause in the same batch. A pause **only ever takes access away**, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.",
-    "只有能相互触及、构成环的设备无法排定先后。对这些设备，完整设备先**写入一条暂停**，即种类 22 的条目（RenewalPause），逐条列出它移除的控制边（一台可运行 AI 的设备与其接受名单中的一台设备）。每个验证者，以及每台可运行 AI 的设备（在 Hub、中继、直连每条路径上），都按「接受名单减去所有未结束暂停的控制边」计算准入，并关闭因此失去准入的通道；接受名单本身不作任何改动。环中的设备全部完成更换后，由一条条目标明暂停已完成，接受名单重新完整生效；仍有一端处于暴露状态的控制边，会在同一批条目中转入一个新的暂停。暂停**只会收回权限**，因此一直未结束的暂停是安全的，并会显示在每台设备上。在确认它将交还的控制、且相关设备都已不再暴露之后，你可以手动结束它（写入一条取消条目）。任何一台完整设备都可以结束它，不限于开始它的那一台。",
-    "只有能相互觸及、構成環的裝置無法排定先後。對這些裝置，完整裝置先**寫入一筆暫停**，即種類 22 的項目（RenewalPause），逐條列出它移除的控制邊（一台可執行 AI 的裝置與其接受名單中的一台裝置）。每個驗證者，以及每台可執行 AI 的裝置（在 Hub、中繼、直連每條路徑上），都按「接受名單減去所有未結束暫停的控制邊」計算准入，並關閉因此失去准入的通道；接受名單本身不作任何改動。環中的裝置全部完成更換後，由一筆項目標明暫停已完成，接受名單重新完整生效；仍有一端處於暴露狀態的控制邊，會在同一批項目中轉入一個新的暫停。暫停**只會收回權限**，因此一直未結束的暫停是安全的，並會顯示在每台裝置上。在確認它將交還的控制、且相關裝置都已不再暴露之後，你可以手動結束它（寫入一筆取消項目）。任何一台完整裝置都可以結束它，不限於開始它的那一台。",
-    "互いに届き合って輪になっているデバイスだけは、順番を付けられません。それらについては、フルデバイスがまず**一時停止**、つまり種別 22 のエントリ（RenewalPause）を書き、取り除く操作の辺（AI を実行できるデバイスと、その受け入れリストにある 1 台のデバイスの組）を 1 本ずつ記します。すべての検証器と、すべての経路（Hub、中継、直結）上の AI を実行できるすべてのデバイスは、有効なアクセスを「受け入れリストから、開いているすべての一時停止が取り除く辺を引いたもの」として計算し、それを失ったチャネルを閉じます。受け入れリスト自体は書き換えません。輪の中のデバイスが更新を終えると、エントリが一時停止の完了を記し、受け入れリストが再びそのまま効きます。両端のどちらかがまだ露出している辺は、同じバッチで新しい一時停止に引き継がれます。一時停止は**アクセスを減らすだけ**なので、開いたままでも安全で、すべてのデバイスに表示されます。返す操作を確認したうえで、どのデバイスももう露出していなければ、手で終わらせることもできます（取り消しのエントリ）。終わらせられるのは始めたフルデバイスに限らず、どのフルデバイスでもかまいません。",
+    "Only devices that can reach one another in a cycle cannot be put in order. For those, a full device first **writes a pause**, an entry of kind 22 (RenewalPause), that names each control edge it removes (a device that runs AI and one device on its accept list). Every verifier, and every device that runs AI on every path (relay, direct), computes access as its accept list minus the edges of every open pause, and closes channels that lose it; the accept lists themselves are never rewritten. Once the devices in the cycle have renewed, an entry marks the pause completed and the accept lists apply in full again. An edge with an end still exposed is carried into a new pause in the same batch. A pause **only ever takes access away**, so one left open is safe and shows on every device. You can end it by hand (a cancellation entry) after confirming the control it gives back, once none of those devices is still exposed. Any full device may end it, not only the one that started it.",
+    "只有能相互触及、构成环的设备无法排定先后。对这些设备，完整设备先**写入一条暂停**，即种类 22 的条目（RenewalPause），逐条列出它移除的控制边（一台可运行 AI 的设备与其接受名单中的一台设备）。每个验证者，以及每台可运行 AI 的设备（在中继、直连每条路径上），都按「接受名单减去所有未结束暂停的控制边」计算准入，并关闭因此失去准入的通道；接受名单本身不作任何改动。环中的设备全部完成更换后，由一条条目标明暂停已完成，接受名单重新完整生效；仍有一端处于暴露状态的控制边，会在同一批条目中转入一个新的暂停。暂停**只会收回权限**，因此一直未结束的暂停是安全的，并会显示在每台设备上。在确认它将交还的控制、且相关设备都已不再暴露之后，你可以手动结束它（写入一条取消条目）。任何一台完整设备都可以结束它，不限于开始它的那一台。",
+    "只有能相互觸及、構成環的裝置無法排定先後。對這些裝置，完整裝置先**寫入一筆暫停**，即種類 22 的項目（RenewalPause），逐條列出它移除的控制邊（一台可執行 AI 的裝置與其接受名單中的一台裝置）。每個驗證者，以及每台可執行 AI 的裝置（在中繼、直連每條路徑上），都按「接受名單減去所有未結束暫停的控制邊」計算准入，並關閉因此失去准入的通道；接受名單本身不作任何改動。環中的裝置全部完成更換後，由一筆項目標明暫停已完成，接受名單重新完整生效；仍有一端處於暴露狀態的控制邊，會在同一批項目中轉入一個新的暫停。暫停**只會收回權限**，因此一直未結束的暫停是安全的，並會顯示在每台裝置上。在確認它將交還的控制、且相關裝置都已不再暴露之後，你可以手動結束它（寫入一筆取消項目）。任何一台完整裝置都可以結束它，不限於開始它的那一台。",
+    "互いに届き合って輪になっているデバイスだけは、順番を付けられません。それらについては、フルデバイスがまず**一時停止**、つまり種別 22 のエントリ（RenewalPause）を書き、取り除く操作の辺（AI を実行できるデバイスと、その受け入れリストにある 1 台のデバイスの組）を 1 本ずつ記します。すべての検証器と、すべての経路（中継、直結）上の AI を実行できるすべてのデバイスは、有効なアクセスを「受け入れリストから、開いているすべての一時停止が取り除く辺を引いたもの」として計算し、それを失ったチャネルを閉じます。受け入れリスト自体は書き換えません。輪の中のデバイスが更新を終えると、エントリが一時停止の完了を記し、受け入れリストが再びそのまま効きます。両端のどちらかがまだ露出している辺は、同じバッチで新しい一時停止に引き継がれます。一時停止は**アクセスを減らすだけ**なので、開いたままでも安全で、すべてのデバイスに表示されます。返す操作を確認したうえで、どのデバイスももう露出していなければ、手で終わらせることもできます（取り消しのエントリ）。終わらせられるのは始めたフルデバイスに限らず、どのフルデバイスでもかまいません。",
   ],
   [
     "What a hostile Hub can and cannot do here",
@@ -1364,10 +1358,10 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Droppen Hub、その運営者、または Hub に強制できる者",
   ],
   [
-    "- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Carry a channel's ciphertext** where no relay does\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**",
-    "- **看到[[第 01 节|overview]]列出的元数据**\n- 向使用 my.droppen.app 的浏览器**下发被篡改的网页**（见最后一行与 [[7.1|t7-1]]）\n- 在通道不经中继时**承载通道的密文**\n- **拒绝服务**\n- **删除数据**\n- **延迟最新的记录或链条目**\n- **进行流量分析**",
-    "- **看到[[第 01 節|overview]]列出的中繼資料**\n- 向使用 my.droppen.app 的瀏覽器**下發被竄改的網頁**（見最後一列與 [[7.1|t7-1]]）\n- 在通道不經中繼時**承載通道的密文**\n- **拒絕服務**\n- **刪除資料**\n- **延遲最新的紀錄或鏈項目**\n- **進行流量分析**",
-    "- **[[01 節|overview]]のメタデータを見る**\n- my.droppen.app を使うブラウザに**改ざんしたページを配信する**（最終行と [[7.1|t7-1]]）\n- 中継を通らないチャネルでは、**チャネルの暗号文を運ぶ**\n- **サービスを拒否する**\n- **データを消す**\n- **最新のレコードやチェーンのエントリを遅らせる**\n- **通信を分析する**",
+    "- **See the metadata in [[section 01|overview]]**\n- **Serve a modified page** to a browser that uses my.droppen.app (last row; [[7.1|t7-1]])\n- **Refuse service**\n- **Delete data**\n- **Delay the newest records or chain entries**\n- **Analyse traffic**",
+    "- **看到[[第 01 节|overview]]列出的元数据**\n- 向使用 my.droppen.app 的浏览器**下发被篡改的网页**（见最后一行与 [[7.1|t7-1]]）\n- **拒绝服务**\n- **删除数据**\n- **延迟最新的记录或链条目**\n- **进行流量分析**",
+    "- **看到[[第 01 節|overview]]列出的中繼資料**\n- 向使用 my.droppen.app 的瀏覽器**下發被竄改的網頁**（見最後一列與 [[7.1|t7-1]]）\n- **拒絕服務**\n- **刪除資料**\n- **延遲最新的紀錄或鏈項目**\n- **進行流量分析**",
+    "- **[[01 節|overview]]のメタデータを見る**\n- my.droppen.app を使うブラウザに**改ざんしたページを配信する**（最終行と [[7.1|t7-1]]）\n- **サービスを拒否する**\n- **データを消す**\n- **最新のレコードやチェーンのエントリを遅らせる**\n- **通信を分析する**",
   ],
   [
     "Through the protocol alone:\n- **decrypt content**\n- **forge commands** (only devices on the chain are admitted, and the first message asks for nothing)\n- **add a device of its own**\n- **slip in keys** (they are sender-authenticated and committed on the chain)\n- **forge or quietly change records** (signed heads)\n- **take over a device that runs AI with a new genesis** (it pinned the account key)",
