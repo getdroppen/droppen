@@ -34,9 +34,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::SendResult;
 use crate::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
-use crate::paths::ClaudeRoot;
 use droppen_base::process_env::{apply_env, claude_env};
-use crate::sessions::{claude, Source};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};
 
@@ -116,33 +114,6 @@ pub struct AccountDefault {
     pub automatic: Optional<bool>,
 }
 
-/// `PUT /api/sessions/{source}/{id}/account` body and response.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionAccount {
-    /// The account this session runs under; `null` unbinds it.
-    #[serde(deserialize_with = "required_nullable")]
-    pub account_id: Nullable<String>,
-}
-
-/// `POST /api/sessions/{source}/{id}/continue` body.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionContinue {
-    /// The stored claude account the new session runs under.
-    pub account_id: String,
-}
-
-/// The session `POST /api/sessions/{source}/{id}/continue` made.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct ContinuedSession {
-    /// Which CLI it belongs to; always `claude`.
-    pub source: Source,
-    /// The new session's id. The session it was copied from keeps its own.
-    pub id: String,
-}
-
 /// The `409` body when a token is already stored.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -199,7 +170,7 @@ pub struct RestClearQuery {
 }
 
 /// An account id that is not a uuid can name no account.
-fn account_not_found() -> ApiError {
+pub(crate) fn account_not_found() -> ApiError {
     ApiError::not_found("account not found")
 }
 
@@ -209,7 +180,7 @@ fn account_not_found() -> ApiError {
 /// `local_session_cannot_use_account`: the client picks the account list it
 /// offers from the session's own CLI, so reaching this is a bug in the client
 /// rather than something a person typed, and it should be able to say so.
-fn provider_mismatch() -> ApiError {
+pub(crate) fn provider_mismatch() -> ApiError {
     ApiError::with_body(
         StatusCode::BAD_REQUEST,
         serde_json::json!({
@@ -249,7 +220,7 @@ fn claude_oauth_only(account: &Account, verb: &str) -> Option<ApiError> {
 /// document only `404` for a missing account, and `PATCH`'s `400` is documented
 /// as "unusable label". A client written against the contract handles `404`; it
 /// has no reason to expect a `400` that is not written down.
-fn require_uuid(id: &str) -> Result<(), ApiError> {
+pub(crate) fn require_uuid(id: &str) -> Result<(), ApiError> {
     if store::is_uuid(id) {
         Ok(())
     } else {
@@ -539,208 +510,6 @@ pub async fn account_start(State(state): State<AppState>, ApiQuery(query): ApiQu
 /// How many logins' model lists `GET /api/accounts/start` asks for at once.
 const START_PROBES: usize = 3;
 
-/// Pin a session to an account, or unbind it.
-#[api(id = "bind_session_account", group = "accounts", summary = "Bind a session to an account")]
-pub async fn bind_session_account(
-    State(state): State<AppState>,
-    ApiPath((source, id)): ApiPath<(Source, String)>,
-    ApiJson(body): ApiJson<SessionAccount>,
-) -> Result<Json<SessionAccount>, ApiError> {
-    let account_id = body.account_id.0;
-    let Some(provider) = AccountProvider::of(source) else {
-        return Err(ApiError::bad_request(
-            "ACP sessions run on the agent's own configuration and have no account to bind",
-        ));
-    };
-    if let Some(account_id) = account_id.as_deref() {
-        require_uuid(account_id)?;
-        // Before anything is read off disk: an account for the other CLI is a
-        // client bug, and it is the same answer whatever the session turns out
-        // to be.
-        let Some(account) = state.drive.accounts.get(account_id).await else {
-            return Err(ApiError::not_found("account not found"));
-        };
-        if account.provider != provider {
-            return Err(provider_mismatch());
-        }
-    }
-    if source == Source::Codex {
-        return bind_codex_session(&state, &id, account_id).await;
-    }
-    let found = claude::find_claude_session(&state.paths, &id).await;
-    // Scoped to claude, because the binding table holds both CLIs' rows: a
-    // codex thread id posted here would otherwise skip the not-found check on
-    // the strength of its *codex* binding, and then overwrite it.
-    let bound = state.drive.accounts.session_account_id_for(&id, provider).await;
-    if found.is_none() && bound.is_none() {
-        return Err(ApiError::not_found("session not found"));
-    }
-    // A session in the user's own root keeps the user's own login, always — and
-    // that stays true of one *this server* started on the local login. An
-    // account spawn runs against this instance's own Claude root, so the
-    // transcript would have to be there, and nothing moves it there: copying it
-    // would fork the conversation. The fork is a separate, explicit step —
-    // [`continue_session_on_account`] — that makes a *new* session and leaves
-    // this one as it was.
-    if account_id.is_some() && found.map(|f| f.root) == Some(ClaudeRoot::Local) {
-        return Err(ApiError::with_body(
-            gotcha::axum::http::StatusCode::CONFLICT,
-            serde_json::json!({
-                "error": "local_session_cannot_use_account",
-                "hint": "this session runs on the local login and its transcript is in ~/.claude, \
-                         so it cannot move onto an account. Continue it on the account instead, \
-                         which copies the conversation into a new session.",
-            }),
-        ));
-    }
-    write_binding(&state, Source::Claude, &id, account_id).await
-}
-
-/// Carry a local-login claude session onto an account, as a new session.
-///
-/// The answer to `local_session_cannot_use_account`, for the moment it matters:
-/// the local login stopped working and the conversation is stuck on it. The
-/// session's transcript is copied into this instance's own root under a new id
-/// ([`crate::sessions::continuation`]), the copy is bound to the account, and
-/// the first message sent to it resumes the whole conversation there. The
-/// original is read and never written; it stays as it was, on the local login.
-///
-/// Only a session this server started (`external_session` otherwise) and only
-/// one on the local login: a session already in this instance's root switches
-/// accounts in place, and so does every codex thread.
-#[api(
-    id = "continue_session_on_account",
-    group = "accounts",
-    summary = "Continue a local-login session on an account"
-)]
-pub async fn continue_session_on_account(
-    State(state): State<AppState>,
-    ApiPath((source, id)): ApiPath<(Source, String)>,
-    ApiJson(body): ApiJson<SessionContinue>,
-) -> Result<Json<ContinuedSession>, ApiError> {
-    if source != Source::Claude {
-        return Err(ApiError::with_body(
-            StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": "continue_not_supported",
-                "hint": "a codex session switches accounts in place; bind it to the account instead",
-            }),
-        ));
-    }
-    require_uuid(&body.account_id)?;
-    let Some(account) = state.drive.accounts.get(&body.account_id).await else {
-        return Err(account_not_found());
-    };
-    if account.provider != AccountProvider::Claude {
-        return Err(provider_mismatch());
-    }
-    // The same row, and the same ownership verdict, the list and the composer
-    // were given: somebody else's session is not this server's to copy.
-    let summary = crate::drive::routes::writable_session(&state.drive, Source::Claude, &id).await?;
-    if summary.claude_root != Some(ClaudeRoot::Local) {
-        return Err(ApiError::with_body(
-            StatusCode::CONFLICT,
-            serde_json::json!({
-                "error": "session_not_on_local_login",
-                "hint": "this session already runs in this server's own root; switch its account instead",
-            }),
-        ));
-    }
-
-    let new_id = uuid::Uuid::new_v4().to_string();
-    let copy = crate::sessions::continuation::copy_local_session(&state.paths, &id, &new_id)
-        .await
-        .map_err(|error| match error {
-            crate::sessions::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
-            crate::sessions::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
-            crate::sessions::continuation::ContinueError::Io(_) => {
-                tracing::warn!(session = %id, %error, "cannot copy a local-login session into this instance's root");
-                ApiError::internal("cannot copy the conversation")
-            }
-        })?;
-    if let Err(error) = state
-        .drive
-        .accounts
-        .bind_session_account(&new_id, Some(&account.id), AccountProvider::Claude)
-        .await
-    {
-        // A copy with no account would list as a managed session that refuses
-        // every message; better no copy at all.
-        tracing::warn!(session = %id, continued = %new_id, %error, "cannot bind the continued session; removing the copy");
-        let _ = tokio::fs::remove_file(&copy).await;
-        if let Some(project) = copy.parent() {
-            let _ = tokio::fs::remove_dir_all(project.join(&new_id)).await;
-        }
-        return Err(ApiError::not_found("cannot bind account"));
-    }
-    // A person picked this account: nothing moves it ahead of a limit for a while.
-    state
-        .drive
-        .accounts
-        .rotation_log()
-        .note_hand_binding(&new_id, crate::accounts::rest::now_ms());
-    // A name somebody gave the conversation goes with it.
-    let titles = state.drive.titles.read().await;
-    if let Some(title) = titles.get(&crate::sessions::reference::title_key(Source::Claude, &id)) {
-        if let Err(error) = state.drive.titles.set(Source::Claude, &new_id, title).await {
-            tracing::warn!(session = %new_id, %error, "cannot carry the title over to the continued session");
-        }
-    }
-    tracing::info!(session = %id, continued = %new_id, account = %account.id, "continued a local-login session on an account as a new session");
-    state.refresh.request_refresh(Some((&Source::Claude, &new_id)));
-    Ok(Json(ContinuedSession {
-        source: Source::Claude,
-        id: new_id,
-    }))
-}
-
-/// The codex half of the route above.
-///
-/// Ownership rather than a config root, because codex has no second root to
-/// own: a thread this server did not start is one the user is driving
-/// somewhere else, and re-pointing its login from here would change which
-/// account the *other* driver bills. The refusal is the send route's own, so a
-/// client that already renders `external_session` renders this too.
-async fn bind_codex_session(state: &AppState, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
-    let bound = state.drive.accounts.session_account_id_for(id, AccountProvider::Codex).await;
-    match crate::drive::routes::writable_session(&state.drive, Source::Codex, id).await {
-        Ok(_) => {}
-        // A session with no transcript yet but a binding already written is one
-        // this server is in the middle of starting; it is ours by construction.
-        Err(_) if bound.is_some() => {}
-        Err(error) => return Err(error),
-    }
-    write_binding(state, Source::Codex, id, account_id).await
-}
-
-/// Store the binding and tell the feed the row changed.
-async fn write_binding(state: &AppState, source: Source, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
-    let provider = AccountProvider::of(source).ok_or_else(|| ApiError::bad_request("this session has no account to bind"))?;
-    state
-        .drive
-        .accounts
-        .bind_session_account(id, account_id.as_deref(), provider)
-        .await
-        // Both arms are a 404 there: the route reports `err.message` for an
-        // `AccountError` and its own fallback for anything else.
-        .map_err(|error| match error {
-            AccountError::ProviderMismatch { .. } => provider_mismatch(),
-            AccountError::NotFound(_) => ApiError::not_found(error.to_string()),
-            _ => ApiError::not_found("cannot bind account"),
-        })?;
-    // Somebody chose this account for the session: nothing moves it ahead of a
-    // limit until the choice has stood for a while (see
-    // [`crate::accounts::rotation::HAND_BINDING_GRACE_MS`]).
-    if source == Source::Claude && account_id.is_some() {
-        state.drive.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
-    }
-    // The binding shows on the session row, so the list has to be re-read.
-    state.refresh.request_refresh(Some((&source, id)));
-    Ok(Json(SessionAccount {
-        account_id: Nullable(account_id),
-    }))
-}
-
 const STATUS_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `{"loggedIn": true, "email": "…"}`, with any banner around it tolerated.
@@ -936,8 +705,6 @@ pub fn routes(router: GotchaRouter<GotchaContext<AppState, AppConfig>>) -> Gotch
         .post("/api/accounts/setup-token/{captureId}/code", setup_token::submit_setup_token_code)
         .post("/api/accounts/{id}/setup-token", setup_token::reauth_account)
         .post("/api/accounts/{id}/usage-login", usage_login::start_usage_login)
-        .put("/api/sessions/{source}/{id}/account", bind_session_account)
-        .post("/api/sessions/{source}/{id}/continue", continue_session_on_account)
 }
 
 /// Every status gotcha cannot derive, plus the golden contract's wordings.
@@ -1045,51 +812,15 @@ pub fn describe(reg: &mut ExtraResponses) {
         )
         .error("POST", "/api/accounts/{id}/usage-login", 404, "Account not found")
         .error("POST", "/api/accounts/{id}/usage-login", 409, "API-key accounts have no login to perform")
-        .error("POST", "/api/accounts/{id}/usage-login", 500, "The wizard could not be started")
-        .describe(
-            "PUT",
-            "/api/sessions/{source}/{id}/account",
-            200,
-            "Session pinned to an account (null unbinds it)",
-        )
-        .error("PUT", "/api/sessions/{source}/{id}/account", 400, "The account belongs to the other CLI")
-        .error("PUT", "/api/sessions/{source}/{id}/account", 404, "Session or account not found")
-        .error(
-            "PUT",
-            "/api/sessions/{source}/{id}/account",
-            409,
-            "The session keeps the local login, or is not this instance's to bind",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            200,
-            "A new session on the account, holding a copy of this conversation; the original is untouched",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            400,
-            "A codex session, or an account for the other CLI",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/continue", 404, "Session or account not found")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            409,
-            "Not this instance's session, or not one on the local login",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            500,
-            "The conversation could not be copied",
-        );
+        .error("POST", "/api/accounts/{id}/usage-login", 500, "The wizard could not be started");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
+    use crate::paths::ClaudeRoot;
+    use crate::sessions::{claude, Source};
 
     #[test]
     fn an_auth_status_survives_a_banner_around_it() {
