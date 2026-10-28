@@ -3008,8 +3008,9 @@ export interface components {
              *     instance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen
              *     setup-code`): the instance when it is not `default`, and where this
              *     server keeps its files when that is not the usual place
-             *     (`crate::program::droppen_env`). Empty for the usual install; values
-             *     not yet quoted for a shell. Servers older than this field send none.
+             *     [`crate::sessions::Paths::droppen_env`]. Empty for the usual install;
+             *     values not yet quoted for a shell. Servers older than this field send
+             *     none.
              */
             droppenEnv: components["schemas"]["CommandEnv"][];
             /**

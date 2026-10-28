@@ -338,13 +338,13 @@ pub fn load(profile: Option<String>) -> Result<ConfigWrapper<AppConfig>, ConfigE
 }
 
 /// A file source, added only when the file is there.
-trait ConfigLoaderExt {
+trait AddFileSourceExt {
     /// Add `path` as a source when it exists; a configuration file that is not
     /// there is not an error.
     fn add_file_if_present(&mut self, path: &str);
 }
 
-impl ConfigLoaderExt for ConfigLoader {
+impl AddFileSourceExt for ConfigLoader {
     fn add_file_if_present(&mut self, path: &str) {
         if Path::new(path).exists() {
             self.add_source(FileSource::new(std::path::PathBuf::from(path)));

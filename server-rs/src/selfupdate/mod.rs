@@ -351,7 +351,7 @@ impl BinStore {
         let path = self.staging(&format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
         let mut upload: Option<Upload> = None;
         let mut sha256 = None;
-    
+
         while let Some(mut field) = multipart
             .next_field()
             .await
@@ -417,7 +417,7 @@ impl BinStore {
                 _ => continue,
             }
         }
-    
+
         match upload {
             // The parts may arrive in either order, so the hash is attached once
             // both have been seen rather than when the binary was.

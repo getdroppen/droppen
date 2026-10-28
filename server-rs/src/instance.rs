@@ -340,13 +340,13 @@ pub enum LockLost {
 }
 
 /// A file's identity, on the metadata it is read from.
-trait FileIdentityExt {
+trait InodeIdentityExt {
     /// The file's `(device, inode)`, which is what identifies it across a
     /// rename.
     fn identity(&self) -> (u64, u64);
 }
 
-impl FileIdentityExt for std::fs::Metadata {
+impl InodeIdentityExt for std::fs::Metadata {
     fn identity(&self) -> (u64, u64) {
         use std::os::unix::fs::MetadataExt;
         (self.dev(), self.ino())
@@ -462,12 +462,12 @@ impl InstanceLock {
 }
 
 /// The lock file's holder, on the file it was read from.
-trait LockFileExt {
+trait ReadHolderExt {
     /// Read the pid the holder wrote, for the refusal message.
     fn read_holder(&mut self) -> String;
 }
 
-impl LockFileExt for File {
+impl ReadHolderExt for File {
     fn read_holder(&mut self) -> String {
         let mut text = String::new();
         if self.seek(SeekFrom::Start(0)).is_err() || self.read_to_string(&mut text).is_err() {

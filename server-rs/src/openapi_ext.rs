@@ -15,11 +15,11 @@
 //! * [`Nullable`] — a value that is always present but may be `null`. gotcha maps
 //!   `Option<T>` to *optional and nullable*, but the contract means *required
 //!   and nullable*, which is a different TS type.
-//! * [`hoist_nullable_refs`] — the contract carries the nullability on a
-//!   registered object schema *inside* the component (`Injection` is
-//!   `type: object` with `nullable: true`), whereas a `Nullable<Injection>`
-//!   field would carry `nullable` next to its `$ref`, where generators ignore
-//!   it.
+//! * [`SpecAmendmentExt::hoist_nullable_refs`] — the contract carries the
+//!   nullability on a registered object schema *inside* the component
+//!   (`Injection` is `type: object` with `nullable: true`), whereas a
+//!   `Nullable<Injection>` field would carry `nullable` next to its `$ref`,
+//!   where generators ignore it.
 
 use std::collections::BTreeMap;
 
@@ -470,9 +470,9 @@ impl ExtraResponses {
 }
 
 /// The amendments this module makes, on the document they amend.
-trait OpenApiV3Ext {
+trait SpecAmendmentExt {
     /// The operation registered under `(method, path)`, if any.
-    fn operation_mut(&mut self, method: &str, path: &str) -> Option<&mut Operation>;
+    fn operation_mut<'a>(&'a mut self, method: &str, path: &str) -> Option<&'a mut Operation>;
 
     /// Register the `bearerAuth` scheme every `#[api(security = "bearerAuth")]`
     /// operation refers to.
@@ -502,8 +502,8 @@ trait OpenApiV3Ext {
     fn hoist_nullable_refs(&mut self);
 }
 
-impl OpenApiV3Ext for OpenAPIV3 {
-    fn operation_mut(&mut self, method: &str, path: &str) -> Option<&mut Operation> {
+impl SpecAmendmentExt for OpenAPIV3 {
+    fn operation_mut<'a>(&'a mut self, method: &str, path: &str) -> Option<&'a mut Operation> {
         let item = self.paths.get_mut(path)?;
         match method {
             "GET" => item.get.as_mut(),

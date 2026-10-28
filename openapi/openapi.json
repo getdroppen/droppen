@@ -869,7 +869,7 @@
             "type": "boolean"
           },
           "droppenEnv": {
-            "description": "What those commands need in their environment to act on this server's\ninstance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen\nsetup-code`): the instance when it is not `default`, and where this\nserver keeps its files when that is not the usual place\n(`crate::program::droppen_env`). Empty for the usual install; values\nnot yet quoted for a shell. Servers older than this field send none.",
+            "description": "What those commands need in their environment to act on this server's\ninstance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen\nsetup-code`): the instance when it is not `default`, and where this\nserver keeps its files when that is not the usual place\n[`crate::sessions::Paths::droppen_env`]. Empty for the usual install;\nvalues not yet quoted for a shell. Servers older than this field send\nnone.",
             "items": {
               "$ref": "#/components/schemas/CommandEnv"
             },
