@@ -455,7 +455,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::auth::routes(router);
     let router = crate::chats::routes(router);
     let router = cloud::routes(router);
-    let router = crate::aggregator::gateway::routes(router);
+    let router = crate::cloud::gateway::routes(router);
     let router = crate::drive::routes(router);
     let router = crate::feed::global::routes(router);
     let router = crate::files::routes(router);

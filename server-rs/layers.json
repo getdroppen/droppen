@@ -86,7 +86,6 @@
       "edges": [
         "accounts -> api",
         "acp_agent -> api",
-        "aggregator -> api",
         "apps -> api",
         "attention -> api",
         "auth -> api",

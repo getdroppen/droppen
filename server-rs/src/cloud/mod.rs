@@ -13,7 +13,7 @@
 //! | `POST /api/cloud/re-enroll-fresh` | only once its identity key was replaced elsewhere (its own chain says so): archive the seed, forget the enrollment, make a fresh seed (`{fingerprint, state: "unenrolled"}`) | the owner |
 //! | `PUT /api/cloud/access {user, remote}` | which local accounts may see other machines | the owner |
 //! | `POST /api/cloud/claim` | "I added this device": become the owner of an ownerless link | whoever manages it |
-//! | `GET /api/agg/ws` | the local gateway: other devices' copies (S1-7, [`crate::aggregator::gateway`]) | a local account that may see other devices ([`remote_viewer`]) |
+//! | `GET /api/agg/ws` | the local gateway: other devices' copies (S1-7, [`gateway`]) | a local account that may see other devices ([`remote_viewer`]) |
 //!
 //! **The rules**, before anything else on every route:
 //!
@@ -61,6 +61,7 @@ use crate::paths::Paths;
 
 mod access;
 mod file;
+pub mod gateway;
 pub mod hub_web;
 mod link;
 pub mod link_handoff;

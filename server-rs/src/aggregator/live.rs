@@ -953,6 +953,13 @@ impl LiveCopies {
     }
 }
 
+/// A published index copy for tests outside `aggregator`: they need a slot,
+/// but `Published::new` must not leave this module.
+#[cfg(test)]
+pub(crate) fn index_slot(copy: rh_client::streams::IndexCopy, seq: u64, time_ms: u64) -> Slot {
+    Arc::new(Mutex::new(Published::new(Fold::Index(copy), seq, time_ms)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
