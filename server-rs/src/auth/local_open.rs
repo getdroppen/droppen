@@ -34,8 +34,9 @@
 //! `/tmp` fallback's name is predictable, and somebody else could make it
 //! first — and the answer has to be a loopback page on the port this instance
 //! recorded, a link to it, and a redirect page that is this user's own file in
-//! [`control_dir`]. The page's address is the listener's bound address as a
-//! literal, never a configured host name the local network could answer for.
+//! [`Paths::control_dir`]. The page's address is the listener's bound address
+//! as a literal, never a configured host name the local network could answer
+//! for.
 //!
 //! What the socket does not stop: **any process of the same operating-system
 //! user** can ask it — the AI CLIs this server runs included, unless their
@@ -94,7 +95,7 @@ impl Paths {
     }
 
     /// The port this instance's server recorded when it bound.
-    pub fn recorded_port(&self) -> Option<u16> {
+    fn recorded_port(&self) -> Option<u16> {
         let dirs = crate::instance::InstanceDirs::new(&self.data_dir(), self.instance()).ok()?;
         std::fs::read_to_string(dirs.port_file()).ok()?.trim().parse().ok()
     }
@@ -350,8 +351,8 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The control socket's requests and its peer check, on the stream they act on.
-pub(crate) trait UnixStreamExt {
+/// The control socket's peer check and request handling, on the stream they act on.
+trait ControlSocketExt {
     /// Whether the peer at the other end is the user this server runs as.
     fn is_same_user(&self) -> bool;
 
@@ -360,7 +361,7 @@ pub(crate) trait UnixStreamExt {
     async fn answer_open(self, auth: &Auth, page: &str, dir: &Path, desktop_app: bool);
 }
 
-impl UnixStreamExt for tokio::net::UnixStream {
+impl ControlSocketExt for tokio::net::UnixStream {
     fn is_same_user(&self) -> bool {
         // SAFETY: `geteuid` reads a process property and cannot fail.
         let me = unsafe { libc::geteuid() };
