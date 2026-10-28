@@ -199,8 +199,8 @@ export const pricingZhCN: Bundle = {
   "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
     "我们自己运营的一个邮件转发服务负责把我们的邮件（比如验证邮件）发到你的邮箱。",
   "How long we keep it": "保存多久",
-  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
-    "你会话的加密副本：免费版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不对外销售的内部方案保存 {{internal}} 天。设备关机超过这个天数，它的副本会被删除。",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device offline for longer than that has its copy deleted.":
+    "你会话的加密副本：免费版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不对外销售的内部方案保存 {{internal}} 天。设备离线超过这个天数，它的副本会被删除。",
   "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
     "邮箱从未验证、也从未添加过设备的账号，会在 {{days}} 天后删除。",
   "Contact": "联系我们",
@@ -401,8 +401,8 @@ export const pricingZhTW: Bundle = {
   "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
     "我們自己營運的一個郵件轉發服務負責把我們的郵件（例如驗證信）寄到你的信箱。",
   "How long we keep it": "保存多久",
-  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
-    "你工作階段的加密副本：免費版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不對外銷售的內部方案保存 {{internal}} 天。裝置關機超過這個天數，它的副本會被刪除。",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device offline for longer than that has its copy deleted.":
+    "你工作階段的加密副本：免費版保存最近 {{free}} 天，Pro 保存 {{pro}} 天，不對外銷售的內部方案保存 {{internal}} 天。裝置離線超過這個天數，它的副本會被刪除。",
   "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
     "信箱從未驗證、也從未新增過裝置的帳號，會在 {{days}} 天後刪除。",
   "Contact": "聯絡我們",
@@ -604,8 +604,8 @@ export const pricingJa: Bundle = {
   "An e-mail relay service we operate sends our e-mail, such as the verification mail, to your address.":
     "私たちが運用するメール配信サービスが、確認メールなど私たちからのメールをあなたのアドレスに送っています。",
   "How long we keep it": "保管期間",
-  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.":
-    "セッションの暗号化コピー：無料プランは直近 {{free}} 日分、Pro は {{pro}} 日分、一般には提供していない内部プランは {{internal}} 日分を保管します。それより長く電源が切れたデバイスは、そのコピーが削除されます。",
+  "The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device offline for longer than that has its copy deleted.":
+    "セッションの暗号化コピー：無料プランは直近 {{free}} 日分、Pro は {{pro}} 日分、一般には提供していない内部プランは {{internal}} 日分を保管します。それより長くオフラインのデバイスは、そのコピーが削除されます。",
   "An account whose e-mail address was never verified, and that never added a device, is deleted after {{days}} days.":
     "メールアドレスが一度も確認されず、デバイスも追加されなかったアカウントは、{{days}} 日後に削除されます。",
   "Contact": "お問い合わせ",

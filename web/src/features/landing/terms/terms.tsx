@@ -36,7 +36,7 @@ for (const bundles of [landingBundles, termsBundles]) {
 }
 
 /** When the terms last changed, as the page says it. */
-export const TERMS_UPDATED = "2026-10-23";
+export const TERMS_UPDATED = "2026-10-28";
 
 /** The minimum age to use droppen.app, in years (the owner's word). */
 export const MINIMUM_AGE = 16;
@@ -171,7 +171,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
                   title={t("What we don't do")}
                   items={[
                     t("We don't provide AI tools, models, or accounts with their providers: Droppen connects you to the ones on your devices."),
-                    t("We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is off; a device off for longer than your plan allows has that copy deleted. Keep your own copies of what matters."),
+                    t("We don't back up your work. The encrypted copy in the cloud lets you read recent sessions while a device is offline; a device offline for longer than your plan allows has that copy deleted. Keep your own copies of what matters."),
                   ]}
                 />
               }
@@ -209,7 +209,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
                 <Block
                   title={t("Today")}
                   items={[
-                    t("The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is off, and {{gb}} GB a month through our servers, then slower.", {
+                    t("The Free plan includes {{hosts}} devices that run AI, {{devices}} devices in all, the last {{days}} days readable while a device is offline, and {{gb}} GB a month through our servers, then slower.", {
                       hosts: free.hosts,
                       devices: free.devices,
                       days: free.retentionDays,

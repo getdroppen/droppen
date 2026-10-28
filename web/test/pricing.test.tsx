@@ -481,7 +481,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   }
   assert.doesNotMatch(words, /in padded sizes/);
   assert.doesNotMatch(words, /a matter of minutes/, "the ids are kept as long as the address's hash, not minutes");
-  assert.equal(PRIVACY_UPDATED, "2026-10-25");
+  assert.equal(PRIVACY_UPDATED, "2026-10-28");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));

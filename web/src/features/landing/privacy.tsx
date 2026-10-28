@@ -27,7 +27,7 @@ import { cn } from "@/lib/cn";
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** When the notice last changed, as the page says it. */
-export const PRIVACY_UPDATED = "2026-10-25";
+export const PRIVACY_UPDATED = "2026-10-28";
 
 /** How long droppen.app keeps a deleted account's address hash (droppen.app's `SIGNUP_CONFIG.deletion`). */
 export const DELETED_EMAIL_HOLD_DAYS = SIGNUP_CONFIG.deletion?.emailHoldDays ?? 0;
@@ -228,7 +228,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
                 <Block
                   title={t("How long we keep it")}
                   items={[
-                    t("The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device off for longer than that has its copy deleted.", {
+                    t("The encrypted copies of your sessions: the last {{free}} days on Free, {{pro}} on Pro, and {{internal}} on the internal plan, which is not for sale. A device offline for longer than that has its copy deleted.", {
                       free: PLAN_TABLE.free!.retentionDays,
                       pro: PLAN_TABLE.pro!.retentionDays,
                       internal: PLAN_TABLE.internal!.retentionDays,

@@ -170,9 +170,9 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 
 test("the page reads in each language, with nothing left in English", () => {
   const lines = {
-    "zh-CN": ["服务条款", "我们承诺什么，也请你遵守什么。", "一人一个账号", "你的设备，你的 AI 工具", "测试版，按现状提供", "离开，以及删除账号", "最后更新：2026-10-23"],
-    "zh-TW": ["服務條款", "我們承諾什麼，也請你遵守什麼。", "一人一個帳號", "你的裝置，你的 AI 工具", "測試版，依現狀提供", "離開，以及刪除帳號", "最後更新：2026-10-23"],
-    ja: ["利用規約", "私たちがお約束すること、お願いすること。", "1 人に 1 アカウント", "あなたのデバイス、あなたの AI ツール", "ベータ版、現状のままでの提供", "退会とアカウントの削除", "最終更新：2026-10-23"],
+    "zh-CN": ["服务条款", "我们承诺什么，也请你遵守什么。", "一人一个账号", "你的设备，你的 AI 工具", "测试版，按现状提供", "离开，以及删除账号", "最后更新：2026-10-28"],
+    "zh-TW": ["服務條款", "我們承諾什麼，也請你遵守什麼。", "一人一個帳號", "你的裝置，你的 AI 工具", "測試版，依現狀提供", "離開，以及刪除帳號", "最後更新：2026-10-28"],
+    ja: ["利用規約", "私たちがお約束すること、お願いすること。", "1 人に 1 アカウント", "あなたのデバイス、あなたの AI ツール", "ベータ版、現状のままでの提供", "退会とアカウントの削除", "最終更新：2026-10-28"],
   };
   for (const lng of LANGS) {
     const words = text(draw(lng));
@@ -192,7 +192,7 @@ test("the terms say what the product is: encrypted, the hosted service only, the
     "You are responsible for",
     "One account per person and per e-mail inbox",
     "An account still unverified after 14 days cannot add devices",
-    `The Free plan includes ${free.hosts} devices that run AI, ${free.devices} devices in all, the last ${free.retentionDays} days readable while a device is off, and ${gb(free.transferBytes)} GB a month through our servers, then slower.`,
+    `The Free plan includes ${free.hosts} devices that run AI, ${free.devices} devices in all, the last ${free.retentionDays} days readable while a device is offline, and ${gb(free.transferBytes)} GB a month through our servers, then slower.`,
     "We may change plans, their limits and their prices.",
     "Use our servers as a general-purpose tunnel, proxy or VPN, or as file storage",
     "it is provided “as is” and “as available”: there is no service-level agreement",
@@ -210,7 +210,7 @@ test("the terms say what the product is: encrypted, the hosted service only, the
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
-  assert.equal(TERMS_UPDATED, "2026-10-23");
+  assert.equal(TERMS_UPDATED, "2026-10-28");
   assert.equal(MINIMUM_AGE, 16);
   assert.doesNotMatch(words, /Postal address/, "no postal address is published");
   assert.equal(SECURITY_EMAIL, SECURITY_PAGE_EMAIL, "the security page's address");
