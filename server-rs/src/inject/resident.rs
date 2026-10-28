@@ -73,6 +73,7 @@ use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, RotationOutcome, RotationTrigger, Wait};
 use crate::accounts::store::{AccountProvider, AccountRef};
 use crate::openapi_ext::Optional;
+use crate::quota::readings::RateLimitWindows;
 use crate::process_env::Env;
 use crate::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
@@ -3091,7 +3092,7 @@ impl Driver {
     /// being billed, at no cost, and with no second login to keep alive. See
     /// [`crate::quota::readings`].
     async fn note_usage(&self, info: &Value) {
-        let windows = crate::quota::readings::windows_from_rate_limit_info(info);
+        let windows = info.windows_from_rate_limit_info();
         if windows.is_empty() {
             return;
         }
@@ -7032,7 +7033,7 @@ mod tests {
         match classify(ALLOWED_WITH_WINDOWS) {
             Event::UsageReading { info } => {
                 assert_eq!(info["status"], "allowed");
-                let windows = crate::quota::readings::windows_from_rate_limit_info(&info);
+                let windows = info.windows_from_rate_limit_info();
                 assert_eq!(windows.len(), 2);
                 assert_eq!(windows[0].label, "5h");
                 assert_eq!(windows[0].used_percent, 19.0);
@@ -7042,7 +7043,7 @@ mod tests {
         let rejected = r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"seven_day_overage_included","resetsAt":1790575200,"status":"rejected","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.02},"seven_day":{"resetsAt":1790575200,"utilization":0.82},"seven_day_overage_included":{"resetsAt":1790575200,"utilization":1}}}}"#;
         match classify(rejected) {
             Event::RateLimit { info } => {
-                let labels: Vec<String> = crate::quota::readings::windows_from_rate_limit_info(&info)
+                let labels: Vec<String> = info.windows_from_rate_limit_info()
                     .into_iter()
                     .map(|w| w.label)
                     .collect();
@@ -11338,7 +11339,7 @@ done
                 "seven_day": {"resetsAt": resets + 86_400, "utilization": week},
             }
         });
-        let windows = crate::quota::readings::windows_from_rate_limit_info(&info);
+        let windows = info.windows_from_rate_limit_info();
         registry
             .quota
             .ingest_session(crate::quota::UsageLogin::Account(account.to_string()), windows);

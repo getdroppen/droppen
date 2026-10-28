@@ -7,7 +7,7 @@
 //!   turn, and every one of them — `allowed` as much as `rejected` — carries
 //!   `rate_limit_info.unifiedWindows`: the utilization and reset instant of each
 //!   window the login has. That is a reading, made by the very credential being
-//!   billed, and it costs nothing. [`windows_from_rate_limit_info`] turns it into
+//!   billed, and it costs nothing. [`RateLimitWindows::windows_from_rate_limit_info`] turns it into
 //!   [`QuotaWindow`]s and a session's driver hands them to
 //!   [`super::QuotaCache::ingest_session`].
 //! * **The `/usage` probe, as a fallback.** Only when a login's newest window is
@@ -205,13 +205,20 @@ fn unified_window_label(key: &str) -> Option<(String, i64)> {
     }
 }
 
-/// The windows in a `rate_limit_event`'s `rate_limit_info`, whatever its status.
-///
-/// `utilization` is a fraction; the panel speaks percent to one decimal, as the
-/// probe's report does. `resetsAt` is epoch seconds. A window with no
-/// utilization is skipped rather than read as zero.
-pub fn windows_from_rate_limit_info(info: &Value) -> Vec<QuotaWindow> {
-    let Some(Value::Object(unified)) = info.get("unifiedWindows") else {
+/// Reading the windows out of a `rate_limit_event`'s `rate_limit_info`.
+pub trait RateLimitWindows {
+    /// The windows in a `rate_limit_event`'s `rate_limit_info`, whatever its
+    /// status.
+    ///
+    /// `utilization` is a fraction; the panel speaks percent to one decimal,
+    /// as the probe's report does. `resetsAt` is epoch seconds. A window with
+    /// no utilization is skipped rather than read as zero.
+    fn windows_from_rate_limit_info(&self) -> Vec<QuotaWindow>;
+}
+
+impl RateLimitWindows for Value {
+    fn windows_from_rate_limit_info(&self) -> Vec<QuotaWindow> {
+    let Some(Value::Object(unified)) = self.get("unifiedWindows") else {
         return vec![];
     };
     let mut windows: Vec<(bool, QuotaWindow)> = Vec::new();
@@ -240,6 +247,7 @@ pub fn windows_from_rate_limit_info(info: &Value) -> Vec<QuotaWindow> {
         }
     }
     windows.into_iter().map(|(_, window)| window).collect()
+    }
 }
 
 // ---------------------------------------------------------- the shared file
@@ -625,7 +633,7 @@ mod tests {
     #[test]
     fn an_allowed_event_is_a_reading_of_every_window_it_names() {
         let line: Value = serde_json::from_str(ALLOWED).expect("json");
-        let windows = windows_from_rate_limit_info(&line["rate_limit_info"]);
+        let windows = line["rate_limit_info"].windows_from_rate_limit_info();
         assert_eq!(windows.len(), 2);
 
         assert_eq!(windows[0].label, "5h");
@@ -643,7 +651,7 @@ mod tests {
     #[test]
     fn the_fable_weekly_hit_maps_its_overage_window_to_weekly_fable() {
         let info: Value = serde_json::from_str(REJECTED_FABLE).expect("json");
-        let windows = windows_from_rate_limit_info(&info);
+        let windows = info.windows_from_rate_limit_info();
         let named: Vec<(&str, f64)> = windows.iter().map(|w| (w.label.as_str(), w.used_percent)).collect();
         assert_eq!(named, [("5h", 2.0), ("weekly", 82.0), ("weekly (Fable)", 100.0)]);
         assert_eq!(windows[2].remaining_percent, 0.0);
@@ -672,14 +680,14 @@ mod tests {
             "seven_day_fable": {"utilization": 0.5},
             "seven_day_overage_included": {"utilization": 0.9},
         }});
-        let windows = windows_from_rate_limit_info(&info);
+        let windows = info.windows_from_rate_limit_info();
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].used_percent, 50.0);
 
         // No `unifiedWindows`, or a window with no utilization: nothing to read.
-        assert!(windows_from_rate_limit_info(&serde_json::json!({"status": "allowed"})).is_empty());
+        assert!(serde_json::json!({"status": "allowed"}).windows_from_rate_limit_info().is_empty());
         let partial = serde_json::json!({"unifiedWindows": {"five_hour": {"resetsAt": 1790436000}}});
-        assert!(windows_from_rate_limit_info(&partial).is_empty());
+        assert!(partial.windows_from_rate_limit_info().is_empty());
     }
 
     #[test]
@@ -697,7 +705,7 @@ mod tests {
         );
         // A session event names two of the three.
         let info: Value = serde_json::from_str::<Value>(ALLOWED).expect("json")["rate_limit_info"].clone();
-        reading.merge(windows_from_rate_limit_info(&info), t0 + 20 * MINUTE, QuotaReadingSource::Session);
+        reading.merge(info.windows_from_rate_limit_info(), t0 + 20 * MINUTE, QuotaReadingSource::Session);
 
         assert_eq!(labels(&reading.windows), ["5h", "weekly", "weekly (Fable)"]);
         let by = |label: &str| reading.windows.iter().find(|w| w.label == label).expect(label).clone();

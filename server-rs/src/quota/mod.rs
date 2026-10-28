@@ -66,7 +66,7 @@ use crate::sessions::{iso8601, Paths};
 use crate::time::now_ms;
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
-pub use readings::{QuotaReadingSource, UsageLogin};
+pub use readings::{QuotaReadingSource, RateLimitWindows, UsageLogin};
 pub use routes::{describe, routes};
 
 /// `/usage` is a local slash command: it queries the usage endpoint directly, so
@@ -1099,7 +1099,7 @@ mod tests {
             r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"five_hour","resetsAt":1790436000,"status":"allowed","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.19},"seven_day":{"resetsAt":1790460000,"utilization":0.46}}}}"#,
         )
         .expect("json");
-        readings::windows_from_rate_limit_info(&line["rate_limit_info"])
+        line["rate_limit_info"].windows_from_rate_limit_info()
     }
 
     /// The poll budget, stated as the arithmetic that produces it.
