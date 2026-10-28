@@ -356,16 +356,12 @@
     {
       "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
       "edges": [
-        "accounts -> api",
-        "accounts::setup_token -> api",
-        "accounts::usage_login -> api",
         "acp_agent -> api",
         "auth -> api",
         "chats -> api",
         "cloud -> api",
         "drive -> api",
         "feed -> api",
-        "models -> api",
         "terminals -> api"
       ]
     },
@@ -432,7 +428,6 @@
         "accounts -> accounts::setup_token",
         "accounts -> accounts::usage_login",
         "accounts -> claude_roots",
-        "accounts -> sessions::claude",
         "setup -> accounts::quota::codex",
         "setup -> claude_roots"
       ]
@@ -510,9 +505,8 @@
       ]
     },
     {
-      "why": "Domain pairs that point the wrong way: accounts checks a model against models::model_ids, and accounts and attention use helpers in drive's routes (writable_session, AgentPath, is_agent_id). They go when those items move to the crate that owns them.",
+      "why": "Domain pairs that point the wrong way: accounts checks a model against models::model_ids, and attention uses helpers in drive's routes (AgentPath, is_agent_id). They go when those items move to the crate that owns them.",
       "edges": [
-        "accounts -> drive",
         "accounts -> models",
         "attention -> drive"
       ]

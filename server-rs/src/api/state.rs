@@ -5,10 +5,17 @@
 //! declare. These impls are the one place that knows which of `AppState`'s
 //! fields each sub-state is made of.
 
+use std::sync::Arc;
+
 use gotcha::axum::extract::FromRef;
 
 use super::AppState;
+use crate::accounts::quota::QuotaState;
+use crate::accounts::setup_token::TokenWizardState;
+use crate::accounts::usage_login::UsageLoginState;
+use crate::accounts::AccountsState;
 use crate::http::app_window::AppWindow;
+use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
 use crate::files::FilesState;
@@ -137,6 +144,58 @@ impl FromRef<AppState> for SetupState {
             accounts: state.drive.accounts.clone(),
             paths: state.drive.paths.clone(),
             desktop_app: state.desktop_app,
+        }
+    }
+}
+
+impl FromRef<AppState> for ModelsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            models: state.drive.models.clone(),
+            injections: state.drive.injections.clone(),
+            accounts: state.drive.accounts.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for AccountsState {
+    fn from_ref(state: &AppState) -> Self {
+        let injections = state.drive.injections.clone();
+        Self {
+            accounts: state.drive.accounts.clone(),
+            quota: state.drive.quota.clone(),
+            paths: state.drive.paths.clone(),
+            models: ModelsState::from_ref(state),
+            recheck_holds: Arc::new(move || injections.recheck_holds()),
+        }
+    }
+}
+
+impl FromRef<AppState> for QuotaState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            quota: state.drive.quota.clone(),
+            accounts: state.drive.accounts.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for TokenWizardState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            drive: state.drive.clone(),
+            terminals: state.terminals.clone(),
+            app_window: state.window(),
+        }
+    }
+}
+
+impl FromRef<AppState> for UsageLoginState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            drive: state.drive.clone(),
+            terminals: state.terminals.clone(),
         }
     }
 }

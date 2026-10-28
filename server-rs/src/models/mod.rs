@@ -16,13 +16,14 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::accounts::store::{Account, AccountKind};
-use crate::api::{ApiRouter, AppState};
+use crate::accounts::store::{Account, AccountKind, AccountsStore};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiQuery;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
@@ -312,6 +313,20 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
     Some(models)
 }
 
+/// What the model routes use of the server's state.
+#[derive(Clone)]
+pub struct ModelsState {
+    /// The instance's paths: codex's model cache and the ACP agents' configs.
+    pub paths: Arc<crate::paths::Paths>,
+    /// The lists Claude Code published, per config root.
+    pub models: Arc<ClaudeModelCache>,
+    /// The live runs, which ask an ACP agent for its options.
+    pub injections: Arc<crate::inject::InjectionRegistry>,
+    /// The stored accounts, whose roots or env blocks name a login's models.
+    pub accounts: Arc<AccountsStore>,
+}
+crate::http::substate!(ModelsState);
+
 /// The models this machine's CLI publishes for `source`.
 ///
 /// Claude's list is per *login*, so the caller names the account whose
@@ -320,7 +335,7 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
 /// for the process — asking costs a CLI startup — so only the first request
 /// after a cold start or an expired reading waits for one.
 #[api(id = "list_models", group = "models", summary = "List models")]
-pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Result<Json<ModelList>, ApiError> {
+pub async fn list_models(State(state): State<ModelsState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Result<Json<ModelList>, ApiError> {
     let paths = state.paths.as_ref();
     let mut hidden = 0;
     let (models, source) = match query.source {
@@ -349,7 +364,7 @@ pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuer
 /// The ids `GET /api/models` lists for one login of `source`, in its order — the
 /// same list a composer resolves its model against, so a model chosen from it
 /// on the server is one the composer shows (`GET /api/accounts/start`).
-pub(crate) async fn model_ids(state: &AppState, source: Source, account_id: Option<&str>) -> Vec<String> {
+pub(crate) async fn model_ids(state: &ModelsState, source: Source, account_id: Option<&str>) -> Vec<String> {
     let (models, _) = match source {
         Source::Codex => codex_models(&crate::sessions::codex::CodexHome::of(&state.paths).models_cache()).await,
         Source::Claude => claude_models(state, account_id).await,
@@ -368,12 +383,12 @@ pub(crate) async fn model_ids(state: &AppState, source: Source, account_id: Opti
 /// models, which hides the pickers, and a `fallback` source, which says why.
 ///
 /// With the models, how many were left out: see [`ModelList::hidden`].
-async fn acp_models(state: &AppState, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
+async fn acp_models(state: &ModelsState, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
     use crate::acp::{category, option_for};
     let Some(agent) = crate::acp_agent::AcpAgentRegistry::of(&state.paths).get(agent) else {
         return (Vec::new(), ModelListSource::Fallback, 0);
     };
-    let options = match state.drive.injections.acp_options(&agent).await {
+    let options = match state.injections.acp_options(&agent).await {
         Ok(options) => options,
         Err(error) => {
             tracing::info!(agent = %agent.id, %error, "cannot read the agent's models");
@@ -385,7 +400,7 @@ async fn acp_models(state: &AppState, agent: &str) -> (Vec<ModelInfo>, ModelList
     // to the agent as it is when picked, so one that looks like a credential,
     // or is too long to show whole, is left out rather than shown altered
     // ([`crate::inject::InjectionRegistry::acp_id_shown`]).
-    let injections = &state.drive.injections;
+    let injections = &state.injections;
     let shown = |text: &str| crate::accounts::limits::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
     let usable = |id: &str| injections.acp_id_shown(id);
     let effort = option_for(&options, category::THOUGHT_LEVEL);
@@ -426,11 +441,11 @@ async fn acp_models(state: &AppState, agent: &str) -> (Vec<ModelInfo>, ModelList
 /// picker and a picker must always have something to show. It gets the same
 /// alias list and the same [`ModelListSource::Fallback`] as any other probe
 /// failure, which the composer already marks as a guess.
-async fn claude_models(state: &AppState, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
+async fn claude_models(state: &ModelsState, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
     let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) else {
-        return state.drive.models.models(None).await;
+        return state.models.models(None).await;
     };
-    let accounts = &state.drive.accounts;
+    let accounts = &state.accounts;
     let Some(account) = accounts.get(id).await else {
         return (claude_fallback(), ModelListSource::Fallback);
     };
@@ -444,7 +459,7 @@ async fn claude_models(state: &AppState, account_id: Option<&str>) -> (Vec<Model
     let Some(dir) = probe_dir(accounts, &account) else {
         return (claude_fallback(), ModelListSource::Fallback);
     };
-    state.drive.models.models(Some(&dir)).await
+    state.models.models(Some(&dir)).await
 }
 
 /// The directory an account's list can be asked of, when there is one.
@@ -542,9 +557,15 @@ pub fn permission_is_known(source: Source, permission: &str) -> bool {
     }
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router.get("/api/models", list_models)
+impl ModelsState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        ModelsState: FromRef<S>,
+    {
+        router.get("/api/models", list_models)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

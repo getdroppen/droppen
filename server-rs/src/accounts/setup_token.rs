@@ -72,11 +72,11 @@ use gotcha::{api, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::api::AppState;
 use crate::drive::Drive;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
+use crate::http::app_window::AppWindow;
 use crate::http::SendResult;
 use crate::openapi_ext::Optional;
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
@@ -963,10 +963,29 @@ fn expire_later(wizards: Weak<Captures>, capture_id: String) {
 
 // ------------------------------------------------------------------- the routes
 
+/// What the setup-token routes use of the server's state.
+#[derive(Clone)]
+pub struct TokenWizardState {
+    /// Accounts, the wizard registry and what a capture stores the token with.
+    pub drive: Arc<Drive>,
+    /// Every live web terminal; the wizard runs in one.
+    pub terminals: Arc<Registry>,
+    /// The desktop app's window, which may let the CLI open the browser.
+    pub app_window: AppWindow,
+}
+crate::http::substate!(TokenWizardState);
+
+impl TokenWizardState {
+    /// The desktop app's window as this server knows it.
+    fn window(&self) -> &AppWindow {
+        &self.app_window
+    }
+}
+
 /// Start the `claude setup-token` wizard in a terminal.
 #[api(id = "start_setup_token", group = "accounts", summary = "Start the setup-token wizard")]
 pub async fn start_setup_token(
-    State(state): State<AppState>,
+    State(state): State<TokenWizardState>,
     #[api(skip)] caller: crate::http::app_window::Caller,
     ApiJson(body): ApiJson<SetupTokenStart>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
@@ -987,7 +1006,7 @@ pub async fn start_setup_token(
 /// account with a credential that works again.
 #[api(id = "reauth_account", group = "accounts", summary = "Re-authorize an account")]
 pub async fn reauth_account(
-    State(state): State<AppState>,
+    State(state): State<TokenWizardState>,
     #[api(skip)] caller: crate::http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
@@ -1023,7 +1042,7 @@ pub async fn reauth_account(
 /// it, so the flow works from a phone that cannot reach this machine's terminal.
 #[api(id = "submit_setup_token_code", group = "accounts", summary = "Submit the OAuth code to a capture")]
 pub async fn submit_setup_token_code(
-    State(state): State<AppState>,
+    State(state): State<TokenWizardState>,
     ApiPath(capture_id): ApiPath<String>,
     ApiJson(body): ApiJson<SetupTokenCode>,
 ) -> Result<gotcha::Json<SendResult>, ApiError> {
@@ -1048,7 +1067,7 @@ pub async fn submit_setup_token_code(
 /// Where a capture stands (never the token itself).
 #[api(id = "setup_token_status", group = "accounts", summary = "Poll a setup-token capture")]
 pub async fn setup_token_status(
-    State(state): State<AppState>,
+    State(state): State<TokenWizardState>,
     ApiPath(capture_id): ApiPath<String>,
 ) -> Result<gotcha::Json<SetupTokenStatus>, ApiError> {
     state

@@ -17,7 +17,6 @@ use std::sync::Arc;
 use gotcha::{api, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::AppState;
 use crate::drive::Drive;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
@@ -90,9 +89,19 @@ pub async fn start(drive: &Arc<Drive>, terminals: &Arc<Registry>, account: &Acco
     Ok(UsageLoginStarted { terminal_id: info.id })
 }
 
+/// What the usage-login route uses of the server's state.
+#[derive(Clone)]
+pub struct UsageLoginState {
+    /// Accounts and what a login's terminal is started with.
+    pub drive: Arc<Drive>,
+    /// Every live web terminal; the login runs in one.
+    pub terminals: Arc<Registry>,
+}
+crate::http::substate!(UsageLoginState);
+
 /// Start `claude auth login` for one account, in a terminal.
 #[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]
-pub async fn start_usage_login(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
+pub async fn start_usage_login(State(state): State<UsageLoginState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
     super::require_uuid(&id)?;
     let Some(account) = state.drive.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
