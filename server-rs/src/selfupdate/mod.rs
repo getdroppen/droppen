@@ -54,16 +54,17 @@
 pub mod store;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
-use gotcha::{api, Json, Multipart, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use droppen_base::text::hex;
 use tokio::io::AsyncWriteExt;
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
@@ -185,7 +186,25 @@ pub struct ServerBinaryUpload {
     pub sha256: serde_json::Value,
 }
 
-impl AppState {
+/// What the self-upgrade route uses of the server's state: the switch that
+/// refuses it under the desktop app, the instance claim it must still hold, the
+/// paths of the shared binary, and the shutdown that restarts into a new one.
+#[derive(Clone)]
+pub struct SelfUpdateState {
+    /// Whether the Droppen desktop app runs this server (see
+    /// [`crate::desktop_app`]); such a server refuses to replace the binary.
+    pub desktop_app: bool,
+    /// This server's claim on its instance directory, filled in once the flock
+    /// is held; the route refuses while it is empty or no longer upgrades.
+    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<crate::instance::InstanceLock>>>,
+    /// Where the shared server binary is installed.
+    pub paths: Arc<Paths>,
+    /// Cancelled to stop the server so its supervisor starts the new binary.
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+crate::http::substate!(SelfUpdateState);
+
+impl SelfUpdateState {
     /// The refusal a server run by the desktop app gives: `403` with a reason a
     /// person can act on, and a warning in the log saying who asked.
     fn refuse_self_upgrade_under_app(&self) -> Result<(), ApiError> {
@@ -205,7 +224,7 @@ impl AppState {
 
 /// Replace the server binary, and restart into it if something is supervising.
 #[api(id = "self_upgrade", group = "meta", summary = "Replace the server binary")]
-pub async fn self_upgrade(State(state): State<AppState>, multipart: Multipart) -> Result<Json<SelfUpgrade>, ApiError> {
+pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multipart) -> Result<Json<SelfUpgrade>, ApiError> {
     // Before anything else, and before a byte is read: a server the desktop app
     // runs is updated with the app, and this route would only replace the
     // shared `<data>/bin` that other instances run (`crate::desktop_app`).
@@ -545,16 +564,22 @@ impl BinStore {
 
 }
 
-/// Register this subsystem's routes.
-///
-/// A one-route sub-router so the body limit is this route's and not every
-/// route's, exactly as the file uploads do it.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router.merge(
-        ApiRouter::default()
-            .post("/api/server/self-upgrade", self_upgrade)
-            .layer(gotcha::axum::extract::DefaultBodyLimit::max((BINARY_LIMIT + MULTIPART_OVERHEAD) as usize)),
-    )
+impl SelfUpdateState {
+    /// Register this subsystem's routes.
+    ///
+    /// A one-route sub-router so the body limit is this route's and not every
+    /// route's, exactly as the file uploads do it.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        SelfUpdateState: FromRef<S>,
+    {
+        router.merge(
+            GotchaRouter::<S>::default()
+                .post("/api/server/self-upgrade", self_upgrade)
+                .layer(gotcha::axum::extract::DefaultBodyLimit::max((BINARY_LIMIT + MULTIPART_OVERHEAD) as usize)),
+        )
+    }
 }
 
 /// Everything gotcha cannot derive about this operation.
@@ -594,7 +619,7 @@ mod tests {
     #[tokio::test]
     async fn a_server_run_by_the_desktop_app_refuses_to_replace_the_shared_binary() {
         let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
+        let mut state = SelfUpdateState::from_ref(&crate::api::test_support::state(home.path()).await);
         assert!(state.refuse_self_upgrade_under_app().is_ok(), "an ordinary server is not refused here");
         state.desktop_app = true;
         let error = state.refuse_self_upgrade_under_app().expect_err("refused under the app");

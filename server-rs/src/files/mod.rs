@@ -12,17 +12,18 @@
 //! server at a temporary home, and a direct read would step out of it.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use gotcha::axum::body::Body;
 use gotcha::axum::http::header::{CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::{api, Json, Multipart, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiQuery;
@@ -988,10 +989,20 @@ fn sanitize_name(raw: &str) -> String {
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// What the file routes use of the server's state: the paths every
+/// [`FileRoots`] is made from.
+#[derive(Clone)]
+pub struct FilesState {
+    /// The instance's paths: the home directory the routes may reach and the
+    /// attachment store.
+    pub paths: Arc<Paths>,
+}
+crate::http::substate!(FilesState);
+
 /// List a directory under the home directory.
 #[api(id = "fs_list", group = "files", summary = "List a directory")]
 pub async fn fs_list(
-    State(state): State<AppState>,
+    State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsListQuery>,
 ) -> Result<Json<FsList>, ApiError> {
@@ -1004,7 +1015,7 @@ pub async fn fs_list(
 /// Read a text file under the home directory (capped at 256 KiB).
 #[api(id = "fs_read", group = "files", summary = "Read a file")]
 pub async fn fs_read(
-    State(state): State<AppState>,
+    State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsReadQuery>,
 ) -> Result<Json<FsRead>, ApiError> {
@@ -1017,7 +1028,7 @@ pub async fn fs_read(
 /// Raw file bytes, as an attachment or inline for an image.
 #[api(id = "fs_download", group = "files", summary = "Download a file")]
 pub async fn fs_download(
-    State(state): State<AppState>,
+    State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsDownloadQuery>,
 ) -> Result<FileBytes, ApiError> {
@@ -1063,7 +1074,7 @@ pub async fn fs_download(
 /// Save an uploaded file into a directory under the home directory.
 #[api(id = "fs_upload", group = "files", summary = "Upload a file")]
 pub async fn fs_upload(
-    State(state): State<AppState>,
+    State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsUploadQuery>,
     multipart: Multipart,
@@ -1078,7 +1089,7 @@ pub async fn fs_upload(
 
 /// Store a file for attaching to a message.
 #[api(id = "upload_attachment", group = "files", summary = "Upload an attachment")]
-pub async fn upload_attachment(State(state): State<AppState>, multipart: Multipart) -> Result<Json<Attachment>, ApiError> {
+pub async fn upload_attachment(State(state): State<FilesState>, multipart: Multipart) -> Result<Json<Attachment>, ApiError> {
     let fallback = "cannot save image";
     let file = multipart.take_file_field().await.map_err(|error| error.into_api(fallback))?;
     FileRoots::of(&state.paths).save_attachment(&file)
@@ -1087,14 +1098,20 @@ pub async fn upload_attachment(State(state): State<AppState>, multipart: Multipa
         .map_err(|error| error.into_api(fallback))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/fs/list", fs_list)
-        .get("/api/fs/read", fs_read)
-        .get("/api/fs/download", fs_download)
-        .merge(upload_route("/api/fs/upload", fs_upload, UPLOAD_LIMIT))
-        .merge(upload_route("/api/uploads", upload_attachment, ATTACHMENT_LIMIT))
+impl FilesState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        FilesState: FromRef<S>,
+    {
+        router
+            .get("/api/fs/list", fs_list)
+            .get("/api/fs/read", fs_read)
+            .get("/api/fs/download", fs_download)
+            .merge(upload_route("/api/fs/upload", fs_upload, UPLOAD_LIMIT))
+            .merge(upload_route("/api/uploads", upload_attachment, ATTACHMENT_LIMIT))
+    }
 }
 
 /// One multipart route carrying its own body limit.
@@ -1105,12 +1122,13 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
 /// per-route layer, so each route is built as a one-route router — which does
 /// carry its own OpenAPI operation through [`gotcha::GotchaRouter::merge`] — and
 /// layered before being merged back in.
-fn upload_route<H, T>(path: &str, handler: H, limit: u64) -> ApiRouter
+fn upload_route<S, H, T>(path: &str, handler: H, limit: u64) -> GotchaRouter<S>
 where
-    H: gotcha::axum::handler::Handler<T, gotcha::GotchaContext<AppState, crate::config::AppConfig>>,
+    S: Clone + Send + Sync + 'static,
+    H: gotcha::axum::handler::Handler<T, S>,
     T: 'static,
 {
-    ApiRouter::default()
+    GotchaRouter::<S>::default()
         .post(path, handler)
         .layer(gotcha::axum::extract::DefaultBodyLimit::max((limit + MULTIPART_OVERHEAD) as usize))
 }
@@ -1370,7 +1388,7 @@ mod tests {
     #[tokio::test]
     async fn the_file_routes_fence_bridged_devices_by_their_identity() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let state = FilesState::from_ref(&crate::api::test_support::state(home.path()).await);
         let key = state.paths.data_dir().join("instances/default/agent/machine-key.json");
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();

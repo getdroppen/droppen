@@ -372,12 +372,10 @@
         "cloud -> api",
         "drive -> api",
         "feed -> api",
-        "files -> api",
         "models -> api",
         "prefs -> api",
         "schedule -> api",
         "screens -> api",
-        "selfupdate -> api",
         "setup -> api",
         "terminals -> api"
       ]
