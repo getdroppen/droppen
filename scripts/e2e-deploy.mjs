@@ -407,11 +407,12 @@ export async function checkDeployment(env) {
   );
 
   // ---- Static hosts --------------------------------------------------------
-  // The app host's marker and CSP are the only phase-dependent expectations:
-  // while the hub still serves `my.`, they are the hub's own (`wss://my.`);
-  // after the Cloudflare cutover they name `api.`. Everything else (DNS, TLS,
-  // CORS, the WebSocket, the site/apex policies, `/install.sh`) is the same in
-  // both phases.
+  // The hosts' markers and CSPs are the phase-dependent expectations: while
+  // the hub still serves `my.`, they are the hub's own (`wss://my.`, and the
+  // site's API on its own origin); after the Cloudflare cutover they name
+  // `api.` (the site's pages call its HTTP API there, never its socket).
+  // Everything else (DNS, TLS, CORS, the WebSocket, `/install.sh`) is the same
+  // in both phases.
   const staticChecks = [
     {
       label: "app",
@@ -432,7 +433,7 @@ export async function checkDeployment(env) {
       // site-role build writes the hub's marker too (`wss://api…`).
       markers: phase === "static" ? [expectedWss] : [null, wssOf(site)],
       webauthn: "none",
-      connect: "no-api",
+      connect: phase === "static" ? "http-api" : "no-api",
       // A static site build ships the app's worker but never registers it;
       // the hub-served site today serves the retiring one.
       sw: phase === "static" ? "any" : "retiring",
@@ -444,7 +445,8 @@ export async function checkDeployment(env) {
       // plain move/redirect page with no marker.
       markers: phase === "static" ? [expectedWss, null] : [null, apexWss],
       webauthn: "none",
-      connect: "no-api",
+      // Static: the site-role build (the HTTP API) or a plain page (nothing).
+      connect: phase === "static" ? "no-socket" : "no-api",
       sw: phase === "static" ? "any" : "retiring",
     },
   ];
@@ -478,14 +480,23 @@ export async function checkDeployment(env) {
     const csp = headerValue(res.headers, "content-security-policy");
     const connect = cspSources(csp, "connect-src");
     const namesApi = connect.some((source) => source === `https://${apiHost}` || source === `wss://${apiHost}` || source.includes(apiHost));
-    const connectOk =
-      host.connect === "api" ? connect.includes(`https://${apiHost}`) && connect.includes(`wss://${apiHost}`) : host.connect === "app" ? connect.includes(appWss) : !namesApi;
-    const connectExpected =
-      host.connect === "api"
-        ? `connect-src names https://${apiHost} and wss://${apiHost}`
-        : host.connect === "app"
-          ? `connect-src names ${appWss} (the hub-served app's own socket)`
-          : "connect-src does not name the API";
+    const namesSocket = connect.some((source) => source.startsWith("wss:") && source.includes(apiHost));
+    // The host with its port: a source names the port when it is not the default one.
+    const apiAuthority = new URL(api).host;
+    const connectOk = {
+      api: connect.includes(`https://${apiAuthority}`) && connect.includes(`wss://${apiAuthority}`),
+      app: connect.includes(appWss),
+      "http-api": connect.includes(`https://${apiAuthority}`) && !namesSocket,
+      "no-socket": !namesSocket,
+      "no-api": !namesApi,
+    }[host.connect];
+    const connectExpected = {
+      api: `connect-src names https://${apiAuthority} and wss://${apiAuthority}`,
+      app: `connect-src names ${appWss} (the hub-served app's own socket)`,
+      "http-api": `connect-src names https://${apiAuthority}, not its socket`,
+      "no-socket": "connect-src does not name the API's socket",
+      "no-api": "connect-src does not name the API",
+    }[host.connect];
     add(
       `static.${host.label}.csp-connect`,
       connectOk,
@@ -631,8 +642,11 @@ function selfTestFakeStatic({ marker, policy, origins, connect = "api", swRetiri
   return createServer((req, res) => {
     if (req.url === "/") {
       const apiHost = new URL(origins.hub.replace(/^wss:/, "https:")).host;
-      const connectSrc =
-        connect === "api" ? `'self' https://${apiHost} wss://${apiHost}` : connect === "app" ? `'self' wss://${new URL(appOrigin()).host}` : "'self'";
+      const connectSrc = {
+        api: `'self' https://${apiHost} wss://${apiHost}`,
+        app: `'self' wss://${new URL(appOrigin()).host}`,
+        "http-api": `'self' https://${apiHost}`,
+      }[connect] ?? "'self'";
       const markerText = typeof marker === "function" ? marker() : marker;
       res.writeHead(200, {
         "content-type": "text/html",
@@ -694,7 +708,7 @@ export async function runSelfTest() {
   const app = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(self), publickey-credentials-create=(self)", origins, connect: "api" });
   const appUrl = await listen(app);
   origins.app = appUrl;
-  const site = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(), publickey-credentials-create=()", origins, connect: "none", swRetiring: true });
+  const site = selfTestFakeStatic({ marker: origins.hub, policy: "publickey-credentials-get=(), publickey-credentials-create=()", origins, connect: "http-api", swRetiring: true });
   const siteUrl = await listen(site);
   origins.site = siteUrl;
   // The hub-served shape of the app: the hub's own marker and socket origin.
@@ -745,6 +759,9 @@ export async function runSelfTest() {
     const broken = await checkDeployment({ ...env, app: siteUrl });
     const brokenByName = Object.fromEntries(broken.map((r) => [r.name, r]));
     expect("self-test sees a site policy on the app", brokenByName["static.app.webauthn"]?.ok === false);
+    const socketOnSite = await checkDeployment({ ...env, site: appUrl });
+    const socketByName = Object.fromEntries(socketOnSite.map((r) => [r.name, r]));
+    expect("self-test sees the API's socket in the site's connect-src", socketByName["static.site.csp-connect"]?.ok === false);
     const evil = await fetchText(`${hubUrl}/v1/me`, { method: "OPTIONS", headers: { origin: "https://evil.test", "access-control-request-method": "GET" } }, 5_000);
     expect("self-test sees no CORS for evil", headerValue(evil.headers, "access-control-allow-origin") === null);
   } finally {

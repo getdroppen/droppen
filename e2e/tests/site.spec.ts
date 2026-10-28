@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { API, APP, HOSTS, HUB_WS, SITE, cspSources, indexedDbNames, webauthnPolicy } from "./helpers";
+import { API, APP, HOSTS, HUB_WS, SITE, cspSources, indexedDbNames, waitForHub, webauthnPolicy } from "./helpers";
 
 /**
  * `www.droppen.test`: the real site-role build. The hub's marker is in the
@@ -8,7 +8,7 @@ import { API, APP, HOSTS, HUB_WS, SITE, cspSources, indexedDbNames, webauthnPoli
  * denied by policy, and every way into the app absolute to `my.`.
  */
 test.describe("site on www.", () => {
-  test("is site mode: the hub marker, but no API in connect-src", async ({ page }) => {
+  test("is site mode: the hub marker, and only the HTTP API in connect-src", async ({ page }) => {
     const response = await page.goto(`${SITE}/`);
     expect(response?.status()).toBe(200);
     await expect(page.locator('meta[name="rh-hub"]')).toHaveAttribute("content", HUB_WS);
@@ -18,8 +18,19 @@ test.describe("site on www.", () => {
     const csp = (await response?.headerValue("content-security-policy")) ?? "";
     const connect = cspSources(csp, "connect-src");
     expect(connect).toContain("'self'");
-    expect(connect.join(" ")).not.toContain(HOSTS.api);
-    expect(connect.join(" ")).not.toContain(API);
+    // Its pages call the HTTP API (the latest release, the waitlist), never its socket.
+    expect(connect).toContain(API);
+    expect(connect.join(" ")).not.toContain(`wss://${HOSTS.api}`);
+  });
+
+  test("asks the API for the latest release, not www., which has no /v1/", async ({ page }) => {
+    const startedAt = Date.now();
+    await page.goto(`${SITE}/`);
+    const asked = await waitForHub(
+      (entry) => entry.kind === "http" && entry.ts >= startedAt && entry.path === "/v1/releases/latest" && entry.origin === SITE,
+    );
+    expect(asked.allowed, "the API must allow www.droppen.test's origin").toBe(true);
+    expect(asked.host).toBe(HOSTS.api);
   });
 
   test("Permissions-Policy denies WebAuthn", async ({ page, browserName }) => {

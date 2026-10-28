@@ -104,7 +104,11 @@ export class FakeHub {
   readonly nonces = new Set<string>();
   readonly loggedOut: string[] = [];
   readonly signIns: { host: string; account: string; device: string }[] = [];
+  /** The host every request was sent to, in order. */
+  readonly asked: string[] = [];
   deny = false;
+  /** `/v1/me` lists none of the account's devices while it is set. */
+  forgetful = false;
   /** `/v1/session` waits for this while it is set. */
   gate: Promise<void> | null = null;
 
@@ -114,6 +118,7 @@ export class FakeHub {
 
   async fetch(pageOrigin: string, input: string, init: RequestInit = {}): Promise<Response> {
     const url = new URL(input, pageOrigin);
+    this.asked.push(url.host);
     const body = typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
     const bearer = (init.headers as Record<string, string> | undefined)?.authorization?.replace(/^Bearer /, "") ?? "";
     switch (url.pathname) {
@@ -137,7 +142,7 @@ export class FakeHub {
       case "/v1/me": {
         const who = this.tokens.get(bearer);
         if (!who) return json({ error: "unauthorized" }, 401);
-        const devices = [...this.devices.entries()].filter(([k]) => k.startsWith(`${who.account}/`)).map(([k, signKey]) => ({ id: k.slice(who.account.length + 1), sign_key: hex(signKey) }));
+        const devices = [...this.devices.entries()].filter(([k]) => !this.forgetful && k.startsWith(`${who.account}/`)).map(([k, signKey]) => ({ id: k.slice(who.account.length + 1), sign_key: hex(signKey) }));
         return json({ account: who.account, devices });
       }
       case "/v1/logout":
@@ -173,6 +178,8 @@ export class World {
   blockPopups = false;
   /** The origins the hub pinned (`/.well-known/droppen-hub`). */
   pinned: { legacy: string; app: string } | null = ORIGINS;
+  /** The shell's `rh-hub` marker on both origins, as a static host serves them; `null`: each origin is the hub's own. */
+  marker: string | null = null;
   private readonly handles = new Map<string, PeerWindow>();
 
   site(origin: string): Site {
@@ -241,7 +248,7 @@ export class World {
       locks: site.locks,
       tabs: { post: (e) => void site.events.push(e), subscribe: () => () => undefined },
       fetch: (input, init) => this.hub.fetch(win.origin, input, init),
-      hub: `wss://${new URL(win.origin).host}`,
+      hub: this.marker ?? `wss://${new URL(win.origin).host}`,
       pinned: this.pinned,
       open: (url) => (this.blockPopups ? null : this.handle(win, this.window(url, win))),
       opener: () => (win.opener ? this.handle(win, win.opener) : null),
