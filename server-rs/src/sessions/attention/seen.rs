@@ -41,7 +41,7 @@ use std::sync::Arc;
 use crate::db::{scope, Db};
 use crate::paths::Paths;
 use crate::sessions::Source;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How many sessions are remembered. Well past what any one list shows, and
 /// small enough that the scope stays a single short read.

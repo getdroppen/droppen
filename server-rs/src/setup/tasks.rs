@@ -89,7 +89,7 @@ use crate::api::AppState;
 use crate::db::scope;
 use crate::http::error::ApiError;
 use crate::openapi_ext::Nullable;
-use crate::process_env::{self, Env};
+use droppen_base::process_env::{self, Env};
 use crate::terminals::{CreateSpec, Registry};
 
 /// The `kv` key, under [`scope::SETUP`].
@@ -140,7 +140,7 @@ impl TaskRecord {
             method: entry.method.to_string(),
             command: entry.command.to_string(),
             terminal_id: None,
-            started_at: crate::time::iso8601(std::time::SystemTime::now()),
+            started_at: droppen_base::time::iso8601(std::time::SystemTime::now()),
             finished: false,
             exit_code: None,
             failed: false,
@@ -211,7 +211,7 @@ impl Tail {
 
 /// The last [`TAIL_LINES`] non-empty lines of `text`, as displayed.
 pub fn last_lines(text: &str) -> Vec<String> {
-    let clean = crate::text::strip_ansi(text);
+    let clean = droppen_base::text::strip_ansi(text);
     let lines: Vec<String> = clean
         .split('\n')
         .filter_map(|line| line.split('\r').rev().find(|part| !part.trim().is_empty()))

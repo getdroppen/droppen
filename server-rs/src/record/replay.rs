@@ -190,7 +190,7 @@ impl ReplayArgs {
             "replay: now run  APP_HOME_DIR={} APP_SERVER__PORT=8701 remote-hand-server serve",
             self.home.display()
         );
-        println!("{}", crate::program::Name::invoked().rewrite(&next));
+        println!("{}", droppen_base::program::Name::invoked().rewrite(&next));
         Ok(())
     }
 }
@@ -355,18 +355,18 @@ fn span(ms: i64) -> String {
     }
 }
 
-/// Milliseconds since the epoch, for a stamp [`crate::time::iso8601`] wrote.
+/// Milliseconds since the epoch, for a stamp [`droppen_base::time::iso8601`] wrote.
 ///
 /// Re-exported under the name this module introduced; the parser itself lives
-/// in [`crate::time::parse_iso_ms`], beside the clock every other caller uses.
-pub use crate::time::parse_iso_ms as parse_iso8601;
+/// in [`droppen_base::time::parse_iso_ms`], beside the clock every other caller uses.
+pub use droppen_base::time::parse_iso_ms as parse_iso8601;
 
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-    use crate::time::iso8601;
+    use droppen_base::time::iso8601;
     use std::time::SystemTime;
 
     fn parse_args(argv: &[String]) -> Result<ReplayArgs, clap::Error> {

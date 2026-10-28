@@ -62,7 +62,7 @@ use crate::drive::Drive;
 use crate::sessions::loader::{encode_fp, Transcript};
 use crate::agent::AgentFiles;
 use crate::sessions::{SessionSummary, Source};
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 use content::{Delta, Scope, SessionCursor, StatusBodyExt};
 use retention::HubPlan;
 use store::{IndexDiff, Kind, PageRef, Row, Store};
@@ -110,7 +110,7 @@ struct Compaction {
 fn compaction() -> Compaction {
     static AT: std::sync::OnceLock<Compaction> = std::sync::OnceLock::new();
     *AT.get_or_init(|| {
-        let env = |name: &str| crate::env::var(name).and_then(|v| v.parse::<u64>().ok());
+        let env = |name: &str| droppen_base::env::var(name).and_then(|v| v.parse::<u64>().ok());
         Compaction {
             records: env("DROPPEN_AGENT_COMPACT_RECORDS").unwrap_or(COMPACT_RECORDS).max(1),
             every: env("DROPPEN_AGENT_COMPACT_EVERY_SECS").map_or(COMPACT_EVERY, Duration::from_secs),
@@ -275,7 +275,7 @@ pub fn spawn(
         freed: 0,
         retention_since: 0,
         streams2,
-        migrate_within: crate::env::var("DROPPEN_AGENT_MIGRATE_WITHIN_SECS")
+        migrate_within: droppen_base::env::var("DROPPEN_AGENT_MIGRATE_WITHIN_SECS")
             .and_then(|v| v.parse().ok())
             .map_or(naming::MIGRATE_WITHIN, Duration::from_secs),
         retry_at: HashMap::new(),
@@ -411,9 +411,9 @@ fn manifests_to_resign(store: &Store, signer: &[u8; 32]) -> HashSet<StreamId> {
         .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
         .unwrap_or_default()
         .iter()
-        .filter_map(|s| crate::text::unhex32(s).map(StreamId))
+        .filter_map(|s| droppen_base::text::unhex32(s).map(StreamId))
         .collect();
-    let signer_hex = crate::text::hex(signer);
+    let signer_hex = droppen_base::text::hex(signer);
     match store.get_kv(SIGNER_KEY) {
         Some(before) if before != signer_hex => {
             let manifests: Vec<StreamId> = store.all().into_iter().filter(|r| r.manifest_upto.is_some()).map(|r| r.stream).collect();
@@ -431,7 +431,7 @@ fn manifests_to_resign(store: &Store, signer: &[u8; 32]) -> HashSet<StreamId> {
 }
 
 fn save_resign(store: &Store, resign: &HashSet<StreamId>) {
-    let list: Vec<String> = resign.iter().map(|s| crate::text::hex(&s.0)).collect();
+    let list: Vec<String> = resign.iter().map(|s| droppen_base::text::hex(&s.0)).collect();
     store.set_kv(RESIGN_KEY, &serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()));
 }
 
@@ -613,7 +613,7 @@ impl Sync {
                         .into_iter()
                         .flatten()
                         .filter_map(|s| s["stream"].as_str())
-                        .filter_map(crate::text::unhex32)
+                        .filter_map(droppen_base::text::unhex32)
                         .map(StreamId)
                         .collect();
                     let (known, entries) = match (self.writer.store.try_all(), self.writer.store.try_index_rows()) {
@@ -643,7 +643,7 @@ impl Sync {
                         .as_array()
                         .into_iter()
                         .flatten()
-                        .filter_map(|s| s.as_str().and_then(crate::text::unhex32).map(StreamId))
+                        .filter_map(|s| s.as_str().and_then(droppen_base::text::unhex32).map(StreamId))
                         .collect();
                     self.watch(streams);
                 }
@@ -1494,7 +1494,7 @@ impl Sync {
     /// so a session back in scope later is copied again from nothing.
     fn delete_on_hub(&mut self, stream: &StreamId) {
         if let Some(text) = &self.text {
-            let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": crate::text::hex(&stream.0)}).to_string());
+            let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": droppen_base::text::hex(&stream.0)}).to_string());
         }
         self.forget(stream);
     }
@@ -1540,7 +1540,7 @@ impl Sync {
                 return v.clone();
             }
         }
-        let v = if crate::env::var("DROPPEN_AGENT_STATUS_CLI").as_deref() == Some("0") {
+        let v = if droppen_base::env::var("DROPPEN_AGENT_STATUS_CLI").as_deref() == Some("0") {
             Value::Null
         } else {
             serde_json::json!({"claude": cli_version("claude").await, "codex": cli_version("codex").await})
@@ -1905,7 +1905,7 @@ fn iso_ms(stamp: &str) -> Option<u64> {
 }
 
 fn ms_iso(ms: u64) -> String {
-    crate::time::iso8601(std::time::UNIX_EPOCH + Duration::from_millis(ms))
+    droppen_base::time::iso8601(std::time::UNIX_EPOCH + Duration::from_millis(ms))
 }
 
 /// The CLI a session stream's row is for.
@@ -1914,7 +1914,7 @@ fn source_of(row: &Row) -> Option<Source> {
 }
 
 fn short(stream: &StreamId) -> String {
-    crate::text::hex(&stream.0[..4])
+    droppen_base::text::hex(&stream.0[..4])
 }
 
 #[cfg(test)]

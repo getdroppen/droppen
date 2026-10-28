@@ -61,9 +61,9 @@ use crate::accounts::store::{Account, AccountKind};
 use crate::claude_roots;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::Paths;
-use crate::process_env::{apply_env, claude_env};
+use droppen_base::process_env::{apply_env, claude_env};
 use crate::sessions::util::try_parse;
-use crate::time::{iso8601, now_ms};
+use droppen_base::time::{iso8601, now_ms};
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
 pub use readings::{QuotaReadingSource, RateLimitWindows, UsageLogin};
@@ -553,7 +553,7 @@ fn probe_logins(accounts: &[Account]) -> Vec<UsageLogin> {
 /// `DROPPEN_USAGE_FALLBACK_MS` (or its old name, `RH_USAGE_FALLBACK_MS`), or
 /// [`readings::DEFAULT_FALLBACK_AFTER`].
 fn fallback_after_from_env() -> Duration {
-    crate::env::var("DROPPEN_USAGE_FALLBACK_MS")
+    droppen_base::env::var("DROPPEN_USAGE_FALLBACK_MS")
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|ms| *ms > 0)
         .map(Duration::from_millis)

@@ -206,12 +206,12 @@ fn content_versioned(path: &str, body: &[u8], version: &str) -> bool {
     if !image || version.len() < 8 || !version.chars().all(|c| c.is_ascii_hexdigit()) {
         return false;
     }
-    crate::text::sha256_hex(body).starts_with(&version.to_ascii_lowercase())
+    droppen_base::text::sha256_hex(body).starts_with(&version.to_ascii_lowercase())
 }
 
 /// A strong validator for a file's bytes: 128 bits of SHA-256, quoted.
 fn etag_of(body: &[u8]) -> String {
-    let hex = crate::text::sha256_hex(body);
+    let hex = droppen_base::text::sha256_hex(body);
     format!("\"{}\"", &hex[..32])
 }
 

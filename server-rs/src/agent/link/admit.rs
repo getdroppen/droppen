@@ -21,7 +21,7 @@ use super::local::AgentLocal;
 use super::mail::retry_mail;
 use super::state::{self, AgentState};
 use super::{Pending, Routes, Shared, AGENT_UNSAVED, CHANNEL_STALE, MAX_PENDING, PENDING_FOR};
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 
 /// Whether a chain error is a conflict between two views — a fork, a
 /// rollback, another genesis or account key — rather than an entry refused.

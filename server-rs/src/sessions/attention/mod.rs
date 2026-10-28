@@ -61,7 +61,7 @@ use unread::Ledger;
 /// The rule the badge, the sort and the push trigger all read, spelled once.
 ///
 /// Timestamps are compared as strings. Every clock involved is ISO-8601 UTC with
-/// milliseconds — the CLIs write theirs that way and [`crate::time::iso8601`]
+/// milliseconds — the CLIs write theirs that way and [`droppen_base::time::iso8601`]
 /// writes ours that way — and for one fixed format that is a plain lexicographic
 /// compare, which is what the session list already sorts by.
 pub fn is_unread(attention_at: Option<&str>, read_at: Option<&str>, status: SessionStatus) -> bool {

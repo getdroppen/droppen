@@ -57,8 +57,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::hub::{self, Backoff, Peer, HEARTBEAT, SILENCE};
 use super::link::{drop_ended, drop_removed, expire_pending, on_channel_frame, Pending, Routes, Shared};
-use crate::text::{hex, unhex32};
-use crate::time::now_ms_u64;
+use droppen_base::text::{hex, unhex32};
+use droppen_base::time::now_ms_u64;
 
 /// What this agent names in `agent_info` when it attaches to relays.
 pub const FEATURE: &str = "relays/1";
@@ -74,13 +74,13 @@ const MAX_ORIGIN: usize = 256;
 
 /// Whether this instance attaches to relays (`DROPPEN_AGENT_RELAYS=0` turns it off).
 pub fn enabled() -> bool {
-    crate::env::flag_or("DROPPEN_AGENT_RELAYS", true)
+    droppen_base::env::flag_or("DROPPEN_AGENT_RELAYS", true)
 }
 
 /// Whether relays on loopback may be used, `ws://` among them
 /// (`DROPPEN_AGENT_RELAY_INSECURE=1`; local testing only).
 fn insecure() -> bool {
-    crate::env::var("DROPPEN_AGENT_RELAY_INSECURE").as_deref() == Some("1")
+    droppen_base::env::var("DROPPEN_AGENT_RELAY_INSECURE").as_deref() == Some("1")
 }
 
 /// What the manager hears.

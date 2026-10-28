@@ -245,7 +245,7 @@ impl PluginCommand {
                 let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())? + "\n";
                 match out {
                     Some(out) => {
-                        crate::fsutil::write_private(Path::new(&out), json.as_bytes()).map_err(|error| format!("cannot write {out}: {error}"))?;
+                        droppen_base::fsutil::write_private(Path::new(&out), json.as_bytes()).map_err(|error| format!("cannot write {out}: {error}"))?;
                         println!("exported {} documents of {id} on instance {instance} to {out}", export.docs.len());
                     }
                     None => {
@@ -283,7 +283,7 @@ impl PluginCommand {
                 println!("imported {} documents into {id} on instance {instance} from {file}", stored.len());
                 if !plugins.is_enabled(&id) {
                     let hint = format!("  {id} is off on this instance; turn it on with: remote-hand-server plugin enable {id} --instance {instance}");
-                    println!("{}", crate::program::Name::invoked().rewrite(&hint));
+                    println!("{}", droppen_base::program::Name::invoked().rewrite(&hint));
                 }
                 Ok(())
             }

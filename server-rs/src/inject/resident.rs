@@ -74,13 +74,13 @@ use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
 use crate::accounts::store::AccountProvider;
 use crate::openapi_ext::Optional;
-use crate::process_env::Env;
-use crate::procs;
+use droppen_base::process_env::Env;
+use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
 use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
 use crate::sessions::delivery::{QuestionState, ReceiptStatus, SessionQuestion};
 use crate::sessions::{InjectionRunState, SessionStatus, Source};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
@@ -7078,8 +7078,8 @@ mod tests {
         use crate::accounts::quota::UsageLogin;
         use crate::paths::ClaudeRoot;
 
-        let local = crate::process_env::claude_env_bare();
-        let managed = crate::process_env::claude_env([("CLAUDE_CONFIG_DIR", "/data/instances/default/claude")]);
+        let local = droppen_base::process_env::claude_env_bare();
+        let managed = droppen_base::process_env::claude_env([("CLAUDE_CONFIG_DIR", "/data/instances/default/claude")]);
         assert_eq!(recipe_root(&local), ClaudeRoot::Local, "a local-login spawn names no config dir");
         assert_eq!(recipe_root(&managed), ClaudeRoot::Managed);
 

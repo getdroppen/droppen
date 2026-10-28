@@ -83,7 +83,7 @@ use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::paths::Paths;
 use crate::sessions::Source;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How long a task's display name may be, in characters.
 const MAX_NAME: usize = 100;
@@ -290,10 +290,10 @@ fn now_iso() -> String {
 
 /// A stored ISO-8601 stamp as an instant, if it is one.
 ///
-/// The parser lives in [`crate::time::parse_iso`], beside the clock; it stays
+/// The parser lives in [`droppen_base::time::parse_iso`], beside the clock; it stays
 /// re-exported here because the agent's stream code and the aggregator reach
 /// for it under this path.
-pub use crate::time::parse_iso;
+pub use droppen_base::time::parse_iso;
 
 /// A string field, or the empty string, from a hand-editable file.
 fn string_at(entry: &Value, key: &str) -> String {

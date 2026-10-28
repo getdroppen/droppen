@@ -29,7 +29,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 
 use crate::acp::{CreateTerminalParams, ReadTextFileParams, TerminalParams, WriteTextFileParams};
-use crate::process_env::Env;
+use droppen_base::process_env::Env;
 
 /// How much of a terminal's output is kept when the agent names no limit.
 const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
@@ -309,7 +309,7 @@ mod tests {
     use super::*;
 
     fn client(dir: &Path) -> Arc<Client> {
-        Client::new(dir.to_path_buf(), crate::process_env::clean_env_bare())
+        Client::new(dir.to_path_buf(), droppen_base::process_env::clean_env_bare())
     }
 
     #[tokio::test]

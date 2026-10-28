@@ -33,7 +33,7 @@ use super::store::AccountProvider;
 use crate::db::Db;
 use crate::openapi_ext::Nullable;
 use crate::sessions::account::LimitClass;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// The rows for a claude session on the machine's own login.
 pub const LOCAL_CLAUDE: &str = "local:claude";
@@ -196,7 +196,7 @@ pub struct LimitLog {
 }
 
 /// Milliseconds since the epoch, now.
-pub use crate::time::now_ms;
+pub use droppen_base::time::now_ms;
 
 /// Epoch milliseconds as the ISO-8601 the rest of the API speaks.
 pub fn iso_ms(ms: i64) -> String {

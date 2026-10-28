@@ -48,18 +48,19 @@ fn is_server_only_variable(key: &str) -> bool {
 /// name up on the `PATH` it is *given*, so overriding here is overriding
 /// everywhere: sessions, terminals, probes and wizards alike.
 ///
-/// Set by the first-run guide ([`crate::setup`]) when it re-reads the login
+/// Set by the first-run guide (the server's `setup`) when it re-reads the login
 /// shell or adopts the directory of a CLI found off the `PATH`, so a tool
 /// installed while the server runs is found without a restart. Children that
 /// are already running keep the `PATH` they were started with.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 static CHILD_PATH: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-// In the unit tests the override is the setting thread's own: a test that
-// sets it is the only one that sees it, and every other test, running
-// alongside, keeps reading the inherited `PATH`. (A test's async code runs on
-// its own thread: `#[tokio::test]` is a current-thread runtime.)
-#[cfg(test)]
+// In the unit tests, this crate's and the server's (feature `test-support`),
+// the override is the setting thread's own: a test that sets it is the only
+// one that sees it, and every other test, running alongside, keeps reading the
+// inherited `PATH`. (A test's async code runs on its own thread:
+// `#[tokio::test]` is a current-thread runtime.)
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static CHILD_PATH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
@@ -67,12 +68,12 @@ thread_local! {
 /// Replace the `PATH` children are started with; `None` goes back to the
 /// inherited one. Returns what was there before.
 pub fn set_child_path(path: Option<String>) -> Option<String> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let mut slot = CHILD_PATH.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         std::mem::replace(&mut *slot, path)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         CHILD_PATH.with(|slot| slot.replace(path))
     }
@@ -80,11 +81,11 @@ pub fn set_child_path(path: Option<String>) -> Option<String> {
 
 /// The override [`set_child_path`] installed, if any.
 pub fn child_path_override() -> Option<String> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         CHILD_PATH.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         CHILD_PATH.with(|slot| slot.borrow().clone())
     }
@@ -224,7 +225,7 @@ pub fn apply_env(command: &mut tokio::process::Command, env: &Env) {
 /// This is only ever the *second* layer. It can catch a credential nobody told
 /// us about, which is why it exists; it cannot catch one that does not look
 /// like a credential at all, which is why
-/// [`crate::accounts::store::AccountsStore::redact_known_secrets`] runs first
+/// the server's `AccountsStore::redact_known_secrets` runs first
 /// on every path that shows a user what a CLI said.
 pub fn redact_secrets(text: &str) -> String {
     static SECRET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();

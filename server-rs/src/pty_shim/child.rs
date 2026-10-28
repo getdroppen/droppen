@@ -247,7 +247,7 @@ impl Faults {
             return;
         }
         use std::io::Write as _;
-        let at = crate::time::iso8601(std::time::SystemTime::now());
+        let at = droppen_base::time::iso8601(std::time::SystemTime::now());
         let line = format!("{at} pid={} {what}\n", std::process::id());
         let _ = std::fs::OpenOptions::new()
             .create(true)
@@ -911,7 +911,7 @@ fn terminate_shell(shell_pid: u32) {
     kill_shell(shell_pid, libc::SIGTERM);
     tokio::spawn(async move {
         tokio::time::sleep(KILL_ESCALATION).await;
-        if crate::procs::alive(shell_pid) {
+        if droppen_base::procs::alive(shell_pid) {
             tracing::info!(shell_pid, "the shell ignored SIGTERM; killing it");
             kill_shell(shell_pid, libc::SIGKILL);
         }
@@ -922,7 +922,7 @@ fn terminate_shell(shell_pid: u32) {
 fn write_tombstone(path: &Path, code: i32) {
     let tombstone = Tombstone {
         exit_code: code,
-        at: crate::time::iso8601(std::time::SystemTime::now()),
+        at: droppen_base::time::iso8601(std::time::SystemTime::now()),
     };
     match serde_json::to_vec(&tombstone) {
         Ok(encoded) => {

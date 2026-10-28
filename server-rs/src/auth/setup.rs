@@ -209,7 +209,7 @@ impl Armed {
     /// person who started the server is looking; a log file (launchd, systemd,
     /// a `nohup` redirect) gets where to find it, never the code. The commands
     /// the banner suggests read in the name the server was started as
-    /// ([`crate::program::Name::rewrite`]), and reach this instance.
+    /// ([`droppen_base::program::Name::rewrite`]), and reach this instance.
     fn announce(&self, code: &str) {
         let env = &self.env;
         if stderr_is_a_terminal() {
@@ -219,7 +219,7 @@ impl Armed {
                 url = self.url,
                 code = display(code),
             );
-            eprintln!("{}", crate::program::Name::invoked().rewrite(&banner));
+            eprintln!("{}", droppen_base::program::Name::invoked().rewrite(&banner));
         }
         tracing::warn!(
             url = %self.url,
@@ -399,7 +399,7 @@ impl Setup {
 
 /// Write the code, `0600`, atomically.
 fn write_code_file(path: &Path, code: &str) -> std::io::Result<()> {
-    crate::fsutil::write_private(path, format!("{}\n", display(code)).as_bytes())
+    droppen_base::fsutil::write_private(path, format!("{}\n", display(code)).as_bytes())
 }
 
 /// Remove the code file; it not being there is fine.

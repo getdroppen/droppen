@@ -26,7 +26,7 @@
 //! * **[`Registry::readopt_all`]** — the boot's probe-and-adopt: alive *and*
 //!   answering means adopt, and every other combination is cleaned up rather
 //!   than guessed at.
-//! * **[`crate::procs`]** — the guard in front of every signal. A recorded pid
+//! * **[`droppen_base::procs`]** — the guard in front of every signal. A recorded pid
 //!   may have been recycled by the kernel, and killing a stranger is far worse
 //!   than leaking an editor.
 //!
@@ -55,9 +55,9 @@ use crate::http::extract::{ApiJson, ApiPath};
 use crate::instance::InstanceDirs;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
-use crate::process_env::{self, Env};
-use crate::procs;
-use crate::time::iso8601;
+use droppen_base::process_env::{self, Env};
+use droppen_base::procs;
+use droppen_base::time::iso8601;
 
 use record::AppRecord;
 

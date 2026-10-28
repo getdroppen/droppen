@@ -10,7 +10,7 @@ use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::app::RemoteHandApp;
-use crate::program::Name;
+use droppen_base::program::Name;
 use crate::{GotchaError, GotchaResult};
 
 /// The top-level command line. No command means `serve`.

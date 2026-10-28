@@ -21,7 +21,7 @@ use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
 use crate::agent::AgentFiles;
 use crate::paths::Paths;
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback
 /// API listens, the per-boot credential the bridge presents there, the
@@ -113,7 +113,7 @@ pub(in crate::agent) const CONTROL_STOP: Duration = Duration::from_millis(200);
 
 /// Whether the link may run at all (`DROPPEN_AGENT_LINK=0` turns it off).
 pub fn enabled() -> bool {
-    crate::env::flag_or("DROPPEN_AGENT_LINK", true)
+    droppen_base::env::flag_or("DROPPEN_AGENT_LINK", true)
 }
 
 /// Start the link for this instance's saved agent state (an enrollment in

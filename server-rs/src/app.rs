@@ -22,7 +22,7 @@ use crate::feed::FeedRegistry;
 use crate::instance::{InstanceDirs, InstanceLock};
 use crate::paths::Paths;
 use crate::shutdown::{self, Cleanups};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How long a shutdown waits for in-flight requests before giving up.
 const DRAIN_GRACE: Duration = Duration::from_secs(5);

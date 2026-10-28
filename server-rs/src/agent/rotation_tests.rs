@@ -30,8 +30,8 @@ use super::rotation::{self, Verdict};
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed, StoredSeed};
 use crate::paths::Paths;
-use crate::text::{hex, unhex32};
-use crate::time::now_ms_u64;
+use droppen_base::text::{hex, unhex32};
+use droppen_base::time::now_ms_u64;
 
 fn account_key() -> MachineIdentity {
     MachineIdentity::from_seed(&[1; 32])
@@ -60,7 +60,7 @@ fn key_epoch(host: &str, epoch: u32) -> Action {
 }
 
 fn unhex64(text: &str) -> [u8; 64] {
-    crate::text::unhex(text).and_then(|b| <[u8; 64]>::try_from(b).ok()).expect("64 bytes of hex")
+    droppen_base::text::unhex(text).and_then(|b| <[u8; 64]>::try_from(b).ok()).expect("64 bytes of hex")
 }
 
 /// A v3 account — genesis (d-1, an admin) → m-1 (this machine, runs AI) →
@@ -458,7 +458,7 @@ impl FakeHub {
                                         Message::Binary(Frame::Chain { ch: 0, entries }.encode().unwrap().into())
                                     }
                                     Some("rotation_stage") => {
-                                        let nonce = crate::text::unhex(v["nonce"].as_str().unwrap()).unwrap();
+                                        let nonce = droppen_base::text::unhex(v["nonce"].as_str().unwrap()).unwrap();
                                         let hash = hex(&Sha256::digest(&nonce));
                                         let reply = match script.lock().unwrap().stage {
                                             StageAnswer::Staged => json!({"t": "rotation_staged", "nonce_hash": hash, "ready_ms": 123}),
@@ -954,7 +954,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     std::fs::create_dir(&state_file).unwrap();
     let promoted = rotation::promote(&shared, &second);
     std::fs::remove_dir(&state_file).unwrap();
-    crate::fsutil::write_private_reporting_path(&state_file, &on_disk).unwrap();
+    droppen_base::fsutil::write_private_reporting_path(&state_file, &on_disk).unwrap();
     // The next start does not take the key in use for one renewed away.
     assert!(
         !a.files.seed_retired(&a.seed_in_use()),
@@ -1780,7 +1780,7 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     let answer = a.staged_answer(&new, [7; 16]);
     a.renew(&answer, [7; 16], Assurance::Auto);
     let store = FileSeedStore::for_instance(&a.files);
-    crate::fsutil::write_private_reporting_path(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
+    droppen_base::fsutil::write_private_reporting_path(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
     let mut script = Script::rotating(vec![new.sign_public()]);
     script.rotated = vec![old.sign_public()];
     let hub = FakeHub::start(script, a.entries.clone()).await;

@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use super::bridge;
 use super::lapse::{still_controls, ChannelLapse};
 use super::Shared;
-use crate::text::unhex;
-use crate::time::now_ms_u64;
+use droppen_base::text::unhex;
+use droppen_base::time::now_ms_u64;
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
 /// device tells the agent itself rather than its API.

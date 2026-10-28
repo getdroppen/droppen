@@ -60,14 +60,14 @@ pub(super) enum HandoffResult {
 pub(super) fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    crate::text::hex(&bytes)
+    droppen_base::text::hex(&bytes)
 }
 
 impl Cloud {
     /// The attempt still in flight, if any (an expired one is dropped).
     pub(super) fn live_attempt(&self) -> Option<Attempt> {
         let mut slot = self.attempt.lock().expect("attempt");
-        if slot.as_ref().is_some_and(|a| a.expires_ms <= crate::time::now_ms_u64()) {
+        if slot.as_ref().is_some_and(|a| a.expires_ms <= droppen_base::time::now_ms_u64()) {
             *slot = None;
             return None;
         }
@@ -79,7 +79,7 @@ impl Cloud {
         *self.handoff_outcome.lock().expect("handoff outcome") = Some(HandoffOutcome {
             attempt: attempt.id.clone(),
             owner: attempt.owner.clone(),
-            at_ms: crate::time::now_ms_u64(),
+            at_ms: droppen_base::time::now_ms_u64(),
             result,
         });
     }
@@ -91,7 +91,7 @@ impl Cloud {
         let slot = self.handoff_outcome.lock().expect("handoff outcome");
         let outcome = slot
             .as_ref()
-            .filter(|o| o.owner == user && crate::time::now_ms_u64().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
+            .filter(|o| o.owner == user && droppen_base::time::now_ms_u64().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
         let (name, machine, error, message) = match &outcome.result {
             HandoffResult::Receiving => ("receiving", None, None, None),
             HandoffResult::HandedOver(machine) => ("handed_over", Some(machine.clone()), None, None),
@@ -113,7 +113,7 @@ impl Cloud {
 /// api.droppen.app; as the agent signs in to it, `wss://…`. Where a browser
 /// signs in to it is the hub's to say ([`crate::cloud::hub_web`]).
 pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
-    let configured = crate::env::var("DROPPEN_HUB_DEFAULT");
+    let configured = droppen_base::env::var("DROPPEN_HUB_DEFAULT");
     let url = requested
         .filter(|h| !h.trim().is_empty())
         .map(str::to_string)
@@ -165,7 +165,7 @@ pub async fn post_link(
                 .map_err(ApiError::internal)?
                 .ok_or_else(|| ApiError::internal("the agent state went away"))?;
             Some(LinkEnrolled {
-                account_fp: crate::text::hex(&st.root.account_fingerprint),
+                account_fp: droppen_base::text::hex(&st.root.account_fingerprint),
                 id: st.machine.clone(),
             })
         }
@@ -193,7 +193,7 @@ pub async fn post_link(
     // `aggregator` stays in the answer (always null) for pages from before.
     let aggregator: Option<LinkAggregator> = None;
     let id = random_hex(16);
-    let expires_ms = crate::time::now_ms_u64() + ATTEMPT_TTL_MS;
+    let expires_ms = droppen_base::time::now_ms_u64() + ATTEMPT_TTL_MS;
     let hostname = crate::http::hostname();
     // The browser hand-off (§4.9), for a page that said where it is: the
     // reply comes back to that origin, which the `/api/*` origin check has
@@ -238,8 +238,8 @@ pub async fn post_link(
         expires_ms: attempt.expires_ms,
         machine: LinkMachine {
             hostname,
-            sign_key: crate::text::hex(&identity.sign_public()),
-            dh_key: crate::text::hex(&identity.dh_public()),
+            sign_key: droppen_base::text::hex(&identity.sign_public()),
+            dh_key: droppen_base::text::hex(&identity.dh_public()),
             fingerprint: machine_fingerprint(&identity),
             enrolled,
         },
@@ -345,7 +345,7 @@ pub async fn post_finish(
     // failure below is said, and signing in again opens a new one.
     let attempt = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, crate::time::now_ms_u64())?
+        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, droppen_base::time::now_ms_u64())?
     };
     complete_sign_in(&state, attempt, &code, body.email).await
 }
@@ -379,7 +379,7 @@ pub async fn post_return(
         .ok_or_else(|| refusal(StatusCode::BAD_REQUEST, "bad_reply", "droppen.app's answer is not readable"))?;
     let (attempt, reply) = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, crate::time::now_ms_u64())?;
+        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, droppen_base::time::now_ms_u64())?;
         // Said before the attempt's lock goes: no look at the status ever
         // finds the attempt gone without this.
         state.cloud.record_handoff(&taken.0, HandoffResult::Receiving);
@@ -461,7 +461,7 @@ pub(super) async fn complete_sign_in(
         file.owner = Some(user.clone());
         file.aggregate = attempt.aggregate;
         file.aggregator_off = !attempt.aggregate;
-        file.linked_at = Some(crate::time::now_ms_u64());
+        file.linked_at = Some(droppen_base::time::now_ms_u64());
         file.email = email;
         file.remote_access.insert(user.clone(), true);
     })?;
@@ -480,7 +480,7 @@ pub async fn post_cancel(
     let cloud = &state.cloud;
     {
         let mut slot = cloud.attempt.lock().expect("attempt");
-        match check_attempt(&slot, &body.attempt, None, &user, crate::time::now_ms_u64()) {
+        match check_attempt(&slot, &body.attempt, None, &user, droppen_base::time::now_ms_u64()) {
             Ok(_) => *slot = None,
             // An attempt that expired meanwhile is gone either way.
             Err(e) if e.status() == StatusCode::GONE => *slot = None,

@@ -3,7 +3,7 @@
 //! Claude config roots.
 //!
 //! Nearly every subsystem takes a [`Paths`], so it sits below all of them and
-//! depends only on [`crate::env`] and [`crate::instance`]: naming a path must not
+//! depends only on [`droppen_base::env`] and [`crate::instance`]: naming a path must not
 //! pull in the code of the subsystem that happens to define it. A subsystem adds
 //! the paths of its own files in an `impl Paths` block next to the code that
 //! reads them. [`Paths::droppen_env`] is how a command typed on this device
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::program::{abbreviate_home, shell_word};
+use droppen_base::program::{abbreviate_home, shell_word};
 
 /// Which Claude config root a session file lives in.
 ///
@@ -58,20 +58,20 @@ impl ClaudeRoot {
 
 /// Test seam: point the user's own root at a scratch directory. Its old name,
 /// `REMOTE_HAND_CLAUDE_LOCAL_ROOT`, is still read until v0.2.135
-/// ([`crate::env`]).
+/// ([`droppen_base::env`]).
 pub const LOCAL_ROOT_ENV: &str = "DROPPEN_CLAUDE_LOCAL_ROOT";
 /// Test seam: point the managed root at a scratch directory. Its old name,
 /// `REMOTE_HAND_CLAUDE_MANAGED_ROOT`, is still read until v0.2.135
-/// ([`crate::env`]).
+/// ([`droppen_base::env`]).
 pub const MANAGED_ROOT_ENV: &str = "DROPPEN_CLAUDE_MANAGED_ROOT";
 
 /// An environment override, honoured only when it is a non-empty value; under
-/// its old name too ([`crate::env::var`]).
+/// its old name too ([`droppen_base::env::var`]).
 ///
 /// Kept as its own function (rather than inlined `std::env::var`) so the
 /// precedence rule is unit-testable without mutating the process environment.
 pub fn env_dir(name: &str) -> Option<PathBuf> {
-    override_dir(crate::env::var(name).as_deref())
+    override_dir(droppen_base::env::var(name).as_deref())
 }
 
 /// The override-or-nothing decision, with the value supplied explicitly.
@@ -91,7 +91,7 @@ pub fn override_dir(value: Option<&str>) -> Option<PathBuf> {
 /// `DROPPEN_CONFIG_DIR` and `DROPPEN_DATA_DIR` name remote-hand's own roots;
 /// `DROPPEN_CLAUDE_LOCAL_ROOT` and `DROPPEN_CLAUDE_MANAGED_ROOT` name the two
 /// Claude ones (each still read under its old `REMOTE_HAND_*` name,
-/// [`crate::env`]). Resolving them
+/// [`droppen_base::env`]). Resolving them
 /// here rather than on each access is what makes a `Paths` a value: two of them
 /// can disagree, and neither changes under a handler because something else
 /// touched the process environment.
@@ -262,17 +262,17 @@ impl Paths {
 impl Paths {
     /// What a command typed on this device needs in its environment to act on
     /// the instance this `Paths` names, as `(name, value)` pairs to put before
-    /// [`droppen_path`](crate::program::droppen_path): `APP_INSTANCE` for any instance but `default`, and
+    /// [`droppen_path`](droppen_base::program::droppen_path): `APP_INSTANCE` for any instance but `default`, and
     /// `DROPPEN_DATA_DIR` / `DROPPEN_CONFIG_DIR` when this server keeps its files
     /// elsewhere than `~/.local/share/remote-hand` / `~/.config/remote-hand` (a
     /// second install beside the first). Nothing for the usual install. Paths
-    /// have the home directory as `~`, for the reason [`droppen_path`](crate::program::droppen_path) does.
+    /// have the home directory as `~`, for the reason [`droppen_path`](droppen_base::program::droppen_path) does.
     ///
     /// Each directory under its old name too, `REMOTE_HAND_DATA_DIR` /
     /// `REMOTE_HAND_CONFIG_DIR`, with the same value: the `droppen` a person's
     /// shell finds may be another install's pre-rename binary, which reads only
     /// the old names and would act on its own files instead
-    /// ([`crate::env`]).
+    /// ([`droppen_base::env`]).
     ///
     /// Without these, `open`, `setup-code` and `user add` typed as the page says
     /// would act on the default instance of the default install: another
@@ -304,7 +304,7 @@ pub fn droppen_env_for(paths: &Paths, home: Option<&Path>) -> Vec<(String, Strin
     let (data, config) = (paths.data_dir(), paths.config_dir());
     let mut both = |name: &'static str, path: &Path| {
         let value = abbreviate_home(path, home);
-        env.extend(crate::env::with_old_name(name).map(|name| (name.to_string(), value.clone())));
+        env.extend(droppen_base::env::with_old_name(name).map(|name| (name.to_string(), value.clone())));
     };
     if usual(&[".local", "share", "remote-hand"]).as_deref() != Some(data.as_path()) {
         both("DROPPEN_DATA_DIR", &data);
@@ -340,7 +340,7 @@ mod tests {
         // Under both names: the `droppen` a shell finds may be a pre-rename
         // binary, which reads only the old ones.
         let second = crate::paths::Paths::for_instance(home.join("bob"), "default");
-        let (data, config) = (crate::env::old_name("DROPPEN_DATA_DIR").unwrap(), crate::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
+        let (data, config) = (droppen_base::env::old_name("DROPPEN_DATA_DIR").unwrap(), droppen_base::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
         assert_eq!(
             droppen_env_for(&second, Some(home)),
             vec![

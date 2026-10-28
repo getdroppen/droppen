@@ -576,7 +576,7 @@ async fn wait_for_record(db: &Path) -> Value {
 }
 
 fn alive(pid: u32) -> bool {
-    remote_hand_server::procs::alive(pid)
+    droppen_base::procs::alive(pid)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

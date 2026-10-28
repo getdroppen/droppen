@@ -83,8 +83,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 
-use crate::process_env::Env;
-use crate::procs;
+use droppen_base::process_env::Env;
+use droppen_base::procs;
 
 // ------------------------------------------------------------------ protocol
 
@@ -669,7 +669,7 @@ fn write_tombstone(path: &Path, status: &ExitStatus) {
     let exit = Exit {
         status: status.code(),
         signal: status.signal(),
-        at: crate::time::iso8601(std::time::SystemTime::now()),
+        at: droppen_base::time::iso8601(std::time::SystemTime::now()),
     };
     match serde_json::to_vec(&exit) {
         Ok(encoded) => {

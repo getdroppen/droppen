@@ -23,7 +23,7 @@ use crate::api::{ApiRouter, AppState, SendResult};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 use super::setup::Refused;
 use super::tickets::TicketScope;
@@ -361,7 +361,7 @@ pub async fn status(State(state): State<AppState>, #[api(skip)] MaybeIdentity(id
         auth_off: auth.is_off(),
         user: Nullable(identity.map(|identity| identity.username)),
         desktop_app: state.desktop_app,
-        droppen_path: crate::program::droppen_path(),
+        droppen_path: droppen_base::program::droppen_path(),
         droppen_env: state.paths.droppen_env()
             .into_iter()
             .map(|(name, value)| CommandEnv { name, value })
@@ -1513,7 +1513,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let state_paths = state.paths.clone();
         let Json(answer) = status(State(state), MaybeIdentity(None)).await;
-        assert_eq!(answer.droppen_path, crate::program::droppen_path());
+        assert_eq!(answer.droppen_path, droppen_base::program::droppen_path());
         assert!(!answer.droppen_path.is_empty());
         // The test binary has no `droppen` beside it: the binary itself.
         let exe = std::env::current_exe().expect("exe");

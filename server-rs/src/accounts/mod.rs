@@ -33,7 +33,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
 use crate::paths::ClaudeRoot;
-use crate::process_env::{apply_env, claude_env};
+use droppen_base::process_env::{apply_env, claude_env};
 use crate::sessions::{claude, Source};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};

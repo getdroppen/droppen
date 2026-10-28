@@ -1,0 +1,44 @@
+[package]
+name = "droppen-base"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's base helpers: the clock, text codecs, private files, process guards, outbound webhooks, the environment and the program's name"
+
+# Helpers that name none of the server's subsystems, so every part of the
+# server may use them and they use nothing of it.
+[dependencies]
+chrono = "0.4"
+# `text::hex`: lower-case, the spelling of every binary field in the hub's
+# control messages. A test in the server holds it to `rh_client::hex`, so
+# the server and the wire keep spelling hex the same; this crate does not
+# depend on rh-client, a crate of the layer above.
+hex = "0.4"
+libc = "0.2"
+regex = "1"
+# Only the client builder and `Url` (`outbound`). `default-features = false`
+# keeps `default-tls` (native-tls, OpenSSL) out: the server links nothing but
+# rustls.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["process", "rt", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# The child-PATH override per thread (`process_env`), as in this crate's own
+# unit tests, for the server's unit tests: a test that sets it is then the
+# only one that sees it. Only the server's [dev-dependencies] turn it on.
+# Cargo turns it on for the whole test build, so the binary the integration
+# tests start has it too; it changes only where a PATH the server adopted
+# (the setup guide) is seen, which no integration test does.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"

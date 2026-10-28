@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use super::admit::refuse;
 use super::state::AgentState;
 use super::{Routes, Shared, CHANNEL_STALE, LAPSE_POLL};
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 
 /// This machine was removed from the account — its own verified chain says
 /// so (a hub refusing its sign-in never gets here): mark it (saved, so the

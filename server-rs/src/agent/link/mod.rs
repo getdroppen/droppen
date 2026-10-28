@@ -47,7 +47,7 @@ use super::bridge::Loopback;
 use super::state::{self, AgentState};
 use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
 use crate::paths::Paths;
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 
 mod admit;
 mod alerts;

@@ -53,8 +53,9 @@ export const isHub = (name) => HUB_NAMES.some((hub) => dashed(name) === hub || d
  * the hub a new sign-in uses (`server-rs/src/api/cloud/link.rs`) and the hub-API
  * traffic capture (`docs/hub-api/check.mjs --traffic`), each read under its
  * Droppen name first and its name from before the rename after it
- * (`server-rs/src/env.rs`). Exactly the names main reads; a new one is
- * added here with its reason, never by widening the pattern.
+ * (`server-rs/crates/droppen-base/src/env.rs`). Exactly the names main
+ * reads; a new one is added here with its reason, never by widening the
+ * pattern.
  */
 export const OPEN_ENV = ["RH_HUB_DEFAULT", "DROPPEN_HUB_DEFAULT", "RH_HUB_API_TRAFFIC", "DROPPEN_HUB_API_TRAFFIC"];
 

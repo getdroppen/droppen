@@ -399,8 +399,8 @@ async fn shutdown_lets_go_of_every_app_without_signalling_it() {
 
 #[tokio::test]
 async fn a_failing_launch_is_a_409_that_says_why() {
-    let env = remote_hand_server::process_env::clean_env_bare();
-    if remote_hand_server::process_env::resolve_on_path("code-server", &env).is_some() {
+    let env = droppen_base::process_env::clean_env_bare();
+    if droppen_base::process_env::resolve_on_path("code-server", &env).is_some() {
         // Refusing to start a real editor from a test; the failure path is what
         // is under test and it is unreachable when the binary exists.
         return;
@@ -560,7 +560,7 @@ fn free_port() -> u16 {
 }
 
 fn alive(pid: u32) -> bool {
-    remote_hand_server::procs::alive(pid)
+    droppen_base::procs::alive(pid)
 }
 
 /// `SIGKILL` a whole process group, for a test's own cleanup.
@@ -708,10 +708,10 @@ async fn a_recorded_pid_that_is_now_a_stranger_is_never_signalled() {
     let convincing = bystander("code-server").await;
     let obvious = bystander("something-else").await;
     assert!(
-        remote_hand_server::procs::is_running(convincing, "code-server").await,
+        droppen_base::procs::is_running(convincing, "code-server").await,
         "the first bystander has to be genuinely convincing, or the token is never what saves it"
     );
-    assert!(!remote_hand_server::procs::is_running(obvious, "code-server").await);
+    assert!(!droppen_base::procs::is_running(obvious, "code-server").await);
 
     // Alive pid, dead port: the shape of an app that died and left its number to
     // be handed to somebody else. The boot wants to stop both — and must not.

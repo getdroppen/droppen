@@ -392,7 +392,7 @@ mod tests {
         flushed("staging", &|| store.stage(&staged(7, 1)).unwrap());
         flushed("staging another", &|| store.stage(&staged(8, 2)).unwrap());
         flushed("setting one aside", &|| store.expire(&[1; 16]).unwrap());
-        assert!(store.expired_path(&[1; 16]).ends_with(format!("agent/machine-key.expired-{}.json", crate::text::hex(&[1; 16]))));
+        assert!(store.expired_path(&[1; 16]).ends_with(format!("agent/machine-key.expired-{}.json", droppen_base::text::hex(&[1; 16]))));
         assert_eq!(store.stagings().unwrap().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[2; 16]]);
         assert_eq!(store.expired().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[1; 16]]);
         assert!(store.expire(&[1; 16]).is_ok(), "none left to set aside: nothing to do");
@@ -414,7 +414,7 @@ mod tests {
         let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
         assert_eq!(
             store.staging_path(&[1; 16]),
-            AgentFiles::of(&paths).machine_key().with_file_name(format!("machine-key.next-{}.json", crate::text::hex(&[1; 16])))
+            AgentFiles::of(&paths).machine_key().with_file_name(format!("machine-key.next-{}.json", droppen_base::text::hex(&[1; 16])))
         );
         assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
         assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");

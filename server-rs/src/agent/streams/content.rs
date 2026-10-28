@@ -55,10 +55,10 @@ impl Scope {
     /// From the environment: `DROPPEN_AGENT_SYNC_DAYS`, `DROPPEN_AGENT_SYNC_EXTERNAL=1`.
     pub fn from_env() -> Self {
         let mut scope = Self::default();
-        if let Some(days) = crate::env::var("DROPPEN_AGENT_SYNC_DAYS").and_then(|d| d.parse().ok()) {
+        if let Some(days) = droppen_base::env::var("DROPPEN_AGENT_SYNC_DAYS").and_then(|d| d.parse().ok()) {
             scope.days = days;
         }
-        scope.external = crate::env::var("DROPPEN_AGENT_SYNC_EXTERNAL").as_deref() == Some("1");
+        scope.external = droppen_base::env::var("DROPPEN_AGENT_SYNC_EXTERNAL").as_deref() == Some("1");
         scope
     }
 
@@ -290,7 +290,7 @@ pub fn window_body(base: usize, before: Option<u64>, chain: &[Fp]) -> Vec<u8> {
     let mut body: Value = serde_json::from_slice(&session_body(base, &[], chain)).unwrap_or_else(|_| serde_json::json!({}));
     body["base"] = Value::from(base);
     body["before"] = before.map_or(Value::Null, |ms| {
-        Value::String(crate::time::iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
+        Value::String(droppen_base::time::iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
     });
     serde_json::to_vec(&body).unwrap_or_default()
 }

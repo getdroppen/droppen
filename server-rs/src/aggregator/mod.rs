@@ -53,7 +53,7 @@ pub fn with_lock<T>(f: impl FnOnce() -> T) -> T {
 
 /// Whether the controller may run at all (`DROPPEN_AGENT_CONTROL=0` turns it off).
 pub fn enabled() -> bool {
-    crate::env::flag_or("DROPPEN_AGENT_CONTROL", true)
+    droppen_base::env::flag_or("DROPPEN_AGENT_CONTROL", true)
 }
 
 /// Whether this computer's device role may sign in to the hub now, as its
@@ -170,7 +170,7 @@ fn deleted_dir(paths: &Paths) -> PathBuf {
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     paths
         .instance_dir()
-        .join(format!("{DELETED_PREFIX}{}-{}-{n}", std::process::id(), crate::time::now_ms_u64()))
+        .join(format!("{DELETED_PREFIX}{}-{}-{n}", std::process::id(), droppen_base::time::now_ms_u64()))
 }
 
 /// The deletions running on threads of their own, for [`finish_deletions`].

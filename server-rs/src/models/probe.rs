@@ -49,7 +49,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 use super::{claude_fallback, ModelInfo, ModelListSource, CLAUDE_DEFAULT_EFFORT};
 use crate::openapi_ext::Nullable;
 use crate::paths::Paths;
-use crate::process_env::{apply_env, claude_env};
+use droppen_base::process_env::{apply_env, claude_env};
 
 /// A CLI that speaks stream-json on both sides, which is the only mode that
 /// takes a control request — and the invocation the Agent SDK itself uses.

@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use super::ece;
 use crate::db::{scope, Db};
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// Serializes the one check-then-write left in this module: [`vapid_key`] looks
 /// for a key, finds none, and mints one, and the look and the mint cannot be a

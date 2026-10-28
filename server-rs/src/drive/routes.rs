@@ -1381,7 +1381,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
     let mtime = tokio::fs::metadata(&file_path)
         .await
         .and_then(|metadata| metadata.modified())
-        .map(crate::time::iso8601)
+        .map(droppen_base::time::iso8601)
         .map_err(|_| not_found())?;
     Ok((crate::sessions::loader::load_transcript(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
 }

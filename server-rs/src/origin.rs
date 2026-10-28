@@ -77,11 +77,11 @@ const ALLOW_METHODS: &str = "GET,HEAD,PUT,POST,DELETE,PATCH";
 
 /// Extra trusted origins, comma-separated, from `DROPPEN_ALLOWED_ORIGINS`.
 /// Its old name, `RH_ALLOWED_ORIGINS`, is still read until v0.2.135
-/// ([`crate::env`]).
+/// ([`droppen_base::env`]).
 fn configured_origins() -> &'static [String] {
     static ORIGINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     ORIGINS.get_or_init(|| {
-        crate::env::var("DROPPEN_ALLOWED_ORIGINS")
+        droppen_base::env::var("DROPPEN_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
             .map(str::trim)
@@ -220,7 +220,7 @@ impl HostPolicy {
 
     /// [`HostPolicy::new`] from this process's environment.
     pub fn from_env(bind_host: &str) -> Self {
-        Self::new(&crate::env::var("DROPPEN_ALLOWED_HOSTS").unwrap_or_default(), configured_origins(), bind_host)
+        Self::new(&droppen_base::env::var("DROPPEN_ALLOWED_HOSTS").unwrap_or_default(), configured_origins(), bind_host)
     }
 
     /// Whether a request addressed to `host` (a `Host` value) is answered.

@@ -385,7 +385,7 @@ impl Controller {
         };
         if let Some((account, device, at)) = &self.hub_removed {
             if *account == view.account && *device == view.me {
-                let left = (REMOVED_EVERY.as_millis() as u64).saturating_sub(crate::time::now_ms_u64().saturating_sub(*at));
+                let left = (REMOVED_EVERY.as_millis() as u64).saturating_sub(droppen_base::time::now_ms_u64().saturating_sub(*at));
                 if left > 0 {
                     return Duration::from_millis(left);
                 }
@@ -443,7 +443,7 @@ impl Controller {
                 // link then restarts with the new key) — or REFUSED_EVERY:
                 // not retried on the back-off meanwhile (R6 review).
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
-                self.suspended = Some((*self.env.chain.borrow(), crate::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64));
+                self.suspended = Some((*self.env.chain.borrow(), droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64));
                 self.report(&view, Some(HubError::Suspended.to_string()));
                 REFUSED_EVERY
             }
@@ -486,7 +486,7 @@ impl Controller {
             return Ok(false);
         }
         self.publish(view);
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let client = self.client.as_mut().expect("a client");
         if !client.signed_in(now) {
             client.sign_in(&self.env.identity, now).await?;
@@ -524,7 +524,7 @@ impl Controller {
     }
 
     async fn read_mail(&mut self, view: &View) -> Result<(), HubError> {
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let mut after = 0i64;
         for _ in 0..MAX_PAGES {
             let page = self.client.as_mut().expect("a client").mailbox(after).await?;
@@ -608,7 +608,7 @@ impl Controller {
     /// Which hosts declared `policy/1` (for the status; S2 checks it before
     /// opening a channel). Best effort.
     async fn read_policy(&mut self, view: &View) {
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let seq = Some(view.chain.seq());
         if self.policy_seq == seq && now.saturating_sub(self.policy_ms) < ME_EVERY.as_millis() as u64 {
             return;
@@ -647,7 +647,7 @@ impl Controller {
             tries,
             "asked the account's admins for the content keys this device lacks"
         );
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         // The requests took a while: the aggregator may be off, or its keys deleted, by now (S1).
         let Some(keys) = self.keys.as_mut() else { return Ok(()) };
         let noted = keys.set_asked(now, name, tries);
@@ -664,7 +664,7 @@ impl Controller {
     /// the time is over.
     fn parked(&mut self) -> Option<Duration> {
         let (version, until) = self.suspended?;
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         if *self.env.chain.borrow() == version && now < until {
             return Some(Duration::from_millis(until - now));
         }
@@ -699,7 +699,7 @@ impl Controller {
         if let Err(error) = super::forget_all(&self.env.paths) {
             tracing::error!(%error, "cannot delete the other devices' keys");
         }
-        self.hub_removed = Some((view.account.clone(), view.me.clone(), crate::time::now_ms_u64()));
+        self.hub_removed = Some((view.account.clone(), view.me.clone(), droppen_base::time::now_ms_u64()));
         self.set_status(|s| {
             *s = Status {
                 running: true,
@@ -752,7 +752,7 @@ impl Controller {
                 copy: None,
             })
             .collect();
-        let signed_in = self.client.as_ref().is_some_and(|c| c.signed_in(crate::time::now_ms_u64()));
+        let signed_in = self.client.as_ref().is_some_and(|c| c.signed_in(droppen_base::time::now_ms_u64()));
         let asked_ms = keys.and_then(HostKeys::asked_ms);
         self.set_status(|s| {
             *s = Status {
@@ -991,7 +991,7 @@ mod tests {
         let app = axum::Router::new()
             .route(
                 "/v1/session/challenge",
-                post(|| async { Json(json!({"nonce": crate::text::hex(&[7; 32])})) }),
+                post(|| async { Json(json!({"nonce": droppen_base::text::hex(&[7; 32])})) }),
             )
             .route(
                 "/v1/session",
@@ -1022,7 +1022,7 @@ mod tests {
                         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "denied"})));
                     }
                     h.sessions += 1;
-                    (StatusCode::OK, Json(json!({"token": "tok", "expires_ms": crate::time::now_ms_u64() + 3_600_000})))
+                    (StatusCode::OK, Json(json!({"token": "tok", "expires_ms": droppen_base::time::now_ms_u64() + 3_600_000})))
                 }),
             )
             .route(
@@ -1041,7 +1041,7 @@ mod tests {
                             .mail
                             .iter()
                             .filter(|m| m.0 > after)
-                            .map(|m| json!({"id": m.0, "sender": m.1, "purpose": m.2, "epoch": m.3, "sealed": crate::text::hex(&m.4)}))
+                            .map(|m| json!({"id": m.0, "sender": m.1, "purpose": m.2, "epoch": m.3, "sealed": droppen_base::text::hex(&m.4)}))
                             .collect();
                         (StatusCode::OK, Json(json!({ "mail": mail })))
                     },
@@ -1055,7 +1055,7 @@ mod tests {
                         h.asked.push((
                             body["recipient"].as_str().unwrap_or_default().into(),
                             body["purpose"].as_u64().unwrap_or_default() as u8,
-                            crate::time::now_ms_u64(),
+                            droppen_base::time::now_ms_u64(),
                         ));
                         (1000 + h.asked.len(), h.ask_delay_ms)
                     };
@@ -1115,8 +1115,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let mut st = AgentState::enrolling(&origin, "a-1", "m-me", a.pin, crate::time::now_ms_u64());
-        assert!(st.absorb(&a.entries, crate::time::now_ms_u64()).error.is_none());
+        let mut st = AgentState::enrolling(&origin, "a-1", "m-me", a.pin, droppen_base::time::now_ms_u64());
+        assert!(st.absorb(&a.entries, droppen_base::time::now_ms_u64()).error.is_none());
         assert!(st.enrolled());
         let state = Arc::new(Mutex::new(st));
         let (bump, chain) = watch::channel(0u64);
@@ -1170,14 +1170,14 @@ mod tests {
         assert_eq!(status.lock().unwrap().hosts.len(), 1, "only m-2 accepts it");
 
         // m-2's key turns over; nobody seals it the new one: it asks the admin, once.
-        let committed = crate::time::now_ms_u64();
+        let committed = droppen_base::time::now_ms_u64();
         {
             let mut st = state.lock().unwrap();
             let chain = st.chain.clone().unwrap();
             let e = chain
                 .draft(Signer::Device("d-a".into()), commit("m-2", 1, &[0x23; 32]), 100)
                 .sign(&a.admin.0);
-            assert!(st.absorb(&[e], crate::time::now_ms_u64()).error.is_none());
+            assert!(st.absorb(&[e], droppen_base::time::now_ms_u64()).error.is_none());
         }
         bump.send_modify(|v| *v += 1);
         until(Duration::from_secs(10), "a key request", || !hub.lock().unwrap().asked.is_empty()).await;
@@ -1245,8 +1245,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "control");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let mut st = AgentState::enrolling(origin, "a-1", "m-me", a.pin, crate::time::now_ms_u64());
-        assert!(st.absorb(&a.entries, crate::time::now_ms_u64()).error.is_none());
+        let mut st = AgentState::enrolling(origin, "a-1", "m-me", a.pin, droppen_base::time::now_ms_u64());
+        assert!(st.absorb(&a.entries, droppen_base::time::now_ms_u64()).error.is_none());
         let state = Arc::new(Mutex::new(st));
         let (bump, chain) = watch::channel(0u64);
         let status = Arc::new(Mutex::new(Status::default()));
@@ -1296,7 +1296,7 @@ mod tests {
                 chain.apply(&e, &mut ChainClock::history()).unwrap();
                 entries.push(e);
             }
-            assert!(st.absorb(&entries, crate::time::now_ms_u64()).error.is_none());
+            assert!(st.absorb(&entries, droppen_base::time::now_ms_u64()).error.is_none());
         }
         r.bump.send_modify(|v| *v += 1);
     }

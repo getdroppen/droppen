@@ -37,7 +37,7 @@ use serde_json::json;
 /// Where `POST /api/notify` is, injected at spawn.
 ///
 /// Injected under its old name too, `RH_NOTIFY_URL` (and read under both,
-/// [`crate::env`]): a session outlives the server that started it, and this is
+/// [`droppen_base::env`]): a session outlives the server that started it, and this is
 /// run by whichever binary that server's path holds by then — older or newer.
 pub const URL_ENV: &str = "DROPPEN_NOTIFY_URL";
 /// The session's capability, injected at spawn (and as `RH_NOTIFY_TOKEN`, for
@@ -133,7 +133,7 @@ impl NotifyArgs {
     pub async fn run(self) -> Result<(), String> {
         let options = self.options()?;
         let payload = payload(&options)?;
-        let (Some(url), Some(token)) = (crate::env::var(URL_ENV), crate::env::var(TOKEN_ENV)) else {
+        let (Some(url), Some(token)) = (droppen_base::env::var(URL_ENV), droppen_base::env::var(TOKEN_ENV)) else {
             return Err("this session cannot send notifications: no channel was configured when it started. \
                  Turn one on in Droppen's settings, under Notifications."
                 .to_string());

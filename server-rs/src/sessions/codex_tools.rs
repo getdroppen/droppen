@@ -68,7 +68,7 @@ use super::tool_display::{
 use super::transcript::is_renderable_image;
 use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use crate::record::replay::parse_iso8601;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 type Json = Map<String, Value>;
 

@@ -95,7 +95,7 @@ const TTL_SECONDS: &str = "86400";
 const DEFAULT_CONTACT: &str = "https://droppen.app";
 
 fn contact() -> String {
-    crate::env::var("DROPPEN_PUSH_CONTACT")
+    droppen_base::env::var("DROPPEN_PUSH_CONTACT")
         .filter(|value| value.starts_with("mailto:") || value.starts_with("https://"))
         .unwrap_or_else(|| DEFAULT_CONTACT.to_string())
 }
@@ -157,7 +157,7 @@ const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_PUSH_ALLOW_INSECURE_ENDPOINT"
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
-    crate::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
+    droppen_base::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
 }
 
 /// Whether an endpoint is somewhere this server is willing to send to.
@@ -169,7 +169,7 @@ fn insecure_endpoints_allowed() -> bool {
 /// does not follow redirects, so an endpoint cannot 3xx its way to somewhere
 /// this would have refused.
 fn endpoint_is_acceptable(endpoint: &str) -> bool {
-    crate::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
+    droppen_base::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
 }
 
 /// The public key browsers subscribe against, minting the keypair on first ask.
@@ -247,7 +247,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 /// One shared client: building one means building a rustls configuration, which
 /// is far more expensive than the request it would carry.
-static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| crate::outbound::no_redirect_client(SEND_TIMEOUT));
+static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, env!("CARGO_PKG_VERSION")));
 
 /// When each session last had a notification sent for it.
 static SENT_AT: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -281,7 +281,7 @@ fn endpoint_origin(endpoint: &str) -> String {
     if endpoint.is_empty() {
         return "<unparseable>".to_string();
     }
-    crate::outbound::endpoint_origin(endpoint)
+    droppen_base::outbound::endpoint_origin(endpoint)
 }
 
 /// What one push service said.

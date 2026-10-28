@@ -884,7 +884,7 @@ impl Copies {
         self.env.live.set_signers(&signers(&hosts));
         self.unpark_if_moved();
         if let Some(until) = self.quiet_until {
-            let now = crate::time::now_ms_u64();
+            let now = droppen_base::time::now_ms_u64();
             if now < until {
                 return Duration::from_millis(until - now).min(IDLE_EVERY);
             }
@@ -1015,7 +1015,7 @@ impl Copies {
             }
             "removed" | "device_removed" => self.removed(view),
             "host_devices_off" => {
-                self.quiet_until = Some(crate::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64);
+                self.quiet_until = Some(droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64);
                 self.set_status(|s| s.error = Some("the hub lets no device that runs AI act as a device now".into()));
                 REFUSED_EVERY.min(IDLE_EVERY)
             }
@@ -1027,7 +1027,7 @@ impl Copies {
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
                 self.session = None;
                 self.parked = Some(*self.env.chain.borrow());
-                self.quiet_until = Some(crate::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64);
+                self.quiet_until = Some(droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64);
                 self.set_status(|s| {
                     s.error = Some("the hub suspends this device's device role while its identity renewal is pending (rotation_pending)".into())
                 });
@@ -1054,13 +1054,13 @@ impl Copies {
         if let Err(error) = super::forget_all(&self.env.paths) {
             tracing::error!(%error, "cannot delete the other devices' copies");
         }
-        self.quiet_until = Some(crate::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64);
+        self.quiet_until = Some(droppen_base::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64);
         IDLE_EVERY
     }
 
     /// The device session, minted when there is none or it expires soon.
     async fn signed_in(&mut self, http: &reqwest::Client, hub: &HubUrl, view: &View) -> Result<Arc<RwLock<Zeroizing<String>>>, Duration> {
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         if let Some((token, expires)) = &self.session {
             if *expires > now + RENEW_BEFORE_MS {
                 return Ok(token.clone());
@@ -1387,7 +1387,7 @@ impl Live {
                 }
             }
         }
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         for want in wants {
             if self.subs.contains_key(&want.stream) || c.too_large.contains(&want.stream) {
                 continue;
@@ -1498,7 +1498,7 @@ impl Live {
                         head_key,
                         state: Some(state),
                         too_large: false,
-                        updated_ms: crate::time::now_ms_u64(),
+                        updated_ms: droppen_base::time::now_ms_u64(),
                     },
                 );
             }
@@ -1571,7 +1571,7 @@ impl Live {
                         head_key: None,
                         state: None,
                         too_large: true,
-                        updated_ms: crate::time::now_ms_u64(),
+                        updated_ms: droppen_base::time::now_ms_u64(),
                     },
                 );
             }
@@ -1593,7 +1593,7 @@ impl Live {
                     }
                 }
                 let wait = (REBUILD_MIN * 2u32.saturating_pow(tries.min(10))).min(REBUILD_MAX);
-                c.failures.insert(want.stream, (crate::time::now_ms_u64() + wait.as_millis() as u64, tries + 1));
+                c.failures.insert(want.stream, (droppen_base::time::now_ms_u64() + wait.as_millis() as u64, tries + 1));
                 tracing::warn!(host = %want.host, kind = want.kind.as_str(), %error, "a copy stopped; reading it again in {wait:?}");
                 if unauthorized {
                     return Err(Ended::Unauthorized);
@@ -1633,7 +1633,7 @@ impl Live {
                 if !hosts.contains(host.as_str()) {
                     continue;
                 }
-                match store.touch(&host, kind, &name, &stream, &head, &head_key, crate::time::now_ms_u64()) {
+                match store.touch(&host, kind, &name, &stream, &head, &head_key, droppen_base::time::now_ms_u64()) {
                     Ok(_) => {}
                     Err(error) if error == super::store::OFF => return Err(Ended::Off),
                     Err(error) => tracing::debug!(%error, %host, "cannot note how current a copy is"),
@@ -1643,7 +1643,7 @@ impl Live {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let every = SESSION_WRITE_EVERY.as_millis() as u64;
         let hosts: HashSet<&str> = self.hosts.iter().map(|h| h.id.as_str()).collect();
         let mut later = HashMap::new();
@@ -1903,7 +1903,7 @@ mod tests {
         let wait = c.refused(&live.view, "rotation_pending");
         assert!(wait <= IDLE_EVERY, "{wait:?}");
         let quiet = c.quiet_until.expect("parked");
-        assert!(quiet > crate::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < crate::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64);
+        assert!(quiet > droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < droppen_base::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64);
         assert_eq!(c.parked, Some(3));
         assert!(super::super::store::path(&paths).exists(), "the copies stay");
         assert!(c.store.is_some());

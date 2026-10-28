@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::openapi_ext::Nullable;
-use crate::text::is_image_ext;
+use droppen_base::text::is_image_ext;
 
 /// Body text must never be cut in practice — there is no way to read the rest.
 /// These are emergency backstops for pathological items, not display budgets.

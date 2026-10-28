@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use crate::instance::InstanceDirs;
 use crate::paths::Paths;
-use crate::process_env::Env;
+use droppen_base::process_env::Env;
 use crate::sessions::Source;
 
 use super::{cli, store, token};
@@ -221,10 +221,10 @@ pub async fn decorate(paths: &Paths, instance: &InstanceDirs, source: Source, id
     let token = token::mint(&secret, instance.name(), &key);
     // Under both names: whatever binary runs `notify` later may be from before
     // the rename to Droppen (a rollback), and an older one reads only the old.
-    for name in crate::env::with_old_name(cli::URL_ENV) {
+    for name in droppen_base::env::with_old_name(cli::URL_ENV) {
         env.insert(name.to_string(), url.clone());
     }
-    for name in crate::env::with_old_name(cli::TOKEN_ENV) {
+    for name in droppen_base::env::with_old_name(cli::TOKEN_ENV) {
         env.insert(name.to_string(), token.clone());
     }
 }

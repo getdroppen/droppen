@@ -50,7 +50,7 @@ use tokio_util::sync::CancellationToken;
 use crate::instance::InstanceDirs;
 use crate::openapi_ext::Optional;
 use crate::paths::Paths;
-use crate::process_env::{self, Env};
+use droppen_base::process_env::{self, Env};
 use crate::pty_shim::client::{self, Link};
 use crate::pty_shim::proto::{self, Frame, Meta, Resize};
 use crate::pty_shim::sidecar::{self, Sidecars};
@@ -619,7 +619,7 @@ impl Registry {
             id: id.clone(),
             title: default_title(spec.title.as_deref(), self.count() + 1),
             cwd: workdir.clone(),
-            created_at: crate::time::iso8601(std::time::SystemTime::now()),
+            created_at: droppen_base::time::iso8601(std::time::SystemTime::now()),
         };
         let sidecars = Sidecars::new(self.instance.pty_shims(), &id);
         let meta = Meta {
@@ -794,7 +794,7 @@ impl Registry {
         // The guards run *after* the hello, because one of them needs what
         // the hello carries, and the other can only have become true during
         // it.
-        if sidecars.tombstoned() || !crate::procs::alive(link.shell_pid) {
+        if sidecars.tombstoned() || !droppen_base::procs::alive(link.shell_pid) {
             tracing::warn!(%id, shell_pid = link.shell_pid, "refusing to adopt a shim minding a dead shell");
             drop(link);
             sidecars.remove_all();
@@ -1486,7 +1486,7 @@ impl Entry {
                 return Relinked::Exited(tombstone.exit_code);
             }
             let shell = self.shell_pid.load(Ordering::SeqCst);
-            if shell > 1 && !crate::procs::alive(shell) {
+            if shell > 1 && !droppen_base::procs::alive(shell) {
                 tracing::warn!(shell_pid = shell, "a terminal's shell is gone and its shim left no exit file");
                 return Relinked::Exited(-1);
             }
@@ -1638,7 +1638,7 @@ fn login_shell() -> String {
     }
 }
 
-/// The scrubbed environment every terminal starts with: [`crate::process_env`]'s,
+/// The scrubbed environment every terminal starts with: [`droppen_base::process_env`]'s,
 /// plus the `TERM` a pty needs and a spawned CLI does not.
 fn terminal_env() -> Env {
     process_env::clean_env([("TERM", TERM)])
@@ -1710,8 +1710,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         // A superset of what was there, so a test running beside this one
         // still finds everything it would have.
-        let path = format!("{}:{}", crate::process_env::child_path(), dir.path().display());
-        crate::process_env::set_child_path(Some(path.clone()));
+        let path = format!("{}:{}", droppen_base::process_env::child_path(), dir.path().display());
+        droppen_base::process_env::set_child_path(Some(path.clone()));
         assert_eq!(terminal_env().get("PATH"), Some(&path));
     }
 

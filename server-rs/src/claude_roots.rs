@@ -23,7 +23,7 @@
 //! construction, so a test can point a whole server at a synthetic tree without
 //! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
 //! also answer to their pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through
-//! [`crate::env`]; [`crate::paths::env_dir`] is the only place they — or any
+//! [`droppen_base::env`]; [`crate::paths::env_dir`] is the only place they — or any
 //! other directory override — are read.
 
 use std::path::PathBuf;

@@ -1,7 +1,7 @@
 //! Entry point: `serve` (the default), `up`, and the tooling subcommands.
 
 use remote_hand_server::cli::{Cli, Command};
-use remote_hand_server::program::Name;
+use droppen_base::program::Name;
 
 fn main() -> std::process::ExitCode {
     let command = Cli::parse_invoked().into_command();
@@ -43,7 +43,7 @@ fn main() -> std::process::ExitCode {
 }
 
 /// An error on stderr, said in the name this binary was run as
-/// (`remote_hand_server::program`): `droppen: …` with the commands it suggests
+/// (`droppen_base::program`): `droppen: …` with the commands it suggests
 /// as `droppen …`, or `remote-hand: …` exactly as before.
 fn complain(prefix: &str, error: &str) {
     eprintln!("{prefix}: {}", Name::invoked().rewrite(error));

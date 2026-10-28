@@ -71,7 +71,7 @@ pub fn gap_note(lost: u64) -> String {
 /// Neither path is reachable from a real deployment, where `current_exe` is the
 /// server itself.
 pub fn shim_program() -> PathBuf {
-    let override_path = crate::env::var("DROPPEN_SHIM_BIN").map(PathBuf::from);
+    let override_path = droppen_base::env::var("DROPPEN_SHIM_BIN").map(PathBuf::from);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("remote-hand-server"));
     resolve_shim_program(override_path, exe, |path| path.is_file())
 }

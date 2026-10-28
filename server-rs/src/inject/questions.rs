@@ -668,7 +668,7 @@ pub fn answered_tool_uses(line: &Value) -> Vec<String> {
 }
 
 /// Epoch milliseconds, the clock every column here is kept in.
-pub use crate::time::now_ms;
+pub use droppen_base::time::now_ms;
 
 #[cfg(test)]
 mod tests {

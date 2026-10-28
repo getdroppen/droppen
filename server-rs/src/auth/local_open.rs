@@ -245,7 +245,7 @@ impl std::fmt::Debug for LocalOpen {
 }
 
 fn digest(token: &str) -> String {
-    crate::text::sha256_hex(token)
+    droppen_base::text::sha256_hex(token)
 }
 
 impl LocalOpen {
@@ -446,7 +446,7 @@ impl Auth {
         let url = format!("{page}#{FRAGMENT_KEY}={token}");
         let mut name = [0u8; 8];
         rand::rngs::OsRng.fill_bytes(&mut name);
-        let file = dir.join(format!("open-{}.html", crate::text::hex(&name)));
+        let file = dir.join(format!("open-{}.html", droppen_base::text::hex(&name)));
         match write_redirect(&file, &url) {
             Ok(()) => {
                 self.local_open.attach_page(&token, file.clone());
@@ -469,7 +469,7 @@ fn write_redirect(file: &Path, url: &str) -> std::io::Result<()> {
     let body = format!(
         "<!doctype html><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\"><title>Droppen</title>\n<script>location.replace({quoted})</script>\n"
     );
-    crate::fsutil::write_private(file, body.as_bytes())
+    droppen_base::fsutil::write_private(file, body.as_bytes())
 }
 
 /// Whether `dir` is a directory of this user's, reachable by nobody else, and
@@ -615,7 +615,7 @@ mod tests {
             ..OpenAnswer::default()
         };
         let file = control.join("open-0123456789abcdef.html");
-        crate::fsutil::write_private(&file, b"x").unwrap();
+        droppen_base::fsutil::write_private(&file, b"x").unwrap();
         assert_eq!(good(Some(file.clone())).check(8700, &control), Ok(()));
         assert_eq!(good(None).check(8700, &control), Ok(()));
         assert!(good(None).check(8701, &control).is_err(), "another port");
@@ -634,7 +634,7 @@ mod tests {
             "a file outside the control directory"
         );
         let other = control.join("evil.command");
-        crate::fsutil::write_private(&other, b"x").unwrap();
+        droppen_base::fsutil::write_private(&other, b"x").unwrap();
         assert!(good(Some(other)).check(8700, &control).is_err(), "not a name the server writes");
         let link = control.join("open-fedcba9876543210.html");
         std::os::unix::fs::symlink("/etc/hosts", &link).unwrap();
