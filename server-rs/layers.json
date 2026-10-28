@@ -356,7 +356,6 @@
     {
       "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
       "edges": [
-        "auth -> api",
         "cloud -> api",
         "feed -> api",
         "terminals -> api"
@@ -495,9 +494,8 @@
       ]
     },
     {
-      "why": "auth reads cloud's return route and notify's caller classification. They go when the return route moves to auth, and the caller classification too.",
+      "why": "auth reads notify's caller classification. It goes when the caller classification moves to auth.",
       "edges": [
-        "auth -> cloud",
         "auth -> notify"
       ]
     },

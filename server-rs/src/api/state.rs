@@ -19,6 +19,7 @@ use crate::http::app_window::AppWindow;
 use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
+use crate::auth::AuthState;
 use crate::chats::ChatsState;
 use crate::drive::DriveState;
 use crate::files::FilesState;
@@ -230,6 +231,17 @@ impl FromRef<AppState> for AcpAgentState {
         Self {
             paths: state.paths.clone(),
             injections: state.drive.injections.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            auth: state.drive.auth.clone(),
+            paths: state.paths.clone(),
+            desktop_app: state.desktop_app,
+            link: state.cloud.clone(),
         }
     }
 }

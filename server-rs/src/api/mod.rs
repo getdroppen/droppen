@@ -410,7 +410,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::acp_agent::AcpAgentState::routes(router);
     let router = crate::apps::AppsState::routes(router);
     let router = crate::attention::AttentionState::routes(router);
-    let router = crate::auth::routes(router);
+    let router = crate::auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
     let router = cloud::routes(router);
     let router = crate::cloud::gateway::routes(router);

@@ -162,7 +162,7 @@ use lockout::{LockoutPolicy, Lockouts};
 use tickets::{TicketScope, Tickets};
 use users::UsersStore;
 
-pub use routes::{describe, routes};
+pub use routes::{describe, AuthState};
 
 /// The paths gotcha mounts its own documentation on
 /// (`gotcha-0.4.1/src/router.rs:311`). They sit outside `/api/`, which is what
@@ -204,6 +204,19 @@ pub const LOCAL_OWNER: &str = "local:owner";
 /// Whether `username` is the local owner ([`LOCAL_OWNER`]).
 pub fn is_local_owner(username: &str) -> bool {
     username == LOCAL_OWNER
+}
+
+/// What creating the first account asks of the Droppen link: that a link the
+/// device's owner signed in becomes that account's. The link (`crate::cloud`)
+/// sits above auth, so it implements this and the entry hands it to the routes
+/// ([`AuthState`]).
+pub trait LinkHandOver: Send + Sync {
+    /// Pass a link the local owner signed in to the first of `users`'
+    /// accounts, if there is such a link.
+    fn hand_over_from_local_owner<'a>(
+        &'a self,
+        users: &'a users::UsersStore,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
 }
 
 /// Everything the guard and the `/api/auth/*` routes need.
