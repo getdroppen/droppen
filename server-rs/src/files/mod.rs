@@ -353,12 +353,22 @@ const READABLE_IN_CLAUDE_ROOT: [&str; 2] = ["plans", "image-cache"];
 /// Read-only to devices, like [`READABLE_IN_CLAUDE_ROOT`].
 const READABLE_IN_PROJECTS: [(&str, usize); 2] = [("memory", 2), ("tool-results", 3)];
 
-/// The roots the file routes work within: the home directory they stay
-/// under, the uploads directory, and the server's own data and config
-/// directories and managed Claude root, which a device reaching this
-/// computer through Droppen is fenced out of ([`FileRoots::fence`]).
+/// The roots the file routes work within, and what the fence
+/// ([`FileRoots::fence`]) makes of each for a device reaching this computer
+/// through Droppen (local users are not fenced):
 ///
-/// Built from the request's [`Paths`] ([`FileRoots::of`]). Its own type
+/// - the home directory: every path a client names must resolve under it
+///   ([`resolve_safe`]);
+/// - the server's data and config directories: closed, whichever path leads
+///   there;
+/// - the uploads directory: open again, to read and write;
+/// - the managed Claude root's plans, pasted images, memory notes and saved
+///   tool output: open again, to read only (`READABLE_IN_CLAUDE_ROOT`,
+///   `READABLE_IN_PROJECTS`).
+///
+/// It keeps the whole [`Paths`] because the fence reads five of its locations
+/// and [`resolve_safe`], which the schedule and the terminals call too, takes
+/// one. Built from the request's [`Paths`] ([`FileRoots::of`]). Its own type
 /// rather than methods on [`Paths`], so that judging and touching a path a
 /// client named goes through this module and nowhere else.
 #[derive(Debug, Clone)]
