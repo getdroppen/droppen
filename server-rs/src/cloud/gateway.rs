@@ -39,13 +39,14 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use gotcha::axum::extract::ws::{CloseFrame, Message, WebSocket};
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::{State, WebSocketUpgrade};
+use gotcha::axum::extract::FromRef;
+use gotcha::{GotchaRouter, State, WebSocketUpgrade};
 use serde_json::{json, Value};
 
 use crate::aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
 use crate::aggregator::store::Kind;
-use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
+use crate::cloud::CloudState;
 
 /// How often a connection looks again at whether its page may still see other devices.
 pub const RECHECK: Duration = Duration::from_secs(2);
@@ -66,7 +67,11 @@ pub const SUB_PER_SECOND: f64 = 32.0;
 const MAX_INCOMING: usize = 64 * 1024;
 
 /// Register the gateway's route.
-pub fn routes(router: ApiRouter) -> ApiRouter {
+pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+    CloudState: FromRef<S>,
+{
     router.get("/api/agg/ws", agg_ws)
 }
 
@@ -75,7 +80,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
 /// Refused before the upgrade unless the caller may see other devices; the
 /// changes to `cloud.json` are listened to from before that check, so one
 /// landing in between is not missed.
-pub async fn agg_ws(State(state): State<AppState>, who: MaybeIdentity, upgrade: WebSocketUpgrade) -> Response {
+pub async fn agg_ws(State(state): State<CloudState>, who: MaybeIdentity, upgrade: WebSocketUpgrade) -> Response {
     let changes = state.cloud.changes();
     let user = match crate::cloud::remote_viewer(&state, &who).await {
         Ok(user) => user,
@@ -208,7 +213,7 @@ async fn send(sink: &mut Sink, message: Message, shutdown: &tokio_util::sync::Ca
 /// Serve one page until it leaves, the server stops, or it may no longer see
 /// other devices — checked again at once, every [`RECHECK`], and on every
 /// change of `cloud.json`, with the login (`who`) that opened it.
-async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentity, mut changes: tokio::sync::watch::Receiver<u64>) {
+async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdentity, mut changes: tokio::sync::watch::Receiver<u64>) {
     let live: Arc<LiveCopies> = state.cloud.control.live().clone();
     let (mut sink, mut stream) = socket.split();
     let (out, mut queued) = Outbox::new(OUTBOX, OUTBOX_BYTES);
@@ -666,7 +671,7 @@ mod tests {
         // alice lets him, then takes it back: he is told, and closed.
         let set = |remote: bool| {
             crate::cloud::put_access(
-                State(state.clone()),
+                State(CloudState::from_ref(&state)),
                 alice.clone(),
                 crate::http::extract::ApiJson(crate::cloud::AccessRequest { user: "bob".into(), remote }),
             )

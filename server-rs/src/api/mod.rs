@@ -412,7 +412,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::attention::AttentionState::routes(router);
     let router = crate::auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
-    let router = cloud::routes(router);
+    let router = cloud::CloudState::routes(router);
     let router = crate::cloud::gateway::routes(router);
     let router = crate::drive::DriveState::routes(router);
     let router = crate::feed::global::EventsState::routes(router);

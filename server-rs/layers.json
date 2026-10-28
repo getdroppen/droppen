@@ -354,12 +354,6 @@
   },
   "allowed": [
     {
-      "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
-      "edges": [
-        "cloud -> api"
-      ]
-    },
-    {
       "why": "sessions, attention and stats read each provider's transcripts and roots themselves. They go through the Transcripts port sessions owns, which each provider implements.",
       "edges": [
         "attention -> sessions::subagents",

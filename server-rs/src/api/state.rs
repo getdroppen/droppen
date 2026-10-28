@@ -21,6 +21,7 @@ use crate::apps::AppsState;
 use crate::attention::AttentionState;
 use crate::auth::AuthState;
 use crate::chats::ChatsState;
+use crate::cloud::CloudState;
 use crate::drive::DriveState;
 use crate::feed::global::EventsState;
 use crate::files::FilesState;
@@ -269,6 +270,17 @@ impl FromRef<AppState> for TerminalsState {
             terminals: state.terminals.clone(),
             auth: state.drive.auth.clone(),
             send_limit: state.send_limit,
+            cancel: state.cancel.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for CloudState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            cloud: state.cloud.clone(),
+            auth: state.drive.auth.clone(),
+            desktop_app: state.desktop_app,
             cancel: state.cancel.clone(),
         }
     }

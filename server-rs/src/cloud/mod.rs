@@ -47,12 +47,12 @@
 use std::sync::{Arc, Mutex};
 
 use gotcha::axum::http::StatusCode;
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::aggregator::controller::AggregatorHost;
-use crate::api::{ApiRouter, AppState};
 use crate::auth::{MaybeIdentity, RETURN_ROUTE};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
@@ -75,7 +75,8 @@ use hub_web::HubWebs;
 use link::*;
 
 /// The link's local state: the hub link itself, the attempt in flight, and
-/// `cloud.json`. One per server, in [`AppState`].
+/// `cloud.json`. One per server, which the link's routes reach through
+/// [`CloudState`].
 pub struct Cloud {
     /// The hub link ([`crate::agent::control`]).
     pub control: Arc<Control>,
@@ -535,7 +536,7 @@ fn standing_name(state: Standing) -> &'static str {
 }
 
 /// The status for `user` (`None`: nobody signed in, local authentication off).
-async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
+async fn status_for(state: &CloudState, user: Option<&str>) -> CloudStatus {
     let cloud = &state.cloud;
     let agent: AgentStatus = cloud.control.status();
     // Read once: the lenient view (for what the status shows of the owner)
@@ -544,7 +545,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     let file = strict.clone().unwrap_or_default();
     let attempt = cloud.live_attempt();
     // Signed in with authentication on: nobody without a session gets here.
-    let local_auth = !state.drive.auth.is_off() && user.is_some();
+    let local_auth = !state.auth.is_off() && user.is_some();
     let owner_now = match user {
         Some(user) => local_owner_now(state, user).await,
         None => false,
@@ -677,9 +678,24 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     }
 }
 
+/// What the link's routes and the gateway use of the server's state.
+#[derive(Clone)]
+pub struct CloudState {
+    /// The hub link, the attempt in flight and `cloud.json`.
+    pub cloud: Arc<Cloud>,
+    /// Local accounts and logins: who may manage the link, and who may view
+    /// the copies.
+    pub auth: Arc<crate::auth::Auth>,
+    /// Whether the Droppen desktop app runs this server.
+    pub desktop_app: bool,
+    /// Cancelled by the shutdown supervisor; the gateway's sockets close on it.
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+crate::http::substate!(CloudState);
+
 /// Where this computer stands with Droppen.
 #[api(id = "cloud_status", group = "cloud", summary = "Droppen link status")]
-pub async fn get_cloud(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
+pub async fn get_cloud(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
     let user = caller(&who)?;
     Ok(Json(status_for(&state, user.as_deref()).await))
 }
@@ -688,7 +704,7 @@ pub async fn get_cloud(State(state): State<AppState>, #[api(skip)] who: MaybeIde
 /// on again (S1-4: it needs nothing from droppen.app since chain v3).
 #[api(id = "cloud_aggregator", group = "cloud", summary = "Turn the aggregator off or on")]
 pub async fn post_aggregator(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<AggregatorRequest>,
 ) -> Result<Json<CloudStatus>, ApiError> {
@@ -716,7 +732,7 @@ pub async fn post_aggregator(
 /// Disconnect this computer from Droppen.
 #[api(id = "cloud_unlink", group = "cloud", summary = "Disconnect this computer from Droppen")]
 pub async fn post_unlink(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<UnlinkRequest>,
 ) -> Result<Json<CloudStatus>, ApiError> {
@@ -757,7 +773,7 @@ pub async fn post_unlink(
 /// fresh seed made: the computer is signed in to Droppen again like a new
 /// one, with a registration code, under a new id.
 #[api(id = "cloud_re_enroll_fresh", group = "cloud", summary = "Add this computer again with a new identity")]
-pub async fn post_re_enroll_fresh(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<ReEnrollFresh>, ApiError> {
+pub async fn post_re_enroll_fresh(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<ReEnrollFresh>, ApiError> {
     let user = local_user(&state, &who).await?;
     require_manager(&state, &user).await?;
     let cloud = &state.cloud;
@@ -788,7 +804,7 @@ pub async fn post_re_enroll_fresh(State(state): State<AppState>, #[api(skip)] wh
 /// `unreadable`: claiming must not write over the owner's settings). What
 /// was allowed before goes: who else sees them is the new owner's to say.
 #[api(id = "cloud_claim", group = "cloud", summary = "Claim this device's Droppen link")]
-pub async fn post_claim(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
+pub async fn post_claim(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
     let user = local_user(&state, &who).await?;
     require_manager(&state, &user).await?;
     if matches!(state.cloud.control.status().state, Standing::None) {
@@ -819,7 +835,7 @@ pub async fn post_claim(State(state): State<AppState>, #[api(skip)] who: MaybeId
 /// Which local accounts may see and use other machines.
 #[api(id = "cloud_access", group = "cloud", summary = "Set a local account's access to other machines")]
 pub async fn put_access(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<AccessRequest>,
 ) -> Result<Json<CloudStatus>, ApiError> {
@@ -829,7 +845,7 @@ pub async fn put_access(
         return Err(refusal(StatusCode::NOT_FOUND, "no_user", "no such local account"));
     };
     // The desktop app's own login is not somebody to let see other devices.
-    if body.remote && state.drive.auth.users.is_app(&body.user).await {
+    if body.remote && state.auth.users.is_app(&body.user).await {
         return Err(refusal(
             StatusCode::BAD_REQUEST,
             "app_account",
@@ -858,19 +874,25 @@ pub async fn put_access(
     Ok(Json(status_for(&state, Some(&user)).await))
 }
 
-/// Register this module's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/cloud", get_cloud)
-        .post("/api/cloud/link", post_link)
-        .post("/api/cloud/link/finish", post_finish)
-        .post(RETURN_ROUTE, post_return)
-        .post("/api/cloud/link/cancel", post_cancel)
-        .post("/api/cloud/aggregator", post_aggregator)
-        .post("/api/cloud/unlink", post_unlink)
-        .post("/api/cloud/re-enroll-fresh", post_re_enroll_fresh)
-        .put("/api/cloud/access", put_access)
-        .post("/api/cloud/claim", post_claim)
+impl CloudState {
+    /// Register this module's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        CloudState: FromRef<S>,
+    {
+        router
+            .get("/api/cloud", get_cloud)
+            .post("/api/cloud/link", post_link)
+            .post("/api/cloud/link/finish", post_finish)
+            .post(RETURN_ROUTE, post_return)
+            .post("/api/cloud/link/cancel", post_cancel)
+            .post("/api/cloud/aggregator", post_aggregator)
+            .post("/api/cloud/unlink", post_unlink)
+            .post("/api/cloud/re-enroll-fresh", post_re_enroll_fresh)
+            .put("/api/cloud/access", put_access)
+            .post("/api/cloud/claim", post_claim)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.
@@ -962,6 +984,7 @@ mod tests {
     use super::file::CloudFile;
 
     use super::*;
+    use crate::api::AppState;
 
     fn attempt(owner: &str, expires_ms: u64) -> Option<Attempt> {
         Some(Attempt {
@@ -1091,12 +1114,12 @@ mod tests {
             }
         };
         fill();
-        let _ = post_aggregator(State(state.clone()), alice(), ApiJson(AggregatorRequest { enabled: false }))
+        let _ = post_aggregator(State(CloudState::from_ref(&state)), alice(), ApiJson(AggregatorRequest { enabled: false }))
             .await
             .unwrap();
         assert!(!dir.exists(), "turning aggregation off deletes other devices' keys and copies");
         fill();
-        let _ = post_unlink(State(state.clone()), alice(), ApiJson(UnlinkRequest { delete_copies: None }))
+        let _ = post_unlink(State(CloudState::from_ref(&state)), alice(), ApiJson(UnlinkRequest { delete_copies: None }))
             .await
             .unwrap();
         assert!(!dir.exists(), "disconnecting deletes them too");
@@ -1112,12 +1135,12 @@ mod tests {
         let key = crate::aggregator::key_path(&state.cloud.paths);
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();
-        assert_eq!(status_for(&state, None).await.aggregator.state, "pending");
+        assert_eq!(status_for(&CloudState::from_ref(&state), None).await.aggregator.state, "pending");
 
         // The next boot builds the state from the same home again.
         let rebooted = crate::api::test_support::state(home.path()).await;
         assert!(!key.exists(), "the leftover key is deleted at startup");
-        assert_ne!(status_for(&rebooted, None).await.aggregator.state, "pending");
+        assert_ne!(status_for(&CloudState::from_ref(&rebooted), None).await.aggregator.state, "pending");
     }
 
     /// `docs/host-identity-rotation.md` §3.8 「只剩退役钥时」:
@@ -1140,24 +1163,24 @@ mod tests {
         let old = state.cloud.control.identity().unwrap();
         let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
         st.save(&files).unwrap();
-        let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
+        let refused = post_re_enroll_fresh(State(CloudState::from_ref(&state)), alice()).await.unwrap_err();
         assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
         assert_eq!(state.cloud.control.identity().unwrap().sign_public(), old.sign_public(), "nothing changed");
         // Refused by the hub as renewed, without a chain to show for it: not
         // evidence, nothing to start again for.
         st.rotation.refused_ms = Some(6);
         st.save(&files).unwrap();
-        let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
+        let refused = post_re_enroll_fresh(State(CloudState::from_ref(&state)), alice()).await.unwrap_err();
         assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
-        let shown = get_cloud(State(state.clone()), alice()).await.unwrap().0.link.unwrap().rotation;
+        let shown = get_cloud(State(CloudState::from_ref(&state)), alice()).await.unwrap().0.link.unwrap().rotation;
         assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("refused", Some("rotated")));
         st.rotation.foreign_ms = Some(6);
         st.rotation.foreign_reason = Some(crate::agent::rotation::FOREIGN_RENEWED_ELSEWHERE.into());
         st.save(&files).unwrap();
-        let before = get_cloud(State(state.clone()), alice()).await.unwrap().0;
+        let before = get_cloud(State(CloudState::from_ref(&state)), alice()).await.unwrap().0;
         let rotation = before.link.unwrap().rotation;
         assert_eq!((rotation.state.as_str(), rotation.reason.as_deref()), ("foreign", Some("renewed_elsewhere")));
-        let fresh = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap().0;
+        let fresh = post_re_enroll_fresh(State(CloudState::from_ref(&state)), alice()).await.unwrap().0;
         assert_eq!(fresh.state, "unenrolled");
         let new = state.cloud.control.identity().unwrap();
         assert_ne!(new.sign_public(), old.sign_public(), "a fresh seed");
@@ -1168,7 +1191,7 @@ mod tests {
             .filter(|n| n.starts_with("machine-key.retired-"))
             .collect();
         assert_eq!(archived.len(), 1, "the retired seed is archived: {archived:?}");
-        let after = get_cloud(State(state.clone()), alice()).await.unwrap().0;
+        let after = get_cloud(State(CloudState::from_ref(&state)), alice()).await.unwrap().0;
         assert_eq!(after.state, "none", "back at entering a registration code");
         assert!(after.link.is_none());
     }
@@ -1250,7 +1273,7 @@ mod tests {
 
     /// Make `user` the owner, as a sign-in from the local settings does.
     async fn own(state: &AppState, user: &str) {
-        let since = accounts(state).await.get(user).cloned().unwrap();
+        let since = accounts(&CloudState::from_ref(state)).await.get(user).cloned().unwrap();
         state
             .cloud
             .update_file(|f| {
@@ -1277,16 +1300,16 @@ mod tests {
     async fn the_status_says_who_sees_the_other_devices_here() {
         let home = tempfile::tempdir().unwrap();
         let state = crate::api::test_support::state(home.path()).await;
-        let none = status_for(&state, None).await;
+        let none = status_for(&CloudState::from_ref(&state), None).await;
         assert!(!none.sees_other_devices && none.accounts.is_empty(), "local authentication off: nobody");
         for user in ["alice", "bob", "carol"] {
             state.drive.auth.users.add(user, "correct horse battery staple").await.unwrap();
         }
         own(&state, "alice").await;
         let alice = signed_in(&state, "alice").await;
-        let _ = put_access(State(state.clone()), alice.clone(), access("carol", true)).await.unwrap();
-        let _ = put_access(State(state.clone()), alice.clone(), access("bob", false)).await.unwrap();
-        let status = status_for(&state, Some("alice")).await;
+        let _ = put_access(State(CloudState::from_ref(&state)), alice.clone(), access("carol", true)).await.unwrap();
+        let _ = put_access(State(CloudState::from_ref(&state)), alice.clone(), access("bob", false)).await.unwrap();
+        let status = status_for(&CloudState::from_ref(&state), Some("alice")).await;
         assert!(status.sees_other_devices);
         assert!(!status.can_claim, "it has an owner");
         let rows: Vec<(String, bool, bool)> = status.accounts.iter().map(|a| (a.user.clone(), a.remote, a.owner)).collect();
@@ -1294,15 +1317,15 @@ mod tests {
             rows,
             vec![("alice".into(), true, true), ("bob".into(), false, false), ("carol".into(), true, false)]
         );
-        let bob = status_for(&state, Some("bob")).await;
+        let bob = status_for(&CloudState::from_ref(&state), Some("bob")).await;
         assert!(!bob.sees_other_devices && bob.accounts.is_empty());
-        assert!(status_for(&state, Some("carol")).await.sees_other_devices);
+        assert!(status_for(&CloudState::from_ref(&state), Some("carol")).await.sees_other_devices);
         // The gateway's own gate, the same rule.
         let carol = signed_in(&state, "carol").await;
-        assert_eq!(remote_viewer(&state, &alice).await.unwrap(), "alice");
-        assert_eq!(remote_viewer(&state, &carol).await.unwrap(), "carol");
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &alice).await.unwrap(), "alice");
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &carol).await.unwrap(), "carol");
         assert_eq!(
-            code_of(remote_viewer(&state, &signed_in(&state, "bob").await).await.unwrap_err()),
+            code_of(remote_viewer(&CloudState::from_ref(&state), &signed_in(&state, "bob").await).await.unwrap_err()),
             (403, "no_remote_access".into())
         );
         let bridged = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
@@ -1310,7 +1333,7 @@ mod tests {
             token_sha256: None,
         }));
         assert_eq!(
-            code_of(remote_viewer(&state, &bridged).await.unwrap_err()),
+            code_of(remote_viewer(&CloudState::from_ref(&state), &bridged).await.unwrap_err()),
             (403, "not_from_cloud".into())
         );
         // A caller whose login cannot be named: refused (fail closed).
@@ -1318,28 +1341,28 @@ mod tests {
             username: "alice".into(),
             token_sha256: None,
         }));
-        assert_eq!(code_of(remote_viewer(&state, &unnamed).await.unwrap_err()), (401, "unauthorized".into()));
+        assert_eq!(code_of(remote_viewer(&CloudState::from_ref(&state), &unnamed).await.unwrap_err()), (401, "unauthorized".into()));
         // A login signed out since its ticket was minted: refused.
         let MaybeIdentity(Some(identity)) = &carol else { unreachable!() };
         state.drive.auth.sessions.revoke(identity.token_sha256.as_deref().unwrap()).await;
-        assert_eq!(code_of(remote_viewer(&state, &carol).await.unwrap_err()).0, 401);
+        assert_eq!(code_of(remote_viewer(&CloudState::from_ref(&state), &carol).await.unwrap_err()).0, 401);
         // Only the owner says who else sees them.
         let bob = signed_in(&state, "bob").await;
         assert_eq!(
-            code_of(put_access(State(state.clone()), bob.clone(), access("bob", true)).await.unwrap_err()),
+            code_of(put_access(State(CloudState::from_ref(&state)), bob.clone(), access("bob", true)).await.unwrap_err()),
             (403, "not_owner".into())
         );
         // The owner's account gone: anybody may manage the link, but nobody sees.
         state.drive.auth.users.remove("alice").await.unwrap();
         assert_eq!(
-            code_of(remote_viewer(&state, &signed_in(&state, "carol").await).await.unwrap_err()),
+            code_of(remote_viewer(&CloudState::from_ref(&state), &signed_in(&state, "carol").await).await.unwrap_err()),
             (403, "no_remote_access".into())
         );
-        assert!(!status_for(&state, Some("bob")).await.sees_other_devices);
+        assert!(!status_for(&CloudState::from_ref(&state), Some("bob")).await.sees_other_devices);
         // A cloud.json that does not read: nobody either.
         std::fs::write(LinkFile::of(&state.cloud.paths).path(), b"{\"owner\": tr").unwrap();
         assert!(state.cloud.read_file_strict().is_none());
-        assert!(!status_for(&state, Some("carol")).await.sees_other_devices);
+        assert!(!status_for(&CloudState::from_ref(&state), Some("carol")).await.sees_other_devices);
     }
 
     /// The user's decision of 2026-10-19: an ownerless link (enrolled from the
@@ -1358,29 +1381,29 @@ mod tests {
         let mallory = signed_in(&state, "mallory").await;
         // No cloud.json at all (enrolled from the command line): nobody sees.
         assert_eq!(
-            code_of(remote_viewer(&state, &alice).await.unwrap_err()),
+            code_of(remote_viewer(&CloudState::from_ref(&state), &alice).await.unwrap_err()),
             (403, "no_remote_access".into())
         );
         // Not signed in to Droppen: nothing to claim.
         assert_eq!(
-            code_of(post_claim(State(state.clone()), alice.clone()).await.unwrap_err()),
+            code_of(post_claim(State(CloudState::from_ref(&state)), alice.clone()).await.unwrap_err()),
             (409, "not_linked".into())
         );
-        assert!(!status_for(&state, Some("alice")).await.can_claim);
+        assert!(!status_for(&CloudState::from_ref(&state), Some("alice")).await.can_claim);
         enrolled(&state);
-        assert!(status_for(&state, Some("alice")).await.can_claim);
-        assert!(may_manage(&state, &state.cloud.read_file(), "bob").await, "anybody manages it");
+        assert!(status_for(&CloudState::from_ref(&state), Some("alice")).await.can_claim);
+        assert!(may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "bob").await, "anybody manages it");
         // Anybody may manage it, but nobody may allow anybody while nobody owns it.
         assert_eq!(
             code_of(
-                put_access(State(state.clone()), mallory.clone(), access("mallory", true))
+                put_access(State(CloudState::from_ref(&state)), mallory.clone(), access("mallory", true))
                     .await
                     .unwrap_err()
             ),
             (403, "not_owner".into())
         );
         // An allowance written by hand meanwhile does not survive a claim either.
-        let t = accounts(&state).await;
+        let t = accounts(&CloudState::from_ref(&state)).await;
         state
             .cloud
             .update_file(|f| {
@@ -1388,15 +1411,15 @@ mod tests {
                 f.accounts_since.insert("mallory".into(), t["mallory"].clone());
             })
             .unwrap();
-        let claimed = post_claim(State(state.clone()), bob.clone()).await.unwrap();
+        let claimed = post_claim(State(CloudState::from_ref(&state)), bob.clone()).await.unwrap();
         assert!(claimed.sees_other_devices && !claimed.can_claim);
-        assert_eq!(remote_viewer(&state, &bob).await.unwrap(), "bob", "claimed: bob alone");
-        assert!(remote_viewer(&state, &mallory).await.is_err(), "nothing allowed before the claim holds");
-        assert!(remote_viewer(&state, &alice).await.is_err());
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &bob).await.unwrap(), "bob", "claimed: bob alone");
+        assert!(remote_viewer(&CloudState::from_ref(&state), &mallory).await.is_err(), "nothing allowed before the claim holds");
+        assert!(remote_viewer(&CloudState::from_ref(&state), &alice).await.is_err());
         assert!(state.cloud.read_file().remote_access.is_empty());
         // A second claim: refused.
         assert_eq!(
-            code_of(post_claim(State(state.clone()), alice.clone()).await.unwrap_err()).1,
+            code_of(post_claim(State(CloudState::from_ref(&state)), alice.clone()).await.unwrap_err()).1,
             "not_owner",
             "only the owner manages it now"
         );
@@ -1419,7 +1442,7 @@ mod tests {
         }
         let claims = callers.into_iter().map(|who| {
             let state = state.clone();
-            tokio::spawn(async move { post_claim(State(state), who).await.map(|_| ()) })
+            tokio::spawn(async move { post_claim(State(CloudState::from_ref(&state)), who).await.map(|_| ()) })
         });
         let claims: Vec<_> = claims.collect();
         let mut won = 0;
@@ -1449,14 +1472,14 @@ mod tests {
         }
         own(&state, "alice").await;
         let alice = signed_in(&state, "alice").await;
-        let _ = put_access(State(state.clone()), alice.clone(), access("carol", true)).await.unwrap();
-        assert!(remote_viewer(&state, &signed_in(&state, "carol").await).await.is_ok());
+        let _ = put_access(State(CloudState::from_ref(&state)), alice.clone(), access("carol", true)).await.unwrap();
+        assert!(remote_viewer(&CloudState::from_ref(&state), &signed_in(&state, "carol").await).await.is_ok());
         // carol goes, and a new carol comes (a ms later at least).
         state.drive.auth.users.remove("carol").await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         state.drive.auth.users.add("carol", "another horse battery staple").await.unwrap();
         assert_eq!(
-            code_of(remote_viewer(&state, &signed_in(&state, "carol").await).await.unwrap_err()),
+            code_of(remote_viewer(&CloudState::from_ref(&state), &signed_in(&state, "carol").await).await.unwrap_err()),
             (403, "no_remote_access".into())
         );
         // So does alice: the new one is not the owner — nobody is, until a claim.
@@ -1464,9 +1487,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         state.drive.auth.users.add("alice", "another horse battery staple").await.unwrap();
         let again = signed_in(&state, "alice").await;
-        assert!(remote_viewer(&state, &again).await.is_err());
+        assert!(remote_viewer(&CloudState::from_ref(&state), &again).await.is_err());
         enrolled(&state);
-        assert!(status_for(&state, Some("alice")).await.can_claim, "an ownerless link again");
+        assert!(status_for(&CloudState::from_ref(&state), Some("alice")).await.can_claim, "an ownerless link again");
     }
 
     /// A port nothing listens on: a hub that cannot be reached.
@@ -1550,13 +1573,13 @@ mod tests {
         assert_ne!(attempt, first, "a new attempt replaces the first");
         assert!(url.starts_with(&format!("{}/link#droppen-link=", web_origin(&hub))), "{url}");
         assert!(!url.contains('?'));
-        let status = status_for(&state, Some("alice")).await;
+        let status = status_for(&CloudState::from_ref(&state), Some("alice")).await;
         assert_eq!(
             status.attempt.as_ref().and_then(|a| a.handoff_url.clone()).as_deref(),
             Some(url.as_str()),
             "the opener sees it"
         );
-        let bob = status_for(&state, Some("bob")).await;
+        let bob = status_for(&CloudState::from_ref(&state), Some("bob")).await;
         assert!(bob.attempt.unwrap().handoff_url.is_none(), "nobody else does");
 
         let reply = serde_json::json!({"code": valid_code(), "email": "me@example.com"});
@@ -1573,7 +1596,7 @@ mod tests {
         assert_eq!(res.status(), 400);
         // A device bridged from Droppen never answers, even with the right reply.
         let bridged = post_return(
-            State(state.clone()),
+            State(CloudState::from_ref(&state)),
             MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                 username: "cloud:d-1".into(),
                 token_sha256: None,
@@ -1597,11 +1620,11 @@ mod tests {
         let res = give_back(attempt.clone(), sealed).await.unwrap();
         assert_eq!(res.status(), 404, "once only");
         // The page that waits sees how it ended; nobody else does.
-        let seen = status_for(&state, Some("alice")).await.handoff.expect("an outcome");
+        let seen = status_for(&CloudState::from_ref(&state), Some("alice")).await.handoff.expect("an outcome");
         assert_eq!((seen.attempt.as_str(), seen.outcome.as_str()), (attempt.as_str(), "failed"));
         assert_eq!(seen.error.as_deref(), Some("hub_unreachable"));
-        assert!(status_for(&state, Some("bob")).await.handoff.is_none());
-        assert!(status_for(&state, None).await.handoff.is_none());
+        assert!(status_for(&CloudState::from_ref(&state), Some("bob")).await.handoff.is_none());
+        assert!(status_for(&CloudState::from_ref(&state), None).await.handoff.is_none());
     }
 
     /// A server that owns its instance and listens, as `return` needs it (the
@@ -1631,7 +1654,7 @@ mod tests {
         }
         let alice = signed_in(&state, "alice").await;
         let Json(opened) = post_link(
-            State(state.clone()),
+            State(CloudState::from_ref(&state)),
             alice,
             PageOrigin(Some(format!("http://{addr}"))),
             ApiJson(LinkRequest { hub, aggregate: None }),
@@ -1685,7 +1708,7 @@ mod tests {
         assert_eq!(opened.hub_web, app);
         let url = opened.handoff_url.clone().expect("opened from a page");
         assert!(url.starts_with(&format!("{app}/link#droppen-link=")), "{url}");
-        let status = status_for(&state, Some("alice")).await;
+        let status = status_for(&CloudState::from_ref(&state), Some("alice")).await;
         assert_eq!((status.hub.as_str(), status.hub_web.as_str()), (hub.as_str(), app.as_str()), "the agent stays on the hub");
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
         // The answer through the browser is bound to the page's origin, not
@@ -1713,11 +1736,11 @@ mod tests {
         let url = opened.handoff_url.clone().expect("opened from a page");
         let reply = serde_json::json!({"code": valid_code()});
         let (_, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
-        let before = status_for(&state, Some("alice")).await;
+        let before = status_for(&CloudState::from_ref(&state), Some("alice")).await;
         assert!(before.attempt.is_some() && before.handoff.is_none());
 
         let returning = tokio::spawn(post_return(
-            State(state.clone()),
+            State(CloudState::from_ref(&state)),
             MaybeIdentity(None),
             ApiJson(ReturnRequest {
                 attempt: opened.attempt.clone(),
@@ -1726,7 +1749,7 @@ mod tests {
         ));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            let seen = status_for(&state, Some("alice")).await;
+            let seen = status_for(&CloudState::from_ref(&state), Some("alice")).await;
             match (seen.attempt.is_some(), seen.handoff) {
                 (true, None) => {}
                 (false, Some(handoff)) => {
@@ -1742,8 +1765,8 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         assert!(!returning.is_finished(), "still enrolling: the hub has not answered");
-        assert!(status_for(&state, Some("bob")).await.handoff.is_none());
-        assert!(status_for(&state, None).await.handoff.is_none());
+        assert!(status_for(&CloudState::from_ref(&state), Some("bob")).await.handoff.is_none());
+        assert!(status_for(&CloudState::from_ref(&state), None).await.handoff.is_none());
         returning.abort();
         drop(silent);
     }
@@ -1759,7 +1782,7 @@ mod tests {
         let reply = serde_json::json!({"code": valid_code()});
         let give_back = |sealed: String| {
             post_return(
-                State(state.clone()),
+                State(CloudState::from_ref(&state)),
                 MaybeIdentity(None),
                 ApiJson(ReturnRequest {
                     attempt: opened.attempt.clone(),
@@ -1775,7 +1798,7 @@ mod tests {
         let (_, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
         assert_eq!(code_of(give_back(sealed).await.unwrap_err()), (409, "already_enrolled".into()));
         assert!(state.cloud.live_attempt().is_none(), "used up");
-        let seen = status_for(&state, Some("alice")).await.handoff.expect("an outcome");
+        let seen = status_for(&CloudState::from_ref(&state), Some("alice")).await.handoff.expect("an outcome");
         assert_eq!(
             (seen.outcome.as_str(), seen.error.as_deref()),
             ("failed", Some("already_enrolled"))
@@ -1856,15 +1879,15 @@ mod tests {
                 f.remote_access.insert("droppen-app".into(), true);
             })
             .unwrap();
-        assert_eq!(remote_viewer(&state, &owner).await.unwrap(), crate::auth::LOCAL_OWNER);
-        let status = status_for(&state, Some(crate::auth::LOCAL_OWNER)).await;
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &owner).await.unwrap(), crate::auth::LOCAL_OWNER);
+        let status = status_for(&CloudState::from_ref(&state), Some(crate::auth::LOCAL_OWNER)).await;
         assert!(
             status.can_manage && status.sees_other_devices && !status.can_claim,
             "the owner, with nothing to claim"
         );
         let app = signed_in(&state, "droppen-app").await;
-        assert!(remote_viewer(&state, &app).await.is_err(), "the app's own account is no viewer by itself");
-        assert!(!may_manage(&state, &state.cloud.read_file(), "droppen-app").await);
+        assert!(remote_viewer(&CloudState::from_ref(&state), &app).await.is_err(), "the app's own account is no viewer by itself");
+        assert!(!may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "droppen-app").await);
 
         // The first account: the link is ada's, bound to her account, and the
         // owner's sessions are over.
@@ -1874,17 +1897,17 @@ mod tests {
         let file = state.cloud.read_file();
         assert_eq!(file.owner.as_deref(), Some("ada"));
         assert_eq!(file.remote_access.keys().collect::<Vec<_>>(), ["ada"], "allowances cleared");
-        assert_eq!(file.accounts_since.get("ada"), accounts(&state).await.get("ada"));
+        assert_eq!(file.accounts_since.get("ada"), accounts(&CloudState::from_ref(&state)).await.get("ada"));
         let ada = signed_in(&state, "ada").await;
-        assert_eq!(remote_viewer(&state, &ada).await.unwrap(), "ada");
-        assert!(remote_viewer(&state, &owner).await.is_err(), "the owner's session is gone");
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &ada).await.unwrap(), "ada");
+        assert!(remote_viewer(&CloudState::from_ref(&state), &owner).await.is_err(), "the owner's session is gone");
         let fresh = signed_in(&state, crate::auth::LOCAL_OWNER).await;
         assert!(
-            remote_viewer(&state, &fresh).await.is_err(),
+            remote_viewer(&CloudState::from_ref(&state), &fresh).await.is_err(),
             "and no owner session counts with an account"
         );
-        assert!(!may_manage(&state, &state.cloud.read_file(), crate::auth::LOCAL_OWNER).await);
-        assert!(!status_for(&state, Some(crate::auth::LOCAL_OWNER)).await.sees_other_devices);
+        assert!(!may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), crate::auth::LOCAL_OWNER).await);
+        assert!(!status_for(&CloudState::from_ref(&state), Some(crate::auth::LOCAL_OWNER)).await.sees_other_devices);
     }
 
     /// The desktop app signs this device in to Droppen from its own window,
@@ -1905,15 +1928,15 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            !may_manage(&state, &state.cloud.read_file(), "droppen-app").await,
+            !may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "droppen-app").await,
             "not on a server the app does not run"
         );
         state.desktop_app = true;
-        assert!(may_manage(&state, &state.cloud.read_file(), "droppen-app").await, "on the app's own server");
+        assert!(may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "droppen-app").await, "on the app's own server");
 
         // A link a person's account owns stays theirs to manage.
         state.drive.auth.users.add("ada", "correct horse battery staple").await.unwrap();
-        let since = accounts(&state).await.get("ada").cloned().unwrap();
+        let since = accounts(&CloudState::from_ref(&state)).await.get("ada").cloned().unwrap();
         state
             .cloud
             .update_file(|f| {
@@ -1922,8 +1945,8 @@ mod tests {
                 f.accounts_since.insert("ada".into(), since);
             })
             .unwrap();
-        assert!(!may_manage(&state, &state.cloud.read_file(), "droppen-app").await);
-        assert!(may_manage(&state, &state.cloud.read_file(), "ada").await);
+        assert!(!may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "droppen-app").await);
+        assert!(may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), "ada").await);
     }
 
     /// A sign-in the local owner began before the first account was made,
@@ -1934,15 +1957,15 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let state = crate::api::test_support::state(home.path()).await;
         let owner = crate::auth::LOCAL_OWNER;
-        assert!(may_manage(&state, &state.cloud.read_file(), owner).await, "the owner, while there is no account");
+        assert!(may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), owner).await, "the owner, while there is no account");
         state.drive.auth.users.add("ada", "correct horse battery staple").await.unwrap();
         let file = state.cloud.read_file();
         assert!(file.owner.is_none(), "nobody owns the link");
-        assert!(!may_manage(&state, &file, owner).await, "not the owner any more");
-        assert!(may_manage(&state, &file, "ada").await, "an account manages an ownerless link");
+        assert!(!may_manage(&CloudState::from_ref(&state), &file, owner).await, "not the owner any more");
+        assert!(may_manage(&CloudState::from_ref(&state), &file, "ada").await, "an account manages an ownerless link");
         // What `post_return` asks of the attempt's opener.
         let attempt = attempt(owner, droppen_base::time::now_ms_u64() + 60_000).unwrap();
-        assert!(!may_manage(&state, &file, &attempt.owner).await);
+        assert!(!may_manage(&CloudState::from_ref(&state), &file, &attempt.owner).await);
     }
 
     /// The hand-over moves only a link the local owner signed in: an owner

@@ -24,9 +24,9 @@ pub(super) fn caller(who: &MaybeIdentity) -> Result<Option<String>, ApiError> {
 /// The local user — signed in to a local account, or as this device's owner
 /// while it has no user account — with local authentication on; else 409
 /// `local_auth_required`.
-pub(super) async fn local_user(state: &AppState, who: &MaybeIdentity) -> Result<String, ApiError> {
+pub(super) async fn local_user(state: &CloudState, who: &MaybeIdentity) -> Result<String, ApiError> {
     let user = caller(who)?;
-    let off = state.drive.auth.is_off();
+    let off = state.auth.is_off();
     match user {
         Some(user) if !off => Ok(user),
         _ if off => Err(local_auth_off()),
@@ -62,14 +62,14 @@ pub(super) fn local_auth_off() -> ApiError {
 /// owner rule here asks this first; one that needs the local owner too
 /// belongs beside it. When the first user account is made, a link it signed
 /// in passes to that account ([`super::LinkFile::hand_over_from_local_owner`]).
-pub(super) async fn local_owner_now(state: &AppState, user: &str) -> bool {
-    let auth = &state.drive.auth;
+pub(super) async fn local_owner_now(state: &CloudState, user: &str) -> bool {
+    let auth = &state.auth;
     crate::auth::is_local_owner(user) && !auth.is_off() && !auth.users.has_users().await
 }
 
 /// Every local account's `createdAt`, by name.
-pub(super) async fn accounts(state: &AppState) -> BTreeMap<String, String> {
-    state.drive.auth.users.list().await.into_iter().map(|u| (u.name, u.created_at)).collect()
+pub(super) async fn accounts(state: &CloudState) -> BTreeMap<String, String> {
+    state.auth.users.list().await.into_iter().map(|u| (u.name, u.created_at)).collect()
 }
 
 /// Whether what `file` says of `user` — the owner, or allowed — is about the
@@ -105,7 +105,7 @@ pub(super) fn owner_of<'a>(file: &'a CloudFile, accounts: &BTreeMap<String, Stri
 /// The local owner while there is no user account always may
 /// ([`local_owner_now`]). An app-internal account may only as the owner — it
 /// is never the "anybody" of an ownerless link — except on a server the
-/// desktop app runs ([`AppState::desktop_app`]), where the app-internal account
+/// desktop app runs ([`CloudState::desktop_app`]), where the app-internal account
 /// is the app's own login, its window's: signed in by the app for the
 /// operating-system user who runs it, as the local owner is by `open`, and how
 /// the app signs this device in to Droppen through the system browser
@@ -115,13 +115,13 @@ pub(super) fn owner_of<'a>(file: &'a CloudFile, accounts: &BTreeMap<String, Stri
 /// an account it manages nothing, ownerless link or not — a sign-in it began
 /// before the first account and that came back after must not leave the link
 /// to `local:owner` on a device that has an account.
-pub(super) async fn may_manage(state: &AppState, file: &CloudFile, user: &str) -> bool {
+pub(super) async fn may_manage(state: &CloudState, file: &CloudFile, user: &str) -> bool {
     if crate::auth::is_local_owner(user) {
         return local_owner_now(state, user).await;
     }
     match owner_of(file, &accounts(state).await) {
         Some(owner) => owner == user,
-        None => state.desktop_app || !state.drive.auth.users.is_app(user).await,
+        None => state.desktop_app || !state.auth.users.is_app(user).await,
     }
 }
 
@@ -141,9 +141,9 @@ pub(super) async fn may_manage(state: &AppState, file: &CloudFile, user: &str) -
 /// out or revoked since its ticket was minted (401); anybody else (403
 /// `no_remote_access`). The local gateway asks this before every connection
 /// and again while it lasts ([`crate::cloud::gateway`]).
-pub async fn remote_viewer(state: &AppState, who: &MaybeIdentity) -> Result<String, ApiError> {
+pub async fn remote_viewer(state: &CloudState, who: &MaybeIdentity) -> Result<String, ApiError> {
     let user = local_user(state, who).await?;
-    let auth = &state.drive.auth;
+    let auth = &state.auth;
     let owner_now = local_owner_now(state, &user).await;
     if !owner_now && !auth.users.exists(&user).await {
         return Err(refusal(StatusCode::UNAUTHORIZED, "unauthorized", "this local account is gone"));
@@ -177,7 +177,7 @@ pub async fn remote_viewer(state: &AppState, who: &MaybeIdentity) -> Result<Stri
     Ok(user)
 }
 
-pub(super) async fn require_manager(state: &AppState, user: &str) -> Result<CloudFile, ApiError> {
+pub(super) async fn require_manager(state: &CloudState, user: &str) -> Result<CloudFile, ApiError> {
     let file = state.cloud.read_file();
     if !may_manage(state, &file, user).await {
         return Err(refusal(
