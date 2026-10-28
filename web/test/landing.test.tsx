@@ -77,7 +77,6 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     "电脑离线时，会话仍可查看。",
     "免费注册",
     "登录",
-    "公开测试版",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
@@ -196,8 +195,6 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
-  // The free plan's computers, as the pricing page has them.
-  assert.ok(words.includes(`Free for up to ${PLAN_NUMBERS.free.hosts} computers that run AI`));
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
@@ -229,15 +226,16 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     const html = draw("en", { signup });
     const words = text(html);
     assert.doesNotMatch(words, /invite/i, `${signup}: no invite`);
-    assert.ok(words.includes(`Public beta · Free for up to ${PLAN_NUMBERS.free.hosts} computers that run AI`));
-    assert.match(html, /<a href="\/pricing"[^>]*data-testid="hero-pricing"[^>]*>See pricing<\/a>/);
+    // The first screen sells the product, not its price: no plans, no link to them (the header and the footer have one).
+    assert.doesNotMatch(words, /Public beta|Free for up to|See pricing/, `${signup}: no plans in the hero`);
+    assert.doesNotMatch(html, /data-testid="hero-pricing"/);
     assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
     assert.match(html, /<a href="\/signup"[^>]*>Create a free account<\/a>/);
   }
   for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
     assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
   }
-  assert.ok(text(draw("zh-CN")).includes(`公开测试版 · 最多 ${PLAN_NUMBERS.free.hosts} 台运行 AI 的电脑免费`));
+  for (const lng of ["zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), /公开测试版|公開測試版|パブリックベータ|查看定价|查看定價|料金を見る/, `${lng}: no plans in the hero`);
   // By invite: as before — the code, and the waitlist for those without one.
   const invited = draw("en", { signup: "invite" });
   assert.ok(text(invited).includes("Invite-only for now: sign-up needs an invite code."));

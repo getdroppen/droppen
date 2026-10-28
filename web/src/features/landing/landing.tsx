@@ -17,7 +17,7 @@ import { FooterLine, PublicHeader, Section, SectionHead, SOURCE_URL } from "./pa
 import { PLAN_NUMBERS } from "./pricing-plans";
 import { ProductTour } from "./product-tour";
 import { useLatestRelease } from "./release-files";
-import { APP_PATH, PRICING_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -85,7 +85,7 @@ function Hero({
       </p>
       {/* The way onto this device, and the account's way in (signed in: back into the app). */}
       <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
-      {/* Below 768px the header has no room for its links: this line is the way to the plans. */}
+      {/* By invite or closed, the way to the waitlist. Open sign-up says nothing of plans here: the first screen sells the product, not its price (the header and the footer link the plans). */}
       {!signedIn &&
         (signup === "invite" ? (
           <p className="mt-3 font-mono text-xs text-muted">
@@ -101,14 +101,7 @@ function Hero({
               {t("Join the waitlist")}
             </a>
           </p>
-        ) : (
-          <p className="mt-3 font-mono text-xs text-muted">
-            {t("Public beta · Free for up to {{hosts}} computers that run AI", { hosts: PLAN_NUMBERS.free.hosts })} ·{" "}
-            <a {...publicLink(PRICING_PATH)} data-testid="hero-pricing" className="whitespace-nowrap text-fg underline underline-offset-4">
-              {t("See pricing")}
-            </a>
-          </p>
-        ))}
+        ) : null)}
     </div>
   );
 }
