@@ -4,6 +4,8 @@
 //! and usage errors itself (usage errors exit 2); `--version` is the one answer
 //! printed here, bare (see [`Cli::parse_invoked`]).
 
+pub mod agent;
+
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
@@ -40,7 +42,7 @@ pub enum Command {
     /// Manage the plugins installed in one instance.
     Plugin(crate::plugins::cli::PluginArgs),
     /// Join, run, inspect or leave the cloud agent.
-    Agent(crate::agent::AgentArgs),
+    Agent(agent::AgentArgs),
     /// Send a push notification from a session.
     #[command(hide = true, override_usage = crate::notify::cli::USAGE_LINE)]
     Notify(crate::notify::cli::NotifyArgs),
@@ -113,7 +115,7 @@ impl Cli {
             .mut_subcommand("setup-code", |command| command.after_long_help(long(crate::auth::cli::SETUP_CODE_USAGE)))
             .mut_subcommand("open", |command| command.after_long_help(long(crate::auth::cli::OPEN_USAGE)))
             .mut_subcommand("plugin", |command| command.after_long_help(long(crate::plugins::cli::USAGE)))
-            .mut_subcommand("agent", |command| command.after_long_help(long(crate::agent::USAGE)))
+            .mut_subcommand("agent", |command| command.after_long_help(long(agent::USAGE)))
             .mut_subcommand("replay", |command| command.after_long_help(long(crate::record::replay::USAGE)))
     }
 
@@ -280,7 +282,7 @@ pub(crate) mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-    use crate::agent::{AgentArgs, AgentCommand};
+    use super::agent::{AgentArgs, AgentCommand};
     use crate::auth::cli::{UserArgs, UserCommand};
 
     /// `argv` (everything after the program name) as this binary parses it.
