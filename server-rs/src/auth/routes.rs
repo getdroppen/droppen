@@ -1467,8 +1467,8 @@ mod tests {
         let (_home, state, mut router) = server(None).await;
         let credential = state.drive.auth.internal_credential().to_string();
         let bridged = [
-            (crate::agent::bridge::CREDENTIAL_HEADER, credential.as_str()),
-            (crate::agent::bridge::DEVICE_HEADER, "d-1"),
+            (crate::http::bridge::CREDENTIAL_HEADER, credential.as_str()),
+            (crate::http::bridge::DEVICE_HEADER, "d-1"),
         ];
         let (status, _, body) = send(&mut router, From::ThisDevice, "GET", STATUS_PATH, None, None, &bridged).await;
         assert_eq!(status, 200, "{body}");

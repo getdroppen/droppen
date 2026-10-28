@@ -458,14 +458,14 @@ trait RequestCredentialsExt {
 
 impl RequestCredentialsExt for HeaderMap {
     fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
-        let offered = self.get(crate::agent::bridge::CREDENTIAL_HEADER)?.as_bytes();
+        let offered = self.get(crate::http::bridge::CREDENTIAL_HEADER)?.as_bytes();
         if !peer.is_some_and(|p| p.ip().is_loopback()) {
             return None;
         }
         if !bool::from(subtle::ConstantTimeEq::ct_eq(offered, expected.as_bytes())) {
             return None;
         }
-        let device = self.get(crate::agent::bridge::DEVICE_HEADER)?.to_str().ok()?;
+        let device = self.get(crate::http::bridge::DEVICE_HEADER)?.to_str().ok()?;
         let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_graphic());
         valid.then(|| AuthIdentity {
             username: format!("cloud:{device}"),
@@ -529,8 +529,8 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         .get::<gotcha::axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0);
     let bridged = auth.bridged(request.headers(), peer);
-    request.headers_mut().remove(crate::agent::bridge::CREDENTIAL_HEADER);
-    request.headers_mut().remove(crate::agent::bridge::DEVICE_HEADER);
+    request.headers_mut().remove(crate::http::bridge::CREDENTIAL_HEADER);
+    request.headers_mut().remove(crate::http::bridge::DEVICE_HEADER);
 
     let is_exempt = exempt(&method, &path);
     // Resolved wherever it could matter, which is two overlapping sets. Every
@@ -878,8 +878,8 @@ mod tests {
         let cred = "ab".repeat(32);
         let with = |value: &str, device: &str| {
             let mut h = HeaderMap::new();
-            h.insert(crate::agent::bridge::CREDENTIAL_HEADER, HeaderValue::from_str(value).unwrap());
-            h.insert(crate::agent::bridge::DEVICE_HEADER, HeaderValue::from_str(device).unwrap());
+            h.insert(crate::http::bridge::CREDENTIAL_HEADER, HeaderValue::from_str(value).unwrap());
+            h.insert(crate::http::bridge::DEVICE_HEADER, HeaderValue::from_str(device).unwrap());
             h
         };
         let local: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();

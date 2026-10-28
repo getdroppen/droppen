@@ -20,10 +20,8 @@ use rh_proto::mux::StreamClass;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
-/// The header carrying the internal credential.
-pub const CREDENTIAL_HEADER: &str = "x-rh-agent";
-/// The header naming the device a bridged request is from.
-pub const DEVICE_HEADER: &str = "x-rh-agent-device";
+use crate::http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER};
+
 /// The largest rpc request body the bridge buffers.
 const MAX_BODY: usize = 64 * 1024 * 1024;
 

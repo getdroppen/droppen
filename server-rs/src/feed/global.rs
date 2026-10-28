@@ -851,7 +851,7 @@ mod tests {
 
         let mut request = format!("ws://{addr}/api/events").into_client_request().expect("a request");
         request.headers_mut().insert(
-            crate::agent::bridge::CREDENTIAL_HEADER,
+            crate::http::bridge::CREDENTIAL_HEADER,
             state
                 .drive
                 .auth
@@ -861,7 +861,7 @@ mod tests {
                 .expect("a header value"),
         );
         request.headers_mut().insert(
-            crate::agent::bridge::DEVICE_HEADER,
+            crate::http::bridge::DEVICE_HEADER,
             "d-1".parse().expect("a header value"),
         );
         let (mut cloud, _) = tokio_tungstenite::connect_async(request).await.expect("a bridged socket");
