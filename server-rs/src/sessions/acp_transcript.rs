@@ -88,10 +88,22 @@ const HEAD_BYTES: usize = 64 * 1024;
 /// How long a tool's one-line summary may be.
 const LINE: usize = 180;
 
+/// The longest agent id.
+pub(crate) const MAX_AGENT_ID: usize = 64;
+
+/// Whether `id` can name an agent: ASCII lowercase letters, digits and `-`,
+/// starting with a letter or digit. It is a directory name and a key, so
+/// nothing else is let near either.
+pub fn valid_agent_id(id: &str) -> bool {
+    id.len() <= MAX_AGENT_ID
+        && id.bytes().next().is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 /// The directory one agent's transcripts are kept in, or `None` for an id that
-/// cannot name one ([`crate::acp_agent::valid_id`]).
+/// cannot name one ([`valid_agent_id`]).
 pub fn agent_dir(paths: &Paths, agent: &str) -> Option<PathBuf> {
-    crate::acp_agent::valid_id(agent).then(|| AcpTranscripts::of(&paths).dir().join(agent))
+    valid_agent_id(agent).then(|| AcpTranscripts::of(&paths).dir().join(agent))
 }
 
 /// Whether `id` can name a session: only the ids that cannot leave the
@@ -124,7 +136,7 @@ async fn agent_dirs(paths: &Paths) -> Vec<String> {
     let mut agents = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if crate::acp_agent::valid_id(&name) && entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
+        if valid_agent_id(&name) && entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
             agents.push(name);
         }
     }
@@ -802,5 +814,15 @@ mod tests {
         listed.sort();
         assert_eq!(listed, vec![("s-1".into(), Some("one".into())), ("s-2".into(), Some("two".into()))]);
         assert_eq!(locate(&paths, "s-2").await.map(|(agent, _)| agent).as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn an_agent_id_is_a_slug() {
+        for good in ["bub", "open-code", "a1", "9", &"x".repeat(MAX_AGENT_ID)] {
+            assert!(valid_agent_id(good), "{good}");
+        }
+        for bad in ["", "-x", "Bub", "a_b", "a.b", "../x", "a/b", "é", &"x".repeat(MAX_AGENT_ID + 1)] {
+            assert!(!valid_agent_id(bad), "{bad}");
+        }
     }
 }

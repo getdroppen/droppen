@@ -491,7 +491,7 @@ fn validate_body(
 fn validate_acp_agent(state: &AppState, source: Source, agent: Option<&str>) -> Result<(), ApiError> {
     match (source, agent) {
         (Source::Acp, None) => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
-        (Source::Acp, Some(id)) if !crate::acp_agent::valid_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
+        (Source::Acp, Some(id)) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
         (Source::Acp, Some(id)) if crate::acp_agent::AcpAgentRegistry::of(&state.paths).get(id).is_none() => {
             Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
         }

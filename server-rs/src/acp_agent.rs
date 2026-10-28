@@ -20,7 +20,7 @@
 //!   These are the agents sessions run on ([`AcpAgentRegistry::list`],
 //!   [`AcpAgentRegistry::get`]).
 //!
-//! The id is a short slug ([`valid_id`]): it names the directory an agent's
+//! The id is a short slug ([`valid_agent_id`]): it names the directory an agent's
 //! transcripts are kept in ([`crate::sessions::acp_transcript`]) and is
 //! recorded on every session, so a session is reopened by the agent it ran on
 //! and no other. Removing an agent leaves its sessions alone: they stay listed
@@ -56,10 +56,9 @@ use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
 use crate::process_env::{clean_env_bare, resolve_on_path, Env};
+use crate::sessions::acp_transcript::{valid_agent_id, MAX_AGENT_ID};
 use crate::sessions::{SessionSummary, Source};
 
-/// The longest agent id.
-const MAX_ID: usize = 64;
 /// The longest name a person needs.
 const MAX_NAME: usize = 64;
 /// The longest executable path a person can mean.
@@ -69,15 +68,6 @@ const MAX_ARGS: usize = 64;
 const MAX_ARG: usize = 4096;
 /// The most agents one machine configures.
 const MAX_AGENTS: usize = 64;
-
-/// Whether `id` can name an agent: ASCII lowercase letters, digits and `-`,
-/// starting with a letter or digit. It is a directory name and a key, so
-/// nothing else is let near either.
-pub fn valid_id(id: &str) -> bool {
-    id.len() <= MAX_ID
-        && id.bytes().next().is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
-        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
 
 /// One built-in agent description: how a known agent is started in ACP mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -128,7 +118,7 @@ fn preset(id: &str) -> Option<&'static AcpAgentPreset> {
 /// One configured agent, values included. Never serialized to a client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpAgent {
-    /// Its id ([`valid_id`]).
+    /// Its id ([`valid_agent_id`]).
     pub id: String,
     /// What the user calls it, in every message about it.
     pub name: String,
@@ -293,14 +283,14 @@ impl AcpAgentRegistry {
         crate::db::at(&self.0)
             .kv_scope(scope::ACP_AGENTS)
             .into_iter()
-            .filter(|(id, _)| valid_id(id))
+            .filter(|(id, _)| valid_agent_id(id))
             .filter_map(|(id, raw)| parse(&id, &raw))
             .collect()
     }
 
     /// The configured agent `id`, or `None` when there is none.
     pub fn get(&self, id: &str) -> Option<AcpAgent> {
-        if !valid_id(id) {
+        if !valid_agent_id(id) {
             return None;
         }
         let raw = crate::db::at(&self.0).kv_get(scope::ACP_AGENTS, id)?;
@@ -328,9 +318,9 @@ impl AcpAgentRegistry {
     /// it; or say why it was refused. A new agent with a built-in's id starts from
     /// that description.
     pub fn update(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
-        if !valid_id(id) {
+        if !valid_agent_id(id) {
             return Err(format!(
-                "an agent id is at most {MAX_ID} lowercase letters, digits and dashes, starting with a letter or digit"
+                "an agent id is at most {MAX_AGENT_ID} lowercase letters, digits and dashes, starting with a letter or digit"
             ));
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -385,7 +375,7 @@ impl AcpAgentRegistry {
 
     /// Forget the agent `id`; `false` when there was none. Its sessions stay.
     pub fn remove(&self, id: &str) -> bool {
-        if !valid_id(id) {
+        if !valid_agent_id(id) {
             return false;
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -802,22 +792,12 @@ mod tests {
         assert!(!presets().is_empty());
         let mut ids: Vec<&str> = presets().iter().map(|preset| preset.id.as_str()).collect();
         for preset in presets() {
-            assert!(valid_id(&preset.id), "{}", preset.id);
+            assert!(valid_agent_id(&preset.id), "{}", preset.id);
             assert!(!preset.name.is_empty() && !preset.command.is_empty(), "{preset:?}");
         }
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), presets().len(), "ids are unique");
-    }
-
-    #[test]
-    fn an_id_is_a_slug() {
-        for good in ["bub", "open-code", "a1", "9", &"x".repeat(MAX_ID)] {
-            assert!(valid_id(good), "{good}");
-        }
-        for bad in ["", "-x", "Bub", "a_b", "a.b", "../x", "a/b", "é", &"x".repeat(MAX_ID + 1)] {
-            assert!(!valid_id(bad), "{bad}");
-        }
     }
 
     #[test]

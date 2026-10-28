@@ -332,7 +332,7 @@ pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuer
             let agent = query
                 .acp_agent
                 .as_deref()
-                .filter(|id| crate::acp_agent::valid_id(id))
+                .filter(|id| crate::sessions::acp_transcript::valid_agent_id(id))
                 .ok_or_else(|| ApiError::bad_request("acpAgent names the ACP agent to list models for"))?;
             let (models, source, left_out) = acp_models(&state, agent).await;
             hidden = left_out;
