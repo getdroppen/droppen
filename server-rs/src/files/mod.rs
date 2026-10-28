@@ -38,10 +38,12 @@ const ATTACHMENT_LIMIT: u64 = 100 * 1024 * 1024;
 /// Headroom over the file-size ceiling for the multipart framing that carries it.
 ///
 /// axum caps every request body at 2 MiB unless a route says otherwise
-/// (`DefaultBodyLimit`), and answers past the cap with a bare `413`. Each upload
-/// route's transport limit is its ceiling plus this, so a file *at* the ceiling
-/// still arrives, and one just over it is refused by the handler's own check,
-/// with its message.
+/// (`DefaultBodyLimit`); a route that keeps the cap refuses a larger body with
+/// a bare `413` before the handler runs. Each upload route raises its cap to
+/// its ceiling plus this, so a file *at* the ceiling still arrives, and one
+/// just over it is refused by the handler's own check, with its message. A body
+/// past even the raised cap fails while the multipart body is being read, which
+/// the handler reports as its fallback text (a `400`), not a bare `413`.
 const MULTIPART_OVERHEAD: u64 = 64 * 1024;
 /// How long an uploaded-but-never-sent attachment survives; see [`sweep_uploads`].
 const UPLOAD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -745,8 +747,8 @@ async fn stat_for_download(paths: &Paths, reach: Reach, requested: &str) -> Resu
 
 /// The file's bytes as a stream, so the response is chunked.
 ///
-/// `unfold` rather than `tokio_util::io::ReaderStream`, which needs the `io`
-/// feature `tokio-util` is built without here.
+/// `unfold` rather than `tokio_util::io::ReaderStream` only because
+/// `Cargo.toml` does not ask for `tokio-util`'s `io` feature.
 fn file_stream(file: tokio::fs::File) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> {
     futures_util::stream::unfold(Some(file), |state| async move {
         let mut file = state?;

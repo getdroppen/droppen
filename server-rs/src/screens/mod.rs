@@ -21,18 +21,16 @@
 //!
 //! In [`crate::db`], one row per layout. A `screens.json` written *in place* —
 //! `tokio::fs::write` straight over the live file with no lock of any kind — is
-//! truncated by a crash in that window, and every reader here turns a truncated
-//! file into an empty list: all the layouts go at once rather than one being
-//! damaged. A transaction has no such window, and nothing opens the file now.
+//! truncated by a crash in that window, and a reader that turns a truncated
+//! file into an empty list loses every layout at once rather than one. A
+//! transaction has no such window; nothing opens `screens.json`.
 //!
 //! # Two devices, one layout
 //!
 //! A phone and a laptop open the same screen. Without [`Screen::revision`] the
-//! server cannot tell their saves apart: every layout save replaces the whole
-//! tree, create and delete re-write every row from a list read outside the
-//! transaction, and the client never looks at the server again once it has a
-//! tree — whoever saves last erases the other without either of them seeing it
-//! happen.
+//! server could not tell their saves apart: a layout save replaces the whole
+//! tree, so whoever saved last would erase the other without either of them
+//! seeing it.
 //!
 //! So every row carries a revision, bumped by each write, and a save names the
 //! revision it started from: a save based on a revision that is no longer the
@@ -165,12 +163,12 @@ pub struct ScreenUpdate {
     /// One emoji; blank restores the default icon, absent leaves it alone.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub emoji: Optional<String>,
-    /// New pane tree; absent leaves it alone.
-    ///
-    /// The custom deserializer is what keeps "absent" and "`null`" apart:
-    /// [`Optional`] alone folds a JSON `null` into `None`, but the contract
-    /// treats an explicit `null` as a layout that was *supplied*, sanitized
-    /// down to a single empty pane.
+    /// New pane tree; absent leaves it alone, and an explicit `null` is a
+    /// supplied layout, sanitized down to a single empty pane.
+    // The custom deserializer is what keeps "absent" and "`null`" apart:
+    // [`Optional`] alone folds a JSON `null` into `None`, but the contract
+    // treats an explicit `null` as a layout that was *supplied*, sanitized down
+    // to a single empty pane.
     #[serde(default, deserialize_with = "explicit_layout", skip_serializing_if = "Optional::is_none")]
     pub layout: Optional<AnyValue>,
 }
@@ -657,8 +655,8 @@ const LIST_REVISION: &str = "list-revision";
 ///
 /// A row that will not parse is dropped rather than fatal and an empty store
 /// reads as an empty list: nothing here may lock the user out of making new
-/// screens. `ordinal` preserves the order the rows were written, which is the
-/// order the user made them; `rowid` breaks the tie two rows written by an older
+/// screens. `ordinal` is the list's order: a create appends at the end and
+/// [`reorder`] rewrites it; `rowid` breaks the tie two rows written by an older
 /// build could share.
 fn screens_in(conn: &Connection) -> rusqlite::Result<Vec<Screen>> {
     let mut statement = conn.prepare("SELECT payload, revision FROM screens ORDER BY ordinal, rowid")?;
@@ -1216,9 +1214,9 @@ mod tests {
     }
 
     /// A `screens.json` written in place is truncated by a crash mid-write, and
-    /// every reader here turns a truncated file into no screens at all — every
-    /// saved layout gone at once rather than one damaged. A layout is a row: a
-    /// save writes the table and creates no file, and nothing reads one.
+    /// a reader that turns a truncated file into an empty list loses every
+    /// layout at once rather than one. A transaction has no such window;
+    /// nothing opens `screens.json`.
     #[tokio::test]
     async fn a_save_writes_only_the_table() {
         let home = tempfile::tempdir().expect("tempdir");
