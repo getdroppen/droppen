@@ -423,7 +423,11 @@ impl Transcript {
         }
         // A tokio file's write only hands the bytes to a blocking task; the
         // flush waits for that write to finish.
-        if let Err(error) = self.file.write_all(text.as_bytes()).await.and(self.file.flush().await) {
+        let written = async {
+            self.file.write_all(text.as_bytes()).await?;
+            self.file.flush().await
+        };
+        if let Err(error) = written.await {
             tracing::warn!(%error, "cannot write an ACP transcript");
         }
     }
