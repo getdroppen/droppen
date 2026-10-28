@@ -6,7 +6,8 @@
  * of it is part of the wait on a cold start, and of the first load after a
  * release, which rehashes it. Their files are fetched ahead of use once the
  * first page is drawn (`view-prefetch.ts`), so opening one does not wait on
- * the network either.
+ * the network either: the build finds every module a `lazyRouteComponent`
+ * here or in `router.tsx` loads, so a view added to either needs no list.
  *
  * Routes (`router.tsx`) and split panes (`secondary-pane.tsx`) both take them
  * from here. `lazyRouteComponent` reloads the page once when a chunk is gone

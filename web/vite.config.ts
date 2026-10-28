@@ -87,30 +87,25 @@ const ON_DEMAND = [
 ];
 
 /**
- * The views the page fetches ahead of use once its first page is drawn
- * (`src/app/view-prefetch.ts`, `build/view-prefetch.ts`), in this order: what
- * a visit most likely opens next. A new session and a session, from the list
- * the app opens on; the chats; files and terminals; settings, stats and
- * updates; the rest. The terminal itself last: xterm is the largest by far,
- * and only a terminal draws it. Math and diagrams stay on demand: only a
- * message that holds one fetches them.
+ * Which views the page fetches ahead of use once its first page is drawn
+ * (`src/app/view-prefetch.ts`). Not a list of them: the build finds every
+ * view a route loads on demand (`build/view-prefetch.ts`), so a new route's
+ * is fetched without being named here. Named are the exceptions only:
+ *
+ * - `first`: what a visit most likely opens next from the list the app opens
+ *   on, a new session and a session. The rest follow in the order the code
+ *   loads them.
+ * - `skip`: pages a signed-in visit does not open: the login and the first
+ *   account's setup, and the app's first-run guide.
+ * - `last`: the terminal itself, which a terminal view loads rather than a
+ *   route, after every view: xterm is the largest by far. Math and diagrams
+ *   stay on demand: only a message that holds one fetches them.
  */
-const PREFETCH = [
-  "src/features/sessions/new-session-view.tsx",
-  "src/features/sessions/session-detail.tsx",
-  "src/features/chat/claude-chat-view.tsx",
-  "src/features/chat/chat-home.tsx",
-  "src/features/chat/api-chat-view.tsx",
-  "src/features/files/files-view.tsx",
-  "src/features/terminals/terminals-view.tsx",
-  "src/features/settings/settings-view.tsx",
-  "src/features/stats/stats-view.tsx",
-  "src/features/updates/updates-view.tsx",
-  "src/features/sessions/subagent-view.tsx",
-  "src/features/screens/screen-view.tsx",
-  "src/features/apps/app-view.tsx",
-  "src/features/terminals/xterm-pane.tsx",
-];
+const PREFETCH = {
+  first: ["src/features/sessions/new-session-view.tsx", "src/features/sessions/session-detail.tsx"],
+  skip: ["src/features/auth/login-view.tsx", "src/features/auth/setup-view.tsx", "src/features/setup/welcome-view.tsx"],
+  last: ["src/features/terminals/xterm-pane.tsx"],
+};
 
 /**
  * KaTeX's stylesheet offers each of its twenty fonts as woff2, woff and ttf.

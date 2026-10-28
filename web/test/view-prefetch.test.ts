@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { build, type Rollup } from "vite";
-import { VIEW_FILES, viewPrefetch } from "../build/view-prefetch.js";
+import { VIEW_FILES, viewPrefetch, type ViewPrefetchOptions } from "../build/view-prefetch.js";
 import { fetchViews } from "../src/app/view-prefetch.js";
 
 /** A small app in a temporary directory, built with the plugin: `files` are its sources under `src/`. */
-async function buildApp(files: Record<string, string>, views: readonly string[]) {
+async function buildApp(files: Record<string, string>, options: ViewPrefetchOptions = {}) {
   // Its real path: Vite takes a root through a symlink (macOS's /var) for one outside the build.
   const root = realpathSync(mkdtempSync(join(tmpdir(), "view-prefetch-")));
   try {
@@ -19,27 +19,48 @@ async function buildApp(files: Record<string, string>, views: readonly string[])
       mkdirSync(dirname(join(root, "src", path)), { recursive: true });
       writeFileSync(join(root, "src", path), text);
     }
-    const out = (await build({ root, configFile: false, logLevel: "silent", plugins: [viewPrefetch(views)], build: { write: false } })) as Rollup.RollupOutput;
+    const out = (await build({ root, configFile: false, logLevel: "silent", plugins: [viewPrefetch(options)], build: { write: false } })) as Rollup.RollupOutput;
     return out.output.filter((file): file is Rollup.OutputChunk => file.type === "chunk");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
+/**
+ * Routes whose views load with `lazyRouteComponent` (`routes.ts`), as the
+ * app's do, and a view that loads a module of its own with `import()`
+ * (the session view's terminal pane), which is not a route's.
+ */
 const APP_FILES = {
   "main.ts": [
     'import { shell } from "./shell";',
+    'import { routes } from "./routes";',
     `const files = typeof ${VIEW_FILES} === "undefined" ? null : ${VIEW_FILES};`,
-    "console.log(shell(), files);",
-    'document.body.onclick = () => void import("./views/session").then((m) => m.session());',
-    'document.body.onkeydown = () => void import("./views/settings").then((m) => m.settings());',
-    'document.body.onfocus = () => void import("./views/files").then((m) => m.files());',
+    "console.log(shell(), routes, files);",
+  ].join("\n"),
+  "router-lib.ts": "export const lazyRouteComponent = (load: () => Promise<unknown>) => ({ preload: load });\n",
+  "routes.ts": [
+    'import { lazyRouteComponent } from "./router-lib";',
+    'const session = () => import("./views/session");',
+    "export const routes = [",
+    '  lazyRouteComponent(() => import("./views/settings")),',
+    "  lazyRouteComponent(session),",
+    '  lazyRouteComponent(() => import("./views/login")),',
+    '  lazyRouteComponent(() => import("./views/files")),',
+    "];",
   ].join("\n"),
   "shell.ts": "export const shell = () => 'the list';\n",
   "composer.ts": "export const composer = () => 'a composer';\n",
-  "views/session.ts": 'import { composer } from "../composer";\nimport { shell } from "../shell";\nexport const session = () => [composer(), shell(), "a session"];\n',
+  "views/session.ts": [
+    'import { composer } from "../composer";',
+    'import { shell } from "../shell";',
+    "export const session = () => [composer(), shell(), \"a session\"];",
+    'export const terminal = () => import("../terminal/pane");',
+  ].join("\n"),
   "views/settings.ts": 'import { composer } from "../composer";\nexport const settings = () => [composer(), "settings"];\n',
+  "views/login.ts": "export const login = () => 'login';\n",
   "views/files.ts": "export const files = () => 'files';\n",
+  "terminal/pane.ts": "export const pane = () => 'xterm';\n",
 };
 
 const chunkOf = (chunks: Rollup.OutputChunk[], module: string) => {
@@ -48,25 +69,47 @@ const chunkOf = (chunks: Rollup.OutputChunk[], module: string) => {
   return `/${chunk.fileName}`;
 };
 
-test("the build writes in each view's files in the order given, less the boot and what an earlier view brings", async () => {
-  const chunks = await buildApp(APP_FILES, ["src/views/settings.ts", "src/views/session.ts", "src/views/files.ts"]);
+/** The list the build wrote into the entry, in place of the marker. */
+function written(chunks: Rollup.OutputChunk[], expected: string[][]) {
   const entry = chunks.find((c) => c.isEntry)!;
   assert.equal(entry.code.includes(VIEW_FILES), false, "the marker is gone");
+  assert.ok(entry.code.includes(JSON.stringify(expected)), entry.code);
+}
+
+test("every view a route loads is found and written in, in the order the code loads them, less the boot and what a view before it brings", async () => {
+  const chunks = await buildApp(APP_FILES);
   const settings = chunkOf(chunks, "views/settings.ts");
   const composer = chunkOf(chunks, "composer.ts");
   assert.notEqual(composer, settings, "shared by two views, the composer is a chunk of its own");
-  const expected = [[settings, composer], [chunkOf(chunks, "views/session.ts")], [chunkOf(chunks, "views/files.ts")]];
-  assert.ok(entry.code.includes(JSON.stringify(expected)), entry.code);
+  // Not the terminal pane: a view loads it, not a route.
+  written(chunks, [[chunkOf(chunks, "views/session.ts"), composer], [settings], [chunkOf(chunks, "views/login.ts")], [chunkOf(chunks, "views/files.ts")]]);
 });
 
-test("a view the build does not have, or one in the boot, fails the build", async () => {
-  await assert.rejects(buildApp(APP_FILES, ["src/views/session.ts", "src/views/gone.ts"]), /src\/views\/gone\.ts is in no chunk of this build/);
-  await assert.rejects(buildApp(APP_FILES, ["src/shell.ts"]), /src\/shell\.ts is in a boot chunk/);
+test("only the exceptions are named: views first, views skipped, and modules a view loads, last", async () => {
+  const chunks = await buildApp(APP_FILES, { first: ["src/views/files.ts"], skip: ["src/views/login.ts"], last: ["src/terminal/pane.ts"] });
+  written(chunks, [
+    [chunkOf(chunks, "views/files.ts")],
+    [chunkOf(chunks, "views/session.ts"), chunkOf(chunks, "composer.ts")],
+    [chunkOf(chunks, "views/settings.ts")],
+    [chunkOf(chunks, "terminal/pane.ts")],
+  ]);
 });
 
-test("a build whose code never names the marker fails", async () => {
+test("an exception that names no view, or a module with nothing to fetch, fails the build", async () => {
+  await assert.rejects(buildApp(APP_FILES, { first: ["src/terminal/pane.ts"] }), /src\/terminal\/pane\.ts \(`first` of PREFETCH in vite\.config\.ts\) is not a view a route loads/);
+  await assert.rejects(buildApp(APP_FILES, { skip: ["src/views/gone.ts"] }), /src\/views\/gone\.ts \(`skip` of PREFETCH in vite\.config\.ts\) is not a view a route loads/);
+  await assert.rejects(buildApp(APP_FILES, { last: ["src/views/gone.ts"] }), /src\/views\/gone\.ts \(`last` of PREFETCH in vite\.config\.ts\) is in no chunk of this build/);
+  await assert.rejects(buildApp(APP_FILES, { last: ["src/shell.ts"] }), /src\/shell\.ts \(`last` of PREFETCH in vite\.config\.ts\) is in a boot chunk/);
+});
+
+test("a build that loads no route's view, or whose code never names the marker, fails", async () => {
+  // `import()` alone is not a route's view: nothing calls lazyRouteComponent.
   await assert.rejects(
-    buildApp({ ...APP_FILES, "main.ts": APP_FILES["main.ts"].replace(/^const files = .*$/m, "const files = null;") }, ["src/views/session.ts"]),
+    buildApp({ ...APP_FILES, "routes.ts": 'export const routes = [() => import("./views/session"), () => import("./views/files")];\n' }),
+    /no module loads a route's view with lazyRouteComponent/,
+  );
+  await assert.rejects(
+    buildApp({ ...APP_FILES, "main.ts": APP_FILES["main.ts"].replace(/^const files = .*$/m, "const files = null;") }),
     new RegExp(`no chunk names ${VIEW_FILES}`),
   );
 });

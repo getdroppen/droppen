@@ -1,15 +1,15 @@
 /*
- * The views the app loads on demand (`lazy-views.ts`; settings, stats and
- * updates in `router.tsx`; the terminal), fetched before they are opened.
+ * Every view a route loads on demand (`lazy-views.ts`, `router.tsx`) and the
+ * terminal, fetched before they are opened.
  *
  * Split by route, the boot is small, but every view's first opening then
  * waits on its chunks: on a weak link, a blank pane for a second or more —
  * the new session view after the list, a session, settings. So once the first
  * page is drawn, the files each view is made of are fetched in the
  * background: one view at a time, its files together, each view when the page
- * is idle, in the order a visit most likely opens them (`PREFETCH` in
- * vite.config.ts). Opening a view then finds them cached, by the service
- * worker or the browser.
+ * is idle, the likeliest next first (`PREFETCH` in vite.config.ts). Which
+ * views those are, the build finds (`build/view-prefetch.ts`). Opening a view
+ * then finds them cached, by the service worker or the browser.
  *
  * Fetched, not imported: a dynamic import that fails is remembered — by
  * `lazyRouteComponent`, and by the module map of browsers that still keep a
