@@ -364,9 +364,9 @@ impl ExtraResponses {
         self
     }
 
-    /// Document a failure status whose body is the API's [`crate::api::error::Error`].
+    /// Document a failure status whose body is the API's [`crate::http::error::Error`].
     pub fn error(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.body::<crate::api::error::Error>(method, path, status, description)
+        self.body::<crate::http::error::Error>(method, path, status, description)
     }
 
     /// Document an extra status whose body is `T`.

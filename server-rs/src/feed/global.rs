@@ -33,9 +33,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use super::watch;
-use crate::api::extract::ApiQuery;
-use crate::api::{close_within, send_within, ApiRouter, AppState, CLOSE_LIMIT};
+use crate::api::{ApiRouter, AppState};
 use crate::drive::Drive;
+use crate::http::extract::ApiQuery;
+use crate::http::{close_within, send_within, CLOSE_LIMIT};
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
 use crate::sessions::{self, SessionSummary, Source};
@@ -449,13 +450,13 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         // The same name, as a session reference scopes it. See
         // `crate::sessions::Settings::server_id`.
         "serverId": crate::sessions::ServerId::local(paths).to_string(),
-        "hostname": crate::api::hostname(),
-        "platform": crate::api::node_platform(),
-        "nodeVersion": crate::api::RUNTIME_VERSION,
+        "hostname": crate::http::hostname(),
+        "platform": crate::http::node_platform(),
+        "nodeVersion": crate::http::RUNTIME_VERSION,
         // The one field a client re-reads *for* its value rather than to
         // display it: a reconnect that brings back a different build is how the
         // web knows a self-upgrade happened underneath it.
-        "serverVersion": crate::api::SERVER_VERSION,
+        "serverVersion": crate::http::SERVER_VERSION,
         "homeDir": paths.home.to_string_lossy(),
         "claudeDir": paths.claude_projects().to_string_lossy(),
         "claudeManagedDir": paths.claude_managed_projects().to_string_lossy(),
@@ -567,7 +568,7 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
     // Declared after the attachment so that it is dropped first: every
     // subscription detaches before the list feed does.
     let (mut subscriptions, mut session_frames) = Subscriptions::new(state.feeds.clone(), state.drive.clone());
-    let mut heartbeat = crate::api::Heartbeat::default();
+    let mut heartbeat = crate::http::Heartbeat::default();
     let mut recheck = tokio::time::interval_at(Instant::now() + LOGIN_RECHECK, LOGIN_RECHECK);
     recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut signed_out = false;
@@ -1144,7 +1145,7 @@ mod tests {
     async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
         let home = tempfile::tempdir().unwrap();
         let (state, addr) = crate::api::test_support::served(home.path()).await;
-        assert_eq!(state.send_limit, crate::api::SEND_LIMIT);
+        assert_eq!(state.send_limit, crate::http::SEND_LIMIT);
         let _client = never_reading_list(&state, addr).await;
         // As many as the broadcast holds, so the socket is handed every one:
         // megabytes more than the kernel's buffers take.

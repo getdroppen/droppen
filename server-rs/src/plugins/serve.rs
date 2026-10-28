@@ -41,9 +41,9 @@ use gotcha::axum::body::Body;
 use gotcha::axum::http::{header, HeaderValue, Response, StatusCode};
 use gotcha::State;
 
-use crate::api::extract::ApiPath;
 use crate::api::AppState;
 use crate::auth::MaybeIdentity;
+use crate::http::extract::ApiPath;
 
 /// The route, as gotcha registers it. The build id inside the URL makes the
 /// answer immutable, so the path is also its own cache key.

@@ -17,11 +17,11 @@ use std::sync::Arc;
 use gotcha::{api, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::created::Created;
-use crate::api::error::ApiError;
-use crate::api::extract::ApiPath;
 use crate::api::AppState;
 use crate::drive::Drive;
+use crate::http::created::Created;
+use crate::http::error::ApiError;
+use crate::http::extract::ApiPath;
 use crate::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
 

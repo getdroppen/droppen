@@ -121,7 +121,7 @@ fn main() -> std::process::ExitCode {
         // deciding whether to install and reads the whole of stdout as the
         // answer. Anything else on this stream would become part of the version.
         Ok(Parsed::Version) => {
-            println!("{}", remote_hand_server::api::SERVER_VERSION);
+            println!("{}", remote_hand_server::http::SERVER_VERSION);
             return std::process::ExitCode::SUCCESS;
         }
         Ok(Parsed::Run(invocation)) => invocation,
@@ -286,7 +286,7 @@ async fn run(invocation: Invocation, args: Vec<String>) -> GotchaResult<()> {
         // `pty-shim` is — it exists for one caller, and that caller is us.
         Invocation::Preflight => {
             let config = remote_hand_server::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
-            println!("{} ok (instance {})", remote_hand_server::api::SERVER_VERSION, config.app.instance());
+            println!("{} ok (instance {})", remote_hand_server::http::SERVER_VERSION, config.app.instance());
             Ok(())
         }
         // Hidden on purpose: nothing but the server itself should ever run

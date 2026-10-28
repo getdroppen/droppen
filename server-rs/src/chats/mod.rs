@@ -35,9 +35,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{ApiRouter, AppState, SendResult};
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath};
 use crate::inject::{self, SendOptions};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::paths::Paths;

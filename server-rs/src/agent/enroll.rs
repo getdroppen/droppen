@@ -212,7 +212,7 @@ impl Paths {
         // writes v3 add it at all.
         hub::send_json(
             &mut sink,
-            &json!({"t": "agent_info", "version": crate::api::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE]}),
+            &json!({"t": "agent_info", "version": crate::http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE]}),
         )
         .await?;
         hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": 0})).await?;

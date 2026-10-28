@@ -332,7 +332,7 @@ async fn os(runner: &Arc<dyn Runner>, probe: &Probe) -> SetupOs {
         None
     };
     SetupOs {
-        platform: crate::api::node_platform().to_string(),
+        platform: crate::http::node_platform().to_string(),
         macos: Nullable(macos),
         arch: match std::env::consts::ARCH {
             "aarch64" => "arm64".to_string(),

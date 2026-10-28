@@ -70,7 +70,7 @@ use gotcha::axum::http::{header, HeaderValue, Method, StatusCode};
 use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
-use crate::api::error::ApiError;
+use crate::http::error::ApiError;
 
 /// The methods the CORS preflight advertises: every method the API answers.
 const ALLOW_METHODS: &str = "GET,HEAD,PUT,POST,DELETE,PATCH";

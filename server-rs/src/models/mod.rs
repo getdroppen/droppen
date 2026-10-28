@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::accounts::store::{Account, AccountKind};
-use crate::api::error::ApiError;
-use crate::api::extract::ApiQuery;
 use crate::api::{ApiRouter, AppState};
+use crate::http::error::ApiError;
+use crate::http::extract::ApiQuery;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::sessions::Source;
 

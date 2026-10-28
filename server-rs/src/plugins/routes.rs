@@ -38,10 +38,10 @@ use super::wire::{
     PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody, PluginTooLarge,
 };
 use super::{DecisionReason, PluginError, Plugins};
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::openapi_ext::ExtraResponses;
 use droppen_plugin_sdk::codes;
 

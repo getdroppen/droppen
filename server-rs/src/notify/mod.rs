@@ -61,9 +61,9 @@ use gotcha::axum::http::{header, HeaderMap, Method, StatusCode};
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
-use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState, SendResult};
+use crate::http::error::ApiError;
+use crate::http::extract::ApiJson;
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
 use crate::sessions::{SessionSummary, Source};

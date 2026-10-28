@@ -22,10 +22,10 @@ use gotcha::{api, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::api::error::ApiError;
-use crate::api::extract::ApiQuery;
 use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
+use crate::http::error::ApiError;
+use crate::http::extract::ApiQuery;
 use crate::openapi_ext::{ExtraResponses, Nullable};
 use crate::paths::Paths;
 use crate::time::iso8601;

@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::created::Created;
-use crate::api::error::ApiError;
 use crate::api::AppState;
 use crate::db::scope;
+use crate::http::created::Created;
+use crate::http::error::ApiError;
 use crate::openapi_ext::Nullable;
 use crate::sessions::{SessionScope, SessionSummary, Source};
 

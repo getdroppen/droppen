@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use gotcha::axum::http::StatusCode;
 use serde_json::Value;
 
-use crate::api::error::ApiError;
+use crate::http::error::ApiError;
 use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
 use crate::sessions::Source;
 
