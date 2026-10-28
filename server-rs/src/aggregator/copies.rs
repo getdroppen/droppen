@@ -857,7 +857,7 @@ impl Copies {
     /// What a round needs: the enrollment as the chain has it, the keys, and
     /// the hosts to follow — `None` while it may not run.
     fn ready(&self) -> Option<(View, Arc<KeyRing>, Vec<Host>)> {
-        if !crate::cloud::wants_aggregator(&self.env.paths) {
+        if !crate::cloud::LinkFile::of(&self.env.paths).wants_aggregator() {
             return None;
         }
         let view = self.env.enrollment.view()?;
@@ -871,7 +871,7 @@ impl Copies {
 
     fn guard(&self) -> super::keys::Guard {
         let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-        Box::new(move || !cancel.is_cancelled() && crate::cloud::wants_aggregator(&paths))
+        Box::new(move || !cancel.is_cancelled() && crate::cloud::LinkFile::of(&paths).wants_aggregator())
     }
 
     /// One connection, or the reason there is none: how long to wait after.

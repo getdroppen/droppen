@@ -286,7 +286,7 @@ async fn owns_sessions(paths: &crate::paths::Paths) -> bool {
     if !crate::sessions::owned_sessions::read(paths).await.is_empty() {
         return true;
     }
-    let projects = claude_roots::projects_dir(paths, ClaudeRoot::Managed);
+    let projects = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Managed);
     tokio::task::spawn_blocking(move || has_transcript(&projects))
         .await
         .unwrap_or(true)
@@ -493,7 +493,7 @@ mod tests {
         assert!(!answered(&state, started).await.auto_open, "started once: never again by itself");
 
         // A transcript in the user's own ~/.claude is not this instance's.
-        let theirs = claude_roots::projects_dir(&state.drive.paths, ClaudeRoot::Local).join("-w");
+        let theirs = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(&theirs).expect("project dir");
         std::fs::write(
             theirs.join("0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b.jsonl"),
@@ -503,7 +503,7 @@ mod tests {
         assert!(answered(&state, fresh.clone()).await.auto_open, "an install that only sees the user's own sessions is new");
 
         // One of its own is an install in use (Q4).
-        let ours = claude_roots::projects_dir(&state.drive.paths, ClaudeRoot::Managed).join("-w");
+        let ours = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Managed).join("-w");
         std::fs::create_dir_all(&ours).expect("project dir");
         std::fs::write(
             ours.join("1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c.jsonl"),
@@ -526,7 +526,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         state.desktop_app = true;
-        let local = claude_roots::projects_dir(&state.drive.paths, ClaudeRoot::Local).join("-w");
+        let local = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(&local).expect("project dir");
         let id = "2d3e4f50-6172-4834-8c9d-1e2f3a4b5c6d";
         std::fs::write(

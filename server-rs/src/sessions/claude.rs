@@ -322,7 +322,7 @@ fn is_process_alive(pid: i32) -> bool {
 pub async fn live_claude_session_ids(paths: &Paths) -> HashSet<String> {
     let mut out = HashSet::new();
     for root in ClaudeRoot::ALL {
-        collect_live_ids(&claude_roots::live_dir(paths, root), &mut out).await;
+        collect_live_ids(&claude_roots::ClaudeRoots::of(paths).live_dir(root), &mut out).await;
     }
     out
 }
@@ -497,7 +497,7 @@ pub async fn archived_ids(paths: &Paths) -> HashSet<String> {
 
 /// Every `<uuid>.jsonl` under one root's projects directory.
 async fn root_transcripts(paths: &Paths, root: ClaudeRoot) -> Vec<(PathBuf, String)> {
-    let Ok(mut project_dirs) = tokio::fs::read_dir(claude_roots::projects_dir(paths, root)).await else {
+    let Ok(mut project_dirs) = tokio::fs::read_dir(claude_roots::ClaudeRoots::of(paths).projects_dir(root)).await else {
         return vec![];
     };
     let mut files = Vec::new();
@@ -617,7 +617,7 @@ pub async fn find_in_root(paths: &Paths, root: ClaudeRoot, id: &str) -> Option<P
     if !is_session_id(id) {
         return None;
     }
-    let mut project_dirs = tokio::fs::read_dir(claude_roots::projects_dir(paths, root)).await.ok()?;
+    let mut project_dirs = tokio::fs::read_dir(claude_roots::ClaudeRoots::of(paths).projects_dir(root)).await.ok()?;
     while let Ok(Some(project)) = project_dirs.next_entry().await {
         let candidate = project.path().join(format!("{id}.jsonl"));
         if tokio::fs::metadata(&candidate).await.is_ok() {
@@ -961,7 +961,7 @@ mod tests {
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
         let id = "0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b";
         for root in ClaudeRoot::ALL {
-            let project = claude_roots::projects_dir(&paths, root).join("-w");
+            let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(root).join("-w");
             std::fs::create_dir_all(&project).expect("project dir");
             std::fs::write(
                 project.join(format!("{id}.jsonl")),
@@ -991,7 +991,7 @@ mod tests {
 
         // A transcript in the user's own `~/.claude`: nobody here made it, and
         // this server can nonetheless see it and serve it.
-        let project = claude_roots::projects_dir(&paths, ClaudeRoot::Local).join("-w");
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(&project).expect("project dir");
         std::fs::write(
             project.join("discovered.jsonl"),

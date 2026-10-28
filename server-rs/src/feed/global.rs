@@ -383,7 +383,7 @@ async fn run(
 /// all until a restart. Creating an empty projects directory is cheap and
 /// harmless; an unwritable home just falls back to the poll interval.
 async fn watch_targets(paths: &Paths) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = crate::claude_roots::projects_dirs(&paths).into_iter().map(|(_, dir)| dir).collect();
+    let mut dirs: Vec<PathBuf> = crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs().into_iter().map(|(_, dir)| dir).collect();
     for dir in &dirs {
         let _ = tokio::fs::create_dir_all(dir).await;
     }
@@ -458,8 +458,8 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         // web knows a self-upgrade happened underneath it.
         "serverVersion": crate::http::SERVER_VERSION,
         "homeDir": paths.home.to_string_lossy(),
-        "claudeDir": crate::claude_roots::local_projects(&paths).to_string_lossy(),
-        "claudeManagedDir": crate::claude_roots::managed_projects(&paths).to_string_lossy(),
+        "claudeDir": crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy(),
+        "claudeManagedDir": crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy(),
         "codexDir": paths.codex_sessions().to_string_lossy(),
         "serverStartedAt": started_at,
         // Which plugins are on decides which parts of the app exist, so it

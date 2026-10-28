@@ -22,7 +22,7 @@ pub(super) struct CloudFile {
     /// controls the account's other devices with its one identity).
     #[serde(default)]
     pub(super) aggregate: bool,
-    /// The owner turned the aggregator off ([`wants_aggregator`]).
+    /// The owner turned the aggregator off ([`LinkFile::wants_aggregator`]).
     /// A field of its own: an install enrolled from the command line has no
     /// sign-in here, and controls by default.
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(super) struct CloudFile {
 
 impl Cloud {
     fn file_path(&self) -> std::path::PathBuf {
-        file_path(&self.paths)
+        LinkFile::of(&self.paths).path()
     }
 
     pub(super) fn read_file(&self) -> CloudFile {
@@ -100,11 +100,11 @@ impl Cloud {
         Ok(file)
     }
 
-    /// [`hand_over_from_local_owner`], under this server's file lock.
+    /// [`LinkFile::hand_over_from_local_owner`], under this server's file lock.
     pub async fn hand_over_from_local_owner(&self, users: &crate::auth::users::UsersStore) {
         let accounts: Vec<(String, String, bool)> = users.list().await.into_iter().map(|u| (u.name, u.created_at, u.app)).collect();
         let _guard = self.file.lock().expect("cloud file");
-        match hand_over_from_local_owner(&self.paths, &accounts) {
+        match LinkFile::of(&self.paths).hand_over_from_local_owner(&accounts) {
             Ok(Some(owner)) => {
                 self.changed.send_modify(|n| *n += 1);
                 tracing::info!(%owner, "the Droppen link this device's owner signed in passed to its first account");
@@ -126,43 +126,61 @@ impl Cloud {
     }
 }
 
-/// `<instance>/cloud.json`.
-pub fn file_path(paths: &Paths) -> std::path::PathBuf {
-    paths.instance_dir().join("cloud.json")
+/// `<instance>/cloud.json` itself, for what reads it without a [`Cloud`]: the
+/// aggregator asking whether it may run, the hand-over to the first account,
+/// the command line's unenroll. [`Cloud`] reads and writes it under its lock.
+///
+/// Its own type rather than functions of [`Paths`], so that where the file is,
+/// and what it says, are this module's.
+#[derive(Debug, Clone)]
+pub struct LinkFile(std::path::PathBuf);
+
+impl LinkFile {
+    /// The file of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.instance_dir().join("cloud.json"))
+    }
+
+    /// `<instance>/cloud.json`.
+    pub fn path(&self) -> std::path::PathBuf {
+        self.0.clone()
+    }
 }
 
-/// Whether the owner wants this computer to control other devices, by
-/// `<instance>/cloud.json`: not when they turned it off (`aggregatorOff`,
-/// or a sign-in from the local settings that asked for no aggregation); yes
-/// otherwise — also with no file at all (a computer enrolled from the
-/// command line). A file that cannot be read or does not parse says no
-/// (security review of S1-4, N3: it may be the owner's "off"), logged
-/// once.
-///
-/// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
-/// `cloud.json` is written whole, so any update of it (say `PUT
-/// /api/cloud/access` on a computer enrolled from the command line) writes
-/// the default `aggregate: false` without anybody asking for "off". Only
-/// `aggregatorOff`, or a sign-in from the local settings without
-/// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
-///
-/// This only says whether the controller works. Deleting what it holds is
-/// the local API's turning it off (`POST /api/cloud/aggregator`), which
-/// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json`
-/// by hand stops the controller but leaves `aggregator/keys.json` where it
-/// is.
-pub(crate) fn wants_aggregator(paths: &Paths) -> bool {
-    let path = file_path(paths);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
-        Err(error) => return unreadable(&path, &error.to_string()),
-    };
-    let file: CloudFile = match serde_json::from_slice(&bytes) {
-        Ok(file) => file,
-        Err(error) => return unreadable(&path, &error.to_string()),
-    };
-    !file.aggregator_off && (file.aggregate || file.linked_at.is_none())
+impl LinkFile {
+    /// Whether the owner wants this computer to control other devices, by
+    /// `<instance>/cloud.json`: not when they turned it off (`aggregatorOff`,
+    /// or a sign-in from the local settings that asked for no aggregation); yes
+    /// otherwise — also with no file at all (a computer enrolled from the
+    /// command line). A file that cannot be read or does not parse says no
+    /// (security review of S1-4, N3: it may be the owner's "off"), logged
+    /// once.
+    ///
+    /// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
+    /// `cloud.json` is written whole, so any update of it (say `PUT
+    /// /api/cloud/access` on a computer enrolled from the command line) writes
+    /// the default `aggregate: false` without anybody asking for "off". Only
+    /// `aggregatorOff`, or a sign-in from the local settings without
+    /// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
+    ///
+    /// This only says whether the controller works. Deleting what it holds is
+    /// the local API's turning it off (`POST /api/cloud/aggregator`), which
+    /// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json`
+    /// by hand stops the controller but leaves `aggregator/keys.json` where it
+    /// is.
+    pub(crate) fn wants_aggregator(&self) -> bool {
+        let path = self.path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(error) => return unreadable(&path, &error.to_string()),
+        };
+        let file: CloudFile = match serde_json::from_slice(&bytes) {
+            Ok(file) => file,
+            Err(error) => return unreadable(&path, &error.to_string()),
+        };
+        !file.aggregator_off && (file.aggregate || file.linked_at.is_none())
+    }
 }
 
 /// `cloud.json` does not read: off, said once per process.
@@ -174,46 +192,48 @@ fn unreadable(path: &std::path::Path, error: &str) -> bool {
     false
 }
 
-/// When the device gets its first user account: a Droppen link the local owner
-/// signed in ([`crate::auth::LOCAL_OWNER`] named as `cloud.json`'s owner)
-/// passes to the first user account — whoever makes it is the OS user (a
-/// shell, or a page opened with `remote-hand-server open`) or holds the setup
-/// code only that user can read — bound to that account by its `createdAt`
-/// ([`same_account`]), with every allowance cleared: who else sees other
-/// devices is the new owner's to say. `accounts`: every local account's
-/// `(name, createdAt, app-internal)`. `Ok(Some(owner))` when it passed.
-///
-/// Only ever called by the server that owns the instance, under its file lock
-/// ([`Cloud::hand_over_from_local_owner`]) — `user add` leaves it to that
-/// server, which does it within a few seconds or when it next starts.
-pub fn hand_over_from_local_owner(paths: &Paths, accounts: &[(String, String, bool)]) -> Result<Option<String>, String> {
-    let path = file_path(paths);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    let Ok(mut file) = serde_json::from_slice::<CloudFile>(&bytes) else {
-        return Ok(None);
-    };
-    if !file.owner.as_deref().is_some_and(crate::auth::is_local_owner) {
-        return Ok(None);
+impl LinkFile {
+    /// When the device gets its first user account: a Droppen link the local owner
+    /// signed in ([`crate::auth::LOCAL_OWNER`] named as `cloud.json`'s owner)
+    /// passes to the first user account — whoever makes it is the OS user (a
+    /// shell, or a page opened with `remote-hand-server open`) or holds the setup
+    /// code only that user can read — bound to that account by its `createdAt`
+    /// ([`same_account`]), with every allowance cleared: who else sees other
+    /// devices is the new owner's to say. `accounts`: every local account's
+    /// `(name, createdAt, app-internal)`. `Ok(Some(owner))` when it passed.
+    ///
+    /// Only ever called by the server that owns the instance, under its file lock
+    /// ([`Cloud::hand_over_from_local_owner`]) — `user add` leaves it to that
+    /// server, which does it within a few seconds or when it next starts.
+    pub fn hand_over_from_local_owner(&self, accounts: &[(String, String, bool)]) -> Result<Option<String>, String> {
+        let path = self.path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        let Ok(mut file) = serde_json::from_slice::<CloudFile>(&bytes) else {
+            return Ok(None);
+        };
+        if !file.owner.as_deref().is_some_and(crate::auth::is_local_owner) {
+            return Ok(None);
+        }
+        // The first user account: the oldest that is not app-internal.
+        let Some((first, since)) = accounts
+            .iter()
+            .filter(|(_, _, app)| !app)
+            .min_by(|a, b| a.1.cmp(&b.1))
+            .map(|(name, since, _)| (name.clone(), since.clone()))
+        else {
+            return Ok(None);
+        };
+        file.owner = Some(first.clone());
+        file.remote_access.clear();
+        file.accounts_since.clear();
+        file.accounts_since.insert(first.clone(), since);
+        file.remote_access.insert(first.clone(), true);
+        let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
+        crate::fsutil::write_private_reporting_path(&path, &bytes)?;
+        Ok(Some(first))
     }
-    // The first user account: the oldest that is not app-internal.
-    let Some((first, since)) = accounts
-        .iter()
-        .filter(|(_, _, app)| !app)
-        .min_by(|a, b| a.1.cmp(&b.1))
-        .map(|(name, since, _)| (name.clone(), since.clone()))
-    else {
-        return Ok(None);
-    };
-    file.owner = Some(first.clone());
-    file.remote_access.clear();
-    file.accounts_since.clear();
-    file.accounts_since.insert(first.clone(), since);
-    file.remote_access.insert(first.clone(), true);
-    let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
-    crate::fsutil::write_private_reporting_path(&path, &bytes)?;
-    Ok(Some(first))
 }

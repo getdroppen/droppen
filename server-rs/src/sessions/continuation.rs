@@ -78,7 +78,7 @@ pub async fn copy_local_session(paths: &Paths, id: &str, new_id: &str) -> Result
         return Err(ContinueError::NotFound);
     }
     let original = claude::find_in_root(paths, ClaudeRoot::Local, id).await.ok_or(ContinueError::NotFound)?;
-    let local_projects = claude_roots::projects_dir(paths, ClaudeRoot::Local);
+    let local_projects = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local);
     let project_dir = original.parent().ok_or(ContinueError::NotFound)?;
     let project = project_dir.file_name().ok_or(ContinueError::NotFound)?.to_owned();
     // Exactly `<local projects>/<project>/<id>.jsonl`, with neither the project
@@ -91,7 +91,7 @@ pub async fn copy_local_session(paths: &Paths, id: &str, new_id: &str) -> Result
         return Err(ContinueError::NotFound);
     }
 
-    let destination_dir = claude_roots::projects_dir(paths, ClaudeRoot::Managed).join(&project);
+    let destination_dir = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Managed).join(&project);
     let destination = destination_dir.join(format!("{new_id}.jsonl"));
     let sidecar_to = destination_dir.join(new_id);
     if tokio::fs::symlink_metadata(&destination).await.is_ok() || tokio::fs::symlink_metadata(&sidecar_to).await.is_ok() {
@@ -199,7 +199,7 @@ mod tests {
     /// Seed a local-root session with a subagent transcript and a saved tool
     /// result beside it.
     fn seed(paths: &Paths, id: &str) -> PathBuf {
-        let project = claude_roots::projects_dir(paths, ClaudeRoot::Local).join("-w");
+        let project = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(project.join(id).join("subagents")).expect("sidecar");
         std::fs::create_dir_all(project.join(id).join("tool-results")).expect("tool results");
         let path = project.join(format!("{id}.jsonl"));
@@ -219,7 +219,7 @@ mod tests {
         let copy = copy_local_session(&paths, OLD, NEW).await.expect("copy");
         assert_eq!(
             copy,
-            claude_roots::projects_dir(&paths, ClaudeRoot::Managed)
+            claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed)
                 .join("-w")
                 .join(format!("{NEW}.jsonl"))
         );
@@ -287,7 +287,7 @@ mod tests {
         let paths = Paths::new(home.path().to_path_buf());
         seed(&paths, OLD);
         // A decoy where `find_in_root(id = "..")` would look.
-        let project = claude_roots::projects_dir(&paths, ClaudeRoot::Local).join("-w");
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::write(project.join("...jsonl"), "{}\n").expect("decoy");
         for id in ["nope", "..", ".", "...", "../../etc/passwd", "-w/../x", ""] {
             assert!(
@@ -302,12 +302,12 @@ mod tests {
             );
         }
         assert!(
-            !claude_roots::projects_dir(&paths, ClaudeRoot::Managed).exists(),
+            !claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).exists(),
             "nothing was written anywhere"
         );
 
         // A session already in the managed root is not this operation's to copy.
-        let managed = claude_roots::projects_dir(&paths, ClaudeRoot::Managed).join("-w");
+        let managed = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w");
         std::fs::create_dir_all(&managed).expect("managed project");
         let other = "33333333-3333-4333-8333-333333333333";
         std::fs::write(managed.join(format!("{other}.jsonl")), line(other, "mine")).expect("managed transcript");
@@ -319,7 +319,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         seed(&paths, OLD);
-        let managed = claude_roots::projects_dir(&paths, ClaudeRoot::Managed).join("-w");
+        let managed = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w");
         std::fs::create_dir_all(&managed).expect("managed project");
         std::fs::write(managed.join(format!("{NEW}.jsonl")), "theirs\n").expect("existing");
         assert!(matches!(copy_local_session(&paths, OLD, NEW).await, Err(ContinueError::Taken)));
@@ -357,7 +357,7 @@ mod tests {
         std::fs::create_dir_all(&outside).expect("outside");
         let outside_id = "66666666-6666-4666-8666-666666666666";
         std::fs::write(outside.join(format!("{outside_id}.jsonl")), line(outside_id, "x")).expect("outside transcript");
-        std::os::unix::fs::symlink(&outside, claude_roots::projects_dir(&paths, ClaudeRoot::Local).join("-linked")).expect("symlink project");
+        std::os::unix::fs::symlink(&outside, claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-linked")).expect("symlink project");
         assert!(matches!(
             copy_local_session(&paths, outside_id, fresh).await,
             Err(ContinueError::NotFound)

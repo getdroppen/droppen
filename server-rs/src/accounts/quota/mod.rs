@@ -818,7 +818,7 @@ impl QuotaCache {
         let mut tier = None;
         // Read-only, and only these two fields: the credentials file is the
         // user's own login and nothing here may touch the rest of it.
-        if let Ok(raw) = tokio::fs::read_to_string(claude_roots::local_credentials_path(&self.paths)).await {
+        if let Ok(raw) = tokio::fs::read_to_string(claude_roots::ClaudeRoots::of(&self.paths).local_credentials()).await {
             if let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&raw) {
                 if let Some(Value::Object(oauth)) = root.get("claudeAiOauth") {
                     let subscription_type = oauth.get("subscriptionType").and_then(Value::as_str).filter(|s| !s.is_empty());

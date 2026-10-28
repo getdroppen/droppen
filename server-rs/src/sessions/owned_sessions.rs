@@ -346,7 +346,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        let project = claude_roots::projects_dir(&paths, ClaudeRoot::Local).join("-w");
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(&project).expect("project dir");
         std::fs::write(project.join("alive.jsonl"), "{}\n").expect("a session that exists");
 
