@@ -7,6 +7,8 @@ license.workspace = true
 description = "The Droppen desktop app's shell logic, without Tauri: port, PATH, sidecar lifecycle, local credentials, login"
 
 [dependencies]
+# The update tool's command line (`core/src/bin/droppen-update-manifest.rs`).
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 # The PATH rule the server follows too (`server-rs/crates/droppen-path`):
 # dependency-free, so neither workspace pulls in the other.
 droppen-path = { path = "../../server-rs/crates/droppen-path" }

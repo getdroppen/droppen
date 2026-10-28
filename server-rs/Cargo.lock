@@ -1100,6 +1100,7 @@ name = "droppen-relay"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "clap",
  "ed25519-dalek",
  "futures-util",
  "rand 0.8.7",
