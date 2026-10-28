@@ -5,18 +5,18 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gotcha::axum::http::StatusCode;
-use gotcha::{api, GotchaContext, GotchaRouter, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
 use crate::accounts::store::{AccountError, AccountProvider};
 use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
-use crate::api::AppState;
 use crate::auth::MaybeIdentity;
-use crate::config::AppConfig;
 use crate::feed;
 use crate::files;
 use crate::http::error::ApiError;
@@ -526,7 +526,7 @@ fn validate_body(
 /// A new session names an ACP agent exactly when it is one, and the agent it
 /// names is one that is configured: an unknown one is a bad request rather
 /// than a session that cannot start.
-fn validate_acp_agent(state: &AppState, source: Source, agent: Option<&str>) -> Result<(), ApiError> {
+fn validate_acp_agent(state: &DriveState, source: Source, agent: Option<&str>) -> Result<(), ApiError> {
     match (source, agent) {
         (Source::Acp, None) => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
         (Source::Acp, Some(id)) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
@@ -550,9 +550,23 @@ fn send_options(model: Option<String>, effort: Option<String>, permission: Optio
 
 // ---------------------------------------------------------------------- routes
 
+/// What the session-driving routes use of the server's state.
+#[derive(Clone)]
+pub struct DriveState {
+    /// Accounts, injections, quota, titles and composer preferences.
+    pub drive: Arc<super::Drive>,
+    /// Where sessions are discovered.
+    pub paths: Arc<crate::paths::Paths>,
+    /// The shared session-list feed, told when a session appears or changes.
+    pub global: Arc<feed::global::GlobalFeed>,
+    /// The same feed's inputs, which the session-binding routes tell.
+    pub refresh: crate::http::refresh::Refresh,
+}
+crate::http::substate!(DriveState);
+
 /// Start a new session in the given directory.
 #[api(id = "new_session", group = "sessions", summary = "Start a new session")]
-pub async fn new_session(State(state): State<AppState>, ApiJson(body): ApiJson<NewSession>) -> Result<Json<NewSessionResult>, ApiError> {
+pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson<NewSession>) -> Result<Json<NewSessionResult>, ApiError> {
     validate_body(
         body.source,
         &body.text,
@@ -589,7 +603,7 @@ pub async fn new_session(State(state): State<AppState>, ApiJson(body): ApiJson<N
 
 /// Everything [`new_session`] does once its body is valid and, for a named
 /// message, its id is claimed.
-async fn start_session(state: AppState, body: NewSession, qid: Option<String>) -> Result<NewSessionResult, ApiError> {
+async fn start_session(state: DriveState, body: NewSession, qid: Option<String>) -> Result<NewSessionResult, ApiError> {
     let drive = &state.drive;
     // The first message's attachments pass the gate a later message's do
     // ([`deliver_message`]): every one proven to come from `/api/uploads`, and
@@ -643,7 +657,7 @@ fn from_answer<T: serde::de::DeserializeOwned>(answer: serde_json::Value) -> Res
 /// was.
 #[api(id = "send_message", group = "sessions", summary = "Send a message")]
 pub async fn send_message(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SendMessage>,
@@ -693,7 +707,7 @@ pub async fn send_message(
 /// message, its id is claimed: `qid` is the queue id that claim chose, and
 /// `by` who is sending it.
 async fn deliver_message(
-    state: AppState,
+    state: DriveState,
     source: Source,
     id: String,
     body: SendMessage,
@@ -798,7 +812,7 @@ async fn deliver_message(
 /// them. The same list the session's `state` frames carry.
 #[api(id = "session_questions", group = "sessions", summary = "Questions the agent asked")]
 pub async fn session_questions(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SessionQuestions>, ApiError> {
     let questions = match source {
@@ -818,7 +832,7 @@ pub async fn session_questions(
 /// is a `409` carrying the question as the first one left it.
 #[api(id = "answer_question", group = "sessions", summary = "Answer a question the agent asked")]
 pub async fn answer_question(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
     ApiPath(QuestionPath { source, id, request_id }): ApiPath<QuestionPath>,
     ApiJson(body): ApiJson<AnswerQuestion>,
@@ -860,7 +874,7 @@ pub async fn answer_question(
 /// on. An expired question is simply closed — there is nobody left to tell.
 #[api(id = "dismiss_question", group = "sessions", summary = "Dismiss a question the agent asked")]
 pub async fn dismiss_question(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
     ApiPath(QuestionPath { source, id, request_id }): ApiPath<QuestionPath>,
 ) -> Result<Json<QuestionAnswerResult>, ApiError> {
@@ -1057,7 +1071,7 @@ async fn settle_expired(
 /// neither is still being accepted.
 #[api(id = "session_receipts", group = "sessions", summary = "Message receipts")]
 pub async fn session_receipts(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<ReceiptsQuery>,
 ) -> Result<Json<ReceiptLookup>, ApiError> {
@@ -1149,7 +1163,7 @@ pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source
 /// Kill the CLI run remote-hand started for this session.
 #[api(id = "interrupt_session", group = "sessions", summary = "Interrupt a run")]
 pub async fn interrupt_session(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SendResult>, ApiError> {
     if !state.drive.injections.interrupt(source, &id) {
@@ -1172,7 +1186,7 @@ pub async fn interrupt_session(
 /// did not take.
 #[api(id = "stop_background_task", group = "sessions", summary = "Stop one background task")]
 pub async fn stop_background_task(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath(TaskPath { source, id, task_id }): ApiPath<TaskPath>,
 ) -> Result<Json<SendResult>, ApiError> {
     match state.drive.injections.stop_background_task(source, &id, &task_id) {
@@ -1224,7 +1238,7 @@ fn queue_result(outcome: inject::QueueOutcome) -> Result<Json<SendResult>, ApiEr
 /// Take a message out of a session's queue before it is sent.
 #[api(id = "drop_queued_message", group = "sessions", summary = "Drop a queued message")]
 pub async fn drop_queued_message(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
 ) -> Result<Json<SendResult>, ApiError> {
     queue_result(state.drive.injections.drop_queued_message(source, &id, &qid).await)
@@ -1239,7 +1253,7 @@ pub async fn drop_queued_message(
 /// that is worth nothing twenty minutes from now.
 #[api(id = "steer_queued_message", group = "sessions", summary = "Steer a queued message")]
 pub async fn steer_queued_message(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
 ) -> Result<Json<SendResult>, ApiError> {
     queue_result(state.drive.injections.steer_queued_message(source, &id, &qid).await)
@@ -1255,7 +1269,7 @@ pub struct SessionPin {
 /// Pin or unpin an owned session in this instance's sidebar.
 #[api(id = "pin_session", group = "sessions", summary = "Pin a session")]
 pub async fn pin_session(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SessionPin>,
 ) -> Result<Json<SessionPin>, ApiError> {
@@ -1268,7 +1282,7 @@ pub async fn pin_session(
 /// Set a session's display title.
 #[api(id = "rename_session", group = "sessions", summary = "Rename a session")]
 pub async fn rename_session(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SessionRename>,
 ) -> Result<Json<SessionRename>, ApiError> {
@@ -1292,7 +1306,7 @@ pub async fn rename_session(
 
 /// Hide a session from the list.
 #[api(id = "archive_session", group = "sessions", summary = "Archive a session")]
-pub async fn archive_session(State(state): State<AppState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SendResult>, ApiError> {
+pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SendResult>, ApiError> {
     let drive = &state.drive;
     // Both arms leave this server: claude's `archived.json` is shared config, and
     // codex's updates the user's own state through its App Server or CLI. Neither is this
@@ -1327,7 +1341,7 @@ pub async fn archive_session(State(state): State<AppState>, ApiPath((source, id)
 /// The transcript page immediately before an index the client already holds.
 #[api(id = "session_history", group = "sessions", summary = "Older transcript")]
 pub async fn session_history(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<HistoryQuery>,
 ) -> Result<Json<SessionHistoryPage>, ApiError> {
@@ -1363,7 +1377,7 @@ pub async fn session_history(
 /// an owned one.
 #[api(id = "session_search", group = "sessions", summary = "Search a session's transcript")]
 pub async fn session_search(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<SearchQuery>,
 ) -> Result<Json<feed::search::SessionSearchResult>, ApiError> {
@@ -1434,7 +1448,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
 /// to. See [`crate::sessions::attention::first_unread`].
 #[api(id = "session_first_unread", group = "sessions", summary = "Where unread messages begin")]
 pub async fn session_first_unread(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<FirstUnreadQuery>,
 ) -> Result<Json<crate::sessions::attention::FirstUnread>, ApiError> {
@@ -1469,7 +1483,7 @@ pub(crate) fn is_agent_id(id: &str) -> bool {
 /// or not, so there is always a way in.
 #[api(id = "session_agents", group = "sessions", summary = "Subagents of a session")]
 pub async fn session_agents(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SessionAgents>, ApiError> {
     let drive = &state.drive;
@@ -1512,7 +1526,7 @@ pub async fn session_agents(
 /// The transcript of a subagent this session's Task call spawned.
 #[api(id = "agent_transcript", group = "sessions", summary = "Subagent transcript")]
 pub async fn agent_transcript(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath(AgentPath { source, id, agent_id }): ApiPath<AgentPath>,
 ) -> Result<Json<AgentTranscript>, ApiError> {
     let drive = &state.drive;
@@ -1557,7 +1571,7 @@ pub async fn agent_transcript(
 /// so asking for one is a `404` rather than an empty list that would imply the
 /// session simply has not planned anything yet.
 #[api(id = "session_checklist", group = "sessions", summary = "Session checklist")]
-pub async fn session_checklist(State(state): State<AppState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<Checklist>, ApiError> {
+pub async fn session_checklist(State(state): State<DriveState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<Checklist>, ApiError> {
     if source != Source::Claude {
         return Err(ApiError::not_found("checklists exist only for claude sessions"));
     }
@@ -1588,7 +1602,7 @@ pub struct RecentCwds {
 
 /// Working directories to offer when starting a new session.
 #[api(id = "recent_cwds", group = "sessions", summary = "Recently used directories")]
-pub async fn recent_cwds(State(state): State<AppState>, ApiQuery(query): ApiQuery<RecentCwdsQuery>) -> Json<RecentCwds> {
+pub async fn recent_cwds(State(state): State<DriveState>, ApiQuery(query): ApiQuery<RecentCwdsQuery>) -> Json<RecentCwds> {
     let bindings = state.drive.accounts.session_account_map().await;
     let cwds = crate::sessions::recent_cwds(&state.drive.paths, &bindings, query.source).await;
     Json(RecentCwds { cwds })
@@ -1596,14 +1610,14 @@ pub async fn recent_cwds(State(state): State<AppState>, ApiQuery(query): ApiQuer
 
 /// Composer model/effort/permission choices, shared across devices.
 #[api(id = "composer_prefs", group = "prefs", summary = "Composer preferences")]
-pub async fn composer_prefs(State(state): State<AppState>) -> Json<ComposerPrefs> {
+pub async fn composer_prefs(State(state): State<DriveState>) -> Json<ComposerPrefs> {
     Json(state.drive.composer.read().await)
 }
 
 /// Update the source default.
 #[api(id = "put_composer_default", group = "prefs", summary = "Set a source's composer default")]
 pub async fn put_composer_default(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath(source): ApiPath<Source>,
     ApiJson(body): ApiJson<ComposerChoice>,
 ) -> Result<Json<ComposerPrefs>, ApiError> {
@@ -1619,7 +1633,7 @@ pub async fn put_composer_default(
 /// Update one session's entry, and the source default with it.
 #[api(id = "put_composer_session", group = "prefs", summary = "Set a session's composer choice")]
 pub async fn put_composer_session(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<ComposerChoice>,
 ) -> Result<Json<ComposerPrefs>, ApiError> {
@@ -1665,7 +1679,7 @@ pub struct ContinuedSession {
 /// Pin a session to an account, or unbind it.
 #[api(id = "bind_session_account", group = "accounts", summary = "Bind a session to an account")]
 pub async fn bind_session_account(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SessionAccount>,
 ) -> Result<Json<SessionAccount>, ApiError> {
@@ -1737,7 +1751,7 @@ pub async fn bind_session_account(
     summary = "Continue a local-login session on an account"
 )]
 pub async fn continue_session_on_account(
-    State(state): State<AppState>,
+    State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SessionContinue>,
 ) -> Result<Json<ContinuedSession>, ApiError> {
@@ -1824,7 +1838,7 @@ pub async fn continue_session_on_account(
 /// somewhere else, and re-pointing its login from here would change which
 /// account the *other* driver bills. The refusal is the send route's own, so a
 /// client that already renders `external_session` renders this too.
-async fn bind_codex_session(state: &AppState, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
+async fn bind_codex_session(state: &DriveState, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
     let bound = state.drive.accounts.session_account_id_for(id, AccountProvider::Codex).await;
     match crate::drive::routes::writable_session(&state.drive, Source::Codex, id).await {
         Ok(_) => {}
@@ -1837,7 +1851,7 @@ async fn bind_codex_session(state: &AppState, id: &str, account_id: Option<Strin
 }
 
 /// Store the binding and tell the feed the row changed.
-async fn write_binding(state: &AppState, source: Source, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
+async fn write_binding(state: &DriveState, source: Source, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
     let provider = AccountProvider::of(source).ok_or_else(|| ApiError::bad_request("this session has no account to bind"))?;
     state
         .drive
@@ -1864,34 +1878,40 @@ async fn write_binding(state: &AppState, source: Source, id: &str, account_id: O
     }))
 }
 
-/// Register the session-driving routes.
-pub fn routes(router: GotchaRouter<GotchaContext<AppState, AppConfig>>) -> GotchaRouter<GotchaContext<AppState, AppConfig>> {
-    router
-        .post("/api/sessions/new", new_session)
-        .post("/api/sessions/{source}/{id}/message", send_message)
-        .get("/api/sessions/{source}/{id}/receipts", session_receipts)
-        .post("/api/sessions/{source}/{id}/interrupt", interrupt_session)
-        .post("/api/sessions/{source}/{id}/tasks/{taskId}/stop", stop_background_task)
-        .delete("/api/sessions/{source}/{id}/queue/{qid}", drop_queued_message)
-        .post("/api/sessions/{source}/{id}/queue/{qid}/steer", steer_queued_message)
-        .get("/api/sessions/{source}/{id}/questions", session_questions)
-        .post("/api/sessions/{source}/{id}/questions/{requestId}/answer", answer_question)
-        .post("/api/sessions/{source}/{id}/questions/{requestId}/dismiss", dismiss_question)
-        .put("/api/sessions/{source}/{id}/title", rename_session)
-        .put("/api/sessions/{source}/{id}/pin", pin_session)
-        .post("/api/sessions/{source}/{id}/archive", archive_session)
-        .get("/api/sessions/{source}/{id}/history", session_history)
-        .get("/api/sessions/{source}/{id}/search", session_search)
-        .get("/api/sessions/{source}/{id}/first-unread", session_first_unread)
-        .get("/api/sessions/{source}/{id}/agents", session_agents)
-        .get("/api/sessions/{source}/{id}/agents/{agentId}", agent_transcript)
-        .get("/api/sessions/{source}/{id}/checklist", session_checklist)
-        .get("/api/sessions/recent-cwds", recent_cwds)
-        .get("/api/composer-prefs", composer_prefs)
-        .put("/api/composer-prefs/{source}", put_composer_default)
-        .put("/api/composer-prefs/{source}/{id}", put_composer_session)
-        .put("/api/sessions/{source}/{id}/account", bind_session_account)
-        .post("/api/sessions/{source}/{id}/continue", continue_session_on_account)
+impl DriveState {
+    /// Register the session-driving routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        DriveState: FromRef<S>,
+    {
+        router
+            .post("/api/sessions/new", new_session)
+            .post("/api/sessions/{source}/{id}/message", send_message)
+            .get("/api/sessions/{source}/{id}/receipts", session_receipts)
+            .post("/api/sessions/{source}/{id}/interrupt", interrupt_session)
+            .post("/api/sessions/{source}/{id}/tasks/{taskId}/stop", stop_background_task)
+            .delete("/api/sessions/{source}/{id}/queue/{qid}", drop_queued_message)
+            .post("/api/sessions/{source}/{id}/queue/{qid}/steer", steer_queued_message)
+            .get("/api/sessions/{source}/{id}/questions", session_questions)
+            .post("/api/sessions/{source}/{id}/questions/{requestId}/answer", answer_question)
+            .post("/api/sessions/{source}/{id}/questions/{requestId}/dismiss", dismiss_question)
+            .put("/api/sessions/{source}/{id}/title", rename_session)
+            .put("/api/sessions/{source}/{id}/pin", pin_session)
+            .post("/api/sessions/{source}/{id}/archive", archive_session)
+            .get("/api/sessions/{source}/{id}/history", session_history)
+            .get("/api/sessions/{source}/{id}/search", session_search)
+            .get("/api/sessions/{source}/{id}/first-unread", session_first_unread)
+            .get("/api/sessions/{source}/{id}/agents", session_agents)
+            .get("/api/sessions/{source}/{id}/agents/{agentId}", agent_transcript)
+            .get("/api/sessions/{source}/{id}/checklist", session_checklist)
+            .get("/api/sessions/recent-cwds", recent_cwds)
+            .get("/api/composer-prefs", composer_prefs)
+            .put("/api/composer-prefs/{source}", put_composer_default)
+            .put("/api/composer-prefs/{source}/{id}", put_composer_session)
+            .put("/api/sessions/{source}/{id}/account", bind_session_account)
+            .post("/api/sessions/{source}/{id}/continue", continue_session_on_account)
+    }
 }
 
 /// Every status gotcha cannot derive, plus the golden contract's wordings.
@@ -2377,7 +2397,7 @@ mod tests {
         };
         let id = "99999999-9999-4999-8999-999999999999".to_string();
         let error = send_message(
-            State(state.clone()),
+            State(DriveState::from_ref(&state)),
             MaybeIdentity(None),
             ApiPath((Source::Claude, id.clone())),
             ApiJson(body(vec![gone])),
@@ -2394,7 +2414,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("uploads dir");
         std::fs::write(&path, b"x").expect("upload");
         let error = send_message(
-            State(state),
+            State(DriveState::from_ref(&state)),
             MaybeIdentity(None),
             ApiPath((Source::Claude, id)),
             ApiJson(body(vec![path.to_string_lossy().into_owned()])),
@@ -2453,24 +2473,24 @@ mod tests {
 
         // Not from `/api/uploads` at all.
         let outside = new_session_body(&missing_cwd, Some(vec!["/etc/passwd".into()]), None);
-        let error = new_session(State(state.clone()), ApiJson(outside)).await.expect_err("refused");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(outside)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload.clone()));
 
         // A traversal that starts inside the uploads directory and leaves it.
         let escape = uploads.join("abc/../../../.ssh/id_rsa").to_string_lossy().into_owned();
         let traversal = new_session_body(&missing_cwd, None, Some(vec![escape]));
-        let error = new_session(State(state.clone()), ApiJson(traversal)).await.expect_err("refused");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(traversal)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload.clone()));
 
         // The uploads directory itself is not an upload.
         let bare = new_session_body(&missing_cwd, Some(vec![uploads.to_string_lossy().into_owned()]), None);
-        let error = new_session(State(state.clone()), ApiJson(bare)).await.expect_err("refused");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(bare)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload));
 
         // An upload that is no longer on the device: its own reason, the draft kept.
         let gone = uploads.join("abc/gone.png").to_string_lossy().into_owned();
         let missing = new_session_body(&missing_cwd, Some(vec![gone]), None);
-        let error = new_session(State(state.clone()), ApiJson(missing)).await.expect_err("refused");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(missing)).await.expect_err("refused");
         assert_eq!(refused(error), (409, Some(inject::ATTACHMENT_MISSING.to_string())));
 
         // Uploaded paths pass, and the next thing said no is the directory.
@@ -2480,7 +2500,7 @@ mod tests {
         let image = uploads.join("abc/a.png").to_string_lossy().into_owned();
         let file = uploads.join("abc/notes.txt").to_string_lossy().into_owned();
         let valid = new_session_body(&missing_cwd, Some(vec![image]), Some(vec![file]));
-        let error = new_session(State(state.clone()), ApiJson(valid)).await.expect_err("no such directory");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(valid)).await.expect_err("no such directory");
         let (status, said) = refused(error);
         assert_eq!(status, 400);
         assert!(said.unwrap_or_default().starts_with("not a directory"), "past the attachment gate");
@@ -2489,10 +2509,10 @@ mod tests {
         // same id with the attachment fixed is a first attempt, not a replay.
         let mut named = new_session_body(&missing_cwd, Some(vec!["/etc/passwd".into()]), None);
         named.client_message_id = Optional(Some("6f1c2a52-3b7e-4d1f-9a0c-2b8f1e4d5c6a".into()));
-        let error = new_session(State(state.clone()), ApiJson(named.clone())).await.expect_err("refused");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(named.clone())).await.expect_err("refused");
         assert_eq!(refused(error).0, 409);
         named.images = Optional(None);
-        let error = new_session(State(state), ApiJson(named)).await.expect_err("no such directory");
+        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(named)).await.expect_err("no such directory");
         assert_eq!(refused(error).0, 400, "answered afresh, not with the recorded refusal");
     }
 

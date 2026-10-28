@@ -407,14 +407,14 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/sessions/{source}/{id}/ws", session_feed_ws)
         .get("/api/settings", settings);
     let router = crate::accounts::AccountsState::routes(router);
-    let router = crate::acp_agent::routes(router);
+    let router = crate::acp_agent::AcpAgentState::routes(router);
     let router = crate::apps::AppsState::routes(router);
     let router = crate::attention::AttentionState::routes(router);
     let router = crate::auth::routes(router);
-    let router = crate::chats::routes(router);
+    let router = crate::chats::ChatsState::routes(router);
     let router = cloud::routes(router);
     let router = crate::cloud::gateway::routes(router);
-    let router = crate::drive::routes(router);
+    let router = crate::drive::DriveState::routes(router);
     let router = crate::feed::global::routes(router);
     let router = crate::files::FilesState::routes(router);
     let router = crate::media::routes(router);

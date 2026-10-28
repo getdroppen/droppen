@@ -30,12 +30,12 @@ use std::sync::Arc;
 
 use gotcha::axum::body::Bytes;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::{api, Event, Json, KeepAlive, Schematic, Sse, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, Event, GotchaRouter, Json, KeepAlive, Schematic, Sse, State};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
@@ -302,9 +302,23 @@ fn validate_new(body: &ChatNew) -> Result<(), ApiError> {
 
 // ---------------------------------------------------------------------- routes
 
+/// What the chat routes use of the server's state.
+#[derive(Clone)]
+pub struct ChatsState {
+    /// The provider configuration and the API-backed store.
+    pub chats: Arc<Chats>,
+    /// Where sessions are discovered.
+    pub paths: Arc<crate::paths::Paths>,
+    /// Accounts and the spawn dependencies a CLI-backed chat starts with.
+    pub drive: Arc<crate::drive::Drive>,
+    /// The shared session-list feed, told when a chat's session appears.
+    pub global: Arc<crate::feed::global::GlobalFeed>,
+}
+crate::http::substate!(ChatsState);
+
 /// Instant chats from both backends, newest first.
 #[api(id = "list_chats", group = "chats", summary = "List chats")]
-pub async fn list_chats(State(state): State<AppState>) -> Json<ChatList> {
+pub async fn list_chats(State(state): State<ChatsState>) -> Json<ChatList> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
     let (claude_sessions, codex_sessions, api_chats) = tokio::join!(
@@ -345,7 +359,7 @@ pub async fn list_chats(State(state): State<AppState>) -> Json<ChatList> {
 /// Start a chat. For the CLI backends the first message is already running when
 /// this returns.
 #[api(id = "new_chat", group = "chats", summary = "Start a chat")]
-pub async fn new_chat(State(state): State<AppState>, ApiJson(body): ApiJson<ChatNew>) -> Result<Json<ChatNewResult>, ApiError> {
+pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<ChatNew>) -> Result<Json<ChatNewResult>, ApiError> {
     validate_new(&body)?;
 
     let Some(source) = body.backend.source() else {
@@ -391,7 +405,7 @@ pub async fn new_chat(State(state): State<AppState>, ApiJson(body): ApiJson<Chat
 
 /// One API-backed chat, with every message.
 #[api(id = "get_api_chat", group = "chats", summary = "Get an API chat")]
-pub async fn get_api_chat(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<ApiChat>, ApiError> {
+pub async fn get_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPath<String>) -> Result<Json<ApiChat>, ApiError> {
     store::read_api_chat(&state.paths, &id)
         .await
         .map(Json)
@@ -400,7 +414,7 @@ pub async fn get_api_chat(State(state): State<AppState>, ApiPath(id): ApiPath<St
 
 /// Delete an API-backed chat.
 #[api(id = "delete_api_chat", group = "chats", summary = "Delete an API chat")]
-pub async fn delete_api_chat(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn delete_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.chats.delete_api_chat(&id).await {
         return Err(ApiError::not_found("chat not found"));
     }
@@ -409,14 +423,14 @@ pub async fn delete_api_chat(State(state): State<AppState>, ApiPath(id): ApiPath
 
 /// The configured provider, with the key redacted.
 #[api(id = "chat_provider", group = "chats", summary = "Chat provider")]
-pub async fn chat_provider(State(state): State<AppState>) -> Json<ChatProviderInfo> {
+pub async fn chat_provider(State(state): State<ChatsState>) -> Json<ChatProviderInfo> {
     Json(state.chats.provider_info().await)
 }
 
 /// Update the provider configuration. An empty `apiKey` clears the stored key.
 #[api(id = "update_chat_provider", group = "chats", summary = "Update the chat provider")]
 pub async fn update_chat_provider(
-    State(state): State<AppState>,
+    State(state): State<ChatsState>,
     ApiJson(body): ApiJson<ChatProviderUpdate>,
 ) -> Result<Json<ChatProviderInfo>, ApiError> {
     state
@@ -429,7 +443,7 @@ pub async fn update_chat_provider(
 
 /// Model ids from the provider's `/models` endpoint.
 #[api(id = "chat_provider_models", group = "chats", summary = "Provider models")]
-pub async fn chat_provider_models(State(state): State<AppState>) -> Result<Json<ChatModelList>, ApiError> {
+pub async fn chat_provider_models(State(state): State<ChatsState>) -> Result<Json<ChatModelList>, ApiError> {
     let models = state
         .chats
         .provider_models()
@@ -507,7 +521,7 @@ impl store::DeltaSink for EventSink {
 /// [`CancellationToken`] drop guard: when the browser hangs up, the stream is
 /// dropped, the guard fires, and the provider request is abandoned rather than
 /// billed to the end.
-pub async fn api_chat_message(State(state): State<AppState>, ApiPath(id): ApiPath<String>, body: Bytes) -> Response {
+pub async fn api_chat_message(State(state): State<ChatsState>, ApiPath(id): ApiPath<String>, body: Bytes) -> Response {
     let Some(request) = parse_message_body(&body) else {
         return ApiError::bad_request("invalid body").into_response();
     };
@@ -539,17 +553,23 @@ pub async fn api_chat_message(State(state): State<AppState>, ApiPath(id): ApiPat
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/chats", list_chats)
-        .post("/api/chats/new", new_chat)
-        .get("/api/api-chats/{id}", get_api_chat)
-        .delete("/api/api-chats/{id}", delete_api_chat)
-        .post("/api/api-chats/{id}/message", api_chat_message)
-        .get("/api/chat-provider", chat_provider)
-        .put("/api/chat-provider", update_chat_provider)
-        .get("/api/chat-provider/models", chat_provider_models)
+impl ChatsState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        ChatsState: FromRef<S>,
+    {
+        router
+            .get("/api/chats", list_chats)
+            .post("/api/chats/new", new_chat)
+            .get("/api/api-chats/{id}", get_api_chat)
+            .delete("/api/api-chats/{id}", delete_api_chat)
+            .post("/api/api-chats/{id}/message", api_chat_message)
+            .get("/api/chat-provider", chat_provider)
+            .put("/api/chat-provider", update_chat_provider)
+            .get("/api/chat-provider/models", chat_provider_models)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.
