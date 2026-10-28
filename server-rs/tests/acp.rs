@@ -889,8 +889,8 @@ async fn an_agent_is_not_removed_while_a_session_on_it_starts() {
     let server = TestServer::start_at(home.path(), None).await;
     configure_env(&server, "slow", &program, "FAKE_AGENT_SLOW=session/new=2").await;
 
-    // A removal asked for while the session is being opened waits for the
-    // start, and then finds its turn running.
+    // A removal asked for while the session is being opened is refused: its
+    // first message is on its way.
     let starting = start(&server, "slow", &workdir, "wait for me");
     let removing = async {
         common::wait_for("the session to be asked for", Duration::from_secs(20), || was_sent(&workdir, "session/new")).await;
@@ -900,10 +900,14 @@ async fn an_agent_is_not_removed_while_a_session_on_it_starts() {
     assert_eq!(status, 409, "{body}");
     assert!(body.contains("running a turn"), "{body}");
     assert_eq!(server.get_json("/api/acp/agents").await["agents"][0]["id"], "slow", "still there");
-    assert_eq!(
-        server.get_json(&format!("/api/sessions/acp/{id}")).await["injection"]["state"],
-        "running"
+    // The start is answered once the driver has the message, which it sends
+    // next: the session is busy from then on, and its turn runs once sent.
+    let detail = server.get_json(&format!("/api/sessions/acp/{id}")).await;
+    assert!(
+        matches!(detail["summary"]["activity"].as_str(), Some("queued" | "working")),
+        "{detail:#}"
     );
+    wait_for(&server, &id, "the turn", |detail| detail["injection"]["state"] == "running").await;
 
     server.json("POST", &format!("/api/sessions/acp/{id}/interrupt"), &json!({})).await;
     wait_for(&server, &id, "the interruption", finished).await;
