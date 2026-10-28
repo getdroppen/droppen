@@ -4230,7 +4230,7 @@
             "type": "string"
           },
           "layout": {
-            "description": "New pane tree; absent leaves it alone.\n\nThe custom deserializer is what keeps \"absent\" and \"`null`\" apart:\n[`Optional`] alone folds a JSON `null` into `None`, but the contract\ntreats an explicit `null` as a layout that was *supplied*, sanitized\ndown to a single empty pane."
+            "description": "New pane tree; absent leaves it alone, and an explicit `null` is a\nsupplied layout, sanitized down to a single empty pane."
           },
           "title": {
             "description": "New display name; absent leaves it alone.",

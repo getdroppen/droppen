@@ -4874,12 +4874,8 @@ export interface components {
             /** @description One emoji; blank restores the default icon, absent leaves it alone. */
             emoji?: string;
             /**
-             * @description New pane tree; absent leaves it alone.
-             *
-             *     The custom deserializer is what keeps "absent" and "`null`" apart:
-             *     [`Optional`] alone folds a JSON `null` into `None`, but the contract
-             *     treats an explicit `null` as a layout that was *supplied*, sanitized
-             *     down to a single empty pane.
+             * @description New pane tree; absent leaves it alone, and an explicit `null` is a
+             *     supplied layout, sanitized down to a single empty pane.
              */
             layout?: unknown;
             /** @description New display name; absent leaves it alone. */
