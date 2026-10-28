@@ -450,7 +450,7 @@ async fn claude_models(state: &AppState, account_id: Option<&str>) -> (Vec<Model
 /// The directory an account's list can be asked of, when there is one.
 ///
 /// The quota panel's rule, not a new one: only an OAuth account that has opted
-/// into probing has a logged-in config root of its own — [`crate::quota`] picks
+/// into probing has a logged-in config root of its own — [`crate::accounts::quota`] picks
 /// the directories it probes on exactly this pair of conditions, and a model
 /// list for a root the quota panel will not read would be a second rule.
 /// An env account authenticates per request and has no root to ask; an account

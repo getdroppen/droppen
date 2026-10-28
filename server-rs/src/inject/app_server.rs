@@ -1210,7 +1210,7 @@ mod tests {
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
             let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
-            let quota = Arc::new(crate::quota::QuotaCache::new(paths.clone()));
+            let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();

@@ -109,7 +109,6 @@ pub mod procs;
 pub mod program;
 pub mod pty_shim;
 pub mod push;
-pub mod quota;
 pub mod record;
 pub mod schedule;
 pub mod screens;

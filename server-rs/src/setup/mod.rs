@@ -1584,8 +1584,8 @@ pub(crate) mod tests {
         for (file, functions) in [
             ("accounts/mod.rs", &["parse_auth_status"][..]),
             ("text.rs", &["strip_ansi"][..]),
-            ("quota/mod.rs", &["claude_plan_label"][..]),
-            ("quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
+            ("accounts/quota/mod.rs", &["claude_plan_label"][..]),
+            ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
             ("process_env.rs", &["apply_env"][..]),
         ] {
             let source = std::fs::read_to_string(src.join(file)).expect(file);

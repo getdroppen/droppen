@@ -153,7 +153,7 @@ pub fn claude_login(output: &RunOutput) -> ToolLogin {
         plan: Nullable(
             subscription
                 .as_deref()
-                .map(|plan| crate::quota::claude_plan_label(Some(plan), tier.as_deref())),
+                .map(|plan| crate::accounts::quota::claude_plan_label(Some(plan), tier.as_deref())),
         ),
         email: Nullable(text("email")),
         usable: Nullable(usable),

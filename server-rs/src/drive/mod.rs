@@ -17,12 +17,12 @@ pub mod routes;
 
 use std::sync::Arc;
 
+use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use crate::auth::Auth;
 use crate::inject::InjectionRegistry;
 use crate::paths::Paths;
-use crate::quota::QuotaCache;
 use crate::sessions::titles;
 
 pub use routes::{describe, routes};

@@ -20,7 +20,7 @@
 //!
 //! An app-server spawn is ~0.8 s, where a file read is microseconds, so it
 //! obeys the three rules the parent module's header sets out: one probe per
-//! [`crate::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
+//! [`crate::accounts::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
 //! a time, and a request waits only inside the collect budget it already had.
 //!
 //! # Security
@@ -59,7 +59,7 @@ const RATE_LIMITS: &str = "account/rateLimits/read";
 /// The live CLI answers in ~0.8 s including its own startup, so this is a
 /// ceiling on the one probe that finds the cache cold rather than a budget
 /// anything is expected to spend. It is deliberately longer than
-/// [`crate::quota::COLLECT_BUDGET`]: a request never waits for the whole of it,
+/// [`crate::accounts::quota::COLLECT_BUDGET`]: a request never waits for the whole of it,
 /// but a probe that needs six seconds should still land in the cache for the
 /// next poll instead of being thrown away.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);

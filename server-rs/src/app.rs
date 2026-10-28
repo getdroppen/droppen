@@ -317,7 +317,7 @@ impl RemoteHandApp {
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
                 // read for a while, and never one another process is probing.
-                crate::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
+                crate::accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
             }
         }
         let cancel = state.cancel.clone();

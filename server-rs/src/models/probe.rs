@@ -208,11 +208,11 @@ fn drop_redundant_default(rows: Vec<ModelInfo>) -> Vec<ModelInfo> {
 /// An account's directory is a usage login with a rotating refresh token, and
 /// this CLI is as able to refresh it as the quota probe is — two processes
 /// doing so at once is how such a login gets revoked. So it takes the same
-/// machine-wide lock ([`crate::quota::readings::ProbeLock`]) for as long as the
+/// machine-wide lock ([`crate::accounts::quota::readings::ProbeLock`]) for as long as the
 /// child lives, and a login somebody else is probing answers `None` rather
 /// than racing them for the token.
 async fn probe_claude_models(paths: &Paths, config_dir: Option<&Path>) -> Option<Vec<ModelInfo>> {
-    use crate::quota::readings::{probe_lock_path, ProbeLock};
+    use crate::accounts::quota::readings::{probe_lock_path, ProbeLock};
     let _lock = match config_dir {
         Some(dir) => match ProbeLock::try_acquire(&probe_lock_path(dir)) {
             Ok(Some(lock)) => Some(lock),
@@ -312,7 +312,7 @@ struct CacheEntry {
 
 /// The Claude model lists, cached for the process — one per config root.
 ///
-/// Keyed by the config **directory**, exactly as [`crate::quota::QuotaCache`] is
+/// Keyed by the config **directory**, exactly as [`crate::accounts::quota::QuotaCache`] is
 /// keyed, so each login gets its own list, its own TTL and its own in-flight
 /// dedup. The key is a path and never a credential: see the module's security
 /// note, and keep it that way.
@@ -326,7 +326,7 @@ pub struct ClaudeModelCache {
     in_flight: Mutex<HashMap<String, Pending>>,
 }
 
-/// `None` is the user's own login; the same key [`crate::quota`] spells `"local"`.
+/// `None` is the user's own login; the same key [`crate::accounts::quota`] spells `"local"`.
 fn cache_key(config_dir: Option<&Path>) -> String {
     config_dir
         .map(|dir| dir.to_string_lossy().into_owned())
