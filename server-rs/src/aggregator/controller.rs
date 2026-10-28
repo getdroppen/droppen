@@ -1231,7 +1231,7 @@ mod tests {
         .await;
 
         // Turned off: the directory goes, and nothing writes it again.
-        std::fs::write(crate::api::cloud::file_path(&paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        std::fs::write(crate::cloud::file_path(&paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
         crate::aggregator::forget_all(&paths).unwrap();
         until(Duration::from_secs(10), "idle", || !status.lock().unwrap().running).await;
         {
@@ -1384,7 +1384,7 @@ mod tests {
         })
         .await;
         // The owner turns it off meanwhile (`aggregatorOff` first, the directory a moment later, as the local API does).
-        std::fs::write(crate::api::cloud::file_path(&r.paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        std::fs::write(crate::cloud::file_path(&r.paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
         push_mail(&hub, 2, mail(&a, "d-a", &a.admin.1, "m-2", 1, &[0x23; 32]));
         tokio::time::sleep(Duration::from_millis(1200)).await;
         let disk = crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").unwrap();
@@ -1395,7 +1395,7 @@ mod tests {
         assert!(!crate::aggregator::dir(&r.paths).exists(), "nothing wrote the keys back");
         assert!(!r.status.lock().unwrap().running);
         // On again: it starts from the disk (nothing), and takes what the mailbox holds.
-        std::fs::write(crate::api::cloud::file_path(&r.paths), br#"{"aggregate": true}"#).unwrap();
+        std::fs::write(crate::cloud::file_path(&r.paths), br#"{"aggregate": true}"#).unwrap();
         r.bump.send_modify(|v| *v += 1);
         until(Duration::from_secs(10), "m-2's epoch 1 taken again", || {
             crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").is_ok_and(|k| k.epochs("m-2") == [1])

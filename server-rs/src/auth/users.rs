@@ -510,7 +510,7 @@ impl UsersStore {
     /// count towards [`UsersStore::has_users`] — so it does not end the setup
     /// state — `user list` leaves it out, its password is not changed through
     /// the API, and it is nobody's way to other devices on its own
-    /// (`crate::api::cloud`).
+    /// (`crate::cloud`).
     pub async fn add_app(&self, name: &str, password: &str) -> Result<(), UserError> {
         self.add_kind(name, password, true).await
     }

@@ -88,7 +88,7 @@
 //!   browser has no login here). It is its own credential: it opens only with
 //!   the attempt's one-off key, held in this process, and its state, which
 //!   only the page that opened the attempt was given
-//!   ([`crate::api::link_handoff`]); the handler refuses everything else;
+//!   ([`crate::cloud::link_handoff`]); the handler refuses everything else;
 //! * `OPTIONS` — answered by [`crate::origin`]'s CORS preflight, which a browser
 //!   never sends credentials on;
 //! * `GET`/`HEAD` outside `/api/`, minus the three documentation paths — the SPA
@@ -195,7 +195,7 @@ enum Mode {
 /// Not an account name — a colon is not allowed in one ([`users::valid_name`]),
 /// so no account can ever be mistaken for it, nor it for an account. Valid only
 /// while the instance has no user account ([`Auth::still_valid`]); every session
-/// of it is revoked when the first one is made. [`crate::api::cloud`] treats it
+/// of it is revoked when the first one is made. [`crate::cloud`] treats it
 /// as the manager of the Droppen link, which is the one place outside this
 /// module that has to know it exists ([`is_local_owner`]).
 pub const LOCAL_OWNER: &str = "local:owner";
@@ -636,7 +636,7 @@ fn exempt(method: &Method, path: &str) -> bool {
     if method == Method::GET && path == routes::STATUS_PATH {
         return true;
     }
-    if method == Method::POST && path == crate::api::cloud::RETURN_ROUTE {
+    if method == Method::POST && path == crate::cloud::RETURN_ROUTE {
         return true;
     }
     if is_embed(path) {

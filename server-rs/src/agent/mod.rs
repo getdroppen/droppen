@@ -297,7 +297,7 @@ mod tests {
         // A pending key an older release left behind.
         std::fs::create_dir_all(crate::aggregator::dir(&paths)).unwrap();
         std::fs::write(crate::aggregator::key_path(&paths), b"{}").unwrap();
-        let cloud = crate::api::cloud::file_path(&paths);
+        let cloud = crate::cloud::file_path(&paths);
         std::fs::write(&cloud, br#"{"owner":"alice"}"#).unwrap();
         let before = unenroll_instance(&paths).unwrap();
         assert_eq!(before.map(|st| st.machine).as_deref(), Some("m-1"));

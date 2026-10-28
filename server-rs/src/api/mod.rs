@@ -4,9 +4,6 @@
 //! because `nest` joins with an extra slash and documents `/api//sessions`
 //! (`gotcha-0.4.1/src/router.rs:161`).
 
-pub mod cloud;
-pub mod hub_web;
-pub mod link_handoff;
 
 use std::sync::Arc;
 
@@ -17,6 +14,7 @@ use gotcha::{api, state, GotchaRouter, Json, Schematic, State, WebSocketUpgrade}
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::cloud;
 use crate::drive::Drive;
 use crate::feed;
 use crate::http::error::ApiError;

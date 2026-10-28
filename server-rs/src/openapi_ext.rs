@@ -251,6 +251,10 @@ fn collect_schema<T: Schematic>() -> (Schema, BTreeMap<String, Schema>) {
 }
 
 /// The media type a JSON body is served as.
+/// The security scheme name the guarded operations reference, and the key it is
+/// registered under in `components/securitySchemes`.
+pub const BEARER_SCHEME: &str = "bearerAuth";
+
 const JSON: &str = "application/json";
 
 /// Implement `Schematic` for a string enum that must stay *inline* in its
@@ -522,7 +526,7 @@ impl SpecAmendmentExt for OpenAPIV3 {
         components
             .security_schemes
             .get_or_insert_with(BTreeMap::new)
-            .entry(crate::auth::routes::BEARER_SCHEME.to_string())
+            .entry(BEARER_SCHEME.to_string())
             .or_insert_with(|| {
                 Referenceable::Data(SecurityScheme {
                     _type: SecurityType::Http {

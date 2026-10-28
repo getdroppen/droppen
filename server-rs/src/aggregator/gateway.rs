@@ -14,7 +14,7 @@
 //! Everything comes from memory ([`super::live`]); nothing here reads the
 //! disk or writes anywhere: read-only, in every sense.
 //!
-//! **Who**: [`crate::api::cloud::remote_viewer`] — the rule `GET /api/cloud`'s
+//! **Who**: [`crate::cloud::remote_viewer`] — the rule `GET /api/cloud`'s
 //! `copy` follows (security review of S1-5, F8): the local account that
 //! signed this device in, and those it allowed; and the login behind the
 //! socket still signed in — before the upgrade, again once upgraded, then
@@ -77,7 +77,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
 /// landing in between is not missed.
 pub async fn agg_ws(State(state): State<AppState>, who: MaybeIdentity, upgrade: WebSocketUpgrade) -> Response {
     let changes = state.cloud.changes();
-    let user = match crate::api::cloud::remote_viewer(&state, &who).await {
+    let user = match crate::cloud::remote_viewer(&state, &who).await {
         Ok(user) => user,
         Err(refusal) => return refusal.into_response(),
     };
@@ -221,7 +221,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
     tracing::info!(%user, "gateway: a page connected");
     let mut bye: Option<(u16, String, String)> = None;
     // A change between the check before the upgrade and here is not missed.
-    if let Err(refusal) = crate::api::cloud::remote_viewer(&state, &who).await {
+    if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
         bye = Some(closing(&refusal));
     } else {
         // Out of the directory's borrow before anything else (sending it may wait).
@@ -269,7 +269,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
                         }
                     }
                     _ = recheck.tick() => {
-                        if let Err(refusal) = crate::api::cloud::remote_viewer(&state, &who).await {
+                        if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
                             bye = Some(closing(&refusal));
                             break;
                         }
@@ -278,7 +278,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
                         if changed.is_err() {
                             break;
                         }
-                        if let Err(refusal) = crate::api::cloud::remote_viewer(&state, &who).await {
+                        if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
                             bye = Some(closing(&refusal));
                             break;
                         }
@@ -623,7 +623,7 @@ mod tests {
         // alice signed this device in: she sees the other devices, and says who else may.
         let created: std::collections::BTreeMap<String, String> = auth.users.list().await.into_iter().map(|u| (u.name, u.created_at)).collect();
         std::fs::write(
-            crate::api::cloud::file_path(&state.paths),
+            crate::cloud::file_path(&state.paths),
             serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 1, "accountsSince": {"alice": created["alice"]}}).to_string(),
         )
         .unwrap();
@@ -673,10 +673,10 @@ mod tests {
         assert_eq!(status_of(connect(ticket("bob")).await), 403);
         // alice lets him, then takes it back: he is told, and closed.
         let set = |remote: bool| {
-            crate::api::cloud::put_access(
+            crate::cloud::put_access(
                 State(state.clone()),
                 alice.clone(),
-                crate::http::extract::ApiJson(crate::api::cloud::AccessRequest { user: "bob".into(), remote }),
+                crate::http::extract::ApiJson(crate::cloud::AccessRequest { user: "bob".into(), remote }),
             )
         };
         let _ = set(true).await.unwrap();
@@ -706,7 +706,7 @@ mod tests {
         // No owner on file (a device signed in with the CLI): nobody sees the
         // other devices, not even who may manage the link, until one claims it.
         std::fs::write(
-            crate::api::cloud::file_path(&state.paths),
+            crate::cloud::file_path(&state.paths),
             serde_json::json!({"aggregate": true, "linkedAt": 1}).to_string(),
         )
         .unwrap();
@@ -715,7 +715,7 @@ mod tests {
         assert_eq!((bye["t"].as_str(), bye["code"].as_str()), (Some("bye"), Some("no_remote_access")));
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
         // A file that does not read: nobody either.
-        std::fs::write(crate::api::cloud::file_path(&state.paths), "{not json").unwrap();
+        std::fs::write(crate::cloud::file_path(&state.paths), "{not json").unwrap();
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
     }
 }

@@ -76,11 +76,6 @@ use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
 use shell::ShellSnapshot;
 
-/// The variable the desktop app reports its own login-shell read in:
-/// `ok`, `timeout` or `failed`. Server-only: never passed to a child
-/// ([`crate::process_env`]).
-pub const SHELL_READ_ENV: &str = "DROPPEN_DESKTOP_SHELL_READ";
-
 /// The `kv` key of the adopted directories, under [`scope::SETUP`].
 const OVERLAY_KEY: &str = "pathOverlay";
 
@@ -493,7 +488,7 @@ impl Setup {
             Arc::new(SystemRunner),
             Arc::new(|paths: &Paths, overlay| Probe::live(paths.home.clone(), overlay)),
             shell::login_shell(),
-            PathRead::from_app(std::env::var(SHELL_READ_ENV).ok().as_deref()),
+            PathRead::from_app(std::env::var(crate::process_env::SHELL_READ_ENV).ok().as_deref()),
         )
     }
 

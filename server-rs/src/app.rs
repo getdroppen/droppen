@@ -126,7 +126,7 @@ impl GotchaApp for RemoteHandApp {
             // two feeds that would otherwise only notice on their next poll.
             drive.injections.attach_listeners(feeds.clone(), global.clone());
             Ok(AppState {
-                cloud: crate::api::cloud::Cloud::new(paths.as_ref().clone()),
+                cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or
                 // store, and `boot` below.

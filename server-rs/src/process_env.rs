@@ -7,6 +7,14 @@ use std::path::{Path, PathBuf};
 /// The environment for a child process, ordered so a spawn is reproducible.
 pub type Env = BTreeMap<String, String>;
 
+/// The environment variable the desktop app sets (under its old name too).
+pub const DESKTOP_APP_ENV: &str = "DROPPEN_DESKTOP_APP";
+
+/// The variable the desktop app reports its own login-shell read in:
+/// `ok`, `timeout` or `failed`. Server-only: never passed to a child
+/// (`is_server_only_variable`).
+pub const SHELL_READ_ENV: &str = "DROPPEN_DESKTOP_SHELL_READ";
+
 /// Variables the harness may have set that break a spawned CLI.
 ///
 /// The server may itself run inside an agent harness whose `CLAUDE`- and
@@ -18,16 +26,16 @@ fn is_harness_variable(key: &str) -> bool {
 
 /// Variables that describe *this server's* situation, not a child's.
 ///
-/// `DROPPEN_DESKTOP_APP` (`crate::desktop_app`), or its old name
+/// `DROPPEN_DESKTOP_APP` ([`DESKTOP_APP_ENV`]), or its old name
 /// `RH_DESKTOP_APP`, says the Droppen desktop app runs this server; a terminal
 /// or a CLI it starts is not run by the app, and a `remote-hand-server`
 /// somebody starts by hand from such a terminal must not believe it is (it
 /// would refuse to self-upgrade and hide its own login). Both names go.
-/// `DROPPEN_DESKTOP_SHELL_READ` ([`crate::setup::SHELL_READ_ENV`]) is the
+/// `DROPPEN_DESKTOP_SHELL_READ` ([`SHELL_READ_ENV`]) is the
 /// app's report on how *its* read of the login shell went; it describes how
 /// this server was started and means nothing to anything the server starts.
 fn is_server_only_variable(key: &str) -> bool {
-    crate::env::is(key, crate::desktop_app::ENV) || key == crate::setup::SHELL_READ_ENV
+    crate::env::is(key, DESKTOP_APP_ENV) || key == SHELL_READ_ENV
 }
 
 /// The `PATH` every child gets instead of the inherited one, once something has

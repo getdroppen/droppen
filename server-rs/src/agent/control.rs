@@ -792,7 +792,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlsweep");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        std::fs::write(crate::api::cloud::file_path(&paths), br#"{"aggregatorOff": true}"#).unwrap();
+        std::fs::write(crate::cloud::file_path(&paths), br#"{"aggregatorOff": true}"#).unwrap();
         assert!(!paths.wants_aggregator());
         let left = paths.instance_dir().join(".aggregator-deleted-1-2-3");
         std::fs::create_dir_all(&left).unwrap();
