@@ -54,8 +54,9 @@ use crate::api::extract::ApiPath;
 use crate::api::{ApiRouter, AppState};
 use crate::db::index::Index;
 use crate::openapi_ext::{ExtraResponses, Nullable};
+use crate::paths::Paths;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};
-use crate::sessions::{Paths, SessionStatus, SessionSummary, Source};
+use crate::sessions::{SessionStatus, SessionSummary, Source};
 use unread::Ledger;
 
 /// Whether a session is waiting on the user.
@@ -63,7 +64,7 @@ use unread::Ledger;
 /// The rule the badge, the sort and the push trigger all read, spelled once.
 ///
 /// Timestamps are compared as strings. Every clock involved is ISO-8601 UTC with
-/// milliseconds — the CLIs write theirs that way and [`crate::sessions::iso8601`]
+/// milliseconds — the CLIs write theirs that way and [`crate::time::iso8601`]
 /// writes ours that way — and for one fixed format that is a plain lexicographic
 /// compare, which is what the session list already sorts by.
 pub fn is_unread(attention_at: Option<&str>, read_at: Option<&str>, status: SessionStatus) -> bool {

@@ -47,7 +47,7 @@ use serde_json::Value;
 
 use super::NotifyConfigInfo;
 use crate::db::{scope, Db};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// Serializes read-modify-write across every caller in the process, for the same
 /// reason [`crate::push::store`]'s does: minting the secret is a read, a change

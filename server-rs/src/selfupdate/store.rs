@@ -33,7 +33,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// The installed binary's name, which is also the process name in `ps`.
 const NAME: &str = "remote-hand-server";

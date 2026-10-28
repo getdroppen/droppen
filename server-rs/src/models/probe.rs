@@ -48,8 +48,8 @@ use tokio::process::{ChildStdin, ChildStdout};
 
 use super::{claude_fallback, ModelInfo, ModelListSource, CLAUDE_DEFAULT_EFFORT};
 use crate::openapi_ext::Nullable;
+use crate::paths::Paths;
 use crate::process_env::{apply_env, claude_env};
-use crate::sessions::Paths;
 
 /// A CLI that speaks stream-json on both sides, which is the only mode that
 /// takes a control request — and the invocation the Agent SDK itself uses.
@@ -195,7 +195,7 @@ fn drop_redundant_default(rows: Vec<ModelInfo>) -> Vec<ModelInfo> {
 ///
 /// `config_dir` `None` means the user's own login (whatever the CLI picks up by
 /// itself); anything else is an account's probe directory, asked for exactly the
-/// way [`crate::sessions::Paths::probe_claude_usage`] asks it — `CLAUDE_CONFIG_DIR` set
+/// way [`crate::paths::Paths::probe_claude_usage`] asks it — `CLAUDE_CONFIG_DIR` set
 /// *and* the directory as the cwd, so the child adopts no project of the user's.
 /// Without the variable the child falls back to `$HOME/.claude` and answers for
 /// the wrong login, which is the whole bug this argument exists for.

@@ -44,7 +44,7 @@
 //!   that used to cure it.
 //! * **Losing it costs a re-scan, not a fact.** Which is what
 //!   [`Durability::Rebuildable`] means, and why this lives in its own file:
-//!   [`crate::sessions::Paths::index_db`] explains the rest of that choice.
+//!   [`crate::paths::Paths::index_db`] explains the rest of that choice.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -54,7 +54,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{at_with, Db, Durability};
-use crate::sessions::{Paths, Source};
+use crate::paths::Paths;
+use crate::sessions::Source;
 
 /// The index's schema, appended to under the same additive-only rule as
 /// [`super::SCHEMA`] — see `migrations.rs` for why an older binary must never
@@ -263,7 +264,7 @@ impl<'a> Watermark<'a> {
         Self {
             path,
             size_bytes: metadata.len(),
-            mtime_ms: crate::sessions::mtime_ms(metadata),
+            mtime_ms: crate::time::mtime_ms(metadata),
         }
     }
 }

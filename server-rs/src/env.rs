@@ -66,7 +66,7 @@ pub enum Kind {
 /// of `codex`), and the names only a test reads.
 pub const RENAMED: &[(&str, &str, Kind)] = &[
     // Where this server keeps its files, and the Claude roots it reads
-    // (`crate::sessions::Paths`).
+    // (`crate::paths::Paths`).
     ("DROPPEN_DATA_DIR", "REMOTE_HAND_DATA_DIR", Kind::Setting),
     ("DROPPEN_CONFIG_DIR", "REMOTE_HAND_CONFIG_DIR", Kind::Setting),
     ("DROPPEN_CLAUDE_LOCAL_ROOT", "REMOTE_HAND_CLAUDE_LOCAL_ROOT", Kind::Setting),

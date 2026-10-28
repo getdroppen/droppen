@@ -66,10 +66,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::mpsc;
 
 use super::{Event, Line, Stop, SCHEMA};
-use crate::claude_roots::ClaudeRoot;
 use crate::feed::watch::{self, FileEvents};
+use crate::paths::{ClaudeRoot, Paths};
 use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
-use crate::sessions::{iso8601, mtime_ms, Paths};
+use crate::time::{iso8601, mtime_ms};
 
 /// How often the files are looked at when the watcher says nothing.
 const POLL: Duration = Duration::from_secs(1);

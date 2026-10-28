@@ -36,7 +36,7 @@ use serde_json::Value;
 use super::{ChatError, Chats};
 use crate::db::{scope, Db};
 use crate::openapi_ext::Optional;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// How long the provider's `/models` call may take.
 ///

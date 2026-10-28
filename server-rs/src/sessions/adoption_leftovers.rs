@@ -13,8 +13,8 @@
 //! at boot, so a server upgraded straight out of an interrupted adoption does
 //! not keep the file for ever. It only ever deletes files with that suffix.
 
-use super::Paths;
-use crate::claude_roots::{self, ClaudeRoot};
+use crate::claude_roots;
+use crate::paths::{ClaudeRoot, Paths};
 
 /// Suffix a half-written adopted transcript wore until it was complete.
 const PARTIAL_SUFFIX: &str = "jsonl.adopting";

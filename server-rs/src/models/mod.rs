@@ -490,7 +490,7 @@ fn probe_dir(accounts: &crate::accounts::store::AccountsStore, account: &Account
 /// few silently hides the rung a new model was released for. Refusing to
 /// schedule a valid effort because this machine has never run codex would be the
 /// second kind of wrong.
-pub async fn accepted_efforts(paths: &crate::sessions::Paths, source: Source, model: Option<&str>) -> Option<Vec<String>> {
+pub async fn accepted_efforts(paths: &crate::paths::Paths, source: Source, model: Option<&str>) -> Option<Vec<String>> {
     match source {
         // The agent checks an effort against the model it runs when it is set.
         Source::Acp => None,
@@ -751,7 +751,7 @@ mod tests {
     /// refuse a task the CLI would have run.
     #[tokio::test]
     async fn a_model_this_build_has_never_heard_of_accepts_the_whole_ladder() {
-        let paths = crate::sessions::Paths::new(PathBuf::from("/nonexistent"));
+        let paths = crate::paths::Paths::new(PathBuf::from("/nonexistent"));
         for model in ["GLM-5.3-CYBERSECURITY-FP8", "qwen3-max", "glm-5-air"] {
             assert_eq!(
                 accepted_efforts(&paths, Source::Claude, Some(model)).await,

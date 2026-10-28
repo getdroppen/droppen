@@ -46,7 +46,7 @@ use lapse::ChannelLapse;
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
 use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, traffic, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
 mod admit;

@@ -71,7 +71,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use crate::instance::InstanceDirs;
-use crate::sessions::{iso8601, Paths};
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 mod tail;
 

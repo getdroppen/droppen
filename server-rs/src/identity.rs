@@ -26,11 +26,12 @@
 //! renamed; a stale one would be a second, worse answer to a question
 //! [`crate::sessions::ServerId::local`] already answers.
 //!
-//! Per instance, in [`crate::sessions::Paths::instance_db`], because a server
+//! Per instance, in [`crate::paths::Paths::instance_db`], because a server
 //! *is* an instance: two servers on one machine are two servers, and one row in
 //! the machine-wide database could not say that.
 
-use crate::sessions::{Paths, ServerId};
+use crate::paths::Paths;
+use crate::sessions::ServerId;
 
 /// One server's durable identity.
 #[derive(Debug, Clone, PartialEq, Eq)]

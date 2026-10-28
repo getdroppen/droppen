@@ -68,7 +68,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::scope;
 use crate::feed::global::GlobalFeed;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use install::{Installed, InstallError};
 pub use store::{Store, StoreError};
 

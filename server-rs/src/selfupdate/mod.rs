@@ -66,7 +66,7 @@ use tokio::io::AsyncWriteExt;
 use crate::api::error::ApiError;
 use crate::api::{ApiRouter, AppState};
 use crate::openapi_ext::ExtraResponses;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 use store::BinStore;
 

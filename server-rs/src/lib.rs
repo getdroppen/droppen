@@ -99,6 +99,7 @@ pub mod notify;
 pub mod openapi_ext;
 pub mod origin;
 pub(crate) mod outbound;
+pub mod paths;
 pub mod plugins;
 pub mod prefs;
 pub mod process_env;

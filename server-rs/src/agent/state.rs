@@ -24,7 +24,7 @@ use rh_proto::noise::ReplayGuard;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::text::{hex, unhex};
 
 const VERSION: u32 = 1;

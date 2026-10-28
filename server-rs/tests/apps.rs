@@ -24,7 +24,7 @@ use gotcha::axum::http::{header, HeaderValue};
 use remote_hand_server::apps::record::{self, AppRecord};
 use remote_hand_server::apps::AppType;
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
-use remote_hand_server::sessions::Paths;
+use remote_hand_server::paths::Paths;
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;

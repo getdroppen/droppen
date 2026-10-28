@@ -27,7 +27,8 @@ use crate::api::extract::ApiQuery;
 use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
 use crate::openapi_ext::{ExtraResponses, Nullable};
-use crate::sessions::{iso8601, Paths};
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 /// How much of a file `GET /api/fs/read` will return.
 const READ_LIMIT: u64 = 256 * 1024;
@@ -60,7 +61,7 @@ const PRIVATE_TO_THIS_COMPUTER: &str = "this device's Droppen data and settings 
 /// Extensions the download route is willing to serve inline, and their mime types.
 ///
 /// Narrower than the allowlist behind
-/// [`is_image_ext`](crate::sessions::util::is_image_ext) — this list decides
+/// [`is_image_ext`](crate::text::is_image_ext) — this list decides
 /// what the browser is invited to render in place rather than save — but note
 /// what it still contains: an
 /// `svg` served as `image/svg+xml` with `Content-Disposition: inline` is a
@@ -395,7 +396,7 @@ impl Paths {
         let real = real_path(target).ok_or(FsError::Private)?;
         let private: Vec<FileId> = [self.data_dir(), self.config_dir()].iter().filter_map(|d| file_id(d)).collect();
         let uploads = file_id(&self.uploads_dir());
-        let claude = self.claude_root(crate::claude_roots::ClaudeRoot::Managed);
+        let claude = self.claude_root(crate::paths::ClaudeRoot::Managed);
         let readable: Vec<FileId> = READABLE_IN_CLAUDE_ROOT.iter().filter_map(|d| real_dir_id(&claude.join(d))).collect();
         let projects = real_dir_id(&claude.join("projects"));
         for dir in real.ancestors() {
@@ -588,7 +589,7 @@ impl Paths {
         Ok(Attachment {
             path: target.to_string_lossy().into_owned(),
             size_bytes: size as i64,
-            is_image: crate::sessions::util::is_image_ext(&extension),
+            is_image: crate::text::is_image_ext(&extension),
             name,
         })
     }
@@ -1218,9 +1219,9 @@ mod tests {
     /// The upload route's extraction: a name with no dot is its own extension.
     #[test]
     fn an_upload_whose_whole_name_is_an_extension_counts_as_an_image() {
-        assert!(crate::sessions::util::is_image_ext(&extension("png")));
-        assert!(crate::sessions::util::is_image_ext(&extension("JPG")));
-        assert!(!crate::sessions::util::is_image_ext(&extension("notes")));
+        assert!(crate::text::is_image_ext(&extension("png")));
+        assert!(crate::text::is_image_ext(&extension("JPG")));
+        assert!(!crate::text::is_image_ext(&extension("notes")));
     }
 
     #[test]
@@ -1374,7 +1375,7 @@ mod tests {
 
         // What the transcript links to in the managed Claude root, at the
         // routes too: a plan reads, a pasted image draws; the login does not.
-        let claude = state.paths.claude_root(crate::claude_roots::ClaudeRoot::Managed);
+        let claude = state.paths.claude_root(crate::paths::ClaudeRoot::Managed);
         for (file, bytes) in [
             ("plans/p.md", &b"# plan"[..]),
             ("image-cache/s-1/1.png", b"png"),
@@ -1420,7 +1421,7 @@ mod tests {
     async fn devices_through_droppen_read_what_the_transcript_links_to_in_the_claude_root() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        let claude = paths.claude_root(crate::claude_roots::ClaudeRoot::Managed);
+        let claude = paths.claude_root(crate::paths::ClaudeRoot::Managed);
         let data = paths.data_dir();
         let put = |path: &Path, bytes: &[u8]| {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1596,7 +1597,7 @@ mod tests {
     async fn devices_through_droppen_do_not_read_hard_links_in_reopened_directories() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        let claude = paths.claude_root(crate::claude_roots::ClaudeRoot::Managed);
+        let claude = paths.claude_root(crate::paths::ClaudeRoot::Managed);
         let put = |path: &Path, bytes: &[u8]| {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, bytes).unwrap();

@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 use super::Auth;
 

@@ -82,11 +82,11 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::accounts::AccountRef;
-use crate::claude_roots::ClaudeRoot;
 use crate::drive::Drive;
 use crate::inject::drafts::Draft;
+use crate::paths::{ClaudeRoot, Paths};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, Paths, SessionDetail, SessionSummary, Source};
+use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source};
 
 /// How many items one page of transcript holds.
 pub const SESSION_PAGE_SIZE: usize = 200;

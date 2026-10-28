@@ -64,6 +64,25 @@ fn ansi_re() -> &'static regex::Regex {
     })
 }
 
+/// Extensions a browser draws in an `<img>`, and so the ones that may render as
+/// a thumbnail rather than a download chip.
+///
+/// An allowlist rather than a "not pdf" test, because the failure mode is a
+/// broken picture on the page and the next format the CLI learns to rasterise
+/// (`Read` answers a PDF with page images) should default to the working
+/// fallback, not to the broken one.
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"];
+
+/// Whether an extension, without the dot, is one a browser draws.
+///
+/// The three call sites keep their own way of finding the extension — a name's
+/// tail, a `Path::extension`, an upload name — because those disagree at the
+/// edges (a dotfile, a name with no dot) and each disagreement is pinned by a
+/// test at the site. This is only the list.
+pub fn is_image_ext(ext: &str) -> bool {
+    IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

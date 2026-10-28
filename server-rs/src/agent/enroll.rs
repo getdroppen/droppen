@@ -30,7 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::hub;
 use super::state::AgentState;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::text::hex;
 use crate::time::now_ms_u64;
 

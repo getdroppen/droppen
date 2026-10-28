@@ -34,8 +34,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{scope, Db};
 use crate::openapi_ext::Optional;
+use crate::paths::Paths;
 use crate::sessions::reference::local_key;
-use crate::sessions::{iso8601, Paths, Source};
+use crate::sessions::Source;
+use crate::time::iso8601;
 
 /// How many per-session entries survive; the oldest beyond it are dropped.
 ///

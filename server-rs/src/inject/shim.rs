@@ -706,7 +706,7 @@ fn write_tombstone(path: &Path, status: &ExitStatus) {
     let exit = Exit {
         status: status.code(),
         signal: status.signal(),
-        at: crate::sessions::iso8601(std::time::SystemTime::now()),
+        at: crate::time::iso8601(std::time::SystemTime::now()),
     };
     match serde_json::to_vec(&exit) {
         Ok(encoded) => {

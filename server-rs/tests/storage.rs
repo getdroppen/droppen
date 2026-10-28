@@ -362,7 +362,7 @@ async fn boot_serves_the_instance_database_and_ignores_the_old_shared_file() {
     let body = format!("{}\n", serde_json::to_string_pretty(&legacy).expect("json"));
     let shared_body = body.clone();
     let server = common::TestServer::start_with(move |home| {
-        let paths = remote_hand_server::sessions::Paths::new(home.to_path_buf());
+        let paths = remote_hand_server::paths::Paths::new(home.to_path_buf());
         remote_hand_server::db::at(paths.instance_db())
             .write(|tx| {
                 tx.execute(

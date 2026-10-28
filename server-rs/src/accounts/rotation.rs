@@ -1501,7 +1501,7 @@ mod tests {
         use crate::accounts::limits::Verdict;
         use crate::accounts::rest::{now_ms, Observation};
         use crate::accounts::store::Credential;
-        use crate::sessions::Paths;
+        use crate::paths::Paths;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
@@ -1739,7 +1739,7 @@ mod tests {
         use crate::accounts::limits::Verdict;
         use crate::accounts::rest::{now_ms, Observation, LOCAL_CLAUDE, LOCAL_CODEX};
         use crate::accounts::store::{parse_env_block, AccountPatch, Credential};
-        use crate::sessions::Paths;
+        use crate::paths::Paths;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));

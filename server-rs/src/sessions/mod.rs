@@ -29,8 +29,10 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountRef;
-use crate::claude_roots::{self, ClaudeRoot};
+use crate::claude_roots;
 use crate::openapi_ext::{Nullable, Optional};
+use crate::paths::{ClaudeRoot, Paths};
+use crate::time::mtime_ms;
 pub use reference::{ServerId, SessionRef};
 use util::TranscriptItem;
 
@@ -846,147 +848,12 @@ pub struct Settings {
     pub plugins: Vec<crate::plugins::wire::PluginStatus>,
 }
 
-/// Every directory session discovery reads, rooted at one home directory.
-///
-/// Threading this through instead of reading `homedir()` at module scope (as the
-/// TypeScript does) is what lets the integration test point the server at a
-/// synthetic `~/.claude` tree.
-///
-/// Every directory the environment may move is resolved once, at construction,
-/// through [`claude_roots::env_dir`] — the one reader of those overrides.
-/// `DROPPEN_CONFIG_DIR` and `DROPPEN_DATA_DIR` name remote-hand's own roots;
-/// `DROPPEN_CLAUDE_LOCAL_ROOT` and `DROPPEN_CLAUDE_MANAGED_ROOT` name the two
-/// Claude ones (each still read under its old `REMOTE_HAND_*` name,
-/// [`crate::env`]). Resolving them
-/// here rather than on each access is what makes a `Paths` a value: two of them
-/// can disagree, and neither changes under a handler because something else
-/// touched the process environment.
-#[derive(Debug, Clone)]
-pub struct Paths {
-    /// The home directory everything hangs off.
-    pub home: PathBuf,
-    config_dir: PathBuf,
-    data_dir: PathBuf,
-    claude_local: PathBuf,
-    /// Which instance's directory the owned half of the world lives in.
-    instance: String,
-    claude_managed: PathBuf,
-}
-
 impl Paths {
-    /// Root a path set at `home`, for the default instance.
-    ///
-    /// A server always calls [`Paths::for_instance`] instead; this is the shape
-    /// every unit test and every path-only caller wants, and it names the same
-    /// instance a server started with no `APP_INSTANCE` would.
-    pub fn new(home: PathBuf) -> Self {
-        Self::for_instance(home, crate::instance::DEFAULT_INSTANCE)
-    }
-
-    /// Root a path set at `home`, for the instance this server owns.
-    ///
-    /// The instance name is part of a `Paths` rather than looked up per access
-    /// for the same reason the environment overrides are resolved once: two of
-    /// these coexist in one test process, and neither may change under a handler
-    /// because something else moved.
-    pub fn for_instance(home: PathBuf, instance: &str) -> Self {
-        let config_dir = claude_roots::env_dir("DROPPEN_CONFIG_DIR").unwrap_or_else(|| home.join(".config").join("remote-hand"));
-        let data_dir = claude_roots::env_dir("DROPPEN_DATA_DIR").unwrap_or_else(|| home.join(".local").join("share").join("remote-hand"));
-        let claude_local = claude_roots::env_dir(claude_roots::LOCAL_ROOT_ENV).unwrap_or_else(|| home.join(".claude"));
-        // The managed root defaults *inside this instance's own directory*, so
-        // it is resolved after the data directory and inherits any
-        // `DROPPEN_DATA_DIR` override. Two servers on one machine therefore
-        // never see each other's sessions — which is the whole of the ownership
-        // model this file's `Managed` root now encodes.
-        let claude_managed = claude_roots::env_dir(claude_roots::MANAGED_ROOT_ENV)
-            .unwrap_or_else(|| crate::instance::instance_root(&data_dir, instance).join("claude"));
-        Self {
-            home,
-            config_dir,
-            data_dir,
-            claude_local,
-            instance: instance.to_string(),
-            claude_managed,
-        }
-    }
-
-    /// The instance whose directory the owned half of this path set lives in.
-    pub fn instance(&self) -> &str {
-        &self.instance
-    }
-
-    /// `<data>/instances/<name>` — this instance's private directory.
-    pub fn instance_dir(&self) -> PathBuf {
-        crate::instance::instance_root(&self.data_dir, &self.instance)
-    }
-
-    /// The machine-wide state database: everything in the config directory that
-    /// is not a file a person edits.
-    ///
-    /// Machine-wide because the things in it are: a Claude account is a login
-    /// somebody registered, a title is a name someone gave a session, and a
-    /// session marked read is read on every server on this machine. It is also
-    /// the scope where the current files are least defensible — two servers
-    /// share this directory right now and guard it with mutexes private to each
-    /// process, so the loser of a race simply loses their edit. See
-    /// [`crate::db`].
-    ///
-    /// One table in it is no longer written: `users`, the *local* accounts,
-    /// which moved to [`Paths::instance_db`] when it turned out that a machine
-    /// runs one instance per person as readily as one per purpose. What is
-    /// there is frozen rather than dropped, so a rolled-back binary still finds
-    /// accounts and stays shut; [`crate::auth::users`] has the argument.
-    pub fn config_db(&self) -> PathBuf {
-        self.config_dir.join("state.db")
-    }
-
-    /// This instance's own state database: the runs, the apps, the layouts, the
-    /// accounts and the logins they mint, the schedule.
-    ///
-    /// Separate from [`Paths::config_db`] because the instance boundary is a
-    /// real one — stopping the staging server must not log the phone out of the
-    /// default one — and separate files are the cheapest way to keep a boundary
-    /// that has already been got wrong twice (`screens.json` and `push.json`
-    /// were machine-wide and clobbered each other).
-    pub fn instance_db(&self) -> PathBuf {
-        self.instance_dir().join("state.db")
-    }
-
-    /// The index over the transcripts, which belongs to nobody.
-    ///
-    /// A third file rather than a table in [`Paths::instance_db`], because it is
-    /// a *cache* and the difference has consequences: it can be deleted at any
-    /// time and rebuilt from the corpus, it is the one store here that will
-    /// reach hundreds of megabytes, and it does not need the `synchronous =
-    /// FULL` the authoritative state does — losing the last few commits to a
-    /// power cut costs a re-scan, not a fact. Keeping it out of `state.db` is
-    /// what lets all three of those be true at once.
-    pub fn index_db(&self) -> PathBuf {
-        self.instance_dir().join("index.db")
-    }
-
     /// The sessions this instance created whose transcripts live elsewhere —
     /// every codex thread, and every claude session on the local login. See
     /// [`owned_sessions`].
     pub fn owned_sessions_file(&self) -> PathBuf {
         self.instance_dir().join("owned-sessions.json")
-    }
-
-    /// `<data>/claude` — the managed root as it was before it became per-instance.
-    ///
-    /// Only [`Paths::migrate_legacy_claude_root`] reads this: it is where
-    /// every account-backed session of every earlier build lives, and the default
-    /// instance claims it once at boot.
-    pub fn legacy_claude_managed(&self) -> PathBuf {
-        self.data_dir.join("claude")
-    }
-
-    /// The directory of one Claude config root.
-    pub fn claude_root(&self, root: ClaudeRoot) -> PathBuf {
-        match root {
-            ClaudeRoot::Local => self.claude_local.clone(),
-            ClaudeRoot::Managed => self.claude_managed.clone(),
-        }
     }
 
     /// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
@@ -1033,37 +900,9 @@ impl Paths {
         self.codex_dir().join("session_index.jsonl")
     }
 
-    /// `<data>/codex-claims` — which instance made which codex thread.
-    ///
-    /// Shared, like `inject-locks` and unlike everything under
-    /// [`Paths::instance_dir`]: a claim exists precisely to be read by the
-    /// instances that did *not* write it, which is the only way one of them can
-    /// tell another's thread from the user's own in the `~/.codex` they share.
-    /// See [`codex_claims`].
-    pub fn codex_claims_dir(&self) -> PathBuf {
-        self.data_dir.join("codex-claims")
-    }
-
     /// Codex's cache of the models its backend offers.
     pub fn codex_models_cache(&self) -> PathBuf {
         self.codex_dir().join("models_cache.json")
-    }
-
-    /// remote-hand's own sidecar state, overridable with `DROPPEN_CONFIG_DIR`.
-    pub fn config_dir(&self) -> PathBuf {
-        self.config_dir.clone()
-    }
-
-    /// remote-hand's own data (accounts, uploads, chats, the managed Claude
-    /// root), overridable with `DROPPEN_DATA_DIR`.
-    pub fn data_dir(&self) -> PathBuf {
-        self.data_dir.clone()
-    }
-
-    /// Where composer attachments land, one uuid directory per upload; the CLIs
-    /// are pointed at it with `--add-dir`.
-    pub fn uploads_dir(&self) -> PathBuf {
-        self.data_dir.join("uploads")
     }
 
     /// Claude has no native archive, so remote-hand keeps its own hidden list.
@@ -1333,54 +1172,9 @@ pub async fn file_signature(path: &Path) -> Option<String> {
     Some(format!("{}:{}", metadata.len(), mtime_ms(&metadata)))
 }
 
-/// Milliseconds since the epoch, matching Node's `stat().mtimeMs`.
-pub fn mtime_ms(metadata: &std::fs::Metadata) -> f64 {
-    metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs_f64() * 1000.0)
-        .unwrap_or(0.0)
-}
-
-/// An ISO-8601 UTC timestamp, matching `Date.prototype.toISOString()`.
-pub fn iso8601(time: std::time::SystemTime) -> String {
-    let duration = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = duration.as_secs() as i64;
-    let millis = duration.subsec_millis();
-
-    // Civil-from-days (Howard Hinnant's algorithm), so no date crate is needed.
-    let days = secs.div_euclid(86_400);
-    let time_of_day = secs.rem_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
-        time_of_day / 3_600,
-        (time_of_day % 3_600) / 60,
-        time_of_day % 60
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn iso8601_matches_javascript() {
-        assert_eq!(iso8601(std::time::UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
-        let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_000_123);
-        assert_eq!(iso8601(t), "2023-11-14T22:13:20.123Z");
-    }
 
     #[test]
     fn a_live_claude_session_cannot_be_sent_to() {

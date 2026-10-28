@@ -12,12 +12,14 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider};
 use crate::api::error::ApiError;
-use crate::claude_roots::{self, ClaudeRoot};
+use crate::claude_roots;
 use crate::instance::InstanceDirs;
+use crate::paths::{ClaudeRoot, Paths};
 use crate::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};
 use crate::procs;
 use crate::record;
-use crate::sessions::{claude, codex, iso8601, Injection, InjectionRunState, Paths, ServerId, SessionRef, SessionStatus, Source};
+use crate::sessions::{claude, codex, Injection, InjectionRunState, ServerId, SessionRef, SessionStatus, Source};
+use crate::time::iso8601;
 use gotcha::axum::http::StatusCode;
 use gotcha::Schematic;
 
@@ -241,7 +243,7 @@ fn attachment_missing() -> ApiError {
 /// it belongs here rather than in the route because this module is what hands
 /// the paths to a child process (`-i`, `--add-dir`, the prompt suffix): a path
 /// that escaped the uploads directory would widen what the CLI may read. The
-/// *resolved* paths are returned because [`crate::sessions::Paths::assert_under_uploads`]
+/// *resolved* paths are returned because [`crate::paths::Paths::assert_under_uploads`]
 /// only vouches for what it resolved, not for the spelling the client sent.
 ///
 /// The lexical check comes first and keeps its own refusal. Then the file

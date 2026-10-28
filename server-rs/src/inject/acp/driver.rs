@@ -18,7 +18,8 @@ use crate::acp::{category, option_for, ConfigOption, SessionUpdate};
 use crate::acp_agent::AcpAgent;
 use crate::inject::{InjectError, InjectionRegistry, Phase, QueueOutcome, ResidentState, Sent};
 use crate::sessions::acp_transcript::{record, Translator};
-use crate::sessions::{iso8601, Injection, InjectionRunState, Source};
+use crate::sessions::{Injection, InjectionRunState, Source};
+use crate::time::iso8601;
 
 /// How long an agent process with nothing to do is kept.
 pub(super) const IDLE_EXIT: Duration = Duration::from_secs(30 * 60);

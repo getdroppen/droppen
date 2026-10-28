@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 
 use super::state::AgentState;
 use crate::aggregator::hub::HubOriginExt;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::text::hex;
 use crate::time::now_ms_u64;
 

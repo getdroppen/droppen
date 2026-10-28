@@ -13,9 +13,11 @@ use serde_json::Value;
 
 use super::transcript::{content_blocks, title_line, user_title_candidate};
 use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
-use super::{iso8601, mtime_ms, Paths, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
-use crate::claude_roots::{self, ClaudeRoot};
+use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use crate::claude_roots;
 use crate::openapi_ext::Nullable;
+use crate::paths::{ClaudeRoot, Paths};
+use crate::time::{iso8601, mtime_ms};
 
 const HEAD_BYTES: usize = 128 * 1024;
 const TAIL_BYTES: u64 = 64 * 1024;

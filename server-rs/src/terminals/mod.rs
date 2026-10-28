@@ -49,12 +49,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::instance::InstanceDirs;
 use crate::openapi_ext::Optional;
+use crate::paths::Paths;
 use crate::process_env::{self, Env};
 use crate::pty_shim::client::{self, Link};
 use crate::pty_shim::proto::{self, Frame, Meta, Resize};
 use crate::pty_shim::sidecar::{self, Sidecars};
 use crate::pty_shim::{self as shim, gap_note};
-use crate::sessions::Paths;
 
 pub use routes::{describe, routes};
 
@@ -619,7 +619,7 @@ impl Registry {
             id: id.clone(),
             title: default_title(spec.title.as_deref(), self.count() + 1),
             cwd: workdir.clone(),
-            created_at: crate::sessions::iso8601(std::time::SystemTime::now()),
+            created_at: crate::time::iso8601(std::time::SystemTime::now()),
         };
         let sidecars = Sidecars::new(self.instance.pty_shims(), &id);
         let meta = Meta {

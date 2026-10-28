@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::fsutil::{check_private, write_private_reporting_path};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// The key file's contents.
 #[derive(Serialize, Deserialize)]

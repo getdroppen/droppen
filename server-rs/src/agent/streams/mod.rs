@@ -60,7 +60,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::drive::Drive;
 use crate::feed::{encode_fp, Transcript};
-use crate::sessions::{Paths, SessionSummary, Source};
+use crate::paths::Paths;
+use crate::sessions::{SessionSummary, Source};
 use crate::time::now_ms_u64;
 use content::{Delta, Scope, SessionCursor, StatusBodyExt};
 use retention::HubPlan;
@@ -1904,7 +1905,7 @@ fn iso_ms(stamp: &str) -> Option<u64> {
 }
 
 fn ms_iso(ms: u64) -> String {
-    crate::sessions::iso8601(std::time::UNIX_EPOCH + Duration::from_millis(ms))
+    crate::time::iso8601(std::time::UNIX_EPOCH + Duration::from_millis(ms))
 }
 
 /// The CLI a session stream's row is for.

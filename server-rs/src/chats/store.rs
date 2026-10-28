@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{ChatError, Chats};
-use crate::sessions::{iso8601, Paths};
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 /// How long a completion may take.
 ///

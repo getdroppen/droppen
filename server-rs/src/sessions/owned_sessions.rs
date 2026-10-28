@@ -63,9 +63,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{Paths, ServerId, Source};
-use crate::claude_roots::ClaudeRoot;
+use super::{ServerId, Source};
 use crate::db::Db;
+use crate::paths::{ClaudeRoot, Paths};
 
 /// The ids one instance claims, per CLI, each with the server that made it.
 ///
@@ -152,7 +152,7 @@ pub async fn read(paths: &Paths) -> OwnedSessions {
 /// `NULL` — and `COALESCE` resolves those to the local server rather than to
 /// "unknown". That is a fact rather than a guess, and the table's own shape is
 /// what makes it one: `owned_sessions` lives in the **per-instance** database
-/// ([`super::Paths::instance_db`]), it is never read across instances (the
+/// ([`crate::paths::Paths::instance_db`]), it is never read across instances (the
 /// module note above turns on that), and the only thing that has ever inserted
 /// into it is this instance recording a session it had just started. A row here
 /// with no server named is therefore this server's, necessarily; there has

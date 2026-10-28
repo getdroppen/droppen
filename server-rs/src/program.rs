@@ -164,7 +164,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-impl crate::sessions::Paths {
+impl crate::paths::Paths {
     /// What a command typed on this device needs in its environment to act on
     /// the instance this `Paths` names, as `(name, value)` pairs to put before
     /// [`droppen_path`]: `APP_INSTANCE` for any instance but `default`, and
@@ -192,7 +192,7 @@ impl crate::sessions::Paths {
 /// [`Paths::droppen_env`] as a person types it before a command: `NAME=value `
 /// for each, the values made shell words ([`shell_word`]); empty for the usual
 /// install.
-pub fn command_prefix(paths: &crate::sessions::Paths) -> String {
+pub fn command_prefix(paths: &crate::paths::Paths) -> String {
     paths.droppen_env()
         .into_iter()
         .map(|(name, value)| format!("{name}={} ", shell_word(&value)))
@@ -200,7 +200,7 @@ pub fn command_prefix(paths: &crate::sessions::Paths) -> String {
 }
 
 /// [`Paths::droppen_env`], with the home directory supplied.
-pub fn droppen_env_for(paths: &crate::sessions::Paths, home: Option<&Path>) -> Vec<(String, String)> {
+pub fn droppen_env_for(paths: &crate::paths::Paths, home: Option<&Path>) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if paths.instance() != crate::instance::DEFAULT_INSTANCE {
         env.push(("APP_INSTANCE".to_string(), paths.instance().to_string()));
@@ -318,16 +318,16 @@ mod tests {
     fn a_command_names_the_instance_and_the_files_of_a_server_that_is_not_the_usual_one() {
         let home = Path::new("/home/ada");
         let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
-        let usual = crate::sessions::Paths::new(home.to_path_buf());
+        let usual = crate::paths::Paths::new(home.to_path_buf());
         assert_eq!(droppen_env_for(&usual, Some(home)), Vec::<(String, String)>::new(), "the usual install needs nothing");
 
-        let other_instance = crate::sessions::Paths::for_instance(home.to_path_buf(), "bob");
+        let other_instance = crate::paths::Paths::for_instance(home.to_path_buf(), "bob");
         assert_eq!(droppen_env_for(&other_instance, Some(home)), vec![pair("APP_INSTANCE", "bob")]);
 
         // A second install, its files under another root.
         // Under both names: the `droppen` a shell finds may be a pre-rename
         // binary, which reads only the old ones.
-        let second = crate::sessions::Paths::for_instance(home.join("bob"), "default");
+        let second = crate::paths::Paths::for_instance(home.join("bob"), "default");
         let (data, config) = (crate::env::old_name("DROPPEN_DATA_DIR").unwrap(), crate::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
         assert_eq!(
             droppen_env_for(&second, Some(home)),

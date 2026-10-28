@@ -65,7 +65,8 @@ use crate::api::error::ApiError;
 use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::sessions::{Paths, SessionSummary, Source};
+use crate::paths::Paths;
+use crate::sessions::{SessionSummary, Source};
 
 /// The one route an agent's `rh-notify` calls.
 pub const NOTIFY_PATH: &str = "/api/notify";

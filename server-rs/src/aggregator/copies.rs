@@ -56,7 +56,7 @@ use super::controller::{view, View};
 use super::live::{Key, LiveCopies, Published, Slot};
 use super::store::{CopyStore, Kind, Row};
 use crate::agent::state::AgentState;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// A session copy larger than this (its folded JSON) is not kept: its row
 /// says so, and it is not followed again until the next run.

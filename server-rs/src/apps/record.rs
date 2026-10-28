@@ -74,7 +74,7 @@ pub struct AppRecord {
 
 /// The instance database that sits beside `apps.json`.
 ///
-/// Derived from the path rather than taken as a [`crate::sessions::Paths`], and
+/// Derived from the path rather than taken as a [`crate::paths::Paths`], and
 /// the reason is that the two are the same directory: the only caller hands this
 /// module `<instance>/apps.json`, and `<instance>/state.db` is its sibling.
 /// Threading a `Paths` down here instead would change every caller's signature

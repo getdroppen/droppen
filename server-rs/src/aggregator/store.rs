@@ -30,7 +30,7 @@ use rh_proto::record::{SignedHead, StreamId};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::keys::Guard;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// The error of a write that may not happen (as [`super::keys::OFF`]).
 pub const OFF: &str = super::keys::OFF;

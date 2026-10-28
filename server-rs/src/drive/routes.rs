@@ -1381,7 +1381,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
     let mtime = tokio::fs::metadata(&file_path)
         .await
         .and_then(|metadata| metadata.modified())
-        .map(crate::sessions::iso8601)
+        .map(crate::time::iso8601)
         .map_err(|_| not_found())?;
     Ok((feed::load_transcript(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
 }
@@ -1875,7 +1875,7 @@ mod tests {
 
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Arc::new(crate::sessions::Paths::new(dir.path().to_path_buf()));
+        let paths = Arc::new(crate::paths::Paths::new(dir.path().to_path_buf()));
         let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
         let drive = Drive::new(paths, &instance, auth);

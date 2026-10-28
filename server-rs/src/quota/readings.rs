@@ -53,9 +53,8 @@ use serde_json::Value;
 use super::{window, QuotaProbeError, QuotaWindow, UsageProbe, RATE_LIMIT_BACKOFF};
 use crate::accounts::rest::iso_ms;
 use crate::accounts::store::{account_dir_in, usage_config_dir_in};
-use crate::claude_roots::ClaudeRoot;
 use crate::openapi_ext::{Nullable, Optional};
-use crate::sessions::Paths;
+use crate::paths::{ClaudeRoot, Paths};
 
 /// How long after a failed probe — `not_logged_in` or `probe_failed` — the
 /// fallback leaves that login alone.

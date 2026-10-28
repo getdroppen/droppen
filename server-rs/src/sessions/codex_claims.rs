@@ -54,7 +54,8 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use super::{Paths, Source};
+use super::Source;
+use crate::paths::Paths;
 
 /// What one instance may conclude about one codex thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

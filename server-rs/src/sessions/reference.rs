@@ -33,7 +33,8 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::sessions::{Paths, Source};
+use crate::paths::Paths;
+use crate::sessions::Source;
 
 /// How long a session id may be before [`stem`] hashes it instead.
 pub(crate) const MAX_STEM: usize = 64;

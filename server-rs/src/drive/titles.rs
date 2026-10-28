@@ -28,7 +28,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::db::{scope, Db};
-use crate::sessions::{Paths, Source};
+use crate::paths::Paths;
+use crate::sessions::Source;
 
 /// The titles store, backed by `state.db`.
 ///

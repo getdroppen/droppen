@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// `<instance>/aggregator/keys.json`.
 pub fn path(paths: &Paths) -> PathBuf {

@@ -27,7 +27,7 @@ use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState};
 use crate::db::scope;
 use crate::openapi_ext::ExtraResponses;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// How the session list is grouped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
