@@ -1321,11 +1321,19 @@ pub struct InjectionRegistry {
     drafts: drafts::Drafts,
 }
 
+/// The per-session feeds as the drivers see them: the open views of a session
+/// are told to look again. The feeds sit above the drivers, so they implement
+/// this and the entry hands it in ([`InjectionRegistry::attach_listeners`]).
+pub trait SessionFeeds: Send + Sync {
+    /// Wake the open views of the session `key` names, if it has any.
+    fn poke(&self, key: &str);
+}
+
 /// Whoever follows a session from outside the driver: the per-session feed and
 /// the session list.
 struct Listeners {
-    feeds: Arc<crate::feed::FeedRegistry>,
-    global: Arc<crate::feed::global::GlobalFeed>,
+    feeds: Arc<dyn SessionFeeds>,
+    refresh: crate::http::refresh::Refresh,
 }
 
 /// A duration from the environment, in milliseconds, or the fallback; under
@@ -1426,8 +1434,8 @@ impl InjectionRegistry {
 
     /// Give the drivers someone to tell. Called once, when the application
     /// state is assembled; a second call is ignored.
-    pub fn attach_listeners(&self, feeds: Arc<crate::feed::FeedRegistry>, global: Arc<crate::feed::global::GlobalFeed>) {
-        let _ = self.listeners.set(Listeners { feeds, global });
+    pub fn attach_listeners(&self, feeds: Arc<dyn SessionFeeds>, refresh: crate::http::refresh::Refresh) {
+        let _ = self.listeners.set(Listeners { feeds, refresh });
     }
 
     /// Tell the session's feed and the session list that it changed in a way
@@ -1435,7 +1443,7 @@ impl InjectionRegistry {
     pub(crate) fn announce(&self, source: Source, id: &str) {
         let Some(listeners) = self.listeners.get() else { return };
         listeners.feeds.poke(&self.key_of(source, id));
-        listeners.global.request_refresh(Some((source, id)));
+        listeners.refresh.request_refresh(Some((&source, id)));
     }
 
     /// Ask the session list, and nothing else, to look again.
@@ -1448,7 +1456,7 @@ impl InjectionRegistry {
     /// transcript, can be told straight away.
     pub(crate) fn refresh_list(&self) {
         let Some(listeners) = self.listeners.get() else { return };
-        listeners.global.request_refresh(None);
+        listeners.refresh.request_refresh(None);
     }
 
     /// Push one session's state to whoever is watching it, and nothing else.

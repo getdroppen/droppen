@@ -546,6 +546,14 @@ impl FeedRegistry {
     }
 }
 
+/// The drivers wake a session's open views through this
+/// ([`crate::inject::SessionFeeds`]): the same call, at the same moment.
+impl crate::inject::SessionFeeds for FeedRegistry {
+    fn poke(&self, key: &str) {
+        FeedRegistry::poke(self, key);
+    }
+}
+
 /// A socket's handle on a feed; dropping it detaches and may stop the watcher.
 pub struct FeedAttachment {
     registry: Arc<FeedRegistry>,
@@ -1456,7 +1464,7 @@ mod tests {
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
         let drive = Drive::new(paths.clone(), &instance, auth);
         let feeds = FeedRegistry::new();
-        drive.injections.attach_listeners(feeds.clone(), global::GlobalFeed::new());
+        drive.injections.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(global::GlobalFeed::new()));
 
         let id = "33333333-3333-4333-8333-333333333333";
         let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");

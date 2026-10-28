@@ -12240,7 +12240,7 @@ done
             paths,
         });
         let feeds = crate::feed::FeedRegistry::new();
-        harness.registry.attach_listeners(feeds.clone(), crate::feed::global::GlobalFeed::new());
+        harness.registry.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
         until("the init", || harness.state().phase == Phase::Idle).await;
         let mut attached = crate::feed::attach_session_feed(&feeds, &drive, Source::Claude, SESSION, None)
             .await
