@@ -11,7 +11,7 @@
 //! | here | `copy {s, reset?, bodies, headSeq, epoch, headTimeMs}`; `missing {s}`; `copy_error {s, code, message}` (`no_device`, `bad_name`, `too_large`, `gone`, `overrun`, `limit`, `busy`) |
 //! | here | `refused {p, code: unsupported}` for `open` (live pipes come with S2-2); `bye {code, message}` before closing when the page may no longer see other devices; `pong` |
 //!
-//! Everything comes from memory ([`super::live`]); nothing here reads the
+//! Everything comes from memory ([`crate::aggregator::live`]); nothing here reads the
 //! disk or writes anywhere: read-only, in every sense.
 //!
 //! **Who**: [`crate::cloud::remote_viewer`] — the rule `GET /api/cloud`'s
@@ -42,8 +42,8 @@ use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::{State, WebSocketUpgrade};
 use serde_json::{json, Value};
 
-use super::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
-use super::store::Kind;
+use crate::aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
+use crate::aggregator::store::Kind;
 use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
 
@@ -379,10 +379,10 @@ fn handle(ask: Ask, live: &Arc<LiveCopies>, out: &Arc<Outbox>, subs: &mut HashMa
     }
 }
 
-fn ended_message(ended: super::live::Ended) -> &'static str {
+fn ended_message(ended: crate::aggregator::live::Ended) -> &'static str {
     match ended {
-        super::live::Ended::Gone => "that device is not one this device shows",
-        super::live::Ended::TooLarge => "this session's copy is too large to keep on this device",
+        crate::aggregator::live::Ended::Gone => "that device is not one this device shows",
+        crate::aggregator::live::Ended::TooLarge => "this session's copy is too large to keep on this device",
     }
 }
 
@@ -547,8 +547,8 @@ mod tests {
         live.set_hosts(&["m-2".into()]);
         let mut index = rh_client::streams::IndexCopy::default();
         index.rows.insert("claude/q".into(), json!({"source": "claude", "id": "q"}));
-        let slot: super::super::live::Slot = Arc::new(std::sync::Mutex::new(super::super::live::Published::new(
-            super::super::copies::Fold::Index(index),
+        let slot: crate::aggregator::live::Slot = Arc::new(std::sync::Mutex::new(crate::aggregator::live::Published::new(
+            crate::aggregator::copies::Fold::Index(index),
             1,
             1,
         )));
@@ -649,8 +649,8 @@ mod tests {
         index
             .rows
             .insert("claude/q".into(), json!({"source": "claude", "id": "q", "asking": true}));
-        let slot: super::super::live::Slot = std::sync::Arc::new(std::sync::Mutex::new(super::super::live::Published::new(
-            super::super::copies::Fold::Index(index),
+        let slot: crate::aggregator::live::Slot = std::sync::Arc::new(std::sync::Mutex::new(crate::aggregator::live::Published::new(
+            crate::aggregator::copies::Fold::Index(index),
             4,
             1_700_000_000_000,
         )));

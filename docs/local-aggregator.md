@@ -1348,7 +1348,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 **S1-7 实现计划**（本机列表里出现其它设备的会话；先写计划再实现）
 
 - **两半**：本机服务一侧是网关的 `dir` 与 `sub`/`copy`、内存里的副本、按需跟随打开的会话、`GET /api/cloud` 的新字段；页面一侧是 `GatewayShell`（只有副本）、统一列表、设备筛选、「需要你」、远端会话只读打开、远端权限开关。
-- **网关 `GET /api/agg/ws?ticket=`**（`S/aggregator/gateway.rs`，§6.3 的一部分；管道 `open` 留给 S2-2）：
+- **网关 `GET /api/agg/ws?ticket=`**（`S/cloud/gateway.rs`，§6.3 的一部分；管道 `open` 留给 S2-2）：
   - 升级前就拒：`cloud:*` → 403 `not_from_cloud`；本机鉴权关着 → 409 `local_auth_required`；调用者看不到其它设备 → 403 `no_remote_access`；登录已退出 → 401。票据同 `/api/events`（`scope=ws`，一次性），`auth::is_websocket_path` 加上这条路径；桥接的拒绝清单把它列为 `Never`（前缀规则本来就挡）。
   - 文本帧 JSON，`t` 标类型：
 

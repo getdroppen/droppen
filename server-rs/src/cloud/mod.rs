@@ -61,6 +61,7 @@ use crate::paths::Paths;
 
 mod access;
 mod file;
+pub mod gateway;
 pub mod hub_web;
 mod link;
 pub mod link_handoff;

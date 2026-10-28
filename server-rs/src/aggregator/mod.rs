@@ -30,7 +30,6 @@
 pub mod access;
 pub mod controller;
 pub mod copies;
-pub mod gateway;
 pub mod hub;
 pub mod keys;
 pub mod live;

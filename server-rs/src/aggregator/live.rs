@@ -64,7 +64,7 @@ pub struct Published {
 }
 
 impl Published {
-    pub(super) fn new(fold: Fold, seq: u64, time_ms: u64) -> Self {
+    pub(crate) fn new(fold: Fold, seq: u64, time_ms: u64) -> Self {
         Self {
             fold,
             seq,
