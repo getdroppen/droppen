@@ -9,10 +9,14 @@ use gotcha::axum::extract::FromRef;
 
 use super::AppState;
 use crate::apps::AppsState;
+use crate::attention::AttentionState;
 use crate::files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
+use crate::prefs::PrefsState;
 use crate::push::PushState;
+use crate::schedule::ScheduleState;
+use crate::screens::ScreensState;
 use crate::selfupdate::SelfUpdateState;
 use crate::stats::StatsState;
 
@@ -71,6 +75,44 @@ impl FromRef<AppState> for SelfUpdateState {
             desktop_app: state.desktop_app,
             lock: state.lock.clone(),
             paths: state.paths.clone(),
+            cancel: state.cancel.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for PrefsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            refresh: state.refresh.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for ScreensState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            refresh: state.refresh.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for AttentionState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            refresh: state.refresh.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for ScheduleState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            drive: state.drive.clone(),
+            global: state.global.clone(),
             cancel: state.cancel.clone(),
         }
     }

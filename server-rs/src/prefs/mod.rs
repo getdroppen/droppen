@@ -18,16 +18,18 @@
 //! rebuilt from scratch.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::api::{ApiRouter, AppState};
 use crate::db::scope;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
+use crate::http::refresh::Refresh;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
 
@@ -298,15 +300,26 @@ impl PrefsStore {
     }
 }
 
+/// What the prefs routes use of the server's state: where the preferences are
+/// stored, and the feed told when they change.
+#[derive(Clone)]
+pub struct PrefsState {
+    /// The instance's paths, under which the preferences live.
+    pub paths: Arc<Paths>,
+    /// The global feed's inputs, told when a write changes what the list shows.
+    pub refresh: Refresh,
+}
+crate::http::substate!(PrefsState);
+
 /// The stored UI preferences.
 #[api(id = "get_prefs", group = "prefs", summary = "UI preferences")]
-pub async fn get_prefs(State(state): State<AppState>) -> Json<Prefs> {
+pub async fn get_prefs(State(state): State<PrefsState>) -> Json<Prefs> {
     Json(PrefsStore::of(&state.paths).read().await)
 }
 
 /// Persist the UI preferences and hand them straight back.
 #[api(id = "put_prefs", group = "prefs", summary = "Update UI preferences")]
-pub async fn put_prefs(State(state): State<AppState>, ApiJson(prefs): ApiJson<Prefs>) -> Result<Json<Prefs>, ApiError> {
+pub async fn put_prefs(State(state): State<PrefsState>, ApiJson(prefs): ApiJson<Prefs>) -> Result<Json<Prefs>, ApiError> {
     let store = PrefsStore::of(&state.paths);
     let before = store.read().await;
     store.write(&prefs)
@@ -320,9 +333,15 @@ pub async fn put_prefs(State(state): State<AppState>, ApiJson(prefs): ApiJson<Pr
     Ok(Json(prefs))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router.get("/api/prefs", get_prefs).put("/api/prefs", put_prefs)
+impl PrefsState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        PrefsState: FromRef<S>,
+    {
+        router.get("/api/prefs", get_prefs).put("/api/prefs", put_prefs)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

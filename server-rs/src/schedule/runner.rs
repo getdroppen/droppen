@@ -49,8 +49,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tokio::time::MissedTickBehavior;
 
-use super::{cron, ScheduledTask, TaskStatus};
-use crate::api::AppState;
+use super::{cron, ScheduleState, ScheduledTask, TaskStatus};
 use crate::inject::SendOptions;
 use crate::notify::{self, Level, Nudge};
 use crate::openapi_ext::Nullable;
@@ -127,13 +126,13 @@ fn take_alert_slot(now: Instant) -> bool {
 }
 
 /// Start the loop. Returns immediately; the task stops on the shutdown token.
-pub fn spawn(state: &AppState) {
+pub fn spawn(state: &ScheduleState) {
     let state = state.clone();
     tokio::spawn(async move { run(state).await });
 }
 
 /// Watch the clock until the server stops.
-async fn run(state: AppState) {
+async fn run(state: ScheduleState) {
     let paths = state.paths.clone();
     reschedule_all(&paths, SystemTime::now()).await;
 
@@ -201,7 +200,7 @@ fn reschedule(task: &mut ScheduledTask, now: SystemTime) -> bool {
 /// list of tasks whose next occurrence is already written down. A slow spawn
 /// therefore cannot make the same task due twice, and the runs go out on their
 /// own tasks so a slow one cannot hold up the tick behind it.
-async fn tick(state: &AppState) {
+async fn tick(state: &ScheduleState) {
     let now = SystemTime::now();
     let paths = state.paths.clone();
     let due = super::update(paths.as_ref(), |tasks| {
@@ -256,7 +255,7 @@ async fn tick(state: &AppState) {
 }
 
 /// Start one task's session, or record why it did not start.
-async fn fire(state: &AppState, task: ScheduledTask) {
+async fn fire(state: &ScheduleState, task: ScheduledTask) {
     let paths = state.paths.clone();
     let at = iso8601(SystemTime::now());
 
@@ -333,7 +332,7 @@ async fn fire(state: &AppState, task: ScheduledTask) {
 /// * **codex** has no resident and no queue: one process per message, alive
 ///   exactly while it works. "Is the run still running" is the whole question
 ///   there, and the injection registry is where it is asked.
-fn still_busy(state: &AppState, task: &ScheduledTask) -> Option<&'static str> {
+fn still_busy(state: &ScheduleState, task: &ScheduledTask) -> Option<&'static str> {
     let previous = task.last_session_id.as_ref()?;
     if task.source == Source::Codex {
         return state
@@ -362,7 +361,7 @@ fn still_busy(state: &AppState, task: &ScheduledTask) -> Option<&'static str> {
 /// interchangeable, and a user who has set up only one will only hear about the
 /// half it covers. Sending this over Web Push instead would be worse: it is
 /// addressed to a *session*, and there is no session to address.
-async fn failed(state: &AppState, task: &ScheduledTask, at: &str, reason: String) {
+async fn failed(state: &ScheduleState, task: &ScheduledTask, at: &str, reason: String) {
     tracing::error!(task = %task.name, reason, "a scheduled task could not start a session");
     record(&state.paths, &task.id, |stored| {
         stored.last_run_at = Nullable(Some(at.to_string()));

@@ -46,17 +46,17 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 
 use gotcha::axum::http::StatusCode;
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::refresh::Refresh;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
@@ -1006,15 +1006,26 @@ fn merged_order(existing: &[String], wanted: &[String]) -> Vec<String> {
 }
 
 
+/// What the screen routes use of the server's state: where the screens are
+/// stored, and the feed every write is announced on.
+#[derive(Clone)]
+pub struct ScreensState {
+    /// The instance's paths, under which the screens live.
+    pub paths: Arc<Paths>,
+    /// The global feed's inputs, which carry `screens:changed` and `screens:list`.
+    pub refresh: Refresh,
+}
+crate::http::substate!(ScreensState);
+
 /// Persistent screens, saved pane layouts.
 #[api(id = "list_screens", group = "screens", summary = "List screens")]
-pub async fn list_screens(State(state): State<AppState>) -> Json<ScreenList> {
+pub async fn list_screens(State(state): State<ScreensState>) -> Json<ScreenList> {
     Json(ScreenStore::of(&state.paths).read_list().await)
 }
 
 /// Create a screen holding one empty pane.
 #[api(id = "create_screen", group = "screens", summary = "Create a screen")]
-pub async fn create_screen(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenCreate>) -> Result<Json<Screen>, ApiError> {
+pub async fn create_screen(State(state): State<ScreensState>, ApiJson(body): ApiJson<ScreenCreate>) -> Result<Json<Screen>, ApiError> {
     ScreenStore::of(&state.paths).create(&state.refresh, body).await.map(Json)
 }
 
@@ -1024,7 +1035,7 @@ pub async fn create_screen(State(state): State<AppState>, ApiJson(body): ApiJson
 /// stored revision.
 #[api(id = "update_screen", group = "screens", summary = "Update a screen")]
 pub async fn update_screen(
-    State(state): State<AppState>,
+    State(state): State<ScreensState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<ScreenUpdate>,
 ) -> Result<Json<Screen>, ApiError> {
@@ -1034,7 +1045,7 @@ pub async fn update_screen(
 /// Delete a screen. The resources its leaves reference are left untouched.
 #[api(id = "delete_screen", group = "screens", summary = "Delete a screen")]
 pub async fn delete_screen(
-    State(state): State<AppState>,
+    State(state): State<ScreensState>,
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<ScreenDeleteQuery>,
 ) -> Result<Json<SendResult>, ApiError> {
@@ -1045,20 +1056,26 @@ pub async fn delete_screen(
 /// Put screens in a new order. Screens the request does not name keep their
 /// relative order after the ones it does.
 #[api(id = "reorder_screens", group = "screens", summary = "Reorder screens")]
-pub async fn reorder_screens(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenOrder>) -> Result<Json<ScreenList>, ApiError> {
+pub async fn reorder_screens(State(state): State<ScreensState>, ApiJson(body): ApiJson<ScreenOrder>) -> Result<Json<ScreenList>, ApiError> {
     ScreenStore::of(&state.paths).reorder(&state.refresh, body).await.map(Json)
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/screens", list_screens)
-        .post("/api/screens", create_screen)
-        // A static segment, which the router prefers over `{id}`; screen ids
-        // are uuids, so no screen is ever named `order`.
-        .put("/api/screens/order", reorder_screens)
-        .patch("/api/screens/{id}", update_screen)
-        .delete("/api/screens/{id}", delete_screen)
+impl ScreensState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        ScreensState: FromRef<S>,
+    {
+        router
+            .get("/api/screens", list_screens)
+            .post("/api/screens", create_screen)
+            // A static segment, which the router prefers over `{id}`; screen ids
+            // are uuids, so no screen is ever named `order`.
+            .put("/api/screens/order", reorder_screens)
+            .patch("/api/screens/{id}", update_screen)
+            .delete("/api/screens/{id}", delete_screen)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.
