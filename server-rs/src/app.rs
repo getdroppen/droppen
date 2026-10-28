@@ -125,8 +125,8 @@ impl GotchaApp for RemoteHandApp {
             // A session's driver changes things no file shows — an automatic
             // account rotation above all — and has to be able to say so to the
             // two feeds that would otherwise only notice on their next poll.
-            drive.injections.attach_listeners(feeds.clone(), global.clone());
             let refresh = crate::http::refresh::Refresh::new(global.clone());
+            drive.injections.attach_listeners(feeds.clone(), refresh.clone());
             Ok(AppState {
                 cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
