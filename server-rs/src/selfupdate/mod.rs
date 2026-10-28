@@ -63,8 +63,8 @@ use sha2::{Digest, Sha256};
 use crate::text::hex;
 use tokio::io::AsyncWriteExt;
 
-use crate::api::error::ApiError;
 use crate::api::{ApiRouter, AppState};
+use crate::http::error::ApiError;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
 
@@ -296,7 +296,7 @@ pub async fn self_upgrade(State(state): State<AppState>, multipart: Multipart) -
     Ok(Json(SelfUpgrade {
         ok: true,
         version,
-        previous_version: crate::api::SERVER_VERSION.to_string(),
+        previous_version: crate::http::SERVER_VERSION.to_string(),
         restart: restart.as_str().to_string(),
         detail,
     }))

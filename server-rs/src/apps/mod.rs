@@ -49,9 +49,9 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{ApiRouter, AppState, SendResult};
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath};
 use crate::instance::InstanceDirs;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;

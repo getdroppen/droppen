@@ -89,6 +89,7 @@ pub mod drive;
 pub mod env;
 pub mod feed;
 pub mod files;
+pub mod http;
 pub(crate) mod fsutil;
 pub mod identity;
 pub mod inject;

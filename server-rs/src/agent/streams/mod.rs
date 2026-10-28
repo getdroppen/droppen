@@ -1528,7 +1528,7 @@ impl Sync {
         // chain's newest and hands the key over again if this machine lags.
         let mk_epoch = self.mk().map(|(e, _)| e);
         content::status_body(now_ms_u64(), name, mk_epoch, settings, accounts, quota, cli)
-            .with_system(crate::agent::system::os(), crate::api::SERVER_VERSION)
+            .with_system(crate::agent::system::os(), crate::http::SERVER_VERSION)
             .with_alarms(&self.alarms)
             .with_changes(&self.changes)
             .with_controllers((self.controllers)().as_ref())

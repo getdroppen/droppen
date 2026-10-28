@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider};
-use crate::api::error::ApiError;
 use crate::claude_roots;
+use crate::http::error::ApiError;
 use crate::instance::InstanceDirs;
 use crate::paths::{ClaudeRoot, Paths};
 use crate::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};

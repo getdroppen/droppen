@@ -50,13 +50,13 @@ use gotcha::axum::http::StatusCode;
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use super::error::ApiError;
-use super::extract::ApiJson;
 use super::hub_web::HubWebs;
 use super::{ApiRouter, AppState};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::MaybeIdentity;
+use crate::http::error::ApiError;
+use crate::http::extract::ApiJson;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
 
@@ -600,7 +600,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
         }),
         machine: CloudMachine {
             id: agent.machine.clone(),
-            hostname: super::hostname(),
+            hostname: crate::http::hostname(),
             fingerprint,
         },
         link: has_state.then(|| CloudLinkHealth {

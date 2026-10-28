@@ -72,11 +72,11 @@ use gotcha::{api, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::api::created::Created;
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{AppState, SendResult};
 use crate::drive::Drive;
+use crate::http::created::Created;
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::Optional;
 use crate::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};

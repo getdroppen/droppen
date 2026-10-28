@@ -25,11 +25,11 @@ use gotcha::axum::http::StatusCode;
 use gotcha::{api, GotchaContext, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::created::Created;
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::api::{AppState, SendResult};
 use crate::config::AppConfig;
+use crate::http::created::Created;
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
 use crate::paths::ClaudeRoot;
 use crate::process_env::{apply_env, claude_env};

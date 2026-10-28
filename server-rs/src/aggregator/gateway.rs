@@ -200,9 +200,9 @@ impl Bucket {
 type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
 
 /// Send one frame, within [`SEND_WITHIN`] and not past a shutdown
-/// ([`crate::api::send_within`]): `false` when it could not go.
+/// ([`crate::http::send_within`]): `false` when it could not go.
 async fn send(sink: &mut Sink, message: Message, shutdown: &tokio_util::sync::CancellationToken) -> bool {
-    crate::api::send_within(sink, message, SEND_WITHIN, shutdown).await
+    crate::http::send_within(sink, message, SEND_WITHIN, shutdown).await
 }
 
 /// Serve one page until it leaves, the server stops, or it may no longer see
@@ -217,7 +217,7 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
     let mut bucket = Bucket::new();
     let mut recheck = tokio::time::interval_at(tokio::time::Instant::now() + RECHECK, RECHECK);
     recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut heartbeat = crate::api::Heartbeat::default();
+    let mut heartbeat = crate::http::Heartbeat::default();
     tracing::info!(%user, "gateway: a page connected");
     let mut bye: Option<(u16, String, String)> = None;
     // A change between the check before the upgrade and here is not missed.
@@ -318,12 +318,12 @@ async fn run(socket: WebSocket, state: AppState, user: String, who: MaybeIdentit
         .await;
         let _ = send(&mut sink, Message::Close(Some(CloseFrame { code, reason: error.into() })), &state.cancel).await;
     }
-    crate::api::close_within(&mut sink, SEND_WITHIN, &state.cancel).await;
+    crate::http::close_within(&mut sink, SEND_WITHIN, &state.cancel).await;
     tracing::info!(%user, held, "gateway: a page left");
 }
 
 /// The close code and the words for a refusal that ends a connection.
-fn closing(refusal: &crate::api::error::ApiError) -> (u16, String, String) {
+fn closing(refusal: &crate::http::error::ApiError) -> (u16, String, String) {
     let body = refusal.body();
     let error = body["error"].as_str().unwrap_or("forbidden").to_string();
     let message = body["message"].as_str().unwrap_or_default().to_string();
@@ -676,7 +676,7 @@ mod tests {
             crate::api::cloud::put_access(
                 State(state.clone()),
                 alice.clone(),
-                crate::api::extract::ApiJson(crate::api::cloud::AccessRequest { user: "bob".into(), remote }),
+                crate::http::extract::ApiJson(crate::api::cloud::AccessRequest { user: "bob".into(), remote }),
             )
         };
         let _ = set(true).await.unwrap();

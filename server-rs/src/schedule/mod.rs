@@ -76,10 +76,10 @@ use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::db::Db;
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::paths::Paths;
 use crate::sessions::Source;

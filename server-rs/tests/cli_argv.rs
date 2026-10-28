@@ -10,7 +10,7 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-use remote_hand_server::api::SERVER_VERSION;
+use remote_hand_server::http::SERVER_VERSION;
 
 struct Invocation {
     home: tempfile::TempDir,

@@ -153,8 +153,8 @@ use gotcha::axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri
 use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
-use crate::api::error::ApiError;
 use crate::config::AuthSettings;
+use crate::http::error::ApiError;
 use crate::instance::InstanceDirs;
 use crate::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};

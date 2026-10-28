@@ -9,8 +9,8 @@ pub mod usage;
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::extract::ApiQuery;
 use crate::api::{ApiRouter, AppState};
+use crate::http::extract::ApiQuery;
 use crate::openapi_ext::ExtraResponses;
 use usage::UsageStats;
 

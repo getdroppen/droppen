@@ -7,7 +7,7 @@ use crate::agent::enroll::BeginError;
 use crate::api::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 use crate::api::SendResult;
 
-use crate::api::created::Accepted;
+use crate::http::created::Accepted;
 use super::*;
 
 /// How long an attempt waits for its code.
@@ -194,7 +194,7 @@ pub async fn post_link(
     let aggregator: Option<LinkAggregator> = None;
     let id = random_hex(16);
     let expires_ms = crate::time::now_ms_u64() + ATTEMPT_TTL_MS;
-    let hostname = crate::api::hostname();
+    let hostname = crate::http::hostname();
     // The browser hand-off (§4.9), for a page that said where it is: the
     // reply comes back to that origin, which the `/api/*` origin check has
     // already accepted as this server's.

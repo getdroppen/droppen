@@ -27,9 +27,10 @@ use gotcha::axum::response::Response;
 use gotcha::{api, Json, State, WebSocketUpgrade};
 use serde::Deserialize;
 
-use crate::api::error::ApiError;
-use crate::api::extract::{ApiJson, ApiPath};
-use crate::api::{send_within, ApiRouter, AppState, SendResult, WsSender as Sender};
+use crate::api::{ApiRouter, AppState, SendResult};
+use crate::http::error::ApiError;
+use crate::http::extract::{ApiJson, ApiPath};
+use crate::http::{send_within, WsSender as Sender};
 use crate::openapi_ext::ExtraResponses;
 
 use super::{Chunk, TerminalCreate, TerminalError, TerminalInfo, TerminalList, TerminalRename, SLOW_NOTE};
@@ -160,7 +161,7 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     // would send the client into its reconnect loop; left open, `[process
     // exited]` stays the last thing on screen.
     let mut live = true;
-    let mut heartbeat = crate::api::Heartbeat::default();
+    let mut heartbeat = crate::http::Heartbeat::default();
     loop {
         tokio::select! {
             () = &mut ended => {

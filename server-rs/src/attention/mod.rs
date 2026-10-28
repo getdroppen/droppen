@@ -49,10 +49,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
-use crate::api::extract::ApiPath;
 use crate::api::{ApiRouter, AppState};
 use crate::db::index::Index;
+use crate::http::error::ApiError;
+use crate::http::extract::ApiPath;
 use crate::openapi_ext::{ExtraResponses, Nullable};
 use crate::paths::Paths;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};

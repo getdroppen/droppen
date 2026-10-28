@@ -31,11 +31,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::Setup;
-use crate::api::error::ApiError;
-use crate::api::extract::ApiJson;
 use crate::api::AppState;
 use crate::claude_roots;
 use crate::db::scope;
+use crate::http::error::ApiError;
+use crate::http::extract::ApiJson;
 use crate::openapi_ext::Nullable;
 use crate::paths::ClaudeRoot;
 
