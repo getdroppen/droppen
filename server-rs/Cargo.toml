@@ -12,7 +12,7 @@ license = "AGPL-3.0-only"
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-path", "crates/droppen-base"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base"]
 
 [features]
 default = ["embed"]
@@ -39,7 +39,7 @@ rh-client = { path = "crates/rh-client" }
 droppen-plugin-sdk = { path = "crates/droppen-plugin-sdk" }
 # The PATH rule the setup guide rebuilds at boot: shared with the desktop app
 # (`desktop/core/src/env_path.rs`), which is not part of this workspace.
-droppen-path = { path = "crates/droppen-path" }
+droppen-search-path = { path = "crates/droppen-search-path" }
 # The helpers below every subsystem: the clock, text codecs, private files,
 # process guards, outbound webhooks, the environment and the program's name.
 droppen-base = { path = "crates/droppen-base" }

@@ -11,7 +11,7 @@
           "modules": []
         },
         {
-          "name": "droppen-path",
+          "name": "droppen-search-path",
           "about": "The PATH rule shared with the desktop app.",
           "modules": []
         },

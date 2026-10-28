@@ -1099,10 +1099,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "droppen-path"
-version = "0.1.0"
-
-[[package]]
 name = "droppen-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1129,6 +1125,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "droppen-search-path"
+version = "0.1.0"
 
 [[package]]
 name = "dunce"
@@ -2776,8 +2776,8 @@ dependencies = [
  "clap",
  "croner",
  "droppen-base",
- "droppen-path",
  "droppen-plugin-sdk",
+ "droppen-search-path",
  "ed25519-dalek",
  "flate2",
  "futures-util",
