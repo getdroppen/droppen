@@ -26,14 +26,14 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use gotcha::axum::extract::ws::{Message, WebSocket};
 use gotcha::axum::response::Response;
-use gotcha::{State, WebSocketUpgrade};
+use gotcha::axum::extract::FromRef;
+use gotcha::{GotchaRouter, State, WebSocketUpgrade};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use super::watch;
-use crate::api::{ApiRouter, AppState};
 use crate::drive::Drive;
 use crate::http::extract::ApiQuery;
 use crate::http::refresh::RefreshSink;
@@ -514,6 +514,28 @@ fn plugin_frame(frame: &str) -> bool {
     )
 }
 
+/// What the session-list socket uses of the server's state.
+#[derive(Clone)]
+pub struct EventsState {
+    /// How long one frame may take to leave before the socket is given up on.
+    pub send_limit: Duration,
+    /// Cancelled by the shutdown supervisor; the socket closes on it.
+    pub cancel: CancellationToken,
+    /// The plugins, whose status a local client is sent.
+    pub plugins: Arc<crate::plugins::Plugins>,
+    /// The shared session-list feed the socket attaches to.
+    pub global: Arc<GlobalFeed>,
+    /// The drivers a subscription follows, and the logins a socket rechecks.
+    pub drive: Arc<Drive>,
+    /// The instance whose name the `settings` frame carries.
+    pub instance: Arc<crate::instance::InstanceDirs>,
+    /// When this process started, ISO-8601, for the `settings` frame.
+    pub started_at: Arc<str>,
+    /// Every live session feed, which a subscription attaches to.
+    pub feeds: Arc<super::FeedRegistry>,
+}
+crate::http::substate!(EventsState);
+
 /// The live session-list feed. Deliberately **not** annotated with `#[api]`:
 /// `WebSocketUpgrade` is not a `ParameterProvider`, so the macro's generated
 /// call fails to compile (`gotcha_macro-0.4.1/src/route.rs:88`). The TypeScript
@@ -529,7 +551,7 @@ fn plugin_frame(frame: &str) -> bool {
 /// login is still signed in, and closes with 4401 once it is not: signing out
 /// or revoking a login ends its live feed too, not only its next request.
 pub async fn events_ws(
-    State(state): State<AppState>,
+    State(state): State<EventsState>,
     who: crate::auth::MaybeIdentity,
     ApiQuery(query): ApiQuery<EventsQuery>,
     upgrade: WebSocketUpgrade,
@@ -566,7 +588,7 @@ pub struct EventsQuery {
 /// Every send is bounded ([`send_within`]), and so is the close
 /// ([`CLOSE_LIMIT`]): a client that stops reading would otherwise park this
 /// task for good, with the list feed and every subscription it holds.
-async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, login: Option<(String, String)>, cloud: bool) {
+async fn run_socket(socket: WebSocket, state: EventsState, options: MuxOptions, login: Option<(String, String)>, cloud: bool) {
     let (mut sender, mut receiver) = socket.split();
     let (limit, shutdown) = (state.send_limit, &state.cancel);
     let compress = options.compress;
@@ -671,9 +693,15 @@ async fn run_socket(socket: WebSocket, state: AppState, options: MuxOptions, log
     close_within(&mut sender, CLOSE_LIMIT, shutdown).await;
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router.get("/api/events", events_ws)
+impl EventsState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        EventsState: FromRef<S>,
+    {
+        router.get("/api/events", events_ws)
+    }
 }
 
 /// Nothing to amend: the websocket carries no OpenAPI operation.
@@ -686,6 +714,7 @@ mod tests {
     use futures_util::SinkExt;
 
     use super::*;
+    use crate::api::AppState;
     use crate::openapi_ext::Nullable;
     use crate::sessions::{SessionStatus, Settings};
 

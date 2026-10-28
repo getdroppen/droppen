@@ -56,7 +56,7 @@ use crate::pty_shim::proto::{self, Frame, Meta, Resize};
 use crate::pty_shim::sidecar::{self, Sidecars};
 use crate::pty_shim::{self as shim, gap_note};
 
-pub use routes::{describe, routes};
+pub use routes::{describe, TerminalsState};
 
 /// How much output a (re)connecting client is repainted with.
 const BUFFER_CAP: usize = 200 * 1024;
