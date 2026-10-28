@@ -2221,7 +2221,7 @@ mod tests {
     /// A claude transcript in the user's own `~/.claude`, which is a session
     /// this server did not start.
     fn external_claude_session(drive: &Drive, id: &str, lines: &[serde_json::Value]) {
-        let project = drive.paths.claude_projects().join("-w-repo");
+        let project = crate::claude_roots::local_projects(&drive.paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
         std::fs::write(project.join(format!("{id}.jsonl")), body).expect("transcript");
@@ -2426,7 +2426,7 @@ mod tests {
         let (_dir, drive) = drive();
         let id = "99999999-9999-4999-8999-999999999999";
         // A session of this server's own: its transcript in the managed root.
-        let project = drive.paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&drive.paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let line = serde_json::json!({"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"/w/repo","sessionId":id,"uuid":"u1"});
         std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");

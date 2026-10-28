@@ -10,7 +10,7 @@
 //!
 //! - the chain names this computer as a current device (an enrollment still
 //!   waiting for a device, or a removed computer, has no device role), and
-//! - the owner has not turned the aggregator off ([`crate::paths::Paths::wants_aggregator`]).
+//! - the owner has not turned the aggregator off ([`crate::cloud::wants_aggregator`]).
 //!
 //! **Each round** (on a chain change, every [`GAP_EVERY`] while a key is
 //! missing, else every [`IDLE_EVERY`]):
@@ -377,7 +377,7 @@ impl Controller {
     }
 
     async fn round(&mut self) -> Duration {
-        if !self.env.paths.wants_aggregator() {
+        if !crate::cloud::wants_aggregator(&self.env.paths) {
             return self.idle(None);
         }
         let Some(view) = self.env.enrollment.view() else {
@@ -411,7 +411,7 @@ impl Controller {
         if self.keys.is_none() {
             // Every write asks again, under the directory's lock: still on, the link still running (S1).
             let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && paths.wants_aggregator());
+            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && crate::cloud::wants_aggregator(&paths));
             match HostKeys::load(&self.env.paths, &view.account, &view.me) {
                 Ok(keys) => self.keys = Some(keys.guarded(guard)),
                 Err(error) => {

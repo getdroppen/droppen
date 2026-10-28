@@ -22,7 +22,7 @@
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
-//! Whether it runs is the owner's choice ([`crate::paths::Paths::wants_aggregator`]): on for a computer
+//! Whether it runs is the owner's choice ([`crate::cloud::wants_aggregator`]): on for a computer
 //! signed in from its local settings with aggregation (the default), and for
 //! one enrolled from the command line that never was (§4.3, "已注册的电脑");
 //! off once the owner turns it off.
@@ -405,22 +405,22 @@ mod tests {
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
         let file = crate::cloud::file_path(&paths);
         // Enrolled from the command line: no file, on.
-        assert!(paths.wants_aggregator());
+        assert!(crate::cloud::wants_aggregator(&paths));
         let write = |v: serde_json::Value| std::fs::write(&file, v.to_string()).unwrap();
         // Signed in from the local settings, with aggregation (the default): on.
         write(serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 5}));
-        assert!(paths.wants_aggregator());
+        assert!(crate::cloud::wants_aggregator(&paths));
         // Without it, or turned off by a release from before (no `aggregatorOff`): off.
         write(serde_json::json!({"owner": "alice", "aggregate": false, "linkedAt": 5}));
-        assert!(!paths.wants_aggregator());
+        assert!(!crate::cloud::wants_aggregator(&paths));
         // Turned off: off, whatever else.
         write(serde_json::json!({"aggregate": true, "aggregatorOff": true}));
-        assert!(!paths.wants_aggregator());
+        assert!(!crate::cloud::wants_aggregator(&paths));
         // A file with no sign-in in it (an owner set before any): on.
         write(serde_json::json!({"remoteAccess": {}}));
-        assert!(paths.wants_aggregator());
+        assert!(crate::cloud::wants_aggregator(&paths));
         // A file that does not parse may be the owner's "off": off (N3).
         std::fs::write(&file, b"{\"aggregatorOff\": tr").unwrap();
-        assert!(!paths.wants_aggregator());
+        assert!(!crate::cloud::wants_aggregator(&paths));
     }
 }

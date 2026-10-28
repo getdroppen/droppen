@@ -290,6 +290,7 @@ pub async fn prune(paths: &Paths) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::SessionFiles;
 
     fn paths(dir: &tempfile::TempDir) -> Paths {
         Paths::new(dir.path().to_path_buf())
@@ -322,12 +323,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
         record(&paths, Source::Codex, "thread-a").await.expect("record");
-        assert!(!paths.owned_sessions_file().exists(), "recording writes the table and nothing else");
-        assert!(!paths.owned_sessions_file().with_extension("json.tmp").exists());
+        assert!(!SessionFiles::of(&paths).owned_sessions().exists(), "recording writes the table and nothing else");
+        assert!(!SessionFiles::of(&paths).owned_sessions().with_extension("json.tmp").exists());
 
         // A registry that appears afterwards is left exactly as found: nothing
         // reads it, and there is no writer left to overwrite it.
-        let file = paths.owned_sessions_file();
+        let file = SessionFiles::of(&paths).owned_sessions();
         std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
         let planted = r#"{"claude":["planted"],"codex":[]}"#;
         std::fs::write(&file, planted).expect("plant");

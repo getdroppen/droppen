@@ -104,7 +104,7 @@ impl GotchaApp for RemoteHandApp {
             // Derived here rather than handed in, so the framework's own `state`
             // path and `prepare`'s agree by construction: both read the same two
             // config fields.
-            let instance = Arc::new(paths.instance_dirs(&instance)?);
+            let instance = Arc::new(InstanceDirs::new(&paths.data_dir(), &instance).map_err(GotchaError::message)?);
             // A pending aggregator key from before chain v3 is deleted once at
             // boot, whatever the link and cloud state: nothing in this build
             // writes it, and while it exists the status route would keep
@@ -199,7 +199,7 @@ impl RemoteHandApp {
         // the error stays typed rather than becoming a message, with the exit
         // code `up` reads as "wait for the holder" instead of "bad binary".
         let paths = Paths::for_instance(config.app.home(), &config.app.instance());
-        let dirs = paths.instance_dirs(&config.app.instance())?;
+        let dirs = InstanceDirs::new(&paths.data_dir(), &config.app.instance()).map_err(GotchaError::message)?;
         let lock = if self.skip_lock {
             None
         } else {
@@ -248,15 +248,19 @@ impl RemoteHandApp {
             } else {
                 // Also gated on the lock, and for the same reason everything below
                 // is: a throwaway server sweeping `<data>/bin` would delete the
-                // staging file of an upgrade the real server has in flight.
-                paths.sweep_staging_binaries();
+                // staging file of an upgrade the real server has in flight. At
+                // boot as well as before each upgrade, because the two catch
+                // different things: this one clears a file left by a process that
+                // was killed outright, and the per-upgrade one keeps a server that
+                // is never restarted from accumulating them.
+                crate::selfupdate::store::BinStore::new(&paths).sweep_staging();
                 // The Claude root remote-hand owns may still be at the path
                 // every instance shared before roots were per-instance; the
                 // `default` instance claims it here, before anything lists a
                 // session out of either place. Renaming a directory two servers
                 // could be reading is an owner's move, so it sits behind the
                 // same lock every adoption below does.
-                paths.migrate_legacy_claude_root();
+                crate::claude_roots::migrate_legacy_root(&paths);
                 // After the move, so a legacy root's leftovers are swept too:
                 // an adoption by an earlier build, interrupted between its copy
                 // and its rename, leaves a full transcript nothing will ever
@@ -410,7 +414,7 @@ impl RemoteHandApp {
                 // reach — for a one-time token that opens the page signed in
                 // as this device's owner (`crate::auth::local_open`).
                 let page = crate::auth::local_open::page_url(addr);
-                if let Err(error) = paths.serve_local_open(auth_for_link.clone(), page, desktop_app, cancel.clone()) {
+                if let Err(error) = crate::auth::local_open::ControlSocket::of(&paths).serve(auth_for_link.clone(), page, desktop_app, cancel.clone()) {
                     tracing::error!(%error, "cannot listen on the control socket; `remote-hand-server open` will not work");
                 }
                 // And again every few seconds, so that an account made or
@@ -597,13 +601,6 @@ fn warn_auth_off(url: &str) {
         url,
         "local authentication is off (auth.enabled = false): every route answers anyone who can reach the port"
     );
-}
-
-impl Paths {
-    /// This server's instance directory, or a refusal naming the bad name.
-    fn instance_dirs(&self, name: &str) -> GotchaResult<InstanceDirs> {
-        InstanceDirs::new(&self.data_dir(), name).map_err(GotchaError::message)
-    }
 }
 
 fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaResult<()> {

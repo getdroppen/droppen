@@ -67,6 +67,7 @@ pub mod link_handoff;
 
 pub use access::remote_viewer;
 pub use file::{file_path, hand_over_from_local_owner};
+pub(crate) use file::wants_aggregator;
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
@@ -622,7 +623,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
         aggregator: {
             let control = cloud.control.control_status().filter(|c| c.running);
             CloudAggregator {
-                enabled: cloud.paths.wants_aggregator(),
+                enabled: wants_aggregator(&cloud.paths),
                 state: if crate::aggregator::key_path(&cloud.paths).exists() {
                     "pending".into()
                 } else if control.is_some() {

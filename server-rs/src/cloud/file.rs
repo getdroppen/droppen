@@ -22,7 +22,7 @@ pub(super) struct CloudFile {
     /// controls the account's other devices with its one identity).
     #[serde(default)]
     pub(super) aggregate: bool,
-    /// The owner turned the aggregator off ([`Paths::wants_aggregator`]).
+    /// The owner turned the aggregator off ([`wants_aggregator`]).
     /// A field of its own: an install enrolled from the command line has no
     /// sign-in here, and controls by default.
     #[serde(default)]
@@ -131,40 +131,38 @@ pub fn file_path(paths: &Paths) -> std::path::PathBuf {
     paths.instance_dir().join("cloud.json")
 }
 
-impl Paths {
-    /// Whether the owner wants this computer to control other devices, by
-    /// `<instance>/cloud.json`: not when they turned it off (`aggregatorOff`,
-    /// or a sign-in from the local settings that asked for no aggregation); yes
-    /// otherwise — also with no file at all (a computer enrolled from the
-    /// command line). A file that cannot be read or does not parse says no
-    /// (security review of S1-4, N3: it may be the owner's "off"), logged
-    /// once.
-    ///
-    /// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
-    /// `cloud.json` is written whole, so any update of it (say `PUT
-    /// /api/cloud/access` on a computer enrolled from the command line) writes
-    /// the default `aggregate: false` without anybody asking for "off". Only
-    /// `aggregatorOff`, or a sign-in from the local settings without
-    /// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
-    ///
-    /// This only says whether the controller works. Deleting what it holds is
-    /// the local API's turning it off (`POST /api/cloud/aggregator`), which
-    /// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json`
-    /// by hand stops the controller but leaves `aggregator/keys.json` where it
-    /// is.
-    pub(crate) fn wants_aggregator(&self) -> bool {
-        let path = file_path(self);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
-            Err(error) => return unreadable(&path, &error.to_string()),
-        };
-        let file: CloudFile = match serde_json::from_slice(&bytes) {
-            Ok(file) => file,
-            Err(error) => return unreadable(&path, &error.to_string()),
-        };
-        !file.aggregator_off && (file.aggregate || file.linked_at.is_none())
-    }
+/// Whether the owner wants this computer to control other devices, by
+/// `<instance>/cloud.json`: not when they turned it off (`aggregatorOff`,
+/// or a sign-in from the local settings that asked for no aggregation); yes
+/// otherwise — also with no file at all (a computer enrolled from the
+/// command line). A file that cannot be read or does not parse says no
+/// (security review of S1-4, N3: it may be the owner's "off"), logged
+/// once.
+///
+/// `{"aggregate": false}` with no `linkedAt` still says yes, on purpose:
+/// `cloud.json` is written whole, so any update of it (say `PUT
+/// /api/cloud/access` on a computer enrolled from the command line) writes
+/// the default `aggregate: false` without anybody asking for "off". Only
+/// `aggregatorOff`, or a sign-in from the local settings without
+/// aggregation (`linkedAt` set and `aggregate` false), is the owner's "off".
+///
+/// This only says whether the controller works. Deleting what it holds is
+/// the local API's turning it off (`POST /api/cloud/aggregator`), which
+/// writes `aggregatorOff` and deletes `aggregator/`; editing `cloud.json`
+/// by hand stops the controller but leaves `aggregator/keys.json` where it
+/// is.
+pub(crate) fn wants_aggregator(paths: &Paths) -> bool {
+    let path = file_path(paths);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(error) => return unreadable(&path, &error.to_string()),
+    };
+    let file: CloudFile = match serde_json::from_slice(&bytes) {
+        Ok(file) => file,
+        Err(error) => return unreadable(&path, &error.to_string()),
+    };
+    !file.aggregator_off && (file.aggregate || file.linked_at.is_none())
 }
 
 /// `cloud.json` does not read: off, said once per process.

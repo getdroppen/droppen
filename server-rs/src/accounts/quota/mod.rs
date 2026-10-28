@@ -48,7 +48,7 @@ pub mod readings;
 pub mod routes;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -342,14 +342,36 @@ pub fn parse_claude_usage(text: &str, now_ms: i64) -> Vec<QuotaWindow> {
 
 // ------------------------------------------------------------- claude: probing
 
-impl Paths {
+/// What the quota probes run against: the user's home directory, which the
+/// `claude` and `codex` CLIs are started in, and Codex's session logs, read
+/// when its app server cannot be reached.
+///
+/// Its own type rather than methods on [`Paths`], so that starting a probe
+/// goes through this module.
+#[derive(Debug, Clone)]
+pub struct QuotaProbe {
+    home: PathBuf,
+    codex_sessions: PathBuf,
+}
+
+impl QuotaProbe {
+    /// The probes of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self {
+            home: paths.home.clone(),
+            codex_sessions: paths.codex_sessions(),
+        }
+    }
+}
+
+impl QuotaProbe {
     /// Run `/usage` against one config root.
     ///
     /// `config_dir` `None` means the user's own login (whatever the CLI picks
     /// up by itself); anything else is an account's probe directory. `TZ` is
     /// pinned so the reset labels always carry `(UTC)`, which is the only form
     /// [`parse_resets_at`] understands.
-    pub async fn probe_claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe {
+    pub async fn claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe {
     let mut command = tokio::process::Command::new("claude");
     command
         .args(USAGE_ARGS)
@@ -563,7 +585,7 @@ impl QuotaCache {
     /// An empty cache for one server instance.
     pub fn new(paths: Arc<Paths>) -> Self {
         Self {
-            codex: Arc::new(CodexQuotaCache::new(paths.clone())),
+            codex: Arc::new(CodexQuotaCache::new(QuotaProbe::of(&paths))),
             paths,
             in_flight: Mutex::new(HashMap::new()),
             queue: Arc::new(tokio::sync::Mutex::new(())),
@@ -726,7 +748,7 @@ impl QuotaCache {
         if !self.fallback_due(login) {
             return;
         }
-        let probe = self.paths.probe_claude_usage(target.config_dir.as_deref()).await;
+        let probe = QuotaProbe::of(&self.paths).claude_usage(target.config_dir.as_deref()).await;
         if probe.rate_limited {
             tracing::warn!(
                 login = ?login,
@@ -989,7 +1011,7 @@ mod tests {
     }
 
     /// A real `claude -p /usage --output-format json` reading from `2026-09-10`,
-    /// spawned exactly as [`Paths::probe_claude_usage`] spawns it.
+    /// spawned exactly as [`QuotaProbe::claude_usage`] spawns it.
     #[test]
     fn a_live_usage_reading_keeps_its_reset_instants() {
         let text = concat!(

@@ -83,7 +83,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
     // assertion this test used to make, and it is worth keeping as an assertion
     // rather than a comment: `prefs.json` is an input to the one-time import, so
     // a save that rewrote it is a save a hand-restored file could not survive.
-    assert!(!server.paths.prefs_file().exists(), "no file is created where there was none");
+    assert!(!remote_hand_server::prefs::PrefsStore::of(&server.paths).file().exists(), "no file is created where there was none");
 
     server.stop().await;
 }

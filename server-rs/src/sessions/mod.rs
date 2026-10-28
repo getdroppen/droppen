@@ -32,7 +32,6 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountRef;
-use crate::claude_roots;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
 use crate::time::mtime_ms;
@@ -851,76 +850,58 @@ pub struct Settings {
     pub plugins: Vec<crate::plugins::wire::PluginStatus>,
 }
 
-impl Paths {
+/// The files the session list keeps of its own, or reads that only it reads:
+/// which sessions this instance owns, the ACP transcripts it keeps, Codex's
+/// thread index and model cache, the price table override, and the sidecars
+/// from before the state database (archived, titles, seen, the schedule).
+///
+/// Its own type rather than methods on [`Paths`], so that these names belong to
+/// this module. Built from the request's [`Paths`] ([`SessionFiles::of`]).
+#[derive(Debug, Clone)]
+pub struct SessionFiles(Paths);
+
+impl SessionFiles {
+    /// The session files of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.clone())
+    }
+
     /// The sessions this instance created whose transcripts live elsewhere —
     /// every codex thread, and every claude session on the local login. See
     /// [`owned_sessions`].
-    pub fn owned_sessions_file(&self) -> PathBuf {
-        self.instance_dir().join("owned-sessions.json")
-    }
-
-    /// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
-    ///
-    /// The *local* root only; `crate::claude_roots` owns the managed one and the
-    /// fan-out over both.
-    pub fn claude_projects(&self) -> PathBuf {
-        claude_roots::projects_dir(self, ClaudeRoot::Local)
-    }
-
-    /// The projects directory of the root remote-hand owns for account sessions.
-    pub fn claude_managed_projects(&self) -> PathBuf {
-        claude_roots::projects_dir(self, ClaudeRoot::Managed)
-    }
-
-    /// Every projects directory a Claude session can live in, local first.
-    pub fn claude_projects_dirs(&self) -> [(ClaudeRoot, PathBuf); 2] {
-        ClaudeRoot::ALL.map(|root| (root, claude_roots::projects_dir(self, root)))
+    pub fn owned_sessions(&self) -> PathBuf {
+        self.0.instance_dir().join("owned-sessions.json")
     }
 
     /// The transcripts this instance keeps for ACP sessions, one directory per
     /// agent; see [`acp_transcript`].
     pub fn acp_sessions(&self) -> PathBuf {
-        self.instance_dir().join("acp-sessions")
-    }
-
-    /// `~/.codex`.
-    pub fn codex_dir(&self) -> PathBuf {
-        self.home.join(".codex")
-    }
-
-    /// `~/.codex/sessions`.
-    pub fn codex_sessions(&self) -> PathBuf {
-        self.codex_dir().join("sessions")
+        self.0.instance_dir().join("acp-sessions")
     }
 
     /// Codex's thread index database.
     pub fn codex_state_db(&self) -> PathBuf {
-        self.codex_dir().join("state_5.sqlite")
+        self.0.codex_dir().join("state_5.sqlite")
     }
 
     /// Codex's optional per-thread name index.
     pub fn codex_session_index(&self) -> PathBuf {
-        self.codex_dir().join("session_index.jsonl")
+        self.0.codex_dir().join("session_index.jsonl")
     }
 
     /// Codex's cache of the models its backend offers.
     pub fn codex_models_cache(&self) -> PathBuf {
-        self.codex_dir().join("models_cache.json")
+        self.0.codex_dir().join("models_cache.json")
     }
 
     /// Claude has no native archive, so remote-hand keeps its own hidden list.
-    pub fn archived_file(&self) -> PathBuf {
-        self.config_dir().join("archived.json")
+    pub fn archived(&self) -> PathBuf {
+        self.0.config_dir().join("archived.json")
     }
 
     /// User-set session titles, kept in a sidecar so the CLIs' files stay untouched.
-    pub fn titles_file(&self) -> PathBuf {
-        self.config_dir().join("titles.json")
-    }
-
-    /// UI preferences.
-    pub fn prefs_file(&self) -> PathBuf {
-        self.config_dir().join("prefs.json")
+    pub fn titles(&self) -> PathBuf {
+        self.0.config_dir().join("titles.json")
     }
 
     /// `<data>/instances/<name>/scheduled-tasks.json` — the cron tasks this
@@ -934,19 +915,19 @@ impl Paths {
     ///
     /// Written `0600`: it holds prompts the user wrote and paths into their
     /// source tree.
-    pub fn scheduled_tasks_file(&self) -> PathBuf {
-        self.instance_dir().join("scheduled-tasks.json")
+    pub fn scheduled_tasks(&self) -> PathBuf {
+        self.0.instance_dir().join("scheduled-tasks.json")
     }
 
     /// When the user last looked at each session — the `read_at` half of
     /// [`crate::attention`].
-    pub fn seen_file(&self) -> PathBuf {
-        self.config_dir().join("seen.json")
+    pub fn seen(&self) -> PathBuf {
+        self.0.config_dir().join("seen.json")
     }
 
     /// The optional per-model price table that overrides the built-in rates.
     pub fn price_override(&self) -> PathBuf {
-        self.home.join(".remote-hand").join("model-prices.json")
+        self.0.home.join(".remote-hand").join("model-prices.json")
     }
 }
 

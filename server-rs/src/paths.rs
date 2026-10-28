@@ -201,7 +201,7 @@ impl Paths {
 
     /// `<data>/claude` — the managed root as it was before it became per-instance.
     ///
-    /// Only [`Paths::migrate_legacy_claude_root`] reads this: it is where
+    /// Only [`crate::claude_roots::migrate_legacy_root`] reads this: it is where
     /// every account-backed session of every earlier build lives, and the default
     /// instance claims it once at boot.
     pub fn legacy_claude_managed(&self) -> PathBuf {
@@ -242,6 +242,20 @@ impl Paths {
     /// are pointed at it with `--add-dir`.
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
+    }
+
+    /// `~/.codex`, the Codex CLI's own home.
+    ///
+    /// Here rather than with one module because several read what is in it:
+    /// the session list, the feed, the quota probe, the usage stats, the
+    /// drive's routes and the API's settings.
+    pub fn codex_dir(&self) -> PathBuf {
+        self.home.join(".codex")
+    }
+
+    /// `~/.codex/sessions`.
+    pub fn codex_sessions(&self) -> PathBuf {
+        self.codex_dir().join("sessions")
     }
 }
 

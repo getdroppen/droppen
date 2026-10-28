@@ -633,13 +633,13 @@ mod tests {
         let a = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "a");
         let b = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "b");
 
-        assert_ne!(a.scheduled_tasks_file(), b.scheduled_tasks_file());
+        assert_ne!(crate::sessions::SessionFiles::of(&a).scheduled_tasks(), crate::sessions::SessionFiles::of(&b).scheduled_tasks());
 
         // And the sidecars that are shared by design did not move with them.
-        assert_eq!(a.prefs_file(), b.prefs_file());
-        assert_eq!(a.titles_file(), b.titles_file());
-        assert_eq!(a.seen_file(), b.seen_file());
-        assert_eq!(a.archived_file(), b.archived_file());
+        assert_eq!(crate::prefs::PrefsStore::of(&a).file(), crate::prefs::PrefsStore::of(&b).file());
+        assert_eq!(crate::sessions::SessionFiles::of(&a).titles(), crate::sessions::SessionFiles::of(&b).titles());
+        assert_eq!(crate::sessions::SessionFiles::of(&a).seen(), crate::sessions::SessionFiles::of(&b).seen());
+        assert_eq!(crate::sessions::SessionFiles::of(&a).archived(), crate::sessions::SessionFiles::of(&b).archived());
     }
 
     #[test]
