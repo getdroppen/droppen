@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 const USAGE: &str = "\
 USAGE:
@@ -51,7 +51,7 @@ fn main() -> ExitCode {
 /// What the command line asked for.
 #[derive(Debug, PartialEq, Eq)]
 enum Invocation {
-    Help,
+    Help(String),
     Serve,
     Keygen,
     Deregister,
@@ -60,8 +60,8 @@ enum Invocation {
 
 async fn run(args: Vec<String>) -> Result<(), String> {
     match parse(&args)? {
-        Invocation::Help => {
-            println!("{USAGE}");
+        Invocation::Help(text) => {
+            print!("{text}");
             Ok(())
         }
         Invocation::Serve => {
@@ -114,17 +114,12 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 /// was; every command ignores a tail it does not read, which is what deployed
 /// relays start with.
 fn parse(args: &[String]) -> Result<Invocation, String> {
-    if let Some(first) = args.first() {
-        match first.as_str() {
-            "--help" | "-h" => return Ok(Invocation::Help),
-            // clap reads a leading `--` as its terminator, leaving no command
-            // and so meaning `serve`; this binary has always called it unknown.
-            "--" => return Err(format!("unknown command {first:?}\n\n{USAGE}")),
-            _ => {}
-        }
-    }
-    let cli = RelayCli::try_parse_from(std::iter::once("droppen-relay".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let matches = match RelayCli::command().try_get_matches_from(std::iter::once("droppen-relay".to_string()).chain(args.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Invocation::Help(error.to_string())),
+        Err(error) => return Err(format!("{error}\n\n{USAGE}")),
+    };
+    let cli = RelayCli::from_arg_matches(&matches).map_err(|error| format!("{error}\n\n{USAGE}"))?;
     Ok(match cli.command {
         None | Some(RelayCommand::Serve(_)) => Invocation::Serve,
         Some(RelayCommand::Keygen(_)) => Invocation::Keygen,
@@ -137,13 +132,7 @@ fn parse(args: &[String]) -> Result<Invocation, String> {
 /// tail: a relay's start command is fixed and deployed, so an argument a
 /// command never read must keep being accepted and ignored.
 #[derive(Debug, Parser)]
-#[command(
-    name = "droppen-relay",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "droppen-relay", disable_help_subcommand = true, args_override_self = true)]
 struct RelayCli {
     #[command(subcommand)]
     command: Option<RelayCommand>,
@@ -151,13 +140,9 @@ struct RelayCli {
 
 #[derive(Debug, Subcommand)]
 enum RelayCommand {
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Serve(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Keygen(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Deregister(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     RotateKey(RelayTail),
 }
 
@@ -201,21 +186,22 @@ mod tests {
         words.iter().map(|word| (*word).to_string()).collect()
     }
 
-    /// Every command keeps accepting the tail a deployed relay may carry; help is the first token only.
+    /// Every command keeps accepting the tail a deployed relay may carry; help is clap's.
     #[test]
     fn the_relay_argument_table() {
         assert_eq!(parse(&args(&[])).unwrap(), Invocation::Serve);
         assert_eq!(parse(&args(&["serve"])).unwrap(), Invocation::Serve);
         assert_eq!(parse(&args(&["serve", "junk", "--x"])).unwrap(), Invocation::Serve);
-        assert_eq!(parse(&args(&["keygen", "--help"])).unwrap(), Invocation::Keygen);
+        assert_eq!(parse(&args(&["keygen", "junk"])).unwrap(), Invocation::Keygen);
         assert_eq!(parse(&args(&["deregister", "--reason", "x"])).unwrap(), Invocation::Deregister);
         assert_eq!(parse(&args(&["deregister", "junk", "--x"])).unwrap(), Invocation::Deregister);
         assert_eq!(parse(&args(&["rotate-key", "--x"])).unwrap(), Invocation::RotateKey);
-        assert_eq!(parse(&args(&["--help"])).unwrap(), Invocation::Help);
-        assert_eq!(parse(&args(&["-h", "junk"])).unwrap(), Invocation::Help, "the first token only");
+        assert_eq!(parse(&args(&["--"])).unwrap(), Invocation::Serve, "a bare -- is clap's terminator");
+        for argv in [vec!["--help"], vec!["-h"], vec!["--help", "junk"], vec!["keygen", "--help"], vec!["serve", "--help"]] {
+            assert!(matches!(parse(&args(&argv)), Ok(Invocation::Help(_))), "{argv:?} must answer help");
+        }
         for argv in [
             vec!["bogus"],
-            vec!["--"],
             vec!["--", "serve"],
             vec!["--version"],
             vec!["-V"],

@@ -18,14 +18,14 @@
 //! `http://127.0.0.1:<port>/…`: the updater's end-to-end test, never a release.
 //! `key-id` prints the key's minisign key id, as `tauri signer` shows it.
 //!
-//! The grammar is clap's: unknown options, `--name=value` and positional words
-//! a command does not take are refused rather than ignored.
+//! The grammar is clap's: unknown options and positional words a command does
+//! not take are refused rather than ignored.
 
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::SystemTime;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use droppen_desktop_core::update::{archive_url, key_id, release_page, Manifest, Rules};
 
 const USAGE: &str = "usage:
@@ -34,11 +34,21 @@ const USAGE: &str = "usage:
   droppen-update-manifest key-id --pubkey <file>";
 
 fn main() -> ExitCode {
-    match run(std::env::args().skip(1).collect()) {
-        Ok(message) => {
-            println!("{message}");
+    match parse(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        Ok(Parsed::Help(text)) => {
+            print!("{text}");
             ExitCode::SUCCESS
         }
+        Ok(Parsed::Run { command, options }) => match run(command, options) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(message) => {
+                eprintln!("droppen-update-manifest: {message}");
+                ExitCode::FAILURE
+            }
+        },
         Err(message) => {
             eprintln!("droppen-update-manifest: {message}");
             ExitCode::FAILURE
@@ -46,8 +56,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: Vec<String>) -> Result<String, String> {
-    let (command, options) = parse(&args)?;
+fn run(command: Command, options: Options) -> Result<String, String> {
     let required = |name: &str, value: Option<String>| value.ok_or_else(|| format!("--{name} is required\n{USAGE}"));
     let pubkey = read_pubkey(Path::new(&required("pubkey", options.pubkey)?))?;
     let key = key_id(&pubkey)?;
@@ -102,8 +111,8 @@ enum Command {
     KeyId,
 }
 
-/// The tool's options. Every command accepts all of them, as the hand parser
-/// did; only the command that uses one reads it.
+/// The tool's options. Every command accepts all of them; only the command that
+/// uses one reads it.
 #[derive(Debug, Args)]
 struct Options {
     #[arg(long, allow_hyphen_values = true)]
@@ -132,16 +141,9 @@ struct CheckArgs {
     options: Options,
 }
 
-/// `droppen-update-manifest`'s command line. The command word is first (the
-/// hand parser took the first argument as the command), then its options.
+/// `droppen-update-manifest`'s command line: the command word, then its options.
 #[derive(Debug, Parser)]
-#[command(
-    name = "droppen-update-manifest",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "droppen-update-manifest", disable_help_subcommand = true, args_override_self = true)]
 struct ManifestCli {
     #[command(subcommand)]
     command: Option<ManifestCommand>,
@@ -149,59 +151,37 @@ struct ManifestCli {
 
 #[derive(Debug, Subcommand)]
 enum ManifestCommand {
-    #[command(disable_help_flag = true, disable_version_flag = true, args_override_self = true)]
+    #[command(args_override_self = true)]
     Write(Options),
-    #[command(disable_help_flag = true, disable_version_flag = true, args_override_self = true)]
+    #[command(args_override_self = true)]
     Check(CheckArgs),
-    #[command(disable_help_flag = true, disable_version_flag = true, args_override_self = true)]
+    #[command(args_override_self = true)]
     KeyId(Options),
 }
 
-/// Parse the command line, or say what is wrong with it.
-fn parse(args: &[String]) -> Result<(Command, Options), String> {
-    scan(args)?;
-    let cli = ManifestCli::try_parse_from(std::iter::once("droppen-update-manifest".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| error.to_string())?;
+/// What the command line asked for, or clap's help text.
+#[derive(Debug)]
+enum Parsed {
+    Help(String),
+    Run { command: Command, options: Options },
+}
+
+/// Parse the command line, or say what is wrong with it. Strict parsing is
+/// clap's: unknown flags are refused, `--name=value` is accepted, and a bare
+/// `--` is its terminator.
+fn parse(args: &[String]) -> Result<Parsed, String> {
+    let matches = match ManifestCli::command().try_get_matches_from(std::iter::once("droppen-update-manifest".to_string()).chain(args.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Parsed::Help(error.to_string())),
+        Err(error) => return Err(error.to_string()),
+    };
+    let cli = ManifestCli::from_arg_matches(&matches).map_err(|error| error.to_string())?;
     match cli.command {
-        Some(ManifestCommand::Write(options)) => Ok((Command::Write, options)),
-        Some(ManifestCommand::KeyId(options)) => Ok((Command::KeyId, options)),
-        Some(ManifestCommand::Check(check)) => Ok((Command::Check { path: check.path }, check.options)),
+        Some(ManifestCommand::Write(options)) => Ok(Parsed::Run { command: Command::Write, options }),
+        Some(ManifestCommand::KeyId(options)) => Ok(Parsed::Run { command: Command::KeyId, options }),
+        Some(ManifestCommand::Check(check)) => Ok(Parsed::Run { command: Command::Check { path: check.path }, options: check.options }),
         None => Err(USAGE.to_string()),
     }
-}
-
-/// The spellings this tool refuses before clap sees them.
-///
-/// `--name=value` is the one approved break from the old accepted argv: it is
-/// now an error. `-h`/`--help` keep their old meaning (this usage as an error,
-/// not clap's help, so the exit status stays 1). The token after a value-taking
-/// option is skipped: it is that option's value, whatever it looks like.
-fn scan(args: &[String]) -> Result<(), String> {
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--version" | "--archive" | "--signature" | "--pubkey" | "--out" | "--url" | "--notes" => {
-                iter.next();
-            }
-            "--loopback-http" => {}
-            // Refused, not clap's terminator: this tool has no positional words after a `--`, and
-            // accepting one would loosen the parser the owner asked to tighten.
-            "--" => return Err(format!("-- is not accepted by this tool\n{USAGE}")),
-            "-h" | "--help" => return Err(USAGE.to_string()),
-            other if is_attached(other) => {
-                return Err(format!("{other}: the --name=value spelling is not accepted; use --name value\n{USAGE}"));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// A value-taking option and its value in one word.
-fn is_attached(arg: &str) -> bool {
-    ["--version=", "--archive=", "--signature=", "--pubkey=", "--out=", "--url=", "--notes="]
-        .iter()
-        .any(|prefix| arg.starts_with(prefix))
 }
 
 /// The public key from a `.pub` file or from `tauri.conf.json`.
@@ -235,7 +215,18 @@ mod tests {
     }
 
     fn parsed(words: &[&str]) -> (Command, Options) {
-        parse(&args(words)).unwrap_or_else(|error| panic!("{words:?} must parse: {error}"))
+        match parse(&args(words)) {
+            Ok(Parsed::Run { command, options }) => (command, options),
+            Ok(Parsed::Help(text)) => panic!("unexpected help: {text}"),
+            Err(error) => panic!("{words:?} must parse: {error}"),
+        }
+    }
+
+    fn help(words: &[&str]) -> String {
+        match parse(&args(words)) {
+            Ok(Parsed::Help(text)) => text,
+            other => panic!("{words:?} must answer help: {other:?}"),
+        }
     }
 
     /// The exact invocations the release workflow, `desktop/updater-artifacts.sh` and `desktop/SIGNING.md`
@@ -319,16 +310,10 @@ mod tests {
         assert_eq!(command, Command::Check { path: "latest.json".into() });
     }
 
-    /// The strictness the owner approved: unknown flags and `--name=value` are errors, and so are extra
-    /// positional words and options before the command word.
+    /// Strict parsing, but clap's: unknown flags, stray words and single-dash
+    /// words are refused; `--name=value` and a bare `--` are clap spellings now.
     #[test]
     fn the_strict_refusals() {
-        // `--name=value`: the approved tightening, with its own message.
-        for words in [&["write", "--version", "v", "--pubkey=p"][..], &["write", "--pubkey=p"]] {
-            let error = parse(&args(words)).unwrap_err();
-            assert!(error.contains("--name=value spelling is not accepted"), "{words:?}: {error}");
-        }
-        // Unknown options and extra positionals: clap's unexpected argument.
         for words in [
             &["key-id", "--pubkey", "p", "--bogus", "x"][..],
             &["key-id", "junk", "--pubkey", "p"],
@@ -347,10 +332,37 @@ mod tests {
         for words in [&["bogus", "--pubkey", "p"][..], &[]] {
             assert!(!parse(&args(words)).unwrap_err().is_empty(), "{words:?}");
         }
-        // A missing value, and the old help-as-error.
+        // A missing value.
         assert!(parse(&args(&["key-id", "--pubkey"])).unwrap_err().contains("a value is required"));
-        for words in [&["key-id", "--pubkey", "p", "--help"][..], &["key-id", "--pubkey", "p", "-h"]] {
-            assert_eq!(parse(&args(words)).unwrap_err(), USAGE, "{words:?}");
+    }
+
+    /// The spellings clap takes now: `--name=value`, and `--` as its terminator.
+    #[test]
+    fn the_new_spellings_parse() {
+        let (command, options) = parsed(&["key-id", "--pubkey=p"]);
+        assert_eq!(command, Command::KeyId);
+        assert_eq!(options.pubkey.as_deref(), Some("p"));
+
+        let (command, options) = parsed(&["write", "--version=0.0.1", "--archive=a", "--signature=s", "--pubkey=p", "--out=o"]);
+        assert_eq!(command, Command::Write);
+        assert_eq!(options.version.as_deref(), Some("0.0.1"));
+
+        for words in [
+            &["key-id", "--pubkey", "p", "--"][..],
+            &["write", "--version", "v", "--archive", "a", "--signature", "s", "--pubkey", "p", "--out", "o", "--"],
+            &["check", "--pubkey", "p", "--", "latest.json"],
+            &["check", "latest.json", "--pubkey", "p", "--"],
+        ] {
+            parsed(words);
+        }
+        let (command, _) = parsed(&["check", "--pubkey", "p", "--", "latest.json"]);
+        assert_eq!(command, Command::Check { path: "latest.json".into() });
+    }
+
+    #[test]
+    fn help_is_claps() {
+        for words in [&["--help"][..], &["-h"], &["--help", "junk"], &["key-id", "--pubkey", "p", "--help"]] {
+            assert!(help(words).contains("Usage:"), "{words:?}");
         }
     }
 
@@ -373,15 +385,6 @@ mod tests {
         assert_eq!(command, Command::Check { path: "-".into() });
         assert_eq!(options.pubkey.as_deref(), Some("p"));
 
-        // A bare `--` is refused (it used to swallow the next word as the value of an empty-named option).
-        for words in [
-            &["key-id", "--pubkey", "p", "--"][..],
-            &["write", "--version", "v", "--archive", "a", "--signature", "s", "--pubkey", "p", "--out", "o", "--"],
-            &["check", "--pubkey", "p", "--", "latest.json"],
-            &["check", "latest.json", "--pubkey", "p", "--"],
-        ] {
-            let error = parse(&args(words)).unwrap_err();
-            assert!(error.contains("-- is not accepted"), "{words:?}: {error}");
-        }
+        // A bare `--` is clap's terminator now; the forms above parse (test `the_new_spellings_parse`).
     }
 }

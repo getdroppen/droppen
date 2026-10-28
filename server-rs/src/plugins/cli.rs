@@ -61,59 +61,37 @@ enum Action {
     Purge(String),
 }
 
-fn parse(args: &[String]) -> Result<Action, String> {
+/// What `plugin` was asked, or clap's help text.
+enum Parsed {
+    Help(String),
+    Run { action: Action, instance: Option<String> },
+}
+
+fn parse(args: &[String]) -> Result<Parsed, String> {
     let usage = || USAGE.to_string();
-    // clap reserves `--` as a terminator; this grammar treats it as a word, and
-    // every shape refuses one except as the value after `--out`.
-    if refuses_separator(args) {
-        return Err(usage());
-    }
-    let cli = plugin_command()
-        .try_get_matches_from(std::iter::once("plugin".to_string()).chain(args.iter().cloned()))
-        .map_err(|_| usage())?;
-    let cli = PluginCli::from_arg_matches(&cli).map_err(|_| usage())?;
-    match cli.command {
-        Some(PluginCommand::List) => Ok(Action::List),
-        Some(PluginCommand::Install { file }) => {
-            // A file that starts with `--` was never the install shape; it fell
-            // through to the usage.
-            if file.starts_with("--") {
-                return Err(usage());
-            }
-            Ok(Action::Install(file))
+    let matches = match plugin_command().try_get_matches_from(std::iter::once("plugin".to_string()).chain(args.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Parsed::Help(error.to_string())),
+        Err(error) => return Err(format!("{error}\n\n{}", usage())),
+    };
+    let cli = PluginCli::from_arg_matches(&matches).map_err(|error| format!("{error}\n\n{}", usage()))?;
+    let instance = cli.instance.last().cloned();
+    let action = match cli.command {
+        Some(PluginCommand::List) => Action::List,
+        Some(PluginCommand::Install { file }) => Action::Install(file),
+        Some(PluginCommand::Uninstall { id }) => Action::Uninstall(id),
+        Some(PluginCommand::Enable { id }) => Action::Enable(id),
+        Some(PluginCommand::Disable { id }) => Action::Disable(id),
+        Some(PluginCommand::Export { id, out }) => Action::Export { id, out },
+        Some(PluginCommand::Import { id, file, replace }) => Action::Import { id, file, replace: replace > 0 },
+        Some(PluginCommand::Verify { id }) => Action::Verify(id),
+        Some(PluginCommand::Purge { yes: 0, .. }) => {
+            return Err("purge moves the plugin's data aside; say --yes to mean it".to_string());
         }
-        Some(PluginCommand::Uninstall { id }) => Ok(Action::Uninstall(checked_id(id)?)),
-        Some(PluginCommand::Enable { id }) => Ok(Action::Enable(checked_id(id)?)),
-        Some(PluginCommand::Disable { id }) => Ok(Action::Disable(checked_id(id)?)),
-        Some(PluginCommand::Export { id, rest }) => {
-            let out = match rest.as_slice() {
-                [] => None,
-                [flag, out] if flag == "--out" => Some(out.clone()),
-                // `--out` without a value, or anything that is not that one shape.
-                _ => return Err(usage()),
-            };
-            Ok(Action::Export { id: checked_id(id)?, out })
-        }
-        Some(PluginCommand::Import { id, rest }) => {
-            let replace = rest.iter().any(|word| word == "--replace");
-            let files: Vec<&String> = rest.iter().filter(|word| *word != "--replace").collect();
-            match files.as_slice() {
-                [file] if !file.starts_with("--") => Ok(Action::Import {
-                    id: checked_id(id)?,
-                    file: (*file).clone(),
-                    replace,
-                }),
-                _ => Err(usage()),
-            }
-        }
-        Some(PluginCommand::Verify { id }) => Ok(Action::Verify(checked_id(id)?)),
-        Some(PluginCommand::Purge { id, rest }) => match rest.as_slice() {
-            [] => Err("purge moves the plugin's data aside; say --yes to mean it".to_string()),
-            [flag] if flag == "--yes" => Ok(Action::Purge(checked_id(id)?)),
-            _ => Err(usage()),
-        },
-        None => Err(usage()),
-    }
+        Some(PluginCommand::Purge { id, .. }) => Action::Purge(id),
+        None => return Err(usage()),
+    };
+    Ok(Parsed::Run { action, instance })
 }
 
 /// `plugin`'s command tree, shown under the name this binary was run as.
@@ -125,9 +103,9 @@ fn plugin_command() -> clap::Command {
 }
 
 /// A plugin id, checked by the same rule every shape used.
-fn checked_id(raw: String) -> Result<String, String> {
-    if valid_id(&raw) {
-        Ok(raw)
+fn plugin_id(raw: &str) -> Result<String, String> {
+    if valid_id(raw) {
+        Ok(raw.to_string())
     } else {
         Err(format!(
             "{raw:?} is not a plugin id: 2-32 characters of a-z, 0-9 or '-', starting with a letter"
@@ -135,82 +113,72 @@ fn checked_id(raw: String) -> Result<String, String> {
     }
 }
 
-/// Whether `args` holds a bare `--` in a place the grammar never accepted it.
-/// `export <id> --out --` is the one shape where `--` is a value (the file name
-/// to write), so there it is allowed at the one position the value can take.
-fn refuses_separator(args: &[String]) -> bool {
-    match args.first().map(String::as_str) {
-        Some("export") => args.iter().enumerate().any(|(index, word)| word == "--" && index != 3),
-        _ => args.iter().any(|word| word == "--"),
-    }
-}
-
-/// `plugin`'s subcommands. `export`'s `--out` and `purge`'s `--yes` are word
-/// lists rather than options: the grammar accepts them only in one exact place,
-/// and clap would otherwise take them before or after the id. `import` is one
-/// word list too because its file and `--replace` come in any order.
+/// `plugin`'s subcommands. `--out`, `--replace` and `--yes` are clap options, so
+/// they may be written before or after the id and in the `--name=value` form;
+/// repeated `--replace`/`--yes` count. Help is clap's.
 #[derive(Debug, Parser)]
-#[command(
-    name = "plugin",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "plugin", disable_help_subcommand = true, args_override_self = true)]
 struct PluginCli {
+    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = crate::auth::cli::instance_name, allow_hyphen_values = true)]
+    instance: Vec<String>,
     #[command(subcommand)]
     command: Option<PluginCommand>,
 }
 
 #[derive(Debug, Subcommand)]
 enum PluginCommand {
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     List,
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Install {
         #[arg(allow_hyphen_values = true)]
         file: String,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Uninstall {
+        #[arg(value_parser = plugin_id)]
         id: String,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Enable {
+        #[arg(value_parser = plugin_id)]
         id: String,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Disable {
+        #[arg(value_parser = plugin_id)]
         id: String,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Export {
+        #[arg(value_parser = plugin_id)]
         id: String,
-        #[arg(allow_hyphen_values = true)]
-        rest: Vec<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        out: Option<String>,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Import {
+        #[arg(value_parser = plugin_id)]
         id: String,
         #[arg(allow_hyphen_values = true)]
-        rest: Vec<String>,
+        file: String,
+        #[arg(long, action = clap::ArgAction::Count)]
+        replace: u8,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Verify {
+        #[arg(value_parser = plugin_id)]
         id: String,
     },
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Purge {
+        #[arg(value_parser = plugin_id)]
         id: String,
-        #[arg(allow_hyphen_values = true)]
-        rest: Vec<String>,
+        #[arg(long, action = clap::ArgAction::Count)]
+        yes: u8,
     },
 }
 
 /// Run a `plugin` subcommand. `args` is everything after `plugin`.
 pub async fn run(args: &[String]) -> Result<(), String> {
-    let (args, instance) = crate::auth::cli::take_instance(args)?;
-    let action = parse(&args)?;
+    let (action, instance) = match parse(args)? {
+        Parsed::Help(text) => {
+            print!("{text}");
+            return Ok(());
+        }
+        Parsed::Run { action, instance } => (action, instance),
+    };
     let (paths, config) = crate::auth::cli::cli_context(instance.as_deref())?;
     let plugins = Plugins::new(paths.instance_dir(), paths.instance_db(), &config.app.plugins, None);
     tokio::task::spawn_blocking(move || execute(&plugins, &paths, action))
@@ -399,21 +367,29 @@ mod tests {
         line.split_whitespace().map(str::to_string).collect()
     }
 
+    fn action(line: &str) -> Result<Action, String> {
+        match parse(&args(line)) {
+            Ok(Parsed::Run { action, .. }) => Ok(action),
+            Ok(Parsed::Help(text)) => panic!("unexpected help: {text}"),
+            Err(error) => Err(error),
+        }
+    }
+
     #[test]
     fn the_subcommands_parse_and_anything_else_is_the_usage() {
-        assert_eq!(parse(&args("list")), Ok(Action::List));
-        assert_eq!(parse(&args("install /tmp/tasks.tgz")), Ok(Action::Install("/tmp/tasks.tgz".into())));
-        assert_eq!(parse(&args("uninstall tasks")), Ok(Action::Uninstall("tasks".into())));
-        assert_eq!(parse(&args("enable tasks")), Ok(Action::Enable("tasks".into())));
+        assert_eq!(action("list"), Ok(Action::List));
+        assert_eq!(action("install /tmp/tasks.tgz"), Ok(Action::Install("/tmp/tasks.tgz".into())));
+        assert_eq!(action("uninstall tasks"), Ok(Action::Uninstall("tasks".into())));
+        assert_eq!(action("enable tasks"), Ok(Action::Enable("tasks".into())));
         assert_eq!(
-            parse(&args("export tasks --out /tmp/x.json")),
+            action("export tasks --out /tmp/x.json"),
             Ok(Action::Export {
                 id: "tasks".into(),
                 out: Some("/tmp/x.json".into())
             })
         );
         assert_eq!(
-            parse(&args("import tasks backup.json")),
+            action("import tasks backup.json"),
             Ok(Action::Import {
                 id: "tasks".into(),
                 file: "backup.json".into(),
@@ -421,29 +397,18 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&args("import tasks backup.json --replace")),
+            action("import tasks backup.json --replace"),
             Ok(Action::Import {
                 id: "tasks".into(),
                 file: "backup.json".into(),
                 replace: true
             })
         );
-        assert_eq!(parse(&args("purge tasks --yes")), Ok(Action::Purge("tasks".into())));
-        assert!(parse(&args("purge tasks")).unwrap_err().contains("--yes"));
-        assert!(parse(&args("enable ../x")).unwrap_err().contains("not a plugin id"));
-        for bad in [
-            "",
-            "list extra",
-            "install",
-            "install --force",
-            "uninstall",
-            "enable",
-            "import tasks",
-            "import tasks a b",
-            "import tasks --force",
-            "export tasks --out",
-        ] {
-            assert_eq!(parse(&args(bad)), Err(USAGE.to_string()), "{bad:?}");
+        assert_eq!(action("purge tasks --yes"), Ok(Action::Purge("tasks".into())));
+        assert!(action("purge tasks").unwrap_err().contains("--yes"));
+        assert!(action("enable ../x").unwrap_err().contains("not a plugin id"));
+        for bad in ["", "list extra", "install", "uninstall", "enable", "import tasks", "import tasks a b", "export tasks --out"] {
+            assert!(action(bad).is_err(), "{bad:?}");
         }
     }
 
@@ -575,42 +540,84 @@ mod tests {
     }
     /// The plugin command lines, including the two literal flag words and the
     /// `--` this grammar treats as a word.
+    /// clap parses the subcommands and options; `--out`, `--replace` and
+    /// `--yes` may be spelled `--name=value` and written in any order, and
+    /// repeated `--replace`/`--yes` count. Help is clap's.
     #[test]
     fn the_plugin_argument_table() {
         let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
-        let accepted: Vec<Vec<String>> = [
-            &["list"][..],
-            &["install", "/tmp/tasks.tgz"],
-            &["install", "-x"],
-            &["install", "-"],
-            &["uninstall", "tasks"],
-            &["enable", "tasks"],
-            &["disable", "tasks"],
-            &["verify", "tasks"],
-            &["export", "tasks"],
-            &["export", "tasks", "--out", "/tmp/x.json"],
-            &["export", "tasks", "--out", "--"],
-            &["export", "tasks", "--out", "--out"],
-            &["import", "tasks", "backup.json"],
-            &["import", "tasks", "backup.json", "--replace"],
-            &["import", "tasks", "--replace", "backup.json"],
-            &["import", "tasks", "--replace", "--replace", "backup.json"],
-            &["import", "tasks", "-x"],
-            &["purge", "tasks", "--yes"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &accepted {
-            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        let run = |line: &[&str]| match parse(&words(line)) {
+            Ok(Parsed::Run { action, .. }) => Ok(action),
+            Ok(Parsed::Help(text)) => panic!("unexpected help: {text}"),
+            Err(error) => Err(error),
+        };
+        let accepted: Vec<(&[&str], Action)> = vec![
+            (&["list"][..], Action::List),
+            (&["list", "--instance", "--hub"], Action::List),
+            (&["install", "/tmp/tasks.tgz"], Action::Install("/tmp/tasks.tgz".into())),
+            (&["install", "-x"], Action::Install("-x".into())),
+            (&["install", "-"], Action::Install("-".into())),
+            // A file that looks like a flag is a file now.
+            (&["install", "--force"], Action::Install("--force".into())),
+            (&["install", "--", "file"], Action::Install("file".into())),
+            (&["uninstall", "tasks"], Action::Uninstall("tasks".into())),
+            (&["enable", "tasks"], Action::Enable("tasks".into())),
+            (&["disable", "tasks"], Action::Disable("tasks".into())),
+            (&["verify", "tasks"], Action::Verify("tasks".into())),
+            (&["export", "tasks"], Action::Export { id: "tasks".into(), out: None }),
+            (
+                &["export", "tasks", "--out", "/tmp/x.json"],
+                Action::Export { id: "tasks".into(), out: Some("/tmp/x.json".into()) },
+            ),
+            (
+                &["export", "--out", "/tmp/x.json", "tasks"],
+                Action::Export { id: "tasks".into(), out: Some("/tmp/x.json".into()) },
+            ),
+            (
+                &["export", "tasks", "--out=/tmp/x.json"],
+                Action::Export { id: "tasks".into(), out: Some("/tmp/x.json".into()) },
+            ),
+            (&["export", "tasks", "--out", "--"], Action::Export { id: "tasks".into(), out: Some("--".into()) }),
+            (&["export", "tasks", "--out", "--out"], Action::Export { id: "tasks".into(), out: Some("--out".into()) }),
+            (
+                &["import", "tasks", "backup.json"],
+                Action::Import { id: "tasks".into(), file: "backup.json".into(), replace: false },
+            ),
+            (
+                &["import", "tasks", "backup.json", "--replace"],
+                Action::Import { id: "tasks".into(), file: "backup.json".into(), replace: true },
+            ),
+            (
+                &["import", "tasks", "--replace", "backup.json"],
+                Action::Import { id: "tasks".into(), file: "backup.json".into(), replace: true },
+            ),
+            (
+                &["import", "--replace", "tasks", "backup.json"],
+                Action::Import { id: "tasks".into(), file: "backup.json".into(), replace: true },
+            ),
+            (
+                &["import", "tasks", "-x"],
+                Action::Import { id: "tasks".into(), file: "-x".into(), replace: false },
+            ),
+            (
+                &["import", "tasks", "--force"],
+                Action::Import { id: "tasks".into(), file: "--force".into(), replace: false },
+            ),
+            (&["import", "--", "tasks", "f"], Action::Import { id: "tasks".into(), file: "f".into(), replace: false }),
+            (&["purge", "tasks", "--yes"], Action::Purge("tasks".into())),
+            (&["purge", "--yes", "tasks"], Action::Purge("tasks".into())),
+            (&["purge", "tasks", "--yes", "--yes"], Action::Purge("tasks".into())),
+            (&["uninstall", "--", "tasks"], Action::Uninstall("tasks".into())),
+            (&["export", "--", "tasks"], Action::Export { id: "tasks".into(), out: None }),
+        ];
+        for (line, expected) in accepted {
+            assert_eq!(run(line), Ok(expected), "{line:?}");
         }
 
-        let refused: Vec<Vec<String>> = [
+        let refused: Vec<&[&str]> = vec![
             &[][..],
             &["list", "extra"],
             &["install"],
-            &["install", "--force"],
-            &["install", "--foo"],
             &["uninstall"],
             &["uninstall", "../x"],
             &["enable"],
@@ -619,29 +626,22 @@ mod tests {
             &["import", "tasks"],
             &["import", "tasks", "a", "b"],
             &["import", "tasks", "--replace"],
-            &["import", "tasks", "--force"],
-            &["import", "tasks", "f", "--replace=x"],
             &["export", "tasks", "--out"],
-            &["export", "tasks", "--out="],
             &["export", "tasks", "f"],
-            &["export", "--out", "f", "tasks"],
-            &["purge", "tasks", "--yes", "--yes"],
-            &["purge", "--yes", "tasks"],
             &["purge", "tasks", "--yes=x"],
             &["--", "list"],
-            &["install", "--", "file"],
-            &["uninstall", "--", "tasks"],
-            &["import", "--", "tasks", "f"],
             &["purge", "--", "tasks", "--yes"],
-            &["export", "--", "tasks"],
             &["export", "tasks", "--", "--out", "f"],
-            &["--help"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        ];
+        for line in refused {
+            assert!(run(line).is_err(), "{line:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn help_is_claps() {
+        for line in ["--help", "-h", "list --help", "export --help", "export tasks --help"] {
+            assert!(matches!(parse(&args(line)), Ok(Parsed::Help(_))), "{line:?} must answer help");
         }
     }
 

@@ -309,7 +309,8 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
     let stderr_file = cli.stderr_file.ok_or_else(|| "session-shim: --stderr-file is required".to_string())?;
     let exit_file = cli.exit_file.ok_or_else(|| "session-shim: --exit-file is required".to_string())?;
     // Required by hand, in the old order and with the old words: clap would
-    // name the missing command first and say it differently.
+    // name the missing command first and say it differently. This is the
+    // server-spawned protocol form (`--command` after a mandatory `--`).
     let mut rest = cli.command;
     if rest.is_empty() {
         return Err("session-shim: the command must follow `--`".to_string());
@@ -334,6 +335,11 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
 /// unexpected argument. The token after a value-taking flag is skipped: it was
 /// that flag's value, whatever it looked like. The first other `--` is the
 /// mandatory separator, where the command begins.
+///
+/// This pre-scan stays because this is a program-to-program command line: the
+/// server spawns `session-shim --socket … --stderr-file … --exit-file …
+/// [--buffer-bytes …] -- <program> …`, and an older server may spawn this shim
+/// across a self-update. Its accepted and refused forms are pinned below.
 fn refused_spelling(argv: &[String]) -> Option<&str> {
     let mut iter = argv.iter();
     while let Some(arg) = iter.next() {

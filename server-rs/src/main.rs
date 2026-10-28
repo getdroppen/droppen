@@ -13,7 +13,7 @@ mod export;
 /// carry their arguments untouched: their tails are ignored, forwarded verbatim
 /// or scanned for one exact `--out` (see `run`), none of which is a clap
 /// grammar. The other commands' own parsers receive the original tail too, so
-/// each sees exactly the bytes it saw before clap.
+/// clap's `--` handling cannot change what they see.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run the server (the default with no command).
@@ -70,13 +70,7 @@ struct RawTail {
 /// The command tree, with the name and prose of the name this binary was run
 /// as (`crate::program`).
 #[derive(Debug, Parser)]
-#[command(
-    name = "remote-hand-server",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "remote-hand-server", disable_help_subcommand = true, args_override_self = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -170,26 +164,15 @@ fn main() -> std::process::ExitCode {
 
 /// Parse `args` (everything after argv[0]).
 ///
-/// Help and version are recognized only as the exact first argument and take
-/// no notice of what follows, as this binary always has. clap's own help and
-/// version flags are disabled for the same reason: they would also answer
-/// `-hV`, `-Vh` and `--help=…`, which are unknown commands today.
+/// Help and version are clap's; version is printed bare by [`main`] because
+/// self-upgrade reads all of stdout.
 fn parse(args: &[String]) -> Result<Parsed, String> {
-    if let Some(first) = args.first() {
-        match first.as_str() {
-            "--help" | "-h" => return Ok(Parsed::Help(help_text())),
-            "--version" | "-V" => return Ok(Parsed::Version),
-            // clap reads a leading `--` as its option terminator, leaving no
-            // subcommand and so meaning `serve`; this binary has always called
-            // it an unknown command.
-            "--" => return Err(format!("unknown command: {first}\n\n{}", Name::invoked().rewrite(USAGE))),
-            _ => {}
-        }
-    }
-
-    let matches = cli_command()
-        .try_get_matches_from(std::iter::once("remote-hand-server".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| error.to_string())?;
+    let matches = match cli_command().try_get_matches_from(std::iter::once("remote-hand-server".to_string()).chain(args.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Parsed::Help(error.to_string())),
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => return Ok(Parsed::Version),
+        Err(error) => return Err(error.to_string()),
+    };
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches).map_err(|error| error.to_string())?;
     let invocation = match cli.command {
         None | Some(Command::Serve(_)) => Invocation::Serve,
@@ -209,14 +192,9 @@ fn parse(args: &[String]) -> Result<Parsed, String> {
     Ok(Parsed::Run(invocation))
 }
 
-/// [`USAGE`], under the invoked name, as clap's long help.
-fn help_text() -> String {
-    cli_command().render_long_help().to_string()
-}
-
 /// The top-level tree as clap's help should show it: the name this binary was
-/// run as, the same header `usage()` always printed, and the whole old usage
-/// text after the generated command list so `--help` still says everything.
+/// run as, its header, and the whole usage text after the generated command
+/// list so `--help` still says everything.
 fn cli_command() -> clap::Command {
     let name = Name::invoked();
     let mut prose = name.rewrite(USAGE).into_owned();
@@ -227,6 +205,7 @@ fn cli_command() -> clap::Command {
         prose = prose.replace(&wide, &narrow);
     }
     Cli::command()
+        .version(remote_hand_server::api::SERVER_VERSION)
         .bin_name(name.command())
         .about(match name {
             Name::Droppen => "Droppen server: `droppen` (`remote-hand-server` is the same program under its old name).",
@@ -304,7 +283,14 @@ async fn run(invocation: Invocation, args: Vec<String>) -> GotchaResult<()> {
         // renders a real session through the real pipeline. Not hidden — it is
         // for developers to use, which is why it is in the usage string.
         Invocation::Replay => {
-            let options = remote_hand_server::record::replay::parse(tail).map_err(remote_hand_server::GotchaError::message)?;
+            let parsed = remote_hand_server::record::replay::parse(tail).map_err(remote_hand_server::GotchaError::message)?;
+            let options = match parsed {
+                remote_hand_server::record::replay::Parsed::Help(text) => {
+                    print!("{text}");
+                    return Ok(());
+                }
+                remote_hand_server::record::replay::Parsed::Options(options) => options,
+            };
             remote_hand_server::record::replay::run(options)
                 .await
                 .map_err(remote_hand_server::GotchaError::message)
@@ -467,31 +453,23 @@ mod tests {
         }
     }
 
-    /// Help and version are the exact first token and nothing else; any other spelling is an unknown
-    /// command, as before clap (which would also answer `-hV`, `-Vh` and `--help=…`).
+    /// Help and version are clap's. Version is intercepted because self-upgrade
+    /// reads all of stdout, so the answer stays the bare version string.
     #[test]
-    fn help_and_version_are_the_first_token_only() {
-        for argv in [vec!["--help"], vec!["-h"]] {
+    fn help_and_version_are_claps() {
+        for argv in [vec!["--help"], vec!["-h"], vec!["--help", "extra"], vec!["-hV"], vec!["-h", "--bogus"]] {
             match parse(&args(&argv)) {
-                Ok(Parsed::Help(text)) => assert!(text.contains("USAGE:"), "{argv:?}: {text}"),
+                Ok(Parsed::Help(text)) => assert!(text.contains("Usage:"), "{argv:?}: {text}"),
                 other => panic!("{argv:?}: {other:?}"),
             }
         }
-        for argv in [vec!["--version"], vec!["-V"]] {
+        for argv in [vec!["--version"], vec!["-V"], vec!["--version", "extra"], vec!["-Vh"], vec!["-V", "--bogus"]] {
             assert!(matches!(parse(&args(&argv)), Ok(Parsed::Version)), "{argv:?}");
         }
-        for argv in [
-            vec!["-hV"],
-            vec!["-Vh"],
-            vec!["--help=1"],
-            vec!["--version=1"],
-            vec!["--"],
-            vec!["--", "serve"],
-            vec!["bogus"],
-            vec!["help"],
-        ] {
+        for argv in [vec!["--help=1"], vec!["--version=1"], vec!["bogus"], vec!["help"]] {
             assert!(parse(&args(&argv)).is_err(), "{argv:?} must be refused");
         }
+        assert_eq!(invocation(&["--"]), Invocation::Serve, "a bare -- is clap's terminator, so no command means serve");
     }
     /// `export-openapi` takes the first exact `--out` and its next token, and
     /// ignores every other argument; `--out=…` is not that word.

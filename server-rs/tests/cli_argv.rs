@@ -1,11 +1,8 @@
 //! The command lines the server answers to, run against the real binary.
 //!
-//! These pin what the parsers accept and refuse, and the exit status and stream
-//! each outcome uses. Help and error *text* is clap's; these tests only look at
-//! text that is behaviour rather than parsing (e.g. the agent's own refusals).
-//! Program-to-program argv (`scripts/install.sh`'s `agent enroll - --hub …`,
-//! `up -- serve`, the shims) is pinned by its own modules; this file covers the
-//! dispatch above them.
+//! Program-to-program argv is pinned byte-for-byte: `scripts/install.sh`'s `agent enroll - --hub … --instance …`
+//! and the two shims the server spawns. Every other command keeps the meaning and exit code of what it
+//! accepted before, but clap may now take more spellings (`--x=v`, `-xv`) and owns `--help`/`--version`.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -62,26 +59,39 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// `--help` and `-h` are the first argument only, print to stdout, and exit 0.
+/// Help is clap's, on stdout, exit 0. `-h` is the short form.
 #[test]
 fn help_is_stdout_and_success() {
     let invocation = Invocation::new();
-    for argv in [vec!["--help"], vec!["-h"], vec!["--help", "extra"], vec!["-h", "--bogus"]] {
+    for argv in [
+        vec!["--help"],
+        vec!["-h"],
+        vec!["--help", "extra"],
+        vec!["-h", "--bogus"],
+        vec!["-hV"],
+        vec!["--help", "--version"],
+    ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
         assert!(stderr(&output).is_empty(), "{argv:?}");
         let text = stdout(&output);
-        assert!(text.contains("USAGE:"), "{argv:?} keeps the usage text: {text}");
+        assert!(text.contains("Usage:"), "{argv:?} prints help: {text}");
         assert!(text.contains("remote-hand-server"), "{argv:?} names the binary it was run as: {text}");
     }
 }
 
-/// `--version` and `-V` print the bare version to stdout — the self-upgrade check reads all of stdout —
-/// are the first argument only, and ignore what follows.
+/// `--version` and `-V` print the bare version to stdout — the self-upgrade check reads all of stdout.
 #[test]
 fn version_is_the_bare_string_on_stdout() {
     let invocation = Invocation::new();
-    for argv in [vec!["--version"], vec!["-V"], vec!["--version", "extra"], vec!["-V", "--bogus"]] {
+    for argv in [
+        vec!["--version"],
+        vec!["-V"],
+        vec!["--version", "extra"],
+        vec!["-V", "--bogus"],
+        vec!["-Vh"],
+        vec!["--version", "--help"],
+    ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
         assert!(stderr(&output).is_empty(), "{argv:?}");
@@ -89,7 +99,7 @@ fn version_is_the_bare_string_on_stdout() {
     }
 }
 
-/// Anything else as the first token is the unknown-command path: stderr, exit 1.
+/// Unknown commands and malformed flags are the error path: stderr, exit 1.
 #[test]
 fn unknown_commands_are_stderr_and_failure() {
     let invocation = Invocation::new();
@@ -98,13 +108,8 @@ fn unknown_commands_are_stderr_and_failure() {
         vec!["help"],
         vec!["--bogus"],
         vec!["-x"],
-        vec!["-hV"],
-        vec!["-Vh"],
         vec!["--help=1"],
         vec!["--version=1"],
-        // clap would read this as its terminator and then serve; it has always
-        // been an unknown command.
-        vec!["--"],
         vec!["--", "serve"],
     ] {
         let output = invocation.run(&argv);
@@ -114,10 +119,9 @@ fn unknown_commands_are_stderr_and_failure() {
     }
 }
 
-/// A subcommand's `--help` is not help: every subcommand refuses it exactly as it refuses any other
-/// argument it does not know (today: usage on stderr, exit 1). `serve`'s tail is ignored entirely.
+/// Every command's `--help` is clap's now, except the two shims' (their protocol argv is pinned).
 #[test]
-fn only_the_top_level_has_help() {
+fn subcommand_help_is_claps() {
     let invocation = Invocation::new();
     for argv in [
         vec!["user", "--help"],
@@ -125,20 +129,27 @@ fn only_the_top_level_has_help() {
         vec!["plugin", "--help"],
         vec!["notify", "--help"],
         vec!["replay", "--help"],
-        vec!["pty-shim", "--help"],
-        vec!["session-shim", "--help"],
         vec!["agent", "--help"],
         vec!["agent", "-h"],
+        vec!["open", "--help"],
+        vec!["setup-code", "--help"],
     ] {
         let output = invocation.run(&argv);
+        assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
+        assert!(stderr(&output).is_empty(), "{argv:?}");
+        assert!(!stdout(&output).is_empty(), "{argv:?} prints help");
+    }
+    // The shims are spawned by the server; `--help` is still an unexpected argument there.
+    for argv in [vec!["pty-shim", "--help"], vec!["session-shim", "--help"]] {
+        let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
-        assert!(stdout(&output).is_empty(), "{argv:?}: {}", stdout(&output));
+        assert!(stdout(&output).is_empty(), "{argv:?}");
         assert!(!stderr(&output).is_empty(), "{argv:?}");
     }
 }
 
-/// The accepted `agent` shapes, including `--hub`/`--instance` before the subcommand and either spelling
-/// of their values. The refusals run before any network or file work.
+/// The accepted `agent` shapes, including `--hub`/`--instance` before the subcommand, and the exact
+/// `scripts/install.sh` invocation. The refusals run before any network or file work.
 #[test]
 fn agent_argv_keeps_its_shape() {
     let invocation = Invocation::new();
@@ -148,17 +159,22 @@ fn agent_argv_keeps_its_shape() {
         vec!["agent", "--instance", "probe", "status"],
         vec!["agent", "status", "--instance=probe"],
         vec!["agent", "--instance=probe", "status"],
+        vec!["agent", "status", "--instance", "--"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
-        assert!(stdout(&output).contains("instance probe"), "{argv:?}: {}", stdout(&output));
+        let expected = if argv.contains(&"--") { "instance --" } else { "instance probe" };
+        assert!(stdout(&output).contains(expected), "{argv:?}: {}", stdout(&output));
     }
 
-    // `--hub` before the subcommand and both spellings reach the same check.
+    // `--hub` before the subcommand and both spellings reach the same check; this is the installer's form.
     for argv in [
         vec!["agent", "enroll", "-", "--hub", "wss://hub.example"],
+        vec!["agent", "enroll", "-", "--hub", "wss://hub.example", "--instance", "probe"],
         vec!["agent", "enroll", "--hub=wss://hub.example", "-"],
         vec!["agent", "--hub", "wss://hub.example", "enroll", "-"],
+        vec!["agent", "--hub", "wss://hub.example", "--instance", "probe", "enroll", "-"],
+        vec!["agent", "--instance", "probe", "enroll", "-", "--hub", "wss://hub.example"],
         vec!["agent", "enroll", "-", "--hub", "wss://a.example", "--hub", "wss://b.example"],
     ] {
         let output = invocation.run(&argv);
@@ -170,19 +186,21 @@ fn agent_argv_keeps_its_shape() {
         );
     }
 
-    // A bad code is refused, and `--` is never a separator here.
+    // A bad code is refused; `--` is clap's terminator, so `--hub` after it is an extra word.
     for argv in [
         vec!["agent", "enroll", "nonsense", "--hub", "wss://hub.example"],
         vec!["agent", "enroll", "--", "-", "--hub", "wss://hub.example"],
         vec!["agent", "enroll", "-", "--", "--hub", "wss://hub.example"],
+        vec!["agent", "enroll", "--", "-"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
         assert!(stdout(&output).is_empty(), "{argv:?}");
-        assert!(stderr(&output).contains("USAGE"), "{argv:?}: {}", stderr(&output));
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
     }
 
-    // Every --instance is validated, and a --hub immediately before one still gets its URL.
+    // Every --instance is validated, and `--hub --instance …` is now refused (--hub takes --instance as
+    // its value; no caller uses that form).
     for argv in [
         vec!["agent", "status", "--instance", "Bad", "--instance", "probe"],
         vec!["agent", "status", "--instance=Bad", "--instance=probe"],
@@ -200,11 +218,7 @@ fn agent_argv_keeps_its_shape() {
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
-        assert!(
-            stderr(&output).contains("no local account"),
-            "{argv:?} parsed the hub URL: {}",
-            stderr(&output)
-        );
+        assert!(stderr(&output).contains("error:"), "{argv:?}: {}", stderr(&output));
     }
 
     // The reason the hub is checked even for a bad code: the URL is validated first.
@@ -231,8 +245,8 @@ fn agent_argv_keeps_its_shape() {
     }
 }
 
-/// `user`, `setup-code` and `open` keep their word shapes, including names that look like flags and the
-/// bare `--` that clap reserves.
+/// `user`, `setup-code` and `open`: the accepted shapes, the flags each action refuses, and the
+/// every-`--instance`-is-validated rule. Named hyphens work; `--help` is clap's.
 #[test]
 fn auth_argv_keeps_its_shape() {
     let invocation = Invocation::new();
@@ -244,26 +258,21 @@ fn auth_argv_keeps_its_shape() {
         vec!["user", "list", "--instance=probe"],
         vec!["user", "--app", "list"],
         vec!["user", "list", "--app", "--app"],
+        vec!["user", "list", "--instance", "--x"],
+        vec!["user", "--instance", "--", "list"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
     }
 
-    // A word that looks like a flag is a user name: `--help` here is not help.
-    let output = invocation.run(&["user", "add", "--help"]);
-    assert_eq!(code(&output), 1);
-    assert!(stderr(&output).contains("at least 12 characters"), "{}", stderr(&output));
-
-    // `--` is a word to this grammar (it can be a name), never a separator.
+    // Flags are still only meaningful to the actions that read them.
     for argv in [
-        vec!["user", "add", "--", "ada"],
-        vec!["user", "--", "list"],
         vec!["user", "add", "ada", "--yes"],
         vec!["user", "passwd", "ada", "--app"],
         vec!["user", "rm", "ada", "--app"],
         vec!["user", "mark-app", "ada", "--yes"],
         vec!["user", "--instance", "Bad Name", "list"],
-        vec!["user", "rm", "--help"],
+        vec!["user", "--", "list"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
@@ -271,8 +280,8 @@ fn auth_argv_keeps_its_shape() {
         assert!(!stderr(&output).is_empty(), "{argv:?}");
     }
 
-    // Every --instance is validated before clap: an invalid earlier name is refused even when a good
-    // one follows, and nothing is created for the good one.
+    // Every --instance is validated; an invalid earlier name is refused even when a good one follows,
+    // and nothing is created for the good one.
     let fresh = Invocation::new();
     for argv in [
         vec!["user", "list", "--instance", "Bad", "--instance", "probe"],
@@ -289,29 +298,38 @@ fn auth_argv_keeps_its_shape() {
     }
     assert!(!fresh.home.path().join("data/instances/probe/state.db").exists(), "no files for the good name");
 
+    // `setup-code --` is now clap's terminator (an accepted spelling) and runs the command.
+    let output = invocation.run(&["setup-code", "--"]);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("no setup code"), "{}", stderr(&output));
+
     for argv in [
-        vec!["setup-code", "--"],
         vec!["setup-code", "junk"],
-        vec!["setup-code", "--help"],
-        vec!["open", "--"],
+        vec!["setup-code", "--", "x"],
         vec!["open", "--print", "--print"],
         vec!["open", "--print", "extra"],
-        vec!["open", "--help"],
+        vec!["open", "--", "--print"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
         assert!(stdout(&output).is_empty(), "{argv:?}: {}", stdout(&output));
         assert!(!stderr(&output).is_empty(), "{argv:?}");
     }
+    // `open --` is an accepted spelling (it opens the page; with no server here it refuses at runtime).
+    let output = invocation.run(&["open", "--"]);
+    assert_eq!(code(&output), 1);
+    assert!(!stderr(&output).is_empty(), "{}", stderr(&output));
 }
 
-/// `plugin` keeps its literal `--out`/`--yes` places and its `--` as a word; `notify` keeps its
-/// two-word option spelling and its own help answer.
+/// `plugin` and `notify`: clap parses their options now (`--out=…`, `-lactive`, repeats), while the
+/// grammar's refusals (an action that does not take a flag, a missing option value) remain.
 #[test]
 fn plugin_and_notify_argv_keep_their_shape() {
     let invocation = Invocation::new();
 
     let output = invocation.run(&["plugin", "list"]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let output = invocation.run(&["plugin", "list", "--instance", "--hub"]);
     assert_eq!(code(&output), 0, "{}", stderr(&output));
 
     // Every --instance is validated before anything else.
@@ -326,11 +344,17 @@ fn plugin_and_notify_argv_keep_their_shape() {
     }
     assert!(!fresh.home.path().join("data/instances/probe/state.db").exists());
 
-    // `--` is a word here: every shape refuses a bare one (clap would drop it and run the command).
-    for argv in [vec!["plugin", "--", "list"], vec!["plugin", "install", "--", "file"], vec!["plugin", "purge", "--", "tasks", "--yes"]] {
+    // A bare `--` is clap's terminator: `plugin -- list` has no positional at the root, so it is refused;
+    // `install -- file` and `uninstall -- tasks` are accepted.
+    for argv in [vec!["plugin", "--", "list"], vec!["plugin", "purge", "--", "tasks", "--yes"], vec!["plugin", "export", "tasks", "--", "--out", "f"]] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
         assert!(stdout(&output).is_empty(), "{argv:?}");
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+    for argv in [vec!["plugin", "install", "--", "file"], vec!["plugin", "uninstall", "--", "tasks"]] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}, which reaches the store and fails there");
         assert!(!stderr(&output).is_empty(), "{argv:?}");
     }
 
@@ -339,12 +363,27 @@ fn plugin_and_notify_argv_keep_their_shape() {
     assert_eq!(code(&output), 1);
     assert!(stderr(&output).contains("no store"), "{}", stderr(&output));
 
+    // New spellings clap accepts, with the same meaning.
     for argv in [
         vec!["plugin", "export", "tasks", "--out=x"],
+        vec!["plugin", "export", "--out=x", "tasks"],
+        vec!["plugin", "import", "tasks", "--replace", "f.json"],
+        vec!["plugin", "import", "--replace", "tasks", "f.json"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(!stderr(&output).contains("Usage:"), "{argv:?} parsed: {}", stderr(&output));
+    }
+    let output = invocation.run(&["plugin", "purge", "tasks", "--yes", "--yes"]);
+    assert_eq!(code(&output), 0, "repeated --yes counts: {}", stderr(&output));
+    let output = invocation.run(&["plugin", "purge", "--yes", "tasks"]);
+    assert_eq!(code(&output), 0, "--yes before the id: {}", stderr(&output));
+
+    for argv in [
         vec!["plugin", "export", "tasks", "--out"],
-        vec!["plugin", "purge", "tasks", "--yes", "--yes"],
-        vec!["plugin", "purge", "--yes", "tasks"],
         vec!["plugin", "import", "tasks", "--replace"],
+        vec!["plugin", "list", "extra"],
+        vec!["plugin", "purge", "tasks", "--yes=x"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
@@ -358,6 +397,9 @@ fn plugin_and_notify_argv_keep_their_shape() {
     for argv in [
         vec!["notify", "T"],
         vec!["notify", "T", "--level", "active"],
+        vec!["notify", "T", "--level=active"],
+        vec!["notify", "T", "-lpassive"],
+        vec!["notify", "--level=active", "T", "B"],
         vec!["notify", "--", "--level=active"],
     ] {
         let output = invocation.run(&argv);
@@ -369,21 +411,15 @@ fn plugin_and_notify_argv_keep_their_shape() {
     assert_eq!(code(&output), 1);
     assert!(stderr(&output).contains("unknown level"), "{}", stderr(&output));
 
-    for argv in [
-        vec!["notify", "T", "--level=active"],
-        vec!["notify", "T", "-lpassive"],
-        vec!["notify", "T", "--help"],
-        vec!["notify", "T", "-h"],
-        vec!["notify", "T", "--nope"],
-    ] {
+    for argv in [vec!["notify", "T", "--nope"], vec!["notify", "T", "--level"], vec!["notify", "-x"]] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
         assert!(!stderr(&output).contains("no channel"), "{argv:?} was parsed: {}", stderr(&output));
     }
 }
 
-/// `replay` keeps its `--flag=value` refusal and its bare `--` refusal, and the shims keep the mandatory
-/// separator and the values that look like flags.
+/// `replay` takes clap spellings now; the shims keep the mandatory separator and the values that look
+/// like flags (they are spawned by the server).
 #[test]
 fn replay_and_the_shims_keep_their_grammar() {
     let invocation = Invocation::new();
@@ -393,17 +429,18 @@ fn replay_and_the_shims_keep_their_grammar() {
         vec!["replay", "--log", "/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home"],
         vec!["replay", "--home", "/tmp/probe-replay-home", "--log", "--"],
         vec!["replay", "--log", "/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home", "--speed", "4", "--instant"],
+        vec!["replay", "--log=/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home"],
+        vec!["replay", "--log", "/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home", "--"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
-        assert!(!stderr(&output).to_lowercase().contains("usage"), "{argv:?} was parsed: {}", stderr(&output));
+        assert!(!stderr(&output).contains("Usage:"), "{argv:?} was parsed: {}", stderr(&output));
     }
     for argv in [
-        vec!["replay", "--log=a", "--home", "b"],
-        vec!["replay", "--log", "a", "--home", "b", "--"],
         vec!["replay", "--log", "a", "--home", "b", "--nope"],
         vec!["replay", "--log", "a", "--home", "b", "extra"],
         vec!["replay", "--log", "a", "--home", "b", "--speed", "0"],
+        vec!["replay", "--log"],
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
@@ -467,8 +504,7 @@ fn export_openapi_scans_its_tail() {
     assert!(!ignored.exists(), "--out=… is not the word --out");
 }
 
-/// The unconverted commands still receive their exact tail, including a `--help` that their own parser
-/// refuses, and the two whose tails are ignored stay permissive.
+/// `preflight` still ignores its tail; the ignored/forwarded tails are not clap grammars.
 #[test]
 fn the_legacy_tails_are_untouched() {
     let invocation = Invocation::new();
@@ -479,29 +515,7 @@ fn the_legacy_tails_are_untouched() {
         assert!(stdout(&output).contains("ok (instance probe)"), "{argv:?}: {}", stdout(&output));
     }
 
-    let output = invocation.run(&["user", "list"]);
-    assert_eq!(code(&output), 0, "{}", stderr(&output));
-    let output = invocation.run(&["plugin", "list"]);
-    assert_eq!(code(&output), 0, "{}", stderr(&output));
-
-    // Every --instance is validated before anything else.
-    let fresh = Invocation::new();
-    for argv in [
-        vec!["plugin", "list", "--instance", "Bad", "--instance", "probe"],
-        vec!["plugin", "list", "--instance=Bad", "--instance=probe"],
-    ] {
-        let output = fresh.run(&argv);
-        assert_eq!(code(&output), 1, "{argv:?}");
-        assert!(stderr(&output).contains("must be 1-32 characters"), "{argv:?}: {}", stderr(&output));
-    }
-    assert!(!fresh.home.path().join("data/instances/probe/state.db").exists());
-
-    // Accepted by the notify parser, refused by its behaviour (no channel in this environment).
-    let output = invocation.run(&["notify", "T", "B", "--level", "active"]);
-    assert_eq!(code(&output), 1);
-    assert!(stderr(&output).contains("no channel was configured"), "{}", stderr(&output));
-
-    // A bare `--` is not a separator in any of these tails today.
+    // A bare `--` before a root's positional words is still not a command here.
     for argv in [vec!["user", "--", "list"], vec!["plugin", "--", "list"], vec!["replay", "--", "--log", "x"]] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");

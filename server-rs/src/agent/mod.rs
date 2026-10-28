@@ -181,22 +181,22 @@ mod tests {
     #[test]
     fn the_subcommands_parse_and_junk_is_the_usage() {
         assert_eq!(
-            parse(&args(&["run"])).unwrap(),
+            run_parsed(&args(&["run"])).unwrap(),
             Invocation {
                 action: Action::Run,
                 hub: None,
                 instance: None,
             }
         );
-        let enroll = parse(&args(&["enroll", &code(), "--hub", "wss://hub.example/v1/agent"])).unwrap();
+        let enroll = run_parsed(&args(&["enroll", &code(), "--hub", "wss://hub.example/v1/agent"])).unwrap();
         assert_eq!(enroll.hub.as_deref(), Some("wss://hub.example"));
         assert!(matches!(enroll.action, Action::Enroll(ref code) if code.secret == [7; 16]));
         assert_eq!(
-            parse(&args(&["enroll", "-", "--hub", "wss://hub.example"])).unwrap().action,
+            run_parsed(&args(&["enroll", "-", "--hub", "wss://hub.example"])).unwrap().action,
             Action::EnrollFromStdin,
             "`-`: the code comes on stdin, out of the process list"
         );
-        assert!(parse(&args(&["enroll", "-"])).is_err(), "still needs the hub");
+        assert!(run_parsed(&args(&["enroll", "-"])).is_err(), "still needs the hub");
         // Piped in: one line, and never more than the cap however much follows.
         assert_eq!(read_capped_line(format!("{}\nmore", code()).as_bytes()).unwrap().trim(), code());
         // The same code with the newer `DR1-` prefix, in any case, as an argument or piped in.
@@ -206,7 +206,7 @@ mod tests {
             secret: [7; 16],
         };
         for text in [dr.clone(), dr.to_lowercase()] {
-            let parsed = parse(&args(&["enroll", &text, "--hub", "wss://hub.example"])).unwrap();
+            let parsed = run_parsed(&args(&["enroll", &text, "--hub", "wss://hub.example"])).unwrap();
             assert!(matches!(parsed.action, Action::Enroll(ref c) if *c == want), "{text}");
             let line = read_capped_line(format!("{text}\r\nmore").as_bytes()).unwrap();
             assert_eq!(code_from_line(&line).unwrap(), want, "{text} on stdin");
@@ -216,9 +216,9 @@ mod tests {
         assert!(code_from_line("").is_err());
         let flood = "x".repeat(10 * CODE_LINE_LIMIT as usize);
         assert_eq!(read_capped_line(flood.as_bytes()).unwrap().len(), CODE_LINE_LIMIT as usize);
-        assert_eq!(parse(&args(&["status"])).unwrap().action, Action::Status);
-        assert_eq!(parse(&args(&["unenroll"])).unwrap().action, Action::Unenroll);
-        assert!(parse(&args(&["unenroll", "--hub", "wss://hub.example"])).is_err());
+        assert_eq!(run_parsed(&args(&["status"])).unwrap().action, Action::Status);
+        assert_eq!(run_parsed(&args(&["unenroll"])).unwrap().action, Action::Unenroll);
+        assert!(run_parsed(&args(&["unenroll", "--hub", "wss://hub.example"])).is_err());
         for bad in [
             &["enroll"][..],
             &["enroll", "RH1-nope", "--hub", "wss://hub.example"],
@@ -231,10 +231,10 @@ mod tests {
             &["run", "--hub", "wss://hub.example"],
             &[],
         ] {
-            assert!(parse(&args(bad)).is_err(), "{bad:?}");
+            assert!(run_parsed(&args(bad)).is_err(), "{bad:?}");
         }
         assert!(
-            parse(&args(&["enroll", &code(), "--hub=ws://127.0.0.1:9000/v1/agent"])).is_ok(),
+            run_parsed(&args(&["enroll", &code(), "--hub=ws://127.0.0.1:9000/v1/agent"])).is_ok(),
             "plain ws on loopback, for local testing"
         );
     }

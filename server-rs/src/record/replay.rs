@@ -81,19 +81,27 @@ impl Default for Options {
     }
 }
 
+/// What `replay` was asked, or clap's help text.
+#[derive(Debug)]
+pub enum Parsed {
+    /// clap's help text for `--help`.
+    Help(String),
+    /// The parsed command line.
+    Options(Options),
+}
+
 /// Read the command line, or say what is wrong with it.
 ///
 /// Every occurrence of `--speed`/`--max-gap` is validated in the order written,
-/// not just the last: the old parser refused a bad value before it could see a
-/// later good one, and a repeated option takes the last *valid* one.
-pub fn parse(argv: &[String]) -> Result<Options, String> {
-    if let Some(token) = refused_spelling(argv) {
-        return Err(format!("unknown option {token:?}\n\n{USAGE}"));
-    }
-    let cli = replay_command()
-        .try_get_matches_from(std::iter::once("replay".to_string()).chain(argv.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    let cli = ReplayCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{USAGE}"))?;
+/// so a bad value fails even when a later one is good; a repeated option takes
+/// the last *valid* one.
+pub fn parse(argv: &[String]) -> Result<Parsed, String> {
+    let matches = match replay_command().try_get_matches_from(std::iter::once("replay".to_string()).chain(argv.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Parsed::Help(error.to_string())),
+        Err(error) => return Err(format!("{error}\n\n{USAGE}")),
+    };
+    let cli = ReplayCli::from_arg_matches(&matches).map_err(|error| format!("{error}\n\n{USAGE}"))?;
     let mut options = Options::default();
     if let Some(raw) = cli.log.last() {
         options.log = PathBuf::from(raw);
@@ -124,35 +132,7 @@ pub fn parse(argv: &[String]) -> Result<Options, String> {
     if options.home.as_os_str().is_empty() {
         return Err(format!("--home is required\n\n{USAGE}"));
     }
-    Ok(options)
-}
-
-/// The spellings this command refused before clap: `--flag=value` was an
-/// unknown option, and a bare `--` not consumed as an option's value was one
-/// too (clap would take it as a terminator and run). The token after a
-/// value-taking option is skipped: it was that option's value, whatever it
-/// looked like.
-fn refused_spelling(argv: &[String]) -> Option<&str> {
-    let mut iter = argv.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--log" | "--home" | "--instance" | "--speed" | "--max-gap" => {
-                iter.next();
-            }
-            "--instant" => {}
-            "--" => return Some(arg),
-            other if is_attached(other) => return Some(other),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A value-taking option and its value in one word.
-fn is_attached(arg: &str) -> bool {
-    ["--log=", "--home=", "--instance=", "--speed=", "--max-gap=", "--instant="]
-        .iter()
-        .any(|prefix| arg.starts_with(prefix))
+    Ok(Parsed::Options(options))
 }
 
 /// `replay`'s command tree, shown under the name this binary was run as.
@@ -164,15 +144,9 @@ fn replay_command() -> clap::Command {
 }
 
 /// `replay`'s command line. The options take the next token as their value,
-/// even one that looks like a flag, as the hand parser did.
+/// even one that looks like a flag. Help is clap's.
 #[derive(Debug, Parser)]
-#[command(
-    name = "replay",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "replay", disable_help_subcommand = true, args_override_self = true)]
 struct ReplayCli {
     #[arg(long, allow_hyphen_values = true)]
     log: Vec<String>,
@@ -460,6 +434,14 @@ mod tests {
     use crate::time::iso8601;
     use std::time::SystemTime;
 
+    fn parsed_options(argv: &[String]) -> Result<Options, String> {
+        match parse(argv) {
+            Ok(Parsed::Options(options)) => Ok(options),
+            Ok(Parsed::Help(text)) => panic!("unexpected help: {text}"),
+            Err(error) => Err(error),
+        }
+    }
+
     #[test]
     fn the_command_line_is_read_or_refused_with_a_reason() {
         let argv: Vec<String> = [
@@ -476,7 +458,7 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let options = parse(&argv).expect("a valid command line");
+        let options = parsed_options(&argv).expect("a valid command line");
         assert_eq!(options.log, PathBuf::from("/tmp/a.ndjson"));
         assert_eq!(options.home, PathBuf::from("/tmp/home"));
         assert_eq!(options.speed, 4.0);
@@ -484,7 +466,7 @@ mod tests {
         assert!(options.instant);
         assert_eq!(options.instance, DEFAULT_INSTANCE, "the default matches the server's own");
 
-        let bare = |args: &[&str]| parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).expect_err("must be refused");
+        let bare = |args: &[&str]| parsed_options(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).expect_err("must be refused");
         assert!(bare(&["--home", "/tmp"]).contains("--log is required"));
         assert!(bare(&["--log", "/tmp/a"]).contains("--home is required"));
         assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "0"]).contains("greater than zero"));
@@ -685,9 +667,9 @@ mod tests {
         let content = std::fs::read_to_string(&file).expect("the transcript");
         assert_eq!(content, "{\"n\":1}\n", "the second replay replaced the first: {content:?}");
     }
-    /// The replay command lines, pinned so the hand parser and clap answer
-    /// alike. A value-taking option consumes the next token whatever it looks
-    /// like, `--flag=value` is not a spelling here, and repeats take the last.
+    /// The replay command lines. A value-taking option consumes the next token
+    /// whatever it looks like, `--flag=value` is now a clap spelling, a bare
+    /// `--` is clap's terminator, and repeats take the last. Help is clap's.
     #[test]
     fn the_replay_argument_table() {
         let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
@@ -699,17 +681,20 @@ mod tests {
             &["--log", "--", "--home", "b"],
             &["--log", "a", "--home", "--"],
             &["--log", "a", "--home", "b", "--instant", "--instant"],
+            &["--log=a", "--home", "b"],
+            &["--log", "a", "--home", "b", "--"],
         ]
         .into_iter()
         .map(words)
         .collect();
         for argv in &accepted {
-            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+            assert!(parsed_options(argv).is_ok(), "{argv:?} must parse: {:?}", parsed_options(argv).err());
         }
-        let parsed = parse(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
+        let parsed = parsed_options(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
         assert_eq!(parsed.log, PathBuf::from("c"), "the last --log wins");
         assert_eq!(parsed.home, PathBuf::from("b"));
-        assert_eq!(parse(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
+        assert_eq!(parsed_options(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
+        assert_eq!(parsed_options(&words(&["--log=a", "--home", "b"])).expect("parsed").log, PathBuf::from("a"));
 
         let refused: Vec<Vec<String>> = [
             &[][..],
@@ -717,7 +702,6 @@ mod tests {
             &["--home", "b"],
             &["--log"],
             &["--log", "a", "--home", "b", "--nope"],
-            &["--log=a", "--home", "b"],
             &["--instant"],
             &["--log", "a", "--home", "b", "--speed"],
             &["--log", "a", "--home", "b", "--speed", "fast"],
@@ -729,17 +713,24 @@ mod tests {
             &["--log", "a", "--home", "b", "--max-gap", "-2"],
             &["--log", "a", "--home", "b", "--max-gap", "NaN"],
             &["--log", "a", "--home", "b", "extra"],
-            &["--log", "a", "--home", "b", "--"],
             &["--log", "a", "--home", "b", "--", "x"],
             // A value-taking option before --instance takes it as its value;
-            // the word after it is then an unknown argument, as before.
+            // the word after it is then an unknown argument.
             &["--log", "--instance", "x", "--home", "y"],
         ]
         .into_iter()
         .map(words)
         .collect();
         for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+            assert!(parsed_options(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn help_is_claps() {
+        for argv in [vec!["--help"], vec!["-h"], vec!["--log", "a", "--help"], vec!["--help", "junk"]] {
+            let argv: Vec<String> = argv.iter().map(|word| (*word).to_string()).collect();
+            assert!(matches!(parse(&argv), Ok(Parsed::Help(_))), "{argv:?}");
         }
     }
 

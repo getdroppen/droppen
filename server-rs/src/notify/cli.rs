@@ -77,8 +77,17 @@ Use it when something has happened that they would want to be interrupted for."
     )
 }
 
+/// What `droppen-notify` was asked, or clap's help text.
+#[derive(Debug)]
+pub enum Parsed {
+    /// clap's help text for `--help`.
+    Help(String),
+    /// The parsed command line.
+    Options(Options),
+}
+
 /// Parse `droppen-notify`'s arguments.
-pub fn parse(args: &[String]) -> Result<Options, String> {
+pub fn parse(args: &[String]) -> Result<Parsed, String> {
     parse_as(args, NAME)
 }
 
@@ -88,13 +97,14 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 /// \"Postgres or SQLite?\"` is what a model writes when it has read one example,
 /// and a tool whose happy path needs two flags is a tool that gets called wrong.
 /// The flags exist for the two things there is no natural position for.
-pub fn parse_as(args: &[String], name: &str) -> Result<Options, String> {
+pub fn parse_as(args: &[String], name: &str) -> Result<Parsed, String> {
     let help = || usage(name);
-    scan_reserved(args, name)?;
-    let cli = notify_command(name)
-        .try_get_matches_from(std::iter::once("droppen-notify".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{}", help()))?;
-    let cli = NotifyCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{}", help()))?;
+    let matches = match notify_command(name).try_get_matches_from(std::iter::once("droppen-notify".to_string()).chain(args.iter().cloned())) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(Parsed::Help(error.to_string())),
+        Err(error) => return Err(format!("{error}\n\n{}", help())),
+    };
+    let cli = NotifyCli::from_arg_matches(&matches).map_err(|error| format!("{error}\n\n{}", help()))?;
     let mut options = Options {
         title: cli.title.unwrap_or_default(),
         body: cli.body.unwrap_or_default(),
@@ -112,45 +122,7 @@ pub fn parse_as(args: &[String], name: &str) -> Result<Options, String> {
     if options.title.trim().is_empty() {
         return Err(format!("a notification needs a title\n\n{}", help()));
     }
-    Ok(options)
-}
-
-/// The spellings this command refuses before clap sees them, and the help
-/// tokens it answers itself.
-///
-/// The hand parser accepted an option only as a flag and a separate value word,
-/// so `--level=active` and `-lpassive` were unknown options (clap takes both),
-/// and `--help` was this command's usage as an error (clap would call it an
-/// unknown flag). A value-taking flag's next token is skipped: the old parser
-/// consumed it as the value, whatever it looked like, so `--title --help` is a
-/// title and `--group --level=x` is a group.
-fn scan_reserved(args: &[String], name: &str) -> Result<(), String> {
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--level" | "-l" | "--group" | "-g" | "--title" | "-t" | "--body" | "-b" => {
-                if iter.next().is_none() {
-                    return Err(format!("{arg} needs a value\n\n{}", usage(name)));
-                }
-            }
-            "--help" | "-h" => return Err(usage(name)),
-            // Everything after `--` is text, however much it looks like a flag:
-            // a title that starts with a dash is a title.
-            "--" => return Ok(()),
-            other if is_attached_option(other) => return Err(format!("unknown option {other}\n\n{}", usage(name))),
-            other if other.starts_with('-') && other.len() > 1 => {
-                return Err(format!("unknown option {other}\n\n{}", usage(name)));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// `--level=active` or `-lpassive`: an option and its value in one word.
-fn is_attached_option(arg: &str) -> bool {
-    ["--level=", "--group=", "--title=", "--body="].iter().any(|prefix| arg.starts_with(prefix))
-        || ["-l", "-g", "-t", "-b"].iter().any(|short| arg.len() > short.len() && arg.starts_with(short))
+    Ok(Parsed::Options(options))
 }
 
 /// `droppen-notify`'s command tree, shown under the name the agent ran it as.
@@ -160,15 +132,9 @@ fn notify_command(name: &str) -> clap::Command {
 
 /// `droppen-notify`'s command line. Positional-first on purpose: the title and
 /// body are what a model writes when it has read one example. The flags are for
-/// the two things there is no natural position for.
+/// the two things there is no natural position for. Help is clap's.
 #[derive(Debug, Parser)]
-#[command(
-    name = "droppen-notify",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+#[command(name = "droppen-notify", disable_help_subcommand = true, args_override_self = true)]
 struct NotifyCli {
     #[arg(long, short = 'l', allow_hyphen_values = true)]
     level: Option<String>,
@@ -218,7 +184,13 @@ pub fn payload(options: &Options) -> Result<serde_json::Value, String> {
 /// blocked and could not say so needs to know that, because the alternative is
 /// waiting forever for an answer to a question nobody was asked.
 pub async fn run(args: &[String]) -> Result<(), String> {
-    let options = parse(args)?;
+    let options = match parse(args)? {
+        Parsed::Help(text) => {
+            print!("{text}");
+            return Ok(());
+        }
+        Parsed::Options(options) => options,
+    };
     let payload = payload(&options)?;
     let (Some(url), Some(token)) = (crate::env::var(URL_ENV), crate::env::var(TOKEN_ENV)) else {
         return Err("this session cannot send notifications: no channel was configured when it started. \
@@ -265,9 +237,17 @@ mod tests {
         raw.iter().map(|value| (*value).to_string()).collect()
     }
 
+    fn options(raw: &[String]) -> Result<Options, String> {
+        match parse(raw) {
+            Ok(Parsed::Options(options)) => Ok(options),
+            Ok(Parsed::Help(text)) => panic!("unexpected help: {text}"),
+            Err(error) => Err(error),
+        }
+    }
+
     #[test]
     fn the_shape_a_model_writes_first_is_the_one_that_works() {
-        let parsed = parse(&args(&["Blocked on a decision", "Postgres or SQLite?"])).expect("parsed");
+        let parsed = options(&args(&["Blocked on a decision", "Postgres or SQLite?"])).expect("parsed");
         assert_eq!(parsed.title, "Blocked on a decision");
         assert_eq!(parsed.body, "Postgres or SQLite?");
         assert_eq!(parsed.level, None);
@@ -275,40 +255,41 @@ mod tests {
 
         // Everything after the title is the body, so an unquoted sentence still
         // arrives whole rather than as a title and four ignored words.
-        let parsed = parse(&args(&["Done", "all", "41", "tests", "pass"])).expect("parsed");
+        let parsed = options(&args(&["Done", "all", "41", "tests", "pass"])).expect("parsed");
         assert_eq!(parsed.body, "all 41 tests pass");
     }
 
     #[test]
     fn the_flags_are_there_for_the_two_things_with_no_natural_position() {
-        let parsed = parse(&args(&["Blocked", "Need a decision", "--level", "time-sensitive", "--group", "deploy"])).expect("parsed");
+        let parsed = options(&args(&["Blocked", "Need a decision", "--level", "time-sensitive", "--group", "deploy"])).expect("parsed");
         assert_eq!(parsed.level.as_deref(), Some("time-sensitive"));
         assert_eq!(parsed.group.as_deref(), Some("deploy"));
 
-        let parsed = parse(&args(&["--title", "T", "--body", "B"])).expect("parsed");
+        let parsed = options(&args(&["--title", "T", "--body", "B"])).expect("parsed");
         assert_eq!((parsed.title.as_str(), parsed.body.as_str()), ("T", "B"));
 
         // A title that starts with a dash is a title.
-        let parsed = parse(&args(&["--", "--not-a-flag", "body"])).expect("parsed");
+        let parsed = options(&args(&["--", "--not-a-flag", "body"])).expect("parsed");
         assert_eq!(parsed.title, "--not-a-flag");
         assert_eq!(parsed.body, "body");
     }
 
     #[test]
     fn a_call_that_cannot_work_says_so_before_the_network() {
-        assert!(parse(&args(&[])).expect_err("no title").contains("needs a title"));
-        assert!(parse(&args(&["  "])).expect_err("blank title").contains("needs a title"));
-        assert!(parse(&args(&["T", "--level"])).expect_err("dangling").contains("needs a value"));
-        assert!(parse(&args(&["T", "--nope"])).expect_err("unknown").contains("unknown option"));
-        assert!(parse(&args(&["--help"])).expect_err("help").contains("usage:"));
+        assert!(options(&args(&[])).expect_err("no title").contains("needs a title"));
+        assert!(options(&args(&["  "])).expect_err("blank title").contains("needs a title"));
+        assert!(options(&args(&["T", "--level"])).expect_err("dangling").contains("a value is required"));
+        assert!(options(&args(&["T", "--nope"])).expect_err("unknown").contains("unexpected argument"));
     }
 
     #[test]
     fn the_usage_names_the_command() {
-        let error = parse(&args(&[])).expect_err("no title");
+        let error = options(&args(&[])).expect_err("no title");
         assert!(error.contains("usage: droppen-notify <title>"), "{error}");
-        let error = parse_as(&args(&["--help"]), NAME).expect_err("help");
-        assert!(error.starts_with("usage: droppen-notify <title>"), "{error}");
+        match parse_as(&args(&["--help"]), NAME) {
+            Ok(Parsed::Help(text)) => assert!(text.contains("usage: droppen-notify <title>"), "{text}"),
+            other => panic!("--help must answer help: {other:?}"),
+        }
     }
 
     #[test]
@@ -370,6 +351,8 @@ mod tests {
         .expect_err("refused");
         assert!(error.contains("passive, active or time-sensitive"), "{error}");
     }
+    /// The spellings clap now takes (`--level=active`, `-lactive`) are accepted;
+    /// a bare `--` still turns the rest into text; help is clap's.
     #[test]
     fn the_notify_argument_table() {
         let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
@@ -389,38 +372,41 @@ mod tests {
             &["--title", "-h"],
             &["T", "--title", "U"],
             &["--level", "active", "T", "B"],
+            &["T", "--level=active"],
+            &["T", "-lactive"],
+            &["T", "-gdeploy"],
+            &["T", "-tU"],
+            &["T", "-bB"],
+            &["T", "--title=U"],
         ]
         .into_iter()
         .map(words)
         .collect();
         for argv in &accepted {
-            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+            assert!(options(argv).is_ok(), "{argv:?} must parse: {:?}", options(argv).err());
         }
+        let parsed = options(&args(&["T", "--level=active"])).expect("parsed");
+        assert_eq!(parsed.level.as_deref(), Some("active"));
 
         let refused: Vec<Vec<String>> = [
             &[][..],
             &["  "],
             &["T", "--level"],
             &["T", "--nope"],
-            &["T", "--level=active"],
-            &["T", "--group=deploy"],
-            &["T", "--title=U"],
-            &["T", "--body=B"],
-            &["T", "-lactive"],
-            &["T", "-gdeploy"],
-            &["T", "-tU"],
-            &["T", "-bB"],
-            &["--help"],
-            &["-h"],
-            &["T", "--help"],
-            &["T", "-h"],
             &["-x"],
         ]
         .into_iter()
         .map(words)
         .collect();
         for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+            assert!(options(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn help_is_claps() {
+        for argv in [vec!["--help"], vec!["-h"], vec!["T", "--help"], vec!["T", "-h"], vec!["--help", "junk"]] {
+            assert!(matches!(parse(&args(&argv)), Ok(Parsed::Help(_))), "{argv:?} must answer help");
         }
     }
 
