@@ -37,6 +37,9 @@ pub struct LinkEnv {
     pub drive: Arc<crate::drive::Drive>,
     /// The server's token; the link takes a child of it.
     pub cancel: CancellationToken,
+    /// Whether the owner wants the device role to work
+    /// ([`crate::aggregator::Switch`]): the controller and the copies ask it.
+    pub aggregator_switch: Arc<dyn crate::aggregator::Switch>,
 }
 
 /// A link that was started: stop it with [`Running::stop`].
@@ -203,6 +206,7 @@ pub fn start(
             paths: paths.clone(),
             identity: shared.identity.clone(),
             enrollment: shared.state.clone(),
+            switch: env.aggregator_switch.clone(),
             chain: shared.chain_version.subscribe(),
             cancel: shared.cancel.child_token(),
             status: control_status.clone(),
@@ -215,6 +219,7 @@ pub fn start(
             paths: paths.clone(),
             identity: shared.identity.clone(),
             enrollment: shared.state.clone(),
+            switch: env.aggregator_switch.clone(),
             chain: shared.chain_version.subscribe(),
             keys,
             nudge,

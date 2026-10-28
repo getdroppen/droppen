@@ -530,12 +530,6 @@
       ]
     },
     {
-      "why": "The aggregator's controller reads cloud.json (cloud::wants_aggregator) each round to see whether the owner turned the device role off. It goes when that switch reaches the aggregator through a port it owns, as the enrollment does.",
-      "edges": [
-        "aggregator -> cloud"
-      ]
-    },
-    {
       "why": "auth reads cloud's return route and notify's caller classification. They go when the return route moves to auth, and the caller classification too.",
       "edges": [
         "auth -> cloud",

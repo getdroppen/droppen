@@ -54,7 +54,7 @@ use zeroize::{Zeroize, Zeroizing};
 use super::access::{self, Want};
 use super::live::{Key, LiveCopies, Published, Slot};
 use super::store::{CopyStore, Kind, Row};
-use super::{Enrollment, View};
+use super::{Enrollment, Switch, View};
 use crate::paths::Paths;
 
 /// A session copy larger than this (its folded JSON) is not kept: its row
@@ -153,6 +153,8 @@ pub struct Env {
     pub identity: Arc<MachineIdentity>,
     /// The link's enrollment, with its verified chain.
     pub enrollment: Arc<dyn Enrollment>,
+    /// The owner's switch, asked each round and before each write.
+    pub switch: Arc<dyn Switch>,
     /// Bumped whenever the chain advanced.
     pub chain: watch::Receiver<u64>,
     /// The keys, from the controller.
@@ -857,7 +859,7 @@ impl Copies {
     /// What a round needs: the enrollment as the chain has it, the keys, and
     /// the hosts to follow — `None` while it may not run.
     fn ready(&self) -> Option<(View, Arc<KeyRing>, Vec<Host>)> {
-        if !crate::cloud::LinkFile::of(&self.env.paths).wants_aggregator() {
+        if !self.env.switch.is_on() {
             return None;
         }
         let view = self.env.enrollment.view()?;
@@ -870,8 +872,8 @@ impl Copies {
     }
 
     fn guard(&self) -> super::keys::Guard {
-        let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-        Box::new(move || !cancel.is_cancelled() && crate::cloud::LinkFile::of(&paths).wants_aggregator())
+        let (switch, cancel) = (self.env.switch.clone(), self.env.cancel.clone());
+        Box::new(move || !cancel.is_cancelled() && switch.is_on())
     }
 
     /// One connection, or the reason there is none: how long to wait after.
@@ -1821,6 +1823,7 @@ mod tests {
             paths: paths.clone(),
             identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
             enrollment: Arc::new(Mutex::new(AgentState::enrolling("ws://127.0.0.1:1", "a-1", "m-me", [0; 16], 1))),
+            switch: super::super::TestSwitch::on(),
             chain: watch::channel(0).1,
             keys: watch::channel(None).1,
             nudge: Arc::default(),

@@ -10,7 +10,7 @@
 //!
 //! - the chain names this computer as a current device (an enrollment still
 //!   waiting for a device, or a removed computer, has no device role), and
-//! - the owner has not turned the aggregator off ([`crate::cloud::LinkFile::wants_aggregator`]).
+//! - the owner has not turned the aggregator off ([`super::Switch`]).
 //!
 //! **Each round** (on a chain change, every [`GAP_EVERY`] while a key is
 //! missing, else every [`IDLE_EVERY`]):
@@ -48,7 +48,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::hub::{DeviceClient, HubError, Mail};
 use super::keys::HostKeys;
-use super::{Enrollment, View};
+use super::{Enrollment, Switch, View};
 use crate::paths::Paths;
 
 /// A round while a key is missing.
@@ -159,6 +159,8 @@ pub struct Env {
     pub identity: Arc<MachineIdentity>,
     /// The link's enrollment, with its verified chain.
     pub enrollment: Arc<dyn Enrollment>,
+    /// The owner's switch, asked each round and before each write.
+    pub switch: Arc<dyn Switch>,
     /// Bumped whenever the chain advanced.
     pub chain: watch::Receiver<u64>,
     /// The link's token (a child of it): the controller stops with the link.
@@ -377,7 +379,7 @@ impl Controller {
     }
 
     async fn round(&mut self) -> Duration {
-        if !crate::cloud::LinkFile::of(&self.env.paths).wants_aggregator() {
+        if !self.env.switch.is_on() {
             return self.idle(None);
         }
         let Some(view) = self.env.enrollment.view() else {
@@ -410,8 +412,8 @@ impl Controller {
         }
         if self.keys.is_none() {
             // Every write asks again, under the directory's lock: still on, the link still running (S1).
-            let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && crate::cloud::LinkFile::of(&paths).wants_aggregator());
+            let (switch, cancel) = (self.env.switch.clone(), self.env.cancel.clone());
+            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && switch.is_on());
             match HostKeys::load(&self.env.paths, &view.account, &view.me) {
                 Ok(keys) => self.keys = Some(keys.guarded(guard)),
                 Err(error) => {
@@ -1138,10 +1140,12 @@ mod tests {
             ask_backoff: [Duration::from_secs(600); 3],
         };
         let (keys_out, ring) = watch::channel(None);
+        let switch = super::super::TestSwitch::on();
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
             identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
             enrollment: state.clone(),
+            switch: switch.clone(),
             chain,
             cancel: cancel.clone(),
             status: status.clone(),
@@ -1204,7 +1208,7 @@ mod tests {
         .await;
 
         // Turned off: the directory goes, and nothing writes it again.
-        std::fs::write(crate::cloud::LinkFile::of(&paths).path(), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        switch.set(false);
         crate::aggregator::forget_all(&paths).unwrap();
         until(Duration::from_secs(10), "idle", || !status.lock().unwrap().running).await;
         {
@@ -1226,6 +1230,8 @@ mod tests {
         status: Arc<Mutex<Status>>,
         cancel: CancellationToken,
         task: tokio::task::JoinHandle<()>,
+        /// The owner's switch it runs under.
+        switch: Arc<super::super::TestSwitch>,
         /// Wakes it as pushed mail would.
         nudge: Arc<tokio::sync::Notify>,
         _dir: tempfile::TempDir,
@@ -1252,10 +1258,12 @@ mod tests {
         let status = Arc::new(Mutex::new(Status::default()));
         let cancel = CancellationToken::new();
         let nudge: Arc<tokio::sync::Notify> = Arc::default();
+        let switch = super::super::TestSwitch::on();
         let task = tokio::spawn(run(Env {
             paths: paths.clone(),
             identity: Arc::new(identity),
             enrollment: state.clone(),
+            switch: switch.clone(),
             chain,
             cancel: cancel.clone(),
             status: status.clone(),
@@ -1276,6 +1284,7 @@ mod tests {
             status,
             cancel,
             task,
+            switch,
             nudge,
             _dir: dir,
         }
@@ -1356,8 +1365,8 @@ mod tests {
             !hub.lock().unwrap().asked.is_empty()
         })
         .await;
-        // The owner turns it off meanwhile (`aggregatorOff` first, the directory a moment later, as the local API does).
-        std::fs::write(crate::cloud::LinkFile::of(&r.paths).path(), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        // The owner turns it off meanwhile (the switch first, the directory a moment later, as the local API does).
+        r.switch.set(false);
         push_mail(&hub, 2, mail(&a, "d-a", &a.admin.1, "m-2", 1, &[0x23; 32]));
         tokio::time::sleep(Duration::from_millis(1200)).await;
         let disk = crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").unwrap();
@@ -1368,7 +1377,7 @@ mod tests {
         assert!(!crate::aggregator::dir(&r.paths).exists(), "nothing wrote the keys back");
         assert!(!r.status.lock().unwrap().running);
         // On again: it starts from the disk (nothing), and takes what the mailbox holds.
-        std::fs::write(crate::cloud::LinkFile::of(&r.paths).path(), br#"{"aggregate": true}"#).unwrap();
+        r.switch.set(true);
         r.bump.send_modify(|v| *v += 1);
         until(Duration::from_secs(10), "m-2's epoch 1 taken again", || {
             crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").is_ok_and(|k| k.epochs("m-2") == [1])

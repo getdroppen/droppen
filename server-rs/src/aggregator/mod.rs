@@ -22,7 +22,7 @@
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
-//! Whether it runs is the owner's choice ([`crate::cloud::LinkFile::wants_aggregator`]): on for a computer
+//! Whether it runs is the owner's choice ([`Switch`]): on for a computer
 //! signed in from its local settings with aggregation (the default), and for
 //! one enrolled from the command line that never was (§4.3, "已注册的电脑");
 //! off once the owner turns it off.
@@ -86,6 +86,44 @@ pub trait Enrollment: Send + Sync {
     /// removed, and then the controller idles and the copies drop what they
     /// follow.
     fn view(&self) -> Option<View>;
+}
+
+/// Whether the owner wants this computer to control other devices.
+///
+/// The controller and the copies ask it before every round, and their
+/// [`keys::Guard`]s ask it again under the directory's lock before every
+/// write, so "off" stops the next write and not only the next round. An
+/// answer is therefore never cached: each call reads what the owner said
+/// last. The device role declares it and the server answers it from the
+/// link's own settings, which the aggregator does not read.
+pub trait Switch: Send + Sync {
+    /// On: the controller and the copies may work. Off: they idle and write
+    /// nothing under `aggregator/`.
+    fn is_on(&self) -> bool;
+}
+
+/// A [`Switch`] a test turns: on until [`TestSwitch::set`] turns it off.
+#[cfg(test)]
+pub(crate) struct TestSwitch(std::sync::atomic::AtomicBool);
+
+#[cfg(test)]
+impl TestSwitch {
+    /// A switch that is on.
+    pub(crate) fn on() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self(std::sync::atomic::AtomicBool::new(true)))
+    }
+
+    /// Turn it on or off, as the owner would.
+    pub(crate) fn set(&self, on: bool) {
+        self.0.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+impl Switch for TestSwitch {
+    fn is_on(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 /// Whether `chain` names `me` with exactly `identity`'s keys: this computer's
@@ -395,31 +433,5 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(!stale.exists());
-    }
-
-    #[test]
-    fn the_owner_decides_whether_this_computer_controls_others() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "wanttest");
-        std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let file = crate::cloud::LinkFile::of(&paths).path();
-        // Enrolled from the command line: no file, on.
-        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
-        let write = |v: serde_json::Value| std::fs::write(&file, v.to_string()).unwrap();
-        // Signed in from the local settings, with aggregation (the default): on.
-        write(serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 5}));
-        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
-        // Without it, or turned off by a release from before (no `aggregatorOff`): off.
-        write(serde_json::json!({"owner": "alice", "aggregate": false, "linkedAt": 5}));
-        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
-        // Turned off: off, whatever else.
-        write(serde_json::json!({"aggregate": true, "aggregatorOff": true}));
-        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
-        // A file with no sign-in in it (an owner set before any): on.
-        write(serde_json::json!({"remoteAccess": {}}));
-        assert!(crate::cloud::LinkFile::of(&paths).wants_aggregator());
-        // A file that does not parse may be the owner's "off": off (N3).
-        std::fs::write(&file, b"{\"aggregatorOff\": tr").unwrap();
-        assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
     }
 }

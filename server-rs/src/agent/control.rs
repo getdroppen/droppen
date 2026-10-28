@@ -779,6 +779,7 @@ mod tests {
             credential: "test".into(),
             drive: crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth),
             cancel: tokio_util::sync::CancellationToken::new(),
+            aggregator_switch: std::sync::Arc::new(crate::cloud::LinkFile::of(paths)),
         }
     }
 
