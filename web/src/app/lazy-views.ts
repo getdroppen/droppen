@@ -4,7 +4,9 @@
  * terminals, a screen, an app, and the login and setup pages. The boot chunk
  * keeps the shell and the session list, the home; on a weak link every byte
  * of it is part of the wait on a cold start, and of the first load after a
- * release, which rehashes it.
+ * release, which rehashes it. Their files are fetched ahead of use once the
+ * first page is drawn (`view-prefetch.ts`), so opening one does not wait on
+ * the network either.
  *
  * Routes (`router.tsx`) and split panes (`secondary-pane.tsx`) both take them
  * from here. `lazyRouteComponent` reloads the page once when a chunk is gone
@@ -37,26 +39,3 @@ export const ScreenView = lazyRouteComponent(() => import("@/features/screens/sc
 export const AppView = lazyRouteComponent(() => import("@/features/apps/app-view"), "AppView");
 export const LoginView = lazyRouteComponent(() => import("@/features/auth/login-view"), "LoginView");
 export const SetupView = lazyRouteComponent(() => import("@/features/auth/setup-view"), "SetupView");
-
-/**
- * Fetch the session view once the first page has been drawn: from the list,
- * a session is the next thing nearly every visit opens, and it should not
- * wait on its chunk then. Called when the router has first rendered, which
- * is before the browser paints: the next frame is that paint, and the fetch
- * waits for idle time after it, so it never competes with the first page;
- * the other views are fetched on intent (`defaultPreload`).
- */
-export function preloadAfterFirstPaint(): void {
-  const idle: (run: () => void) => void =
-    typeof requestIdleCallback === "function" ? (run) => void requestIdleCallback(run, { timeout: 5000 }) : (run) => void setTimeout(run, 1000);
-  const nextFrame: (run: () => void) => void =
-    typeof requestAnimationFrame === "function" ? (run) => void requestAnimationFrame(run) : (run) => void setTimeout(run, 16);
-  nextFrame(() =>
-    setTimeout(() =>
-      idle(() => {
-        void SessionDetail.preload?.();
-        void SessionDetailInner.preload?.();
-      }),
-    ),
-  );
-}

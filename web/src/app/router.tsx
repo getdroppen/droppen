@@ -14,7 +14,6 @@ import {
   FilesView,
   LoginView,
   NewSessionRoute,
-  preloadAfterFirstPaint,
   ScreenView,
   SessionDetail,
   SetupView,
@@ -23,6 +22,7 @@ import {
 } from "./lazy-views";
 import { MachineRoute } from "./machine-route";
 import { RootLayout } from "./root-layout";
+import { prefetchViews } from "./view-prefetch";
 import { ChatLayout } from "@/features/chat/chat-layout";
 import type { FilesSearch } from "@/features/files/files-view";
 import { validateNewSessionSearch } from "@/features/sessions/new-session-open";
@@ -397,12 +397,13 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 // A view's chunk starts loading when a link to it is hovered or touched, not
-// when it is clicked (`app/lazy-views.ts`).
+// when it is clicked (`app/lazy-views.ts`) — if the background fetch after
+// the first page (`app/view-prefetch.ts`) has not brought it already.
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 
 const stopWatchingFirstPaint = router.subscribe("onRendered", () => {
   stopWatchingFirstPaint();
-  preloadAfterFirstPaint();
+  prefetchViews();
 });
 
 declare module "@tanstack/react-router" {
