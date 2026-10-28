@@ -371,4 +371,15 @@ mod tests {
         assert!(origin("ftp://x").is_err());
         assert!(origin("wss://").is_err());
     }
+
+    /// The hex this server writes into the hub's fields is the hex the device
+    /// side of the hub API (`rh_client`) writes and reads: one spelling, kept
+    /// by two crates that do not depend on each other.
+    #[test]
+    fn the_server_and_the_wire_spell_hex_the_same() {
+        let all: Vec<u8> = (0..=255).collect();
+        for bytes in [&[][..], &[0x00], &[0x0f, 0xf0], &[0xab, 0xcd, 0xef], &[7; 32], &all] {
+            assert_eq!(hex(bytes), rh_client::hex(bytes), "{bytes:?}");
+        }
+    }
 }

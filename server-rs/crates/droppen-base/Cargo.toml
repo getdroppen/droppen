@@ -9,10 +9,12 @@ description = "The Droppen server's base helpers: the clock, text codecs, privat
 # Helpers that name none of the server's subsystems, so every part of the
 # server may use them and they use nothing of it.
 [dependencies]
-# `text::hex`: the spelling every binary field of the hub's control messages
-# uses, so the server's hex and the wire's are one function.
-rh-client = { path = "../rh-client" }
 chrono = "0.4"
+# `text::hex`: lower-case, the spelling of every binary field in the hub's
+# control messages. A test in the server holds it to `rh_client::hex`, so
+# the server and the wire keep spelling hex the same; this crate does not
+# depend on rh-client, a crate of the layer above.
+hex = "0.4"
 libc = "0.2"
 regex = "1"
 # Only the client builder and `Url` (`outbound`). `default-features = false`

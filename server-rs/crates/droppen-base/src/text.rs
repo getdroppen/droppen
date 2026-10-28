@@ -1,8 +1,8 @@
 //! Text helpers that more than one subsystem needs.
 //!
-//! Hex is re-exported from [`rh_client`], which spells it the way every binary
-//! field in the hub's control messages does; `unhex` and [`unhex32`] read it
-//! back, answering `None` for anything that is not hex; [`sha256_hex`] is the one
+//! [`hex`] spells bytes the way every binary field in the hub's control
+//! messages does (lower case); [`unhex`] and [`unhex32`] read it back,
+//! answering `None` for anything that is not hex; [`sha256_hex`] is the one
 //! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal
 //! cleaner the setup wizard and the installer-output reader share — every escape
 //! becomes a space, never nothing, so two words the escape sat between do not
@@ -11,7 +11,9 @@
 use sha2::{Digest, Sha256};
 
 /// Lower-case hex, as `sha256sum` and the hub's wire fields spell it.
-pub use rh_client::hex;
+pub fn hex(data: &[u8]) -> String {
+    ::hex::encode(data)
+}
 
 /// Bytes from hex, or `None` for anything that is not hex.
 pub fn unhex(text: &str) -> Option<Vec<u8>> {

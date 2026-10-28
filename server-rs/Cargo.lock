@@ -1087,10 +1087,10 @@ name = "droppen-base"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hex",
  "libc",
  "regex",
  "reqwest",
- "rh-client",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
