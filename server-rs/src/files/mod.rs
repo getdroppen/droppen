@@ -874,10 +874,6 @@ impl FileStream for tokio::fs::File {
         })
     }
 }
-            }
-        })
-    }
-}
 
 /// `encodeURIComponent`: percent-escape every byte outside the unreserved set.
 fn encode_uri_component(value: &str) -> String {
