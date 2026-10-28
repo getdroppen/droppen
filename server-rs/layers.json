@@ -2,81 +2,369 @@
   "layers": [
     {
       "name": "base",
-      "about": "What knows nothing of the server's subsystems: the config, the instance's name and lock. The other base helpers (the clock, text, private files, processes, outbound requests, the environment, the program's name) are the droppen-base crate, outside this check.",
-      "modules": [
-        "config",
-        "instance"
+      "open": true,
+      "about": "Helpers that name no subsystem, and the contracts shared outside the server. Open: every crate above may use them.",
+      "crates": [
+        {
+          "name": "droppen-base",
+          "about": "The clock, text codecs, private files, process guards, outbound webhooks, the environment, the program's name.",
+          "modules": []
+        },
+        {
+          "name": "droppen-path",
+          "about": "The PATH rule shared with the desktop app.",
+          "modules": []
+        },
+        {
+          "name": "rh-proto",
+          "about": "The cloud protocol, shared with the hub, the relays and the test device.",
+          "modules": []
+        },
+        {
+          "name": "droppen-plugin-sdk",
+          "about": "The plugin contract.",
+          "modules": []
+        }
       ]
     },
     {
       "name": "platform",
-      "about": "What the subsystems stand on: where the instance keeps its files, the HTTP kit and the origins it answers, the databases, the instance's identity, the OpenAPI extensions, the Claude roots, the supervisor and self-update.",
-      "modules": [
-        "paths",
-        "http",
-        "origin",
-        "db",
-        "identity",
-        "openapi_ext",
-        "claude_roots",
-        "supervisor",
-        "selfupdate"
+      "open": true,
+      "middle": true,
+      "about": "What the subsystems stand on: the instance and its files, the HTTP kit, the pty shims, the supervisor. Open: every crate above may use them; inside the layer, each uses what its mayUse lists.",
+      "crates": [
+        {
+          "name": "droppen-instance",
+          "about": "The shared Paths, the instance's directories and lock, its identity, the databases.",
+          "modules": [
+            "paths",
+            "instance",
+            "identity",
+            "db"
+          ],
+          "mayUse": []
+        },
+        {
+          "name": "droppen-http",
+          "about": "Errors, extractors, response types, the OpenAPI helpers, the origin guard, the config.",
+          "modules": [
+            "http",
+            "openapi_ext",
+            "origin",
+            "config"
+          ],
+          "mayUse": [
+            "droppen-instance"
+          ],
+          "notes": [
+            "Gets desktop_app's AppWindow and Refresh: items, counted where they are until they move."
+          ]
+        },
+        {
+          "name": "droppen-pty",
+          "about": "The pty shims that outlive the server.",
+          "modules": [
+            "pty_shim"
+          ],
+          "mayUse": [
+            "droppen-instance"
+          ]
+        },
+        {
+          "name": "droppen-supervisor",
+          "about": "The supervising process and self-update.",
+          "modules": [
+            "supervisor",
+            "selfupdate"
+          ],
+          "mayUse": [
+            "droppen-instance",
+            "droppen-http"
+          ]
+        },
+        {
+          "name": "rh-client",
+          "about": "A device's side of the hub API.",
+          "modules": [],
+          "mayUse": []
+        }
       ]
     },
     {
       "name": "domain",
-      "about": "The subsystems. They may use one another.",
-      "modules": [
-        "accounts",
-        "acp",
-        "acp_agent",
-        "agent",
-        "aggregator",
-        "apps",
-        "attention",
-        "auth",
-        "chats",
-        "cloud",
-        "drive",
-        "feed",
-        "files",
-        "inject",
-        "media",
-        "models",
-        "notify",
-        "plugins",
-        "prefs",
-        "pty_shim",
-        "push",
-        "record",
-        "schedule",
-        "screens",
-        "sessions",
-        "setup",
-        "stats",
-        "terminals"
+      "middle": true,
+      "about": "The subsystems. Each uses only the domain crates its mayUse lists: auth under files, workbench and plugins, all of them under sessions, sessions under accounts, accounts under notify and setup; the aggregator under the agent, both under cloud, and neither uses another subsystem.",
+      "crates": [
+        {
+          "name": "droppen-auth",
+          "about": "Users, logins, tickets, the Identity extractor.",
+          "modules": [
+            "auth"
+          ],
+          "mayUse": [],
+          "notes": [
+            "Gets notify's caller classification: items of notify, counted there until they move."
+          ]
+        },
+        {
+          "name": "droppen-files",
+          "about": "Home-directory access behind the path guard, and the media proxy.",
+          "modules": [
+            "files",
+            "media"
+          ],
+          "mayUse": [
+            "droppen-auth"
+          ]
+        },
+        {
+          "name": "droppen-workbench",
+          "about": "Terminal and app panes, saved screens, UI preferences.",
+          "modules": [
+            "terminals",
+            "apps",
+            "screens",
+            "prefs"
+          ],
+          "mayUse": [
+            "droppen-auth",
+            "droppen-files"
+          ]
+        },
+        {
+          "name": "droppen-plugins",
+          "about": "The plugin store, installs and serving.",
+          "modules": [
+            "plugins"
+          ],
+          "mayUse": [
+            "droppen-auth"
+          ]
+        },
+        {
+          "name": "droppen-sessions",
+          "about": "The session vocabulary, stores, listing and attention; owns the Transcripts port.",
+          "modules": [
+            "sessions",
+            "attention",
+            "stats"
+          ],
+          "mayUse": [
+            "droppen-auth",
+            "droppen-workbench",
+            "droppen-plugins"
+          ]
+        },
+        {
+          "name": "droppen-accounts",
+          "about": "The account store, rotation, the quota cache and sweep, limits; owns the Login port.",
+          "modules": [
+            "accounts"
+          ],
+          "mayUse": [
+            "droppen-sessions",
+            "droppen-workbench"
+          ]
+        },
+        {
+          "name": "droppen-notify",
+          "about": "Alert channels: Bark, Web Push and the alert fan-out.",
+          "modules": [
+            "notify",
+            "push"
+          ],
+          "mayUse": [
+            "droppen-sessions",
+            "droppen-accounts"
+          ],
+          "notes": [
+            "Gives its caller classification to droppen-auth."
+          ]
+        },
+        {
+          "name": "droppen-setup",
+          "about": "The first-run guide, CLI detection and installs.",
+          "modules": [
+            "setup"
+          ],
+          "mayUse": [
+            "droppen-sessions",
+            "droppen-accounts",
+            "droppen-workbench",
+            "droppen-auth"
+          ]
+        },
+        {
+          "name": "droppen-aggregator",
+          "about": "The device role: copies of other machines; owns the Enrollment port.",
+          "modules": [
+            "aggregator"
+          ],
+          "mayUse": []
+        },
+        {
+          "name": "droppen-agent",
+          "about": "The machine role: link, chain, relays, direct path, streams, rotation; owns the StreamSource and LinkHost ports.",
+          "modules": [
+            "agent"
+          ],
+          "mayUse": [
+            "droppen-aggregator"
+          ]
+        },
+        {
+          "name": "droppen-cloud",
+          "about": "The Droppen-link routes, the remote-view gate, link control, the StreamSource impl.",
+          "modules": [
+            "cloud",
+            "agent::control"
+          ],
+          "mayUse": [
+            "droppen-agent",
+            "droppen-aggregator",
+            "droppen-auth",
+            "droppen-sessions"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "providers",
+      "about": "The provider base, then what stands on it: the three implementations and drive, which do not see one another. Each lists the domain crates it may use. Nothing but the entry names an implementation.",
+      "crates": [
+        {
+          "name": "droppen-provider",
+          "about": "Provider, Run, Models, the registry, the spawn gate, queue, receipts, questions, drafts.",
+          "modules": [
+            "inject",
+            "models"
+          ],
+          "mayUse": [
+            "droppen-sessions",
+            "droppen-accounts"
+          ],
+          "notes": [
+            "inject's own items, inject::receipts and inject::questions, drafts, runs and lock.",
+            "models keeps its routes here; each provider gets its own model list (models::probe)."
+          ]
+        },
+        {
+          "name": "droppen-provider-claude-code",
+          "about": "Claude Code: the resident driver, the shim, its transcripts, roots, readings, logins and recordings.",
+          "modules": [
+            "inject::resident",
+            "inject::shim",
+            "sessions::transcript",
+            "sessions::claude",
+            "sessions::subagents",
+            "sessions::checklist",
+            "claude_roots",
+            "accounts::quota::readings",
+            "accounts::setup_token",
+            "accounts::usage_login",
+            "accounts::local_login",
+            "record"
+          ],
+          "mayUse": [
+            "droppen-provider",
+            "droppen-sessions",
+            "droppen-accounts",
+            "droppen-workbench"
+          ]
+        },
+        {
+          "name": "droppen-provider-codex",
+          "about": "Codex: the app-server driver, its threads and tools, its quota.",
+          "modules": [
+            "inject::app_server",
+            "sessions::codex",
+            "sessions::codex_tools",
+            "sessions::codex_claims",
+            "accounts::quota::codex"
+          ],
+          "mayUse": [
+            "droppen-provider",
+            "droppen-sessions",
+            "droppen-accounts"
+          ]
+        },
+        {
+          "name": "droppen-provider-acp",
+          "about": "Every configured ACP agent, from data.",
+          "modules": [
+            "acp",
+            "acp_agent",
+            "inject::acp",
+            "sessions::acp_transcript"
+          ],
+          "mayUse": [
+            "droppen-provider",
+            "droppen-sessions"
+          ]
+        },
+        {
+          "name": "droppen-drive",
+          "about": "Send, start and answer; the live and global feeds, search; chats; schedules.",
+          "modules": [
+            "drive",
+            "feed",
+            "chats",
+            "schedule"
+          ],
+          "mayUse": [
+            "droppen-provider",
+            "droppen-sessions",
+            "droppen-accounts",
+            "droppen-files",
+            "droppen-notify",
+            "droppen-auth"
+          ]
+        }
       ]
     },
     {
       "name": "entry",
-      "about": "What assembles and serves the subsystems: the router, the app, the web files, the desktop app's settings, shutdown, the command line, and the binary.",
-      "modules": [
-        "api",
-        "cli",
-        "app",
-        "static_files",
-        "desktop_app",
-        "shutdown",
-        "export",
-        "main"
+      "about": "The binary: the router, AppState, the wiring, the command line. It may use every crate below it.",
+      "crates": [
+        {
+          "name": "remote-hand-server",
+          "about": "The router, the app, the web files, the desktop app's settings, shutdown, export and the binary.",
+          "modules": [
+            "api",
+            "app",
+            "static_files",
+            "desktop_app",
+            "shutdown",
+            "export",
+            "main",
+            "cli",
+            "agent::cli"
+          ],
+          "mayUse": "*",
+          "notes": [
+            "Gives desktop_app's AppWindow to droppen-http."
+          ]
+        }
       ]
     }
   ],
+  "sourceMatches": {
+    "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code outside the provider crates. Outside them Source is only the key that picks a provider, so the number may only go down.",
+    "providers": [
+      "droppen-provider",
+      "droppen-provider-claude-code",
+      "droppen-provider-codex",
+      "droppen-provider-acp"
+    ],
+    "count": 112
+  },
   "allowed": [
     {
       "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
       "edges": [
         "accounts -> api",
+        "accounts::setup_token -> api",
+        "accounts::usage_login -> api",
         "acp_agent -> api",
         "apps -> api",
         "attention -> api",
@@ -98,6 +386,178 @@
         "setup -> api",
         "stats -> api",
         "terminals -> api"
+      ]
+    },
+    {
+      "why": "sessions, attention and stats read each provider's transcripts and roots themselves. They go through the Transcripts port sessions owns, which each provider implements.",
+      "edges": [
+        "attention -> sessions::subagents",
+        "sessions -> claude_roots",
+        "sessions -> sessions::acp_transcript",
+        "sessions -> sessions::claude",
+        "sessions -> sessions::codex",
+        "sessions -> sessions::codex_claims",
+        "sessions -> sessions::subagents",
+        "sessions -> sessions::transcript",
+        "stats -> claude_roots"
+      ]
+    },
+    {
+      "why": "drive, feed and chats call each provider's transcript, roots, checklist and agent code themselves (the ACP agent registry too), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
+      "edges": [
+        "chats -> sessions::claude",
+        "chats -> sessions::codex",
+        "drive -> accounts::setup_token",
+        "drive -> acp_agent",
+        "drive -> sessions::acp_transcript",
+        "drive -> sessions::checklist",
+        "drive -> sessions::claude",
+        "drive -> sessions::codex",
+        "drive -> sessions::transcript",
+        "feed -> acp_agent",
+        "feed -> claude_roots",
+        "feed -> sessions::acp_transcript",
+        "feed -> sessions::claude",
+        "feed -> sessions::codex",
+        "feed -> sessions::subagents"
+      ]
+    },
+    {
+      "why": "inject and models name each implementation: the registry starts them, models asks each for its list. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register) and brings its own model list.",
+      "edges": [
+        "inject -> acp",
+        "inject -> claude_roots",
+        "inject -> inject::acp",
+        "inject -> inject::app_server",
+        "inject -> inject::resident",
+        "inject -> inject::shim",
+        "inject -> record",
+        "inject -> sessions::acp_transcript",
+        "inject -> sessions::claude",
+        "inject -> sessions::codex",
+        "models -> accounts::quota::readings",
+        "models -> acp",
+        "models -> acp_agent",
+        "models -> sessions::acp_transcript",
+        "models -> sessions::codex"
+      ]
+    },
+    {
+      "why": "accounts (its quota too) and setup call the provider logins, probes and roots themselves. They go through the Login port accounts owns, which Claude Code and Codex implement.",
+      "edges": [
+        "accounts -> accounts::local_login",
+        "accounts -> accounts::quota::codex",
+        "accounts -> accounts::quota::readings",
+        "accounts -> accounts::setup_token",
+        "accounts -> accounts::usage_login",
+        "accounts -> claude_roots",
+        "accounts -> sessions::claude",
+        "setup -> accounts::quota::codex",
+        "setup -> claude_roots"
+      ]
+    },
+    {
+      "why": "The implementations share transcript helpers that sit in Claude Code's and Codex's modules today; the shared parts go to sessions or the provider base.",
+      "edges": [
+        "sessions::acp_transcript -> sessions::transcript",
+        "sessions::codex -> sessions::transcript",
+        "sessions::codex_tools -> sessions::transcript",
+        "sessions::subagents -> sessions::codex"
+      ]
+    },
+    {
+      "why": "The runs tell push about a turn, a question or a rotation themselves (push::notify_turn, notify_question, notify_rotation), and inject adds notify's channel to a session's environment (notify::inject::decorate). They go when the runs broadcast RunEvent and RotationEvent for notify to subscribe to, and the channel's environment reaches a spawn through the spawn dependencies (SpawnDeps).",
+      "edges": [
+        "inject -> notify",
+        "inject -> push",
+        "inject::acp -> push",
+        "inject::app_server -> push",
+        "inject::resident -> push"
+      ]
+    },
+    {
+      "why": "The ACP provider parses an agent's KEY=VALUE block with accounts' parser (store::parse_env_block, EnvVar) and shortens text with accounts::limits::clip. They go when the parser moves to a crate both may use, and clip, which names no account, to droppen_base::text.",
+      "edges": [
+        "acp_agent -> accounts",
+        "inject::acp -> accounts"
+      ]
+    },
+    {
+      "why": "Claude Code's setup-token wizard is for the desktop app's window only, and asks setup's Caller and app_caller whether that is who calls. It goes when that gate is http's AppWindow.",
+      "edges": [
+        "accounts::setup_token -> setup"
+      ]
+    },
+    {
+      "why": "They read droppen_base::time's parse_iso and parse_iso_ms through the re-exports schedule::parse_iso and record::replay::parse_iso8601. They go when the callers name droppen_base::time.",
+      "edges": [
+        "accounts::quota::codex -> record",
+        "agent -> schedule",
+        "auth -> record",
+        "cloud -> record",
+        "sessions::codex_tools -> record"
+      ]
+    },
+    {
+      "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the spawn dependencies they use (SpawnDeps), as the spawns do.",
+      "edges": [
+        "accounts::setup_token -> drive",
+        "accounts::usage_login -> drive"
+      ]
+    },
+    {
+      "why": "inject resolves a run's attachments with files' upload guard (FileRoots). It goes when the send routes in drive, which may use files, resolve them before they reach the provider.",
+      "edges": [
+        "inject -> files"
+      ]
+    },
+    {
+      "why": "inject attaches each run to the feeds (FeedRegistry, GlobalFeed), and plugins and screens tell the global feed to refresh. They go when runs broadcast RunEvent for the feeds to subscribe to, and the refresh is a Refresh sender.",
+      "edges": [
+        "inject -> feed",
+        "plugins -> feed",
+        "screens -> feed"
+      ]
+    },
+    {
+      "why": "record's tail follows a recording with feed's file watcher (feed::watch), which names no session. It goes when the watcher moves below both.",
+      "edges": [
+        "record -> feed"
+      ]
+    },
+    {
+      "why": "The agent publishes sessions and transcripts, raises alerts and renews its VAPID key by calling into them (sessions, push, Drive). They go through the ports the agent owns: StreamSource (cloud implements it over sessions), LinkHost and LinkEvent (notify subscribes).",
+      "edges": [
+        "agent -> drive",
+        "agent -> push",
+        "agent -> sessions"
+      ]
+    },
+    {
+      "why": "agent::control goes to cloud, but the agent's rotation reads its machine_fingerprint, which stays with the agent.",
+      "edges": [
+        "agent -> agent::control"
+      ]
+    },
+    {
+      "why": "The aggregator's controller reads cloud.json (cloud::wants_aggregator) each round to see whether the owner turned the device role off. It goes when that switch reaches the aggregator through a port it owns, as the enrollment does.",
+      "edges": [
+        "aggregator -> cloud"
+      ]
+    },
+    {
+      "why": "auth reads cloud's return route and notify's caller classification. They go when the return route moves to auth, and the caller classification too.",
+      "edges": [
+        "auth -> cloud",
+        "auth -> notify"
+      ]
+    },
+    {
+      "why": "Domain pairs that point the wrong way: accounts checks a model against models::model_ids, and accounts and attention use helpers in drive's routes (writable_session, AgentPath, is_agent_id). They go when those items move to the crate that owns them.",
+      "edges": [
+        "accounts -> drive",
+        "accounts -> models",
+        "attention -> drive"
       ]
     }
   ]
