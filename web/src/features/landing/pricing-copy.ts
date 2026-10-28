@@ -33,7 +33,7 @@ export const pricingZhCN: Bundle = {
     "一台设备不用账号就能用；凭邀请码免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
   "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "一台设备不用账号就能用；注册账号免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
-  "Start free. Go Pro when you need more.": "免费开始，需要更多时升级 Pro。",
+  "Start free. Go Pro when you need more.": "免费开始，需要更多时升级 Pro",
   "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.":
     "所有方案均端到端加密：无论哪个方案，我们都无法读取你的会话、代码和终端。方案只决定三项：可连接的设备数量；可运行 AI 的设备离线时，手机上可查看的会话天数；以及每月经我们服务器转发的流量。",
   "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.": "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
@@ -240,7 +240,7 @@ export const pricingZhTW: Bundle = {
     "一台裝置不用帳號就能用；憑邀請碼免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
   "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "一台裝置不用帳號就能用；註冊帳號免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
-  "Start free. Go Pro when you need more.": "免費開始，需要更多時升級 Pro。",
+  "Start free. Go Pro when you need more.": "免費開始，需要更多時升級 Pro",
   "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.":
     "所有方案均端對端加密：無論哪個方案，我們都無法讀取你的工作階段、程式碼和終端機。方案只決定三項：可連接的裝置數量；可執行 AI 的裝置離線時，手機上可查看的工作階段天數；以及每月經我們伺服器轉送的流量。",
   "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.": "價格以美元計。Pro 尚未開放購買；在你決定付款之前，不會產生任何費用。",

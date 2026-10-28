@@ -89,10 +89,14 @@ const zhCN: Bundle = {
   "Get started": "开始使用",
 
   // Hero
-  "Your computer's AI, from your phone.": "电脑上的 AI，手机上接着用。",
+  "Your computer's AI, from your phone.": "电脑上的 AI，手机上接着用",
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
     "Claude Code 和 Codex 仍在你自己的电脑上运行。在手机或其他设备的浏览器中，回答它们的提问、发送指令、打开电脑上的终端。",
   "Create a free account": "免费注册",
+  "Sign up on the web": "Web 免费注册",
+  "Open web app": "在 Web 中打开",
+  "Join the web waitlist": "加入 Web 等候名单",
+  "Run Droppen on a Linux server": "Linux 服务器上运行 Droppen",
   "Linux and other platforms": "Linux 及其他平台",
   "Invite-only for now: sign-up needs an invite code.": "目前邀请制，注册需要邀请码。",
   "Sign-up is closed for now.": "目前暂停注册。",
@@ -110,7 +114,7 @@ const zhCN: Bundle = {
   "Droppen on a phone: what needs you, and a session's question": "手机上的 Droppen：「需要你」清单，以及一个会话的提问",
   "Add a device": "添加设备",
   "A new device shows a QR code, and a device you already have approves it": "新设备显示二维码，由你已有的设备扫码批准",
-  "Three steps to set up, then carry on away from your desk.": "三步完成设置，离开电脑也能继续。",
+  "Three steps to set up, then carry on away from your desk.": "三步完成设置，离开电脑也能继续",
   "Install Droppen where Claude Code or Codex runs": "在运行 Claude Code 或 Codex 的电脑上安装 Droppen",
   "Sign in on that computer": "在那台电脑上登录",
 
@@ -126,7 +130,7 @@ const zhCN: Bundle = {
 
   // Your code, for your eyes only (the one section on encryption, near the end)
   "End-to-end encrypted": "端到端加密",
-  "Droppen can't read your code.": "你的代码，Droppen 无法读取。",
+  "Droppen can't read your code.": "你的代码，Droppen 无法读取",
   "Encrypted on your computer and decrypted only on your devices. Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext; neither holds a key that can decrypt them.":
     "内容在你的电脑上加密，只在你的设备上解密。Droppen Hub 保存的只是加密副本，Droppen 中继转发的只是加密数据，两者都没有解密所需的密钥。",
   "Only devices you approve can join": "只有你批准的设备才能加入",
@@ -139,7 +143,7 @@ const zhCN: Bundle = {
   "Read the source": "查看源代码",
 
   // Typing from your phone stays snappy (the direct path)
-  "Typing from your phone stays responsive.": "在手机上输入，响应及时。",
+  "Typing from your phone stays responsive.": "在手机上输入，响应及时",
   "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
     "手机能直接连到你的电脑时，按键经直连送达；连不上时，自动改由 Droppen 中继转发。直连中断后，中继在 1.5 秒内接管，并按原顺序重发尚未确认的按键，不会丢失。",
   "browser on the same computer": "同一台电脑上的浏览器",
@@ -154,12 +158,12 @@ const zhCN: Bundle = {
   "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "按键 {{sent}} · 送达 {{delivered}} · 在途 {{flight}} · 丢失 0",
 
   // Lid closed? (the offline copy)
-  "Your sessions stay readable while your computer is offline.": "电脑离线时，会话仍可查看。",
+  "Your sessions stay readable while your computer is offline.": "电脑离线时，会话仍可查看",
   "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
     "电脑在线时，会话的加密副本会保存到云端的 Droppen Hub，只有你的设备能解密。电脑关机、休眠或断网后，手机仍可查看最近 {{free}} 天内更新的会话（Pro 方案为 {{pro}} 天）；发送消息和使用终端，需等这台电脑重新上线。",
 
   // What you get
-  "Away from your computer, handle all of this from your phone.": "不在电脑前，这些事也能在手机上处理。",
+  "Away from your computer, handle all of this from your phone.": "不在电脑前，这些事也能在手机上处理",
   "Every computer, one list": "所有电脑，一个列表",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
     "家里和公司的电脑登录同一个账户，等你回答、有未读消息和正在运行的会话汇总在同一个列表中。",
@@ -183,7 +187,7 @@ const zhCN: Bundle = {
     "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
 
   // Footer
-  "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的电脑上继续工作，需要你时，在手机上即可回应。",
+  "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的电脑上继续工作，需要你时，在手机上即可回应",
 };
 
 const zhTW: Bundle = {
@@ -224,10 +228,14 @@ const zhTW: Bundle = {
   "Sign in": "登入",
   "Get started": "開始使用",
 
-  "Your computer's AI, from your phone.": "電腦上的 AI，手機上接著用。",
+  "Your computer's AI, from your phone.": "電腦上的 AI，手機上接著用",
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
     "Claude Code 和 Codex 仍在你自己的電腦上執行。在手機或其他裝置的瀏覽器中，回答它們的提問、傳送指令、開啟電腦上的終端機。",
   "Create a free account": "免費註冊",
+  "Sign up on the web": "Web 免費註冊",
+  "Open web app": "在 Web 中打開",
+  "Join the web waitlist": "加入 Web 等候名單",
+  "Run Droppen on a Linux server": "在 Linux 伺服器上執行 Droppen",
   "Linux and other platforms": "Linux 及其他平台",
   "Invite-only for now: sign-up needs an invite code.": "目前採邀請制，註冊需要邀請碼。",
   "Sign-up is closed for now.": "目前暫停註冊。",
@@ -245,7 +253,7 @@ const zhTW: Bundle = {
   "Droppen on a phone: what needs you, and a session's question": "手機上的 Droppen：「需要你」清單，以及一個工作階段的提問",
   "Add a device": "新增裝置",
   "A new device shows a QR code, and a device you already have approves it": "新裝置顯示 QR 碼，由你已有的裝置掃碼核准",
-  "Three steps to set up, then carry on away from your desk.": "三步完成設定，離開電腦也能繼續。",
+  "Three steps to set up, then carry on away from your desk.": "三步完成設定，離開電腦也能繼續",
   "Install Droppen where Claude Code or Codex runs": "在執行 Claude Code 或 Codex 的電腦上安裝 Droppen",
   "Sign in on that computer": "在那台電腦上登入",
 
@@ -259,7 +267,7 @@ const zhTW: Bundle = {
     "在手機瀏覽器中打開 {{app}}，再用一台已登入的裝置掃描手機上顯示的 QR 碼，確認加入。",
 
   "End-to-end encrypted": "端對端加密",
-  "Droppen can't read your code.": "你的程式碼，Droppen 無法讀取。",
+  "Droppen can't read your code.": "你的程式碼，Droppen 無法讀取",
   "Encrypted on your computer and decrypted only on your devices. Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext; neither holds a key that can decrypt them.":
     "內容在你的電腦上加密，只在你的裝置上解密。Droppen Hub 儲存的只是加密副本，Droppen 中繼轉送的只是加密資料，兩者都沒有解密所需的金鑰。",
   "Only devices you approve can join": "只有你核准的裝置才能加入",
@@ -271,7 +279,7 @@ const zhTW: Bundle = {
     "droppen 命令列程式、Mac 應用程式和網頁應用程式均以 AGPL-3.0 授權開源。Droppen Hub 不開源。",
   "Read the source": "查看原始碼",
 
-  "Typing from your phone stays responsive.": "在手機上輸入，回應及時。",
+  "Typing from your phone stays responsive.": "在手機上輸入，回應及時",
   "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
     "手機能直接連到你的電腦時，按鍵經直連送達；連不上時，自動改由 Droppen 中繼轉送。直連中斷後，中繼在 1.5 秒內接手，並按原順序重送尚未確認的按鍵，不會遺失。",
   "browser on the same computer": "同一台電腦上的瀏覽器",
@@ -285,11 +293,11 @@ const zhTW: Bundle = {
   "network back: direct again": "網路恢復：重新直連",
   "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "按鍵 {{sent}} · 送達 {{delivered}} · 傳送中 {{flight}} · 遺失 0",
 
-  "Your sessions stay readable while your computer is offline.": "電腦離線時，工作階段仍可查看。",
+  "Your sessions stay readable while your computer is offline.": "電腦離線時，工作階段仍可查看",
   "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
     "電腦在線時，工作階段的加密副本會儲存到雲端的 Droppen Hub，只有你的裝置能解密。電腦關機、休眠或斷網後，手機仍可查看最近 {{free}} 天內更新的工作階段（Pro 方案為 {{pro}} 天）；傳送訊息和使用終端機，需等這台電腦重新上線。",
 
-  "Away from your computer, handle all of this from your phone.": "不在電腦前，這些事也能在手機上處理。",
+  "Away from your computer, handle all of this from your phone.": "不在電腦前，這些事也能在手機上處理",
   "Every computer, one list": "所有電腦，一個清單",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
     "家裡和公司的電腦登入同一個帳戶，等你回答、有未讀訊息和正在執行的工作階段匯整在同一個清單中。",
@@ -311,7 +319,7 @@ const zhTW: Bundle = {
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
 
-  "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的電腦上繼續工作，需要你時，在手機上即可回應。",
+  "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的電腦上繼續工作，需要你時，在手機上即可回應",
 };
 
 const ja: Bundle = {
@@ -356,6 +364,10 @@ const ja: Bundle = {
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
     "Claude Code と Codex は、自分のコンピュータで動いたまま。スマホやほかのデバイスのブラウザから、質問に答え、指示を送り、そのコンピュータのターミナルを開けます。",
   "Create a free account": "無料で登録",
+  "Sign up on the web": "Web で登録",
+  "Open web app": "Web アプリを開く",
+  "Join the web waitlist": "Web ウェイトリストに登録",
+  "Run Droppen on a Linux server": "Linux サーバーで Droppen を実行",
   "Linux and other platforms": "Linux とほかのプラットフォーム",
   "Invite-only for now: sign-up needs an invite code.": "いまは招待制です。登録には招待コードが必要です。",
   "Sign-up is closed for now.": "現在、新規登録を停止しています。",

@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Copy } from "lucide-react";
+import { Menu } from "@base-ui-components/react/menu";
+import { Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
@@ -9,7 +10,7 @@ import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, TERMS_PATH, usePathname } from "./route";
+import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "./route";
 
 /*
  * The public pages' frame, in the landing page's drafting-sheet language: a
@@ -54,7 +55,7 @@ export function SectionHead({ label, title, lead, className }: { label?: string;
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
       {label && <CapsLabel className={cjkTracking}>{label}</CapsLabel>}
-      <h2 className="text-[32px] leading-[1.1] font-semibold tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
+      <h2 className="text-[32px] leading-[1.1] font-normal tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
@@ -108,7 +109,7 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
 function PageLink({ path, label, className, testId }: { path: string; label: string; className: string; testId?: string }) {
   const here = usePathname().replace(/\/+$/, "") === path;
   return (
-    <a {...publicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn(className, here && "text-fg")}>
+    <a {...publicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn(className, here && "text-fg font-medium")}>
       {label}
     </a>
   );
@@ -122,6 +123,12 @@ function GitHubMark({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** Popup styling matching LanguageMenu's public look */
+const MENU_POPUP =
+  "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none";
+const MENU_ITEM =
+  "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-[13px] text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
 
 /**
  * The public pages' header: the mark (home), the site's other pages (download,
@@ -141,11 +148,17 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
       <div className="relative mx-auto flex h-full max-w-[1360px] items-center gap-3 px-6 max-md:px-4 md:border-x md:border-border">
         <a {...publicLink("/")} className="flex items-center gap-3" aria-label="Droppen">
           <BrandMark size={20} />
-          <span className="font-mono text-sm font-medium text-fg">Droppen</span>
+          <span className="font-mono text-base font-medium text-fg">Droppen</span>
         </a>
-        <nav aria-label={t("Site navigation")} className="ml-6 flex items-center gap-5 max-md:hidden">
+        <nav aria-label={t("Site navigation")} className="ml-6 flex items-center gap-6 max-md:hidden">
           {pages.map((page) => (
-            <PageLink key={page.path} path={page.path} label={page.label} testId={page.testId} className={cn("label-caps text-2xs whitespace-nowrap text-muted hover:text-fg", cjkTracking)} />
+            <PageLink
+              key={page.path}
+              path={page.path}
+              label={page.label}
+              testId={page.testId}
+              className="text-base whitespace-nowrap text-muted transition-colors hover:text-fg"
+            />
           ))}
         </nav>
         <span className="flex-1" />
@@ -159,15 +172,56 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
           <GitHubMark className="size-4" />
         </a>
         <PrefsControls />
-        {signedIn ? (
-          <a {...publicLink(APP_PATH)} className={secondary}>
-            {t("Open app")}
-          </a>
-        ) : (
-          <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
-            {t("Sign in")}
-          </a>
-        )}
+        <Menu.Root>
+          <Menu.Trigger
+            aria-label={signedIn ? t("Open app") : t("Sign in")}
+            title={signedIn ? t("Open app") : t("Sign in")}
+            className="flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg"
+          >
+            <UserRound className="size-3.5" />
+          </Menu.Trigger>
+          <Menu.Portal keepMounted>
+            <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
+              <Menu.Popup className={MENU_POPUP}>
+                {signedIn ? (
+                  <Menu.Item
+                    closeOnClick
+                    render={<a {...publicLink(APP_PATH)} />}
+                    className={MENU_ITEM}
+                  >
+                    <span className="flex size-3.5 shrink-0 items-center justify-center">
+                      <LogIn className="size-3.5" />
+                    </span>
+                    <span>{t("Open app")}</span>
+                  </Menu.Item>
+                ) : (
+                  <>
+                    <Menu.Item
+                      closeOnClick
+                      render={<a {...publicLink(SIGN_IN_PATH)} />}
+                      className={MENU_ITEM}
+                    >
+                      <span className="flex size-3.5 shrink-0 items-center justify-center">
+                        <LogIn className="size-3.5" />
+                      </span>
+                      <span>{t("Sign in")}</span>
+                    </Menu.Item>
+                    <Menu.Item
+                      closeOnClick
+                      render={<a {...publicLink(SIGN_UP_PATH)} />}
+                      className={MENU_ITEM}
+                    >
+                      <span className="flex size-3.5 shrink-0 items-center justify-center">
+                        <UserPlus className="size-3.5" />
+                      </span>
+                      <span>{t("Create a free account")}</span>
+                    </Menu.Item>
+                  </>
+                )}
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Portal>
+        </Menu.Root>
         <RegMark className="-bottom-[5px] -left-[5px]" />
         <RegMark className="-right-[5px] -bottom-[5px]" />
       </div>

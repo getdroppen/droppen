@@ -290,7 +290,7 @@ function Hero() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
+      <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-normal tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
         {t("How Droppen's end-to-end encryption works.")}
       </h1>
       <p className="max-w-[44em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">

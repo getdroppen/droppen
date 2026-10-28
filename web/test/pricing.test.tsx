@@ -98,7 +98,7 @@ const part = (html: string, from: string, to?: string) => {
 test("the pricing page leads with what you get, in zh-CN first", () => {
   const words = text(draw("zh-CN"));
   for (const line of [
-    "免费开始，需要更多时升级 Pro。",
+    "免费开始，需要更多时升级 Pro",
     "所有方案均端到端加密：无论哪个方案，我们都无法读取你的会话、代码和终端。",
     "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
     "仅本地",
@@ -386,7 +386,7 @@ test("the hub client joins with POST /v1/waitlist, with no session and only what
 
 test("the page reads in zh-TW and ja, with nothing left in English", () => {
   const tw = text(draw("zh-TW"));
-  for (const line of ["免費開始，需要更多時升級 Pro。", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
+  for (const line of ["免費開始，需要更多時升級 Pro", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
   const jp = text(draw("ja"));
   for (const line of ["無料で始めて、必要になったら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
   for (const words of [tw, jp, text(draw("zh-CN"))]) {

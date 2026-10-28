@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { Bell, CalendarClock, Code, FolderOpen, Info, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
+import { ArrowRight, Bell, CalendarClock, Code, FolderOpen, Info, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
 import { secondary } from "@/features/cloud/ui";
 import { appHost } from "@/lib/hub/hosts";
 import { cn } from "@/lib/cn";
@@ -53,7 +53,7 @@ import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLI
 // Added, never overwriting: a key the app already translates keeps its wording.
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
-const headline = "font-semibold text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]";
+const headline = "font-normal text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]";
 
 /** The space before a link that follows a sentence: none after Chinese or Japanese punctuation. */
 const gapBefore = (language: string) => (/^(zh|ja)/.test(language) ? "" : " ");
@@ -77,7 +77,7 @@ function Hero({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col px-10 pt-16 pb-12 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className={cn(headline, "mb-6 max-w-[14em] text-[64px] leading-[1.02] tracking-[-0.04em] max-lg:text-[52px] max-md:text-[36px] max-md:leading-[1.08]")}>
+      <h1 className="mb-6 max-w-[14em] text-[64px] leading-[1.02] font-normal tracking-[-0.04em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-lg:text-[52px] max-md:text-[36px] max-md:leading-[1.08]">
         {t("Your computer's AI, from your phone.")}
       </h1>
       <p className="max-w-[36em] text-[17px] leading-7 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[15px] max-md:leading-6">
@@ -222,11 +222,19 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
           <div className="flex flex-col gap-6 px-6 py-16 max-md:px-4 max-md:py-10 md:flex-row md:items-end md:justify-between">
             <p className={cn(headline, "text-[36px] leading-[1.1] tracking-[-0.03em] max-md:text-[28px]")}>{t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}</p>
             <div className="flex flex-wrap gap-3">
-              <a {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)} className={secondary}>
-                {signup === "closed" ? t("Join the waitlist") : t("Create a free account")}
+              <a
+                {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)}
+                className="group flex h-10 items-center justify-between gap-3 border border-fg bg-fg px-4 text-sm font-medium text-bg transition-colors hover:bg-fg/85"
+              >
+                <span>{signup === "closed" ? t("Join the waitlist") : t("Sign up on the web")}</span>
+                <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
               </a>
-              <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
-                {t("Sign in")}
+              <a
+                {...publicLink(SIGN_IN_PATH)}
+                className="group flex h-10 items-center justify-between gap-3 border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
+              >
+                <span>{t("Sign in")}</span>
+                <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
               </a>
             </div>
           </div>

@@ -198,7 +198,7 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "relative flex h-12 items-center justify-center px-4 text-sm whitespace-nowrap transition-colors max-md:shrink-0 max-md:px-5",
+                "relative flex h-12 items-center justify-center px-4 text-base whitespace-nowrap transition-colors max-md:shrink-0 max-md:px-5",
                 i > 0 && "border-l border-border",
                 on ? "bg-raised font-semibold text-fg" : "text-muted hover:text-fg",
               )}

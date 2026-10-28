@@ -27,8 +27,8 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
 
   [
     "How Droppen's end-to-end encryption works.",
-    "Droppen 端到端加密的工作原理。",
-    "Droppen 端對端加密的運作原理。",
+    "Droppen 端到端加密的工作原理",
+    "Droppen 端對端加密的運作原理",
     "Droppen のエンドツーエンド暗号化のしくみ。",
   ],
   [

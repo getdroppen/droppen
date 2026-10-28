@@ -40,7 +40,7 @@ export const downloadZhCN: Bundle = {
   "Detected": "当前设备",
 
   // Mac · App
-  "Droppen for Mac": "Mac 版 Droppen",
+  "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "打开 App，Droppen 即在这台 Mac 上运行，无需终端，也无需设置本地密码。要在手机和其他设备上使用，请在 App 内登录 Droppen。",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "打开 App，Droppen 即在这台 Mac 上运行，无需终端，也无需设置本地密码。",
@@ -220,7 +220,7 @@ export const downloadZhTW: Bundle = {
   "Phone / tablet": "手機 / 平板",
   "Detected": "目前裝置",
 
-  "Droppen for Mac": "Mac 版 Droppen",
+  "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "打開 App，Droppen 即在這台 Mac 上執行，無需終端機，也無需設定本地密碼。要在手機和其他裝置上使用，請在 App 內登入 Droppen。",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "打開 App，Droppen 即在這台 Mac 上執行，無需終端機，也無需設定本地密碼。",
@@ -392,7 +392,7 @@ export const downloadJa: Bundle = {
   "Phone / tablet": "スマホ / タブレット",
   "Detected": "このデバイス",
 
-  "Droppen for Mac": "Mac 版 Droppen",
+  "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "アプリを開くと、この Mac で Droppen が動きます。ターミナルもローカルのパスワードも不要です。スマホやほかのデバイスから使うには、アプリから Droppen にサインインします。",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password.": "アプリを開くと、この Mac で Droppen が動きます。ターミナルもローカルのパスワードも不要です。",

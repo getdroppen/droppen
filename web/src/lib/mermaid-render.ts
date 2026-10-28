@@ -46,7 +46,7 @@ const RENDER_TIMEOUT_MS = 10_000;
  * same in both, so the text fits the boxes it was measured for.
  */
 const DIAGRAM_FONT =
-  'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
+  '"IBM Plex Sans", "IBM Plex Sans SC", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
 
 /**
  * Config a fence's own text may not set.

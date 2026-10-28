@@ -17,12 +17,25 @@ const FILES: Record<string, string> = {
 };
 
 export function devTools(dir: string): Plugin {
+  const landingMode = process.env.DROPPEN_DEV_LANDING === "1" || process.env.DROPPEN_WEB_ROLE === "site";
   return {
     name: "rh-dev-tools",
     apply: "serve",
+    transformIndexHtml(html) {
+      if (landingMode && !html.includes('name="rh-hub"')) {
+        return html.replace("<head>", '<head>\n    <meta name="rh-hub" content="wss://api.droppen.app" />');
+      }
+      return html;
+    },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = (req.url ?? "").split(/[?#]/, 1)[0]!;
+        if (landingMode && path === "/.well-known/droppen-hub") {
+          res.setHeader("content-type", "application/json");
+          res.setHeader("cache-control", "no-store");
+          res.end(JSON.stringify({ origin: "wss://api.droppen.app", app: null, site: null, apex_mode: "app" }));
+          return;
+        }
         const type = FILES[path];
         if (!type) return next();
         res.setHeader("content-type", type);
