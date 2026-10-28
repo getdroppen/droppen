@@ -66,8 +66,7 @@ mod link;
 pub mod link_handoff;
 
 pub use access::remote_viewer;
-pub use file::{file_path, hand_over_from_local_owner};
-pub(crate) use file::wants_aggregator;
+pub use file::LinkFile;
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
@@ -623,7 +622,7 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
         aggregator: {
             let control = cloud.control.control_status().filter(|c| c.running);
             CloudAggregator {
-                enabled: wants_aggregator(&cloud.paths),
+                enabled: LinkFile::of(&cloud.paths).wants_aggregator(),
                 state: if crate::aggregator::key_path(&cloud.paths).exists() {
                     "pending".into()
                 } else if control.is_some() {
@@ -1336,7 +1335,7 @@ mod tests {
         );
         assert!(!status_for(&state, Some("bob")).await.sees_other_devices);
         // A cloud.json that does not read: nobody either.
-        std::fs::write(file_path(&state.cloud.paths), b"{\"owner\": tr").unwrap();
+        std::fs::write(LinkFile::of(&state.cloud.paths).path(), b"{\"owner\": tr").unwrap();
         assert!(state.cloud.read_file_strict().is_none());
         assert!(!status_for(&state, Some("carol")).await.sees_other_devices);
     }
@@ -1951,28 +1950,28 @@ mod tests {
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
         let t = "2026-10-19T00:00:00.000Z".to_string();
         let accounts = vec![("droppen-app".to_string(), t.clone(), true), ("ada".to_string(), t.clone(), false)];
-        assert_eq!(hand_over_from_local_owner(&paths, &accounts), Ok(None), "no cloud.json");
+        assert_eq!(LinkFile::of(&paths).hand_over_from_local_owner(&accounts), Ok(None), "no cloud.json");
         let write = |owner: &str| {
             let file = CloudFile {
                 owner: Some(owner.into()),
                 ..CloudFile::default()
             };
-            std::fs::write(file_path(&paths), serde_json::to_vec(&file).unwrap()).unwrap();
+            std::fs::write(LinkFile::of(&paths).path(), serde_json::to_vec(&file).unwrap()).unwrap();
         };
         write("droppen-app");
         assert_eq!(
-            hand_over_from_local_owner(&paths, &accounts),
+            LinkFile::of(&paths).hand_over_from_local_owner(&accounts),
             Ok(None),
             "the app linked it: the app keeps it"
         );
         write(crate::auth::LOCAL_OWNER);
         assert_eq!(
-            hand_over_from_local_owner(&paths, &accounts[..1]),
+            LinkFile::of(&paths).hand_over_from_local_owner(&accounts[..1]),
             Ok(None),
             "no user account yet: nobody to hand it to"
         );
-        assert_eq!(hand_over_from_local_owner(&paths, &accounts), Ok(Some("ada".into())));
-        let file: CloudFile = serde_json::from_slice(&std::fs::read(file_path(&paths)).unwrap()).unwrap();
+        assert_eq!(LinkFile::of(&paths).hand_over_from_local_owner(&accounts), Ok(Some("ada".into())));
+        let file: CloudFile = serde_json::from_slice(&std::fs::read(LinkFile::of(&paths).path()).unwrap()).unwrap();
         assert_eq!(file.owner.as_deref(), Some("ada"));
         assert_eq!(file.accounts_since.get("ada"), Some(&t));
     }

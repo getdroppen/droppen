@@ -10,7 +10,7 @@
 //!
 //! - the chain names this computer as a current device (an enrollment still
 //!   waiting for a device, or a removed computer, has no device role), and
-//! - the owner has not turned the aggregator off ([`crate::cloud::wants_aggregator`]).
+//! - the owner has not turned the aggregator off ([`crate::cloud::LinkFile::wants_aggregator`]).
 //!
 //! **Each round** (on a chain change, every [`GAP_EVERY`] while a key is
 //! missing, else every [`IDLE_EVERY`]):
@@ -377,7 +377,7 @@ impl Controller {
     }
 
     async fn round(&mut self) -> Duration {
-        if !crate::cloud::wants_aggregator(&self.env.paths) {
+        if !crate::cloud::LinkFile::of(&self.env.paths).wants_aggregator() {
             return self.idle(None);
         }
         let Some(view) = self.env.enrollment.view() else {
@@ -411,7 +411,7 @@ impl Controller {
         if self.keys.is_none() {
             // Every write asks again, under the directory's lock: still on, the link still running (S1).
             let (paths, cancel) = (self.env.paths.clone(), self.env.cancel.clone());
-            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && crate::cloud::wants_aggregator(&paths));
+            let guard: super::keys::Guard = Box::new(move || !cancel.is_cancelled() && crate::cloud::LinkFile::of(&paths).wants_aggregator());
             match HostKeys::load(&self.env.paths, &view.account, &view.me) {
                 Ok(keys) => self.keys = Some(keys.guarded(guard)),
                 Err(error) => {
@@ -1204,7 +1204,7 @@ mod tests {
         .await;
 
         // Turned off: the directory goes, and nothing writes it again.
-        std::fs::write(crate::cloud::file_path(&paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        std::fs::write(crate::cloud::LinkFile::of(&paths).path(), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
         crate::aggregator::forget_all(&paths).unwrap();
         until(Duration::from_secs(10), "idle", || !status.lock().unwrap().running).await;
         {
@@ -1357,7 +1357,7 @@ mod tests {
         })
         .await;
         // The owner turns it off meanwhile (`aggregatorOff` first, the directory a moment later, as the local API does).
-        std::fs::write(crate::cloud::file_path(&r.paths), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
+        std::fs::write(crate::cloud::LinkFile::of(&r.paths).path(), br#"{"aggregate": false, "aggregatorOff": true}"#).unwrap();
         push_mail(&hub, 2, mail(&a, "d-a", &a.admin.1, "m-2", 1, &[0x23; 32]));
         tokio::time::sleep(Duration::from_millis(1200)).await;
         let disk = crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").unwrap();
@@ -1368,7 +1368,7 @@ mod tests {
         assert!(!crate::aggregator::dir(&r.paths).exists(), "nothing wrote the keys back");
         assert!(!r.status.lock().unwrap().running);
         // On again: it starts from the disk (nothing), and takes what the mailbox holds.
-        std::fs::write(crate::cloud::file_path(&r.paths), br#"{"aggregate": true}"#).unwrap();
+        std::fs::write(crate::cloud::LinkFile::of(&r.paths).path(), br#"{"aggregate": true}"#).unwrap();
         r.bump.send_modify(|v| *v += 1);
         until(Duration::from_secs(10), "m-2's epoch 1 taken again", || {
             crate::aggregator::keys::HostKeys::load(&r.paths, "a-1", "m-me").is_ok_and(|k| k.epochs("m-2") == [1])

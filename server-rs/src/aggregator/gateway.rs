@@ -623,7 +623,7 @@ mod tests {
         // alice signed this device in: she sees the other devices, and says who else may.
         let created: std::collections::BTreeMap<String, String> = auth.users.list().await.into_iter().map(|u| (u.name, u.created_at)).collect();
         std::fs::write(
-            crate::cloud::file_path(&state.paths),
+            crate::cloud::LinkFile::of(&state.paths).path(),
             serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 1, "accountsSince": {"alice": created["alice"]}}).to_string(),
         )
         .unwrap();
@@ -706,7 +706,7 @@ mod tests {
         // No owner on file (a device signed in with the CLI): nobody sees the
         // other devices, not even who may manage the link, until one claims it.
         std::fs::write(
-            crate::cloud::file_path(&state.paths),
+            crate::cloud::LinkFile::of(&state.paths).path(),
             serde_json::json!({"aggregate": true, "linkedAt": 1}).to_string(),
         )
         .unwrap();
@@ -715,7 +715,7 @@ mod tests {
         assert_eq!((bye["t"].as_str(), bye["code"].as_str()), (Some("bye"), Some("no_remote_access")));
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
         // A file that does not read: nobody either.
-        std::fs::write(crate::cloud::file_path(&state.paths), "{not json").unwrap();
+        std::fs::write(crate::cloud::LinkFile::of(&state.paths).path(), "{not json").unwrap();
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
     }
 }

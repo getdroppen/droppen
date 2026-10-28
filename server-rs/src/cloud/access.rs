@@ -61,7 +61,7 @@ pub(super) fn local_auth_off() -> ApiError {
 /// `cloud.json` names: it manages it, and sees other devices' copies. Every
 /// owner rule here asks this first; one that needs the local owner too
 /// belongs beside it. When the first user account is made, a link it signed
-/// in passes to that account ([`hand_over_from_local_owner`]).
+/// in passes to that account ([`super::LinkFile::hand_over_from_local_owner`]).
 pub(super) async fn local_owner_now(state: &AppState, user: &str) -> bool {
     let auth = &state.drive.auth;
     crate::auth::is_local_owner(user) && !auth.is_off() && !auth.users.has_users().await

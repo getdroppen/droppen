@@ -188,7 +188,7 @@ pub(super) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentStat
     let before = state::AgentState::load(&files).ok().flatten();
     files.unenroll()?;
     crate::aggregator::forget_all(paths)?;
-    let cloud = crate::cloud::file_path(paths);
+    let cloud = crate::cloud::LinkFile::of(paths).path();
     match std::fs::remove_file(&cloud) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
