@@ -435,8 +435,8 @@ pub fn signed_out_frame() -> gotcha::axum::extract::ws::CloseFrame {
     }
 }
 
-/// The credentials this guard reads out of headers, on the headers themselves.
-trait HeaderMapExt {
+/// The credentials this guard reads out of a request's headers.
+trait RequestCredentialsExt {
     /// The identity a request bridged by the cloud agent speaks for: only with
     /// `expected` (this boot's credential) and only from a loopback peer.
     fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity>;
@@ -445,9 +445,18 @@ trait HeaderMapExt {
     /// the same path. Without the check, a `?ticket=` would be spendable on any
     /// request to a `/ws` path.
     fn is_websocket_upgrade(&self) -> bool;
+
+    /// The token out of `Authorization: Bearer <token>`.
+    ///
+    /// A long-lived token is only ever accepted in this header. It is
+    /// deliberately not read from a query parameter or a cookie: the first ends
+    /// up in proxy logs and browser history, and the second would make every
+    /// route forgeable cross-site unless a second anti-CSRF mechanism were
+    /// added to carry the weight the `Authorization` header carries for free.
+    fn bearer(&self) -> Option<String>;
 }
 
-impl HeaderMapExt for HeaderMap {
+impl RequestCredentialsExt for HeaderMap {
     fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
         let offered = self.get(crate::agent::bridge::CREDENTIAL_HEADER)?.as_bytes();
         if !peer.is_some_and(|p| p.ip().is_loopback()) {
@@ -468,6 +477,16 @@ impl HeaderMapExt for HeaderMap {
         self.get(header::UPGRADE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    }
+
+    fn bearer(&self) -> Option<String> {
+        let value = self.get(header::AUTHORIZATION)?.to_str().ok()?;
+        let (scheme, token) = value.split_once(' ')?;
+        if !scheme.eq_ignore_ascii_case("bearer") {
+            return None;
+        }
+        let token = token.trim();
+        (!token.is_empty()).then(|| token.to_string())
     }
 }
 
@@ -664,8 +683,8 @@ fn is_websocket_path(path: &str) -> bool {
         || (path.starts_with("/api/terminals/") && path.ends_with("/ws"))
 }
 
-/// The query string's parameters, read as themselves.
-trait UriExt {
+/// The ticket query, read from the URI that carries it.
+trait TicketQueryExt {
     /// One query parameter, undecoded.
     ///
     /// Both tickets are base64url, whose alphabet needs no percent-encoding, so
@@ -674,7 +693,7 @@ trait UriExt {
     fn query_param(&self, name: &str) -> Option<String>;
 }
 
-impl UriExt for Uri {
+impl TicketQueryExt for Uri {
     fn query_param(&self, name: &str) -> Option<String> {
         self.query()?
             .split('&')
@@ -684,29 +703,6 @@ impl UriExt for Uri {
     }
 }
 
-/// The bearer credential, read from the one header that carries one.
-trait BearerExt {
-    /// The token out of `Authorization: Bearer <token>`.
-    ///
-    /// A long-lived token is only ever accepted in this header. It is
-    /// deliberately not read from a query parameter or a cookie: the first ends
-    /// up in proxy logs and browser history, and the second would make every
-    /// route forgeable cross-site unless a second anti-CSRF mechanism were
-    /// added to carry the weight the `Authorization` header carries for free.
-    fn bearer(&self) -> Option<String>;
-}
-
-impl BearerExt for HeaderMap {
-    fn bearer(&self) -> Option<String> {
-        let value = self.get(header::AUTHORIZATION)?.to_str().ok()?;
-        let (scheme, token) = value.split_once(' ')?;
-        if !scheme.eq_ignore_ascii_case("bearer") {
-            return None;
-        }
-        let token = token.trim();
-        (!token.is_empty()).then(|| token.to_string())
-    }
-}
 
 /// The caller, for a route that requires one.
 ///

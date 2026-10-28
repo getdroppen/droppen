@@ -278,8 +278,9 @@ pub async fn caller(paths: &Paths, instance: &str, headers: &HeaderMap) -> Optio
 
 /// The token out of `Authorization: Bearer <token>`.
 ///
-/// Copied from [`crate::auth::bearer`] rather than shared with it, because that
-/// one is private to a module whose job is accounts and this one's job is not.
+/// Copied from [`crate::auth::RequestCredentialsExt::bearer`] rather than
+/// shared with it, because that one is private to a module whose job is
+/// accounts and this one's job is not.
 /// The rule is what matters: a long-lived credential is read from this header
 /// and from nowhere else — never a query parameter, which ends up in proxy logs,
 /// and never a cookie, which would make the route forgeable cross-site.
