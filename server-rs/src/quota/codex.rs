@@ -242,14 +242,14 @@ trait WindowValue {
 
 impl WindowValue for Option<&Value> {
     fn rpc_window(&self) -> Option<QuotaWindow> {
-        let object = self?.as_object()?;
+        let object = (*self)?.as_object()?;
         let used = object.get("usedPercent")?.as_f64()?;
         let minutes = object.get("windowDurationMins").and_then(Value::as_i64).unwrap_or(0);
         Some(window(window_label(minutes), minutes, used, object.get("resetsAt").resets_at()))
     }
 
     fn log_window(&self) -> Option<QuotaWindow> {
-        let object = self?.as_object()?;
+        let object = (*self)?.as_object()?;
         let used = object.get("used_percent")?.as_f64()?;
         let minutes = object.get("window_minutes").and_then(Value::as_i64).unwrap_or(0);
         Some(window(window_label(minutes), minutes, used, object.get("resets_at").resets_at()))
@@ -431,7 +431,7 @@ async fn file_reading(path: &Path, floor_ms: i64) -> Option<(i64, CodexQuota)> {
         let Some(limits) = payload.get("rate_limits") else { continue };
         let windows: Vec<QuotaWindow> = [limits.get("primary"), limits.get("secondary")]
             .into_iter()
-            .filter_map(log_window)
+            .filter_map(|raw| raw.log_window())
             .collect();
         if windows.is_empty() {
             continue;
