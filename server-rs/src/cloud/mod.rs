@@ -53,7 +53,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::api::{ApiRouter, AppState};
-use crate::auth::MaybeIdentity;
+use crate::auth::{MaybeIdentity, RETURN_ROUTE};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::openapi_ext::ExtraResponses;
@@ -857,11 +857,6 @@ pub async fn put_access(
     })?;
     Ok(Json(status_for(&state, Some(&user)).await))
 }
-
-/// `POST` here hands back droppen.app's answer from the browser; it is the
-/// one route of this module the login guard lets through without a login
-/// ([`crate::auth`]): the reply is its own credential.
-pub const RETURN_ROUTE: &str = "/api/cloud/link/return";
 
 /// Register this module's routes.
 pub fn routes(router: ApiRouter) -> ApiRouter {

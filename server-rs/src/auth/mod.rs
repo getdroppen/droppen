@@ -615,6 +615,11 @@ impl ResponseExt for Response {
     }
 }
 
+/// `POST` here hands back droppen.app's answer from the browser; it is the
+/// one route of [`crate::cloud`] the login guard lets through without a login
+/// (`exempt`): the reply is its own credential.
+pub const RETURN_ROUTE: &str = "/api/cloud/link/return";
+
 /// Paths that answer without a token.
 fn exempt(method: &Method, path: &str) -> bool {
     if method == Method::POST && [routes::LOGIN_PATH, setup::SETUP_PATH, routes::LOCAL_OPEN_PATH].contains(&path) {
@@ -623,7 +628,7 @@ fn exempt(method: &Method, path: &str) -> bool {
     if method == Method::GET && path == routes::STATUS_PATH {
         return true;
     }
-    if method == Method::POST && path == crate::cloud::RETURN_ROUTE {
+    if method == Method::POST && path == RETURN_ROUTE {
         return true;
     }
     if is_embed(path) {

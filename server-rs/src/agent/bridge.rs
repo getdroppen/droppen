@@ -1085,13 +1085,16 @@ mod tests {
 
     /// `(METHOD, path template)` of every route the server's source
     /// registers on its router: `.get("/api/…", handler)` and the other
-    /// methods (a path constant resolved in its own file), and
+    /// methods (a path constant resolved in its own file, or else in the one
+    /// other file that defines it, as the guard's crate defines
+    /// `auth::RETURN_ROUTE` for cloud's handler), and
     /// `upload_route("/api/…", …)` (a POST). The undocumented ones — the
     /// websockets — are only found this way.
     fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
         let call = regex::Regex::new(r#"\.(get|post|put|patch|delete|head)\(\s*(?:"(/api/[A-Za-z0-9_./{}-]*)"|([A-Z][A-Z0-9_]*))\s*,"#).unwrap();
         let upload = regex::Regex::new(r#"upload_route\(\s*"(/api/[A-Za-z0-9_./{}-]*)""#).unwrap();
-        let mut found = std::collections::BTreeSet::new();
+        let constant = regex::Regex::new(r#"const ([A-Z][A-Z0-9_]*): &str = "(/api/[^"]*)";"#).unwrap();
+        let mut files = Vec::new();
         let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
@@ -1103,27 +1106,41 @@ mod tests {
                 if path.extension().is_none_or(|e| e != "rs") {
                     continue;
                 }
-                let text = std::fs::read_to_string(&path).unwrap();
-                for c in call.captures_iter(&text) {
-                    let route = match (c.get(2), c.get(3)) {
-                        (Some(literal), _) => literal.as_str().to_string(),
-                        (None, Some(name)) => {
-                            let def = regex::Regex::new(&format!(r#"const {}: &str = "([^"]*)";"#, name.as_str())).unwrap();
-                            match def.captures(&text) {
-                                Some(d) => d[1].to_string(),
-                                // Not a route constant of this file (`.get(KEY, …)` on a map).
-                                None => continue,
-                            }
+                files.push(std::fs::read_to_string(&path).unwrap());
+            }
+        }
+        // A route constant every file can name: one defined in exactly one file.
+        let mut shared: std::collections::BTreeMap<String, Option<String>> = std::collections::BTreeMap::new();
+        for text in &files {
+            for d in constant.captures_iter(text) {
+                shared
+                    .entry(d[1].to_string())
+                    .and_modify(|seen| *seen = None)
+                    .or_insert_with(|| Some(d[2].to_string()));
+            }
+        }
+        let mut found = std::collections::BTreeSet::new();
+        for text in &files {
+            for c in call.captures_iter(text) {
+                let route = match (c.get(2), c.get(3)) {
+                    (Some(literal), _) => literal.as_str().to_string(),
+                    (None, Some(name)) => {
+                        let def = regex::Regex::new(&format!(r#"const {}: &str = "([^"]*)";"#, name.as_str())).unwrap();
+                        match (def.captures(text), shared.get(name.as_str())) {
+                            (Some(d), _) => d[1].to_string(),
+                            (None, Some(Some(route))) => route.clone(),
+                            // Not a route constant (`.get(KEY, …)` on a map).
+                            _ => continue,
                         }
-                        _ => unreachable!(),
-                    };
-                    if route.starts_with("/api/") {
-                        found.insert((c[1].to_ascii_uppercase(), route));
                     }
+                    _ => unreachable!(),
+                };
+                if route.starts_with("/api/") {
+                    found.insert((c[1].to_ascii_uppercase(), route));
                 }
-                for c in upload.captures_iter(&text) {
-                    found.insert(("POST".to_string(), c[1].to_string()));
-                }
+            }
+            for c in upload.captures_iter(text) {
+                found.insert(("POST".to_string(), c[1].to_string()));
             }
         }
         found
