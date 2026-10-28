@@ -1029,8 +1029,8 @@ mod tests {
         assert!(agents.get("x").unwrap().record_check(&agents, &failed));
         let credential = state.drive.auth.internal_credential().to_string();
         let device = [
-            (crate::agent::bridge::CREDENTIAL_HEADER, credential.as_str()),
-            (crate::agent::bridge::DEVICE_HEADER, "d-1"),
+            (crate::http::bridge::CREDENTIAL_HEADER, credential.as_str()),
+            (crate::http::bridge::DEVICE_HEADER, "d-1"),
         ];
 
         // This computer, and a device bridged in: how the check ended, not why.

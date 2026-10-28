@@ -10,6 +10,7 @@ use futures_util::SinkExt;
 use gotcha::axum::extract::ws::{Message, WebSocket};
 use tokio_util::sync::CancellationToken;
 
+pub mod bridge;
 pub mod created;
 pub mod error;
 pub mod extract;
