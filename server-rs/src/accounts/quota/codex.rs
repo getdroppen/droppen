@@ -47,7 +47,7 @@ use super::{window, QuotaWindow, USAGE_TTL};
 use crate::openapi_ext::Nullable;
 use super::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
-use crate::record::replay::parse_iso8601;
+use droppen_base::time::parse_iso_ms;
 use crate::sessions::util::{read_tail_lines, try_parse};
 use droppen_base::time::iso8601;
 
@@ -416,7 +416,7 @@ async fn file_reading(path: &Path, floor_ms: i64) -> Option<(i64, CodexQuota)> {
         let Some(stamp) = entry.get("timestamp").and_then(Value::as_str) else {
             continue;
         };
-        let Some(at) = parse_iso8601(stamp) else { continue };
+        let Some(at) = parse_iso_ms(stamp) else { continue };
         if at < floor_ms {
             break;
         }

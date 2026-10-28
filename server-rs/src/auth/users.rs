@@ -744,7 +744,7 @@ fn store_error(error: rusqlite::Error) -> UserError {
 /// will not parse falls back to now rather than dropping an account, which is
 /// the one outcome this file must never produce.
 fn epoch_seconds(stamp: &str) -> i64 {
-    crate::record::replay::parse_iso8601(stamp)
+    droppen_base::time::parse_iso_ms(stamp)
         .map(|millis| millis / 1_000)
         .unwrap_or_else(|| {
             SystemTime::now()

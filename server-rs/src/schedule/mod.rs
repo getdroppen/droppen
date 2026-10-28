@@ -288,13 +288,6 @@ fn now_iso() -> String {
     iso8601(SystemTime::now())
 }
 
-/// A stored ISO-8601 stamp as an instant, if it is one.
-///
-/// The parser lives in [`droppen_base::time::parse_iso`], beside the clock; it stays
-/// re-exported here because the agent's stream code and the aggregator reach
-/// for it under this path.
-pub use droppen_base::time::parse_iso;
-
 /// A string field, or the empty string, from a hand-editable file.
 fn string_at(entry: &Value, key: &str) -> String {
     entry.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
@@ -764,6 +757,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_base::time::parse_iso;
 
     fn paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().expect("tempdir");

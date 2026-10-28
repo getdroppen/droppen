@@ -41,6 +41,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use super::{Event, Line};
 use crate::instance::DEFAULT_INSTANCE;
 use crate::paths::{ClaudeRoot, Paths};
+use droppen_base::time::parse_iso_ms;
 
 /// How much silence is replayed before it is compressed, by default.
 const DEFAULT_MAX_GAP: Duration = Duration::from_secs(3);
@@ -156,7 +157,7 @@ impl ReplayArgs {
 
             // The clock, before the write: a line is due at the moment it was
             // recorded, not the moment after it lands.
-            let stamp = parse_iso8601(&line.at);
+            let stamp = parse_iso_ms(&line.at);
             if let Some(stamp) = stamp {
                 first.get_or_insert(stamp);
                 if !instant {
@@ -299,7 +300,7 @@ async fn survey(log: &Path) -> Result<Plan, String> {
     while let Some(line) = next_line(&mut lines).await {
         if matches!(line.event, Event::Transcript { .. } | Event::Sidecar { .. }) {
             acts += 1;
-            if let Some(stamp) = parse_iso8601(&line.at) {
+            if let Some(stamp) = parse_iso_ms(&line.at) {
                 first.get_or_insert(stamp);
                 last = Some(stamp);
             }
@@ -354,12 +355,6 @@ fn span(ms: i64) -> String {
         format!("{seconds}s")
     }
 }
-
-/// Milliseconds since the epoch, for a stamp [`droppen_base::time::iso8601`] wrote.
-///
-/// Re-exported under the name this module introduced; the parser itself lives
-/// in [`droppen_base::time::parse_iso_ms`], beside the clock every other caller uses.
-pub use droppen_base::time::parse_iso_ms as parse_iso8601;
 
 #[cfg(test)]
 mod tests {
@@ -432,12 +427,12 @@ mod tests {
     fn a_stamp_survives_the_round_trip_it_was_written_for() {
         for millis in [0i64, 1, 1_000, 1_700_000_000_123, 253_370_764_800_000] {
             let stamp = iso8601(SystemTime::UNIX_EPOCH + Duration::from_millis(millis as u64));
-            assert_eq!(parse_iso8601(&stamp), Some(millis), "{stamp}");
+            assert_eq!(parse_iso_ms(&stamp), Some(millis), "{stamp}");
         }
-        assert_eq!(parse_iso8601("2026-08-29T12:00:00Z"), parse_iso8601("2026-08-29T12:00:00.000Z"));
-        assert_eq!(parse_iso8601("2026-08-29T12:00:00.5Z"), parse_iso8601("2026-08-29T12:00:00.500Z"));
+        assert_eq!(parse_iso_ms("2026-08-29T12:00:00Z"), parse_iso_ms("2026-08-29T12:00:00.000Z"));
+        assert_eq!(parse_iso_ms("2026-08-29T12:00:00.5Z"), parse_iso_ms("2026-08-29T12:00:00.500Z"));
         for bad in ["", "nonsense", "2026-08-29", "2026-13-01T00:00:00.000Z", "2026-08-32T00:00:00.000Z"] {
-            assert_eq!(parse_iso8601(bad), None, "{bad}");
+            assert_eq!(parse_iso_ms(bad), None, "{bad}");
         }
         assert_eq!(span(0), "0s");
         assert_eq!(span(90_000), "1m30s");

@@ -489,16 +489,6 @@
       ]
     },
     {
-      "why": "They read droppen_base::time's parse_iso and parse_iso_ms through the re-exports schedule::parse_iso and record::replay::parse_iso8601. They go when the callers name droppen_base::time.",
-      "edges": [
-        "accounts::quota::codex -> record",
-        "agent -> schedule",
-        "auth -> record",
-        "cloud -> record",
-        "sessions::codex_tools -> record"
-      ]
-    },
-    {
       "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the spawn dependencies they use (SpawnDeps), as the spawns do.",
       "edges": [
         "accounts::setup_token -> drive",

@@ -1899,7 +1899,7 @@ fn copy_start(items: &[crate::sessions::util::TranscriptItem], cutoff: Option<u6
 
 /// An ISO-8601 time as ms since the epoch.
 fn iso_ms(stamp: &str) -> Option<u64> {
-    crate::schedule::parse_iso(stamp)
+    droppen_base::time::parse_iso(stamp)
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
 }

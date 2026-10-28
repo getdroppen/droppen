@@ -86,7 +86,7 @@ pub(super) fn same_account(file: &CloudFile, accounts: &BTreeMap<String, String>
         Some(since) => since == created,
         None => {
             file.owner.as_deref() == Some(user)
-                && match (crate::record::replay::parse_iso8601(created), file.linked_at) {
+                && match (droppen_base::time::parse_iso_ms(created), file.linked_at) {
                     (Some(created_ms), Some(linked_ms)) => u64::try_from(created_ms).is_ok_and(|c| c <= linked_ms),
                     _ => false,
                 }
