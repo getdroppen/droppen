@@ -784,9 +784,9 @@ mod tests {
         std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
     }
 
-    /// Re-review of S1-5, M1: a deletion of the other devices' copies the
-    /// process did not finish (it stopped right after turning the aggregator
-    /// off) is finished at the next start, with the aggregator off.
+    /// A deletion of the other devices' copies that a stop interrupted (it
+    /// stopped right after turning the aggregator off) is finished at the next
+    /// start, with the aggregator off.
     #[tokio::test]
     async fn an_unfinished_deletion_of_the_copies_is_finished_at_start() {
         let dir = tempfile::tempdir().unwrap();
