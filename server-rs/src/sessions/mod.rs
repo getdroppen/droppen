@@ -32,7 +32,6 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountRef;
-use crate::claude_roots;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
 use crate::time::mtime_ms;

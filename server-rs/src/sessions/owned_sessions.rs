@@ -63,7 +63,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{ServerId, SessionFiles, Source};
+use super::{ServerId, Source};
 use crate::db::Db;
 use crate::paths::{ClaudeRoot, Paths};
 
@@ -290,6 +290,7 @@ pub async fn prune(paths: &Paths) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::SessionFiles;
 
     fn paths(dir: &tempfile::TempDir) -> Paths {
         Paths::new(dir.path().to_path_buf())
