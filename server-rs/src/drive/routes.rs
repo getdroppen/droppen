@@ -1399,7 +1399,7 @@ pub async fn session_first_unread(
     State(state): State<AppState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<FirstUnreadQuery>,
-) -> Result<Json<crate::attention::FirstUnread>, ApiError> {
+) -> Result<Json<crate::sessions::attention::FirstUnread>, ApiError> {
     first_unread_of(&state.drive, source, &id, query.after.as_deref()).await.map(Json)
 }
 
@@ -1409,9 +1409,9 @@ pub(crate) async fn first_unread_of(
     source: Source,
     id: &str,
     after: Option<&str>,
-) -> Result<crate::attention::FirstUnread, ApiError> {
+) -> Result<crate::sessions::attention::FirstUnread, ApiError> {
     let (items, mtime) = whole_transcript(drive, source, id).await?;
-    Ok(crate::attention::first_unread(&items, after, &mtime))
+    Ok(crate::sessions::attention::first_unread(&items, after, &mtime))
 }
 
 /// Whether an agent id can name a file next to a transcript.

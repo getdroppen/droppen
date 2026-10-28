@@ -111,7 +111,7 @@ pub const INDEX_SCHEMA: &[&str] = &[
          probed_at INTEGER NOT NULL
      ) STRICT, WITHOUT ROWID;
      CREATE INDEX IF NOT EXISTS repo_keys_by_probe ON repo_keys (probed_at)",
-    // 2 — the unread ledgers (`crate::attention::unread`): the timestamps of a
+    // 2 — the unread ledgers (`crate::sessions::attention::unread`): the timestamps of a
     // transcript's newest assistant messages, and how far into the file they
     // were read.
     //

@@ -25,7 +25,7 @@
 //!
 //! Three of the four are also free functions, because three of their call sites
 //! have no server to name and — per the table above — must not name one:
-//! `crate::attention::seen::key_of` is called from a token mint that holds only
+//! `crate::sessions::attention::seen::key_of` is called from a token mint that holds only
 //! a `(source, id)`, and `crate::inject::lock::acquire` takes the source as a
 //! `&str` on purpose so the separator property can be tested against sources
 //! that do not exist. The method bodies *are* the free functions, so there is

@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{codex, transcript, SessionActivity, SessionSummary, Source};
-use crate::attention::seen;
+use crate::sessions::attention::seen;
 use crate::openapi_ext::Nullable;
 use crate::paths::Paths;
 use crate::time::iso8601;
