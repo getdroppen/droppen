@@ -25,8 +25,8 @@ import { securityBundles } from "./security-copy";
  * protocol code (`server-rs/crates/rh-proto`, `web/src/lib/e2e`) or the
  * public design notes (docs/cross-machine-architecture.md, docs/local-
  * aggregator.md §3, docs/web-integrity.md, docs/relay-and-plans.md §2,
- * docs/hub-api/, SECURITY.md, the README's "What the Hub sees"); the
- * renewal section follows docs/host-identity-rotation.md. The labels and
+ * docs/hub-api/, SECURITY.md, docs/security-model.md's "What the Hub sees");
+ * the renewal section follows docs/host-identity-rotation.md. The labels and
  * formulas in the mono blocks are the code's own bytes, quoted, so they are
  * not translated; every part of them explains itself on hover, focus or tap
  * (`formula.tsx`, its words and code references in `formula-data.ts`).

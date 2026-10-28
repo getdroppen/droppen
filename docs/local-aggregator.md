@@ -48,7 +48,7 @@
 | 设备侧确认 | droppen.app「添加机器」：`POST /v1/enrollments` → 显示命令 → 轮询 → 验证明 → 链上写 `[AddMachine, KeyEpochs]` → 写钥环、交 `MK`。需要完整设备的设备会话 | `W/lib/hub/account.ts:1259-1300`、`W/features/cloud/cloud-app.tsx:974-1028`、Hub | 必须有一台可管理账号的设备在场 |
 | 链接何时起 | 只在 server 启动时 `spawn_if_enrolled`；注册后要重启 | `S/app.rs:333-345`、`S/agent/link.rs:114-182` | 要能在运行中启停（S1-1） |
 | 解除 | 没有 `unenroll` 或 `status`；agent 不理会自己被移除；Hub 在 agent 登录时不查它是否仍在链上；`AddMachine` 不告警 | `S/agent/enroll.rs:36-46`、Hub、`S/agent/link.rs:516` | S1-1 补上 |
-| 本机账号 | 每个实例单独，argon2id；用 bearer（localStorage 的 `rh.auth.token`），**没有 cookie**，**没有角色**；没有任何请求因为来源地址被放行：有用户账号时处处登录；没有用户账号（桌面 App 的应用内部账号不算）时，这台设备的主人用 `remote-hand-server open`（本机控制 socket 发的一次性令牌）以 `local:owner` 身份进入，其他设备用一次性设置码建第一个账号（2026-10-19 起，见 README「谁需要登录」） | `S/auth/users.rs`、`S/auth/mod.rs:212-263,494-509`、`W/lib/auth.ts:25` | 登录 Droppen 前必须有本机账号 |
+| 本机账号 | 每个实例单独，argon2id；用 bearer（localStorage 的 `rh.auth.token`），**没有 cookie**，**没有角色**；没有任何请求因为来源地址被放行：有用户账号时处处登录；没有用户账号（桌面 App 的应用内部账号不算）时，这台设备的主人用 `remote-hand-server open`（本机控制 socket 发的一次性令牌）以 `local:owner` 身份进入，其他设备用一次性设置码建第一个账号（2026-10-19 起，见 manual.zh-CN.md「谁需要登录」） | `S/auth/users.rs`、`S/auth/mod.rs:212-263,494-509`、`W/lib/auth.ts:25` | 登录 Droppen 前必须有本机账号 |
 | CSRF | `/api/*` 上有 Origin 检查；没有 Origin 的请求放行 | `S/origin.rs:25-40,106-137` | 新路由沿用，另加 nonce |
 | 设备经通道进本机 | 桥接到回环 `/api/*`，身份是 `cloud:<设备>`。任何当前设备都能到达所有 `/api/*`，包括自升级；只有 `/rh/display-name`、`/rh/machine-key` 限完整设备 | `S/agent/bridge.rs:141-171`、`S/auth/mod.rs:295-309`、`S/agent/link.rs:632-759` | 不可管理账号的设备要一份拒绝清单 |
 | 设备会话与信箱 | 设备签挑战即可换 30 天的设备会话，不需要 bearer；`POST /v1/devices` 接受任何会话；只有完整设备能发信 | Hub | 本机不需要密码；索钥请求要放开给非管理设备 |

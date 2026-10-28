@@ -74,15 +74,15 @@ copyright and licence notice.
   review blocks, it says why in a comment and a maintainer decides. A
   maintainer also decides when the pull request changes files under
   `.github/` ([docs/ci-security.md](docs/ci-security.md)).
-- Keep the documentation in step: [README.zh-CN.md](README.zh-CN.md) is the full
-  manual, and the server's API contract (`openapi/openapi.json`,
+- Keep the documentation in step: [docs/manual.zh-CN.md](docs/manual.zh-CN.md) is
+  the full manual, and the server's API contract (`openapi/openapi.json`,
   `web/src/api/schema.d.ts`) is regenerated with `pnpm gen:api` after a change
   to the server's routes or types, and committed with it.
 
 ## Run the tests before you open a pull request
 
-Setup is in the [README](README.md#build-from-source): Rust (stable), Node 22
-and pnpm 10.6.3.
+Setup is in [docs/development.md](docs/development.md#build-from-source): Rust
+(stable), Node 22 and pnpm 10.6.3.
 
 The web app:
 
