@@ -150,7 +150,7 @@ test("signed in, the landing page is still the landing page, with a way back int
   const words = text(draw("zh-CN", { signedIn: true }));
   for (const gone of ["台运行 AI 的电脑免费", "免费注册", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
   assert.ok(!text(draw("zh-CN", { signedIn: true, signup: "invite" })).includes("注册需要邀请码。"), "by invite too");
-  assert.ok(text(draw("zh-CN")).includes("台运行 AI 的电脑免费"), "signed out keeps the sign-up prompt");
+  assert.ok(text(draw("zh-CN")).includes("免费注册"), "signed out keeps the sign-up prompt");
 });
 
 test("routing: `/` is the landing page signed in or not; the app keeps its own routes and starts at its start", () => {
