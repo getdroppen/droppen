@@ -1,6 +1,6 @@
 # Droppen
 
-[English](README.md) | 简体中文
+[English](../README.md) | [简体中文](../README.zh-CN.md)
 
 Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
@@ -8,7 +8,7 @@ Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
 ## 功能
 
-- **插件**：Droppen 的核心不带任何插件；插件按实例安装，装好后默认开启（配置 `[plugins] enable/disable` 可强制），由该实例自己的服务器提供给它的页面（桌面应用窗口、服务器自己的浏览器页面），droppen.app 上不出现。在「设置 › 插件」里可从 `.tgz` 文件安装、卸载或开关；页面在 `/p/<插件 id>/`，数据在插件自己的文档存储 `instances/<实例>/plugins/<id>/store.db`。SDK 是 `packages/plugin-sdk`（`@droppen/plugin-sdk`）与 `server-rs/crates/droppen-plugin-sdk`，MIT OR Apache-2.0。见 [运行时插件](docs/plugins/runtime.md)、[文档存储协议](docs/plugins/storage-protocol.md)。
+- **插件**：Droppen 的核心不带任何插件；插件按实例安装，装好后默认开启（配置 `[plugins] enable/disable` 可强制），由该实例自己的服务器提供给它的页面（桌面应用窗口、服务器自己的浏览器页面），droppen.app 上不出现。在「设置 › 插件」里可从 `.tgz` 文件安装、卸载或开关；页面在 `/p/<插件 id>/`，数据在插件自己的文档存储 `instances/<实例>/plugins/<id>/store.db`。SDK 是 `packages/plugin-sdk`（`@droppen/plugin-sdk`）与 `server-rs/crates/droppen-plugin-sdk`，MIT OR Apache-2.0。见 [运行时插件](plugins/runtime.md)、[文档存储协议](plugins/storage-protocol.md)。
 
 - **会话置顶**：列表右键菜单或会话详情标题栏可置顶／取消置顶。置顶会话显示在整个列表最上方（目录分组之前），仍遵守搜索与来源筛选，置顶项内部沿用原列表顺序。状态保存在实例自己的数据库，通过实时 feed 同步到手机和电脑；不修改 CLI 的会话文件。
 
@@ -23,7 +23,7 @@ Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
   - **worktree 分组**：每行带 `repoKey`（该 cwd 的 `git rev-parse --git-common-dir` 规范化路径），同一个仓库的多个 worktree 共享一个 key，客户端可以把它们收进一个标题下；不在 git 里则为 `null`。纯展示用，不影响任何 server 能看见什么。新建会话的目录候选（`recent-cwds`）按 `repoKey` 去重，每个仓库只留最近开工的那个 worktree。
   - **附件**：支持上传**任意类型**文件（点纸夹图标或直接粘贴）——图片显示缩略图，其他文件（md / csv 等）显示为可下载的文件卡片；Claude 用 Read 工具读取，Codex 图片走 App Server 的 `localImage`、其余在 prompt 中给出路径。
   - **Codex App Server**：每个受管会话持有常驻 `codex app-server`，通过原生 `turn/start`、`turn/steer`、`turn/interrupt` 驱动。忙时消息进入服务器持久队列，⚡ 将消息递送到当前回合，不再以终止进程模拟 steer。服务器重启后通过 session shim 重连原进程并回放确认；旧版 `codex exec` 会运行至结束，下一次发送才迁移。未获确认的递送不会自动重发；CLI 异常退出后保留队列，需查看 transcript 后再撤回或重发。使用当前 Codex CLI（已验证 0.153.4）；App Server 仍是上游持续演进的接口。
-  - **ACP agent**：新建会话时可以选任何一个已配置的 ACP agent——只要在 stdio 上说 [Agent Client Protocol](https://agentclientprotocol.com)（JSON-RPC）的程序都行，可以同时配置多个。「设置 → 智能体与账号 → ACP」里每个 agent 一张卡片：添加时可以从内置预设（[`server-rs/src/acp-agents.json`](server-rs/src/acp-agents.json)，只描述 id、名称、命令行和说明，添加之前不会运行）里选一个已知的 agent，也可以填任意 agent 的命令；每个 agent 有自己的 id（小写字母、数字和 `-`）、显示名称、可执行文件、参数和额外环境变量（`GET /api/acp/agents`、`PUT`/`DELETE /api/acp/agents/{id}`，某个回合还在运行、或有消息在等它的回合时，删除会被拒绝（409）；变量只回显名字、不回显值，填写新的内容会整体替换，`PATH`、`LD_PRELOAD` 等与账号环境块相同的变量被拒绝；从远程设备修改需要管理员权限）。「检查」（`POST /api/acp/agents/{id}/check`）用它的环境变量启动它（在它自己的进程组里：不论是自己退出、超时还是请求被取消，它启动的进程都随它一起结束）、发送 `initialize`、读出它声明的名称、版本和能力，然后停掉，不会向模型发任何东西；结果（可用、找不到命令或启动失败，附带 stderr 的末尾和它查找的 PATH，变量的值会被去掉；这段原文只发给能管理这台电脑的设备）记在 agent 上，命令行或环境变量改动后作废；检查失败的 agent 在新建会话时仍可选，但会以红字提示。agent 的图标按 id 取 `web/src/features/sessions/presets/icons/<id>.svg`，没有则用通用图标。每个会话记下它运行的 agent（会话行的 `acpAgent`），重新打开和继续时总是用这个 agent，不受之后改了哪个 agent 的影响；改了这个 agent 的命令行、参数或环境变量（或删除后重新添加同一 id）时，会话的下一条消息以新配置启动它：空闲的进程立即结束，正在运行的在当前回合和改动时已排队的消息完成后结束，这期间再发给这个会话的消息会被拒绝（409），等这一回合结束后再发；会话 id 由 Droppen 自己生成（agent 给的 id 记在 transcript 头部的 `agentSessionId`，与 agent 通信时用它），所以两个 agent 给出相同的 id 也不会冲突。移除一个 agent 不会删除它的会话：会话仍在列表里、可以查看和归档，但不能继续，直到再次添加同一 id 的 agent。每个会话一个 agent 进程：新会话用 `session/new`，重新打开用 `session/load`；忙时消息在服务端排队，回合结束后依次发送，⏹ 发送 `session/cancel`。agent 可以在 ACP 回合里通过客户端运行 shell 和读写文件（`terminal/*`、`fs/*`），Droppen 以运行 agent 的同一用户在本机执行，每个终端是独立进程组，会话进程退出时一并结束；`session/request_permission` 一律拒绝。transcript 由 Droppen 自己写在实例目录的 `acp-sessions/<agent id>/<会话 id>.jsonl`（流式文字、思考、工具调用与结果、上下文用量），会话视图读的就是它；这份 transcript 丢失时，重新打开会用 agent 自己 `session/load` 回放的历史补上。模型和推理强度可以在输入框里选：列表是该 agent 自己通过 ACP 配置项公布的（类别 `model` 和 `thought_level`），`GET /api/models?source=acp&acpAgent=<id>` 第一次被问到时，在临时目录里开一个会话读出选项再用 `session/close` 关掉，结果按 agent 缓存，该 agent 的设置改动后重新读取；发送时与会话当前值不同的选择会先用 `session/set_config_option` 下发再开始回合，agent 没有公布的值直接拒绝，会话实际在用的模型和强度记在 transcript 的 `config` 记录里。权限和账号由 agent 自己的配置决定，请求里带了会被拒绝。协议客户端（`server-rs/src/inject/acp/`：连接、客户端方法、驱动；消息类型在 `server-rs/src/acp.rs`）与具体 agent 无关，代码里没有内置任何特定 agent。没有使用官方 Rust SDK `agent-client-protocol`：它会给整个构建打开 `serde_json` 的 `preserve_order`，改变 Droppen 所有 JSON 的字段顺序。第一版的限制：只列出由本实例创建的会话（不发现在 Zed 等其他客户端开的会话）；agent 是本服务进程的子进程，不经 session shim、不写 journal，服务重启会中断进行中的回合（已输出的内容保留），下一条消息重新 `session/load`；空闲 30 分钟后进程退出，它启动的进程一并结束；切换模型或推理强度 60 秒内没有回应时，这条消息失败，agent 进程被当作已退出；不支持 steer、定时任务和即时聊天。
+  - **ACP agent**：新建会话时可以选任何一个已配置的 ACP agent——只要在 stdio 上说 [Agent Client Protocol](https://agentclientprotocol.com)（JSON-RPC）的程序都行，可以同时配置多个。「设置 → 智能体与账号 → ACP」里每个 agent 一张卡片：添加时可以从内置预设（[`server-rs/src/acp-agents.json`](../server-rs/src/acp-agents.json)，只描述 id、名称、命令行和说明，添加之前不会运行）里选一个已知的 agent，也可以填任意 agent 的命令；每个 agent 有自己的 id（小写字母、数字和 `-`）、显示名称、可执行文件、参数和额外环境变量（`GET /api/acp/agents`、`PUT`/`DELETE /api/acp/agents/{id}`，某个回合还在运行、或有消息在等它的回合时，删除会被拒绝（409）；变量只回显名字、不回显值，填写新的内容会整体替换，`PATH`、`LD_PRELOAD` 等与账号环境块相同的变量被拒绝；从远程设备修改需要管理员权限）。「检查」（`POST /api/acp/agents/{id}/check`）用它的环境变量启动它（在它自己的进程组里：不论是自己退出、超时还是请求被取消，它启动的进程都随它一起结束）、发送 `initialize`、读出它声明的名称、版本和能力，然后停掉，不会向模型发任何东西；结果（可用、找不到命令或启动失败，附带 stderr 的末尾和它查找的 PATH，变量的值会被去掉；这段原文只发给能管理这台电脑的设备）记在 agent 上，命令行或环境变量改动后作废；检查失败的 agent 在新建会话时仍可选，但会以红字提示。agent 的图标按 id 取 `web/src/features/sessions/presets/icons/<id>.svg`，没有则用通用图标。每个会话记下它运行的 agent（会话行的 `acpAgent`），重新打开和继续时总是用这个 agent，不受之后改了哪个 agent 的影响；改了这个 agent 的命令行、参数或环境变量（或删除后重新添加同一 id）时，会话的下一条消息以新配置启动它：空闲的进程立即结束，正在运行的在当前回合和改动时已排队的消息完成后结束，这期间再发给这个会话的消息会被拒绝（409），等这一回合结束后再发；会话 id 由 Droppen 自己生成（agent 给的 id 记在 transcript 头部的 `agentSessionId`，与 agent 通信时用它），所以两个 agent 给出相同的 id 也不会冲突。移除一个 agent 不会删除它的会话：会话仍在列表里、可以查看和归档，但不能继续，直到再次添加同一 id 的 agent。每个会话一个 agent 进程：新会话用 `session/new`，重新打开用 `session/load`；忙时消息在服务端排队，回合结束后依次发送，⏹ 发送 `session/cancel`。agent 可以在 ACP 回合里通过客户端运行 shell 和读写文件（`terminal/*`、`fs/*`），Droppen 以运行 agent 的同一用户在本机执行，每个终端是独立进程组，会话进程退出时一并结束；`session/request_permission` 一律拒绝。transcript 由 Droppen 自己写在实例目录的 `acp-sessions/<agent id>/<会话 id>.jsonl`（流式文字、思考、工具调用与结果、上下文用量），会话视图读的就是它；这份 transcript 丢失时，重新打开会用 agent 自己 `session/load` 回放的历史补上。模型和推理强度可以在输入框里选：列表是该 agent 自己通过 ACP 配置项公布的（类别 `model` 和 `thought_level`），`GET /api/models?source=acp&acpAgent=<id>` 第一次被问到时，在临时目录里开一个会话读出选项再用 `session/close` 关掉，结果按 agent 缓存，该 agent 的设置改动后重新读取；发送时与会话当前值不同的选择会先用 `session/set_config_option` 下发再开始回合，agent 没有公布的值直接拒绝，会话实际在用的模型和强度记在 transcript 的 `config` 记录里。权限和账号由 agent 自己的配置决定，请求里带了会被拒绝。协议客户端（`server-rs/src/inject/acp/`：连接、客户端方法、驱动；消息类型在 `server-rs/src/acp.rs`）与具体 agent 无关，代码里没有内置任何特定 agent。没有使用官方 Rust SDK `agent-client-protocol`：它会给整个构建打开 `serde_json` 的 `preserve_order`，改变 Droppen 所有 JSON 的字段顺序。第一版的限制：只列出由本实例创建的会话（不发现在 Zed 等其他客户端开的会话）；agent 是本服务进程的子进程，不经 session shim、不写 journal，服务重启会中断进行中的回合（已输出的内容保留），下一条消息重新 `session/load`；空闲 30 分钟后进程退出，它启动的进程一并结束；切换模型或推理强度 60 秒内没有回应时，这条消息失败，agent 进程被当作已退出；不支持 steer、定时任务和即时聊天。
   - **幂等发送**：每条消息在创建时生成一个 `clientMessageId`（UUID），和消息一起存在本机待发队列里，每次重试都带同一个 id；服务端在入队**之前**按 id 占位（本实例 `state.db` 的 `client_messages`，保留 7 天），重复的 id 只回放第一次的结果（`duplicate: true`）、不再入队，`/api/sessions/new` 重试拿到的是同一个会话；被 4xx 拒绝的尝试不记录。每条外发消息标四种状态：**已保存**（只在本机，还没发出）、**已送达**（服务端已收到，排队中）、**已执行**（已交给 agent）、**未知**（发出去了但没收到回应）。网络错误、超时或认不出的 5xx 一律记为未知，**不会被自动重发**，它后面的消息也先不发；恢复连接后客户端用 `GET /api/sessions/{source}/{id}/receipts?ids=` 问服务端：收到过就采用服务端的状态，从没见过就标「未送达，可安全重发」，一键重发沿用同一个 id。会话 `state` 帧和 `SessionDetail` 带最近两小时（最多 100 条）的 `receipts`。claude 与 codex 都支持。
   - **agent 提问（`AskUserQuestion`）**：受管的 claude 会话现在能真正向你提问并等你回答。常驻进程带 `--permission-prompt-tool stdio` 启动，模型调用 `AskUserQuestion` 时 CLI 把它作为 `control_request` 发给服务端、整轮停住等答案（没有超时）；服务端把问题记进本实例 `state.db` 的 `session_questions`（按 CLI 的 `request_id`），会话行与窗格立刻标成「在问你」（即使这一轮仍在 working），并推一条通知（每个问题只推一次，Bark 走 time-sensitive）。transcript 里的问题卡片变成可交互：单选点一下就提交，多选勾完再提交，每题都能填「其他」自由文本，也可以「让 agent 自己决定」（告诉它你不回答、按它的判断继续）。回答是对数据库的一次 compare-and-set（`pending → answered`），**先**落库再写进 CLI 的 stdin，所以两台设备同时回答时后到的一方拿到 `409 question_settled`，卡片显示谁、何时已回答。问题挂着时在输入框里发的普通消息会**直接作为这道题的回答**（`response` 自由文本）送进去，而不是排在被卡住的那一轮后面；输入框上方会写明这一点。接口：`POST /api/sessions/{source}/{id}/questions/{requestId}/answer`（`{answers: {题目原文: 字符串 | 字符串数组}, notes?, response?}`，多选数组由服务端用 `", "` 拼接、`questions` 原样回传给 CLI）、`…/dismiss`、`GET …/questions`；会话 `state` 帧和 `SessionDetail` 都带 `questions`。问题挂着期间：卡顿看门狗、「transcript 说已结束」的幽灵轮次判定、空闲退役、设置变更重启和提前换号都会让路；点停止会把问题标成已取消。进程没了（崩溃、换号重启、空闲退役……）问题就**过期**——`--resume` 不会再问一遍——但仍可回答，答案会作为一条普通消息（「Answer to your question "…": …」）发给会话。服务端重启不影响：进程在 session shim 后面活着，重启后回放 stdout 重建挂着的问题（库里已答、但答案还没写进 stdin 的，会把存下的答案再写一遍，CLI 会忽略重复的 `request_id`）。已在跑的常驻进程不会为此被强制重启，等它下一次因为别的原因重启（换设置、换号、崩溃、空闲退役）时才带上新参数。codex 不受影响（它以 `approvalPolicy: never` 运行，不会提问）。
   - **下载按钮**：agent 回复里提到的、真实存在于 `$HOME` 内的文件，会在消息底部生成一键下载卡片，省去去文件列表里翻找。
@@ -79,7 +79,7 @@ Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
 ## 架构
 
-- `server-rs/`：Rust + [gotcha](https://crates.io/crates/gotcha)（axum + OpenAPI 派生），监听 `127.0.0.1:8700`，OpenAPI 文档位于 `/openapi.json`。**单个可执行文件**：前端产物在编译期由 rust-embed 打进二进制，运行时不需要任何 Node 依赖。框架填不上的洞（额外状态码、zod 的两种「可缺省」、spec 导出、优雅停机、静态资源）集中在少数几个模块里，见 [`server-rs/README.md`](server-rs/README.md)。同一个二进制还负责**看住自己**：`remote-hand-server up` 是一圈极简的 supervisor loop，起一个 `serve` 子进程守着——干净退出就立刻重新拉起（自我更新正是这样切进新二进制的），反复起不来就退避并逐级回滚，同时用 `waitpid(-1)` 收掉所有被过继过来的孤儿进程。
+- `server-rs/`：Rust + [gotcha](https://crates.io/crates/gotcha)（axum + OpenAPI 派生），监听 `127.0.0.1:8700`，OpenAPI 文档位于 `/openapi.json`。**单个可执行文件**：前端产物在编译期由 rust-embed 打进二进制，运行时不需要任何 Node 依赖。框架填不上的洞（额外状态码、zod 的两种「可缺省」、spec 导出、优雅停机、静态资源）集中在少数几个模块里，见 [`server-rs/README.md`](../server-rs/README.md)。同一个二进制还负责**看住自己**：`remote-hand-server up` 是一圈极简的 supervisor loop，起一个 `serve` 子进程守着——干净退出就立刻重新拉起（自我更新正是这样切进新二进制的），反复起不来就退避并逐级回滚，同时用 `waitpid(-1)` 收掉所有被过继过来的孤儿进程。
 - `web/`：Vite + React + TanStack Router / Query + Tailwind CSS v4 + Base UI，shadcn 风格紧凑三列布局，开发端口 `5180`（`/api` 与 `/embed` 代理到后端）。
 - `openapi/openapi.json`：由后端导出的契约，`openapi-typescript` 生成前端类型，`openapi-fetch` 提供强类型客户端。
 
@@ -111,7 +111,7 @@ pnpm build:server # cargo build --release
 
 `pnpm test` 里的 `cargo test` 是单进程多线程跑的，在 macOS 上随手跑一遍没问题；CI 和提 PR 前要过的是 cargo-nextest
 （在 `server-rs/` 里 `cargo nextest run`，每个测试一个进程：这些测试会改进程的环境变量，Linux 上同一进程里多线程跑可能卡住），
-具体命令见 [`CONTRIBUTING.md`](CONTRIBUTING.md#run-the-tests-before-you-open-a-pull-request)。
+具体命令见 [`CONTRIBUTING.md`](../CONTRIBUTING.md#run-the-tests-before-you-open-a-pull-request)。
 
 ## 契约更新流程
 
@@ -388,7 +388,7 @@ ticket 只活 60 秒。
 ## macOS 裸机部署
 
 日常使用推荐 Droppen 桌面 App（`Droppen-<version>.dmg`，与下面的发布包在同一个发布页；源码、构建与签名见
-[`desktop/`](desktop/README.md)）。
+[`desktop/`](../desktop/README.md)）。
 下面是服务端安装，用于后台或无界面运行。
 
 一条命令装好（下载、校验 SHA-256、建本地账号、注册 launchd、打开页面），重跑即原地升级：
@@ -400,15 +400,15 @@ curl -fsSL https://droppen.app/install.sh | sh
 `droppen.app/install.sh` 直接给出 Droppen Hub 构建时所用那次发版的 `install.sh`，与那次发版里的文件逐字节相同
 （`https://github.com/getdroppen/droppen/releases/download/<tag>/install.sh`；它的 sha256 见
 `https://droppen.app/.well-known/droppen-build` 的 `install_sh`），不再跳转；源码是
-[`scripts/install.sh`](scripts/install.sh)。二进制只从本仓库的
+[`scripts/install.sh`](../scripts/install.sh)。二进制只从本仓库的
 [Releases](https://github.com/getdroppen/droppen/releases) 下载，hub 不分发任何二进制（v0.2.126 及以前的发版在
-[getdroppen/releases](https://github.com/getdroppen/releases)）。公开发布包由 GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）
+[getdroppen/releases](https://github.com/getdroppen/releases)）。公开发布包由 GitHub Actions（[`.github/workflows/release.yml`](../.github/workflows/release.yml)）
 从本仓库的源码构建（公开发行版；macOS aarch64 + x86_64 + universal、Linux、桌面 App），每个文件都附
 构建来源证明，可以用 `gh attestation verify <文件> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/<版本>` 验证
-（[`docs/releasing.md`](docs/releasing.md)）。它用的仍是 [`scripts/release-public.sh`](scripts/release-public.sh)
-和 [`scripts/publish-release.sh`](scripts/publish-release.sh)：先建草稿、把桌面 App 的 `latest.json`
+（[`docs/releasing.md`](releasing.md)）。它用的仍是 [`scripts/release-public.sh`](../scripts/release-public.sh)
+和 [`scripts/publish-release.sh`](../scripts/publish-release.sh)：先建草稿、把桌面 App 的 `latest.json`
 （没有新桌面 App 时沿用当前最新版本里的那份，连同它的 DMG）最后上传，然后才发布并标为最新版本
-（[`desktop/SIGNING.md`](desktop/SIGNING.md)「Making a release」）。安装脚本用
+（[`desktop/SIGNING.md`](../desktop/SIGNING.md)「Making a release」）。安装脚本用
 `default` 实例和 launchd 标签 `app.droppen.server`（见下文[开机自启](#开机自启launchd)），发现本机
 已有别的 Droppen（remote-hand）服务（名字或 plist 里带 `remote-hand` / `droppen` 的 launchd 任务、
 systemd 单元）只列出、不碰。
@@ -427,11 +427,11 @@ curl -fsSL https://droppen.app/install.sh | DROPPEN_CODE=<code> sh
 脚本再经 stdin 交给 `remote-hand-server agent enroll -`，所以不出现在任何进程的参数里。登录账号和
 入网都先用下载好、尚未替换的新二进制完成，失败时设备保持原样；替换后标记 `restart=1`，直到服务
 真正重启进新版本。没有显示器时不打开浏览器，本地页面只给出经 SSH 隧道访问的端口。Linux 二进制由
-[`scripts/build-linux-in-container.sh`](scripts/build-linux-in-container.sh) 在固定版本的镜像里用
+[`scripts/build-linux-in-container.sh`](../scripts/build-linux-in-container.sh) 在固定版本的镜像里用
 cargo-zigbuild 构建（对 glibc 2.28 链接）：发版时由 `release.yml` 运行，在本机兜底时由
-[`scripts/build-linux.sh`](scripts/build-linux.sh) 放进一次性 pod（集群由 `DROPPEN_K8S_CONTEXT`、
+[`scripts/build-linux.sh`](../scripts/build-linux.sh) 放进一次性 pod（集群由 `DROPPEN_K8S_CONTEXT`、
 `DROPPEN_K8S_NAMESPACE` 指定）；打包后在 Debian 10 容器里冒烟测试
-（[`.github/scripts/smoke-linux.sh`](.github/scripts/smoke-linux.sh)）。
+（[`.github/scripts/smoke-linux.sh`](../.github/scripts/smoke-linux.sh)）。
 
 **可选：网页里的 VS Code。** 侧栏「+」→ `vscode` 用 [code-server](https://github.com/coder/code-server)
 在浏览器里打开 VS Code，Droppen 不会替你安装它。要用的话，把 code-server 装在服务端所在的设备上
@@ -496,7 +496,7 @@ curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall   # 停掉并�
 
 plist 由安装脚本生成，别手改：重跑安装脚本时它会按当前设置重写这个文件，有变化就带着新设置
 重启服务。手动安装的服务端不带开机自启，安装脚本也不接管它（发现不是自己装的二进制或数据就
-停下，什么都不改）；要自己写 plist 的，照着 [`scripts/install.sh`](scripts/install.sh) 里
+停下，什么都不改）；要自己写 plist 的，照着 [`scripts/install.sh`](../scripts/install.sh) 里
 `launchd_write` 生成的那份写。其中有两个键值得单独讲：
 
 - **`AbandonProcessGroup=true`**——macOS 上最关键的一行。不加的话，job 一停 launchd 就把整个
@@ -528,7 +528,7 @@ curl -sS -X POST http://127.0.0.1:8700/api/server/self-upgrade \
 
 发版：服务端的 tar 包（macOS、Linux）、桌面 App 的 DMG、安装脚本和 `SHA256SUMS` 都发布在
 本仓库的 [Releases](https://github.com/getdroppen/droppen/releases)，由 GitHub Actions 从本仓库构建并发布，
-每个文件都附构建来源证明（[`docs/releasing.md`](docs/releasing.md)）。新装和升级都可以直接（重）跑
+每个文件都附构建来源证明（[`docs/releasing.md`](releasing.md)）。新装和升级都可以直接（重）跑
 `curl -fsSL https://droppen.app/install.sh | sh`。二进制的版本号形如 `0.1.0+g<commit>`：构建时
 取环境变量 `DROPPEN_BUILD_REV`，没有就用 `git rev-parse --short HEAD`
 （树里有未提交的改动时加 `-dirty`）。自我更新正是靠这个后缀区分同一个 crate 版本的两次构建，
@@ -558,13 +558,13 @@ docker run -p 8080:8080 \
 **覆盖** `X-Real-IP`（不能把客户端自己带来的值传进来）；在 Fly.io 上设 `fly`（`Fly-Client-IP`）。不设时中继用连接的地址，
 放在代理后面就是代理的地址，所有客户端共用一个。
 
-所有变量见 [`server-rs/crates/rh-relay/src/config.rs`](server-rs/crates/rh-relay/src/config.rs)，中继与 Hub 之间的协议见
-[`docs/relay-and-plans.md`](docs/relay-and-plans.md)。中继只按自己的 Hub 签发的票配对通道，所以它只服务注册它的那个 Hub
+所有变量见 [`server-rs/crates/rh-relay/src/config.rs`](../server-rs/crates/rh-relay/src/config.rs)，中继与 Hub 之间的协议见
+[`docs/relay-and-plans.md`](relay-and-plans.md)。中继只按自己的 Hub 签发的票配对通道，所以它只服务注册它的那个 Hub
 的账户。droppen.app 只列出它自己运行的中继，暂不接入别人运行的中继。
 
 ## 安全边界
 
-- droppen.app 上的网页由闭源的 Hub 下发。它是 `web/` 的可复现构建，每次发版附带逐文件哈希清单；`node scripts/verify-web.mjs` 检查站点此刻下发的字节是否与之相同。它证明不了有针对性的一次性投递，高保障请用本机界面。见 [`docs/web-integrity.md`](docs/web-integrity.md)。
+- droppen.app 上的网页由闭源的 Hub 下发。它是 `web/` 的可复现构建，每次发版附带逐文件哈希清单；`node scripts/verify-web.mjs` 检查站点此刻下发的字节是否与之相同。它证明不了有针对性的一次性投递，高保障请用本机界面。见 [`docs/web-integrity.md`](web-integrity.md)。
 - 裸机运行只绑定 `127.0.0.1`；公网部署请置于反向代理/隧道之后并自行加鉴权层。
 - 跨源请求默认拒绝（同 host 与白名单 Origin 除外），防 CSRF 读写。
 - 文件 API 限制在 home 目录内；上传不覆盖已有文件。
@@ -577,16 +577,16 @@ docker run -p 8080:8080 \
 
 ## 参与贡献与安全
 
-贡献须知见 [`CONTRIBUTING.md`](CONTRIBUTING.md)：每个提交都要 `Signed-off-by:`（DCO，`git commit -s`），
+贡献须知见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)：每个提交都要 `Signed-off-by:`（DCO，`git commit -s`），
 每个 PR 都有一项必须通过的检查（DCO GitHub App 或同等的必需状态检查）核对它，缺了就不能合并；PR 以
 squash 方式合并，合并后的提交信息保留各个提交的 `Signed-off-by:` 行。安全漏洞请按
-[`SECURITY.md`](SECURITY.md) 私下报告，不要开公开的 issue。
+[`SECURITY.md`](../SECURITY.md) 私下报告，不要开公开的 issue。
 
 ## 许可证
 
 Copyright (C) 2026 Kilerd。
 
-- **应用**以 [GNU Affero General Public License v3.0 only](LICENSE)（AGPL-3.0-only）授权：
+- **应用**以 [GNU Affero General Public License v3.0 only](../LICENSE)（AGPL-3.0-only）授权：
   本机程序（`server-rs/` 的根 crate `remote-hand-server`，即 `droppen`，含 agent 和本机网关）、
   桌面 App（`desktop/`）、网页（`web/`）和中继程序 `droppen-relay`。
 - **协议与库 crate**——`rh-proto`、`rh-relay`（库）、`rh-client`、`rh-devkit`——以及插件 SDK
@@ -595,7 +595,7 @@ Copyright (C) 2026 Kilerd。
   只链接这一类 crate。
 
 公开发布包里附带 `LICENSE` 和 `THIRD_PARTY_NOTICES`（由
-[`scripts/release-public.sh`](scripts/release-public.sh) 用 cargo-about 和
-[`scripts/notices/`](scripts/notices) 生成，许可证白名单见 [`about.toml`](about.toml)）。网页的每次构建都在
+[`scripts/release-public.sh`](../scripts/release-public.sh) 用 cargo-about 和
+[`scripts/notices/`](../scripts/notices) 生成，许可证白名单见 [`about.toml`](../about.toml)）。网页的每次构建都在
 `/THIRD_PARTY_NOTICES.txt` 提供其中 npm 包的许可证（droppen.app 上也是），公开页面的页脚有链接
-（[`web/build/third-party-notices.mjs`](web/build/third-party-notices.mjs)）。
+（[`web/build/third-party-notices.mjs`](../web/build/third-party-notices.mjs)）。
