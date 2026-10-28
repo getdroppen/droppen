@@ -1271,8 +1271,9 @@ mod tests {
         assert_eq!(grant.token.0, None);
     }
 
-    /// An instance with a user account asks for a login everywhere, whether
-    /// `auth.enabled = true` is set or not: an account alone turns the guard on.
+    /// An instance with a user account asks for a login everywhere, with
+    /// `auth.enabled` unset or `true`: the account ends the setup state, so no
+    /// code is offered and only a login gets in.
     #[tokio::test]
     async fn with_a_user_account_everyone_logs_in() {
         for enabled in [None, Some(true)] {

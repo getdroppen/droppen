@@ -23,10 +23,9 @@
 //! [`crate::sessions::Paths::instance_db`] names.
 //!
 //! Expiry is the reason this store has a *column* and not just a payload.
-//! Answering "which of these are still alive" from a payload alone means
-//! reading every row and filtering in Rust, so every login, every revocation
-//! and every list would rewrite the whole table to drop the dead ones.
-//! `expires_at` makes that `DELETE FROM auth_sessions WHERE expires_at < ?`, and
+//! Answering "which of these are still alive" from a payload alone costs
+//! reading and decoding every row on every login, every revocation and every
+//! list. `expires_at` makes that `DELETE FROM auth_sessions WHERE expires_at < ?`, and
 //! the index makes it a range scan over the ones that are actually dead. It is
 //! stored in **milliseconds**, matching the ISO stamps beside it in the payload
 //! rather than SQLite's `unixepoch()` convention: a session minted with a zero

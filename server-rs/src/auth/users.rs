@@ -42,20 +42,13 @@
 //! opens, and the ways in are `droppen user add`, `droppen open` or the setup
 //! code.
 //!
-//! Nothing here reads or writes the machine-wide set, and nothing deletes it:
-//! the schema is additive-only, it is the user's data, and it is a manual
-//! recovery source. An older binary that still seeds from it — the supervisor's
-//! `.prev`, a build from before the seed was removed — finds accounts there
-//! rather than none, which is the **fail-closed** direction; [`SEED_MARKER`]
-//! below is what keeps such a build from copying them into an instance created
-//! here. A migration that is no longer needed is not a licence to delete user
-//! data.
-//!
-//! The accepted cost: an account revoked on an instance is not removed from that
-//! set, so a build that still seeds could put it back into an instance whose
-//! marker is gone. That is the deliberate direction of the error: it can leave a
-//! door shut-but-openable by a credential that should have been withdrawn, never
-//! a door with no lock on it at all — and only the second cannot be walked back.
+//! Nothing here reads, writes or deletes the machine-wide set: the schema is
+//! additive-only, it is the user's data, and it is a manual recovery source.
+//! Every release up to 0.2.133 still seeds from it, so the supervisor's `.prev`
+//! does too, but only into an instance without [`SEED_MARKER`]. The accepted
+//! cost: an account revoked on an instance stays in that set, so such a build
+//! can put it back into an instance whose marker was lost with its `state.db`;
+//! with nothing to seed, that instance would be in its setup state instead.
 //!
 //! # App-internal accounts
 //!
@@ -71,11 +64,12 @@
 //! # Why this store, alone, still writes a JSON file
 //!
 //! The mirror is a **second opinion**, and [`UsersStore::has_users`] and
-//! [`UsersStore::is_empty`] are its only readers. Everywhere else in this server
-//! an empty table means an empty store. Here it means *authentication is
-//! switched off*, on a server that may be published to the internet through a
-//! tunnel, and the two things that could empty it — a database set aside as
-//! corrupt, a restore that brought back the wrong file — both look exactly like
+//! [`UsersStore::is_empty`] are its only readers after the one-time import.
+//! Everywhere else in this server an empty table means an empty store. Here it
+//! means *authentication is switched off*, on a server that may be published to
+//! the internet through a tunnel, and the two things that could empty it — a
+//! database set aside as corrupt, a restore that brought back the wrong file —
+//! both look exactly like
 //! "the operator has not configured any accounts yet". So a table that says
 //! nobody is on file is believed only when `users.json` agrees. Other stores have
 //! no JSON mirror; do not drop this one to match them.
@@ -665,8 +659,7 @@ impl UsersStore {
     /// revokes this instance's sessions only.
     ///
     /// It does not reach the machine-wide set on disk either; see the module
-    /// note on what a rollback would then still honour, and why that is the
-    /// direction the error is allowed to point in.
+    /// note on what a build that still seeds can put back.
     pub async fn remove(&self, name: &str) -> Result<(), UserError> {
         let name = check_name(name)?;
         let _guard = self.write_lock.lock().await;
@@ -1193,9 +1186,9 @@ mod tests {
         );
         assert_eq!(listed[1].updated_at, "2024-02-02T00:00:00.000Z");
 
-        // A rolled-back build adds an account to the file, then the server
-        // rolls forward: the file is not the source of truth, and re-reading it
-        // would import over whatever has happened since.
+        // The file changes after the import (a hand edit, or a build without
+        // the table): it is not the source of truth, and re-reading it would
+        // import over whatever has happened since.
         let mut behind = existing.clone();
         behind.users[0].name = "someone-else".into();
         std::fs::write(&path, serde_json::to_string(&behind).expect("encode")).expect("rewrite");
