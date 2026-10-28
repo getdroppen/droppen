@@ -136,7 +136,7 @@ pub fn web_origin(ws_origin: &str) -> String {
 /// through the browser instead (§4.9).
 #[api(id = "cloud_link", group = "cloud", summary = "Start signing in to Droppen")]
 pub async fn post_link(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     #[api(skip)] PageOrigin(page): PageOrigin,
     ApiJson(body): ApiJson<LinkRequest>,
@@ -319,7 +319,7 @@ pub(super) fn finish_code(text: &str) -> Result<rh_proto::identity::EnrollCode, 
 }
 
 /// 409 `already_enrolled` while this computer is in an account.
-pub(super) fn refuse_if_enrolled(state: &AppState) -> Result<(), ApiError> {
+pub(super) fn refuse_if_enrolled(state: &CloudState) -> Result<(), ApiError> {
     if matches!(state.cloud.control.status().state, Standing::Linked | Standing::NotHosting) {
         return Err(refusal(
             StatusCode::CONFLICT,
@@ -333,7 +333,7 @@ pub(super) fn refuse_if_enrolled(state: &AppState) -> Result<(), ApiError> {
 /// Hand over the popup's code and enroll in process.
 #[api(id = "cloud_link_finish", group = "cloud", summary = "Finish signing in to Droppen")]
 pub async fn post_finish(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<FinishRequest>,
 ) -> Result<Accepted<FinishResult>, ApiError> {
@@ -367,12 +367,12 @@ pub async fn post_finish(
 /// the caller is anybody who reaches the port.
 #[api(id = "cloud_link_return", group = "cloud", summary = "Hand back droppen.app's answer from the browser")]
 pub async fn post_return(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<ReturnRequest>,
 ) -> Result<Accepted<FinishResult>, ApiError> {
     caller(&who)?;
-    if state.drive.auth.is_off() {
+    if state.auth.is_off() {
         return Err(local_auth_off());
     }
     let sealed = link_handoff::sealed_bytes(&body.sealed)
@@ -418,7 +418,7 @@ pub async fn post_return(
 /// process with the code, and make the local account that opened the attempt
 /// the link's owner.
 pub(super) async fn complete_sign_in(
-    state: &AppState,
+    state: &CloudState,
     attempt: Attempt,
     code: &rh_proto::identity::EnrollCode,
     email: Option<String>,
@@ -472,7 +472,7 @@ pub(super) async fn complete_sign_in(
 /// Drop the attempt (and an enrollment it started that no device completed).
 #[api(id = "cloud_link_cancel", group = "cloud", summary = "Cancel signing in to Droppen")]
 pub async fn post_cancel(
-    State(state): State<AppState>,
+    State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<CancelRequest>,
 ) -> Result<Json<SendResult>, ApiError> {
