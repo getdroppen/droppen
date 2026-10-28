@@ -1260,7 +1260,7 @@ mod tests {
     /// conversation, while the original stays exactly where and what it was.
     #[tokio::test]
     async fn a_local_login_session_continues_on_an_account_as_a_new_session() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let paths = state.drive.paths.clone();
@@ -1341,7 +1341,7 @@ mod tests {
     /// claude account — and nothing written on any refusal.
     #[tokio::test]
     async fn continuing_refuses_what_is_not_this_servers_to_copy() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let paths = state.drive.paths.clone();

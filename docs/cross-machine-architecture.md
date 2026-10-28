@@ -125,7 +125,7 @@
 
 | 模块（`server-rs/src/`） | 本机依赖与状态 | 新归属 |
 |---|---|---|
-| `sessions/*`、`db/index.rs`、`feed/*`、`attention/{derive,unread}.rs` | 读 `~/.claude`、托管 root、`~/.codex`；`index.db` | agent。产出改为写加密流：每台机器一条索引流，每个会话一条会话流 |
+| `sessions/*`、`feed/*`、`attention/{derive,unread}.rs` | 读 `~/.claude`、托管 root、`~/.codex`；`index.db` | agent。产出改为写加密流：每台机器一条索引流，每个会话一条会话流 |
 | `inject/*`（resident、shim、app_server、receipts、questions、drafts） | 常驻 CLI、session-shim；`runs`、`client_messages`、`session_questions` 三张表 | agent，只能经 E2E RPC 驱动 |
 | `accounts/*`、`quota/*`、`models/` | OAuth token / env 凭据（机器库，0600）、PTY 向导、`rate_limit_event` | agent。读数写入加密的「机器状态流」，凭据永不离机 |
 | `terminals/`、`pty_shim/` | shim 进程、环形缓冲、vt100，16 ms 合帧（`terminals/mod.rs:69`） | agent，走 E2E 通道 |

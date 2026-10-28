@@ -50,7 +50,7 @@ use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiRouter, AppState};
-use crate::db::index::Index;
+use crate::sessions::index::Index;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiPath;
 use crate::openapi_ext::{ExtraResponses, Nullable};
@@ -309,7 +309,7 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
         return;
     }
     let seen = seen::read(paths).await;
-    let index = crate::db::index::current();
+    let index = crate::sessions::index::current();
     for summary in sessions.iter_mut() {
         let read_at = seen.get(&seen::key_of(summary.source, &summary.id)).map(String::as_str);
         let ledger = ledger_for(index.as_ref(), summary, read_at).await;
@@ -321,7 +321,7 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
 /// [`apply`] fills the list row from — for a caller outside the list that must
 /// agree with the row's badge (the push gate in [`crate::push`]).
 pub async fn clock_of(summary: &SessionSummary, read_at: Option<&str>) -> Option<String> {
-    let index = crate::db::index::current();
+    let index = crate::sessions::index::current();
     let ledger = ledger_for(index.as_ref(), summary, read_at).await?;
     ledger.newest().map(str::to_owned)
 }
@@ -532,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn an_indexed_ledger_is_believed_without_reading_the_transcript() {
         let home = tempfile::tempdir().expect("tempdir");
-        let index = crate::db::index::open(&Paths::new(home.path().to_path_buf()));
+        let index = crate::sessions::index::open(&Paths::new(home.path().to_path_buf()));
         let file = home.path().join("quiet.jsonl");
         std::fs::write(&file, "{\"type\":\"user\"}\n").expect("write");
         let summary = row(&file, "2026-01-01T10:00:09.000Z", SessionStatus::Idle);
@@ -555,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn a_grown_transcript_resumes_from_its_indexed_ledger() {
         let home = tempfile::tempdir().expect("tempdir");
-        let index = crate::db::index::open(&Paths::new(home.path().to_path_buf()));
+        let index = crate::sessions::index::open(&Paths::new(home.path().to_path_buf()));
         let file = home.path().join("grown.jsonl");
         std::fs::write(&file, "{\"type\":\"user\"}\n").expect("write");
         let before = row(&file, "2026-01-01T10:00:05.000Z", SessionStatus::Idle);

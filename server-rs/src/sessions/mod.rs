@@ -14,6 +14,7 @@ pub mod codex_tools;
 pub mod context;
 pub mod continuation;
 pub mod delivery;
+pub mod index;
 pub mod mentions;
 pub mod owned_sessions;
 pub mod pins;
@@ -32,10 +33,11 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::AccountRef;
+use crate::identity::ServerId;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
 use crate::time::mtime_ms;
-pub use reference::{ServerId, SessionRef};
+pub use reference::SessionRef;
 use util::TranscriptItem;
 
 /// Which CLI a session belongs to.

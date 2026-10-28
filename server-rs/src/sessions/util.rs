@@ -693,7 +693,7 @@ impl<K: std::hash::Hash + Eq, V> BoundedMap<K, V> {
 /// A bounded, process-local cache of a value derived from a file, invalidated
 /// by the file's mtime and size.
 ///
-/// The near tier in front of [`crate::db::index`]: a hit is a map lookup, and a
+/// The near tier in front of [`crate::sessions::index`]: a hit is a map lookup, and a
 /// miss falls through to the durable answer or a re-read. Both CLIs build their
 /// list rows this way, and both check the same two fields because those are
 /// what the durable tier's watermark is made of.

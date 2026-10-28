@@ -26,7 +26,7 @@
 //! `read(2)` it replaces.** The largest is `runs.json` at 7.7 KB, and the warm
 //! session list already answers in under four milliseconds. What this module
 //! buys is the first two — atomicity, and safety between processes. The *speed*
-//! claim belongs entirely to [`crate::db::index`], which is a different file
+//! claim belongs entirely to [`crate::sessions::index`], which is a different file
 //! about a different problem: 194 MB of somebody else's transcripts, re-read
 //! from scratch after every restart because every cache in this server is a
 //! `LazyLock<Mutex<HashMap>>` that dies with the process.
@@ -35,7 +35,7 @@
 //!
 //! It is not a place to put the transcripts. Those belong to claude and codex,
 //! they are hundreds of megabytes, and remote-hand only ever reads them — see
-//! [`crate::db::index`] for the durable *index* over them, which is where the
+//! [`crate::sessions::index`] for the durable *index* over them, which is where the
 //! speed actually comes from. It is also not where the session recordings go:
 //! [`crate::record`] appends NDJSON, an append is already crash-safe, and a
 //! 1.4 GB table of lines nothing queries would be a database used as a bucket.
@@ -64,7 +64,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
-pub mod index;
 mod kv;
 mod migrations;
 
@@ -79,7 +78,7 @@ pub use migrations::SCHEMA;
 /// query is against a primary key or a covering index, and the server they serve
 /// answers a handful of requests a second from one or two people. A pool would
 /// add a dependency and a lifetime to every call site to remove contention that
-/// cannot be measured. [`crate::db::index`] is the one store that will grow, and it is
+/// cannot be measured. [`crate::sessions::index`] is the one store that will grow, and it is
 /// read far more than written; if it ever wants readers of its own, WAL is
 /// already on and a second connection is three lines here — not a change to any
 /// caller.
