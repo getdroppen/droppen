@@ -140,7 +140,7 @@ impl TaskRecord {
             method: entry.method.to_string(),
             command: entry.command.to_string(),
             terminal_id: None,
-            started_at: crate::sessions::iso8601(std::time::SystemTime::now()),
+            started_at: crate::time::iso8601(std::time::SystemTime::now()),
             finished: false,
             exit_code: None,
             failed: false,

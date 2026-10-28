@@ -56,9 +56,11 @@ use super::transcript::title_line;
 use super::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, try_parse, FileRef, ItemKind, Role, ToolDisplay, TranscriptItem,
 };
-use super::{iso8601, Paths, ServerId, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use super::{ServerId, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::acp::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use crate::openapi_ext::Nullable;
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 /// How much of a transcript's start is read for its working directory and title.
 const HEAD_BYTES: usize = 64 * 1024;

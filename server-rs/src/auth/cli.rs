@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 use super::sessions::SessionsStore;
 use super::users::{UserError, UsersStore};

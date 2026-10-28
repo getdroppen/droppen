@@ -18,7 +18,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
 
 use super::{DecisionReason, PluginError, Plugins, StoreError};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// What to print when the subcommand does not parse.
 pub const USAGE: &str = "\

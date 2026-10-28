@@ -19,7 +19,7 @@ use super::lapse::{drop_ended, drop_removed};
 use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback

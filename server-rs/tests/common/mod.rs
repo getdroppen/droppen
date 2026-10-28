@@ -31,7 +31,7 @@ use remote_hand_server::apps::Registry;
 use remote_hand_server::feed::global::GlobalFeed;
 use remote_hand_server::feed::FeedRegistry;
 use remote_hand_server::instance::InstanceDirs;
-use remote_hand_server::sessions::Paths;
+use remote_hand_server::paths::Paths;
 use remote_hand_server::shutdown::Cleanups;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

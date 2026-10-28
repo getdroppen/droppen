@@ -80,7 +80,7 @@ pub mod streams;
 pub mod system;
 pub mod traffic;
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 mod cli;
 mod seed;
@@ -140,7 +140,7 @@ mod tests {
     use super::cli::*;
     use super::seed::*;
     use super::{rotation, state};
-    use crate::sessions::Paths;
+    use crate::paths::Paths;
     use rh_proto::identity::{EnrollCode, MachineIdentity};
     use zeroize::Zeroizing;
     use super::*;

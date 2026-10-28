@@ -37,7 +37,8 @@ use crate::api::extract::ApiQuery;
 use crate::api::{close_within, send_within, ApiRouter, AppState, CLOSE_LIMIT};
 use crate::drive::Drive;
 use crate::openapi_ext::ExtraResponses;
-use crate::sessions::{self, Paths, SessionSummary, Source};
+use crate::paths::Paths;
+use crate::sessions::{self, SessionSummary, Source};
 
 /// Status changes (a live process exiting) touch no file; poll cheaply for them.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);

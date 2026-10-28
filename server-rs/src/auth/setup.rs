@@ -54,7 +54,7 @@ use std::time::{Duration, Instant};
 
 use rand::RngCore;
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 pub use super::routes::SETUP_PATH;
 

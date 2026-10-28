@@ -54,8 +54,9 @@ use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::db::scope;
 use crate::openapi_ext::{ExtraResponses, Optional};
+use crate::paths::Paths;
 use crate::process_env::{clean_env_bare, resolve_on_path, Env};
-use crate::sessions::{Paths, SessionSummary, Source};
+use crate::sessions::{SessionSummary, Source};
 
 /// The longest agent id.
 const MAX_ID: usize = 64;
@@ -590,7 +591,7 @@ impl AcpCheck {
             error
         });
         Self {
-            checked_at: crate::sessions::iso8601(std::time::SystemTime::now()),
+            checked_at: crate::time::iso8601(std::time::SystemTime::now()),
             state,
             resolved_path: None.into(),
             protocol_version: None.into(),

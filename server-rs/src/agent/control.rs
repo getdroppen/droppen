@@ -22,7 +22,7 @@ use serde::Serialize;
 use super::enroll::BeginError;
 use super::link::{Health, LinkEnv, Running};
 use super::state::{AgentState, Alarm};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// Where this instance stands with a hub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

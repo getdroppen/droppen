@@ -60,7 +60,8 @@ use crate::api::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::feed::global::GlobalFeed;
 use crate::openapi_ext::{AnyValue, ExtraResponses, Optional};
-use crate::sessions::{iso8601, Paths};
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 /// How many leaves one layout may hold. A split turns one pending slot into
 /// two, so the budget is spent on splits rather than on leaves directly.

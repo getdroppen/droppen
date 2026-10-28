@@ -16,8 +16,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::openapi_ext::Nullable;
+use crate::paths::Paths;
 use crate::sessions::util::{try_parse, LossyLines};
-use crate::sessions::{iso8601, mtime_ms, Paths, Source};
+use crate::sessions::Source;
+use crate::time::{iso8601, mtime_ms};
 
 /// One parsed JSONL entry.
 type Entry = serde_json::Map<String, Value>;

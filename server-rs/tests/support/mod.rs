@@ -270,7 +270,7 @@ fn ensure_fake_clis_on_path() -> &'static Path {
 /// the sessions it seeds must be the next server's own — an external one is
 /// browse-only and could not be sent to.
 pub fn owned_claude_root(home: &Path) -> PathBuf {
-    remote_hand_server::sessions::Paths::new(home.to_path_buf()).claude_root(remote_hand_server::claude_roots::ClaudeRoot::Managed)
+    remote_hand_server::paths::Paths::new(home.to_path_buf()).claude_root(remote_hand_server::paths::ClaudeRoot::Managed)
 }
 
 /// A running server plus its synthetic home.

@@ -61,7 +61,6 @@ use std::sync::OnceLock;
 
 use serde_json::{json, Map, Value};
 
-use super::iso8601;
 use super::mentions::resolve_within_home;
 use super::tool_display::{
     as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name, ChecklistLinesExt, QuestionLinesExt,
@@ -69,6 +68,7 @@ use super::tool_display::{
 use super::transcript::is_renderable_image;
 use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use crate::record::replay::parse_iso8601;
+use crate::time::iso8601;
 
 type Json = Map<String, Value>;
 
@@ -1928,7 +1928,7 @@ fn push_call(items: &mut Vec<TranscriptItem>, display: ToolDisplay, id: Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::Paths;
+    use crate::paths::Paths;
     use serde_json::json;
 
     /// One rollout line: `{"timestamp", "type", "payload"}`.

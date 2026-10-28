@@ -23,79 +23,12 @@
 //! construction, so a test can point a whole server at a synthetic tree without
 //! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
 //! also answer to their pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through
-//! [`crate::env`]; [`env_dir`] is the only place they — or any other directory
-//! override — are read.
+//! [`crate::env`]; [`crate::paths::env_dir`] is the only place they — or any
+//! other directory override — are read.
 
 use std::path::PathBuf;
 
-use gotcha::Schematic;
-use serde::{Deserialize, Serialize};
-
-use crate::sessions::Paths;
-
-/// Which Claude config root a session file lives in.
-///
-/// The name is the OpenAPI component name in `openapi/openapi.json`
-/// (`ClaudeRoot`), so `Schematic::name()` and the golden contract agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "lowercase")]
-pub enum ClaudeRoot {
-    /// `~/.claude` — the user's own login.
-    Local,
-    /// The root *this instance* owns for account-backed sessions.
-    Managed,
-}
-
-impl ClaudeRoot {
-    /// Both roots, local first — the order duplicate ids are resolved against.
-    ///
-    /// Two, and never more: the only managed root a server may look at is its
-    /// own. Widening this array is how one instance would start listing another
-    /// one's sessions, so every scan in the crate goes through it.
-    pub const ALL: [ClaudeRoot; 2] = [ClaudeRoot::Local, ClaudeRoot::Managed];
-
-    /// The name this root has on the wire, matching the `serde` representation.
-    ///
-    /// Spelled out rather than round-tripped through `serde_json` because
-    /// [`crate::record`] writes it into every line of a recording and reads it
-    /// back in the replay tool: one function both directions go through is what
-    /// stops the two from drifting.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ClaudeRoot::Local => "local",
-            ClaudeRoot::Managed => "managed",
-        }
-    }
-
-    /// The inverse of [`ClaudeRoot::as_str`]; `None` for anything else.
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|root| root.as_str() == name)
-    }
-}
-
-/// Test seam: point the user's own root at a scratch directory. Its old name,
-/// `REMOTE_HAND_CLAUDE_LOCAL_ROOT`, is still read until v0.2.135
-/// ([`crate::env`]).
-pub const LOCAL_ROOT_ENV: &str = "DROPPEN_CLAUDE_LOCAL_ROOT";
-/// Test seam: point the managed root at a scratch directory. Its old name,
-/// `REMOTE_HAND_CLAUDE_MANAGED_ROOT`, is still read until v0.2.135
-/// ([`crate::env`]).
-pub const MANAGED_ROOT_ENV: &str = "DROPPEN_CLAUDE_MANAGED_ROOT";
-
-/// An environment override, honoured only when it is a non-empty value; under
-/// its old name too ([`crate::env::var`]).
-///
-/// Kept as its own function (rather than inlined `std::env::var`) so the
-/// precedence rule is unit-testable without mutating the process environment.
-pub fn env_dir(name: &str) -> Option<PathBuf> {
-    override_dir(crate::env::var(name).as_deref())
-}
-
-/// The override-or-nothing decision, with the value supplied explicitly.
-pub fn override_dir(value: Option<&str>) -> Option<PathBuf> {
-    // An empty value is absent: it means the same as unset.
-    value.filter(|v| !v.is_empty()).map(PathBuf::from)
-}
+use crate::paths::{ClaudeRoot, Paths};
 
 /// The directory a root lives in, as `paths` resolved it when it was built.
 pub fn root_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
@@ -316,12 +249,5 @@ mod tests {
 
         assert_eq!(paths.migrate_legacy_claude_root(), LegacyMigration::BothPresent);
         assert!(paths.legacy_claude_managed().is_dir(), "nothing is destroyed on this path");
-    }
-
-    #[test]
-    fn an_empty_override_is_no_override() {
-        assert_eq!(override_dir(None), None);
-        assert_eq!(override_dir(Some("")), None, "`process.env.X || fallback` treats \"\" as absent");
-        assert_eq!(override_dir(Some("/scratch")), Some(PathBuf::from("/scratch")));
     }
 }

@@ -283,7 +283,7 @@ impl Faults {
             return;
         }
         use std::io::Write as _;
-        let at = crate::sessions::iso8601(std::time::SystemTime::now());
+        let at = crate::time::iso8601(std::time::SystemTime::now());
         let line = format!("{at} pid={} {what}\n", std::process::id());
         let _ = std::fs::OpenOptions::new()
             .create(true)
@@ -954,7 +954,7 @@ fn terminate_shell(shell_pid: u32) {
 fn write_tombstone(path: &Path, code: i32) {
     let tombstone = Tombstone {
         exit_code: code,
-        at: crate::sessions::iso8601(std::time::SystemTime::now()),
+        at: crate::time::iso8601(std::time::SystemTime::now()),
     };
     match serde_json::to_vec(&tombstone) {
         Ok(encoded) => {

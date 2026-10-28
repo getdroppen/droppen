@@ -301,7 +301,7 @@ fn set_aside(path: &Path) {
 
 /// Every open database in this process, one per file.
 ///
-/// A registry rather than a handle threaded through [`crate::sessions::Paths`],
+/// A registry rather than a handle threaded through [`crate::paths::Paths`],
 /// for a reason that is about correctness and not convenience: `Paths` is a
 /// *value*, two of them naming one instance exist at once (`app.rs` builds one
 /// to take the lock and another for the state), and a handle per value would put

@@ -60,10 +60,10 @@ use serde_json::Value;
 use crate::accounts::store::{Account, AccountKind};
 use crate::claude_roots;
 use crate::openapi_ext::{Nullable, Optional};
+use crate::paths::Paths;
 use crate::process_env::{apply_env, claude_env};
 use crate::sessions::util::try_parse;
-use crate::sessions::{iso8601, Paths};
-use crate::time::now_ms;
+use crate::time::{iso8601, now_ms};
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
 pub use readings::{QuotaReadingSource, RateLimitWindows, UsageLogin};

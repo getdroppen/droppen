@@ -89,9 +89,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::instance::InstanceError;
+use crate::paths::Paths;
 use crate::selfupdate;
 use crate::selfupdate::store::{BinStore, Fallback};
-use crate::sessions::Paths;
 use crate::GotchaError;
 
 /// The first wait after a failure.

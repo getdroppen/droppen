@@ -71,7 +71,7 @@ use crate::api::{ApiRouter, AppState};
 use crate::auth::AuthIdentity;
 use crate::db::scope;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
 use shell::ShellSnapshot;

@@ -77,7 +77,8 @@ use crate::quota::readings::RateLimitWindows;
 use crate::process_env::Env;
 use crate::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
-use crate::sessions::{iso8601, InjectionRunState, SessionStatus, Source};
+use crate::sessions::{InjectionRunState, SessionStatus, Source};
+use crate::time::iso8601;
 
 use super::questions::{self, PermissionRequest, QuestionState, SessionQuestion, Stored};
 use super::receipts::ReceiptStatus;
@@ -6413,11 +6414,11 @@ fn answered_in(line: &str) -> Vec<String> {
 /// see `owned_claude_env` — and the server's own value never leaks through,
 /// because `claude_env` strips every inherited `CLAUDE_*`. So its absence is the
 /// user's own `~/.claude`, and its presence is the managed root.
-fn recipe_root(env: &Env) -> crate::claude_roots::ClaudeRoot {
+fn recipe_root(env: &Env) -> crate::paths::ClaudeRoot {
     if env.contains_key("CLAUDE_CONFIG_DIR") {
-        crate::claude_roots::ClaudeRoot::Managed
+        crate::paths::ClaudeRoot::Managed
     } else {
-        crate::claude_roots::ClaudeRoot::Local
+        crate::paths::ClaudeRoot::Local
     }
 }
 
@@ -6451,7 +6452,7 @@ mod tests {
     use std::path::Path;
 
     use crate::instance::InstanceDirs;
-    use crate::sessions::Paths;
+    use crate::paths::Paths;
 
     /// The id every fake claude in this module answers under.
     const SESSION: &str = "11111111-1111-4111-8111-111111111111";
@@ -7072,7 +7073,7 @@ mod tests {
     /// server really builds for each kind of spawn.
     #[test]
     fn a_usage_reading_goes_to_the_login_the_process_runs_on() {
-        use crate::claude_roots::ClaudeRoot;
+        use crate::paths::ClaudeRoot;
         use crate::quota::readings::session_login;
         use crate::quota::UsageLogin;
 

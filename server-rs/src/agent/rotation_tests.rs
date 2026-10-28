@@ -29,7 +29,7 @@ use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
 use super::{FileSeedStore, StagedSeed, StoredSeed};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::text::{hex, unhex32};
 use crate::time::now_ms_u64;
 

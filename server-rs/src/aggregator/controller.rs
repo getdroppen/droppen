@@ -10,7 +10,7 @@
 //!
 //! - the chain names this computer as a current device (an enrollment still
 //!   waiting for a device, or a removed computer, has no device role), and
-//! - the owner has not turned the aggregator off ([`crate::sessions::Paths::wants_aggregator`]).
+//! - the owner has not turned the aggregator off ([`crate::paths::Paths::wants_aggregator`]).
 //!
 //! **Each round** (on a chain change, every [`GAP_EVERY`] while a key is
 //! missing, else every [`IDLE_EVERY`]):
@@ -49,7 +49,7 @@ use tokio_util::sync::CancellationToken;
 use super::hub::{DeviceClient, HubError, Mail};
 use super::keys::HostKeys;
 use crate::agent::state::AgentState;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// A round while a key is missing.
 pub const GAP_EVERY: Duration = Duration::from_secs(5);

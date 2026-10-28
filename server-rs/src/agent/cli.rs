@@ -4,7 +4,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, hub, rotation, state};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
 /// What to print when the subcommand does not parse.

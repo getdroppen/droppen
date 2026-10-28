@@ -2,12 +2,11 @@
 //!
 //! There is one clock and one parser here. Everything that needs "now" as
 //! milliseconds since the epoch calls [`now_ms`] (or [`now_ms_u64`], where the
-//! value is kept as a `u64`), and everything that reads a
-//! stored stamp back calls [`parse_iso_ms`] — the exact inverse of the
-//! [`iso8601`](crate::sessions::iso8601) writer, with its leniency kept as a
-//! contract: a `T` or a space between date and time, an optional fractional
-//! part of any length, and an optional `Z` (with anything after the seconds
-//! ignored).
+//! value is kept as a `u64`), and everything that reads a stored stamp back
+//! calls [`parse_iso_ms`] — the exact inverse of the [`iso8601`] writer, with
+//! its leniency kept as a contract: a `T` or a space between date and time, an
+//! optional fractional part of any length, and an optional `Z` (with anything
+//! after the seconds ignored).
 //!
 //! [`parse_iso`] is the stricter reader for a stamp this server did not write:
 //! a hand-editable schedule file may hold any RFC 3339 string, and a stamp that
@@ -34,9 +33,47 @@ pub fn now_ms_u64() -> u64 {
         .unwrap_or(0)
 }
 
+/// Milliseconds since the epoch, matching Node's `stat().mtimeMs`.
+pub fn mtime_ms(metadata: &std::fs::Metadata) -> f64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
+}
+
+/// An ISO-8601 UTC timestamp, matching `Date.prototype.toISOString()`.
+pub fn iso8601(time: std::time::SystemTime) -> String {
+    let duration = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = duration.as_secs() as i64;
+    let millis = duration.subsec_millis();
+
+    // Civil-from-days (Howard Hinnant's algorithm), so no date crate is needed.
+    let days = secs.div_euclid(86_400);
+    let time_of_day = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        time_of_day / 3_600,
+        (time_of_day % 3_600) / 60,
+        time_of_day % 60
+    )
+}
+
 /// A stored ISO-8601 stamp as an instant, if it is one.
 ///
-/// Only [`crate::sessions::iso8601`]'s own output is ever parsed here, but a
+/// Only [`iso8601`]'s own output is ever parsed here, but a
 /// schedule file is editable by hand and a stamp that does not parse must not
 /// wedge the runner — it reads as "no schedule", which the next tick fixes by
 /// computing one.
@@ -44,7 +81,7 @@ pub fn parse_iso(stamp: &str) -> Option<SystemTime> {
     chrono::DateTime::parse_from_rfc3339(stamp).ok().map(SystemTime::from)
 }
 
-/// Milliseconds since the epoch, for a stamp [`crate::sessions::iso8601`] wrote.
+/// Milliseconds since the epoch, for a stamp [`iso8601`] wrote.
 ///
 /// The field scan is deliberately lenient — a `T` or a space, any fraction, an
 /// optional `Z` — because a recording made by an older writer must keep
@@ -86,9 +123,16 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn iso8601_matches_javascript() {
+        assert_eq!(iso8601(std::time::UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_000_123);
+        assert_eq!(iso8601(t), "2023-11-14T22:13:20.123Z");
+    }
+
+    #[test]
     fn a_stamp_keeps_the_leniency_it_had() {
         for millis in [0i64, 1, 1_000, 1_700_000_000_123, 253_370_764_800_000] {
-            let stamp = crate::sessions::iso8601(UNIX_EPOCH + Duration::from_millis(millis as u64));
+            let stamp = iso8601(UNIX_EPOCH + Duration::from_millis(millis as u64));
             assert_eq!(parse_iso_ms(&stamp), Some(millis), "{stamp}");
         }
         assert_eq!(parse_iso_ms("2026-08-29 12:00:00"), parse_iso_ms("2026-08-29T12:00:00Z"));

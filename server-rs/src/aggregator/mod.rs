@@ -22,7 +22,7 @@
 //! - Turning the aggregator off, disconnecting the computer, or the chain
 //!   removing it deletes the whole directory ([`forget_all`]).
 //!
-//! Whether it runs is the owner's choice ([`crate::sessions::Paths::wants_aggregator`]): on for a computer
+//! Whether it runs is the owner's choice ([`crate::paths::Paths::wants_aggregator`]): on for a computer
 //! signed in from its local settings with aggregation (the default), and for
 //! one enrolled from the command line that never was (§4.3, "已注册的电脑");
 //! off once the owner turns it off.
@@ -39,7 +39,7 @@ pub mod store;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 /// Writes under `aggregator/` and its deletion, one at a time: a key the
 /// controller is storing never lands after the directory was deleted.

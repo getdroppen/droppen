@@ -226,7 +226,7 @@ impl AppConfig {
     /// directory somebody later cannot find.
     pub fn instance(&self) -> String {
         // An empty value means "unset", matching how `home_dir` and every
-        // `DROPPEN_*` override in `crate::sessions::Paths` read one.
+        // `DROPPEN_*` override in `crate::paths::Paths` read one.
         self.instance
             .as_deref()
             .map(str::trim)

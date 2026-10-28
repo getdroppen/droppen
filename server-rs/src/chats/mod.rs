@@ -40,7 +40,8 @@ use crate::api::extract::{ApiJson, ApiPath};
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::inject::{self, SendOptions};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::sessions::{chats_cwd, claude, codex, Paths, Source};
+use crate::paths::Paths;
+use crate::sessions::{chats_cwd, claude, codex, Source};
 
 pub use provider::{ChatModelList, ChatProviderInfo, ChatProviderUpdate};
 pub use store::{ApiChat, ApiChatMessage};

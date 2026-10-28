@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
+use remote_hand_server::paths::Paths;
 use remote_hand_server::pty_shim::proto::Meta;
 use remote_hand_server::pty_shim::sidecar::{self, Sidecars};
-use remote_hand_server::sessions::Paths;
 use remote_hand_server::terminals::{CreateSpec, Registry, MAX_TERMINALS};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;

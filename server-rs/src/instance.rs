@@ -161,7 +161,7 @@ pub fn valid_name(name: &str) -> bool {
 
 /// `<data>/instances/<name>` — the one place the layout is spelled.
 ///
-/// [`crate::sessions::Paths`] needs this too (the Claude config root an instance
+/// [`crate::paths::Paths`] needs this too (the Claude config root an instance
 /// owns hangs off it) and cannot go through [`InstanceDirs`], which validates and
 /// therefore returns a `Result` that a path accessor has nowhere to put. Keeping
 /// the join here rather than duplicating it is what stops the two from drifting;
@@ -630,8 +630,8 @@ mod tests {
     /// directory would be one shared file again.
     #[test]
     fn the_moved_sidecars_are_disjoint_between_instances() {
-        let a = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "a");
-        let b = crate::sessions::Paths::for_instance(PathBuf::from("/home/me"), "b");
+        let a = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "a");
+        let b = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "b");
 
         assert_ne!(a.scheduled_tasks_file(), b.scheduled_tasks_file());
 

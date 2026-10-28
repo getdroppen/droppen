@@ -39,9 +39,8 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{Event, Line};
-use crate::claude_roots::ClaudeRoot;
 use crate::instance::DEFAULT_INSTANCE;
-use crate::sessions::Paths;
+use crate::paths::{ClaudeRoot, Paths};
 
 /// How much silence is replayed before it is compressed, by default.
 const DEFAULT_MAX_GAP: Duration = Duration::from_secs(3);
@@ -449,7 +448,7 @@ fn span(ms: i64) -> String {
     }
 }
 
-/// Milliseconds since the epoch, for a stamp [`crate::sessions::iso8601`] wrote.
+/// Milliseconds since the epoch, for a stamp [`crate::time::iso8601`] wrote.
 ///
 /// Re-exported under the name this module introduced; the parser itself lives
 /// in [`crate::time::parse_iso_ms`], beside the clock every other caller uses.
@@ -458,7 +457,7 @@ pub use crate::time::parse_iso_ms as parse_iso8601;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::iso8601;
+    use crate::time::iso8601;
     use std::time::SystemTime;
 
     #[test]

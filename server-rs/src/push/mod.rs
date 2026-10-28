@@ -77,7 +77,8 @@ use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::attention::{self, derive};
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::sessions::{DriverStates, InjectionRunState, Paths, ResidentInfo, SessionSummary, Source};
+use crate::paths::Paths;
+use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, SessionSummary, Source};
 
 /// How long the same session's notifications are suppressed after one is sent.
 const THROTTLE: Duration = Duration::from_secs(60);

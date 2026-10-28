@@ -94,7 +94,8 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{self, Db};
-use crate::sessions::{iso8601, Paths};
+use crate::paths::Paths;
+use crate::time::iso8601;
 
 /// Memory cost, in KiB. 64 MiB — the OWASP baseline for argon2id at `t=3`.
 pub const MEMORY_KIB: u32 = 65536;

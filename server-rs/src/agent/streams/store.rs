@@ -25,7 +25,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Durability};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 pub const SCHEMA: &[&str] = &[
     "

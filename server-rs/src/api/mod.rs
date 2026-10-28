@@ -23,7 +23,8 @@ use tokio_util::sync::CancellationToken;
 use crate::drive::Drive;
 use crate::feed;
 use crate::openapi_ext::{self, ExtraResponses};
-use crate::sessions::{self, claude, codex, Paths, SessionDetail, SessionList, Settings, Source};
+use crate::paths::Paths;
+use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
 use error::ApiError;
 use extract::{ApiPath, ApiQuery};
 

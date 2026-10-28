@@ -32,8 +32,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::instance::InstanceDirs;
+use crate::paths::Paths;
 use crate::process_env::Env;
-use crate::sessions::{Paths, Source};
+use crate::sessions::Source;
 
 use super::{cli, store, token};
 

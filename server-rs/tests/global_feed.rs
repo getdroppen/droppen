@@ -55,7 +55,7 @@ fn seed_session(home: &Path) {
 async fn pin_changes_reach_two_clients_and_survive_server_restart() {
     let home = tempfile::tempdir().unwrap();
     seed_session(home.path());
-    let paths = remote_hand_server::sessions::Paths::new(home.path().to_owned());
+    let paths = remote_hand_server::paths::Paths::new(home.path().to_owned());
     let managed = paths.claude_managed_projects().join("project");
     std::fs::create_dir_all(&managed).unwrap();
     std::fs::rename(

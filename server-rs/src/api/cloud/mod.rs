@@ -58,7 +58,7 @@ use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlEr
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::MaybeIdentity;
 use crate::openapi_ext::ExtraResponses;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 
 mod access;
 mod file;

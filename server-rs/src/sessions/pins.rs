@@ -1,7 +1,8 @@
 //! Instance-local sidebar pins; never modify the CLI's transcript or shared titles.
 use crate::db::scope;
+use crate::paths::Paths;
 use crate::sessions::reference::local_key;
-use crate::sessions::{Paths, SessionScope, SessionSummary, Source};
+use crate::sessions::{SessionScope, SessionSummary, Source};
 
 /// The `kv` key a pin is a row under.
 ///

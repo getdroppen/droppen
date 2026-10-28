@@ -156,7 +156,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 use crate::api::error::ApiError;
 use crate::config::AuthSettings;
 use crate::instance::InstanceDirs;
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
 use tickets::{TicketScope, Tickets};
 use users::UsersStore;

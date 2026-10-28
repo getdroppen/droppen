@@ -85,7 +85,7 @@ use zeroize::Zeroizing;
 use super::link::Shared;
 use super::state::AgentState;
 use super::{FileSeedStore, StagedSeed};
-use crate::sessions::Paths;
+use crate::paths::Paths;
 use crate::text::{hex, unhex32};
 use crate::time::now_ms_u64;
 

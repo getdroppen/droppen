@@ -290,7 +290,7 @@ pub fn window_body(base: usize, before: Option<u64>, chain: &[Fp]) -> Vec<u8> {
     let mut body: Value = serde_json::from_slice(&session_body(base, &[], chain)).unwrap_or_else(|_| serde_json::json!({}));
     body["base"] = Value::from(base);
     body["before"] = before.map_or(Value::Null, |ms| {
-        Value::String(crate::sessions::iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
+        Value::String(crate::time::iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
     });
     serde_json::to_vec(&body).unwrap_or_default()
 }

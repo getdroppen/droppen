@@ -29,9 +29,9 @@ use crate::api::created::Created;
 use crate::api::error::ApiError;
 use crate::api::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::api::{AppState, SendResult};
-use crate::claude_roots::ClaudeRoot;
 use crate::config::AppConfig;
 use crate::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
+use crate::paths::ClaudeRoot;
 use crate::process_env::{apply_env, claude_env};
 use crate::sessions::{claude, Source};
 use rest::AccountLimitEventList;
@@ -1205,7 +1205,7 @@ mod tests {
 
     /// A claude session this server started on the local login, in the user's
     /// own `~/.claude`, with a subagent transcript beside it.
-    async fn local_session(paths: &crate::sessions::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
+    async fn local_session(paths: &crate::paths::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
         let project = crate::claude_roots::projects_dir(paths, ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(project.join(id).join("subagents")).expect("sidecar");
         let path = project.join(format!("{id}.jsonl"));
