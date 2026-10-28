@@ -44,10 +44,10 @@ use tokio_util::sync::CancellationToken;
 
 use lapse::ChannelLapse;
 use super::bridge::Loopback;
-use super::hub::now_ms;
 use super::state::{self, AgentState};
 use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, traffic, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
 use crate::sessions::Paths;
+use crate::time::now_ms_u64;
 
 mod admit;
 mod alerts;
@@ -65,7 +65,6 @@ pub(super) use admit::{expire_pending, on_channel_frame};
 pub(super) use alerts::raise_alarm;
 pub(super) use lapse::{drop_ended, drop_removed};
 pub(super) use local::standing_of;
-pub(crate) use local::unhex;
 
 /// The close of a handshake this agent took but could not save the device
 /// of (a device not on its record yet is let in only once it is): the page
@@ -159,7 +158,7 @@ impl Shared {
     fn set_health(&self, connected: bool, error: Option<String>) {
         let mut health = self.health.lock().expect("health");
         if health.connected != connected || health.since_ms == 0 {
-            health.since_ms = now_ms();
+            health.since_ms = now_ms_u64();
         }
         health.connected = connected;
         if connected {
@@ -271,9 +270,9 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
-        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), now_ms());
-        assert!(st.absorb(&entries, now_ms()).error.is_none());
-        let guard = st.replay_guard(now_ms());
+        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), now_ms_u64());
+        assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
+        let guard = st.replay_guard(now_ms_u64());
         let shared = Arc::new(Shared {
             paths,
             deferred_mail: Mutex::new(Vec::new()),
@@ -382,14 +381,14 @@ mod tests {
                 e
             })
             .collect();
-        let absorbed = a.shared.state.lock().unwrap().absorb(&entries, now_ms());
+        let absorbed = a.shared.state.lock().unwrap().absorb(&entries, now_ms_u64());
         assert!(absorbed.error.is_none(), "{:?}", absorbed.error);
         entries
     }
 
     /// `device` (keys `key`) vouches for this agent's chain head, `age_ms` ago.
     fn attest(a: &Account, device: &str, key: &MachineIdentity, age_ms: u64) {
-        let att = Attestation::create(&a.hub, device, key.signing_key(), now_ms() - age_ms);
+        let att = Attestation::create(&a.hub, device, key.signing_key(), now_ms_u64() - age_ms);
         assert!(a.shared.state.lock().unwrap().attest(att));
     }
 
@@ -429,7 +428,7 @@ mod tests {
             entries: Vec::new(),
             client: Vec::new(),
         };
-        let hello = initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap();
+        let hello = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         let (text_tx, _text_rx) = mpsc::unbounded_channel();
         accept(&a.shared, ch, device.into(), &hello, routes, &out_tx, &text_tx);
@@ -444,7 +443,7 @@ mod tests {
             }
             Err(_) => return Err(Vec::new()),
         };
-        let (transport, _) = initiator.read_reply(&reply, RekeyPolicy::default(), now_ms()).unwrap();
+        let (transport, _) = initiator.read_reply(&reply, RekeyPolicy::default(), now_ms_u64()).unwrap();
         let session = Session::new(ch, transport, Role::Initiator);
         let (to_device, from_agent) = mpsc::unbounded_channel();
         let (device_out, mut device_frames) = mpsc::unbounded_channel();
@@ -566,7 +565,7 @@ mod tests {
             .draft(Signer::Device("d-1".into()), Action::RemoveDevice("d-3".into()), 3_001)
             .sign(a.d1.signing_key());
         ahead.apply(&theirs, &mut ChainClock::history()).unwrap();
-        let vouched = Attestation::create(&ahead, "d-2", d2().signing_key(), now_ms());
+        let vouched = Attestation::create(&ahead, "d-2", d2().signing_key(), now_ms_u64());
         assert!(a.shared.state.lock().unwrap().attest(vouched), "kept: catching up will tell");
         assert_eq!(local.standing("d-1").view, bridge::View::Behind);
         // The same removal, drafted a moment apart: another entry at that seq.
@@ -819,7 +818,7 @@ mod tests {
             entries: Vec::new(),
             client: Vec::new(),
         };
-        initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap()
+        initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap()
     }
 
     /// Handshakes from a device new to the record arriving
@@ -950,7 +949,7 @@ mod tests {
             entries: Vec::new(),
             client: Vec::new(),
         };
-        (bind, initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap())
+        (bind, initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap())
     }
 
     /// A device admitted on a DataChannel is
@@ -1249,7 +1248,7 @@ mod tests {
     /// of what `lapse` knew.
     fn lapse_at(a: &Account, lapse: &mut ChannelLapse) -> Option<u64> {
         let st = a.shared.state.lock().unwrap();
-        lapse.update(&st, now_ms());
+        lapse.update(&st, now_ms_u64());
         lapse.at()
     }
 
@@ -1271,7 +1270,7 @@ mod tests {
             None,
             "its own word does not count while another admin's could"
         );
-        let future = Attestation::create(&a.hub, "d-2", d2().signing_key(), now_ms() + 10 * 60 * 1000);
+        let future = Attestation::create(&a.hub, "d-2", d2().signing_key(), now_ms_u64() + 10 * 60 * 1000);
         assert!(a.shared.state.lock().unwrap().attest(future));
         assert_eq!(lapse_at(&a, &mut ChannelLapse::new("d-1")), None, "nor a word dated too far ahead");
         let at_n = a.hub.clone();
@@ -1286,9 +1285,9 @@ mod tests {
             let mut st = a.shared.state.lock().unwrap();
             let next = st.chain.as_ref().unwrap().seq();
             let mut seen = st.clock.first_seen().clone();
-            seen.insert(next, now_ms() - 60 * 60 * 1000);
+            seen.insert(next, now_ms_u64() - 60 * 60 * 1000);
             st.clock.restore(seen);
-            assert!(st.attest(Attestation::create(&at_n, "d-1", a.d1.signing_key(), now_ms())));
+            assert!(st.attest(Attestation::create(&at_n, "d-1", a.d1.signing_key(), now_ms_u64())));
         }
         assert_eq!(
             lapse_at(&a, &mut ChannelLapse::new("d-2")),
@@ -1383,7 +1382,7 @@ mod tests {
             on_frame(&a.shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
         };
         // It renews (still the sole admin)…
-        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms()));
+        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64()));
         // …pairs a second admin, and vouches for that head, before the channel heard of the change.
         take(
             &mut a,
@@ -1392,7 +1391,7 @@ mod tests {
                 admin: true,
             }],
         );
-        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms()));
+        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64()));
         a.shared.chain_version.send_modify(|v| *v += 1);
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert!(a.heard_closes.lock().unwrap().is_empty(), "{:?}", a.heard_closes.lock().unwrap());
@@ -1414,7 +1413,7 @@ mod tests {
             }],
         );
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
-        let renewal = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms());
+        let renewal = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64());
         let pairing = a
             .hub
             .draft(
@@ -1427,11 +1426,11 @@ mod tests {
             )
             .sign(a.d1.signing_key());
         a.hub.apply(&pairing, &mut ChainClock::history()).unwrap();
-        let replacing = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms());
+        let replacing = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64());
         let shared = a.shared.clone();
         *a.shared.after_admission.lock().unwrap() = Some(Box::new(move || {
             assert!(take_attestation(&shared, renewal));
-            assert!(shared.state.lock().unwrap().absorb(std::slice::from_ref(&pairing), now_ms()).error.is_none());
+            assert!(shared.state.lock().unwrap().absorb(std::slice::from_ref(&pairing), now_ms_u64()).error.is_none());
             assert!(take_attestation(&shared, replacing));
         }));
         let mut routes = Routes::new();
@@ -1537,11 +1536,11 @@ mod tests {
             let mut st = a.shared.state.lock().unwrap();
             let next = st.chain.as_ref().unwrap().seq();
             let mut seen = st.clock.first_seen().clone();
-            seen.insert(next, now_ms() - 60 * 60 * 1000);
+            seen.insert(next, now_ms_u64() - 60 * 60 * 1000);
             st.clock.restore(seen);
         }
         a.shared.chain_version.send_modify(|v| *v += 1);
-        let fresh = Attestation::create(&at_n, "d-1", a.d1.signing_key(), now_ms());
+        let fresh = Attestation::create(&at_n, "d-1", a.d1.signing_key(), now_ms_u64());
         assert!(a.shared.state.lock().unwrap().attest(fresh));
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
@@ -1739,7 +1738,7 @@ mod tests {
             entries: batch,
             client: Vec::new(),
         };
-        let hello = initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap();
+        let hello = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         let (text_tx, _text_rx) = mpsc::unbounded_channel();
         let mut routes = routes_with_d2();
@@ -2286,7 +2285,7 @@ mod tests {
         a.hub.apply(&rm, &mut ChainClock::history()).unwrap();
         {
             let mut st = a.shared.state.lock().unwrap();
-            assert!(st.absorb(&[rm], now_ms()).error.is_none());
+            assert!(st.absorb(&[rm], now_ms_u64()).error.is_none());
             assert!(st.removed());
         }
         a.shared.save();
@@ -2425,7 +2424,7 @@ mod tests {
             entries: vec![rm],
             client: Vec::new(),
         };
-        let hello = initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap();
+        let hello = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
         let _ = LinkAdmit { shared: a.shared.clone() }.admit("d-1", &bind, &hello);
         assert!(a.shared.state.lock().unwrap().chain.as_ref().unwrap().device("d-2").is_none());
         assert!(sweeps.has_changed().unwrap(), "every relay connection is told to sweep");
@@ -2503,7 +2502,7 @@ mod tests {
             entries,
             client: Vec::new(),
         };
-        initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap()
+        initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap()
     }
 
     /// The next frame the hub hears from the agent on a channel in `chs`,
@@ -2584,7 +2583,7 @@ mod tests {
                     entries: vec![rm],
                     client: Vec::new(),
                 };
-                let taught = initiator.write_hello(now_ms(), &body.encode().unwrap()).unwrap();
+                let taught = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
                 let _ = LinkAdmit { shared: a.shared.clone() }.admit("d-1", &bind, &taught);
             }
             assert!(

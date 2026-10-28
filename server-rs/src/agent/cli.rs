@@ -2,10 +2,10 @@ use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, Mach
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use super::now_ms;
 use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, hub, rotation, state};
 use crate::sessions::Paths;
+use crate::time::now_ms_u64;
 
 /// What to print when the subcommand does not parse.
 pub const USAGE: &str = "\
@@ -229,7 +229,7 @@ pub(super) fn print_status(paths: &Paths) {
     if let Ok((identity, _)) = load_or_create_existing(paths) {
         show("fingerprint", Some(control::machine_fingerprint(&identity)));
     }
-    for line in rotation_lines(&status.rotation, now_ms()) {
+    for line in rotation_lines(&status.rotation, now_ms_u64()) {
         println!("  {line}");
     }
     for alarm in &status.alarms {

@@ -25,12 +25,13 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
 use zeroize::Zeroizing;
 
-use super::hub::{hex, now_ms, unhex32};
 use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
 use super::{FileSeedStore, StagedSeed, StoredSeed};
 use crate::sessions::Paths;
+use crate::text::{hex, unhex32};
+use crate::time::now_ms_u64;
 
 fn account_key() -> MachineIdentity {
     MachineIdentity::from_seed(&[1; 32])
@@ -59,7 +60,7 @@ fn key_epoch(host: &str, epoch: u32) -> Action {
 }
 
 fn unhex64(text: &str) -> [u8; 64] {
-    link::unhex(text).and_then(|b| <[u8; 64]>::try_from(b).ok()).expect("64 bytes of hex")
+    crate::text::unhex(text).and_then(|b| <[u8; 64]>::try_from(b).ok()).expect("64 bytes of hex")
 }
 
 /// A v3 account — genesis (d-1, an admin) → m-1 (this machine, runs AI) →
@@ -127,9 +128,9 @@ impl Account {
 
     /// m-1's state having taken the chain so far, its head vouched for by d-1 now.
     fn state(&self, hub: &str) -> AgentState {
-        let mut st = AgentState::enrolling(hub, "a-1", "m-1", fingerprint(&account_key().sign_public()), now_ms());
-        assert!(st.absorb(&self.entries, now_ms()).error.is_none());
-        assert!(st.attest(Attestation::create(&self.hub, "d-1", admin().signing_key(), now_ms())));
+        let mut st = AgentState::enrolling(hub, "a-1", "m-1", fingerprint(&account_key().sign_public()), now_ms_u64());
+        assert!(st.absorb(&self.entries, now_ms_u64()).error.is_none());
+        assert!(st.attest(Attestation::create(&self.hub, "d-1", admin().signing_key(), now_ms_u64())));
         st
     }
 
@@ -202,8 +203,8 @@ impl Account {
             chain_seq: self.hub.seq(),
             chain_head: self.hub.head(),
             assurance: Assurance::Auto,
-            created_ms: now_ms(),
-            accepted_ms: Some(now_ms()),
+            created_ms: now_ms_u64(),
+            accepted_ms: Some(now_ms_u64()),
         };
         FileSeedStore::for_instance(&self.paths).stage(&staged).unwrap();
         staged.identity()
@@ -455,7 +456,7 @@ impl FakeHub {
                                         Message::Binary(Frame::Chain { ch: 0, entries }.encode().unwrap().into())
                                     }
                                     Some("rotation_stage") => {
-                                        let nonce = link::unhex(v["nonce"].as_str().unwrap()).unwrap();
+                                        let nonce = crate::text::unhex(v["nonce"].as_str().unwrap()).unwrap();
                                         let hash = hex(&Sha256::digest(&nonce));
                                         let reply = match script.lock().unwrap().stage {
                                             StageAnswer::Staged => json!({"t": "rotation_staged", "nonce_hash": hash, "ready_ms": 123}),
@@ -768,11 +769,11 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         Assurance::OnDevice,
     );
     let st = AgentState::load(&a.paths).unwrap().unwrap();
-    let shown = a.paths.rotation_status(Some(&st), now_ms());
+    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
     assert_eq!(shown.code.as_deref(), Some(rh_proto::chain::rotate_sas(&body).as_str()));
-    assert!(shown.code_expires_ms.is_some_and(|t| t <= now_ms() + rotation::CODE_FOR_MS));
-    let later = a.paths.rotation_status(Some(&st), now_ms() + rotation::CODE_FOR_MS + 1);
+    assert!(shown.code_expires_ms.is_some_and(|t| t <= now_ms_u64() + rotation::CODE_FOR_MS));
+    let later = a.paths.rotation_status(Some(&st), now_ms_u64() + rotation::CODE_FOR_MS + 1);
     assert_eq!((later.state.as_str(), later.code), ("staged", None), "ten minutes, then no code");
     shared.cancel.cancel();
     let _ = task.await;
@@ -902,7 +903,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(st.rotation.renewed_ms.is_some());
     assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
     assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
-    let shown = a.paths.rotation_status(Some(&st), now_ms());
+    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
     // Its own renewal is disputed by nobody — no statement
@@ -911,7 +912,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
     assert!(a.paths.kept_disputes().is_empty());
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
-    assert!(super::dispute::statement(&st, &new, now_ms()).is_none());
+    assert!(super::dispute::statement(&st, &new, now_ms_u64()).is_none());
 }
 
 /// The state — with the chain that names the renewed key — is saved before
@@ -951,7 +952,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     std::fs::create_dir(&state_file).unwrap();
     let promoted = rotation::promote(&shared, &second);
     std::fs::remove_dir(&state_file).unwrap();
-    super::write_private(&state_file, &on_disk).unwrap();
+    crate::fsutil::write_private_reporting_path(&state_file, &on_disk).unwrap();
     // The next start does not take the key in use for one renewed away.
     assert!(
         !a.paths.seed_retired(&a.seed_in_use()),
@@ -1018,7 +1019,7 @@ async fn the_device_role_never_signs_in_with_a_key_renewed_away_or_committed() {
     let shared = a.shared(&hub.url, &Arc::default());
     assert!(rotation::device_role_may_sign_in(&shared), "nothing renewed, nothing staged");
     let entries = a.renew_to(&thief());
-    assert!(shared.state.lock().unwrap().absorb(&entries, now_ms()).error.is_none());
+    assert!(shared.state.lock().unwrap().absorb(&entries, now_ms_u64()).error.is_none());
     assert!(a.staged().is_none());
     assert!(!rotation::device_role_may_sign_in(&shared), "renewed away: closed");
     drop(hub);
@@ -1364,7 +1365,7 @@ async fn the_device_role_waits_for_the_link_while_a_staged_seed_is_kept() {
     assert!(rotation::device_role_may_sign_in(&shared), "the hub took the key in use");
     // A laptop asleep: the wall clock jumps, the dead socket still looks open
     // and nothing was heard since — the connection vouches for nothing.
-    let woke = now_ms() + rotation::LIVE_MS + 60_000;
+    let woke = now_ms_u64() + rotation::LIVE_MS + 60_000;
     assert!(shared.rotation.session().is_some(), "the connection still looks up");
     assert!(!rotation::device_role_may_sign_in_at(&shared, woke), "stale: no device-role sign-in");
     // Heard from the hub again (its answer to the link's ping): it vouches again.
@@ -1395,7 +1396,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     let kept = a.staged().expect("kept for the attempt");
     assert!(kept.accepted_ms.is_none());
     let st = AgentState::load(&a.paths).unwrap().unwrap();
-    let shown = a.paths.rotation_status(Some(&st), now_ms());
+    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.code), ("idle", None), "not shown, no code");
     // Asked to confirm it on this connection: confirmed, not unknown.
     let new = kept.identity();
@@ -1410,7 +1411,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     // The late answer: one the hub took now, shown with its code.
     hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([7u8; 16])), "ready_ms": 5}));
     until("the late answer", || a.staged().is_some_and(|s| s.accepted_ms.is_some())).await;
-    let shown = a.paths.rotation_status(Some(&st), now_ms());
+    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
     assert!(shown.code.is_some(), "high assurance: its code now");
     // A late refusal forgets one never answered.
@@ -1496,7 +1497,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     until("the file gone once delivered", || !file.exists()).await;
     let st = AgentState::load(&a.paths).unwrap().unwrap();
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
-    let shown = a.paths.rotation_status(Some(&st), now_ms());
+    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
     assert_eq!(
         rotation::verdict(&st, &old, &[], false),
@@ -1588,7 +1589,7 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
         let st = shared.state.lock().unwrap();
         assert!(st.rotation.refused_ms.is_some() && st.rotation.foreign_ms.is_none());
         assert!(st.alarms.is_empty(), "no alarm on the hub's word");
-        assert_eq!(a.paths.rotation_status(Some(&st), now_ms()).state, "refused");
+        assert_eq!(a.paths.rotation_status(Some(&st), now_ms_u64()).state, "refused");
     }
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "no fresh seed");
     assert!(!a.paths.seed_archived(&old));
@@ -1606,8 +1607,8 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     let hub = FakeHub::start(script, served.iter().cloned().chain(renewal.iter().cloned()).collect()).await;
     let restarts = Arc::new(AtomicUsize::new(0));
     // This machine's chain is from before the renewal.
-    let mut st = AgentState::enrolling(&hub.url, "a-1", "m-1", fingerprint(&account_key().sign_public()), now_ms());
-    assert!(st.absorb(&served, now_ms()).error.is_none());
+    let mut st = AgentState::enrolling(&hub.url, "a-1", "m-1", fingerprint(&account_key().sign_public()), now_ms_u64());
+    assert!(st.absorb(&served, now_ms_u64()).error.is_none());
     st.save(&b.paths).unwrap();
     let count = restarts.clone();
     let shared = link::test_shared(
@@ -1682,7 +1683,7 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     r.old_sig = rh_proto::sig::sign(h2_old.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
     r.new_sig = rh_proto::sig::sign(h2_new.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
     let entries = vec![a.push(Action::RotateHostKey(r)), a.push(key_epoch("h-2", 1))];
-    assert!(shared.state.lock().unwrap().absorb(&entries, now_ms()).error.is_none());
+    assert!(shared.state.lock().unwrap().absorb(&entries, now_ms_u64()).error.is_none());
     link::drop_removed(&shared, &mut routes, &out);
     assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![2], "the admin's channel stays");
     match closed.try_recv() {
@@ -1777,7 +1778,7 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     let answer = a.staged_answer(&new, [7; 16]);
     a.renew(&answer, [7; 16], Assurance::Auto);
     let store = FileSeedStore::for_instance(&a.paths);
-    super::write_private(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
+    crate::fsutil::write_private_reporting_path(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
     let mut script = Script::rotating(vec![new.sign_public()]);
     script.rotated = vec![old.sign_public()];
     let hub = FakeHub::start(script, a.entries.clone()).await;
@@ -1792,7 +1793,7 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(st.alarms.iter().any(|al| al.what.contains("Staged key unreadable")), "{:?}", st.alarms);
     assert!(!st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")));
-    assert_eq!(a.paths.rotation_status(Some(&st), now_ms()).state, "unreadable");
+    assert_eq!(a.paths.rotation_status(Some(&st), now_ms_u64()).state, "unreadable");
     assert!(!a.paths.seed_retired(&old));
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 0);

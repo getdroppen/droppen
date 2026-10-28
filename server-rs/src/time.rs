@@ -1,7 +1,8 @@
 //! Wall-clock readings, and the ISO-8601 spelling the rest of the server uses.
 //!
 //! There is one clock and one parser here. Everything that needs "now" as
-//! milliseconds since the epoch calls [`now_ms`], and everything that reads a
+//! milliseconds since the epoch calls [`now_ms`] (or [`now_ms_u64`], where the
+//! value is kept as a `u64`), and everything that reads a
 //! stored stamp back calls [`parse_iso_ms`] — the exact inverse of the
 //! [`iso8601`](crate::sessions::iso8601) writer, with its leniency kept as a
 //! contract: a `T` or a space between date and time, an optional fractional
@@ -22,6 +23,15 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|since| since.as_millis() as i64)
         .unwrap_or_default()
+}
+
+/// Milliseconds since the Unix epoch, as the `u64` the agent's state, link and
+/// streams keep.
+pub fn now_ms_u64() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// A stored ISO-8601 stamp as an instant, if it is one.

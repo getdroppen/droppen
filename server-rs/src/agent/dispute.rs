@@ -34,10 +34,11 @@ use rh_proto::identity::MachineIdentity;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::hub::{hex, now_ms};
 use super::state::AgentState;
 use crate::aggregator::hub::HubOriginExt;
 use crate::sessions::Paths;
+use crate::text::hex;
+use crate::time::now_ms_u64;
 
 /// The first wait after a delivery that failed…
 #[cfg(not(test))]
@@ -179,7 +180,7 @@ impl Paths {
 
 fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| e.to_string())?;
-    super::write_private(path, &bytes)?;
+    crate::fsutil::write_private_reporting_path(path, &bytes)?;
     super::sync_dir(path);
     Ok(())
 }
@@ -345,7 +346,7 @@ impl Paths {
             for (path, mut s) in pending {
                 match post(&http, &s).await {
                     Delivery::Acked => {
-                        let at = now_ms();
+                        let at = now_ms_u64();
                         tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
                         s.acked_ms = Some(at);
                         self.note_dispute_evidence(&s, at);
@@ -491,7 +492,7 @@ mod tests {
             push(&mut chain, epoch(n as u32 + 1));
         }
         let mut st = AgentState::enrolling(hub, account, "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
-        assert!(st.absorb(&entries, now_ms()).error.is_none());
+        assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         st.rotation.foreign_ms = Some(6);
         st
     }
@@ -586,7 +587,7 @@ mod tests {
         assert_eq!((s.seq, s.created_ms, s.host.as_str(), s.account.as_str()), (first, 77, "m-1", "a-1"));
         assert_eq!(s.entry_hash, hex(&chain.hash_at(first).unwrap()));
         assert_eq!(s.new_sign, hex(&k1.sign_public()), "the key that renewal installed, not the latest");
-        let sig: [u8; 64] = crate::agent::link::unhex(&s.sig).unwrap().try_into().unwrap();
+        let sig: [u8; 64] = crate::text::unhex(&s.sig).unwrap().try_into().unwrap();
         assert!(chain.verify_rotate_dispute("m-1", first, &sig), "it verifies with rh-proto on the chain");
         assert!(!chain.verify_rotate_dispute("m-1", later, &sig));
         // The holder of K1 disputes the second renewal.
@@ -610,8 +611,8 @@ mod tests {
         let (fake, origin) = hub(Vec::new()).await;
         let first = renewed_in("a-1", &[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputetwo", [4; 32], &first);
-        let a = statement(&first, &k0, now_ms()).unwrap();
-        let b = statement(&renewed_in("a-2", &[&k2, &k3], &origin), &k2, now_ms()).unwrap();
+        let a = statement(&first, &k0, now_ms_u64()).unwrap();
+        let b = statement(&renewed_in("a-2", &[&k2, &k3], &origin), &k2, now_ms_u64()).unwrap();
         assert_eq!(a.seq, b.seq, "the same place on two chains");
         assert_ne!(a.entry_hash, b.entry_hash);
         assert!(paths.keep_dispute(&a).unwrap());
@@ -619,7 +620,7 @@ mod tests {
         assert!(!paths.keep_dispute(&a).unwrap() && !paths.keep_dispute(&b).unwrap(), "the very same ones again: duplicates");
         assert_eq!(paths.kept_disputes().len(), 2);
         // Something in its place that is not it (damaged here) gives way.
-        crate::agent::write_private(&a.path(&paths), b"{}").unwrap();
+        crate::fsutil::write_private_reporting_path(&a.path(&paths), b"{}").unwrap();
         assert!(paths.keep_dispute(&a).unwrap());
         assert_eq!(paths.kept_disputes().len(), 2);
         paths.deliver_disputes();
@@ -638,7 +639,7 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503), Answer::Hang, Answer::Status(500)]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputeretry", [4; 32], &st);
-        let s = statement(&st, &k0, now_ms()).unwrap();
+        let s = statement(&st, &k0, now_ms_u64()).unwrap();
         let before = crate::agent::dir_syncs();
         assert!(paths.keep_dispute(&s).unwrap());
         assert!(crate::agent::dir_syncs() > before, "flushed before it is sent");
@@ -676,7 +677,7 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503); 50]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputerestart", [4; 32], &st);
-        paths.keep_dispute(&statement(&st, &k0, now_ms()).unwrap()).unwrap();
+        paths.keep_dispute(&statement(&st, &k0, now_ms_u64()).unwrap()).unwrap();
         paths.deliver_disputes();
         until("a first try", || !fake.lock().unwrap().posts.is_empty()).await;
         paths.stop_dispute_delivery();
@@ -696,7 +697,7 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503), Answer::Status(410)]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputegone", [4; 32], &st);
-        paths.keep_dispute(&statement(&st, &k0, now_ms()).unwrap()).unwrap();
+        paths.keep_dispute(&statement(&st, &k0, now_ms_u64()).unwrap()).unwrap();
         paths.deliver_disputes();
         until("stopped, and deleted", || paths.kept_disputes().is_empty()).await;
         until("the delivery ends", || !paths.delivering_disputes()).await;
@@ -714,7 +715,7 @@ mod tests {
         let (fake, origin) = hub(vec![Answer::Status(503); 50]).await;
         let st = renewed(&[&k0, &k1], &origin);
         let (_dir, paths) = instance("disputefresh", [4; 32], &st);
-        let s = statement(&st, &k0, now_ms()).unwrap();
+        let s = statement(&st, &k0, now_ms_u64()).unwrap();
         paths.keep_dispute(&s).unwrap();
         let fresh = paths.re_enroll_fresh(99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());

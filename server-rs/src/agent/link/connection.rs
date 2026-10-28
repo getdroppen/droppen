@@ -14,12 +14,13 @@ use tokio_util::sync::CancellationToken;
 use super::admit::{expire_pending, on_frame};
 use super::alerts::ask_again_for_held;
 use super::bridge::Loopback;
-use super::hub::{self, now_ms, Backoff, WelcomeExt, HEARTBEAT, SILENCE};
+use super::hub::{self, Backoff, WelcomeExt, HEARTBEAT, SILENCE};
 use super::lapse::{drop_ended, drop_removed};
 use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
 use crate::sessions::Paths;
+use crate::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback
 /// API listens, the per-boot credential the bridge presents there, the
@@ -134,7 +135,7 @@ pub fn start(
         (_, true) => return Err("this instance has agent state but its identity key was missing (a new one was made); re-enroll it".into()),
     };
     let cancel = env.cancel.child_token();
-    let guard = loaded.replay_guard(now_ms());
+    let guard = loaded.replay_guard(now_ms_u64());
     tracing::info!(hub = %loaded.hub, account = %loaded.account, machine = %loaded.machine, enrolled = loaded.enrolled(), "starting the hub link");
     let loopback = Arc::new(Loopback::new(env.addr, env.credential.clone()));
     let (display_name, alarms, changes) = (loaded.display_name.clone(), loaded.alarms.clone(), loaded.changes.clone());
@@ -288,7 +289,7 @@ pub(in crate::agent) fn test_shared(
     sync: super::streams::Handle,
     restart: super::rotation::Restart,
 ) -> Arc<Shared> {
-    let guard = st.replay_guard(now_ms());
+    let guard = st.replay_guard(now_ms_u64());
     Arc::new(Shared {
         paths: paths.clone(),
         deferred_mail: Mutex::new(Vec::new()),
@@ -462,7 +463,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     let (mut sink, mut source, nonce, welcome, since) = loop {
         let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
         let identity = staged_key.as_ref().unwrap_or(&shared.identity);
-        let since = now_ms();
+        let since = now_ms_u64();
         match hub::login(&mut sink, &mut source, identity, &account, &machine, &origin, nonce).await {
             Ok(welcome) => break (sink, source, nonce, welcome, since),
             Err(hub::LoginError::Refused { code, .. }) if staged_key.is_some() && code == "rotated" => {
@@ -536,7 +537,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
                 let news = {
                     let mut st = shared.state.lock().expect("agent state");
                     let news = st.rotation.refused_ms.is_none();
-                    st.rotation.refused_ms = Some(now_ms());
+                    st.rotation.refused_ms = Some(now_ms_u64());
                     news
                 };
                 if news {

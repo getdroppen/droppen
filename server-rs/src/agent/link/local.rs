@@ -4,9 +4,10 @@ use rh_proto::chain::ChainError;
 use serde_json::{json, Value};
 
 use super::bridge;
-use super::hub::now_ms;
 use super::lapse::{still_controls, ChannelLapse};
 use super::Shared;
+use crate::text::unhex;
+use crate::time::now_ms_u64;
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
 /// device tells the agent itself rather than its API.
@@ -61,7 +62,7 @@ pub(in crate::agent) fn standing_with(shared: &Shared, device: &str, controls: b
         };
     };
     use rh_proto::chain::Freshness;
-    let view = match chain.freshness(device, &st.attestation_list(), now_ms(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
+    let view = match chain.freshness(device, &st.attestation_list(), now_ms_u64(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
         Ok(Freshness::Fresh) => bridge::View::Fresh,
         Ok(Freshness::Stale { .. }) => bridge::View::Stale,
         Ok(Freshness::Behind { .. }) => bridge::View::Behind,
@@ -78,7 +79,7 @@ pub(in crate::agent) fn standing_with(shared: &Shared, device: &str, controls: b
 impl bridge::Local for AgentLocal {
     fn standing(&self, device: &str) -> bridge::Standing {
         // The channel's own control lapse (local-aggregator §3.4).
-        let controls = still_controls(&self.shared, &self.lapse, now_ms());
+        let controls = still_controls(&self.shared, &self.lapse, now_ms_u64());
         standing_with(&self.shared, device, controls)
     }
 
@@ -204,14 +205,4 @@ impl AgentLocal {
             _ => (404, json!({"error": "not_found", "message": "no such agent route"})),
         }
     }
-}
-
-pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
-        .collect()
 }

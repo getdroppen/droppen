@@ -80,8 +80,6 @@ pub mod streams;
 pub mod system;
 pub mod traffic;
 
-use std::path::Path;
-
 use crate::sessions::Paths;
 
 mod cli;
@@ -92,14 +90,6 @@ pub use seed::{load_or_create, load_or_create_in, FileSeedStore, StagedSeed, Sto
 pub(in crate::agent) use seed::sync_dir;
 #[cfg(test)]
 pub(crate) use seed::dir_syncs;
-
-/// Milliseconds since the Unix epoch.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 /// The legacy apex hub origin, and the canonical `api.` one.
 const LEGACY_HUB: &str = "wss://droppen.app";
@@ -145,43 +135,11 @@ impl Paths {
     }
 }
 
-#[cfg(unix)]
-pub(crate) fn check_private(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .permissions()
-        .mode();
-    if mode & 0o077 != 0 {
-        return Err(format!(
-            "{} is readable by others (mode {:o}); chmod 600 it, or delete it to make a new identity",
-            path.display(),
-            mode & 0o777
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-pub(crate) fn check_private(_: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-/// Write `data` to `path` as a new 0600 file in a 0700 directory, atomically:
-/// a half-written key file must never be what the next run finds.
-///
-/// The rule itself lives in [`crate::fsutil::write_private_creating_parent`];
-/// this adds the path to the error, which is the shape every caller here
-/// reports.
-pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
-    crate::fsutil::write_private_creating_parent(path, data).map_err(|error| format!("{}: {error}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::cli::*;
     use super::seed::*;
-    use super::{hub, rotation, state};
+    use super::{rotation, state};
     use crate::sessions::Paths;
     use rh_proto::identity::{EnrollCode, MachineIdentity};
     use zeroize::Zeroizing;
@@ -384,7 +342,7 @@ mod tests {
         flushed("staging", &|| store.stage(&staged(7, 1)).unwrap());
         flushed("staging another", &|| store.stage(&staged(8, 2)).unwrap());
         flushed("setting one aside", &|| store.expire(&[1; 16]).unwrap());
-        assert!(store.expired_path(&[1; 16]).ends_with(format!("agent/machine-key.expired-{}.json", hub::hex(&[1; 16]))));
+        assert!(store.expired_path(&[1; 16]).ends_with(format!("agent/machine-key.expired-{}.json", crate::text::hex(&[1; 16]))));
         assert_eq!(store.stagings().unwrap().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[2; 16]]);
         assert_eq!(store.expired().iter().map(|s| s.nonce).collect::<Vec<_>>(), vec![[1; 16]]);
         assert!(store.expire(&[1; 16]).is_ok(), "none left to set aside: nothing to do");
@@ -406,7 +364,7 @@ mod tests {
         let store = FileSeedStore::for_instance(&paths);
         assert_eq!(
             store.staging_path(&[1; 16]),
-            paths.machine_key_path().with_file_name(format!("machine-key.next-{}.json", hub::hex(&[1; 16])))
+            paths.machine_key_path().with_file_name(format!("machine-key.next-{}.json", crate::text::hex(&[1; 16])))
         );
         assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
         assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");

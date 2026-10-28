@@ -123,7 +123,7 @@ impl AgentStatus {
     /// files say ([`Paths::rotation_status`]).
     pub fn of_instance(paths: &Paths, st: &AgentState) -> Self {
         Self {
-            rotation: paths.rotation_status(Some(st), super::now_ms()),
+            rotation: paths.rotation_status(Some(st), crate::time::now_ms_u64()),
             ..Self::of(st)
         }
     }
@@ -506,7 +506,7 @@ impl Control {
             return Ok(false);
         }
         self.stop_locked().await;
-        self.paths.re_enroll_fresh(super::now_ms()).map_err(ControlError::Failed)?;
+        self.paths.re_enroll_fresh(crate::time::now_ms_u64()).map_err(ControlError::Failed)?;
         Ok(true)
     }
 
@@ -518,7 +518,7 @@ impl Control {
     pub async fn re_enroll_fresh(&self) -> Result<MachineIdentity, ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        self.paths.re_enroll_fresh(super::now_ms()).map_err(ControlError::Failed)
+        self.paths.re_enroll_fresh(crate::time::now_ms_u64()).map_err(ControlError::Failed)
     }
 
     /// Stop the link and delete everything under `agent/`: the state, the
@@ -973,7 +973,7 @@ mod tests {
         AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
         // What the crash left: the marker, the seed archived, the state kept.
         let agent = paths.machine_key_path().parent().unwrap().to_path_buf();
-        crate::agent::write_private(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
+        crate::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
         std::fs::rename(paths.machine_key_path(), paths.archived_key_path(5)).unwrap();
         control.attach(link_env(&paths));
         assert!(!paths.has_agent_state(), "the old enrollment is forgotten");

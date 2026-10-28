@@ -70,7 +70,7 @@ impl Cloud {
     /// lock, as its callers already hold it.
     fn write_file(&self, file: &CloudFile) -> Result<(), ApiError> {
         let bytes = serde_json::to_vec_pretty(file).map_err(|e| ApiError::internal(e.to_string()))?;
-        crate::agent::write_private(&self.file_path(), &bytes).map_err(ApiError::internal)?;
+        crate::fsutil::write_private_reporting_path(&self.file_path(), &bytes).map_err(ApiError::internal)?;
         self.changed.send_modify(|n| *n += 1);
         Ok(())
     }
@@ -216,6 +216,6 @@ pub fn hand_over_from_local_owner(paths: &Paths, accounts: &[(String, String, bo
     file.accounts_since.insert(first.clone(), since);
     file.remote_access.insert(first.clone(), true);
     let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
-    crate::agent::write_private(&path, &bytes)?;
+    crate::fsutil::write_private_reporting_path(&path, &bytes)?;
     Ok(Some(first))
 }

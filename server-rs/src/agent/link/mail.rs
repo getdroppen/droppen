@@ -5,8 +5,8 @@ use rh_proto::wrap::{self, Purpose, SealContext, SealedKey, WrapError};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use super::local::unhex;
 use super::Shared;
+use crate::text::unhex;
 
 /// The most mail kept to try again as the chain catches up.
 pub(in crate::agent) const MAX_DEFERRED: usize = 64;

@@ -1934,7 +1934,7 @@ mod tests {
         assert!(!may_manage(&state, &file, owner).await, "not the owner any more");
         assert!(may_manage(&state, &file, "ada").await, "an account manages an ownerless link");
         // What `post_return` asks of the attempt's opener.
-        let attempt = attempt(owner, crate::agent::now_ms() + 60_000).unwrap();
+        let attempt = attempt(owner, crate::time::now_ms_u64() + 60_000).unwrap();
         assert!(!may_manage(&state, &file, &attempt.owner).await);
     }
 

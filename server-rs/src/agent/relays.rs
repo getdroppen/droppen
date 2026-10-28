@@ -55,8 +55,10 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use super::hub::{self, hex, now_ms, unhex32, Backoff, Peer, HEARTBEAT, SILENCE};
+use super::hub::{self, Backoff, Peer, HEARTBEAT, SILENCE};
 use super::link::{drop_ended, drop_removed, expire_pending, on_channel_frame, Pending, Routes, Shared};
+use crate::text::{hex, unhex32};
+use crate::time::now_ms_u64;
 
 /// What this agent names in `agent_info` when it attaches to relays.
 pub const FEATURE: &str = "relays/1";
@@ -527,7 +529,7 @@ impl Manager {
     /// soon (all of them with `now`).
     fn ask_tickets(&mut self, all: bool) {
         let Some(hub) = &self.hub else { return };
-        let now = now_ms();
+        let now = now_ms_u64();
         let due: Vec<&String> = self
             .wanted
             .keys()
@@ -545,7 +547,7 @@ impl Manager {
     /// Start a connection to every wanted relay with a ticket; leave the
     /// ones no longer wanted once their channels are gone.
     fn reconcile(&mut self) {
-        let now = now_ms();
+        let now = now_ms_u64();
         self.conns.retain(|_, c| !c.done.is_finished());
         for (id, w) in &self.wanted {
             let Some(ticket) = self.tickets.get(id).filter(|(_, exp)| *exp > now) else {
@@ -699,7 +701,7 @@ async fn run(
         let started = Instant::now();
         let current = ticket.borrow().clone();
         match current {
-            Some((text, expires)) if expires > now_ms() => {
+            Some((text, expires)) if expires > now_ms_u64() => {
                 let result = tokio::select! {
                     r = session(&shared, &id, &target, &text, &mut ticket, &channels, &events) => r,
                     () = cancel.cancelled() => return,
@@ -774,7 +776,7 @@ async fn session(
         let st = shared.state.lock().expect("agent state");
         (st.account.clone(), st.machine.clone())
     };
-    let time_ms = now_ms();
+    let time_ms = now_ms_u64();
     let sig = HubLogin {
         role: LoginRole::RelayAgent,
         account: account.clone(),
@@ -1158,7 +1160,7 @@ mod tests {
                             let _ = socket.send(WsMessage::Close(Some(close))).await;
                             return;
                         }
-                        let welcome = json!({"t": "welcome", "relay": "r-1", "id": "m-1", "expires_ms": now_ms() + 600_000}).to_string();
+                        let welcome = json!({"t": "welcome", "relay": "r-1", "id": "m-1", "expires_ms": now_ms_u64() + 600_000}).to_string();
                         let _ = socket.send(WsMessage::Text(welcome.into())).await;
                         while let Some(Ok(_)) = socket.recv().await {}
                     })
@@ -1168,7 +1170,7 @@ mod tests {
         .await;
         let dir = tempfile::tempdir().unwrap();
         let paths = crate::sessions::Paths::for_instance(dir.path().to_path_buf(), "relays");
-        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms());
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
         let identity = rh_proto::identity::MachineIdentity::from_seed(&[5; 32]);
         let shared = super::super::link::test_shared(
             &paths,
@@ -1177,7 +1179,7 @@ mod tests {
             super::super::streams::Handle::detached(),
             super::super::rotation::no_restart(),
         );
-        let (tickets, rx) = watch::channel(Some(("revoked".to_string(), now_ms() + 600_000)));
+        let (tickets, rx) = watch::channel(Some(("revoked".to_string(), now_ms_u64() + 600_000)));
         let (events, mut heard) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
         let target = Target {
@@ -1199,7 +1201,7 @@ mod tests {
         assert_eq!(revoked, vec!["r-1".to_string()]);
         // The manager drops it, then brings a fresh one: signed in with that.
         tickets.send_replace(None);
-        tickets.send_replace(Some(("fresh".to_string(), now_ms() + 600_000)));
+        tickets.send_replace(Some(("fresh".to_string(), now_ms_u64() + 600_000)));
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 match heard.recv().await {
@@ -1221,7 +1223,7 @@ mod tests {
     async fn the_manager_asks_for_a_fresh_ticket_once_one_is_revoked() {
         let dir = tempfile::tempdir().unwrap();
         let paths = crate::sessions::Paths::for_instance(dir.path().to_path_buf(), "relays");
-        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms());
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
         let shared = super::super::link::test_shared(
             &paths,
             st,
@@ -1235,7 +1237,7 @@ mod tests {
             events: mpsc::unbounded_channel().0,
             wanted: BTreeMap::from([("r-1".to_string(), Wanted { origin: "wss://r-1.relay.example".into() })]),
             directory: BTreeMap::new(),
-            tickets: HashMap::from([("r-1".to_string(), ("old".to_string(), now_ms() + 14 * 60 * 1000))]),
+            tickets: HashMap::from([("r-1".to_string(), ("old".to_string(), now_ms_u64() + 14 * 60 * 1000))]),
             conns: HashMap::new(),
             hub: Some(hub),
             attached: BTreeSet::new(),

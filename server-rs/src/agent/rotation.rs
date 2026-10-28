@@ -82,11 +82,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
-use super::hub::{hex, now_ms, unhex32};
 use super::link::Shared;
 use super::state::AgentState;
 use super::{FileSeedStore, StagedSeed};
 use crate::sessions::Paths;
+use crate::text::{hex, unhex32};
+use crate::time::now_ms_u64;
 
 /// How long `POST /rh/rotate` waits for the hub to stage the proof.
 #[cfg(not(test))]
@@ -215,12 +216,12 @@ impl Rotation {
         let mut inner = self.lock();
         inner.session = Some(session);
         inner.switch = false;
-        inner.heard_ms = now_ms();
+        inner.heard_ms = now_ms_u64();
     }
 
     /// The hub connection heard from the hub just now.
     pub fn heard(&self) {
-        self.lock().heard_ms = now_ms();
+        self.lock().heard_ms = now_ms_u64();
     }
 
     /// It went: whatever waited for it gets no answer.
@@ -564,7 +565,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
                 chain_seq: req.chain_seq,
                 chain_head: req.chain_head,
                 assurance: req.assurance,
-                created_ms: now_ms(),
+                created_ms: now_ms_u64(),
                 accepted_ms: None,
             }
         }
@@ -594,7 +595,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
         return (200, answer(ready_ms));
     }
     if is_new {
-        make_room(&store, &stagings, session.since_ms, now_ms());
+        make_room(&store, &stagings, session.since_ms, now_ms_u64());
     }
     // On disk before the hub hears of it: a renewal the hub stages is one
     // this device can always finish.
@@ -628,7 +629,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             let ready_ms = v["ready_ms"].as_u64();
             // Taken by the hub: kept until it expires, whatever is asked next.
             let accepted = StagedSeed {
-                accepted_ms: Some(staged.accepted_ms.unwrap_or_else(now_ms)),
+                accepted_ms: Some(staged.accepted_ms.unwrap_or_else(now_ms_u64)),
                 ..staged.clone()
             };
             if let Err(error) = store.stage(&accepted) {
@@ -704,7 +705,7 @@ pub(super) fn late_answer(shared: &Shared, value: &Value) {
             tracing::info!("the hub's late answer: it staged the renewal; keeping the staged key");
             let nonce = staged.nonce;
             let accepted = StagedSeed {
-                accepted_ms: Some(now_ms()),
+                accepted_ms: Some(now_ms_u64()),
                 ..staged
             };
             if let Err(error) = store.stage(&accepted) {
@@ -811,7 +812,7 @@ impl Request {
         let v: Value = serde_json::from_slice(body).map_err(|_| "JSON expected")?;
         let nonce = v["nonce"]
             .as_str()
-            .and_then(super::link::unhex)
+            .and_then(crate::text::unhex)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or("nonce: 16 bytes of hex expected")?;
         let eph = v["eph"].as_str().and_then(unhex32).ok_or("eph: 32 bytes of hex expected")?;
@@ -918,7 +919,7 @@ pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
 fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     let statement = {
         let mut st = shared.state.lock().expect("agent state");
-        st.rotation.foreign_ms.get_or_insert(now_ms());
+        st.rotation.foreign_ms.get_or_insert(now_ms_u64());
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.to_string());
         st.rotation.refused_ms = None;
         st.rotation.unreadable_ms = None;
@@ -926,7 +927,7 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
         if st.rotation.evidence_ms.is_some() {
             Err(())
         } else {
-            Ok(super::dispute::statement(&st, &shared.identity, now_ms()))
+            Ok(super::dispute::statement(&st, &shared.identity, now_ms_u64()))
         }
     };
     tracing::warn!(
@@ -967,7 +968,7 @@ fn unreadable(shared: &Arc<Shared>, store: &FileSeedStore) {
     let news = {
         let mut st = shared.state.lock().expect("agent state");
         let news = st.rotation.unreadable_ms.is_none();
-        st.rotation.unreadable_ms.get_or_insert(now_ms());
+        st.rotation.unreadable_ms.get_or_insert(now_ms_u64());
         news
     };
     if news {
@@ -1005,7 +1006,7 @@ pub fn renewed_away(st: &AgentState, identity: &MachineIdentity) -> bool {
 /// it ([`renewed_away`]: a renewal the link has not taken yet, or one made
 /// elsewhere).
 pub(super) fn device_role_may_sign_in(shared: &Shared) -> bool {
-    device_role_may_sign_in_at(shared, now_ms())
+    device_role_may_sign_in_at(shared, now_ms_u64())
 }
 
 /// [`device_role_may_sign_in`] at wall-clock time `now`.
@@ -1064,7 +1065,7 @@ impl Paths {
             let current = MachineIdentity::from_seed(&stored.seed);
             if self.seed_retired(&current) {
                 tracing::warn!("the identity key in use was replaced elsewhere (or archived): this enrollment uses a fresh one");
-                return self.re_enroll_fresh(now_ms());
+                return self.re_enroll_fresh(now_ms_u64());
             }
         }
         super::load_or_create(self).map(|(identity, _)| identity)
@@ -1121,7 +1122,7 @@ impl Paths {
             }
         }
         let marker = self.re_enroll_marker();
-        super::write_private(&marker, b"{}")?;
+        crate::fsutil::write_private_reporting_path(&marker, b"{}")?;
         super::sync_dir(&marker);
         self.forget_for_a_fresh_identity(now)
     }
@@ -1136,7 +1137,7 @@ impl Paths {
             return Ok(None);
         }
         tracing::warn!("adding this device again under a new identity was interrupted: finishing it");
-        self.forget_for_a_fresh_identity(now_ms()).map(Some)
+        self.forget_for_a_fresh_identity(now_ms_u64()).map(Some)
     }
 }
 
@@ -1262,7 +1263,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
     let new = new.identity();
     {
         let mut st = shared.state.lock().expect("agent state");
-        st.rotation.renewed_ms = Some(now_ms());
+        st.rotation.renewed_ms = Some(now_ms_u64());
         st.rotation.previous_fingerprint = Some(previous.clone());
         st.rotation.foreign_ms = None;
         st.rotation.foreign_reason = None;
@@ -1599,7 +1600,7 @@ mod tests {
         push(&mut hub, chain::Action::RotateHostKey(r));
         push(&mut hub, epoch(1));
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
-        assert!(st.absorb(&entries, now_ms()).error.is_none());
+        assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         st
     }
 
@@ -1667,7 +1668,7 @@ mod tests {
         let st = renewed_to(&current, &mine.identity());
         st.save(&paths).unwrap();
         // The staged file is damaged.
-        super::super::write_private(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
+        crate::fsutil::write_private_reporting_path(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
         assert_eq!(store.unreadable().len(), 1);
         assert_eq!(verdict(&st, &current, &[], true), Verdict::Unreadable);
         assert_eq!(paths.stored_verdict(&st, &current), Verdict::Unreadable);

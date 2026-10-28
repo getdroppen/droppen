@@ -1,7 +1,8 @@
 //! Text helpers that more than one subsystem needs.
 //!
 //! Hex is re-exported from [`rh_client`], which spells it the way every binary
-//! field in the hub's control messages does; [`sha256_hex`] is the one
+//! field in the hub's control messages does; `unhex` and [`unhex32`] read it
+//! back, answering `None` for anything that is not hex; [`sha256_hex`] is the one
 //! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal
 //! cleaner the setup wizard and the installer-output reader share — every escape
 //! becomes a space, never nothing, so two words the escape sat between do not
@@ -11,6 +12,28 @@ use sha2::{Digest, Sha256};
 
 /// Lower-case hex, as `sha256sum` and the hub's wire fields spell it.
 pub use rh_client::hex;
+
+pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+/// 32 bytes from 64 hex characters.
+pub fn unhex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
 
 /// Lower-case hex of the SHA-256 digest of `data`.
 pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
