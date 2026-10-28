@@ -40,7 +40,7 @@ pub struct AssistantEcho {
     /// ISO-8601 timestamp of the transcript entry it came from, when the entry
     /// carried one. Both CLIs stamp every line in practice; a fixture may not,
     /// and a caller that needs a clock regardless falls back on the file's mtime
-    /// ([`crate::attention::apply`] does).
+    /// ([`crate::sessions::attention::apply`] does).
     pub at: Option<String>,
     /// The text itself, trimmed.
     pub text: String,
@@ -89,7 +89,7 @@ fn collapse_whitespace(text: &str) -> String {
 /// trimmed, in the order they were written.
 ///
 /// **The one definition** behind the badge, the unread count and the push
-/// notification ([`crate::attention::unread`] counts these; [`claude_echo`] and
+/// notification ([`crate::sessions::attention::unread`] counts these; [`claude_echo`] and
 /// [`codex_echo`] take the newest), so the three can never disagree about
 /// whether something was said. One entry per transcript row the session view
 /// draws for it:

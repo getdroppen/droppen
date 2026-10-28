@@ -7,7 +7,7 @@
 //! events, and one of them is conditional:
 //!
 //! * **A turn finished and the session is unread.** "Unread" is
-//!   [`crate::attention`]'s verdict, unchanged — if the user is looking at the
+//!   [`crate::sessions::attention`]'s verdict, unchanged — if the user is looking at the
 //!   session, the screen already said everything the notification would.
 //! * **A run failed.** Always, regardless of what anyone is looking at: a run
 //!   that died is not going to tell you itself.
@@ -72,7 +72,7 @@ use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiRouter, AppState, SendResult};
-use crate::attention::{self, derive};
+use crate::sessions::attention::{self, derive};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
@@ -469,7 +469,7 @@ async fn notify_inner(paths: Arc<Paths>, source: Source, id: String, outcome: In
         InjectionRunState::Failed => Notice::Failed(error.unwrap_or_else(|| "the run failed".to_string())),
         InjectionRunState::Ok => {
             // A turn only earns a notification if the user has not already seen
-            // what it produced. Exactly `crate::attention`'s rule *and* its data:
+            // what it produced. Exactly `crate::sessions::attention`'s rule *and* its data:
             // the clock is the newest message in the same unread ledger the list
             // row's badge and count come from, built by the same predicate
             // (`derive::spoken_texts`) — so the badge and the notification can

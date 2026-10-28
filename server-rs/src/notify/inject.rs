@@ -216,7 +216,7 @@ pub async fn decorate(paths: &Paths, instance: &InstanceDirs, source: Source, id
         return;
     };
 
-    let key = crate::attention::seen::key_of(source, id);
+    let key = crate::sessions::attention::seen::key_of(source, id);
     env.insert("PATH".to_string(), path_with(&dir, env.get("PATH").map(String::as_str)));
     let token = token::mint(&secret, instance.name(), &key);
     // Under both names: whatever binary runs `notify` later may be from before

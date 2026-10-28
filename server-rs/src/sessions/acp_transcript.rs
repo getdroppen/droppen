@@ -30,7 +30,7 @@
 //! * `assistant` / `thinking` — the whole of a run of deltas, written as soon
 //!   as the run ends. It supersedes the deltas before it, so a finished
 //!   transcript reads as messages and only a turn still streaming reads as
-//!   deltas. It is also the one line [`crate::attention`] counts as the agent
+//!   deltas. It is also the one line [`crate::sessions::attention`] counts as the agent
 //!   speaking, once per message rather than once per token.
 //! * `tool_call` — `id`, `title`, `kind` and `input`; `tool_result` — `id`,
 //!   `status` and `output`.
@@ -508,7 +508,7 @@ fn user_item(entry: &Map<String, Value>, at: Option<&str>) -> TranscriptItem {
 
 /// The texts in one transcript line that are the agent speaking to the user.
 ///
-/// The ACP arm of [`crate::attention::derive::spoken_texts`]: the record that
+/// The ACP arm of [`crate::sessions::attention::derive::spoken_texts`]: the record that
 /// closes a run of answer text, never a delta.
 pub fn spoken_texts(entry: &Map<String, Value>) -> Vec<String> {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {

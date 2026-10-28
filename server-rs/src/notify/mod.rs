@@ -221,7 +221,7 @@ pub struct NotifyCaller {
 impl NotifyCaller {
     /// The `<source>/<id>` key a token is minted against.
     pub fn key(&self) -> String {
-        crate::attention::seen::key_of(self.source, &self.id)
+        crate::sessions::attention::seen::key_of(self.source, &self.id)
     }
 
     /// Split a session key back into its two halves.

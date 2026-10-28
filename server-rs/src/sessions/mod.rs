@@ -7,6 +7,7 @@ pub mod account;
 pub mod acp_transcript;
 pub mod adoption_leftovers;
 pub mod archive;
+pub mod attention;
 pub mod checklist;
 pub mod claude;
 pub mod codex;
@@ -406,7 +407,7 @@ impl DriverStates {
 
     /// Fold the driver's account into every row.
     ///
-    /// Called from [`list_and_filter`] *before* [`crate::attention::apply`],
+    /// Called from [`list_and_filter`] *before* [`crate::sessions::attention::apply`],
     /// because `unread` is computed from `status` and the corrected status is
     /// the one it must be computed from: a session whose resident is mid-turn
     /// is not waiting on the user, whatever the tail of its transcript looks
@@ -934,7 +935,7 @@ pub async fn list_and_filter(
     // After the driver: a Claude child counts as working only while its
     // parent is, and that is the driver's answer.
     subagents::apply(paths, &mut sessions).await;
-    crate::attention::apply(paths, &mut sessions).await;
+    attention::apply(paths, &mut sessions).await;
     repo::apply(&mut sessions).await;
     pins::apply(paths, &mut sessions);
     sessions.sort_by_key(|session| !session.pinned);
