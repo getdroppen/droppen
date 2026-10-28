@@ -296,7 +296,7 @@ async fn fire(state: &AppState, task: ScheduledTask) {
         ..Default::default()
     };
 
-    match inject::start_new_session(&state.drive, task.source, &cwd, &task.prompt, &options).await {
+    match inject::start_new_session(&state.drive.spawn_deps(), task.source, &cwd, &task.prompt, &options).await {
         Ok(id) => {
             tracing::info!(task = %task.name, source = %task.source, session = %id, "a scheduled task started a session");
             record(&paths, &task.id, |stored| {

@@ -575,7 +575,7 @@ async fn start_session(state: AppState, body: NewSession, qid: Option<String>) -
         acp_agent: body.acp_agent.0,
         ..send_options(body.model.0, body.effort.0, body.permission.0, body.account_id)
     };
-    let id = inject::start_new_session(drive, body.source, &resolved.to_string_lossy(), &body.text, &options)
+    let id = inject::start_new_session(&drive.spawn_deps(), body.source, &resolved.to_string_lossy(), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "cannot start session"))?;
     // The sidebar has to show the new session before its first transcript line
@@ -742,7 +742,7 @@ async fn deliver_message(
         message_id: qid.clone(),
         ..send_options(body.model.0, body.effort.0, body.permission.0, body.account_id)
     };
-    let sent = inject::send_to_session(drive, source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
+    let sent = inject::send_to_session(&drive.spawn_deps(), source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "failed to start the CLI"))?;
     Ok(SendMessageResult {
@@ -998,7 +998,7 @@ async fn settle_expired(
         permission: choice.permission.0,
         ..SendOptions::default()
     };
-    match inject::send_to_session(drive, source, id, summary.cwd.as_ref().map(String::as_str), &text, &options).await {
+    match inject::send_to_session(&drive.spawn_deps(), source, id, summary.cwd.as_ref().map(String::as_str), &text, &options).await {
         Ok(_) => Ok(QuestionAnswerResult {
             question: question.wire(),
             delivered: QuestionDelivery::Message,
