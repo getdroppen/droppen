@@ -36,6 +36,7 @@ use super::watch;
 use crate::api::{ApiRouter, AppState};
 use crate::drive::Drive;
 use crate::http::extract::ApiQuery;
+use crate::http::refresh::RefreshSink;
 use crate::http::{close_within, send_within, CLOSE_LIMIT};
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
@@ -94,9 +95,15 @@ impl GlobalFeed {
     /// TypeScript). With nobody listening there is nothing to refresh, so it is
     /// a no-op rather than an error.
     pub fn request_refresh(&self, expected: Option<(Source, &str)>) {
+        self.send_request(|| expected.map(|(source, id)| format!("{source}/{id}")));
+    }
+
+    /// The one body behind both `request_refresh`s. The key is made only once
+    /// a client is known to be attached, under the lock.
+    fn send_request(&self, key: impl FnOnce() -> Option<String>) {
         let live = self.live.lock().expect("global feed poisoned");
         let Some(live) = live.as_ref() else { return };
-        let key = expected.map(|(source, id)| format!("{source}/{id}"));
+        let key = key();
         // A full queue already means "a refresh is pending", so a drop here
         // loses nothing but the discovery retries, which only speed things up.
         let _ = live.requests.try_send(key);
@@ -166,6 +173,19 @@ impl GlobalFeed {
                 live.cancel.cancel();
             }
         }
+    }
+}
+
+/// The inputs the subsystems below the feed reach it through
+/// ([`crate::http::refresh::Refresh`]): the same two calls as the inherent
+/// methods, under the same lock.
+impl RefreshSink for GlobalFeed {
+    fn request_refresh(&self, expected: Option<(&dyn std::fmt::Display, &str)>) {
+        self.send_request(|| expected.map(|(source, id)| format!("{source}/{id}")));
+    }
+
+    fn publish(&self, frame: String) {
+        GlobalFeed::publish(self, frame);
     }
 }
 

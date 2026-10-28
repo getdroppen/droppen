@@ -57,7 +57,7 @@ use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::api::{ApiRouter, AppState};
-use crate::feed::global::GlobalFeed;
+use crate::http::refresh::Refresh;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::SendResult;
@@ -803,7 +803,7 @@ impl ScreenStore {
     }
     /// Create a screen holding one empty pane: one row inserted, nothing else
     /// rewritten.
-    async fn create(&self, feed: &GlobalFeed, body: ScreenCreate) -> Result<Screen, ApiError> {
+    async fn create(&self, feed: &Refresh, body: ScreenCreate) -> Result<Screen, ApiError> {
         let db = crate::db::at(&self.0);
         let (screen, list_revision) = db
             .write(|tx| {
@@ -837,7 +837,7 @@ impl ScreenStore {
         Ok(screen)
     }
     /// Patch one screen, if the client's `baseRevision` is still its revision.
-    async fn update(&self, feed: &GlobalFeed, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
+    async fn update(&self, feed: &Refresh, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
         let emoji = body.emoji.as_deref().map(parse_emoji).transpose().map_err(ApiError::bad_request)?;
         let db = crate::db::at(&self.0);
         // A layout autosave and an icon change can arrive together. Read and patch
@@ -883,7 +883,7 @@ impl ScreenStore {
         Ok(next)
     }
     /// Delete one screen: one row removed, nothing else rewritten.
-    async fn delete(&self, feed: &GlobalFeed, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
+    async fn delete(&self, feed: &Refresh, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
         let db = crate::db::at(&self.0);
         let (revision, list_revision) = db
             .write(|tx| {
@@ -904,7 +904,7 @@ impl ScreenStore {
         Ok(())
     }
     /// Move screens' positions, in one transaction, without touching any payload.
-    async fn reorder(&self, feed: &GlobalFeed, body: ScreenOrder) -> Result<ScreenList, ApiError> {
+    async fn reorder(&self, feed: &Refresh, body: ScreenOrder) -> Result<ScreenList, ApiError> {
         let db = crate::db::at(&self.0);
         let (list, moved) = db
             .write(|tx| {
@@ -972,7 +972,7 @@ fn write_failed(error: rusqlite::Error) -> ApiError {
     ApiError::internal(format!("failed to write screens: {error}"))
 }
 
-impl GlobalFeed {
+impl Refresh {
     /// Tell every open client that one screen changed, or went.
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool) {
         let mut frame = json!({ "type": "screens:changed", "id": id, "revision": revision });
@@ -1015,7 +1015,7 @@ pub async fn list_screens(State(state): State<AppState>) -> Json<ScreenList> {
 /// Create a screen holding one empty pane.
 #[api(id = "create_screen", group = "screens", summary = "Create a screen")]
 pub async fn create_screen(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenCreate>) -> Result<Json<Screen>, ApiError> {
-    ScreenStore::of(&state.paths).create(&state.global, body).await.map(Json)
+    ScreenStore::of(&state.paths).create(&state.refresh, body).await.map(Json)
 }
 
 /// Update a screen's name, emoji, and/or layout without touching omitted fields.
@@ -1028,7 +1028,7 @@ pub async fn update_screen(
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<ScreenUpdate>,
 ) -> Result<Json<Screen>, ApiError> {
-    ScreenStore::of(&state.paths).update(&state.global, &id, body).await.map(Json)
+    ScreenStore::of(&state.paths).update(&state.refresh, &id, body).await.map(Json)
 }
 
 /// Delete a screen. The resources its leaves reference are left untouched.
@@ -1038,7 +1038,7 @@ pub async fn delete_screen(
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<ScreenDeleteQuery>,
 ) -> Result<Json<SendResult>, ApiError> {
-    ScreenStore::of(&state.paths).delete(&state.global, &id, query.base_list_revision).await?;
+    ScreenStore::of(&state.paths).delete(&state.refresh, &id, query.base_list_revision).await?;
     Ok(Json(SendResult { accepted: true }))
 }
 
@@ -1046,7 +1046,7 @@ pub async fn delete_screen(
 /// relative order after the ones it does.
 #[api(id = "reorder_screens", group = "screens", summary = "Reorder screens")]
 pub async fn reorder_screens(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenOrder>) -> Result<Json<ScreenList>, ApiError> {
-    ScreenStore::of(&state.paths).reorder(&state.global, body).await.map(Json)
+    ScreenStore::of(&state.paths).reorder(&state.refresh, body).await.map(Json)
 }
 
 /// Register this subsystem's routes.
@@ -1115,6 +1115,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::feed::global::GlobalFeed;
 
     /// A split of two leaves, `depth` levels deep.
     fn nested_split(depth: u32) -> Value {
@@ -1326,7 +1327,7 @@ mod tests {
         assert_eq!(screens[0], screen);
 
         // And the next save leaves the table as the only place a layout lives.
-        store.update(&GlobalFeed::default(),
+        store.update(&Refresh::new(GlobalFeed::new()),
             "screen-1",
             ScreenUpdate {
                 title: Some("again".to_string()).into(),
@@ -1484,7 +1485,7 @@ mod tests {
         assert_eq!(screens.len(), 1);
         assert_eq!(screens[0].layout.0, layout, "the browser leaf must survive the sanitizer");
 
-        let saved = store.update(&GlobalFeed::default(),
+        let saved = store.update(&Refresh::new(GlobalFeed::new()),
             "screen-1",
             ScreenUpdate {
                 layout: Optional(Some(screens[0].layout.clone())),
@@ -1567,7 +1568,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = GlobalFeed::default();
+        let feed = Refresh::new(GlobalFeed::new());
         let created = store.create(&feed, ScreenCreate::default()).await.expect("create");
         assert_eq!(created.revision, 1);
 
@@ -1633,7 +1634,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = GlobalFeed::default();
+        let feed = Refresh::new(GlobalFeed::new());
         seed(&paths, &[screen("a"), screen("b")]).await;
 
         // The laptop deletes `a` while the phone creates a screen; neither has
@@ -1674,7 +1675,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = GlobalFeed::default();
+        let feed = Refresh::new(GlobalFeed::new());
         seed(&paths, &[screen("a"), screen("b"), screen("c")]).await;
 
         let (reordered, created) = tokio::join!(
@@ -1718,7 +1719,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = GlobalFeed::default();
+        let feed = Refresh::new(GlobalFeed::new());
         assert_eq!(store.read_list().await.list_revision, 1, "an untouched list is at revision 1");
 
         let first = store.create(&feed,
@@ -1784,8 +1785,9 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = GlobalFeed::default();
-        let mut rx = feed.listen();
+        let global = GlobalFeed::new();
+        let mut rx = global.listen();
+        let feed = Refresh::new(global.clone());
 
         let a = store.create(&feed, ScreenCreate::default()).await.expect("create a");
         assert_eq!(
@@ -1866,7 +1868,7 @@ mod tests {
         assert!(list.screens.iter().all(|screen| screen.revision == 1));
         assert_eq!(list.list_revision, 1);
 
-        let saved = store.update(&GlobalFeed::default(),
+        let saved = store.update(&Refresh::new(GlobalFeed::new()),
             "old-2",
             ScreenUpdate {
                 layout: Optional(Some(terminal("t"))),

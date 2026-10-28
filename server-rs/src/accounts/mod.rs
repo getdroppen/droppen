@@ -686,7 +686,7 @@ pub async fn continue_session_on_account(
         }
     }
     tracing::info!(session = %id, continued = %new_id, account = %account.id, "continued a local-login session on an account as a new session");
-    state.global.request_refresh(Some((Source::Claude, &new_id)));
+    state.refresh.request_refresh(Some((&Source::Claude, &new_id)));
     Ok(Json(ContinuedSession {
         source: Source::Claude,
         id: new_id,
@@ -734,7 +734,7 @@ async fn write_binding(state: &AppState, source: Source, id: &str, account_id: O
         state.drive.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
     }
     // The binding shows on the session row, so the list has to be re-read.
-    state.global.request_refresh(Some((source, id)));
+    state.refresh.request_refresh(Some((&source, id)));
     Ok(Json(SessionAccount {
         account_id: Nullable(account_id),
     }))
