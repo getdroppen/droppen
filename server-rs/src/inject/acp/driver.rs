@@ -407,8 +407,11 @@ impl Transcript {
         Ok(Self { file })
     }
 
-    /// Append records. A failed write is logged and the turn goes on: losing a
-    /// line of the view is better than stopping the work it describes.
+    /// Append records. They are in the file when this returns: the feed is
+    /// poked, or the session seen gone, right after, and whoever reads the
+    /// transcript then must find them. A failed write is logged and the turn
+    /// goes on: losing a line of the view is better than stopping the work it
+    /// describes.
     pub(super) async fn append(&mut self, records: &[Value]) {
         if records.is_empty() {
             return;
@@ -418,7 +421,13 @@ impl Transcript {
             text.push_str(&record.to_string());
             text.push('\n');
         }
-        if let Err(error) = self.file.write_all(text.as_bytes()).await {
+        // A tokio file's write only hands the bytes to a blocking task; the
+        // flush waits for that write to finish.
+        let written = async {
+            self.file.write_all(text.as_bytes()).await?;
+            self.file.flush().await
+        };
+        if let Err(error) = written.await {
             tracing::warn!(%error, "cannot write an ACP transcript");
         }
     }
