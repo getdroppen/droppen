@@ -114,12 +114,6 @@
       "edges": [
         "agent -> app"
       ]
-    },
-    {
-      "why": "db::index keys its summary cache by sessions::Source.",
-      "edges": [
-        "db -> sessions"
-      ]
     }
   ]
 }

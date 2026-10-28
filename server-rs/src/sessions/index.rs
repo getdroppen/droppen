@@ -53,7 +53,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::{at_with, Db, Durability};
+use crate::db::{at_with, Db, Durability};
 use crate::paths::Paths;
 use crate::sessions::Source;
 

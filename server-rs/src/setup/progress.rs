@@ -478,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_guide_opens_by_itself_only_for_a_new_install_of_the_app() {
-        let _index = crate::db::index::exclusive().await;
+        let _index = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         let fresh = SetupProgress::default();
@@ -517,7 +517,7 @@ mod tests {
     async fn sessions_the_app_ran_on_the_user_s_own_logins_are_its_own_too() {
         use crate::sessions::{owned_sessions, Source};
 
-        let _index = crate::db::index::exclusive().await;
+        let _index = crate::sessions::index::exclusive().await;
         let fresh = SetupProgress::default();
 
         // A Claude session the app started on the user's own login: its

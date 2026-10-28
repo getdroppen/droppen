@@ -2232,7 +2232,7 @@ mod tests {
     /// that is not this server's own.
     #[tokio::test]
     async fn the_first_unread_is_an_index_in_the_feeds_numbering() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "88888888-8888-4888-8888-888888888888";
         let entry = |kind: &str, uuid: &str, at: &str, content: serde_json::Value| serde_json::json!({"type":kind,"message":{"role":kind,"content":content},"timestamp":at,"cwd":"/w/repo","sessionId":id,"uuid":uuid});
@@ -2303,7 +2303,7 @@ mod tests {
     /// one of this server's own, in the feed's numbering.
     #[tokio::test]
     async fn an_external_session_is_searchable_in_the_feeds_numbering() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "55555555-5555-4555-8555-555555555555";
         let entry = |kind: &str, uuid: &str, content: serde_json::Value| serde_json::json!({"type":kind,"message":{"role":kind,"content":content},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"/w/repo","sessionId":id,"uuid":uuid});
@@ -2365,7 +2365,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_codex_thread_is_searchable_too() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "66666666-6666-4666-8666-666666666666";
         let day = drive.paths.codex_sessions().join("2026").join("10").join("01");
@@ -2422,7 +2422,7 @@ mod tests {
     /// record moves or anything is sent, and the question stays answerable.
     #[tokio::test]
     async fn an_expired_answer_too_long_as_a_message_is_refused_and_stays_answerable() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "99999999-9999-4999-8999-999999999999";
         // A session of this server's own: its transcript in the managed root.

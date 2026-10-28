@@ -126,7 +126,7 @@ const CACHE_MAX: usize = 2048;
 /// files that actually changed.
 ///
 /// The near tier of two. This one is a `HashMap` lookup and dies with the
-/// process; behind it sits [`crate::db::index`], which is what stops a restart
+/// process; behind it sits [`crate::sessions::index`], which is what stops a restart
 /// costing 11.2 MB of head and tail parsing before the first list appears.
 static LIST_CACHE: LazyLock<FileCache<SessionSummary>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
@@ -150,7 +150,7 @@ fn from_index(mut payload: serde_json::Value) -> Option<SessionSummary> {
 pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std::io::Result<SessionSummary> {
     let metadata = tokio::fs::metadata(file_path).await?;
     let mtime = mtime_ms(&metadata);
-    let mark = crate::db::index::Watermark::of(file_path, &metadata);
+    let mark = crate::sessions::index::Watermark::of(file_path, &metadata);
     // Size as well as mtime, so the near tier agrees with the durable one
     // about what "unchanged" means.
     if let Some(summary) = LIST_CACHE.get(file_path, mtime, metadata.len()) {
@@ -160,7 +160,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
     // What some previous boot worked out about this exact file. The watermark is
     // the entire check: same path, same length, same mtime, or it is a miss and
     // the transcript gets read like there was no index at all.
-    let index = crate::db::index::current();
+    let index = crate::sessions::index::current();
     if let Some(summary) = index
         .as_ref()
         .and_then(|index| index.summary::<serde_json::Value>(Source::Claude, id, mark))
@@ -524,8 +524,8 @@ pub async fn list_claude_sessions(paths: &Paths, bindings: &BTreeMap<String, Str
     // [`summarize_file`] takes a path and no instance, because a transcript is a
     // file on this machine and belongs to nobody here. This is where the index
     // it writes into is named — on the way past, by the caller that does hold a
-    // `Paths`. See [`crate::db::index::current`].
-    crate::db::index::install(paths);
+    // `Paths`. See [`crate::sessions::index::current`].
+    crate::sessions::index::install(paths);
     let archived = archived_ids(paths).await;
 
     // Ids are uuids, so a collision across roots means one file was copied by
@@ -634,7 +634,7 @@ pub async fn find_claude_session_file(paths: &Paths, id: &str) -> Option<PathBuf
 
 /// One session's row, with live status applied, or `None` when it is gone.
 pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSummary> {
-    crate::db::index::install(paths);
+    crate::sessions::index::install(paths);
     let found = find_claude_session(paths, id).await?;
     let mut summary = summarize_file(&found.file_path, id, found.root).await.ok()?;
     std::slice::from_mut(&mut summary).finish(paths).await;
@@ -956,7 +956,7 @@ mod tests {
     /// session, listed once, and resolved to the copy a resume runs against.
     #[tokio::test]
     async fn a_session_adopted_by_an_earlier_build_is_still_this_servers_own() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
         let id = "0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b";
@@ -985,7 +985,7 @@ mod tests {
     /// are different claims. See [`SessionSummary::server`].
     #[tokio::test]
     async fn a_discovered_session_is_reachable_through_this_server_and_says_so() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
 
@@ -1031,10 +1031,10 @@ mod tests {
     /// same answer", which is what every other assertion here cannot distinguish.
     #[tokio::test]
     async fn a_summary_outlives_the_process_and_a_moved_file_does_not() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        crate::db::index::install(&paths);
+        crate::sessions::index::install(&paths);
 
         let id = "durable-index-fixture";
         let (_dir, path) = session(&[r#"{"type":"summary","summary":"from the transcript","cwd":"/w"}"#]);
@@ -1044,13 +1044,13 @@ mod tests {
         // The restart: the in-memory tier is precisely the part that dies.
         LIST_CACHE.clear();
 
-        let index = crate::db::index::open(&paths);
+        let index = crate::sessions::index::open(&paths);
         let metadata = std::fs::metadata(&path).expect("stat");
         let planted = SessionSummary {
             title: "read out of the index".to_string(),
             ..first.clone()
         };
-        index.remember_summary(Source::Claude, id, crate::db::index::Watermark::of(&path, &metadata), &planted);
+        index.remember_summary(Source::Claude, id, crate::sessions::index::Watermark::of(&path, &metadata), &planted);
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
             "read out of the index",
@@ -1065,7 +1065,7 @@ mod tests {
         })
         .expect("JSON");
         older.as_object_mut().expect("an object").remove("unreadCount");
-        index.remember_summary(Source::Claude, id, crate::db::index::Watermark::of(&path, &metadata), &older);
+        index.remember_summary(Source::Claude, id, crate::sessions::index::Watermark::of(&path, &metadata), &older);
         LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
@@ -1094,7 +1094,7 @@ mod tests {
         let wrecked = Paths::new(other.path().to_path_buf());
         std::fs::create_dir_all(wrecked.index_db().parent().expect("parent")).expect("mkdir");
         std::fs::write(wrecked.index_db(), b"this is not a database").expect("write");
-        crate::db::index::install(&wrecked);
+        crate::sessions::index::install(&wrecked);
         LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,

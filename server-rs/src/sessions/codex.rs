@@ -120,7 +120,7 @@ async fn with_codex_status(mut summary: SessionSummary, updated_ms: i64) -> Sess
 /// What one rollout file says about itself, cached by mtime and size.
 ///
 /// `Serialize`/`Deserialize` because this is the payload
-/// [`crate::db::index`] stores: what survives a restart is this struct, not the
+/// [`crate::sessions::index`] stores: what survives a restart is this struct, not the
 /// `SessionSummary` built from it, because the summary also carries a thread
 /// name and an ownership verdict that come from elsewhere and can change while
 /// the rollout file does not move at all.
@@ -145,7 +145,7 @@ struct FileMeta {
 const CACHE_MAX: usize = 2048;
 
 /// The near tier: what this process has already read, keyed by rollout path.
-/// Behind it is [`crate::db::index`], which remembers the same thing across a
+/// Behind it is [`crate::sessions::index`], which remembers the same thing across a
 /// restart.
 static META_CACHE: LazyLock<FileCache<FileMeta>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
@@ -203,7 +203,7 @@ pub(crate) fn is_wrapper_text(text: &str) -> bool {
 async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
     let metadata = tokio::fs::metadata(file_path).await?;
     let mtime = mtime_ms(&metadata);
-    let mark = crate::db::index::Watermark::of(file_path, &metadata);
+    let mark = crate::sessions::index::Watermark::of(file_path, &metadata);
     if let Some(meta) = META_CACHE.get(file_path, mtime, metadata.len()) {
         // Size too, so this tier and the durable one agree on what "unchanged"
         // means.
@@ -213,7 +213,7 @@ async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
     // What a previous boot read out of this exact file. A rollout's head can be
     // half a megabyte — the `session_meta` line alone carries the base
     // instructions — so this is the read worth not repeating.
-    let index = crate::db::index::current();
+    let index = crate::sessions::index::current();
     if let Some(meta) = index.as_ref().and_then(|index| index.summary::<FileMeta>(Source::Codex, id, mark)) {
         META_CACHE.put(file_path, mtime, meta.size_bytes, meta.clone());
         return Ok(meta);
@@ -567,8 +567,8 @@ fn meta_to_summary(meta: &FileMeta, names: &HashMap<String, String>) -> SessionS
 /// Every visible Codex session, preferring the state database.
 pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
     // Names the index that [`file_meta`] writes into; see
-    // [`crate::db::index::current`] for why it is not an argument.
-    crate::db::index::install(paths);
+    // [`crate::sessions::index::current`] for why it is not an argument.
+    crate::sessions::index::install(paths);
     let rows = on_state_db(paths, list_from_state_db).await.flatten();
     let mut summaries = match rows {
         Some(rows) => {
@@ -694,7 +694,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
     }
     // After the id check, not before: an id that cannot name a thread is not a
     // reason to open a database.
-    crate::db::index::install(paths);
+    crate::sessions::index::install(paths);
 
     let summary = match on_state_db(paths, {
         let id = id.to_string();
@@ -1071,7 +1071,7 @@ mod tests {
     /// on the CLI where discovery has no root to distinguish "mine" by.
     #[tokio::test]
     async fn a_discovered_thread_names_the_server_it_is_reachable_through() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
 
@@ -1105,10 +1105,10 @@ mod tests {
     /// serialise/deserialise round trip that nothing else in this file does.
     #[tokio::test]
     async fn a_rollout_read_once_is_not_read_again_after_a_restart() {
-        let _guard = crate::db::index::exclusive().await;
+        let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        crate::db::index::install(&paths);
+        crate::sessions::index::install(&paths);
 
         let id = "durable-index-fixture";
         let (_dir, path) = rollout(&[
@@ -1119,13 +1119,13 @@ mod tests {
         assert_eq!(first.title_fallback.as_deref(), Some("from the rollout"));
 
         META_CACHE.clear();
-        let index = crate::db::index::open(&paths);
+        let index = crate::sessions::index::open(&paths);
         let metadata = std::fs::metadata(&path).expect("stat");
         let planted = FileMeta {
             title_fallback: Some("read out of the index".to_string()),
             ..first.clone()
         };
-        index.remember_summary(Source::Codex, id, crate::db::index::Watermark::of(&path, &metadata), &planted);
+        index.remember_summary(Source::Codex, id, crate::sessions::index::Watermark::of(&path, &metadata), &planted);
 
         let after = file_meta(&path, id).await.expect("meta");
         assert_eq!(

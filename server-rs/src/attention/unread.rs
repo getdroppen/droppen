@@ -16,7 +16,7 @@
 //! The ledger is derived once per transcript and then kept up to date by
 //! reading only what was appended since. It lives in two places: a small
 //! in-memory memo ([`super`]) for the five-second re-list, and the
-//! per-instance `index.db` ([`crate::db::index`]) so a restart does not mean
+//! per-instance `index.db` ([`crate::sessions::index`]) so a restart does not mean
 //! re-reading every transcript — the largest of them run to a hundred
 //! megabytes.
 //!

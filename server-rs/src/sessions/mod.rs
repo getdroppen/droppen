@@ -14,6 +14,7 @@ pub mod codex_tools;
 pub mod context;
 pub mod continuation;
 pub mod delivery;
+pub mod index;
 pub mod mentions;
 pub mod owned_sessions;
 pub mod pins;
