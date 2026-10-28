@@ -24,7 +24,7 @@ import { meStore } from "@/lib/hub/me";
 import type { MachineKey } from "@/lib/machines/key";
 import { type DeviceSessions, needsYou, recentSessions } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";
-import { DeviceRow, type DeviceRowView } from "@/features/cloud/devices";
+import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
 import { AccountName } from "@/features/cloud/my-devices";
 import { QrCode } from "@/features/cloud/qr";
 import { SignOutChoice } from "@/features/cloud/sign-out-dialog";

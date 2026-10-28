@@ -19,7 +19,7 @@ import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { DeviceRow, type DeviceRowView } from "@/features/cloud/devices";
+import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
