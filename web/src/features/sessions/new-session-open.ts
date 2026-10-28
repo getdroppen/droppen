@@ -12,7 +12,7 @@ import { useHomeMachine, useMachine, useOpenMachines } from "@/lib/machines/cont
 import type { MachineKey } from "@/lib/machines/key";
 import { runtimeFor } from "@/lib/machines/registry";
 import { isNewSessionChord, lastDevice, newSessionShortcut } from "./new-session";
-import type { SessionSource } from "./new-session-flow";
+import { agentKey, parseAgentKey, type SessionSource } from "./new-session-flow";
 
 export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 
@@ -29,8 +29,10 @@ export interface OpenNewSession {
   cwd?: string;
   /** A first message, put in the composer in place of what was typed there; nothing is sent until the person sends it. */
   draft?: string;
-  /** The agent, claude or codex. */
+  /** The agent: claude, codex or an ACP agent (acp, with `acpAgent`). */
   source?: SessionSource;
+  /** Which configured ACP agent, by id, when `source` is `acp`. */
+  acpAgent?: string;
 }
 
 /**
@@ -59,7 +61,7 @@ export function useOpenNewSession(here?: MachineKey): (options?: OpenNewSession)
       const search: NewSessionSearch = {
         ...(options.cwd ? { cwd: options.cwd } : {}),
         ...(options.draft !== undefined ? { draft: options.draft } : {}),
-        ...(options.source ? { agent: options.source } : {}),
+        ...(options.source ? { agent: agentKey({ source: options.source, acpAgent: options.acpAgent ?? null }) } : {}),
       };
       void navigate({ to: "/sessions/new", machine, ...(Object.keys(search).length ? { search: { ...search } } : {}) });
     },
@@ -93,14 +95,15 @@ export interface NewSessionSearch {
   cwd?: string;
   /** A first message to fill in (not sent). */
   draft?: string;
-  /** The agent: claude or codex. */
-  agent?: SessionSource;
+  /** The agent: `claude`, `codex`, or `acp:<id>` for a configured ACP agent. */
+  agent?: string;
 }
 
 export function validateNewSessionSearch(search: Record<string, unknown>): NewSessionSearch {
+  const agent = parseAgentKey(search.agent);
   return {
     cwd: typeof search.cwd === "string" && search.cwd ? search.cwd : undefined,
     draft: typeof search.draft === "string" ? search.draft : undefined,
-    agent: search.agent === "claude" || search.agent === "codex" ? search.agent : undefined,
+    agent: agent ? agentKey(agent) : undefined,
   };
 }

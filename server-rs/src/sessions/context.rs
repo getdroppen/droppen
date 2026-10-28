@@ -142,6 +142,22 @@ pub async fn read_claude_context(file_path: &Path) -> Option<ContextUsage> {
     None
 }
 
+/// An ACP agent's occupancy: the newest `usage` record, which is the agent's
+/// own `usage_update` with the window it reported beside it.
+pub async fn read_acp_context(file_path: &Path) -> Option<ContextUsage> {
+    let lines = read_tail_lines(file_path, TAIL_BYTES).await.ok()?;
+    lines.iter().rev().filter_map(|line| try_parse(line)).find_map(|entry| {
+        if entry.get("type").and_then(Value::as_str) != Some("usage") {
+            return None;
+        }
+        Some(ContextUsage {
+            tokens: entry.get("used").and_then(Value::as_u64)?,
+            window: entry.get("size").and_then(Value::as_u64).filter(|size| *size > 0),
+            model: None,
+        })
+    })
+}
+
 /// Codex's occupancy: the newest `token_count` event's `last_token_usage`.
 ///
 /// Deliberately *not* `total_token_usage`, which is cumulative over the session —

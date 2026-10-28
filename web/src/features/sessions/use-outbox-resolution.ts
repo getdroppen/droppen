@@ -1,3 +1,4 @@
+import type { components } from "@/api/schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ReceiptChecker } from "./receipt-check";
 import {
@@ -40,7 +41,7 @@ export function useOutboxResolution({
   receipts,
   onAdopted,
 }: {
-  source: "claude" | "codex";
+  source: components["schemas"]["Source"];
   id: string;
   outbox: readonly OutgoingMessage[];
   outboxRef: RefObject<OutgoingMessage[]>;

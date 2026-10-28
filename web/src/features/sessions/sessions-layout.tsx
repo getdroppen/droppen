@@ -175,7 +175,7 @@ const SessionRow = memo(function SessionRow({
                   {device}
                 </span>
               )}
-              <SourceIcon source={session.source} className="text-muted" />
+              <SourceIcon source={session.source} acpAgent={session.acpAgent} machine={machine} className="text-muted" />
               {dirLabel && <span className="truncate font-mono text-2xs text-faint">{dirLabel}</span>}
               {children.length > 0 && <SubagentCount list={children} isOpen={isOpen} />}
               <span className="ml-auto shrink-0 font-mono text-2xs text-faint">

@@ -326,6 +326,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/acp/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ACP agents
+         * @description The ACP agents configured on this machine, and the built-in descriptions.
+         */
+        get: operations["acp_agents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/acp/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Add or update an ACP agent
+         * @description Add an ACP agent or change how it is started. A changed command line or
+         *     environment renews the processes its sessions run in: one with nothing to
+         *     do ends now, one with a turn or messages waiting when they are done, and
+         *     each session's next message starts the agent as it is configured now.
+         */
+        put: operations["put_acp_agent"];
+        post?: never;
+        /**
+         * Remove an ACP agent
+         * @description Remove an ACP agent. Its sessions stay listed and readable; they cannot be
+         *     continued until an agent with this id is configured again, which starts
+         *     their processes afresh: the ones they had, idle by then, are stopped.
+         *     Refused while a turn of the agent is running, or a message is waiting for
+         *     one.
+         */
+        delete: operations["delete_acp_agent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/acp/agents/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The last check of an ACP agent
+         * @description An ACP agent's last check in full: the error it ended with included, which
+         *     is the agent's own words, the end of its stderr among them. A route of its
+         *     own so that the list, which every device reads, never carries it.
+         */
+        get: operations["last_acp_check"];
+        put?: never;
+        /**
+         * Check an ACP agent
+         * @description Check an ACP agent: start it with its environment, send `initialize`, read
+         *     what it says it is and can do, and stop it. Nothing is sent to a model. The
+         *     answer is kept as the agent's `lastCheck`.
+         */
+        post: operations["check_acp_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/api-chats/{id}": {
         parameters: {
             query?: never;
@@ -2804,6 +2883,141 @@ export interface components {
              */
             secret?: string;
         };
+        /** @description An agent's `agentInfo`. */
+        AcpAgentIdentity: {
+            /** @description Its programmatic name. */
+            name: string;
+            /** @description Its display name. */
+            title?: string;
+            /** @description Its version. */
+            version?: string;
+        };
+        /**
+         * @description One configured agent, as a client sees it: the variables' names, not their
+         *     values.
+         */
+        AcpAgentInfo: {
+            /** @description Its arguments, in order. */
+            args: string[];
+            /** @description The configured executable. */
+            command: string;
+            /** @description The names of the extra environment variables, in order. */
+            envNames: string[];
+            /** @description Where its ACP setup is documented, for a built-in agent. */
+            homepage?: string;
+            /** @description Its id: what sessions record, and what `presets/icons/<id>.svg` draws. */
+            id: string;
+            /**
+             * @description What the last check of its command line and environment found, without
+             *     its `error` (`GET /api/acp/agents/{id}/check` has it); absent until one
+             *     ran.
+             */
+            lastCheck?: components["schemas"]["AcpCheck"];
+            /** @description What the user calls it. */
+            name: string;
+            /** @description What a built-in agent needs before it can run. */
+            note?: string;
+        };
+        /** @description `GET /api/acp/agents`. */
+        AcpAgentList: {
+            /** @description The agents sessions can run on, in id order. */
+            agents: components["schemas"]["AcpAgentInfo"][];
+            /**
+             * @description The built-in descriptions, to offer when an agent is added, each with
+             *     whether its executable is on this server's `PATH`.
+             */
+            presets: components["schemas"]["AcpAgentPreset"][];
+        };
+        /** @description One built-in agent description: how a known agent is started in ACP mode. */
+        AcpAgentPreset: {
+            /** @description The arguments that put it into ACP mode over stdio. */
+            args: string[];
+            /** @description The executable, as found on the `PATH`. */
+            command: string;
+            /** @description Where its ACP setup is documented. */
+            homepage?: string;
+            /** @description Its id, which a configured agent made from it keeps. */
+            id: string;
+            /** @description What the agent is called. */
+            name: string;
+            /** @description What it needs before it can run. */
+            note?: string;
+            /**
+             * @description Whether its executable is on this server's `PATH`, as a lookup finds it
+             *     (nothing is started). Filled in when the descriptions are listed.
+             */
+            onPath?: boolean;
+        };
+        /** @description The body of `PUT /api/acp/agents/{id}`; every field is a patch. */
+        AcpAgentUpdate: {
+            /** @description The arguments; absent leaves them alone. */
+            args?: string[];
+            /** @description The executable; required unless the agent exists or is a built-in. */
+            command?: string;
+            /**
+             * @description A `KEY=VALUE`-per-line block that replaces every stored variable; `""`
+             *     clears them, absent leaves them alone.
+             */
+            env?: string;
+            /** @description The name; `""` goes back to the built-in's or the id, absent leaves it alone. */
+            name?: string;
+        };
+        /** @description One way an agent can be signed in to. */
+        AcpAuthMethod: {
+            /** @description What it does. */
+            description?: string;
+            /** @description Its id. */
+            id: string;
+            /** @description What it is called. */
+            name: string;
+        };
+        /** @description What an agent says it can do, as `initialize` answers. */
+        AcpCapabilities: {
+            /** @description A prompt may hold audio. */
+            audio: boolean;
+            /** @description A prompt may embed resources. */
+            embeddedContext: boolean;
+            /** @description A prompt may hold images. */
+            image: boolean;
+            /** @description It can reopen a session (`session/load`). */
+            loadSession: boolean;
+            /** @description It can be given MCP servers over HTTP. */
+            mcpHttp: boolean;
+            /** @description It can be given MCP servers over SSE. */
+            mcpSse: boolean;
+        };
+        /**
+         * @description What a check found (`POST /api/acp/agents/{id}/check`): the agent was
+         *     started with its environment, sent `initialize` and stopped.
+         */
+        AcpCheck: {
+            /** @description What it says it is. */
+            agentInfo?: components["schemas"]["AcpAgentIdentity"];
+            /** @description The ways it can be signed in to, when it needs that first. */
+            authMethods?: components["schemas"]["AcpAuthMethod"][];
+            /** @description What it says it can do. */
+            capabilities?: components["schemas"]["AcpCapabilities"];
+            /** @description When, ISO-8601. */
+            checkedAt: string;
+            /**
+             * @description Why it is not ready: the error, the end of what it wrote to stderr and
+             *     the `PATH` it was looked up on, with the agent's variable values and
+             *     anything that looks like a key taken out. Never in a list of the agents,
+             *     which every device may read: only in a check's own answer.
+             */
+            error?: string;
+            /** @description The ACP version it agreed to. */
+            protocolVersion?: number;
+            /** @description Where its executable was found. */
+            resolvedPath?: string;
+            /** @description How it ended. */
+            state: components["schemas"]["AcpCheckState"];
+        };
+        /**
+         * @description How a check of an agent ended.
+         * @enum {string}
+         */
+        AcpCheckState: "ready" | "not_found" | "failed";
         /** @description A subagent's own transcript. */
         AgentTranscript: {
             /** @description Which agent type answered. */
@@ -3969,6 +4183,12 @@ export interface components {
         };
         /** @description The `GET /api/models` response. */
         ModelList: {
+            /**
+             * @description How many of an ACP agent's models are left out because their ids look
+             *     like a credential, so a picker can say why its list is short or empty;
+             *     absent when none are.
+             */
+            hidden?: number;
             /** @description Models currently known to the local CLI, freshest first. */
             models: components["schemas"]["ModelInfo"][];
             /** @description Whether `models` came from the CLI's cache or from the static fallback. */
@@ -4014,6 +4234,11 @@ export interface components {
             accountFrom?: components["schemas"]["AccountFrom"];
             /** @description Run under a stored Claude account; `null` means the local login. */
             accountId?: string | null;
+            /**
+             * @description The configured ACP agent to start, by id (`GET /api/acp/agents`):
+             *     required when `source` is `acp`, refused otherwise.
+             */
+            acpAgent?: string;
             /**
              * @description A UUID the client minted for this first message, sent unchanged with
              *     every attempt. A repeat answers the session the first attempt started
@@ -5359,6 +5584,12 @@ export interface components {
             /** @description Account the session is pinned to, for managed-root sessions. */
             accountId?: string | null;
             /**
+             * @description The id of the ACP agent an acp session runs on; null for claude and
+             *     codex. It may name an agent that has since been removed, whose sessions
+             *     are listed and read but not continued.
+             */
+            acpAgent?: string | null;
+            /**
              * @description Whether anything is in flight, and if not, what is holding it up.
              *
              *     The field a list row should render "busy" from. Unlike `status` it can
@@ -5757,7 +5988,7 @@ export interface components {
          * @description Which CLI a session belongs to.
          * @enum {string}
          */
-        Source: "claude" | "codex";
+        Source: "claude" | "codex" | "acp";
         /** @description One CLI's share of the window. */
         SourceUsage: {
             /** @description Estimated USD; an unpriced model contributes nothing. */
@@ -6834,6 +7065,164 @@ export interface operations {
             };
             /** @description API-key accounts have no login to verify */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    acp_agents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The configured ACP agents, with the names of their extra variables, and the built-in descriptions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpAgentList"];
+                };
+            };
+        };
+    };
+    put_acp_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description The body of `PUT /api/acp/agents/{id}`; every field is a patch. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpAgentUpdate"];
+            };
+        };
+        responses: {
+            /** @description The agent as now configured */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpAgentInfo"];
+                };
+            };
+            /** @description An unusable id, name, executable, argument or environment block */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_acp_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agent is gone; its sessions stay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
+                };
+            };
+            /** @description No such ACP agent */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A turn of the agent is running, or a message is waiting for one */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    last_acp_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agent's last check, its error included */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpCheck"];
+                };
+            };
+            /** @description No such ACP agent, or it has not been checked */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    check_acp_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the check found: ready, or why the agent cannot start */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpCheck"];
+                };
+            };
+            /** @description No such ACP agent */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8237,6 +8626,11 @@ export interface operations {
                  *     user's own login. Ignored by the codex lane, which has one config root.
                  */
                 accountId?: string | null;
+                /**
+                 * @description Which ACP agent the list is for, by id: required when `source` is
+                 *     `acp`, ignored otherwise.
+                 */
+                acpAgent?: string | null;
             };
             header?: never;
             path?: never;
@@ -8251,6 +8645,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelList"];
+                };
+            };
+            /** @description An ACP list that names no usable agent */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

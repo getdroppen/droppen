@@ -19,6 +19,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { errorText } from "@/api/errors";
+import type { components } from "@/api/schema";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AccountRows } from "@/features/accounts/account-picker";
 import {
@@ -40,7 +41,7 @@ export function looksLikeLoginFailure(error: string | null | undefined): boolean
 }
 
 /** Where the view goes once the new session exists. */
-export type OpenSession = (source: "claude" | "codex", id: string) => void;
+export type OpenSession = (source: components["schemas"]["Source"], id: string) => void;
 
 /**
  * The stored Claude accounts to continue on, then a confirmation saying what

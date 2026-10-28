@@ -7,7 +7,7 @@ import { feedRow, useGlobalFeedSelector, type GlobalFeedState } from "@/app/glob
 import { MachineLink } from "@/app/machine-route";
 import { SourceIcon } from "@/components/source-icon";
 import { Spinner } from "@/components/ui/spinner";
-import { AgentTranscriptBody, useAgentTranscript } from "@/features/sessions/session-detail";
+import { AgentTranscriptBody, useAgentTranscript, type SubagentCtx } from "@/features/sessions/session-detail";
 import { SessionHeader } from "@/features/sessions/session-header";
 import { ChildStatusMark } from "@/features/sessions/subagent-marks";
 import { useMachine } from "@/lib/machines/context";
@@ -55,7 +55,8 @@ function useReportAgentSeen(machine: string, source: Source, id: string, agentId
  */
 export function SubagentDetail() {
   const { t } = useTranslation();
-  const { source, id, agentId } = useParams({ strict: false }) as { source: Source; id: string; agentId: string };
+  // Only Claude and Codex sessions have subagents; an ACP agent's have none.
+  const { source, id, agentId } = useParams({ strict: false }) as { source: SubagentCtx["source"]; id: string; agentId: string };
   const machine = useMachine();
   // Two slices that each keep their identity until the row is replaced.
   const selectTitle = useCallback((state: GlobalFeedState) => feedRow(state, { machine, source, id })?.title, [machine, source, id]);

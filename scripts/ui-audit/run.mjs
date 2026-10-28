@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | both (default both)
+ *   --fixture <f>      settings | devices | agents | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -56,8 +56,9 @@ const channel = flag("channel", process.env.UI_AUDIT_CHANNEL ?? "");
 const liveUrl = flag("url", "");
 const check = has("check");
 const which = flag("fixture", "both");
-const runSettings = which !== "devices";
-const runDevices = which !== "settings";
+const runSettings = which === "both" || which === "settings";
+const runDevices = which === "both" || which === "devices";
+const runAgents = which === "both" || which === "agents";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -440,6 +441,100 @@ async function auditDevices(theme, view) {
   await page.close();
 }
 
+/**
+ * Settings › Agents & accounts (docs/ui-spec.md §3): text tabs, not a second
+ * segmented strip; a card grid on the sheet's full width — three columns on a
+ * desktop sheet, one on a phone — with the text kept to the 48rem column; the
+ * details dialog with its error well; the empty state's preset cards.
+ */
+async function auditAgents(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "agents", id, actual, expected });
+  const desktop = view.name === "desktop";
+  const snapshot = () =>
+    page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+      };
+      const cs = (e) => (e ? getComputedStyle(e) : null);
+      const root = document.querySelector("[data-fixture-root]");
+      const list = document.querySelector('[role="tablist"]');
+      const active = document.querySelector('[role="tab"][aria-selected="true"]');
+      const idle = document.querySelector('[role="tab"][aria-selected="false"]');
+      const grid = document.querySelector("[data-acp-grid]") ?? document.querySelector("[data-acp-preset]")?.closest("ul");
+      const cards = [...document.querySelectorAll("[data-acp-card], [data-acp-preset] > button, [data-add-card]")];
+      const card = document.querySelector("[data-acp-card]") ?? document.querySelector("[data-acp-preset] > button");
+      const hint = document.querySelector('[data-tab-panel="acp"] > p');
+      const visible = (e) => e && e.getBoundingClientRect().width > 0;
+      const invalid = [...(root ?? document.body).querySelectorAll("button,input,[role=tab],li,pre,dl")]
+        .filter(visible)
+        .map((e) => ({ tag: e.tagName, radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
+        .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !x.shadow.includes("inset")));
+      const details = document.querySelector("[data-acp-details]");
+      const well = details?.querySelector('pre[data-signal="failed"]');
+      return {
+        tabs: {
+          list: list ? { rect: rect(list), borderTop: cs(list).borderTopWidth, borderBottom: cs(list).borderBottomWidth, bg: cs(list).backgroundColor } : null,
+          active: active ? { rect: rect(active), bg: cs(active).backgroundColor, color: cs(active).color, shadow: cs(active).boxShadow, size: cs(active).fontSize } : null,
+          idle: idle ? { color: cs(idle).color } : null,
+        },
+        grid: grid ? { rect: rect(grid), columns: cs(grid).gridTemplateColumns } : null,
+        cards: cards.map((c) => rect(c)),
+        card: card ? { borderW: cs(card).borderTopWidth, border: cs(card).borderTopColor, radius: cs(card).borderRadius, padding: cs(card).padding } : null,
+        hint: rect(hint),
+        details: details ? { rect: rect(details.closest('[role="dialog"]') ?? details), well: well ? { color: cs(well).color, font: cs(well).fontFamily } : null } : null,
+        presets: document.querySelectorAll("[data-acp-preset]").length,
+        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+        invalid,
+      };
+    });
+  for (const which of ["cards", "details", "empty"]) {
+    await page.goto(`${base}ui-audit/index.html?fixture=agents&view=${which}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(250);
+    const before = await snapshot();
+    await page.screenshot({ path: `${out}/agents-${which}-${theme}-${view.name}.png` });
+    results.push({ mode: "agents", view: which, theme, viewport: view.name, before });
+    if (which === "cards") {
+      const tabs = before.tabs;
+      if (!tabs.list || tabs.list.borderTop !== "0px" || tabs.list.borderBottom !== "1px") fail("agents.tabs-rule", tabs.list, "words over one 1px rule, no frame");
+      if (!tabs.active || tabs.active.bg !== "rgba(0, 0, 0, 0)") fail("agents.tabs-fill", tabs.active?.bg, "no ink fill on the chosen tab");
+      if (!tabs.active || !/0px -2px 0px 0px|inset 0px -2px/.test(tabs.active.shadow)) fail("agents.tabs-underline", tabs.active?.shadow, "a 2px underline on the chosen tab");
+      if (tabs.active && tabs.idle && tabs.active.color === tabs.idle.color) fail("agents.tabs-ink", tabs.active.color, "the chosen tab in ink, the rest muted");
+      const columns = before.grid?.columns.split(/\s+/).filter(Boolean).length ?? 0;
+      if (desktop && columns < 3) fail("agents.columns", before.grid?.columns, ">= 3 card columns on a desktop sheet");
+      if (!desktop && columns !== 1) fail("agents.mobile-columns", before.grid?.columns, "one column on a phone");
+      if (before.card?.borderW !== "1px") fail("agents.card-frame", before.card?.borderW, "a 1px card frame");
+      if (parseFloat(before.card?.radius ?? "1") !== 0) fail("agents.card-radius", before.card?.radius, "0");
+      const firstRow = before.cards.filter((c) => c && Math.abs(c.y - before.cards[0].y) < 1);
+      if (new Set(firstRow.map((c) => Math.round(c.h))).size > 1) fail("agents.card-height", firstRow, "one height per row");
+      if ((before.hint?.w ?? 0) > 768.5) fail("agents.text-column", before.hint?.w, "text within 48rem");
+      if (desktop) {
+        await page.locator("[data-acp-card]").first().hover();
+        await page.waitForTimeout(200);
+        const hover = await snapshot();
+        if (hover.card?.border === before.card?.border) fail("agents.hover-frame", hover.card?.border, "a border change on hover");
+      }
+    }
+    if (which === "details") {
+      if (!before.details?.well) fail("agents.details-error", before.details, "the failed check's error in a well");
+      else if (!/mono|Menlo|Consolas|SFMono/i.test(before.details.well.font)) fail("agents.details-error-font", before.details.well.font, "monospaced");
+      if ((before.details?.rect.w ?? 0) > 512.5) fail("agents.details-width", before.details?.rect.w, "<= 32rem");
+    }
+    if (which === "empty" && before.presets < 2) fail("agents.presets", before.presets, "the built-in presets as start cards");
+    if (before.overflow.doc > before.overflow.win + 1) fail("agents.overflow", before.overflow, "no horizontal overflow");
+    if (before.invalid.length) fail("agents.radius-shadow", before.invalid, "no radius, no drop shadow");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -448,6 +543,7 @@ try {
       for (const view of views) {
         if (runSettings) await auditSettings(theme, view);
         if (runDevices) await auditDevices(theme, view);
+        if (runAgents) await auditAgents(theme, view);
       }
     }
   }

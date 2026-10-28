@@ -41,7 +41,6 @@ import { ReauthDialog, SetupTokenDialog, UsageLoginDialog } from "@/features/set
 import { LimitEventsPanel } from "@/features/settings/limit-events-panel";
 import { isImeKeydown } from "@/lib/ime";
 import { cn } from "@/lib/cn";
-import { Sheet } from "@/components/sheet";
 import {
   SETTINGS_ACTION,
   SETTINGS_ACTION_PRIMARY,
@@ -62,11 +61,8 @@ class DuplicateAccountError extends Error {
   }
 }
 
-/** The CLIs an account can belong to, in the order this page lists them. */
-const PROVIDERS: AccountProvider[] = ["claude", "codex"];
-
 /** Proper names, untranslated: they are the products' own spelling. */
-const PROVIDER_NAME: Record<AccountProvider, string> = { claude: "Claude", codex: "Codex" };
+const PROVIDER_NAME: Record<AccountProvider, string> = { claude: "Claude Code", codex: "Codex" };
 
 const field = SETTINGS_FIELD;
 
@@ -717,11 +713,12 @@ function ProviderGroup({
 }
 
 /**
- * The Claude and Codex accounts remote-hand can run sessions under. Secrets are
- * write-only: they go to the server on add and are never read back into the
- * browser.
+ * One CLI's accounts remote-hand can run sessions under — the Claude Code or
+ * the Codex tab of Settings › Agents & accounts, its rows as they always were.
+ * Secrets are write-only: they go to the server on add and are never read
+ * back into the browser.
  */
-export function AccountsSection() {
+export function AccountsSection({ provider }: { provider: AccountProvider }) {
   const api = useApi();
   const machine = useMachine();
   const { t } = useTranslation();
@@ -736,9 +733,8 @@ export function AccountsSection() {
   // account's /usage login actually works.
   const { data: quota } = useQuota();
   const [adding, setAdding] = useState(false);
-  // Which CLI the open form is about, so an empty Codex group appears while one
-  // is being added and stays hidden the rest of the time.
-  const [addProvider, setAddProvider] = useState<AccountProvider>("claude");
+  // Which CLI the open form is about: the tab's, unless switched in the form.
+  const [addProvider, setAddProvider] = useState<AccountProvider>(provider);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [usageFor, setUsageFor] = useState<Account | null>(null);
   const [reauthFor, setReauthFor] = useState<Account | null>(null);
@@ -760,52 +756,48 @@ export function AccountsSection() {
   };
 
   return (
-    <Sheet className="p-3">
-      <p className={cn(SETTINGS_COLUMN, "text-xs leading-[18px] text-muted")}>
-        {t(
-          "Sessions started under an account use Droppen's own Claude config dir, so they never touch your local login. Sessions you start from a terminal keep using the local login.",
-        )}
-      </p>
-      <p className={cn(SETTINGS_COLUMN, "mt-1 text-xs leading-[18px] text-muted")}>
-        {t("A local token is handed to the CLI through its environment instead, for the session it starts.")}
-      </p>
-      {settings?.claudeManagedDir && (
-        <p className={cn(SETTINGS_COLUMN, "mt-1 font-mono text-xs text-muted")}>
-          {t("managed config dir")}: <span className="break-all text-muted">{settings.claudeManagedDir}</span>
-        </p>
+    <div data-tab-panel={provider} className="p-3">
+      {provider === "claude" && (
+        <>
+          <p className={cn(SETTINGS_COLUMN, "text-xs leading-[18px] text-muted")}>
+            {t(
+              "Sessions started under an account use Droppen's own Claude config dir, so they never touch your local login. Sessions you start from a terminal keep using the local login.",
+            )}
+          </p>
+          <p className={cn(SETTINGS_COLUMN, "mt-1 text-xs leading-[18px] text-muted")}>
+            {t("A local token is handed to the CLI through its environment instead, for the session it starts.")}
+          </p>
+          {settings?.claudeManagedDir && (
+            <p className={cn(SETTINGS_COLUMN, "mt-1 font-mono text-xs text-muted")}>
+              {t("managed config dir")}: <span className="break-all text-muted">{settings.claudeManagedDir}</span>
+            </p>
+          )}
+        </>
       )}
 
       <div>
         {isPending && <Spinner />}
-        {data &&
-          PROVIDERS.map((provider) => {
-            const group = accountsForProvider(data.accounts, provider);
-            // Codex is additive: the page looks exactly as it did until there
-            // is a Codex account, or one is being added right now.
-            if (provider === "codex" && group.length === 0 && !(adding && addProvider === "codex")) return null;
-            return (
-              <ProviderGroup
-                key={provider}
-                provider={provider}
-                accounts={group}
-                defaultId={
-                  // `?? null` for the refresh where a new web build is talking
-                  // to a server that has no Codex default yet.
-                  provider === "codex" ? (data.defaultCodexAccountId ?? null) : data.defaultAccountId
-                }
-                local={localLoginOf(data, provider)}
-                localDir={localDir[provider]}
-                usageFor={(account) => {
-                  const q = quota?.accounts.find((a) => a.id === account.id);
-                  const usage = accountUsageState(account.kind, account.usageEnabled, q?.error);
-                  return { usage, notice: usageNotice(usage, q?.updatedAt, (q?.windows.length ?? 0) > 0) };
-                }}
-                onMakeDefault={(accountId, automatic) => setDefault.mutate({ accountId, provider, automatic })}
-                onEnableUsage={setUsageFor}
-                onReauth={setReauthFor}
-              />
-            );
-          })}
+        {data && (
+          <ProviderGroup
+            provider={provider}
+            accounts={accountsForProvider(data.accounts, provider)}
+            defaultId={
+              // `?? null` for the refresh where a new web build is talking
+              // to a server that has no Codex default yet.
+              provider === "codex" ? (data.defaultCodexAccountId ?? null) : data.defaultAccountId
+            }
+            local={localLoginOf(data, provider)}
+            localDir={localDir[provider]}
+            usageFor={(account) => {
+              const q = quota?.accounts.find((a) => a.id === account.id);
+              const usage = accountUsageState(account.kind, account.usageEnabled, q?.error);
+              return { usage, notice: usageNotice(usage, q?.updatedAt, (q?.windows.length ?? 0) > 0) };
+            }}
+            onMakeDefault={(accountId, automatic) => setDefault.mutate({ accountId, provider, automatic })}
+            onEnableUsage={setUsageFor}
+            onReauth={setReauthFor}
+          />
+        )}
         {setDefault.isError && (
           <p data-signal="failed" className="mt-1 font-mono text-2xs text-danger">{setDefault.error.message}</p>
         )}
@@ -845,6 +837,6 @@ export function AccountsSection() {
       />
       <UsageLoginDialog account={usageFor} onOpenChange={(open) => !open && setUsageFor(null)} />
       <ReauthDialog account={reauthFor} onOpenChange={(open) => !open && setReauthFor(null)} />
-    </Sheet>
+    </div>
   );
 }

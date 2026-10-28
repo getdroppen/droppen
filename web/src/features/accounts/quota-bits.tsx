@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/cn";
 import { formatRelative, formatResetAt, formatUntil } from "@/lib/format";
 import { MachineLink } from "@/app/machine-route";
+import { agentsSearch } from "@/features/settings/agents/agents-tabs";
 
 /**
  * The quota readouts shared by the composer gauges, the account picker and the
@@ -232,7 +233,7 @@ export function QuotaBlock({
             ? t("usage not enabled")
             : t("usage not enabled · only affects the idle-time fallback")}
           {" · "}
-          <MachineLink to="/settings" className="text-accent hover:underline">
+          <MachineLink to="/settings" search={agentsSearch("claude")} className="text-accent hover:underline">
             {t("Settings")}
           </MachineLink>
         </div>
@@ -243,7 +244,7 @@ export function QuotaBlock({
             ? t("usage login expired")
             : t("usage login expired · only affects the idle-time fallback")}
           {" · "}
-          <MachineLink to="/settings" className="text-accent hover:underline">
+          <MachineLink to="/settings" search={agentsSearch("claude")} className="text-accent hover:underline">
             {t("Settings")}
           </MachineLink>
         </div>

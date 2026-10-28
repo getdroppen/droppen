@@ -490,6 +490,9 @@ async fn validated_cwd(paths: &Paths, cwd: &str) -> Result<String, ApiError> {
 /// history, codex's out of a cache — so a model this machine has not run yet is
 /// not a model that does not exist.
 async fn validated_flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
+    if source == Source::Acp {
+        return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"));
+    }
     crate::drive::routes::validate_flags(model, effort, permission).map_err(ApiError::bad_request)?;
 
     if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {

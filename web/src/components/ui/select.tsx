@@ -2,6 +2,7 @@ import { Select as BaseSelect } from "@base-ui-components/react/select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { Children, memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { GlyphIcon, type Glyph } from "@/components/glyph";
 import { cn } from "@/lib/cn";
 
 /**
@@ -171,16 +172,43 @@ export function SelectItem({ className, children, ...props }: React.ComponentPro
   );
 }
 
-/** One entry of a flat select: the stored value and what the list says for it. */
-export type SelectOption<V extends string = string> = { value: V; label: string; disabled?: boolean };
+/**
+ * One entry of a flat select: the stored value and what the list says for it,
+ * with the mark of what it names, when it names something that has one.
+ */
+export type SelectOption<V extends string = string> = { value: V; label: string; disabled?: boolean; glyph?: Glyph };
+
+/** An option as a row and the trigger say it: its glyph, if any, then its label. */
+export function OptionLabel({ label, glyph }: { label: string; glyph?: Glyph }) {
+  if (!glyph) return label;
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <GlyphIcon glyph={glyph} />
+      <span className="min-w-0 truncate">{label}</span>
+    </span>
+  );
+}
+
+/**
+ * What a trigger shows for options that carry glyphs: the chosen option with
+ * its glyph. `undefined` when none does, so the trigger says the label as it
+ * always has.
+ */
+export function glyphValue(options: readonly { value: string; label: string; glyph?: Glyph }[]) {
+  if (!options.some((o) => o.glyph)) return undefined;
+  return (value: string) => {
+    const chosen = options.find((o) => o.value === value);
+    return chosen ? <OptionLabel label={chosen.label} glyph={chosen.glyph} /> : value;
+  };
+}
 
 /**
  * The same array for as long as the options say the same thing. Callers build
  * their option lists inline; handed to `Select` as `items`, a fresh array each
  * render makes Base UI rewrite its store (and redraw what reads it) every time.
  */
-export function useStableOptions<T extends { value: string; label: string; disabled?: boolean }>(options: readonly T[]): readonly T[] {
-  const key = options.map((o) => `${o.value}\u0000${o.label}\u0000${o.disabled ? 1 : 0}`).join("\u0001");
+export function useStableOptions<T extends { value: string; label: string; disabled?: boolean; glyph?: Glyph }>(options: readonly T[]): readonly T[] {
+  const key = options.map((o) => `${o.value}\u0000${o.label}\u0000${o.disabled ? 1 : 0}\u0000${o.glyph?.id ?? ""}`).join("\u0001");
   // Keyed on what the options say, not on the array's identity.
   return useMemo(() => options, [key]);
 }
@@ -245,12 +273,12 @@ const SelectFieldView = memo(function SelectFieldView({
       }}
     >
       <SelectTrigger variant={variant} className={className} {...trigger}>
-        <SelectValue />
+        <SelectValue>{glyphValue(options)}</SelectValue>
       </SelectTrigger>
       <SelectContent className={popupClassName} variant={variant}>
         {options.map((o) => (
           <SelectItem key={o.value} value={o.value} disabled={o.disabled}>
-            {o.label}
+            <OptionLabel label={o.label} glyph={o.glyph} />
           </SelectItem>
         ))}
       </SelectContent>

@@ -69,6 +69,7 @@ import {
   type SearchMatch,
 } from "@/features/sessions/session-search";
 import { useApi } from "@/lib/machines/context";
+import { isSessionSource } from "./new-session-flow";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
 
@@ -451,7 +452,7 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
         return;
       }
       const { source, id } = hostRef.current;
-      if (source !== "claude" && source !== "codex") return;
+      if (!isSessionSource(source)) return;
       const controller = new AbortController();
       abortRef.current = controller;
       setSearching(true);

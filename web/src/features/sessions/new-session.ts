@@ -8,7 +8,7 @@ import { shortenHome } from "@/lib/format";
 import type { MachineKey } from "@/lib/machines/key";
 import { readMachineItem, removeMachineItem, writeMachineItem, type KeyValueStorage } from "@/lib/machines/storage";
 import type { StoredAttachment } from "./composer-box";
-import type { CreationAttempt, SessionSource } from "./new-session-flow";
+import { isSessionSource, parseAgentKey, type CreationAttempt, type SessionSource } from "./new-session-flow";
 
 type SessionSummary = Pick<components["schemas"]["SessionSummary"], "cwd" | "createdAt" | "updatedAt">;
 
@@ -131,6 +131,8 @@ export interface NewSessionDraft {
   text: string;
   attachments: StoredAttachment[];
   source: SessionSource;
+  /** The ACP agent picked, by id, when `source` is `acp`; absent is none picked yet. */
+  acpAgent?: string;
   /** Picked by hand; null follows the directory last used. */
   cwd: string | null;
   /** Picked by hand: an account id, or "" for the local login; null follows the CLI's default. */
@@ -170,10 +172,13 @@ export function readNewSessionDraft(storage: KeyValueStorage, machine: MachineKe
   try {
     const stored = JSON.parse(raw) as Record<string, unknown>;
     const attempt = stored.attempt as Partial<CreationAttempt> | null | undefined;
+    // Only an id the server could have, and only for an ACP pick.
+    const acpAgent = stored.source === "acp" && isString(stored.acpAgent) ? parseAgentKey(`acp:${stored.acpAgent}`)?.acpAgent : null;
     return {
       text: isString(stored.text) ? stored.text : "",
       attachments: readAttachments(stored.attachments),
-      source: stored.source === "codex" ? "codex" : "claude",
+      source: isSessionSource(stored.source) ? stored.source : "claude",
+      ...(acpAgent ? { acpAgent } : {}),
       cwd: isString(stored.cwd) ? stored.cwd : null,
       account: isString(stored.account) ? stored.account : null,
       attempt: attempt && isString(attempt.key) && isString(attempt.clientMessageId) ? { key: attempt.key, clientMessageId: attempt.clientMessageId } : null,
@@ -185,7 +190,7 @@ export function readNewSessionDraft(storage: KeyValueStorage, machine: MachineKe
 
 /** Whether a draft holds nothing worth keeping (the defaults, and nothing typed or attached). */
 export function isEmptyNewSessionDraft(draft: NewSessionDraft): boolean {
-  return !draft.text && draft.attachments.length === 0 && draft.source === "claude" && draft.cwd === null && draft.account === null && draft.attempt === null;
+  return !draft.text && draft.attachments.length === 0 && draft.source === "claude" && !draft.acpAgent && draft.cwd === null && draft.account === null && draft.attempt === null;
 }
 
 /** Keep `draft` as the device's; an empty one removes the key rather than storing defaults. */
@@ -220,6 +225,8 @@ export interface NewSessionPrefill {
   text?: string;
   /** Which agent. */
   source?: SessionSource;
+  /** Which ACP agent, by id, when `source` is `acp`. */
+  acpAgent?: string;
 }
 
 /** `draft` with `prefill` taken into it: what is named replaces what was there, the rest stays. */
@@ -230,6 +237,8 @@ export function applyNewSessionPrefill(draft: NewSessionDraft, prefill: NewSessi
     ...(prefill.cwd ? { cwd: prefill.cwd } : {}),
     // An account picked for the other CLI cannot start this one.
     ...(prefill.source && prefill.source !== draft.source ? { source: prefill.source, account: null } : {}),
+    // Which ACP agent, when it names one; the draft's own pick is read only while it is an ACP one.
+    ...(prefill.source === "acp" && prefill.acpAgent ? { acpAgent: prefill.acpAgent } : {}),
     // A different message is a different start: the old one's attempt and attachments go with it.
     ...(prefill.text !== undefined ? { text: prefill.text, attachments: [], attempt: null } : {}),
   };
@@ -244,12 +253,16 @@ export function prefillNewSessionDraft(storage: KeyValueStorage, machine: Machin
   writeNewSessionDraft(storage, machine, applyNewSessionPrefill(readNewSessionDraft(storage, machine), prefill));
 }
 
-/** The prefill an address names (`?cwd=…&draft=…&agent=…`), or null when it names none. */
-export function prefillFromSearch(search: { cwd?: string; draft?: string; agent?: SessionSource }): NewSessionPrefill | null {
+/**
+ * The prefill an address names (`?cwd=…&draft=…&agent=…`, the agent as
+ * `claude`, `codex` or `acp:<id>`), or null when it names none.
+ */
+export function prefillFromSearch(search: { cwd?: string; draft?: string; agent?: string }): NewSessionPrefill | null {
+  const agent = parseAgentKey(search.agent);
   const prefill: NewSessionPrefill = {
     ...(search.cwd ? { cwd: search.cwd } : {}),
     ...(search.draft !== undefined ? { text: search.draft } : {}),
-    ...(search.agent ? { source: search.agent } : {}),
+    ...(agent ? { source: agent.source, ...(agent.acpAgent ? { acpAgent: agent.acpAgent } : {}) } : {}),
   };
   return Object.keys(prefill).length > 0 ? prefill : null;
 }

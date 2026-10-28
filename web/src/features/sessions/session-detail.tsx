@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SourceIcon } from "@/components/source-icon";
+import { AcpAgentChip, SourceIcon } from "@/components/source-icon";
+import { useAcpAgentLook } from "@/features/sessions/acp-agent-icons";
 import { useParams } from "@tanstack/react-router";
 import {
   ArrowDown,
@@ -1453,7 +1454,7 @@ function Composer({
   onQueueChanged,
   onOpenSession,
 }: {
-  source: "claude" | "codex";
+  source: Source;
   id: string;
   detail: FeedState;
   /** The feed's draft store: what the agent is doing that the transcript does not show. */
@@ -1484,6 +1485,10 @@ function Composer({
   // The machine's offline copy is read-only: nothing is queued for later
   // (architecture doc §4: no offline queue), so the composer is shut, not deferred.
   const readOnlyCopy = useShowingCopy();
+  // So is an ACP session whose agent was removed: it is read, not continued,
+  // until an agent with its id is added again — nothing waits for that.
+  const agentRemoved = useAcpAgentLook(source === "acp" ? detail.summary.acpAgent : null).removed;
+  const shut = readOnlyCopy || agentRemoved;
   // Another device's session in the local app (its gateway, S1-7): nothing
   // here can go to it — not a message, a model or an attachment — until S2.
   const otherDevice = useInfoOf(useMachine()).readOnly === true;
@@ -1504,7 +1509,7 @@ function Composer({
 
   // The models offered are the ones the account this session is *bound to* may
   // run — the same value `ComposerQuota` below is given, for the same reason.
-  const choice = useComposerChoice(source, id, detail.cliChoice, detail.account?.id ?? null);
+  const choice = useComposerChoice(source, id, detail.cliChoice, detail.account?.id ?? null, undefined, detail.summary.acpAgent);
   const { activeModel, activeEffort, activePermission } = choice;
 
   // The checklist sidecar is only ever rewritten by a tool call, so the number
@@ -1527,7 +1532,9 @@ function Composer({
   const deliveryQueue = useMemo(() => detail.summary.resident?.queuedMessages ?? [], [detail.summary.resident]);
   const delivery = useDeliveryPreviews(sessionKey(session), {
     items: detail.items, startIndex: detail.startIndex, totalItems: detail.totalItems, queue: deliveryQueue,
-    receipts: detail.receipts, adoptQueue: source === "codex",
+    // Codex and the ACP agent write every queued message into the transcript when it
+    // runs; claude folds a steered one into its turn without an echo.
+    receipts: detail.receipts, adoptQueue: source !== "claude",
   }, true);
   // Every message carries the id it was created with (`clientMessageId`), so a
   // retry of one the server already has is answered, not run again — see
@@ -1552,11 +1559,13 @@ function Composer({
             text: message.text,
             ...(message.images?.length ? { images: message.images } : {}),
             ...(message.files?.length ? { files: message.files } : {}),
-            model: activeModel.id,
+            // Omitted when empty: an ACP agent may choose its own model and has no
+            // permission modes, and refuses a message that names either.
+            ...(activeModel.id ? { model: activeModel.id } : {}),
             // Omitted, not null: a model with no effort ladder refuses `--effort`
             // outright, and the flag is only built when a value is present.
             ...(activeEffort ? { effort: activeEffort } : {}),
-            permission: activePermission,
+            ...(activePermission ? { permission: activePermission } : {}),
             clientMessageId: message.clientMessageId,
           },
           signal: timeoutSignal(),
@@ -1801,7 +1810,7 @@ function Composer({
     if (
       (!message && attachments.length === 0) ||
       send.isPending ||
-      readOnlyCopy ||
+      shut ||
       anyFailed
     ) {
       return;
@@ -1962,10 +1971,10 @@ function Composer({
           text={text}
           onText={setText}
           onTextLive={setTextState}
-          disabled={readOnlyCopy}
+          disabled={shut}
           onSubmit={submit}
           placeholder={
-            readOnlyCopy
+            shut
               ? (detail.sendBlockReason ?? t("the device is offline — this is a read-only copy"))
               : detail.canSend
                 ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
@@ -1978,7 +1987,7 @@ function Composer({
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
-            disabled: send.isPending || readOnlyCopy || anyFailed || (!text.trim() && attachments.length === 0),
+            disabled: send.isPending || shut || anyFailed || (!text.trim() && attachments.length === 0),
             label: sendsAnswer ? t("send as your answer") : willQueue ? t("add to queue") : t("send"),
             busy: send.isPending || sendQueued,
             queues: willQueue,
@@ -2738,14 +2747,19 @@ export function SessionDetailInner({
         metadata={<>
           {readOnly && !paneActions && <DeviceChip machine={machine} />}
           {chat ? (
-            <Badge variant={summary.source} className="shrink-0">
+            // An instant chat is Claude's or Codex's; the ACP agent has none.
+            <Badge variant={summary.source === "acp" ? "default" : summary.source} className="shrink-0">
               {t("chat")}
             </Badge>
+          ) : summary.source === "acp" ? (
+            // Its agent's mark and name: the session's own, whatever else is configured.
+            <AcpAgentChip agent={summary.acpAgent} />
           ) : (
             <SourceIcon source={summary.source} className="text-muted" />
           )}
           {summary.parentId && <ParentSessionLink source={summary.source} id={summary.parentId} />}
-          {!readOnly && (
+          {/* An ACP agent runs on its own configuration: there is no account to show or bind. */}
+          {!readOnly && summary.source !== "acp" && (
             <SessionAccountBadge
               source={summary.source}
               id={id}
@@ -3007,7 +3021,7 @@ export function SessionDetailInner({
       </div>
       <Composer
         key={`${source}/${id}`}
-        source={source as "claude" | "codex"}
+        source={source as Source}
         id={id}
         detail={data}
         drafts={drafts}

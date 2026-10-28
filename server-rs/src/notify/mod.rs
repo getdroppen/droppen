@@ -65,7 +65,7 @@ use crate::api::error::ApiError;
 use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::sessions::{claude, codex, Paths, SessionSummary, Source};
+use crate::sessions::{Paths, SessionSummary, Source};
 
 /// The one route an agent's `rh-notify` calls.
 pub const NOTIFY_PATH: &str = "/api/notify";
@@ -325,10 +325,7 @@ fn take_slot(key: &str, now: Instant) -> bool {
 
 /// What a nudge is worth telling the caller about the session it came from.
 async fn summary_of(paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
-    match source {
-        Source::Claude => claude::load_claude_summary(paths, id).await,
-        Source::Codex => codex::find_codex_session(paths, id).await,
-    }
+    crate::sessions::find_summary(paths, source, id).await
 }
 
 /// Trim, collapse and cap one field of a nudge.

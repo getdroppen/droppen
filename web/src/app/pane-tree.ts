@@ -23,7 +23,7 @@ export type PaneContent =
   /** A plugin's pane; `state` is the plugin's, flat and ≤ 2 KB. */
   | { kind: "plugin"; plugin: string; pane: string; state?: Record<string, string | number | boolean | null> }
   | { kind: "files"; path?: string; file?: string; machine?: MachineKey }
-  | { kind: "session"; source: "claude" | "codex"; id: string; machine?: MachineKey }
+  | { kind: "session"; source: "claude" | "codex" | "acp"; id: string; machine?: MachineKey }
   /** A session about to be started: the empty session view, which becomes the session once its first message is sent. */
   | { kind: "new-session"; machine?: MachineKey }
   | { kind: "chat"; chatKind: "claude" | "codex" | "api"; id: string; machine?: MachineKey }

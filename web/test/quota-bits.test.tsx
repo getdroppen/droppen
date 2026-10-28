@@ -91,7 +91,7 @@ test("an expired /usage login behind a fresh reading reads faint, as what it cos
   const fresh = draw(
     <QuotaBlock title="work" windows={[win()]} current={false} usage="login_expired" updatedAt={ago(1)} source="session" />,
   );
-  assert.match(fresh, /<div class="font-mono text-\[10px\] text-faint">usage login expired · only affects the idle-time fallback · <a href="\/settings"/);
+  assert.match(fresh, /<div class="font-mono text-\[10px\] text-faint">usage login expired · only affects the idle-time fallback · <a href="\/settings\?section=accounts&amp;tab=claude"/);
   assert.doesNotMatch(fresh, /text-warn/);
   assert.match(fresh, /60% left/);
 });
@@ -100,7 +100,7 @@ test("an expired /usage login behind an aged reading keeps today's amber line", 
   const stale = draw(
     <QuotaBlock title="work" windows={[win()]} current={false} usage="login_expired" updatedAt={ago(120)} source="probe" />,
   );
-  assert.match(stale, /<div class="font-mono text-\[10px\] text-warn-fg">usage login expired · <a href="\/settings"/);
+  assert.match(stale, /<div class="font-mono text-\[10px\] text-warn-fg">usage login expired · <a href="\/settings\?section=accounts&amp;tab=claude"/);
   assert.doesNotMatch(stale, /idle-time fallback/);
   assert.match(stale, /60% left/, "the last good numbers are still drawn, dated");
 });
@@ -109,7 +109,7 @@ test("a never-enabled /usage login with session windows shows them, with a faint
   const html = draw(
     <QuotaBlock title="work" windows={[win()]} current={false} usage="login_needed" updatedAt={ago(1)} source="session" />,
   );
-  assert.match(html, /<div class="font-mono text-\[10px\] text-faint">usage not enabled · only affects the idle-time fallback · <a href="\/settings"/);
+  assert.match(html, /<div class="font-mono text-\[10px\] text-faint">usage not enabled · only affects the idle-time fallback · <a href="\/settings\?section=accounts&amp;tab=claude"/);
   assert.match(html, /60% left/);
   assert.match(html, /from sessions/);
 });

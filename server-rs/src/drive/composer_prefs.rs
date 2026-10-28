@@ -73,6 +73,20 @@ const DEFAULTS_KEY: &str = "defaults";
 /// unbalanced; this says what is meant instead.
 pub const MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:-]*(?:\[[A-Za-z0-9]+\])?$";
 
+/// A model id as an ACP agent spells it: `provider:model`, where the model
+/// half is often a path (`openrouter:vendor/name`). Still nothing that could
+/// read as a flag or hold a space; the agent checks it against its own list.
+pub const ACP_MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:/@+-]*$";
+
+/// The pattern and length a model id for `source` is held to.
+pub fn model_rule(source: Source) -> (&'static str, usize) {
+    if source == Source::Acp {
+        (ACP_MODEL_PATTERN, 200)
+    } else {
+        (MODEL_PATTERN, 100)
+    }
+}
+
 /// One remembered set of composer choices.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -113,9 +127,10 @@ fn matches(pattern: &'static str, value: &str) -> bool {
 }
 
 /// The bounds `ComposerChoiceSchema` puts on each field.
-fn validate(choice: &ComposerChoice) -> Result<(), ComposerPrefsError> {
+fn validate(source: Source, choice: &ComposerChoice) -> Result<(), ComposerPrefsError> {
+    let (model_pattern, model_length) = model_rule(source);
     let checks: [(&str, Option<&str>, &'static str, usize); 3] = [
-        ("model", choice.model.as_deref(), MODEL_PATTERN, 100),
+        ("model", choice.model.as_deref(), model_pattern, model_length),
         ("effort", choice.effort.as_deref(), r"^[a-z]+$", 20),
         ("permission", choice.permission.as_deref(), r"^[A-Za-z][A-Za-z-]*$", 40),
     ];
@@ -239,7 +254,7 @@ impl ComposerPrefsStore {
     /// that could read as a flag leaves no trace at all — not a row, not a file,
     /// not a database where there was none.
     pub async fn update(&self, source: Source, session_id: Option<&str>, patch: &ComposerChoice) -> Result<ComposerPrefs, ComposerPrefsError> {
-        validate(patch)?;
+        validate(source, patch)?;
         let _guard = self.write_lock.lock().await;
         let db = self.db();
         let mut prefs = self.read_stored().await;

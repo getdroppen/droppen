@@ -27,10 +27,11 @@ import { mq } from "@/lib/machines/query";
 import { recentSessions } from "@/features/machines/needs-you";
 import type { SwitchingTransport } from "@/lib/transport/switching";
 import type { HubShell } from "./hub-shell";
+import { isSessionSource, type SessionSource } from "@/features/sessions/new-session-flow";
 
 /** A session a device's copy knows. */
 export interface SessionRefLite {
-  source: "claude" | "codex";
+  source: SessionSource;
   id: string;
 }
 
@@ -176,7 +177,7 @@ export function shellScreenMaker(shell: HubShell): ScreenMaker {
     newest: async (key) => {
       const pick = (rows: Parameters<typeof recentSessions>[0]): SessionRefLite | null => {
         const row = recentSessions(rows, 1)[0];
-        return row && (row.source === "claude" || row.source === "codex") ? { source: row.source, id: row.id } : null;
+        return row && isSessionSource(row.source) ? { source: row.source, id: row.id } : null;
       };
       // Its index copy, when it has one (a device just added may not have it here yet)…
       const sessions = shell.machine(key)?.sessions;

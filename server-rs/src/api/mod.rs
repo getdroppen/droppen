@@ -539,6 +539,7 @@ fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
     crate::accounts::describe(&mut reg);
+    crate::acp_agent::describe(&mut reg);
     crate::apps::describe(&mut reg);
     crate::attention::describe(&mut reg);
     crate::auth::describe(&mut reg);
@@ -571,6 +572,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/sessions/{source}/{id}/ws", session_feed_ws)
         .get("/api/settings", settings);
     let router = crate::accounts::routes(router);
+    let router = crate::acp_agent::routes(router);
     let router = crate::apps::routes(router);
     let router = crate::attention::routes(router);
     let router = crate::auth::routes(router);

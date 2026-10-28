@@ -77,7 +77,7 @@ use crate::api::extract::ApiJson;
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::attention::{self, derive};
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::sessions::{claude, codex, DriverStates, InjectionRunState, Paths, ResidentInfo, SessionSummary, Source};
+use crate::sessions::{DriverStates, InjectionRunState, Paths, ResidentInfo, SessionSummary, Source};
 
 /// How long the same session's notifications are suppressed after one is sent.
 const THROTTLE: Duration = Duration::from_secs(60);
@@ -362,10 +362,7 @@ async fn deliver(paths: &Paths, title: String, body: String, tag: String, url: S
 
 /// The session-list row for one session, whatever CLI it belongs to.
 async fn summary_of(paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
-    match source {
-        Source::Claude => claude::load_claude_summary(paths, id).await,
-        Source::Codex => codex::find_codex_session(paths, id).await,
-    }
+    crate::sessions::find_summary(paths, source, id).await
 }
 
 /// What a finished run is worth telling somebody about, if anything.
@@ -889,6 +886,7 @@ mod tests {
             activity: SessionActivity::Idle,
             resident: Nullable(None),
             claude_root: None,
+            acp_agent: None,
             account_id: None,
             attention_at: Nullable(None),
             unread: false,

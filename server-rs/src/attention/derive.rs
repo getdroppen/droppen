@@ -113,6 +113,7 @@ pub fn spoken_texts(source: Source, entry: &serde_json::Map<String, Value>) -> V
         (!text.is_empty()).then(|| text.to_string())
     };
     match source {
+        Source::Acp => crate::sessions::acp_transcript::spoken_texts(entry),
         Source::Claude => {
             if entry.get("isSidechain") == Some(&Value::Bool(true)) || entry.get("type").and_then(Value::as_str) != Some("assistant") {
                 return Vec::new();
@@ -204,6 +205,7 @@ pub fn echo(source: Source, tail: &[String]) -> Option<AssistantEcho> {
     match source {
         Source::Claude => claude_echo(tail),
         Source::Codex => codex_echo(tail),
+        Source::Acp => newest_echo(Source::Acp, tail),
     }
 }
 

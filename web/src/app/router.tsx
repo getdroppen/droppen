@@ -207,6 +207,10 @@ const terminalsRoute = createRoute({
 export interface SettingsSearch {
   /** Which section to open (`plugins`, …). */
   section?: string;
+  /** Agents & accounts: which provider's tab (`claude`, `codex`, `acp`). */
+  tab?: string;
+  /** Agents & accounts: the ACP agent whose details are open. */
+  agent?: string;
 }
 
 const settingsRoute = createRoute({
@@ -214,6 +218,8 @@ const settingsRoute = createRoute({
   path: "settings",
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
     section: typeof search.section === "string" ? search.section : undefined,
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+    agent: typeof search.agent === "string" ? search.agent : undefined,
   }),
   // Lazy like the views below: settings and stats are a sixth of the app's own
   // code, rarely opened, and on a weak link every byte of the app chunk is

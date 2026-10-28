@@ -433,7 +433,7 @@ const checkedRadios = (provider = "claude") => defaultRadios(provider).map((n) =
 test("settings: automatic, always the local login, or an account — and automatic names its stand-in while the local login is signed out", async (t) => {
   const sent: Sent[] = [];
   reset(sent, list([gateway(GATEWAY, "gateway"), account(WORK, "work")], "signed_out"));
-  const { root, errors } = await mount(<AccountsSection />);
+  const { root, errors } = await mount(<AccountsSection provider="claude" />);
   t.after(() => root.unmount());
   await until("the radios", () => defaultRadios().length === 4);
   assert.deepEqual(
@@ -461,7 +461,7 @@ test("settings: an env account offers edit, an OAuth one re-auth", async (t) => 
   const sent: Sent[] = [];
   // A gateway (env) beside an OAuth account: only the first has fields to edit.
   reset(sent, list([gateway(GATEWAY, "gateway"), account(WORK, "work")], "unknown"));
-  const { root, errors } = await mount(<AccountsSection />);
+  const { root, errors } = await mount(<AccountsSection provider="claude" />);
   t.after(() => root.unmount());
   const edit = () =>
     first((n) => n.nodeName === "BUTTON" && n.getAttribute("title") === "edit this account's environment variables");
@@ -477,7 +477,7 @@ test("settings: a local login somebody chose stays chosen while it is signed out
   const chosen = list([account(WORK, "work")], "signed_out");
   chosen.local.claude = { ...chosen.local.claude, isDefault: true };
   reset(sent, chosen);
-  const { root } = await mount(<AccountsSection />);
+  const { root } = await mount(<AccountsSection provider="claude" />);
   t.after(() => root.unmount());
   await until("the radios", () => defaultRadios().length === 3);
   assert.deepEqual(checkedRadios(), [false, true, false]);
@@ -490,7 +490,7 @@ test("settings: a codex stand-in says how codex's own login comes back", async (
   const codex = list([{ ...account(SPARE, "codex key"), provider: "codex", kind: "env", rotation: true }], "unknown");
   codex.local.codex = { state: "signed_out", rest: [{ ...AUTH_REST, source: "codex:turn" }], isDefault: false };
   reset(sent, codex);
-  const { root } = await mount(<AccountsSection />);
+  const { root } = await mount(<AccountsSection provider="codex" />);
   t.after(() => root.unmount());
   await until("the codex note", () => /codex key/.test(notice()?.textContent ?? ""));
   assert.match(
@@ -504,7 +504,7 @@ test("an older server: no automatic choice in settings, the old rule in the chat
   const old = { accounts: [account(WORK, "work"), account(SPARE, "spare")], defaultAccountId: null, defaultCodexAccountId: null,
     local: { claude: { state: "signed_out", rest: [AUTH_REST] }, codex: { state: "unknown", rest: [] } } };
   reset(sent, old);
-  const settings = await mount(<AccountsSection />);
+  const settings = await mount(<AccountsSection provider="claude" />);
   await until("the radios", () => defaultRadios().length === 3);
   assert.deepEqual(checkedRadios(), [true, false, false], "the local login: what an older server starts on");
   settings.root.unmount();

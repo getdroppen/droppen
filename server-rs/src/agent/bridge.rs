@@ -305,6 +305,14 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("GET", "/api/chat-provider", Use),
         ("PUT", "/api/chat-provider", Posture),
         ("GET", "/api/chat-provider/models", Use),
+        // Which programs run as ACP agents, and with what in their environment.
+        ("GET", "/api/acp/agents", Use),
+        ("PUT", "/api/acp/agents/{id}", Posture),
+        ("DELETE", "/api/acp/agents/{id}", Posture),
+        // A check starts the program an agent names; the last one's error is
+        // what the program wrote to stderr.
+        ("POST", "/api/acp/agents/{id}/check", Posture),
+        ("GET", "/api/acp/agents/{id}/check", Posture),
         ("GET", "/api/fs/list", Use),
         ("GET", "/api/fs/read", Use),
         ("GET", "/api/fs/download", Use),
@@ -916,6 +924,9 @@ mod tests {
             ("GET", "/api/sessions/claude/a%20b"),
             ("PUT", "/api/screens/order"),
             ("POST", "/api/notify/test"),
+            // Which agents there are, by name: no values, nothing to run.
+            ("GET", "/api/acp/agents"),
+            ("POST", "/api/sessions/acp/abc/message"),
         ] {
             assert_eq!(refusal(method, path, PLAIN), None, "{method} {path}");
         }
@@ -937,6 +948,11 @@ mod tests {
             ("head", "/api/accounts/setup-token/c-1"),
             ("PUT", "/api/notify/config"),
             ("PUT", "/api/chat-provider"),
+            // They name the programs ACP sessions run.
+            ("PUT", "/api/acp/agents/bub"),
+            ("DELETE", "/api/acp/agents/bub"),
+            ("POST", "/api/acp/agents/bub/check"),
+            ("GET", "/api/acp/agents/bub/check"),
             ("POST", "/api/push/subscriptions"),
             ("GET", "/api/push/vapid"),
             ("POST", "/rh/machine-key"),

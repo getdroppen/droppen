@@ -137,7 +137,7 @@ function SessionPickerPanel({
             <StatusBadge session={s} unread={unreadCountOf(s)} />
           </div>
           <div className="mt-0.5 flex items-center gap-1.5">
-            <SourceIcon source={s.source} className="text-muted" />
+            <SourceIcon source={s.source} acpAgent={s.acpAgent} className="text-muted" />
             <span className="truncate font-mono text-2xs text-faint">{basename(s.cwd)}</span>
             <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
               {formatRelative(s.updatedAt)}

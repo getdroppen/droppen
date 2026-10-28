@@ -33,3 +33,33 @@ export function TabsTab({ className, ...props }: React.ComponentProps<typeof Bas
     />
   );
 }
+
+/**
+ * Text tabs: a row of words over one 1px rule, the chosen word in ink with a
+ * 2px underline (docs/ui-spec.md §7 V3), the rest muted. Lighter than a
+ * segmented control, for choosing among a page's own parts (the providers of
+ * Settings › Agents & accounts), where a segmented strip would read as a
+ * second category strip. It scrolls sideways rather than squeeze or wrap a
+ * label.
+ */
+export function TextTabsList({ className, ...props }: React.ComponentProps<typeof BaseTabs.List>) {
+  return (
+    <BaseTabs.List
+      className={cn("flex h-9 items-stretch gap-5 overflow-x-auto border-b border-border", className)}
+      {...props}
+    />
+  );
+}
+
+export function TextTab({ className, ...props }: React.ComponentProps<typeof BaseTabs.Tab>) {
+  return (
+    <BaseTabs.Tab
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 whitespace-nowrap px-0.5 text-[13px] font-medium text-muted select-none hover:text-fg",
+        "data-[active]:text-fg data-[active]:shadow-[inset_0_-2px_0_0_var(--color-fg)]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}

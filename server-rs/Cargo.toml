@@ -74,6 +74,10 @@ tower-service = "0.3"
 # codecs; zstd would link a C library.
 tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "map-response-body"] }
 libc = "0.2"
+# The scratch directory an ACP agent is started in to be checked, or asked
+# what it offers (`inject::acp`): removed when dropped, a cancelled request's
+# too. Already in the graph for the tests.
+tempfile = "3"
 
 # The command line of this binary, the relay and the desktop update tool. One
 # derive tree per binary; parsing only, so the subcommands' own argument checks
@@ -181,7 +185,6 @@ opt-level = 3
 opt-level = 3
 
 [dev-dependencies]
-tempfile = "3"
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
 # be asserted without a test that actually takes minutes.
 tokio = { version = "1", features = ["test-util"] }

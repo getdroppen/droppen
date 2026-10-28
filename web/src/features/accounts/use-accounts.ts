@@ -83,12 +83,15 @@ export function useStartAccount(
   provider: AccountProvider,
   model?: string | null,
   chooseModel = false,
+  /** False for a start that runs on no account at all (an ACP agent): nothing is asked, and there is no start. */
+  enabled = true,
 ): { start: AccountStart | null; ready: boolean; confirm: () => Promise<boolean> } {
   const machine = useMachine();
   const api = useApi();
   const { data: list } = useAccounts();
   const family = chooseModel || provider !== "claude" ? null : modelFamily(model);
   const query = useQuery({
+    enabled,
     queryKey: mq(machine, "accounts", "start", provider, chooseModel ? "choose" : family, startInputs(list, provider)),
     queryFn: async () => {
       const res = await api.GET("/api/accounts/start", {
@@ -104,7 +107,7 @@ export function useStartAccount(
     // other CLI's account is never where this one starts.
     placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[4] === provider ? previous : undefined),
   });
-  const start = query.data ?? (list ? startAccountFor(list, provider, family) : null);
+  const start = !enabled ? null : (query.data ?? (list ? startAccountFor(list, provider, family) : null));
   // The answer at the moment of sending, not as it was asked: the list is cached
   // and readings are not in the key, so the rule may have moved on. `confirm`
   // asks again and says whether the answer shown still stands; when it does not,
@@ -112,7 +115,11 @@ export function useStartAccount(
   // caller sends on that.
   const latest = useRef(query);
   latest.current = query;
+  const asking = useRef(enabled);
+  asking.current = enabled;
   const confirm = useCallback(async () => {
+    // Nothing was asked, so nothing can have moved.
+    if (!asking.current) return true;
     const shown = JSON.stringify(latest.current.data ?? null);
     const fresh = await latest.current.refetch();
     // Nothing to check against: the spawn places it by the same rule anyway.

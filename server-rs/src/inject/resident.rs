@@ -833,6 +833,9 @@ impl InjectionRegistry {
         if source == Source::Codex {
             return self.codex_handle(id).is_some_and(|h| h.visible());
         }
+        if source == Source::Acp {
+            return self.acp_handle(id).is_some_and(|h| h.visible());
+        }
         source == Source::Claude && self.residents.lock().expect("residents poisoned").contains_key(id)
     }
 
@@ -840,6 +843,9 @@ impl InjectionRegistry {
     pub fn resident_state(&self, source: Source, id: &str) -> Option<ResidentState> {
         if source == Source::Codex {
             return self.codex_handle(id).filter(|h| h.visible()).map(|h| h.state());
+        }
+        if source == Source::Acp {
+            return self.acp_handle(id).filter(|h| h.visible()).map(|h| h.state());
         }
         if source != Source::Claude {
             return None;
@@ -7153,6 +7159,9 @@ mod tests {
             quota: Arc::new(crate::quota::QuotaCache::new(paths.clone())),
             server: crate::sessions::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
+            acp_servers: Mutex::new(HashMap::new()),
+            acp_options: Mutex::new(HashMap::new()),
+            acp_probes: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             spawn_gate: tokio::sync::Mutex::new(()),

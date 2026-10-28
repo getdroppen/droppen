@@ -272,6 +272,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         activity: SessionActivity::Idle,
         resident: Nullable(None),
         claude_root: Some(root),
+        acp_agent: None,
         account_id: None,
         // Filled in by `crate::attention::apply`, which memoises the transcript
         // read this cache would otherwise repeat for it.

@@ -14,6 +14,7 @@ import {
   type TranscriptWindow,
 } from "./session-feed-state.js";
 import { createDraftStore, thinkingOf, type DraftStore } from "./stream-draft.js";
+import { isSessionSource } from "./new-session-flow";
 
 /*
  * The session websockets, owned by the page rather than by the view that shows
@@ -647,7 +648,7 @@ export class SessionFeed {
       !data?.hasMoreBefore ||
       before <= 0 ||
       this.loadingEarlier ||
-      (this.source !== "claude" && this.source !== "codex")
+      !isSessionSource(this.source)
     ) {
       return;
     }
@@ -711,7 +712,7 @@ export class SessionFeed {
    * costs a state read and nothing else.
    */
   refreshState(): void {
-    if (this.source !== "claude" && this.source !== "codex") return;
+    if (!isSessionSource(this.source)) return;
     const epoch = this.epoch;
     const held = { after: this.view.data?.totalItems ?? 0, sig: this.view.data?.sig ?? "" };
     void this.deps.fetchState(this.source, this.id, held).then(

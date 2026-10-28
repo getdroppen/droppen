@@ -13,9 +13,8 @@ import { Content, Panel, PanelHeader } from "@/components/panel";
 import { useShowHiddenFiles } from "@/features/files/use-files-prefs";
 import { AccessSection } from "@/features/settings/access-section";
 import { SettingsUpdatesRow } from "@/features/updates/updates-row";
-import { AccountsSection } from "@/features/settings/accounts-section";
 import { ScheduleSection } from "@/features/settings/schedule-section";
-import { askedSection, sectionsFor, type SectionId } from "@/features/settings/sections";
+import { askedSection, SECTION_LABEL, sectionsFor, type SectionId } from "@/features/settings/sections";
 import {
   PREFERENCE_ROW,
   ROW_HINT,
@@ -27,6 +26,7 @@ import {
   SETTINGS_FIELD,
 } from "@/features/settings/layout";
 import { SetupSection } from "@/features/setup/settings-section";
+import { AgentsSection } from "@/features/settings/agents/agents-section";
 import { cn } from "@/lib/cn";
 import { isCloud } from "@/lib/hub/config";
 import { formatTime } from "@/lib/format";
@@ -781,7 +781,7 @@ export function SettingsView() {
                 section === id ? "!bg-fg font-medium text-bg" : "text-fg",
               )}
             >
-              {t(id)}
+              {t(SECTION_LABEL[id])}
             </button>
           ))}
         </div>
@@ -789,7 +789,7 @@ export function SettingsView() {
       <Content className="@container/settings">
         {/* The page title and every section title start at the same 12px. */}
         <header className="flex min-h-8 shrink-0 flex-col justify-center gap-1 border-b border-border bg-bg px-3 py-1 md:h-8 md:flex-row md:items-center md:justify-between md:py-0">
-          <span className="text-[13px] font-semibold max-md:hidden">{t(section)}</span>
+          <span className="text-[13px] font-semibold max-md:hidden">{t(SECTION_LABEL[section])}</span>
           {devices && <span className="flex min-w-0 justify-end max-md:hidden">{devices}</span>}
           <div
             className="min-w-0 overflow-x-auto md:hidden"
@@ -805,7 +805,7 @@ export function SettingsView() {
               <TabsList className="h-9 w-max min-w-full">
                 {sections.map((id) => (
                   <TabsTab key={id} value={id} className="shrink-0 whitespace-nowrap">
-                    {t(id)}
+                    {t(SECTION_LABEL[id])}
                   </TabsTab>
                 ))}
               </TabsList>
@@ -817,7 +817,7 @@ export function SettingsView() {
           {section === "general" ? (
             <GeneralSettings />
           ) : section === "accounts" ? (
-            <AccountsSection />
+            <AgentsSection />
           ) : section === "access" ? (
             <AccessSection />
           ) : !cloud && section === "plugins" ? (

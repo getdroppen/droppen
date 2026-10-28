@@ -20,6 +20,7 @@ import {
 import type { JumpOutcome } from "./session-search-view";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { sessionKey } from "@/lib/machines/key";
+import { isSessionSource } from "./new-session-flow";
 
 /** How long "could not get there" stays up. */
 const FAILED_MS = 3000;
@@ -77,7 +78,7 @@ export function useFirstUnread(input: {
 
   const onArrival = useCallback(
     (previousReadAt: string | null) => {
-      if (source !== "claude" && source !== "codex") return;
+      if (!isSessionSource(source)) return;
       request.current?.abort();
       const controller = new AbortController();
       request.current = controller;

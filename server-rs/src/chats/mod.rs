@@ -153,11 +153,12 @@ impl ChatKind {
         }
     }
 
-    /// The kind a discovered CLI session belongs to.
-    fn of(source: Source) -> Self {
+    /// The kind a discovered CLI session belongs to; an ACP agent has no chats.
+    fn of(source: Source) -> Option<Self> {
         match source {
-            Source::Claude => ChatKind::Claude,
-            Source::Codex => ChatKind::Codex,
+            Source::Claude => Some(ChatKind::Claude),
+            Source::Codex => Some(ChatKind::Codex),
+            Source::Acp => None,
         }
     }
 }
@@ -317,12 +318,14 @@ pub async fn list_chats(State(state): State<AppState>) -> Json<ChatList> {
         .into_iter()
         .chain(codex_sessions)
         .filter(|session| session.cwd.as_ref().map(String::as_str) == Some(anchor.as_str()))
-        .map(|session| ChatSummary {
-            kind: ChatKind::of(session.source),
-            id: session.id,
-            title: session.title,
-            model: Nullable(None),
-            updated_at: session.updated_at,
+        .filter_map(|session| {
+            Some(ChatSummary {
+                kind: ChatKind::of(session.source)?,
+                id: session.id,
+                title: session.title,
+                model: Nullable(None),
+                updated_at: session.updated_at,
+            })
         })
         .collect();
     chats.extend(api_chats.into_iter().map(|chat| ChatSummary {
@@ -710,8 +713,9 @@ mod tests {
         for (kind, name) in [(ChatKind::Claude, "claude"), (ChatKind::Codex, "codex"), (ChatKind::Api, "api")] {
             assert_eq!(serde_json::to_value(kind).expect("encode"), json!(name));
         }
-        assert_eq!(ChatKind::of(Source::Claude), ChatKind::Claude);
-        assert_eq!(ChatKind::of(Source::Codex), ChatKind::Codex);
+        assert_eq!(ChatKind::of(Source::Claude), Some(ChatKind::Claude));
+        assert_eq!(ChatKind::of(Source::Codex), Some(ChatKind::Codex));
+        assert_eq!(ChatKind::of(Source::Acp), None);
         assert_eq!(ChatKind::Api.source(), None, "the API backend is not a CLI");
     }
 

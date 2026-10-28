@@ -482,6 +482,7 @@ fn row_to_summary(row: &ThreadRow, size_bytes: u64) -> (SessionSummary, i64) {
         activity: SessionActivity::Idle,
         resident: Nullable(None),
         claude_root: None,
+        acp_agent: None,
         account_id: None,
         // All filled in by `crate::attention::apply`, once per changed file.
         attention_at: Nullable(None),
@@ -523,6 +524,7 @@ fn meta_to_summary(meta: &FileMeta, names: &HashMap<String, String>) -> SessionS
         activity: SessionActivity::Idle,
         resident: Nullable(None),
         claude_root: None,
+        acp_agent: None,
         account_id: None,
         attention_at: Nullable(None),
         unread: false,

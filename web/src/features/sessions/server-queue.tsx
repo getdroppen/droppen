@@ -1,3 +1,4 @@
+import type { components } from "@/api/schema";
 import { useMutation } from "@tanstack/react-query";
 import { Loader2, RotateCw, X, Zap } from "lucide-react";
 import { useState } from "react";
@@ -43,7 +44,7 @@ export function noticeInForce(notice: QueueNotice | null, messages: readonly { i
 export function queuedRowState(
   message: QueuedMessage,
   receipts: readonly MessageReceipt[] | undefined,
-  source: "claude" | "codex",
+  source: components["schemas"]["Source"],
 ): DeliveryState {
   const receipt = receipts?.find((candidate) => candidate.qid === message.id);
   if (receipt) return receiptState(receipt.status);
@@ -73,7 +74,7 @@ export function ServerQueueList({
   onSteer,
   onDrop,
 }: {
-  source?: "claude" | "codex";
+  source?: components["schemas"]["Source"];
   messages: readonly QueuedMessage[];
   /** The session's receipts, which say where each named row is. */
   receipts?: readonly MessageReceipt[];
@@ -126,7 +127,8 @@ export function ServerQueueList({
               </span>
             ) : (
               <>
-                <button
+                {/* An ACP agent takes the next message only when the turn in flight ends. */}
+                {source !== "acp" && <button
                   type="button"
                   disabled={busy}
                   title={
@@ -150,7 +152,7 @@ export function ServerQueueList({
                   ) : (
                     <Zap className="size-3" />
                   )}
-                </button>
+                </button>}
                 <button
                   type="button"
                   disabled={busy}
@@ -233,7 +235,7 @@ export function ServerQueue({
   onChanged,
   onDropped,
 }: {
-  source: "claude" | "codex";
+  source: components["schemas"]["Source"];
   id: string;
   resident: ResidentInfo | null;
   /** The session's message receipts, from its state. */

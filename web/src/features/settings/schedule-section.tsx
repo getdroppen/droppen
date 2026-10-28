@@ -28,6 +28,7 @@ import {
   MODEL_FALLBACK,
   ModelSelect,
   PERMISSION_OPTIONS,
+  type CliSource,
 } from "@/features/sessions/composer-controls";
 import { DirBrowser } from "@/features/sessions/dir-browser";
 import { cn } from "@/lib/cn";
@@ -46,7 +47,8 @@ import type { MachineKey } from "@/lib/machines/key";
 
 type ScheduledTask = components["schemas"]["ScheduledTask"];
 type TaskStatus = components["schemas"]["TaskStatus"];
-type Source = components["schemas"]["Source"];
+// The agents a schedule can run: the ACP agent is not one of them (yet).
+type Source = CliSource;
 
 export const scheduledTasksKey = (machine: MachineKey) => mq(machine, "scheduled-tasks");
 
@@ -232,7 +234,7 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
   const settings = useFeedSettings();
   const homeDir = settings?.homeDir ?? "";
 
-  const [source, setSource] = useState<Source>(initial?.source ?? "claude");
+  const [source, setSource] = useState<Source>(initial?.source === "codex" ? "codex" : "claude");
   const [name, setName] = useState(initial?.name ?? "");
   const [cwd, setCwd] = useState(initial?.cwd ?? "");
   const [browsing, setBrowsing] = useState(false);

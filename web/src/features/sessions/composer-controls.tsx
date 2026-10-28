@@ -4,7 +4,8 @@ import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, useLatest, useStableOptions } from "@/components/ui/select";
+import { glyphValue, OptionLabel, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, useLatest, useStableOptions } from "@/components/ui/select";
+import type { Glyph } from "@/components/glyph";
 import { activeRests, restChipText, restTitle, restTone } from "@/features/accounts/account-rest";
 import { QuotaBlock, QuotaGauges } from "@/features/accounts/quota-bits";
 import {
@@ -27,6 +28,17 @@ type ModelInfo = components["schemas"]["ModelInfo"];
 type ComposerChoice = components["schemas"]["ComposerChoice"];
 type ComposerPrefs = components["schemas"]["ComposerPrefs"];
 type CliChoice = components["schemas"]["CliChoice"];
+type Source = components["schemas"]["Source"];
+
+/**
+ * The agents whose model, effort, permission and account a composer chooses.
+ * An ACP agent chooses all four from its own configuration, so its composer offers
+ * none of them and sends none of them.
+ */
+export type CliSource = "claude" | "codex";
+
+/** What the composer holds while an agent's model list is unknown: nothing to send. */
+const NO_MODEL: ModelInfo = { id: "", label: null, efforts: [], defaultEffort: null };
 
 /** Every effort each CLI accepts, for models that publish no list of their own. */
 export const EFFORT_FALLBACK: Record<"claude" | "codex", string[]> = {
@@ -325,10 +337,12 @@ export function useComposerDefaultModel(source: "claude" | "codex"): string | nu
  * Either way the start, sent with the composer's model and no account, lands
  * on the login shown.
  */
-export function useComposerStart(source: "claude" | "codex") {
-  const stored = useComposerDefaultModel(source);
+export function useComposerStart(source: Source) {
+  const cli: CliSource = source === "acp" ? "claude" : source;
+  const stored = useComposerDefaultModel(cli);
   const named = stored && isSendable(stored) ? stored : null;
-  return useStartAccount(source, named, !named);
+  // An ACP agent has no accounts: nothing to ask the server where a start would land.
+  return useStartAccount(cli, named, !named, source !== "acp");
 }
 
 /**
@@ -351,17 +365,23 @@ export function useComposerStart(source: "claude" | "codex") {
  * session bound to an account.
  */
 export function useComposerChoice(
-  source: "claude" | "codex",
+  source: Source,
   scope?: string,
   cliChoice?: CliChoice | null,
   accountId?: string | null,
   /** The model to start on when none (sendable) is stored: the one the server paired with the login shown ([`useComposerStart`]). */
   startModel?: string | null,
+  /** An ACP session's agent, by id: whose models and efforts are offered. */
+  acpAgent?: string | null,
 ) {
   const api = useApi();
   const machine = useMachine();
   const queryClient = useQueryClient();
   const prefsKey = scope ? `${source}/${scope}` : null;
+  // An ACP agent chooses nothing here (see `CliSource`); the hooks below still run, as
+  // hooks must, against a stand-in that is never shown or sent.
+  const acp = source === "acp";
+  const cli: CliSource = acp ? "codex" : source;
 
   const { data: prefs } = useQuery({
     queryKey: mq(machine, "composer-prefs"),
@@ -424,29 +444,43 @@ export function useComposerChoice(
   // Codex has one config root and no account to pick, so its key stays
   // account-free: sending a meaningless id would split one cache entry in two.
   const modelAccount = source === "claude" ? (accountId ?? null) : null;
+  // Every ACP agent publishes its own list; with no agent named there is none.
+  const modelAgent = acp ? (acpAgent ?? null) : null;
   const { data: modelData, isError: modelsFailed } = useQuery({
     // The account is in the key, not just the query: two accounts publish two
     // lists, and one served out of the other's entry is the bug this fixes.
-    queryKey: mq(machine, "models", source, modelAccount),
+    // The same goes for two ACP agents.
+    queryKey: mq(machine, "models", source, acp ? modelAgent : modelAccount),
     queryFn: async () =>
       (await api.GET("/api/models", {
-        params: { query: { source, ...(modelAccount ? { accountId: modelAccount } : {}) } },
+        params: {
+          query: {
+            source,
+            ...(modelAccount ? { accountId: modelAccount } : {}),
+            ...(modelAgent ? { acpAgent: modelAgent } : {}),
+          },
+        },
       })).data,
     staleTime: 5 * 60_000,
+    enabled: !acp || modelAgent !== null,
   });
-  const catalog = modelData?.models.length ? modelData.models : MODEL_FALLBACK[source];
+  // An ACP agent's list is the agent's own (its `model` option); there is no
+  // static guess to fall back on, and no list means no pickers at all.
+  const catalog = modelData?.models.length ? modelData.models : acp ? [] : MODEL_FALLBACK[cli];
   // Whether the list on offer describes this machine's CLI or is a static guess.
   // A pending query answers "no": a warning that flashes on every mount is noise
   // about a condition that has not been established yet.
   // `account_env` is as real a list as the cache — it is the model the
   // account's own env block names — so only the static guess is flagged.
   const modelsAreFallback = modelData ? modelData.source === "fallback" : modelsFailed;
-  const {
-    options: models,
-    active: activeModel,
-    custom: modelIsCustom,
-  } = resolveModel(catalog, startingModel(pick("model"), startModel), source);
-  const effortOptions = effortsOf(activeModel, source);
+  const resolved = catalog.length
+    ? resolveModel(catalog, startingModel(pick("model"), startModel), cli)
+    : { options: [], active: NO_MODEL, custom: false };
+  // An ACP agent takes only what it published: a stored pick it no longer
+  // offers falls back to its first model rather than becoming a typed-in one.
+  const { options: models, active: activeModel, custom: modelIsCustom } =
+    acp && resolved.custom ? { options: catalog, active: catalog[0]!, custom: false } : resolved;
+  const effortOptions = effortsOf(activeModel, cli);
   const storedEffort = pick("effort") ?? "";
   // Null for a model with no ladder, and for a stored rung the current model
   // does not accept: the effort follows the model rather than outliving it.
@@ -455,13 +489,13 @@ export function useComposerChoice(
     : defaultEffortOf(activeModel, effortOptions);
   const storedPermission = pick("permission") ?? "";
   // Stored values from an older option set fall back to the safe default.
-  const activePermission = PERMISSION_OPTIONS[source].includes(storedPermission)
+  const activePermission = PERMISSION_OPTIONS[cli].includes(storedPermission)
     ? storedPermission
-    : PERMISSION_DEFAULT[source];
+    : PERMISSION_DEFAULT[cli];
 
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id);
-    const opts = effortsOf(next, source);
+    const opts = effortsOf(next, cli);
     const patch: ComposerChoice = { model: id };
     // Efforts do not carry across models: `xhigh` is a rung opus-4-6 never had,
     // and sending it would be refused. Converge on what the new model names.
@@ -476,6 +510,24 @@ export function useComposerChoice(
     save.mutate(patch);
   };
 
+  if (acp) {
+    // No permission modes, and nothing at all while the agent's list is
+    // unknown: an empty choice is "send none", which the composers leave out
+    // of the request.
+    return {
+      models,
+      activeModel,
+      customModel: null,
+      effortOptions: models.length ? effortOptions : [],
+      activeEffort: models.length ? activeEffort : null,
+      modelsAreFallback: false,
+      modelsHidden: modelData?.hidden ?? 0,
+      pickModel: models.length ? pickModel : () => {},
+      setEffort: (v: string) => save.mutate({ effort: v }),
+      activePermission: "",
+      setPermission: () => {},
+    };
+  }
   return {
     models,
     activeModel,
@@ -487,6 +539,8 @@ export function useComposerChoice(
     activeEffort,
     /** The list is the static guess, not the CLI's own; say so beside it. */
     modelsAreFallback,
+    /** How many of an ACP agent's models the list leaves out; none for a CLI. */
+    modelsHidden: 0,
     pickModel,
     setEffort: (v: string) => save.mutate({ effort: v }),
     activePermission,
@@ -511,6 +565,7 @@ export function ModelSelect({
   ghost = false,
   className,
   leading,
+  allowCustom = true,
 }: {
   models: ModelInfo[];
   /** The active id; `""` selects `leading`, where a form offers one. */
@@ -523,6 +578,8 @@ export function ModelSelect({
   className?: string;
   /** An entry before the models, e.g. a form's "CLI default". */
   leading?: { value: string; label: string };
+  /** Offer the box a model id can be typed into; off for an agent that takes only what it lists. */
+  allowCustom?: boolean;
 }) {
   const { t } = useTranslation();
   // Null while the box is closed; the draft while it is open, which is why ""
@@ -581,7 +638,8 @@ export function ModelSelect({
     );
   }
 
-  const options = modelOptions(models, customId, { custom: t("custom…"), marker: t("custom") });
+  const listed = modelOptions(models, customId, { custom: t("custom…"), marker: t("custom") });
+  const options = allowCustom ? listed : listed.filter((option) => option.value !== CUSTOM_MODEL);
   return (
     <ComposerSelect
       ghost={ghost}
@@ -620,24 +678,38 @@ export function ComposerChoiceChips({
   permission = true,
   account,
 }: {
-  source: "claude" | "codex";
+  source: Source;
   choice: ReturnType<typeof useComposerChoice>;
   /** Instant chats run without tools: no permission to pick. */
   permission?: boolean;
   account?: ReactNode;
 }) {
   const { t } = useTranslation();
+  // An ACP agent offers its own models and efforts, and no permission
+  // modes; with its list unknown there is nothing to pick at all.
+  const acp = source === "acp";
+  if (acp && choice.models.length === 0) {
+    // Every model left out still says why there is no picker.
+    return choice.modelsHidden > 0 ? <ModelSourceHint fallback={false} hidden={choice.modelsHidden} /> : null;
+  }
   return (
     <>
-      <ModelSelect ghost models={choice.models} value={choice.activeModel.id} customId={choice.customModel} onChange={choice.pickModel} />
-      <ModelSourceHint fallback={choice.modelsAreFallback} />
+      <ModelSelect
+        ghost
+        models={choice.models}
+        value={choice.activeModel.id}
+        customId={choice.customModel}
+        onChange={choice.pickModel}
+        allowCustom={!acp}
+      />
+      <ModelSourceHint fallback={choice.modelsAreFallback} hidden={choice.modelsHidden} />
       {/* Absent, not disabled, for a model that takes no effort: an empty
           control in a toolbar reads as something that failed to load. */}
       {choice.activeEffort !== null && (
         <ComposerSelect ghost label={t("effort")} value={choice.activeEffort} options={choice.effortOptions} onChange={choice.setEffort} />
       )}
       {account}
-      {permission && (
+      {permission && !acp && (
         <ComposerSelect
           ghost
           label={t("permission")}
@@ -666,23 +738,27 @@ export function CliModelControls({ choice }: { choice: ReturnType<typeof useComp
       {choice.activeEffort !== null && (
         <ComposerSelect className="h-6.5 min-w-0 max-w-full" label={t("effort")} value={choice.activeEffort} options={choice.effortOptions} onChange={choice.setEffort} />
       )}
-      <ModelSourceHint fallback={choice.modelsAreFallback} />
+      <ModelSourceHint fallback={choice.modelsAreFallback} hidden={choice.modelsHidden} />
     </div>
   );
 }
 
 /**
- * A mark beside the model picker when the list it offers is the static guess.
+ * A mark beside the model picker when the list it offers is the static guess,
+ * or leaves out `hidden` of an ACP agent's models: ones whose ids look like a
+ * credential, which the device does not show or send back.
  *
  * Nothing at all in the normal case: a list read from the CLI's own cache is
  * simply correct, and a badge saying so on every session is noise. The fallback
  * is the one worth knowing about, because picking a model off it is picking one
  * this machine may not have.
  */
-export function ModelSourceHint({ fallback }: { fallback: boolean }) {
+export function ModelSourceHint({ fallback, hidden = 0 }: { fallback: boolean; hidden?: number }) {
   const { t } = useTranslation();
-  if (!fallback) return null;
-  const said = t("model list is a static fallback — the CLI's own list could not be read");
+  if (!fallback && hidden === 0) return null;
+  const said = hidden > 0
+    ? t("{{n}} of the agent's models are not shown: their ids look like credentials", { n: hidden })
+    : t("model list is a static fallback — the CLI's own list could not be read");
   return (
     // Native tooltip: the hint sits in a toolbar that already scrolls
     // horizontally on a phone, where a popover would be a trap.
@@ -715,7 +791,7 @@ export function ModelDriftBadge({
   id,
   cliChoice,
 }: {
-  source: "claude" | "codex";
+  source: Source;
   id: string;
   cliChoice?: CliChoice | null;
 }) {
@@ -798,12 +874,14 @@ export function ComposerQuota({
   source,
   accountId,
 }: {
-  source: "claude" | "codex";
+  source: Source;
   /** Account this session runs under; null/undefined means the local login. */
   accountId?: string | null;
 }) {
   const { t } = useTranslation();
   const { data } = useQuota();
+  // This server reads no quota for an ACP agent: its provider is the agent's to configure.
+  if (source === "acp") return null;
 
   if (source === "codex") {
     const codex = data?.codex;
@@ -980,7 +1058,7 @@ export function ChecklistChip({
   id,
   toolTick,
 }: {
-  source: "claude" | "codex";
+  source: Source;
   id: string;
   toolTick: number;
 }) {
@@ -1062,7 +1140,7 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
 }
 
 /** A bare string is its own label; the object form separates the two. */
-export type ComposerOption = string | { value: string; label: string };
+export type ComposerOption = string | { value: string; label: string; glyph?: Glyph };
 
 type ComposerSelectProps = {
   value: string;
@@ -1093,7 +1171,7 @@ const ComposerSelectView = memo(function ComposerSelectView({
   ghost = false,
   className,
   label,
-}: Omit<ComposerSelectProps, "options"> & { items: readonly { value: string; label: string }[] }) {
+}: Omit<ComposerSelectProps, "options"> & { items: readonly { value: string; label: string; glyph?: Glyph }[] }) {
   return (
     <Select
       value={value}
@@ -1122,14 +1200,14 @@ const ComposerSelectView = memo(function ComposerSelectView({
             is the longest thing this control has to say. The cap still exists so
             one freakish value cannot stretch the row, and the toolbar wraps
             rather than scrolls, so a long name costs a line, not a cut-off. */}
-        <SelectValue className={ghost ? "max-w-48" : undefined} />
+        <SelectValue className={ghost ? "max-w-48" : undefined}>{glyphValue(items)}</SelectValue>
       </SelectTrigger>
       {/* Anchored to the chip like every select: a chip at the bottom of the
           composer opens upward, over the message box. */}
       <SelectContent variant={ghost ? "chip" : "field"}>
         {items.map((o) => (
           <SelectItem key={o.value} value={o.value}>
-            {o.label}
+            <OptionLabel label={o.label} glyph={o.glyph} />
           </SelectItem>
         ))}
       </SelectContent>

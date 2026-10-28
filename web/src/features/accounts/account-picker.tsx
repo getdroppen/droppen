@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/cn";
 import { formatRelative, formatResetAt } from "@/lib/format";
 import { MachineLink } from "@/app/machine-route";
+import { agentsSearch } from "@/features/settings/agents/agents-tabs";
 
 /**
  * Which login to run under, with how much fuel each one has left.
@@ -276,7 +277,7 @@ export function AccountRows({
         <div className="px-1 py-1 text-2xs text-faint">
           {t("no accounts yet")}
           {" · "}
-          <MachineLink to="/settings" className="text-accent hover:underline">
+          <MachineLink to="/settings" search={agentsSearch(provider)} className="text-accent hover:underline">
             {t("Settings")}
           </MachineLink>
         </div>

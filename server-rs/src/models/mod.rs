@@ -22,9 +22,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::accounts::store::{Account, AccountKind};
+use crate::api::error::ApiError;
 use crate::api::extract::ApiQuery;
 use crate::api::{ApiRouter, AppState};
-use crate::openapi_ext::{ExtraResponses, Nullable};
+use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::sessions::Source;
 
 pub mod probe;
@@ -76,6 +77,11 @@ pub struct ModelList {
     pub models: Vec<ModelInfo>,
     /// Whether `models` came from the CLI's cache or from the static fallback.
     pub source: ModelListSource,
+    /// How many of an ACP agent's models are left out because their ids look
+    /// like a credential, so a picker can say why its list is short or empty;
+    /// absent when none are.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub hidden: Optional<u32>,
 }
 
 /// Query for `GET /api/models`.
@@ -87,6 +93,9 @@ pub struct ModelsQuery {
     /// Which stored Claude account the list is for; absent or empty is the
     /// user's own login. Ignored by the codex lane, which has one config root.
     pub account_id: Option<String>,
+    /// Which ACP agent the list is for, by id: required when `source` is
+    /// `acp`, ignored otherwise.
+    pub acp_agent: Option<String>,
 }
 
 /// Everything `claude --effort` accepts; the CLI presents max as "ultracode".
@@ -311,13 +320,30 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
 /// for the process — asking costs a CLI startup — so only the first request
 /// after a cold start or an expired reading waits for one.
 #[api(id = "list_models", group = "models", summary = "List models")]
-pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Json<ModelList> {
+pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Result<Json<ModelList>, ApiError> {
     let paths = state.paths.as_ref();
+    let mut hidden = 0;
     let (models, source) = match query.source {
         Source::Codex => codex_models(&paths.codex_models_cache()).await,
         Source::Claude => claude_models(&state, query.account_id.as_deref()).await,
+        Source::Acp => {
+            // Every agent has its own list: one served for another is a picker
+            // offering models the session cannot run.
+            let agent = query
+                .acp_agent
+                .as_deref()
+                .filter(|id| crate::acp_agent::valid_id(id))
+                .ok_or_else(|| ApiError::bad_request("acpAgent names the ACP agent to list models for"))?;
+            let (models, source, left_out) = acp_models(&state, agent).await;
+            hidden = left_out;
+            (models, source)
+        }
     };
-    Json(ModelList { models, source })
+    Ok(Json(ModelList {
+        models,
+        source,
+        hidden: (hidden > 0).then_some(hidden).into(),
+    }))
 }
 
 /// The ids `GET /api/models` lists for one login of `source`, in its order — the
@@ -327,8 +353,64 @@ pub(crate) async fn model_ids(state: &AppState, source: Source, account_id: Opti
     let (models, _) = match source {
         Source::Codex => codex_models(&state.paths.codex_models_cache()).await,
         Source::Claude => claude_models(state, account_id).await,
+        // An ACP agent has no logins; its list is asked for by agent.
+        Source::Acp => (Vec::new(), ModelListSource::Fallback),
     };
     models.into_iter().map(|model| model.id).collect()
+}
+
+/// An ACP agent's list: the values of its `model` option, each with the
+/// ladder of its `thought_level` option, as the agent itself publishes them
+/// ([`crate::inject::InjectionRegistry::acp_options`]).
+///
+/// The agent's list is the whole list: there is no static guess to fall back
+/// on, so an agent that cannot be asked — or is not configured — yields no
+/// models, which hides the pickers, and a `fallback` source, which says why.
+///
+/// With the models, how many were left out: see [`ModelList::hidden`].
+async fn acp_models(state: &AppState, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
+    use crate::acp::{category, option_for};
+    let Some(agent) = state.paths.acp_agent(agent) else {
+        return (Vec::new(), ModelListSource::Fallback, 0);
+    };
+    let options = match state.drive.injections.acp_options(&agent).await {
+        Ok(options) => options,
+        Err(error) => {
+            tracing::info!(agent = %agent.id, %error, "cannot read the agent's models");
+            return (Vec::new(), ModelListSource::Fallback, 0);
+        }
+    };
+    // The agent's words, shown to whoever can start a session: a label is
+    // redacted as its errors are, and no longer than a name. An id goes back
+    // to the agent as it is when picked, so one that looks like a credential,
+    // or is too long to show whole, is left out rather than shown altered
+    // ([`crate::inject::InjectionRegistry::acp_id_shown`]).
+    let injections = &state.drive.injections;
+    let shown = |text: &str| crate::accounts::limits::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
+    let usable = |id: &str| injections.acp_id_shown(id);
+    let effort = option_for(&options, category::THOUGHT_LEVEL);
+    let efforts = effort.map(|effort| {
+        effort
+            .values()
+            .iter()
+            .map(|value| value.value.clone())
+            .filter(|value| usable(value))
+            .collect::<Vec<_>>()
+    });
+    let default_effort = effort.and_then(|effort| effort.current_value.clone()).filter(|value| usable(value));
+    let offered = option_for(&options, category::MODEL).map(|model| model.values()).unwrap_or_default();
+    let models: Vec<ModelInfo> = offered
+        .iter()
+        .filter(|value| usable(&value.value))
+        .map(|value| ModelInfo {
+            id: value.value.clone(),
+            label: Nullable((!value.name.is_empty() && value.name != value.value).then(|| shown(&value.name))),
+            efforts: Nullable(efforts.clone()),
+            default_effort: Nullable(default_effort.clone()),
+        })
+        .collect();
+    let hidden = u32::try_from(offered.len() - models.len()).unwrap_or(u32::MAX);
+    (models, ModelListSource::Cache, hidden)
 }
 
 /// The Claude list for one login: the local one, or a stored account's.
@@ -410,6 +492,8 @@ fn probe_dir(accounts: &crate::accounts::store::AccountsStore, account: &Account
 /// second kind of wrong.
 pub async fn accepted_efforts(paths: &crate::sessions::Paths, source: Source, model: Option<&str>) -> Option<Vec<String>> {
     match source {
+        // The agent checks an effort against the model it runs when it is set.
+        Source::Acp => None,
         Source::Claude => Some(claude_efforts(model.unwrap_or_default())),
         Source::Codex => {
             let (models, list) = codex_models(&paths.codex_models_cache()).await;
@@ -453,6 +537,8 @@ pub fn permission_is_known(source: Source, permission: &str) -> bool {
     match source {
         Source::Claude => CLAUDE_PERMISSIONS.contains(&permission),
         Source::Codex => crate::inject::codex_permission_flags(permission).is_ok(),
+        // An ACP agent has no permission modes to choose between.
+        Source::Acp => false,
     }
 }
 
@@ -468,7 +554,8 @@ pub fn describe(reg: &mut ExtraResponses) {
         "/api/models",
         200,
         "Models the named login's CLI publishes, in the order it publishes them",
-    );
+    )
+    .error("GET", "/api/models", 400, "An ACP list that names no usable agent");
 }
 
 #[cfg(test)]

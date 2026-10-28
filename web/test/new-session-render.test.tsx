@@ -954,7 +954,7 @@ test("switching the CLI while a start waits for its answer drops the start: it n
   propsOf(sendButton()).onClick!();
   await until("the hold", () => !!first((n) => n.hasAttribute("data-choosing-account")));
 
-  const cli = first((n) => n.nodeName === "BUTTON" && n.getAttribute("aria-label") === "cli");
+  const cli = first((n) => n.nodeName === "BUTTON" && n.getAttribute("aria-label") === "agent");
   propsWith(cli, "onChange").onChange!("codex");
   await until("the hold dropped", () => !first((n) => n.hasAttribute("data-choosing-account")));
   answer({ accountId: ACCOUNT_A, reason: "default", model: null, placed: true });

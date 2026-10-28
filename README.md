@@ -3,7 +3,13 @@
 English | [简体中文](README.zh-CN.md)
 
 Droppen lets you browse and drive your Claude Code and Codex sessions from any
-device: a browser, a phone or another computer.
+device: a browser, a phone or another computer. It can also start and drive
+sessions on any agent you configure that speaks the
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio.
+Settings → Agents & accounts → ACP holds one card per agent: add a known one
+from the built-in presets ([`server-rs/src/acp-agents.json`](server-rs/src/acp-agents.json))
+or give any agent's command line, and check that it starts. Every session
+records the agent it was started on and is always resumed with that agent.
 
 It runs on the computer where the CLIs run. It reads their sessions where they
 are, starts and resumes them, and shows them in a web app: the transcript, a

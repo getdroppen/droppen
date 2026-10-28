@@ -398,10 +398,7 @@ pub struct SessionState {
 /// Read one session's live state, or `None` when it no longer exists.
 pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) -> Option<SessionState> {
     let paths = drive.paths.as_ref();
-    let mut summary = match source {
-        Source::Claude => claude::load_claude_summary(paths, id).await,
-        Source::Codex => codex::find_codex_session(paths, id).await,
-    }?;
+    let mut summary = crate::sessions::find_summary(paths, source, id).await?;
     let injection = drive.injections.injection_for(source, id);
     let running = injection
         .as_ref()
@@ -421,14 +418,23 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // three functions away is a rule waiting to be broken.
     crate::sessions::apply_driver(&mut summary, resident.as_ref(), running, finished_at);
     crate::sessions::pins::apply(paths, std::slice::from_mut(&mut summary));
-    let (can_send, send_block_reason) = sendability(source, summary.scope, summary.status, running, resident.is_some());
+    // An ACP session whose agent was removed cannot be continued, whatever is
+    // still running for it.
+    let (can_send, send_block_reason) = match paths.acp_send_block(&summary) {
+        Some(reason) => (false, Some(reason)),
+        None => sendability(source, summary.scope, summary.status, running, resident.is_some()),
+    };
     let cli_choice = match source {
         Source::Claude => claude::read_cli_choice(Path::new(&summary.file_path)).await,
         Source::Codex => codex::read_codex_cli_choice(Path::new(&summary.file_path)).await,
+        // The `config` record the driver writes when the choice changes.
+        Source::Acp => crate::sessions::acp_transcript::read_cli_choice(Path::new(&summary.file_path)).await,
     };
     let context = match source {
         Source::Claude => crate::sessions::context::read_claude_context(Path::new(&summary.file_path)).await,
         Source::Codex => crate::sessions::context::read_codex_context(Path::new(&summary.file_path)).await,
+        // The `usage` record the driver writes from the agent's own `usage_update`.
+        Source::Acp => crate::sessions::context::read_acp_context(Path::new(&summary.file_path)).await,
     };
     // The CLI's own figure wins, then the model on the entry the reading came
     // from, then the reading itself; see `context::resolve_window`.
@@ -447,7 +453,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // `raw.claudeRoot ?? "local"` says.
     let claude_root = match source {
         Source::Claude => Some(summary.claude_root.unwrap_or(ClaudeRoot::Local)),
-        Source::Codex => None,
+        Source::Codex | Source::Acp => None,
     };
     // A row is a row wherever it is served from: the list route, the detail
     // route and this feed's `state` frames must not disagree about whether a
@@ -460,12 +466,12 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // Only claude sessions rotate, and only this instance's log knows about it.
     let rotation = match source {
         Source::Claude => drive.accounts.rotation_log().latest(id),
-        Source::Codex => None,
+        Source::Codex | Source::Acp => None,
     };
     let receipts = drive.injections.receipts().for_session(source, id, crate::inject::receipts::now_ms());
     let questions = match source {
         Source::Claude => drive.injections.questions().for_session(id, crate::inject::questions::now_ms()),
-        Source::Codex => Vec::new(),
+        Source::Codex | Source::Acp => Vec::new(),
     };
     Some(SessionState {
         summary,
@@ -597,6 +603,9 @@ pub async fn load_transcript(paths: &Paths, source: Source, file_path: &Path, si
         Source::Codex => codex::parse_codex_transcript(paths, file_path)
             .await
             .map(|items| Transcript::new(file_path, Arc::new(items))),
+        Source::Acp => crate::sessions::acp_transcript::parse_transcript(file_path)
+            .await
+            .map(|items| Transcript::new(file_path, Arc::new(items))),
     };
     match parsed {
         Ok(transcript) => {
@@ -621,6 +630,9 @@ pub async fn read_transcript_uncached(paths: &Paths, source: Source, file_path: 
             .await
             .map(|items| Transcript::new(file_path, Arc::new(items))),
         Source::Codex => codex::parse_codex_transcript(paths, file_path)
+            .await
+            .map(|items| Transcript::new(file_path, Arc::new(items))),
+        Source::Acp => crate::sessions::acp_transcript::parse_transcript(file_path)
             .await
             .map(|items| Transcript::new(file_path, Arc::new(items))),
     };

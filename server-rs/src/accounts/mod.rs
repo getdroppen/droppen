@@ -545,7 +545,11 @@ pub async fn bind_session_account(
     ApiJson(body): ApiJson<SessionAccount>,
 ) -> Result<Json<SessionAccount>, ApiError> {
     let account_id = body.account_id.0;
-    let provider = AccountProvider::of(source);
+    let Some(provider) = AccountProvider::of(source) else {
+        return Err(ApiError::bad_request(
+            "ACP sessions run on the agent's own configuration and have no account to bind",
+        ));
+    };
     if let Some(account_id) = account_id.as_deref() {
         require_uuid(account_id)?;
         // Before anything is read off disk: an account for the other CLI is a
@@ -709,10 +713,11 @@ async fn bind_codex_session(state: &AppState, id: &str, account_id: Option<Strin
 
 /// Store the binding and tell the feed the row changed.
 async fn write_binding(state: &AppState, source: Source, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
+    let provider = AccountProvider::of(source).ok_or_else(|| ApiError::bad_request("this session has no account to bind"))?;
     state
         .drive
         .accounts
-        .bind_session_account(id, account_id.as_deref(), AccountProvider::of(source))
+        .bind_session_account(id, account_id.as_deref(), provider)
         .await
         // Both arms are a 404 there: the route reports `err.message` for an
         // `AccountError` and its own fallback for anything else.

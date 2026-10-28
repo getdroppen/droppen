@@ -121,13 +121,20 @@ type LinkProps = ComponentProps<typeof Link>;
 export function MachineLink({
   to,
   params,
+  search,
   machine,
   ...rest
-}: Omit<LinkProps, "to" | "params"> & { to: string; params?: Record<string, string>; machine?: MachineKey }) {
+}: Omit<LinkProps, "to" | "params" | "search"> & {
+  to: string;
+  params?: Record<string, string>;
+  /** The address's search, as {@link useMachineNavigate} takes it. */
+  search?: Record<string, unknown>;
+  machine?: MachineKey;
+}) {
   const viewMachine = useMachine();
   const home = useHomeMachine();
   const target = machineTarget(machine ?? viewMachine, to, params, home);
-  return <Link {...(rest as LinkProps)} to={target.to as never} params={target.params as never} />;
+  return <Link {...(rest as LinkProps)} to={target.to as never} params={target.params as never} search={search as never} />;
 }
 
 /** What {@link useMachineNavigate} takes: a navigation written as the home's. */

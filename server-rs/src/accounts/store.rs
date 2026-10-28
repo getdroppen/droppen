@@ -136,11 +136,13 @@ impl AccountProvider {
         }
     }
 
-    /// The provider whose accounts drive this CLI.
-    pub fn of(source: crate::sessions::Source) -> Self {
+    /// The provider whose accounts drive this CLI, or `None` for one that has
+    /// no accounts: an ACP agent runs on its own configuration.
+    pub fn of(source: crate::sessions::Source) -> Option<Self> {
         match source {
-            crate::sessions::Source::Claude => AccountProvider::Claude,
-            crate::sessions::Source::Codex => AccountProvider::Codex,
+            crate::sessions::Source::Claude => Some(AccountProvider::Claude),
+            crate::sessions::Source::Codex => Some(AccountProvider::Codex),
+            crate::sessions::Source::Acp => None,
         }
     }
 

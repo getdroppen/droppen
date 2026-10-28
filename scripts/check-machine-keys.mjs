@@ -96,6 +96,8 @@ export const DEVICE_KEYS = [
   "rh.files.showHidden",
   // The download page's tab chosen in this browser tab (sessionStorage).
   "rh.download.os",
+  // The Agents & accounts tab this browser used last.
+  "rh.settings.agents-tab",
   // Not storage: the names of a machine's index and status streams.
   "rh.index",
   "rh.status",

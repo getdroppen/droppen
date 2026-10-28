@@ -3,7 +3,8 @@
  * with no API, router or machine context. It is a fixture, not a page; keep it
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
- * `?fixture=settings` (default) or `?fixture=devices`, plus `?theme=dark`.
+ * `?fixture=settings` (default), `?fixture=devices` or `?fixture=agents`
+ * (`&view=cards|details|empty`), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -17,9 +18,16 @@ import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/devices";
 import { SectionHead } from "@/features/cloud/ui";
+import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
+import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
+import { AcpDetailsBody, AcpTabView } from "@/features/settings/agents/acp-tab";
+import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
+import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
 import { PREFERENCE_ROW, ROW_HINT, ROW_LABEL, SECTION_TITLE } from "@/features/settings/layout";
+import { applyLanguage, type LanguagePref } from "@/i18n";
 
 const query = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", query.get("theme") === "dark");
@@ -164,4 +172,67 @@ function DevicesFixture() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(fixture === "devices" ? <DevicesFixture /> : <SettingsFixture />);
+const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+const readyCheck: AcpCheck = {
+  checkedAt: minutesAgo(2),
+  state: "ready",
+  resolvedPath: "/home/demo/.local/bin/bub",
+  protocolVersion: 1,
+  agentInfo: { name: "bub-acp-server", version: "0.1.0" },
+  capabilities: { loadSession: true, image: true, audio: false, embeddedContext: true, mcpHttp: false, mcpSse: false },
+};
+const failedCheck: AcpCheck = {
+  checkedAt: minutesAgo(5),
+  state: "not_found",
+  error: "lab-agent: no such executable\nPATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/home/demo/.cargo/bin",
+};
+const agentsFixture: AcpAgentInfo[] = [
+  { id: "bub", name: "Bub", command: "bub", args: ["acp"], envNames: ["OPENROUTER_API_KEY"], lastCheck: readyCheck, homepage: "https://bub.build/" },
+  { id: "lab-agent", name: "Lab agent", command: "lab-agent", args: ["--acp", "--stdio"], envNames: ["LAB_API_TOKEN"], lastCheck: failedCheck },
+  { id: "opencode", name: "OpenCode", command: "opencode", args: ["acp"], envNames: [] },
+];
+const presetsFixture: AcpAgentPreset[] = [
+  { id: "bub", name: "Bub", command: "bub", args: ["acp"], onPath: false, note: "Needs Bub's ACP server: bub install bub-acp-server@main" },
+  { id: "opencode", name: "OpenCode", command: "opencode", args: ["acp"], onPath: true },
+];
+const acpActions = { onOpen: noop, onCheck: noop, onEdit: noop, onRemove: noop };
+
+/** Settings › Agents & accounts on its ACP tab: the strip, the grid, the details, the empty state. */
+function AgentsFixture() {
+  const view = query.get("view") ?? "cards";
+  const agents = view === "empty" ? [] : agentsFixture;
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-[1000px] md:border-x md:border-border">
+      <AgentsTabStrip value="acp" onChange={noop} signals={{ claude: { warn: 2, danger: 0 }, codex: { warn: 0, danger: 0 }, acp: acpSignal(agents) }} />
+      <AcpTabView agents={agents} presets={presetsFixture} statusOf={(agent) => acpStatus(agent.lastCheck)} actions={acpActions} onAdd={noop} />
+      {view === "details" && (
+        <Dialog open>
+          <DialogContent title="Lab agent" className="w-[min(32rem,calc(100vw-2rem))]">
+            <AcpDetailsBody
+              agent={agentsFixture[1]!}
+              status={acpStatus(failedCheck)}
+              sessions={2}
+              models={null}
+              confirming={false}
+              busy={false}
+              error={null}
+              errorWithheld={false}
+              onCheck={noop}
+              onEdit={noop}
+              onAskRemove={noop}
+              onConfirmRemove={noop}
+              onCancelRemove={noop}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+// The agents fixture's words go through i18n (counts, "5 min ago"): English
+// unless `&lang=` names another of the app's languages.
+if (fixture === "agents") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+createRoot(document.getElementById("root")!).render(
+  fixture === "devices" ? <DevicesFixture /> : fixture === "agents" ? <AgentsFixture /> : <SettingsFixture />,
+);

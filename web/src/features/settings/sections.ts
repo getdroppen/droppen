@@ -7,6 +7,19 @@ export const ALL_SECTIONS = ["general", "accounts", "access", "plugins", "schedu
 export type SectionId = (typeof ALL_SECTIONS)[number];
 
 /**
+ * What each tab is called (the translation key). `accounts` is
+ * 「智能体与账号」 — agents & accounts — since ACP agents joined the CLIs'
+ * accounts there; its id stays, so links to it keep working.
+ */
+export const SECTION_LABEL: Record<SectionId, string> = {
+  general: "general",
+  accounts: "agents & accounts",
+  access: "access",
+  plugins: "plugins",
+  "scheduled tasks": "scheduled tasks",
+};
+
+/**
  * The tabs a page offers. Plugins belong to the instance the page is served
  * by, and a page a hub serves (cloud mode) has none — no list, no settings
  * block and no such tab (`docs/plugins/runtime.md` §5).

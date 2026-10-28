@@ -118,6 +118,8 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
         session.children = match session.source {
             Source::Claude => claude_children(session, &marks).await,
             Source::Codex => codex_children(&session.id, &threads_by_parent, &marks, read_at(&marks, Source::Codex, &session.id), 0).await,
+            // ACP keeps no parent links between sessions.
+            Source::Acp => Vec::new(),
         };
     }
 }
