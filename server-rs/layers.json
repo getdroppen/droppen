@@ -356,9 +356,7 @@
     {
       "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
       "edges": [
-        "cloud -> api",
-        "feed -> api",
-        "terminals -> api"
+        "cloud -> api"
       ]
     },
     {
@@ -471,6 +469,12 @@
       "why": "inject attaches each run to the feeds (FeedRegistry, GlobalFeed). It goes when runs broadcast RunEvent for the feeds to subscribe to.",
       "edges": [
         "inject -> feed"
+      ]
+    },
+    {
+      "why": "The session-list socket reads the plugin host's status for a local client (the settings and plugins frames), which it reached through api::AppState before its sub-state named it. It goes when the feed takes that list through a port the entry fills.",
+      "edges": [
+        "feed -> plugins"
       ]
     },
     {

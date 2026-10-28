@@ -21,13 +21,15 @@
 //!   `{"type":"resize","cols":N,"rows":N}`. Anything else — malformed JSON, an
 //!   unknown `type`, a wrongly typed field — is dropped in silence.
 
+use std::sync::Arc;
+
 use futures_util::{SinkExt, StreamExt};
 use gotcha::axum::extract::ws::{Message, WebSocket};
 use gotcha::axum::response::Response;
-use gotcha::{api, Json, State, WebSocketUpgrade};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, State, WebSocketUpgrade};
 use serde::Deserialize;
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::{send_within, WsSender as Sender};
@@ -48,9 +50,23 @@ const UNREACHABLE_NOTE: &str = "\r\n[terminal unreachable: reconnecting]\r\n";
 /// being displayed at about the moment it stops being true.
 const RELINKED_NOTE: &str = "\r\n[terminal reconnected]\r\n";
 
+/// What the terminal routes use of the server's state.
+#[derive(Clone)]
+pub struct TerminalsState {
+    /// Every live web terminal.
+    pub terminals: Arc<super::Registry>,
+    /// The logins a terminal socket watches, so signing out ends it.
+    pub auth: Arc<crate::auth::Auth>,
+    /// How long one frame may take to leave before the socket is given up on.
+    pub send_limit: std::time::Duration,
+    /// Cancelled by the shutdown supervisor; the socket closes on it.
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+crate::http::substate!(TerminalsState);
+
 /// Every terminal whose process is still running.
 #[api(id = "list_terminals", group = "terminals", summary = "List terminals")]
-pub async fn list_terminals(State(state): State<AppState>) -> Json<TerminalList> {
+pub async fn list_terminals(State(state): State<TerminalsState>) -> Json<TerminalList> {
     Json(TerminalList {
         terminals: state.terminals.list(),
     })
@@ -58,7 +74,7 @@ pub async fn list_terminals(State(state): State<AppState>) -> Json<TerminalList>
 
 /// Start a terminal running the user's login shell.
 #[api(id = "create_terminal", group = "terminals", summary = "Create a terminal")]
-pub async fn create_terminal(State(state): State<AppState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
+pub async fn create_terminal(State(state): State<TerminalsState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
     let cwd = match body.cwd.as_deref() {
         // An empty string means "no cwd".
         Some(cwd) if !cwd.is_empty() => Some(state.terminals.resolve_safe(cwd).map_err(bad_request)?),
@@ -71,7 +87,7 @@ pub async fn create_terminal(State(state): State<AppState>, ApiJson(body): ApiJs
 /// Give a terminal a new display name.
 #[api(id = "rename_terminal", group = "terminals", summary = "Rename a terminal")]
 pub async fn rename_terminal(
-    State(state): State<AppState>,
+    State(state): State<TerminalsState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<TerminalRename>,
 ) -> Result<Json<TerminalInfo>, ApiError> {
@@ -85,7 +101,7 @@ pub async fn rename_terminal(
 
 /// Kill a terminal's process.
 #[api(id = "kill_terminal", group = "terminals", summary = "Kill a terminal")]
-pub async fn kill_terminal(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.terminals.kill_terminal(&id) {
         return Err(ApiError::not_found("terminal not found"));
     }
@@ -100,7 +116,7 @@ pub async fn kill_terminal(State(state): State<AppState>, ApiPath(id): ApiPath<S
 /// stands ([`crate::auth::Auth::watch_login`]): a shell is the last thing to leave
 /// open for a login that was signed out.
 pub async fn terminal_ws(
-    State(state): State<AppState>,
+    State(state): State<TerminalsState>,
     who: crate::auth::MaybeIdentity,
     ApiPath(id): ApiPath<String>,
     upgrade: WebSocketUpgrade,
@@ -123,9 +139,9 @@ enum Control {
     Resize { cols: f64, rows: f64 },
 }
 
-async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, login: Option<(String, String)>) {
+async fn run_terminal_socket(socket: WebSocket, state: TerminalsState, id: String, login: Option<(String, String)>) {
     let (mut sender, mut receiver) = socket.split();
-    let ended = state.drive.auth.clone().watch_login(login);
+    let ended = state.auth.clone().watch_login(login);
     tokio::pin!(ended);
 
     let Some(mut attachment) = state.terminals.attach(&id) else {
@@ -325,14 +341,20 @@ pub fn describe(reg: &mut ExtraResponses) {
         .error("DELETE", "/api/terminals/{id}", 404, "Terminal not found");
 }
 
-/// Register every terminal route.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/terminals", list_terminals)
-        .post("/api/terminals", create_terminal)
-        .patch("/api/terminals/{id}", rename_terminal)
-        .delete("/api/terminals/{id}", kill_terminal)
-        .get("/api/terminals/{id}/ws", terminal_ws)
+impl TerminalsState {
+    /// Register every terminal route.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        TerminalsState: FromRef<S>,
+    {
+        router
+            .get("/api/terminals", list_terminals)
+            .post("/api/terminals", create_terminal)
+            .patch("/api/terminals/{id}", rename_terminal)
+            .delete("/api/terminals/{id}", kill_terminal)
+            .get("/api/terminals/{id}/ws", terminal_ws)
+    }
 }
 
 #[cfg(test)]

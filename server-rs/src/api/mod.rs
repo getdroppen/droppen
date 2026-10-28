@@ -415,7 +415,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = cloud::routes(router);
     let router = crate::cloud::gateway::routes(router);
     let router = crate::drive::DriveState::routes(router);
-    let router = crate::feed::global::routes(router);
+    let router = crate::feed::global::EventsState::routes(router);
     let router = crate::files::FilesState::routes(router);
     let router = crate::media::routes(router);
     let router = crate::models::ModelsState::routes(router);
@@ -429,7 +429,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::SetupState::routes(router);
     let router = crate::stats::StatsState::routes(router);
-    let router = crate::terminals::routes(router);
+    let router = crate::terminals::TerminalsState::routes(router);
     router
         .openapi(|mut spec| {
             spec.info.title = API_TITLE.to_string();

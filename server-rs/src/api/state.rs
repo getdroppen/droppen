@@ -22,6 +22,7 @@ use crate::attention::AttentionState;
 use crate::auth::AuthState;
 use crate::chats::ChatsState;
 use crate::drive::DriveState;
+use crate::feed::global::EventsState;
 use crate::files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
@@ -32,6 +33,7 @@ use crate::screens::ScreensState;
 use crate::selfupdate::SelfUpdateState;
 use crate::setup::SetupState;
 use crate::stats::StatsState;
+use crate::terminals::TerminalsState;
 
 impl AppState {
     /// The desktop app's window as this server knows it: the port cell
@@ -242,6 +244,32 @@ impl FromRef<AppState> for AuthState {
             paths: state.paths.clone(),
             desktop_app: state.desktop_app,
             link: state.cloud.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for EventsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            send_limit: state.send_limit,
+            cancel: state.cancel.clone(),
+            plugins: state.plugins.clone(),
+            global: state.global.clone(),
+            drive: state.drive.clone(),
+            instance: state.instance.clone(),
+            started_at: state.started_at.clone(),
+            feeds: state.feeds.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for TerminalsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            terminals: state.terminals.clone(),
+            auth: state.drive.auth.clone(),
+            send_limit: state.send_limit,
+            cancel: state.cancel.clone(),
         }
     }
 }
