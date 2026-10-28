@@ -65,7 +65,7 @@ use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiRouter, AppState};
-use crate::auth::AuthIdentity;
+use crate::http::identity::AuthIdentity;
 use crate::db::scope;
 use crate::http::created::Created;
 use crate::http::error::ApiError;

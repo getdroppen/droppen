@@ -17,6 +17,7 @@ pub mod bridge;
 pub mod created;
 pub mod error;
 pub mod extract;
+pub mod identity;
 pub mod refresh;
 
 // Defined here rather than in whichever subsystem needed it first, because

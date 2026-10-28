@@ -590,7 +590,7 @@ mod tests {
         for device in ["agent-sync", "d-1"] {
             let bridged = settings(
                 State(state.clone()),
-                crate::auth::MaybeIdentity(Some(crate::auth::AuthIdentity {
+                crate::auth::MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                     username: format!("cloud:{device}"),
                     token_sha256: None,
                 })),

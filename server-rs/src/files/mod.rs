@@ -1393,7 +1393,7 @@ mod tests {
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();
         let who = |name: &str| {
-            MaybeIdentity(Some(crate::auth::AuthIdentity {
+            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             }))
@@ -1710,7 +1710,7 @@ mod tests {
     #[test]
     fn a_requests_reach_is_cloud_only_for_bridged_devices() {
         let who = |name: &str| {
-            MaybeIdentity(Some(crate::auth::AuthIdentity {
+            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             }))

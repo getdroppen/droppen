@@ -155,6 +155,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use crate::config::AuthSettings;
 use crate::http::error::ApiError;
+use crate::http::identity::AuthIdentity;
 use crate::instance::InstanceDirs;
 use crate::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -203,20 +204,6 @@ pub const LOCAL_OWNER: &str = "local:owner";
 /// Whether `username` is the local owner ([`LOCAL_OWNER`]).
 pub fn is_local_owner(username: &str) -> bool {
     username == LOCAL_OWNER
-}
-
-/// Who a request is, once the guard has decided.
-///
-/// Put in the request extensions by [`guard`] and read back out by the
-/// [`Identity`] extractor, so a handler never parses a header itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthIdentity {
-    /// The account name.
-    pub username: String,
-    /// The digest of the session token this request carried, when it carried
-    /// one — or, for a request authorized by a ticket, of the session that
-    /// minted the ticket (`None` for a ticket no session minted).
-    pub token_sha256: Option<String>,
 }
 
 /// Everything the guard and the `/api/auth/*` routes need.

@@ -605,7 +605,7 @@ mod tests {
             let auth = auth.clone();
             async move {
                 let digest = crate::auth::sessions::digest_of(&auth.sessions.issue(user, None).await.unwrap().token);
-                let who = MaybeIdentity(Some(crate::auth::AuthIdentity {
+                let who = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                     username: user.into(),
                     token_sha256: Some(digest.clone()),
                 }));

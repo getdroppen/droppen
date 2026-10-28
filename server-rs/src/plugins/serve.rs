@@ -219,7 +219,7 @@ mod tests {
         use gotcha::axum::extract::Request;
 
         async fn as_cloud(mut request: Request, next: Next) -> HttpResponse<Body> {
-            request.extensions_mut().insert(crate::auth::AuthIdentity {
+            request.extensions_mut().insert(crate::http::identity::AuthIdentity {
                 username: "cloud:device-1".into(),
                 token_sha256: None,
             });
