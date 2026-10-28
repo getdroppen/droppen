@@ -126,6 +126,17 @@ impl Cloud {
     }
 }
 
+/// The account-creating route reaches the link through this
+/// ([`crate::auth::LinkHandOver`]): the same call, awaited at the same point.
+impl crate::auth::LinkHandOver for Cloud {
+    fn hand_over_from_local_owner<'a>(
+        &'a self,
+        users: &'a crate::auth::users::UsersStore,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(Cloud::hand_over_from_local_owner(self, users))
+    }
+}
+
 /// `<instance>/cloud.json` itself, for what reads it without a [`Cloud`]: the
 /// aggregator asking whether it may run, the hand-over to the first account,
 /// the command line's unenroll. [`Cloud`] reads and writes it under its lock.

@@ -162,7 +162,7 @@ use lockout::{LockoutPolicy, Lockouts};
 use tickets::{TicketScope, Tickets};
 use users::UsersStore;
 
-pub use routes::{describe, routes};
+pub use routes::{describe, AuthState};
 
 /// The paths gotcha mounts its own documentation on
 /// (`gotcha-0.4.1/src/router.rs:311`). They sit outside `/api/`, which is what
@@ -204,6 +204,19 @@ pub const LOCAL_OWNER: &str = "local:owner";
 /// Whether `username` is the local owner ([`LOCAL_OWNER`]).
 pub fn is_local_owner(username: &str) -> bool {
     username == LOCAL_OWNER
+}
+
+/// What creating the first account asks of the Droppen link: that a link the
+/// device's owner signed in becomes that account's. The link (`crate::cloud`)
+/// sits above auth, so it implements this and the entry hands it to the routes
+/// ([`AuthState`]).
+pub trait LinkHandOver: Send + Sync {
+    /// Pass a link the local owner signed in to the first of `users`'
+    /// accounts, if there is such a link.
+    fn hand_over_from_local_owner<'a>(
+        &'a self,
+        users: &'a users::UsersStore,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
 }
 
 /// Everything the guard and the `/api/auth/*` routes need.
@@ -615,6 +628,11 @@ impl ResponseExt for Response {
     }
 }
 
+/// `POST` here hands back droppen.app's answer from the browser; it is the
+/// one route of [`crate::cloud`] the login guard lets through without a login
+/// (`exempt`): the reply is its own credential.
+pub const RETURN_ROUTE: &str = "/api/cloud/link/return";
+
 /// Paths that answer without a token.
 fn exempt(method: &Method, path: &str) -> bool {
     if method == Method::POST && [routes::LOGIN_PATH, setup::SETUP_PATH, routes::LOCAL_OPEN_PATH].contains(&path) {
@@ -623,7 +641,7 @@ fn exempt(method: &Method, path: &str) -> bool {
     if method == Method::GET && path == routes::STATUS_PATH {
         return true;
     }
-    if method == Method::POST && path == crate::cloud::RETURN_ROUTE {
+    if method == Method::POST && path == RETURN_ROUTE {
         return true;
     }
     if is_embed(path) {

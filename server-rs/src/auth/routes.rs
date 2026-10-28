@@ -11,15 +11,15 @@
 //! an attacker a list of valid user names for free, and the lockout state on top
 //! of it.
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
-use gotcha::axum::extract::FromRequestParts;
+use gotcha::axum::extract::{FromRef, FromRequestParts};
 use gotcha::axum::http::request::Parts;
 use gotcha::axum::http::{header, StatusCode};
-use gotcha::{api, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
@@ -279,14 +279,28 @@ fn refused(status: StatusCode, code: &str, hint: &str) -> ApiError {
     ApiError::with_body(status, serde_json::json!({ "error": code, "hint": hint }))
 }
 
+/// What the `/api/auth/*` routes use of the server's state.
+#[derive(Clone)]
+pub struct AuthState {
+    /// Local accounts, live logins, tickets and failed-login counters.
+    pub auth: Arc<super::Auth>,
+    /// The instance's paths, for the status's `droppenEnv`.
+    pub paths: Arc<crate::paths::Paths>,
+    /// Whether the Droppen desktop app runs this server.
+    pub desktop_app: bool,
+    /// The Droppen link, which the first account takes over from the owner.
+    pub link: Arc<dyn super::LinkHandOver>,
+}
+crate::http::substate!(AuthState);
+
 /// Exchange a name and a password for a bearer token.
 #[api(id = "auth_login", group = "auth", summary = "Log in")]
 pub async fn login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] ClientLabel(label): ClientLabel,
     ApiJson(body): ApiJson<LoginRequest>,
 ) -> Result<Json<LoginResult>, ApiError> {
-    let auth = &state.drive.auth;
+    let auth = &state.auth;
     let name = body.username.as_str();
 
     // One login attempt at a time, for the whole of it.
@@ -342,9 +356,9 @@ pub async fn login(
 
 /// Revoke the token this request arrived with.
 #[api(id = "auth_logout", group = "auth", summary = "Log out", security = "bearerAuth")]
-pub async fn logout(State(state): State<AppState>, #[api(skip)] Identity(identity): Identity) -> Json<SendResult> {
+pub async fn logout(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Json<SendResult> {
     if let Some(digest) = identity.token_sha256.as_deref() {
-        state.drive.auth.sessions.revoke(digest).await;
+        state.auth.sessions.revoke(digest).await;
     }
     Json(SendResult { accepted: true })
 }
@@ -354,8 +368,8 @@ pub async fn logout(State(state): State<AppState>, #[api(skip)] Identity(identit
 /// The one route besides [`login`] that answers without a token, because the web
 /// app has to ask it before it knows whether to draw a login page.
 #[api(id = "auth_status", group = "auth", summary = "Authentication status")]
-pub async fn status(State(state): State<AppState>, #[api(skip)] MaybeIdentity(identity): MaybeIdentity) -> Json<AuthStatus> {
-    let auth = &state.drive.auth;
+pub async fn status(State(state): State<AuthState>, #[api(skip)] MaybeIdentity(identity): MaybeIdentity) -> Json<AuthStatus> {
+    let auth = &state.auth;
     Json(AuthStatus {
         auth_required: !auth.is_off(),
         setup_required: auth.setup_pending().await,
@@ -378,12 +392,12 @@ pub async fn status(State(state): State<AppState>, #[api(skip)] MaybeIdentity(id
 /// has no user account: once it has one, logging in is the way in.
 #[api(id = "auth_local_open", group = "auth", summary = "Open the page as this device's owner")]
 pub async fn local_open(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
     #[api(skip)] ClientLabel(label): ClientLabel,
     ApiJson(body): ApiJson<LocalOpenRequest>,
 ) -> Result<Json<LoginResult>, ApiError> {
-    let auth = &state.drive.auth;
+    let auth = &state.auth;
     if identity.as_ref().is_some_and(|who| who.username.starts_with("cloud:")) {
         return Err(refused(
             StatusCode::FORBIDDEN,
@@ -451,8 +465,8 @@ pub async fn local_open(
     summary = "A one-time page link for the desktop app",
     security = "bearerAuth"
 )]
-pub async fn local_open_grant(State(state): State<AppState>, #[api(skip)] Identity(identity): Identity) -> Result<Json<LocalOpenGrant>, ApiError> {
-    let auth = &state.drive.auth;
+pub async fn local_open_grant(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Result<Json<LocalOpenGrant>, ApiError> {
+    let auth = &state.auth;
     if !state.desktop_app {
         return Err(refused(
             StatusCode::FORBIDDEN,
@@ -499,13 +513,13 @@ pub async fn local_open_grant(State(state): State<AppState>, #[api(skip)] Identi
 /// ends with it.
 #[api(id = "auth_setup", group = "auth", summary = "Create the first account with the setup code")]
 pub async fn setup(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
     #[api(skip)] Peer(peer): Peer,
     #[api(skip)] ClientLabel(label): ClientLabel,
     ApiJson(body): ApiJson<SetupRequest>,
 ) -> Result<Json<LoginResult>, ApiError> {
-    let auth = &state.drive.auth;
+    let auth = &state.auth;
     if identity.as_ref().is_some_and(|who| who.username.starts_with("cloud:")) {
         return Err(refused(
             StatusCode::FORBIDDEN,
@@ -616,7 +630,7 @@ pub async fn setup(
     let ended = auth.sessions.revoke_user(LOCAL_OWNER, None).await;
     auth.in_setup().await;
     // A Droppen link the owner signed in is this account's now.
-    state.cloud.hand_over_from_local_owner(&auth.users).await;
+    state.link.hand_over_from_local_owner(&auth.users).await;
     if owner {
         tracing::info!(user = name, ended, "the first account was created by this device's owner");
     } else {
@@ -665,10 +679,9 @@ fn name_taken() -> ApiError {
 
 /// The caller's own live sessions.
 #[api(id = "auth_sessions", group = "auth", summary = "List login sessions", security = "bearerAuth")]
-pub async fn list_sessions(State(state): State<AppState>, #[api(skip)] Identity(identity): Identity) -> Json<AuthSessionList> {
+pub async fn list_sessions(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Json<AuthSessionList> {
     let current = identity.token_sha256.as_deref();
     let sessions = state
-        .drive
         .auth
         .sessions
         .list()
@@ -691,14 +704,13 @@ pub async fn list_sessions(State(state): State<AppState>, #[api(skip)] Identity(
 /// Revoke one of the caller's sessions — the phone that was left on a train.
 #[api(id = "auth_revoke_session", group = "auth", summary = "Revoke a login session", security = "bearerAuth")]
 pub async fn revoke_session(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] Identity(identity): Identity,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Json<SendResult>, ApiError> {
     // Somebody else's session id is a `404`, not a `403`: whether an id exists is
     // not the caller's business either way.
     let mine = state
-        .drive
         .auth
         .sessions
         .list()
@@ -708,7 +720,7 @@ pub async fn revoke_session(
     if !mine {
         return Err(ApiError::not_found("session not found"));
     }
-    state.drive.auth.sessions.revoke(&id).await;
+    state.auth.sessions.revoke(&id).await;
     Ok(Json(SendResult { accepted: true }))
 }
 
@@ -720,7 +732,7 @@ pub async fn revoke_session(
     security = "bearerAuth"
 )]
 pub async fn issue_ticket(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] Identity(identity): Identity,
     ApiJson(body): ApiJson<TicketRequest>,
 ) -> Result<Json<TicketResult>, ApiError> {
@@ -730,7 +742,6 @@ pub async fn issue_ticket(
         return Err(refused(StatusCode::FORBIDDEN, "no_session", "tickets are minted by a signed-in session"));
     };
     let (ticket, _) = state
-        .drive
         .auth
         .tickets
         .issue(&identity.username, session, body.scope)
@@ -744,11 +755,11 @@ pub async fn issue_ticket(
 /// Change the caller's password, and log every other device out.
 #[api(id = "auth_change_password", group = "auth", summary = "Change password", security = "bearerAuth")]
 pub async fn change_password(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     #[api(skip)] Identity(identity): Identity,
     ApiJson(body): ApiJson<PasswordChange>,
 ) -> Result<Json<SendResult>, ApiError> {
-    let auth = &state.drive.auth;
+    let auth = &state.auth;
     if auth.users.is_app(&identity.username).await {
         return Err(refused(
             StatusCode::FORBIDDEN,
@@ -775,19 +786,25 @@ pub async fn change_password(
     Ok(Json(SendResult { accepted: true }))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .post(LOGIN_PATH, login)
-        .post("/api/auth/logout", logout)
-        .get(STATUS_PATH, status)
-        .post(SETUP_PATH, setup)
-        .post(LOCAL_OPEN_PATH, local_open)
-        .post(LOCAL_OPEN_GRANT_PATH, local_open_grant)
-        .get("/api/auth/sessions", list_sessions)
-        .delete("/api/auth/sessions/{id}", revoke_session)
-        .post("/api/auth/ticket", issue_ticket)
-        .post("/api/auth/password", change_password)
+impl AuthState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        AuthState: FromRef<S>,
+    {
+        router
+            .post(LOGIN_PATH, login)
+            .post("/api/auth/logout", logout)
+            .get(STATUS_PATH, status)
+            .post(SETUP_PATH, setup)
+            .post(LOCAL_OPEN_PATH, local_open)
+            .post(LOCAL_OPEN_GRANT_PATH, local_open_grant)
+            .get("/api/auth/sessions", list_sessions)
+            .delete("/api/auth/sessions/{id}", revoke_session)
+            .post("/api/auth/ticket", issue_ticket)
+            .post("/api/auth/password", change_password)
+    }
 }
 
 /// Everything gotcha cannot derive about those operations.
@@ -863,6 +880,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::AppState;
     use gotcha::axum::body::Body;
     use gotcha::axum::extract::ConnectInfo;
     use gotcha::axum::http::Request;
@@ -1247,25 +1265,25 @@ mod tests {
         let code_of = |error: ApiError| (error.status().as_u16(), error.body()["error"].as_str().unwrap_or_default().to_string());
 
         // Not a server the desktop app runs: `open` is the way there.
-        let refused = local_open_grant(State(state.clone()), who("droppen-app")).await.unwrap_err();
+        let refused = local_open_grant(State(AuthState::from_ref(&state)), who("droppen-app")).await.unwrap_err();
         assert_eq!(code_of(refused), (403, "not_desktop_app".into()));
 
         state.desktop_app = true;
-        let Json(grant) = local_open_grant(State(state.clone()), who("droppen-app")).await.expect("a link");
+        let Json(grant) = local_open_grant(State(AuthState::from_ref(&state)), who("droppen-app")).await.expect("a link");
         let token = grant.token.0.expect("a token");
         assert!(state.drive.auth.local_open.redeem(&token), "a live one-time token");
         // Anybody else signed in to this server — the owner it opened, a
         // device through Droppen — gets none.
         for other in [LOCAL_OWNER, "cloud:d-1"] {
-            let refused = local_open_grant(State(state.clone()), who(other)).await.unwrap_err();
+            let refused = local_open_grant(State(AuthState::from_ref(&state)), who(other)).await.unwrap_err();
             assert_eq!(code_of(refused), (403, "not_app_account".into()), "{other}");
         }
 
         // With a person's account there is only the login page to open.
         state.drive.auth.users.add("ada", PASSWORD).await.expect("account");
-        let refused = local_open_grant(State(state.clone()), who("ada")).await.unwrap_err();
+        let refused = local_open_grant(State(AuthState::from_ref(&state)), who("ada")).await.unwrap_err();
         assert_eq!(code_of(refused), (403, "not_app_account".into()));
-        let Json(grant) = local_open_grant(State(state.clone()), who("droppen-app")).await.expect("an answer");
+        let Json(grant) = local_open_grant(State(AuthState::from_ref(&state)), who("droppen-app")).await.expect("an answer");
         assert_eq!(grant.token.0, None);
     }
 
@@ -1497,12 +1515,12 @@ mod tests {
     async fn the_status_says_whether_the_desktop_app_owns_the_login() {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
-        let Json(ordinary) = status(State(state.clone()), MaybeIdentity(None)).await;
+        let Json(ordinary) = status(State(AuthState::from_ref(&state)), MaybeIdentity(None)).await;
         assert!(!ordinary.desktop_app);
         assert!(ordinary.auth_required, "on by default");
         assert!(ordinary.setup_required, "and no account yet");
         state.desktop_app = true;
-        let Json(under_the_app) = status(State(state), MaybeIdentity(None)).await;
+        let Json(under_the_app) = status(State(AuthState::from_ref(&state)), MaybeIdentity(None)).await;
         assert!(under_the_app.desktop_app);
         let wire = serde_json::to_value(&under_the_app).expect("json");
         assert_eq!(wire["desktopApp"], true, "the web app reads it as desktopApp: {wire}");
@@ -1513,7 +1531,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let state_paths = state.paths.clone();
-        let Json(answer) = status(State(state), MaybeIdentity(None)).await;
+        let Json(answer) = status(State(AuthState::from_ref(&state)), MaybeIdentity(None)).await;
         assert_eq!(answer.droppen_path, droppen_base::program::droppen_path());
         assert!(!answer.droppen_path.is_empty());
         // The test binary has no `droppen` beside it: the binary itself.
