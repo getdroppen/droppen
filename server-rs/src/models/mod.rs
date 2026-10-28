@@ -324,7 +324,7 @@ pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuer
     let paths = state.paths.as_ref();
     let mut hidden = 0;
     let (models, source) = match query.source {
-        Source::Codex => codex_models(&crate::sessions::SessionFiles::of(&paths).codex_models_cache()).await,
+        Source::Codex => codex_models(&crate::sessions::codex::CodexHome::of(&paths).models_cache()).await,
         Source::Claude => claude_models(&state, query.account_id.as_deref()).await,
         Source::Acp => {
             // Every agent has its own list: one served for another is a picker
@@ -351,7 +351,7 @@ pub async fn list_models(State(state): State<AppState>, ApiQuery(query): ApiQuer
 /// on the server is one the composer shows (`GET /api/accounts/start`).
 pub(crate) async fn model_ids(state: &AppState, source: Source, account_id: Option<&str>) -> Vec<String> {
     let (models, _) = match source {
-        Source::Codex => codex_models(&crate::sessions::SessionFiles::of(&state.paths).codex_models_cache()).await,
+        Source::Codex => codex_models(&crate::sessions::codex::CodexHome::of(&state.paths).models_cache()).await,
         Source::Claude => claude_models(state, account_id).await,
         // An ACP agent has no logins; its list is asked for by agent.
         Source::Acp => (Vec::new(), ModelListSource::Fallback),
@@ -496,7 +496,7 @@ pub async fn accepted_efforts(paths: &crate::paths::Paths, source: Source, model
         Source::Acp => None,
         Source::Claude => Some(claude_efforts(model.unwrap_or_default())),
         Source::Codex => {
-            let (models, list) = codex_models(&crate::sessions::SessionFiles::of(&paths).codex_models_cache()).await;
+            let (models, list) = codex_models(&crate::sessions::codex::CodexHome::of(&paths).models_cache()).await;
             if list == ModelListSource::Fallback {
                 return None;
             }

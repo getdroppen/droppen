@@ -473,6 +473,25 @@ const DEFAULT_PRICES: [(&str, ModelPrice); 10] = [
     ),
 ];
 
+/// `~/.remote-hand/model-prices.json`: the optional per-model price table that
+/// overrides the built-in rates.
+///
+/// Its own type rather than a method of [`Paths`]: only the usage stats read it.
+#[derive(Debug, Clone)]
+pub struct PriceOverride(PathBuf);
+
+impl PriceOverride {
+    /// The override of the home `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.home.join(".remote-hand").join("model-prices.json"))
+    }
+
+    /// The file, which may not exist.
+    pub fn path(&self) -> PathBuf {
+        self.0.clone()
+    }
+}
+
 /// The built-in rates merged with the user's optional override file.
 ///
 /// A `Vec` rather than a map because the prefix fallback walks the table in
@@ -753,7 +772,7 @@ pub async fn collect_usage(paths: &Paths, days: Option<u32>) -> UsageStats {
 
     // Price each model's tokens at published API rates; unpriced models (Codex/
     // OpenAI, or anything without a table entry) contribute nothing and are named.
-    let prices = PriceTable::load(&crate::sessions::SessionFiles::of(&paths).price_override()).await;
+    let prices = PriceTable::load(&PriceOverride::of(&paths).path()).await;
     let mut unpriced_models = Vec::new();
     let mut cost_usd = 0.0;
     let mut by_model = acc.models;
@@ -814,7 +833,7 @@ pub async fn collect_usage(paths: &Paths, days: Option<u32>) -> UsageStats {
         by_source,
         pricing: UsagePricing {
             unpriced_models,
-            override_path: crate::sessions::SessionFiles::of(&paths).price_override().to_string_lossy().into_owned(),
+            override_path: PriceOverride::of(&paths).path().to_string_lossy().into_owned(),
         },
     }
 }

@@ -390,7 +390,7 @@ async fn watch_targets(paths: &Paths) -> Vec<PathBuf> {
     dirs.push(paths.codex_sessions());
     // Created for the same reason: the first ACP session would otherwise only
     // reach the list on the poll. One recursive watch covers every agent.
-    let acp = crate::sessions::SessionFiles::of(&paths).acp_sessions();
+    let acp = crate::sessions::acp_transcript::AcpTranscripts::of(&paths).dir();
     let _ = tokio::fs::create_dir_all(&acp).await;
     dirs.push(acp);
     dirs

@@ -28,13 +28,40 @@ use serde_json::Value;
 
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
-use super::SessionFiles;
 use crate::paths::Paths;
 use crate::time::{iso8601, mtime_ms, now_ms};
 use super::transcript::title_line;
 use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::openapi_ext::Nullable;
+
+/// The files in `~/.codex` that only the session list and the model list read:
+/// Codex's thread index, its per-thread name index and its model cache.
+/// `~/.codex` itself and its `sessions/` are shared ([`Paths::codex_dir`]).
+#[derive(Debug, Clone)]
+pub struct CodexHome(PathBuf);
+
+impl CodexHome {
+    /// `~/.codex` of the home `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.codex_dir())
+    }
+
+    /// Codex's thread index database.
+    pub fn state_db(&self) -> PathBuf {
+        self.0.join("state_5.sqlite")
+    }
+
+    /// Codex's optional per-thread name index.
+    pub fn session_index(&self) -> PathBuf {
+        self.0.join("session_index.jsonl")
+    }
+
+    /// Codex's cache of the models its backend offers.
+    pub fn models_cache(&self) -> PathBuf {
+        self.0.join("models_cache.json")
+    }
+}
 
 /// Codex has no reliable live-process registry, so anything untouched for this
 /// long counts as idle; recent files get their tail inspected.
@@ -257,7 +284,7 @@ async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
 async fn thread_names(paths: &Paths) -> HashMap<String, String> {
     let mut names = HashMap::new();
     // The index is optional; without it sessions fall back to their first message.
-    let Ok(raw) = tokio::fs::read_to_string(SessionFiles::of(&paths).codex_session_index()).await else {
+    let Ok(raw) = tokio::fs::read_to_string(CodexHome::of(&paths).session_index()).await else {
         return names;
     };
     for line in raw.split('\n') {
@@ -444,7 +471,7 @@ fn query_spawned_thread_row(db: &Path, id: &str) -> Option<(ThreadRow, String)> 
 /// SQLite is a blocking API, and a cold page cache on a large index is long
 /// enough to matter to every other request in flight.
 async fn on_state_db<T: Send + 'static>(paths: &Paths, query: impl FnOnce(&Path) -> T + Send + 'static) -> Option<T> {
-    let db = SessionFiles::of(&paths).codex_state_db();
+    let db = CodexHome::of(&paths).state_db();
     tokio::task::spawn_blocking(move || query(&db)).await.ok()
 }
 
