@@ -259,8 +259,8 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
         node_version: RUNTIME_VERSION.to_string(),
         server_version: SERVER_VERSION.to_string(),
         home_dir: paths.home.to_string_lossy().into_owned(),
-        claude_dir: paths.claude_projects().to_string_lossy().into_owned(),
-        claude_managed_dir: paths.claude_managed_projects().to_string_lossy().into_owned(),
+        claude_dir: crate::claude_roots::local_projects(&paths).to_string_lossy().into_owned(),
+        claude_managed_dir: crate::claude_roots::managed_projects(&paths).to_string_lossy().into_owned(),
         codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
         claude_session_count: claude_sessions.len(),
         codex_session_count: codex_sessions.len(),
@@ -674,7 +674,7 @@ mod tests {
     /// The session [`WIDE_ID`] in `state`'s home, holding `turns` turns of
     /// `width`; its transcript's path.
     fn wide_session(state: &AppState, turns: usize, width: usize) -> std::path::PathBuf {
-        let project = state.paths.claude_projects().join("-w-wide");
+        let project = crate::claude_roots::local_projects(&state.paths).join("-w-wide");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{WIDE_ID}.jsonl"));
         std::fs::write(&file, wide_turns(0, turns, width)).expect("transcript");

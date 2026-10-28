@@ -28,6 +28,7 @@ use serde_json::Value;
 
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
+use super::SessionFiles;
 use crate::paths::Paths;
 use crate::time::{iso8601, mtime_ms, now_ms};
 use super::transcript::title_line;
@@ -256,7 +257,7 @@ async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
 async fn thread_names(paths: &Paths) -> HashMap<String, String> {
     let mut names = HashMap::new();
     // The index is optional; without it sessions fall back to their first message.
-    let Ok(raw) = tokio::fs::read_to_string(paths.codex_session_index()).await else {
+    let Ok(raw) = tokio::fs::read_to_string(SessionFiles::of(&paths).codex_session_index()).await else {
         return names;
     };
     for line in raw.split('\n') {
@@ -443,7 +444,7 @@ fn query_spawned_thread_row(db: &Path, id: &str) -> Option<(ThreadRow, String)> 
 /// SQLite is a blocking API, and a cold page cache on a large index is long
 /// enough to matter to every other request in flight.
 async fn on_state_db<T: Send + 'static>(paths: &Paths, query: impl FnOnce(&Path) -> T + Send + 'static) -> Option<T> {
-    let db = paths.codex_state_db();
+    let db = SessionFiles::of(&paths).codex_state_db();
     tokio::task::spawn_blocking(move || query(&db)).await.ok()
 }
 

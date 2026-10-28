@@ -40,6 +40,24 @@ pub fn projects_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
     root_dir(paths, root).join("projects")
 }
 
+/// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
+///
+/// The *local* root only; [`managed_projects`] is the managed one and
+/// [`projects_dirs`] the fan-out over both.
+pub fn local_projects(paths: &Paths) -> PathBuf {
+    projects_dir(paths, ClaudeRoot::Local)
+}
+
+/// The projects directory of the root remote-hand owns for account sessions.
+pub fn managed_projects(paths: &Paths) -> PathBuf {
+    projects_dir(paths, ClaudeRoot::Managed)
+}
+
+/// Every projects directory a Claude session can live in, local first.
+pub fn projects_dirs(paths: &Paths) -> [(ClaudeRoot, PathBuf); 2] {
+    ClaudeRoot::ALL.map(|root| (root, projects_dir(paths, root)))
+}
+
 /// `<root>/sessions` — where a running CLI registers its pid.
 pub fn live_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
     root_dir(paths, root).join("sessions")

@@ -562,7 +562,7 @@ fn is_jsonl(path: &Path) -> bool {
 /// both config roots contribute: usage is per machine, not per login.
 async fn claude_files(paths: &Paths, cutoff_ms: f64) -> Vec<FileRef> {
     let mut out = Vec::new();
-    for (_, projects) in paths.claude_projects_dirs() {
+    for (_, projects) in crate::claude_roots::projects_dirs(&paths) {
         let Ok(mut roots) = tokio::fs::read_dir(&projects).await else { continue };
         while let Ok(Some(project)) = roots.next_entry().await {
             let Ok(mut files) = tokio::fs::read_dir(project.path()).await else {
@@ -753,7 +753,7 @@ pub async fn collect_usage(paths: &Paths, days: Option<u32>) -> UsageStats {
 
     // Price each model's tokens at published API rates; unpriced models (Codex/
     // OpenAI, or anything without a table entry) contribute nothing and are named.
-    let prices = PriceTable::load(&paths.price_override()).await;
+    let prices = PriceTable::load(&crate::sessions::SessionFiles::of(&paths).price_override()).await;
     let mut unpriced_models = Vec::new();
     let mut cost_usd = 0.0;
     let mut by_model = acc.models;
@@ -814,7 +814,7 @@ pub async fn collect_usage(paths: &Paths, days: Option<u32>) -> UsageStats {
         by_source,
         pricing: UsagePricing {
             unpriced_models,
-            override_path: paths.price_override().to_string_lossy().into_owned(),
+            override_path: crate::sessions::SessionFiles::of(&paths).price_override().to_string_lossy().into_owned(),
         },
     }
 }

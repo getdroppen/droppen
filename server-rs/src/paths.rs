@@ -243,6 +243,20 @@ impl Paths {
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
+
+    /// `~/.codex`, the Codex CLI's own home.
+    ///
+    /// Here rather than with one module because several read what is in it:
+    /// the session list, the feed, the quota probe, the usage stats, the
+    /// drive's routes and the API's settings.
+    pub fn codex_dir(&self) -> PathBuf {
+        self.home.join(".codex")
+    }
+
+    /// `~/.codex/sessions`.
+    pub fn codex_sessions(&self) -> PathBuf {
+        self.codex_dir().join("sessions")
+    }
 }
 
 impl Paths {

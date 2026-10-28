@@ -8049,7 +8049,7 @@ done
     /// the fake claude's script has to name it.
     fn transcript_path(home: &Path) -> PathBuf {
         let paths = Paths::new(home.to_path_buf());
-        let project = paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project dir");
         project.join(format!("{SESSION}.jsonl"))
     }

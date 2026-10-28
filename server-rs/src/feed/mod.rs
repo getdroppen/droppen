@@ -1678,7 +1678,7 @@ mod tests {
         drive.injections.attach_listeners(feeds.clone(), global::GlobalFeed::new());
 
         let id = "33333333-3333-4333-8333-333333333333";
-        let project = paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let line = format!(
             r#"{{"type":"user","message":{{"role":"user","content":"hello"}},"timestamp":"2026-09-29T00:00:00.000Z","cwd":"/tmp","sessionId":"{id}","uuid":"u1"}}"#
@@ -1854,7 +1854,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let id = "44444444-4444-4444-8444-444444444444";
         let (paths, drive) = test_drive(dir.path());
-        let project = paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{id}.jsonl"));
         std::fs::write(&file, claude_turns(id, 0, 250)).expect("transcript");
@@ -1944,7 +1944,7 @@ mod tests {
     /// A claude session on disk with one prompt in it, and a drive to serve it.
     fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
         let (paths, drive) = test_drive(dir);
-        let project = paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{id}.jsonl"));
         let prompt = serde_json::json!({"type": "user", "uuid": "u-prompt", "message": {"role": "user", "content": "write the module"}, "timestamp": "2026-10-10T00:00:00.000Z", "cwd": "/tmp", "sessionId": id});

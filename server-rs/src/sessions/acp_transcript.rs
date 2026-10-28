@@ -6,7 +6,7 @@
 //! can read back later except by `session/load`, which means starting the
 //! agent. Its own history is its format, not this server's
 //! contract. So the session view reads a transcript *this server* writes, one
-//! per session, under [`Paths::acp_sessions`]`/<agent id>/<session id>.jsonl`:
+//! per session, under [`super::SessionFiles::acp_sessions`]`/<agent id>/<session id>.jsonl`:
 //! every update the driver hears is translated by [`Translator`] into the
 //! small, stable record set below and appended. The feed watches that file the
 //! way it watches a claude or codex transcript, which is what makes streamed
@@ -56,7 +56,7 @@ use super::transcript::title_line;
 use super::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, try_parse, FileRef, ItemKind, Role, ToolDisplay, TranscriptItem,
 };
-use super::{ServerId, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use super::{ServerId, SessionActivity, SessionFiles, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::acp::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use crate::openapi_ext::Nullable;
 use crate::paths::Paths;
@@ -70,7 +70,7 @@ const LINE: usize = 180;
 /// The directory one agent's transcripts are kept in, or `None` for an id that
 /// cannot name one ([`crate::acp_agent::valid_id`]).
 pub fn agent_dir(paths: &Paths, agent: &str) -> Option<PathBuf> {
-    crate::acp_agent::valid_id(agent).then(|| paths.acp_sessions().join(agent))
+    crate::acp_agent::valid_id(agent).then(|| SessionFiles::of(&paths).acp_sessions().join(agent))
 }
 
 /// Whether `id` can name a session: only the ids that cannot leave the
@@ -87,7 +87,7 @@ pub async fn locate(paths: &Paths, id: &str) -> Option<(String, PathBuf)> {
         return None;
     }
     for agent in agent_dirs(paths).await {
-        let file = paths.acp_sessions().join(&agent).join(format!("{id}.jsonl"));
+        let file = SessionFiles::of(&paths).acp_sessions().join(&agent).join(format!("{id}.jsonl"));
         if tokio::fs::metadata(&file).await.is_ok_and(|metadata| metadata.is_file()) {
             return Some((agent, file));
         }
@@ -97,7 +97,7 @@ pub async fn locate(paths: &Paths, id: &str) -> Option<(String, PathBuf)> {
 
 /// Every agent directory there is, by agent id, in id order.
 async fn agent_dirs(paths: &Paths) -> Vec<String> {
-    let Ok(mut entries) = tokio::fs::read_dir(paths.acp_sessions()).await else {
+    let Ok(mut entries) = tokio::fs::read_dir(SessionFiles::of(&paths).acp_sessions()).await else {
         return Vec::new();
     };
     let mut agents = Vec::new();
@@ -539,7 +539,7 @@ pub async fn list_sessions(paths: &Paths) -> Vec<SessionSummary> {
     let titles = super::custom_titles(paths, Source::Acp).await;
     let mut out = Vec::new();
     for agent in agent_dirs(paths).await {
-        let dir = paths.acp_sessions().join(&agent);
+        let dir = SessionFiles::of(&paths).acp_sessions().join(&agent);
         let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
         while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -745,9 +745,9 @@ mod tests {
         tokio::fs::write(&file, body + "\n").await.unwrap();
         tokio::fs::write(dir.join("not an id!.jsonl"), "").await.unwrap();
         // Neither a directory an agent id cannot name, nor a stray file, is an agent.
-        tokio::fs::create_dir_all(paths.acp_sessions().join("Not An Agent")).await.unwrap();
-        tokio::fs::write(paths.acp_sessions().join("Not An Agent").join("zzz.jsonl"), "").await.unwrap();
-        tokio::fs::write(paths.acp_sessions().join("stray.jsonl"), "").await.unwrap();
+        tokio::fs::create_dir_all(SessionFiles::of(&paths).acp_sessions().join("Not An Agent")).await.unwrap();
+        tokio::fs::write(SessionFiles::of(&paths).acp_sessions().join("Not An Agent").join("zzz.jsonl"), "").await.unwrap();
+        tokio::fs::write(SessionFiles::of(&paths).acp_sessions().join("stray.jsonl"), "").await.unwrap();
 
         let listed = list_sessions(&paths).await;
         assert_eq!(listed.len(), 1, "{listed:?}");

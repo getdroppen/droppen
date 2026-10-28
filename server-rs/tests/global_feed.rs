@@ -56,7 +56,7 @@ async fn pin_changes_reach_two_clients_and_survive_server_restart() {
     let home = tempfile::tempdir().unwrap();
     seed_session(home.path());
     let paths = remote_hand_server::paths::Paths::new(home.path().to_owned());
-    let managed = paths.claude_managed_projects().join("project");
+    let managed = remote_hand_server::claude_roots::managed_projects(&paths).join("project");
     std::fs::create_dir_all(&managed).unwrap();
     std::fs::rename(
         home.path().join(format!(".claude/projects/-Users-me-proj/{SESSION_ID}.jsonl")),
@@ -105,10 +105,10 @@ async fn the_feed_opens_with_settings_and_a_snapshot_then_pushes_a_delta() {
     let settings = next_frame(&mut stream).await;
     assert_eq!(settings["type"], "settings", "the server describes itself first");
     assert_eq!(settings["homeDir"], server.home.to_string_lossy().into_owned());
-    assert_eq!(settings["claudeDir"], server.paths.claude_projects().to_string_lossy().into_owned());
+    assert_eq!(settings["claudeDir"], remote_hand_server::claude_roots::local_projects(&server.paths).to_string_lossy().into_owned());
     assert_eq!(
         settings["claudeManagedDir"],
-        server.paths.claude_managed_projects().to_string_lossy().into_owned(),
+        remote_hand_server::claude_roots::managed_projects(&server.paths).to_string_lossy().into_owned(),
         "the sidebar needs both roots to explain where a session came from"
     );
     assert_eq!(settings["codexDir"], server.paths.codex_sessions().to_string_lossy().into_owned());
@@ -171,7 +171,7 @@ async fn the_settings_route_and_the_feed_frame_agree() {
     assert_eq!(settings["codexSessionCount"], 0);
     assert_eq!(
         settings["claudeManagedDir"],
-        server.paths.claude_managed_projects().to_string_lossy().into_owned()
+        remote_hand_server::claude_roots::managed_projects(&server.paths).to_string_lossy().into_owned()
     );
 
     server.stop().await;

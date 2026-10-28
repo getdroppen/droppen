@@ -578,7 +578,7 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
-        let project = paths.claude_managed_projects().join("-w-repo");
+        let project = crate::claude_roots::managed_projects(&paths).join("-w-repo");
         std::fs::create_dir_all(&project).expect("project dir");
         let transcript = project.join(format!("{id}.jsonl"));
         std::fs::write(&transcript, b"").expect("transcript");
