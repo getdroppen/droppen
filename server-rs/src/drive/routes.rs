@@ -1298,7 +1298,7 @@ pub async fn session_history(
     let state_now = feed::load_session_state(drive, source, &id).await.ok_or_else(not_found)?;
     let file_path = PathBuf::from(&state_now.summary.file_path);
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
-    let transcript = feed::load_transcript(&drive.paths, source, &file_path, &sig).await;
+    let transcript = crate::sessions::loader::load_transcript(&drive.paths, source, &file_path, &sig).await;
     let before = query.before as usize;
     // Only the prefix the page depends on is checked, so a session that grew
     // since the client's window was cut is no reason to refuse it.
@@ -1383,7 +1383,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
         .and_then(|metadata| metadata.modified())
         .map(crate::time::iso8601)
         .map_err(|_| not_found())?;
-    Ok((feed::load_transcript(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
+    Ok((crate::sessions::loader::load_transcript(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
 }
 
 /// Where the messages a visit has not read yet begin.
@@ -1445,7 +1445,7 @@ pub async fn session_agents(
     // shared cache, so the common case — a client opening the panel on a session
     // it is already watching — costs nothing.
     let anchors: HashSet<String> = match file_signature(&file_path).await {
-        Some(sig) => feed::parse_transcript(&drive.paths, source, &file_path, &sig)
+        Some(sig) => crate::sessions::loader::parse_transcript(&drive.paths, source, &file_path, &sig)
             .await
             .iter()
             .filter_map(|item| item.tool_use_id.clone())
@@ -2276,7 +2276,7 @@ mod tests {
         );
         let summary = claude::load_claude_summary(&drive.paths, id).await.expect("the session is there");
         let sig = file_signature(std::path::Path::new(&summary.file_path)).await.expect("sig");
-        let items = feed::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
+        let items = crate::sessions::loader::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
 
         let found = first_unread_of(&drive, Source::Claude, id, Some("2026-10-01T10:00:30.000Z"))
             .await
@@ -2342,7 +2342,7 @@ mod tests {
 
         // The same numbering the history route pages by.
         let sig = file_signature(std::path::Path::new(&summary.file_path)).await.expect("sig");
-        let items = feed::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
+        let items = crate::sessions::loader::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
         let ticker = search_session(&drive, Source::Claude, id, &search("useticker"))
             .await
             .expect("searchable");

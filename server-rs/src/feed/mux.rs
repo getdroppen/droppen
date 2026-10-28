@@ -576,7 +576,7 @@ mod tests {
         let delta = next(&mut rx).await;
         assert_eq!(delta["sub"], 2);
         assert_eq!(delta["type"], "delta");
-        assert_eq!(delta["fromIndex"], 1000 - super::super::RESUME_OVERLAP);
+        assert_eq!(delta["fromIndex"], 1000 - crate::sessions::loader::RESUME_OVERLAP);
         assert_eq!(registry.len(), 1, "two subscriptions, one watcher");
         assert_eq!(subs.len(), 2);
     }
