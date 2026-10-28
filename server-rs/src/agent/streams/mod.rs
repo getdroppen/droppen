@@ -60,7 +60,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::drive::Drive;
 use crate::feed::{encode_fp, Transcript};
-use crate::paths::Paths;
+use crate::agent::AgentFiles;
 use crate::sessions::{SessionSummary, Source};
 use crate::time::now_ms_u64;
 use content::{Delta, Scope, SessionCursor, StatusBodyExt};
@@ -245,7 +245,7 @@ pub fn committed_only(keys: BTreeMap<u32, zeroize::Zeroizing<[u8; 32]>>, check: 
 /// Start the sync task for this enrolled instance; it ends with `cancel`
 /// (the join handle says when its store is closed).
 pub fn spawn(
-    paths: &Paths,
+    files: &AgentFiles,
     drive: Arc<Drive>,
     signing: SigningKey,
     loopback: Arc<Loopback>,
@@ -253,14 +253,14 @@ pub fn spawn(
     cancel: CancellationToken,
 ) -> (Handle, tokio::task::JoinHandle<()>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    let store = Store::open(paths);
+    let store = Store::open(files);
     // The plan the hub last told: the window holds across a restart.
     let plan: Option<HubPlan> = store.get_kv(PLAN_KEY).and_then(|p| serde_json::from_str(&p).ok());
     let streams2 = store.get_kv(naming::STREAMS2_KEY).is_some();
     let resign = manifests_to_resign(&store, &signing.verifying_key().to_bytes());
     let env = Scope::from_env();
     let mut sync = Sync {
-        paths: paths.clone(),
+        files: files.clone(),
         drive,
         loopback,
         writer: Writer::new(store, signing),
@@ -332,7 +332,7 @@ impl Budget {
 }
 
 struct Sync {
-    paths: Paths,
+    files: AgentFiles,
     drive: Arc<Drive>,
     loopback: Arc<Loopback>,
     writer: Writer,
@@ -746,7 +746,7 @@ impl Sync {
     /// written ahead of the chain): new records are sealed under the newest
     /// of these, not the newest in the file.
     fn load_keys(&mut self) {
-        match self.paths.load_machine_keys() {
+        match self.files.load_machine_keys() {
             Ok(keys) => {
                 for (epoch, key) in committed_only(keys, &self.committed) {
                     self.writer.add_key(epoch, key);

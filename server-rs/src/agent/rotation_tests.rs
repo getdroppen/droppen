@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
-use super::{FileSeedStore, StagedSeed, StoredSeed};
+use super::{AgentFiles, FileSeedStore, StagedSeed, StoredSeed};
 use crate::paths::Paths;
 use crate::text::{hex, unhex32};
 use crate::time::now_ms_u64;
@@ -70,6 +70,7 @@ struct Account {
     hub: ChainState,
     entries: Vec<Entry>,
     paths: Paths,
+    files: AgentFiles,
     _dir: tempfile::TempDir,
 }
 
@@ -95,6 +96,7 @@ impl Account {
         let mut a = Account {
             hub,
             entries: vec![genesis],
+            files: AgentFiles::of(&paths),
             paths,
             _dir: dir,
         };
@@ -106,7 +108,7 @@ impl Account {
         }));
         a.push(key_epoch("m-1", 0));
         let uuid = crate::identity::ensure(&a.paths).unwrap().uuid;
-        FileSeedStore::for_instance(&a.paths)
+        FileSeedStore::for_instance(&a.files)
             .create(&StoredSeed {
                 uuid,
                 seed: Zeroizing::new([4; 32]),
@@ -137,7 +139,7 @@ impl Account {
     /// The link's shared state for this instance (saved as well), its restarts counted in `restarts`.
     fn shared(&self, hub: &str, restarts: &Arc<AtomicUsize>) -> Arc<Shared> {
         let st = self.state(hub);
-        st.save(&self.paths).unwrap();
+        st.save(&self.files).unwrap();
         let count = restarts.clone();
         let restart: rotation::Restart = Arc::new(move || {
             count.fetch_add(1, Ordering::SeqCst);
@@ -206,7 +208,7 @@ impl Account {
             created_ms: now_ms_u64(),
             accepted_ms: Some(now_ms_u64()),
         };
-        FileSeedStore::for_instance(&self.paths).stage(&staged).unwrap();
+        FileSeedStore::for_instance(&self.files).stage(&staged).unwrap();
         staged.identity()
     }
 
@@ -242,16 +244,16 @@ impl Account {
 
     /// The seed in use on disk, as keys.
     fn seed_in_use(&self) -> MachineIdentity {
-        MachineIdentity::from_seed(&FileSeedStore::for_instance(&self.paths).load().unwrap().unwrap().seed)
+        MachineIdentity::from_seed(&FileSeedStore::for_instance(&self.files).load().unwrap().unwrap().seed)
     }
 
     fn staged(&self) -> Option<StagedSeed> {
-        FileSeedStore::for_instance(&self.paths).staged().unwrap()
+        FileSeedStore::for_instance(&self.files).staged().unwrap()
     }
 
     /// The nonces of every staging, oldest first.
     fn nonces(&self) -> Vec<[u8; 16]> {
-        FileSeedStore::for_instance(&self.paths).stagings().unwrap().iter().map(|s| s.nonce).collect()
+        FileSeedStore::for_instance(&self.files).stagings().unwrap().iter().map(|s| s.nonce).collect()
     }
 }
 
@@ -648,7 +650,7 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let next = FileSeedStore::for_instance(&a.paths).staging_path(&[7; 16]);
+        let next = FileSeedStore::for_instance(&a.files).staging_path(&[7; 16]);
         assert_eq!(std::fs::metadata(next).unwrap().permissions().mode() & 0o777, 0o600);
     }
     // The hub heard the staging, snake_case, with the same proof.
@@ -768,7 +770,7 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         &[7; 16],
         Assurance::OnDevice,
     );
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
     assert_eq!(shown.code.as_deref(), Some(rh_proto::chain::rotate_sas(&body).as_str()));
@@ -899,7 +901,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     let last = logins.last().unwrap();
     assert!(last.by(&new, &hub.url) && last.welcomed, "it signed in with the new key before taking it");
     assert!(logins[0].by(&old, &hub.url));
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.renewed_ms.is_some());
     assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
     assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
@@ -910,7 +912,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     // signed, kept or delivered, and the promoted key has none to make.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(hub.disputes().is_empty(), "{:?}", hub.disputes());
-    assert!(a.paths.kept_disputes().is_empty());
+    assert!(a.files.kept_disputes().is_empty());
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(super::dispute::statement(&st, &new, now_ms_u64()).is_none());
 }
@@ -931,8 +933,8 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     let first = a.stage([44; 32], [1; 16]);
     let answer = a.staged_answer(&first, [1; 16]);
     a.renew(&answer, [1; 16], Assurance::Auto);
-    FileSeedStore::for_instance(&a.paths).promote(&[1; 16]).unwrap();
-    a.state(hub).save(&a.paths).unwrap();
+    FileSeedStore::for_instance(&a.files).promote(&[1; 16]).unwrap();
+    a.state(hub).save(&a.files).unwrap();
     assert_eq!(a.seed_in_use().sign_public(), first.sign_public());
     // Renewed again, to `second`: the chain naming it is in memory only.
     let second = a.stage([77; 32], [7; 16]);
@@ -946,7 +948,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     let shared = link::test_shared(&a.paths, a.state(hub), MachineIdentity::from_seed(&[44; 32]), super::streams::Handle::detached(), restart);
     // The state cannot be saved (a directory where its file goes); what is
     // on disk stays as it was, as after any failed atomic write.
-    let state_file = a.paths.agent_state_path();
+    let state_file = a.files.state();
     let on_disk = std::fs::read(&state_file).unwrap();
     std::fs::remove_file(&state_file).unwrap();
     std::fs::create_dir(&state_file).unwrap();
@@ -968,7 +970,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     assert_eq!(a.seed_in_use().sign_public(), second.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 1);
     assert!(!a.paths.seed_retired(&second));
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert_eq!(rotation::named_keys(&st), Some((second.sign_public(), second.dh_public())));
     assert!(st.rotation.push_renew);
 }
@@ -987,7 +989,7 @@ async fn a_renewed_key_not_put_in_place_leaves_the_push_keys_alone() {
     let restarts = Arc::new(AtomicUsize::new(0));
     let shared = a.shared("ws://127.0.0.1:9", &restarts);
     // After the save, the staged seed's file is moved away: the rename fails.
-    let staging = FileSeedStore::for_instance(&a.paths).staging_path(&[7; 16]);
+    let staging = FileSeedStore::for_instance(&a.files).staging_path(&[7; 16]);
     let aside = staging.with_extension("aside");
     let (from, to) = (staging.clone(), aside.clone());
     rotation::BETWEEN_SAVE_AND_SWAP.with(|b| *b.borrow_mut() = Some(Box::new(move || std::fs::rename(&from, &to).unwrap())));
@@ -999,12 +1001,12 @@ async fn a_renewed_key_not_put_in_place_leaves_the_push_keys_alone() {
         !shared.state.lock().unwrap().rotation.push_renew,
         "the push keys are refused as being renewed for a renewal not taken"
     );
-    assert!(!AgentState::load(&a.paths).unwrap().unwrap().rotation.push_renew, "nor at the next start");
+    assert!(!AgentState::load(&a.files).unwrap().unwrap().rotation.push_renew, "nor at the next start");
     // Put back, it is taken, and the push keys follow it.
     std::fs::rename(&aside, &staging).unwrap();
     rotation::promote(&shared, &new).unwrap();
     assert_eq!(a.seed_in_use().sign_public(), new.sign_public());
-    assert!(AgentState::load(&a.paths).unwrap().unwrap().rotation.push_renew);
+    assert!(AgentState::load(&a.files).unwrap().unwrap().rotation.push_renew);
 }
 
 /// The device role never signs in once this computer's own
@@ -1186,7 +1188,7 @@ async fn of_two_stagings_the_hub_took_the_first_one_committed_is_promoted() {
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
     assert_eq!(a.seed_in_use().sign_public(), first_key, "the first staging, promoted");
     assert!(a.nonces().is_empty(), "the other staging goes with the promotion");
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.foreign_ms.is_none() && st.alarms.is_empty(), "not replaced elsewhere");
     let logins = hub.logins();
     assert!(logins[0].by(&old, &hub.url));
@@ -1395,7 +1397,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     assert_eq!(status, 504);
     let kept = a.staged().expect("kept for the attempt");
     assert!(kept.accepted_ms.is_none());
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.code), ("idle", None), "not shown, no code");
     // Asked to confirm it on this connection: confirmed, not unknown.
@@ -1423,7 +1425,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     // One never answered goes when its attempt is over; the taken one stays.
     let (status, _) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
     assert_eq!(status, 504);
-    let made = FileSeedStore::for_instance(&a.paths)
+    let made = FileSeedStore::for_instance(&a.files)
         .stagings()
         .unwrap()
         .into_iter()
@@ -1433,7 +1435,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     let named = rotation::named_keys(&shared.state.lock().unwrap());
     a.paths.set_aside_expired_stagings(named, &machine(), made + rotation::ATTEMPT_MS + 1);
     assert_eq!(a.nonces(), vec![[7; 16]]);
-    let aside: Vec<[u8; 16]> = FileSeedStore::for_instance(&a.paths).expired().iter().map(|s| s.nonce).collect();
+    let aside: Vec<[u8; 16]> = FileSeedStore::for_instance(&a.files).expired().iter().map(|s| s.nonce).collect();
     assert_eq!(aside, vec![[9; 16]], "set aside, never deleted (R6 review)");
     shared.cancel.cancel();
     let _ = task.await;
@@ -1473,7 +1475,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
-    let file = a.paths.dispute_path("a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
+    let file = a.files.dispute("a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
     let name = file.file_name().unwrap().to_str().unwrap().to_string();
     assert!(name.starts_with(&format!("rotation-dispute-{}-", entries[0].seq())) && name.ends_with(".json"), "{name}");
     assert!(file.parent().unwrap().ends_with("agent"));
@@ -1491,11 +1493,11 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     let sig = unhex64(body["sig"].as_str().unwrap());
     assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with rh-proto on the chain");
     until("the hub's 200 noted", || {
-        AgentState::load(&a.paths).unwrap().unwrap().rotation.evidence_ms.is_some()
+        AgentState::load(&a.files).unwrap().unwrap().rotation.evidence_ms.is_some()
     })
     .await;
     until("the file gone once delivered", || !file.exists()).await;
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
     let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
@@ -1540,7 +1542,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     hub.send_entries(&entries);
     tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
     let seq = entries[0].seq();
-    let file = a.paths.dispute_path("a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
+    let file = a.files.dispute("a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
     until("a first delivery", || !hub.disputes().is_empty()).await;
     assert!(file.exists());
     // Disconnect before the hub has it.
@@ -1548,21 +1550,21 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     assert!(file.exists(), "the statement survives");
     let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(left, vec![file.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
-    assert!(!a.paths.has_agent_state());
+    assert!(!a.files.has_state());
     // Still delivered, unenrolled…
     let tried = hub.disputes().len();
     until("a delivery after the unenroll", || hub.disputes().len() > tried).await;
     // …and after a restart (the process ends; the next start delivers it).
-    a.paths.stop_dispute_delivery();
-    until("the process gone", || !a.paths.delivering_disputes()).await;
+    a.files.stop_dispute_delivery();
+    until("the process gone", || !a.files.delivering_disputes()).await;
     assert!(file.exists());
     hub.script.lock().unwrap().dispute_answers.clear();
-    a.paths.deliver_disputes();
+    a.files.deliver_disputes();
     until("delivered, and only then deleted", || !file.exists()).await;
     let sig = unhex64(hub.disputes().last().unwrap().1["sig"].as_str().unwrap());
     assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig));
     // Done: a disconnect now leaves nothing at all.
-    a.paths.unenroll_agent_files().unwrap();
+    a.files.unenroll().unwrap();
     assert!(!file.parent().unwrap().exists());
 }
 
@@ -1609,7 +1611,7 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     // This machine's chain is from before the renewal.
     let mut st = AgentState::enrolling(&hub.url, "a-1", "m-1", fingerprint(&account_key().sign_public()), now_ms_u64());
     assert!(st.absorb(&served, now_ms_u64()).error.is_none());
-    st.save(&b.paths).unwrap();
+    st.save(&b.files).unwrap();
     let count = restarts.clone();
     let shared = link::test_shared(
         &b.paths,
@@ -1706,7 +1708,7 @@ async fn a_staging_set_aside_as_expired_is_taken_back_when_the_chain_names_it() 
     let old = machine();
     let new = a.stage([77; 32], [7; 16]);
     let answer = a.staged_answer(&new, [7; 16]);
-    let store = FileSeedStore::for_instance(&a.paths);
+    let store = FileSeedStore::for_instance(&a.files);
     store.expire(&[7; 16]).unwrap();
     let hub = FakeHub::start(Script::rotating(vec![old.sign_public()]), a.entries.clone()).await;
     let restarts = Arc::new(AtomicUsize::new(0));
@@ -1729,7 +1731,7 @@ async fn a_staging_set_aside_as_expired_is_taken_back_when_the_chain_names_it() 
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
     assert_eq!(a.seed_in_use().sign_public(), new.sign_public(), "promoted from the staging set aside");
     assert!(store.expired().is_empty() && a.nonces().is_empty());
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.foreign_ms.is_none() && st.alarms.is_empty(), "never replaced elsewhere");
     let logins = hub.logins();
     assert!(logins[1..].iter().all(|l| l.by(&new, &hub.url)), "{logins:?}");
@@ -1777,7 +1779,7 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     let new = a.stage([77; 32], [7; 16]);
     let answer = a.staged_answer(&new, [7; 16]);
     a.renew(&answer, [7; 16], Assurance::Auto);
-    let store = FileSeedStore::for_instance(&a.paths);
+    let store = FileSeedStore::for_instance(&a.files);
     crate::fsutil::write_private_reporting_path(&store.staging_path(&[7; 16]), b"not a key file").unwrap();
     let mut script = Script::rotating(vec![new.sign_public()]);
     script.rotated = vec![old.sign_public()];
@@ -1788,7 +1790,7 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link stops").unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(hub.logins().is_empty(), "no sign-in at all");
-    let st = AgentState::load(&a.paths).unwrap().unwrap();
+    let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.unreadable_ms.is_some());
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(st.alarms.iter().any(|al| al.what.contains("Staged key unreadable")), "{:?}", st.alarms);

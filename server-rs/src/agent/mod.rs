@@ -80,6 +80,8 @@ pub mod streams;
 pub mod system;
 pub mod traffic;
 
+use std::path::PathBuf;
+
 use crate::paths::Paths;
 
 mod cli;
@@ -91,48 +93,67 @@ pub(in crate::agent) use seed::sync_dir;
 #[cfg(test)]
 pub(crate) use seed::dir_syncs;
 
+/// This instance's agent files, `<instance dir>/agent/`: the machine key and
+/// its stagings and archives, the state, the machine keys, the streams' store
+/// and the dispute statements.
+///
+/// Its own type rather than methods on [`Paths`] so that only this module
+/// names those files: the seed and the machine keys are secret, and every
+/// other module reaches them through what this one does with them.
+#[derive(Debug, Clone)]
+pub struct AgentFiles(PathBuf);
+
+impl AgentFiles {
+    /// The agent files of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.instance_dir().join("agent"))
+    }
+}
+
 /// The legacy apex hub origin, and the canonical `api.` one.
 const LEGACY_HUB: &str = "wss://droppen.app";
 const CANONICAL_HUB: &str = "wss://api.droppen.app";
 /// How long the canonical hub has to answer the pre-flight sign-in.
 const MIGRATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-impl Paths {
-    /// Move an install still enrolled at the legacy apex hub to the canonical
-    /// `api.` origin — once, and only if the canonical hub takes its sign-in.
-    /// The machine keeps its identity, account and chain; only the origin its
-    /// link dials changes. A hub that cannot be reached, or refuses the machine,
-    /// leaves the enrolled origin alone (the apex still serves it).
-    pub async fn migrate_hub(&self) -> Result<(), String> {
-        let Some(mut state) = state::AgentState::load(self)? else {
-            return Ok(());
-        };
-        if state.hub != LEGACY_HUB {
-            return Ok(());
-        }
-        let (identity, created) = load_or_create(self)?;
-        if created {
-            return Ok(());
-        }
-        let origin = hub::origin(CANONICAL_HUB)?;
-        let attempt = async {
-            let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
-            hub::login(&mut sink, &mut source, &identity, &state.account, &state.machine, &origin, nonce)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        };
-        match tokio::time::timeout(MIGRATE_TIMEOUT, attempt).await {
-            Ok(Ok(())) => {
-                let from = std::mem::replace(&mut state.hub, origin);
-                state.save(self)?;
-                tracing::info!(from = %from, to = %state.hub, machine = %state.machine, "moved this machine to the canonical hub");
-            }
-            Ok(Err(error)) => tracing::warn!(%error, "the canonical hub did not take this machine; keeping the enrolled hub"),
-            Err(_) => tracing::warn!("the canonical hub did not answer in time; keeping the enrolled hub"),
-        }
-        Ok(())
+/// Move an install still enrolled at the legacy apex hub to the canonical
+/// `api.` origin — once, and only if the canonical hub takes its sign-in.
+/// The machine keeps its identity, account and chain; only the origin its
+/// link dials changes. A hub that cannot be reached, or refuses the machine,
+/// leaves the enrolled origin alone (the apex still serves it).
+///
+/// Takes the whole [`Paths`]: the machine key is checked against the
+/// instance identity ([`load_or_create`]).
+pub async fn migrate_hub(paths: &Paths) -> Result<(), String> {
+    let files = AgentFiles::of(paths);
+    let Some(mut state) = state::AgentState::load(&files)? else {
+        return Ok(());
+    };
+    if state.hub != LEGACY_HUB {
+        return Ok(());
     }
+    let (identity, created) = load_or_create(paths)?;
+    if created {
+        return Ok(());
+    }
+    let origin = hub::origin(CANONICAL_HUB)?;
+    let attempt = async {
+        let (mut sink, mut source, nonce) = hub::dial(&origin).await?;
+        hub::login(&mut sink, &mut source, &identity, &state.account, &state.machine, &origin, nonce)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+    match tokio::time::timeout(MIGRATE_TIMEOUT, attempt).await {
+        Ok(Ok(())) => {
+            let from = std::mem::replace(&mut state.hub, origin);
+            state.save(&files)?;
+            tracing::info!(from = %from, to = %state.hub, machine = %state.machine, "moved this machine to the canonical hub");
+        }
+        Ok(Err(error)) => tracing::warn!(%error, "the canonical hub did not take this machine; keeping the enrolled hub"),
+        Err(_) => tracing::warn!("the canonical hub did not answer in time; keeping the enrolled hub"),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -227,7 +248,7 @@ mod tests {
         assert!(refusal.contains("user add <name> --instance enrolltest"), "says how: {refusal}");
         assert!(refusal.contains("setup-code --instance enrolltest"), "and where the code is: {refusal}");
         assert!(refusal.contains(&crate::auth::setup::code_file(&paths).display().to_string()));
-        assert!(!paths.machine_key_path().exists(), "refused before a machine key is made");
+        assert!(!AgentFiles::of(&paths).machine_key().exists(), "refused before a machine key is made");
 
         let users = crate::auth::users::UsersStore::new(&paths);
         users.add_app("app", "correct horse battery").await.expect("the desktop app's account");
@@ -252,7 +273,7 @@ mod tests {
         assert!(!created, "a second run loads rather than mints");
         assert_eq!(first.sign_public(), again.sign_public());
         assert_eq!(first.dh_public(), again.dh_public());
-        let stored = FileSeedStore::for_instance(&paths).load().unwrap().unwrap();
+        let stored = FileSeedStore::for_instance(&AgentFiles::of(&paths)).load().unwrap().unwrap();
         assert_eq!(
             stored.uuid,
             crate::identity::ensure(&paths).unwrap().uuid,
@@ -263,7 +284,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let path = paths.machine_key_path();
+            let path = AgentFiles::of(&paths).machine_key();
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -273,9 +294,9 @@ mod tests {
 
         // The same file copied into another instance is refused, not silently re-derived.
         let other = Paths::for_instance(dir.path().to_path_buf(), "agentother");
-        let copied = other.machine_key_path();
+        let copied = AgentFiles::of(&other).machine_key();
         std::fs::create_dir_all(copied.parent().unwrap()).unwrap();
-        std::fs::copy(paths.machine_key_path(), &copied).unwrap();
+        std::fs::copy(AgentFiles::of(&paths).machine_key(), &copied).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -292,7 +313,7 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         load_or_create(&paths).unwrap();
         state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5)
-            .save(&paths)
+            .save(&AgentFiles::of(&paths))
             .unwrap();
         // A pending key an older release left behind.
         std::fs::create_dir_all(crate::aggregator::dir(&paths)).unwrap();
@@ -322,7 +343,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentsync");
         let (old, _) = load_or_create(&paths).unwrap();
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
         let uuid = crate::identity::ensure(&paths).unwrap().uuid;
         let staged = |seed: u8, nonce: u8| StagedSeed {
             uuid: uuid.clone(),
@@ -361,10 +382,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         let (old, _) = load_or_create(&paths).unwrap();
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
         assert_eq!(
             store.staging_path(&[1; 16]),
-            paths.machine_key_path().with_file_name(format!("machine-key.next-{}.json", crate::text::hex(&[1; 16])))
+            AgentFiles::of(&paths).machine_key().with_file_name(format!("machine-key.next-{}.json", crate::text::hex(&[1; 16])))
         );
         assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
         assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");
@@ -454,7 +475,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         load_or_create(&paths).unwrap();
-        let path = paths.machine_key_path();
+        let path = AgentFiles::of(&paths).machine_key();
         let uuid = crate::identity::ensure(&paths).unwrap().uuid;
         std::fs::write(&path, format!(r#"{{"version":1,"uuid":"{uuid}","seed":"abcd"}}"#)).unwrap();
         assert!(load_or_create(&paths).unwrap_err().contains("not 32 bytes"));

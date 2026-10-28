@@ -1,8 +1,8 @@
 //! Joining this instance to an account (`docs/cross-machine-architecture.md`
 //! §6): `agent enroll <code> --hub <url>` on the command line, and the local
 //! settings' "Sign in to Droppen" in process
-//! ([`super::control::Control::enroll`]) — the same [`Paths::begin_enrollment`], then either
-//! [`Paths::wait_enrollment_confirmed`] here or the link.
+//! ([`super::control::Control::enroll`]) — the same [`AgentFiles::begin_enrollment`], then either
+//! [`AgentFiles::wait_enrollment_confirmed`] here or the link.
 //!
 //! 1. Dial the hub and present the code's *token* — `HMAC(secret, …)`, never
 //!    the secret. The hub assigns this machine an id in the account the token
@@ -30,7 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::hub;
 use super::state::AgentState;
-use crate::paths::Paths;
+use super::AgentFiles;
 use crate::text::hex;
 use crate::time::now_ms_u64;
 
@@ -60,7 +60,7 @@ impl std::fmt::Display for BeginError {
 
 /// An enrollment the hub has taken: the machine id it assigned, and the
 /// socket it was taken on (signed in as that machine). The enrolling state is
-/// saved already, so whoever follows the chain from here — [`Paths::wait_enrollment_confirmed`]
+/// saved already, so whoever follows the chain from here — [`AgentFiles::wait_enrollment_confirmed`]
 /// on this socket, or the link ([`super::link::start`]) on its own — completes it.
 pub struct Begun {
     /// The hub's origin, as the machine signs in to it.
@@ -73,7 +73,7 @@ pub struct Begun {
     source: hub::Source,
 }
 
-impl Paths {
+impl AgentFiles {
     /// Steps 1 and 2 (see the module docs): present the code's token, prove the
     /// code and the keys, and save the enrolling state. Fast — a few round trips
     /// — and the same for the command line and the local API.
@@ -145,7 +145,7 @@ impl Paths {
     }
 }
 
-/// How [`Paths::enroll`] ended without the device being added, as the command line
+/// How [`AgentFiles::enroll`] ended without the device being added, as the command line
 /// tells the two apart.
 #[derive(Debug)]
 pub enum EnrollFailure {
@@ -172,7 +172,7 @@ impl std::fmt::Display for EnrollFailure {
     }
 }
 
-impl Paths {
+impl AgentFiles {
     /// Enroll this instance with `code` at the hub at `hub_url` (see the module
     /// docs): `agent enroll` on the command line, which waits here until the
     /// page that showed the code has added this device (or the code expired).
@@ -196,7 +196,7 @@ impl Paths {
     }
 }
 
-impl Paths {
+impl AgentFiles {
     /// Step 3 on the enrollment's own socket: follow the account's chain until
     /// it names this machine with exactly its keys; the chain's seq then.
     pub async fn wait_enrollment_confirmed(&self, identity: &MachineIdentity, begun: Begun, timeout: Duration) -> Result<u64, EnrollFailure> {
@@ -238,7 +238,7 @@ impl Paths {
             let Some(Ok(message)) = message else {
                 return Err(EnrollFailure::Pending(format!(
                     "the hub closed the connection before the page added this device; `serve` finishes the enrollment once it does (state saved in {})",
-                    self.agent_state_path().display()
+                    self.state().display()
                 )));
             };
             let Message::Binary(bytes) = message else { continue };

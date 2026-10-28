@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::fsutil::{check_private, write_private_reporting_path};
+use super::AgentFiles;
 use crate::paths::Paths;
 
 /// The key file's contents.
@@ -98,9 +99,9 @@ pub struct FileSeedStore {
 
 impl FileSeedStore {
     /// The file for this instance: `<instance dir>/agent/machine-key.json`.
-    pub fn for_instance(paths: &Paths) -> Self {
+    pub fn for_instance(files: &AgentFiles) -> Self {
         Self {
-            path: paths.machine_key_path(),
+            path: files.machine_key(),
         }
     }
 
@@ -387,25 +388,32 @@ pub(super) fn sync_dir(path: &Path) {
     let _ = path;
 }
 
-impl Paths {
+impl AgentFiles {
     /// Where this instance's machine identity lives.
-    pub fn machine_key_path(&self) -> PathBuf {
-        self.instance_dir().join("agent").join("machine-key.json")
+    pub(in crate::agent) fn machine_key(&self) -> PathBuf {
+        self.0.join("machine-key.json")
+    }
+
+    /// Whether this instance has a machine key yet, for a status that must
+    /// never be what makes one.
+    pub fn has_machine_key(&self) -> bool {
+        self.machine_key().exists()
     }
 }
 /// This instance's machine identity, created on first use. The `bool` says
 /// whether it was created just now.
 pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
+    let files = AgentFiles::of(paths);
     let uuid = crate::identity::ensure(paths)
         .ok_or("cannot read or mint this instance's identity uuid")?
         .uuid;
-    let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(paths), &uuid)?;
+    let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(&files), &uuid)?;
     // A seed this device archived as retired (a crash, or a copy put back)
     // is never used again (`docs/host-identity-rotation.md` §3.8).
     if !created && paths.seed_archived(&identity) {
         return Err(format!(
             "{} is an archived (retired) identity key and is never used again: add this device again under a new identity",
-            paths.machine_key_path().display()
+            files.machine_key().display()
         ));
     }
     Ok((identity, created))

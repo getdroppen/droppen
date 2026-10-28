@@ -584,8 +584,8 @@ async fn status_for(state: &AppState, user: Option<&str>) -> CloudStatus {
     };
     // The fingerprint only when the key exists already: a status is never
     // what makes one.
-    let fingerprint = cloud.paths.machine_key_path()
-        .exists()
+    let fingerprint = crate::agent::AgentFiles::of(&cloud.paths)
+        .has_machine_key()
         .then(|| cloud.control.identity().ok())
         .flatten()
         .map(|identity| machine_fingerprint(&identity));
@@ -1134,23 +1134,24 @@ mod tests {
             }))
         };
         let paths = state.cloud.paths.clone();
+        let files = crate::agent::AgentFiles::of(&paths);
         let old = state.cloud.control.identity().unwrap();
         let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
-        st.save(&paths).unwrap();
+        st.save(&files).unwrap();
         let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
         assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
         assert_eq!(state.cloud.control.identity().unwrap().sign_public(), old.sign_public(), "nothing changed");
         // Refused by the hub as renewed, without a chain to show for it: not
         // evidence, nothing to start again for.
         st.rotation.refused_ms = Some(6);
-        st.save(&paths).unwrap();
+        st.save(&files).unwrap();
         let refused = post_re_enroll_fresh(State(state.clone()), alice()).await.unwrap_err();
         assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
         let shown = get_cloud(State(state.clone()), alice()).await.unwrap().0.link.unwrap().rotation;
         assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("refused", Some("rotated")));
         st.rotation.foreign_ms = Some(6);
         st.rotation.foreign_reason = Some(crate::agent::rotation::FOREIGN_RENEWED_ELSEWHERE.into());
-        st.save(&paths).unwrap();
+        st.save(&files).unwrap();
         let before = get_cloud(State(state.clone()), alice()).await.unwrap().0;
         let rotation = before.link.unwrap().rotation;
         assert_eq!((rotation.state.as_str(), rotation.reason.as_deref()), ("foreign", Some("renewed_elsewhere")));
@@ -1260,7 +1261,7 @@ mod tests {
     /// Pretend the link is enrolled (a device completes it): something to claim.
     fn enrolled(state: &AppState) {
         crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [7; 16], 1)
-            .save(&state.cloud.paths)
+            .save(&crate::agent::AgentFiles::of(&state.cloud.paths))
             .unwrap();
     }
 
@@ -1658,7 +1659,7 @@ mod tests {
         chain.apply(&add, &mut ChainClock::history()).unwrap();
         let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), 5_000);
         assert_eq!(st.absorb(&[genesis, add], 5_000).error, None);
-        st.save(&state.cloud.paths).unwrap();
+        st.save(&crate::agent::AgentFiles::of(&state.cloud.paths)).unwrap();
         assert_eq!(state.cloud.control.status().state, Standing::Linked);
     }
 

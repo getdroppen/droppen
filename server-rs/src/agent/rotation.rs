@@ -84,7 +84,7 @@ use zeroize::Zeroizing;
 
 use super::link::Shared;
 use super::state::AgentState;
-use super::{FileSeedStore, StagedSeed};
+use super::{AgentFiles, FileSeedStore, StagedSeed};
 use crate::paths::Paths;
 use crate::text::{hex, unhex32};
 use crate::time::now_ms_u64;
@@ -382,7 +382,7 @@ impl Paths {
     /// [`verdict`] from this instance's files, changing none: every staging it
     /// keeps, waiting or set aside as expired.
     fn stored_verdict(&self, st: &AgentState, current: &MachineIdentity) -> Verdict {
-        let store = FileSeedStore::for_instance(self);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(self));
         let kept = kept_stagings(&store, current);
         verdict(st, current, &identities(&kept), !store.unreadable().is_empty())
     }
@@ -444,7 +444,7 @@ impl Paths {
     /// judged only where that is safe ([`drop_expired`], [`rotate`]): a renewal
     /// committed while this device was away may name any staging the hub took.
     pub(super) fn staged_seeds(&self, current: &MachineIdentity) -> Vec<StagedSeed> {
-        let store = FileSeedStore::for_instance(self);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(self));
         let uuid = store.load().ok().flatten().map(|s| s.uuid);
         let mut out = Vec::new();
         for staged in store.stagings().unwrap_or_default() {
@@ -493,7 +493,7 @@ impl Paths {
     /// this device's own verified chain names one after all ([`on_chain`]). One
     /// whose keys that chain names now (`named`, [`named_keys`]) is never set aside.
     pub(super) fn set_aside_expired_stagings(&self, named: Option<([u8; 32], [u8; 32])>, current: &MachineIdentity, since: u64) {
-        let store = FileSeedStore::for_instance(self);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(self));
         for staged in &self.staged_seeds(current) {
             let keys = staged.identity();
             if expiry(staged) < since && named != Some((keys.sign_public(), keys.dh_public())) {
@@ -537,7 +537,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             json!({"error": "hub_not_ready", "message": "this device's hub connection is down, or its hub does not stage identity renewals yet"}),
         );
     };
-    let store = FileSeedStore::for_instance(&shared.paths);
+    let store = FileSeedStore::for_instance(&shared.files);
     let uuid = match store.load() {
         Ok(Some(seed)) => seed.uuid,
         _ => return (500, json!({"error": "unavailable", "message": "this device's identity key does not read"})),
@@ -699,7 +699,7 @@ pub(super) fn late_answer(shared: &Shared, value: &Value) {
         tracing::info!(t = %value["t"], nonce_hash = %value["nonce_hash"], "a staging answer for no staged key waiting for one: ignored");
         return;
     };
-    let store = FileSeedStore::for_instance(&shared.paths);
+    let store = FileSeedStore::for_instance(&shared.files);
     match value["t"].as_str() {
         Some("rotation_staged") => {
             tracing::info!("the hub's late answer: it staged the renewal; keeping the staged key");
@@ -875,7 +875,7 @@ pub(super) fn on_pending(shared: &Shared, value: &Value, text: &mpsc::UnboundedS
 /// the next signs in with the new one, to promote; renewed to keys it does
 /// not hold — [`foreign`].
 pub(super) fn on_chain(shared: &Arc<Shared>) -> Verdict {
-    let store = FileSeedStore::for_instance(&shared.paths);
+    let store = FileSeedStore::for_instance(&shared.files);
     // One set aside as expired that the chain names after all: back among
     // the stagings first, to be signed in with and promoted.
     let keys = named_keys(&shared.state.lock().expect("agent state"));
@@ -941,12 +941,12 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     shared.cancel.cancel();
     match statement {
         Ok(Some(statement)) => {
-            match shared.paths.keep_dispute(&statement) {
+            match shared.files.keep_dispute(&statement) {
                 Ok(true) => tracing::warn!(seq = statement.seq, "signed a dispute of that renewal with the retired key; delivering it to the hub"),
                 Ok(false) => {}
                 Err(error) => tracing::error!(%error, "cannot keep the dispute statement"),
             }
-            shared.paths.deliver_disputes();
+            shared.files.deliver_disputes();
         }
         Ok(None) => tracing::warn!("the device chain retired no key this device holds: no dispute statement to sign"),
         Err(()) => tracing::info!("the hub took this device's dispute statement already"),
@@ -1014,7 +1014,7 @@ pub(super) fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
     if renewed_away(&shared.state.lock().expect("agent state"), &shared.identity) {
         return false;
     }
-    let staged = FileSeedStore::for_instance(&shared.paths).stagings().is_ok_and(|s| !s.is_empty());
+    let staged = FileSeedStore::for_instance(&shared.files).stagings().is_ok_and(|s| !s.is_empty());
     !staged || shared.rotation.key_in_use_confirmed(now)
 }
 
@@ -1029,7 +1029,7 @@ impl Paths {
         if self.seed_archived(identity) {
             return true;
         }
-        let Ok(Some(st)) = AgentState::load(self) else { return false };
+        let Ok(Some(st)) = AgentState::load(&AgentFiles::of(self)) else { return false };
         matches!(self.stored_verdict(&st, identity), Verdict::Foreign { .. })
     }
 }
@@ -1037,7 +1037,7 @@ impl Paths {
 impl Paths {
     /// Whether `identity`'s seed is one [`Paths::re_enroll_fresh`] archived.
     pub fn seed_archived(&self, identity: &MachineIdentity) -> bool {
-        let key = self.machine_key_path();
+        let key = AgentFiles::of(self).machine_key();
         let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else { return false };
         entries.filter_map(Result::ok).any(|e| {
             let name = e.file_name();
@@ -1061,7 +1061,7 @@ impl Paths {
         if let Some(identity) = self.finish_re_enroll()? {
             return Ok(identity);
         }
-        if let Some(stored) = FileSeedStore::for_instance(self).load()? {
+        if let Some(stored) = FileSeedStore::for_instance(&AgentFiles::of(self)).load()? {
             let current = MachineIdentity::from_seed(&stored.seed);
             if self.seed_retired(&current) {
                 tracing::warn!("the identity key in use was replaced elsewhere (or archived): this enrollment uses a fresh one");
@@ -1077,7 +1077,7 @@ impl Paths {
     /// has not finished: whatever start comes next finishes it
     /// ([`Paths::finish_re_enroll`]).
     fn re_enroll_marker(&self) -> std::path::PathBuf {
-        self.machine_key_path().with_file_name("re-enroll-fresh.json")
+        AgentFiles::of(self).machine_key().with_file_name("re-enroll-fresh.json")
     }
 }
 
@@ -1103,8 +1103,8 @@ impl Paths {
         if let Some(identity) = self.finish_re_enroll()? {
             return Ok(identity);
         }
-        let store = FileSeedStore::for_instance(self);
-        if let (Ok(Some(seed)), Ok(Some(st))) = (store.load(), AgentState::load(self)) {
+        let store = FileSeedStore::for_instance(&AgentFiles::of(self));
+        if let (Ok(Some(seed)), Ok(Some(st))) = (store.load(), AgentState::load(&AgentFiles::of(self))) {
             match self.stored_verdict(&st, &MachineIdentity::from_seed(&seed.seed)) {
                 Verdict::Renewed => {
                     return Err(
@@ -1151,7 +1151,7 @@ thread_local! {
 impl Paths {
     /// [`Paths::re_enroll_fresh`]'s steps after its marker; each may run again.
     fn forget_for_a_fresh_identity(&self, now: u64) -> Result<MachineIdentity, String> {
-        let current = self.machine_key_path();
+        let current = AgentFiles::of(self).machine_key();
         if current.exists() {
             // Whatever seed is in place: the old one, or (a crash after the
             // fresh one was made) one never enrolled anywhere.
@@ -1164,10 +1164,10 @@ impl Paths {
         if CRASH_AFTER_ARCHIVE.with(|c| c.replace(false)) {
             return Err("crashed after archiving (test)".into());
         }
-        FileSeedStore::for_instance(self).discard_all_staged()?;
-        self.forget_enrollment_leftovers()?;
+        FileSeedStore::for_instance(&AgentFiles::of(self)).discard_all_staged()?;
+        AgentFiles::of(self).forget_enrollment_leftovers()?;
         crate::aggregator::forget_all(self)?;
-        match std::fs::remove_file(self.agent_state_path()) {
+        match std::fs::remove_file(AgentFiles::of(self).state()) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
@@ -1191,7 +1191,7 @@ impl Paths {
     /// Where [`Paths::re_enroll_fresh`] archives a retired seed:
     /// `<instance dir>/agent/machine-key.retired-<ms>.json`.
     pub fn archived_key_path(&self, now: u64) -> std::path::PathBuf {
-        self.machine_key_path().with_file_name(format!("machine-key.retired-{now}.json"))
+        AgentFiles::of(self).machine_key().with_file_name(format!("machine-key.retired-{now}.json"))
     }
 }
 
@@ -1223,7 +1223,7 @@ thread_local! {
 /// atomically — the other stagings go — noted for the local settings, and
 /// the link restarted with it.
 pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Result<(), String> {
-    let store = FileSeedStore::for_instance(&shared.paths);
+    let store = FileSeedStore::for_instance(&shared.files);
     let stagings = shared.paths.staged_seeds(&shared.identity);
     let new = {
         let st = shared.state.lock().expect("agent state");
@@ -1340,7 +1340,7 @@ impl Paths {
                 ..Status::default()
             };
         }
-        let store = FileSeedStore::for_instance(self);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(self));
         let seed = store.load().ok().flatten();
         if let Some(seed) = seed {
             let current = MachineIdentity::from_seed(&seed.seed);
@@ -1420,8 +1420,9 @@ mod tests {
     fn stagings_the_hub_took_stay_until_they_expire() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotroom");
+        let files = AgentFiles::of(&paths);
         let (current, _) = super::super::load_or_create(&paths).unwrap();
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&files);
         let at = |seed: u8, nonce: u8, created: u64, accepted: Option<u64>| StagedSeed {
             nonce: [nonce; 16],
             accepted_ms: accepted,
@@ -1480,10 +1481,11 @@ mod tests {
     fn re_enrolling_fresh_archives_the_retired_seed_and_forgets_the_enrollment() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotfresh");
+        let files = AgentFiles::of(&paths);
         let (old, _) = super::super::load_or_create(&paths).unwrap();
-        AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5).save(&paths).unwrap();
-        paths.store_machine_key(0, &[7; 32]).unwrap();
-        FileSeedStore::for_instance(&paths).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
+        AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5).save(&files).unwrap();
+        files.store_machine_key(0, &[7; 32]).unwrap();
+        FileSeedStore::for_instance(&files).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
         let fresh = paths.re_enroll_fresh(1234).unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public(), "a fresh seed");
         assert_ne!(fresh.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public(), "not the staged one");
@@ -1496,10 +1498,10 @@ mod tests {
         assert!(!created);
         assert_eq!(now.sign_public(), fresh.sign_public());
         // The enrollment is forgotten: no state, no machine keys, nothing staged.
-        assert!(!paths.has_agent_state());
-        assert!(AgentState::load(&paths).unwrap().is_none());
-        assert!(!paths.agent_keys_path().exists());
-        assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
+        assert!(!files.has_state());
+        assert!(AgentState::load(&files).unwrap().is_none());
+        assert!(!files.keys().exists());
+        assert!(FileSeedStore::for_instance(&files).staged().unwrap().is_none());
     }
 
     /// An archived (retired) seed is never loaded again — not
@@ -1510,6 +1512,7 @@ mod tests {
     fn a_retired_or_archived_seed_never_signs_up_again() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotenrol");
+        let files = AgentFiles::of(&paths);
         // Not retired: the seed in use enrolls.
         let (old, _) = super::super::load_or_create(&paths).unwrap();
         assert!(!paths.seed_retired(&old));
@@ -1517,7 +1520,7 @@ mod tests {
         // Archived, then a crash put the archive back in place (or a copy of it):
         // never loaded, and enrolling makes a fresh seed.
         let archive = paths.archived_key_path(5);
-        std::fs::copy(paths.machine_key_path(), &archive).unwrap();
+        std::fs::copy(files.machine_key(), &archive).unwrap();
         assert!(paths.seed_archived(&old));
         let refused = super::super::load_or_create(&paths).err().expect("an archived seed is not loaded");
         assert!(refused.contains("archived"), "{refused}");
@@ -1525,20 +1528,21 @@ mod tests {
         assert_ne!(fresh.sign_public(), old.sign_public());
         assert_eq!(super::super::load_or_create(&paths).unwrap().0.sign_public(), fresh.sign_public());
         // Only the archive left (a crash right after archiving): a fresh seed, never the archive.
-        std::fs::remove_file(paths.machine_key_path()).unwrap();
+        std::fs::remove_file(files.machine_key()).unwrap();
         let (made, created) = super::super::load_or_create(&paths).unwrap();
         assert!(created && made.sign_public() != old.sign_public() && made.sign_public() != fresh.sign_public());
 
         // Retired on the chain it knows: a v3 account renewed this seed away.
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotenrol2");
+        let files = AgentFiles::of(&paths);
         let (current, _) = super::super::load_or_create(&paths).unwrap();
-        renewed_to(&current, &MachineIdentity::from_seed(&[66; 32])).save(&paths).unwrap();
+        renewed_to(&current, &MachineIdentity::from_seed(&[66; 32])).save(&files).unwrap();
         assert!(paths.seed_retired(&current), "retired on the chain it knows");
         let fresh = paths.identity_for_enrolling().unwrap();
         assert_ne!(fresh.sign_public(), current.sign_public());
         assert!(paths.seed_archived(&current), "the retired seed is archived, kept");
-        assert!(AgentState::load(&paths).unwrap().is_none(), "the old enrollment is forgotten");
+        assert!(AgentState::load(&files).unwrap().is_none(), "the old enrollment is forgotten");
         assert_eq!(paths.identity_for_enrolling().unwrap().sign_public(), fresh.sign_public(), "and the fresh one stays");
     }
 
@@ -1612,15 +1616,16 @@ mod tests {
     async fn an_honest_hosts_own_renewal_is_never_wiped_for_a_fresh_identity() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rothonest");
+        let files = AgentFiles::of(&paths);
         let (current, _) = super::super::load_or_create(&paths).unwrap();
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&files);
         let mine = staged(&paths, 8, Assurance::Auto, 5);
         store.stage(&mine).unwrap();
-        renewed_to(&current, &mine.identity()).save(&paths).unwrap();
+        renewed_to(&current, &mine.identity()).save(&files).unwrap();
         let untouched = |why: &str| {
             assert!(!paths.seed_retired(&current), "{why}: its own renewal");
             assert!(!paths.seed_archived(&current), "{why}: nothing archived");
-            assert!(paths.has_agent_state(), "{why}: the enrollment stays");
+            assert!(files.has_state(), "{why}: the enrollment stays");
             assert_eq!(
                 MachineIdentity::from_seed(&store.load().unwrap().unwrap().seed).sign_public(),
                 current.sign_public(),
@@ -1628,7 +1633,7 @@ mod tests {
             );
             assert_eq!(kept_stagings(&store, &current).len(), 1, "{why}: the staged seed stays");
         };
-        let st = AgentState::load(&paths).unwrap().unwrap();
+        let st = AgentState::load(&files).unwrap().unwrap();
         assert_eq!(paths.stored_verdict(&st, &current), Verdict::Renewed);
         assert_eq!(paths.identity_for_enrolling().unwrap().sign_public(), current.sign_public());
         untouched("signing up");
@@ -1662,11 +1667,12 @@ mod tests {
     fn an_unreadable_staging_is_never_taken_for_a_replacement() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotunread");
+        let files = AgentFiles::of(&paths);
         let (current, _) = super::super::load_or_create(&paths).unwrap();
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&files);
         let mine = staged(&paths, 8, Assurance::Auto, 5);
         let st = renewed_to(&current, &mine.identity());
-        st.save(&paths).unwrap();
+        st.save(&files).unwrap();
         // The staged file is damaged.
         crate::fsutil::write_private_reporting_path(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
         assert_eq!(store.unreadable().len(), 1);
@@ -1674,7 +1680,7 @@ mod tests {
         assert_eq!(paths.stored_verdict(&st, &current), Verdict::Unreadable);
         assert!(!paths.seed_retired(&current));
         assert!(paths.re_enroll_fresh(5).err().is_some_and(|e| e.contains("does not read")));
-        assert!(!paths.seed_archived(&current) && paths.has_agent_state());
+        assert!(!paths.seed_archived(&current) && files.has_state());
         // One set aside as expired that does not read counts the same.
         std::fs::rename(store.staging_path(&mine.nonce), store.expired_path(&mine.nonce)).unwrap();
         assert_eq!(paths.stored_verdict(&st, &current), Verdict::Unreadable);
@@ -1691,33 +1697,34 @@ mod tests {
     fn adding_again_cut_short_by_a_crash_is_finished_at_the_next_start() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotcrash");
+        let files = AgentFiles::of(&paths);
         let (old, _) = super::super::load_or_create(&paths).unwrap();
-        renewed_to(&old, &MachineIdentity::from_seed(&[66; 32])).save(&paths).unwrap();
-        paths.store_machine_key(0, &[7; 32]).unwrap();
-        FileSeedStore::for_instance(&paths).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
+        renewed_to(&old, &MachineIdentity::from_seed(&[66; 32])).save(&files).unwrap();
+        files.store_machine_key(0, &[7; 32]).unwrap();
+        FileSeedStore::for_instance(&files).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
         CRASH_AFTER_ARCHIVE.with(|c| c.set(true));
         assert!(paths.re_enroll_fresh(1234).is_err(), "crashed");
         // What the crash left: the seed archived, the enrollment still there.
-        assert!(!paths.machine_key_path().exists());
+        assert!(!files.machine_key().exists());
         assert!(paths.seed_archived(&old));
-        assert!(paths.has_agent_state());
+        assert!(files.has_state());
         assert!(paths.re_enroll_marker().exists());
         // The next start finishes it.
         let fresh = paths.finish_re_enroll().unwrap().expect("finished");
         assert_ne!(fresh.sign_public(), old.sign_public());
-        assert!(!paths.has_agent_state(), "the old enrollment is forgotten");
-        assert!(!paths.agent_keys_path().exists());
-        assert!(FileSeedStore::for_instance(&paths).staged().unwrap().is_none());
+        assert!(!files.has_state(), "the old enrollment is forgotten");
+        assert!(!files.keys().exists());
+        assert!(FileSeedStore::for_instance(&files).staged().unwrap().is_none());
         assert!(!paths.re_enroll_marker().exists());
         assert_eq!(super::super::load_or_create(&paths).unwrap().0.sign_public(), fresh.sign_public());
         assert!(paths.finish_re_enroll().unwrap().is_none(), "nothing left to finish");
         // Cut short again, and a sign-up comes first: it finishes it too.
-        renewed_to(&fresh, &MachineIdentity::from_seed(&[67; 32])).save(&paths).unwrap();
+        renewed_to(&fresh, &MachineIdentity::from_seed(&[67; 32])).save(&files).unwrap();
         CRASH_AFTER_ARCHIVE.with(|c| c.set(true));
         assert!(paths.re_enroll_fresh(1235).is_err());
         let again = paths.identity_for_enrolling().unwrap();
         assert!(again.sign_public() != fresh.sign_public() && again.sign_public() != old.sign_public());
-        assert!(!paths.has_agent_state() && !paths.re_enroll_marker().exists());
+        assert!(!files.has_state() && !paths.re_enroll_marker().exists());
         assert!(paths.seed_archived(&old) && paths.seed_archived(&fresh), "both archived, neither written over");
     }
 
@@ -1763,12 +1770,13 @@ mod tests {
     fn the_status_reads_what_the_files_say() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "rotstatus");
+        let files = AgentFiles::of(&paths);
         let (current, _) = super::super::load_or_create(&paths).unwrap();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
         let now = 10_000_000;
         assert_eq!(paths.rotation_status(None, now).state, "idle");
         assert_eq!(paths.rotation_status(Some(&st), now).state, "idle");
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&files);
         store.stage(&staged(&paths, 8, Assurance::Auto, now - 1_000)).unwrap();
         let shown = paths.rotation_status(Some(&st), now);
         assert_eq!((shown.state.as_str(), shown.code.as_ref()), ("staged", None), "no code without high assurance");
