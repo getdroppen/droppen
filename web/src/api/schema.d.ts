@@ -1897,7 +1897,7 @@ export interface paths {
          *     so the answer is about what was unread *before* the reader got there, and
          *     no later report can move it. Read-only and ungated like search, and answered
          *     over the same cached parse, so the index is one the history route can page
-         *     to. See [`crate::attention::first_unread`].
+         *     to. See [`crate::sessions::attention::first_unread`].
          */
         get: operations["session_first_unread"];
         put?: never;
@@ -5613,14 +5613,14 @@ export interface components {
              *     it runs with approvals off, and every interactive request its app server
              *     makes is refused, so it has no way to stop and ask.
              *
-             *     `#[serde(default)]` for the summaries [`crate::db::index`] cached before
+             *     `#[serde(default)]` for the summaries [`crate::sessions::index`] cached before
              *     this field existed; the live overlay fills it in.
              */
             asking?: boolean;
             /**
              * @description When the assistant last spoke on the main chain, ISO-8601.
              *
-             *     Derived from the transcript by [`crate::attention`], not stored; `null`
+             *     Derived from the transcript by [`crate::sessions::attention`], not stored; `null`
              *     for a session the assistant has not said anything in yet.
              */
             attentionAt: string | null;
@@ -5714,7 +5714,7 @@ export interface components {
              *     Filled in by the ownership overlay — `claude::mark_owned` and
              *     `codex::apply_ownership` — alongside `scope`, because both can change
              *     without the transcript being touched and neither may be cached against
-             *     it. `#[serde(default)]` for the summaries [`crate::db::index`] cached
+             *     it. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached
              *     before this field existed: they parse, and the overlay fills them in.
              */
             server?: string;
@@ -5745,7 +5745,7 @@ export interface components {
              *     CLI's own synthetic notices — counted from the start for a session never
              *     opened. Not suppressed while a turn runs, unlike `unread`: a working
              *     session can be holding answers nobody has read. `unread` is never true
-             *     with a count of zero. See [`crate::attention::unread`].
+             *     with a count of zero. See [`crate::sessions::attention::unread`].
              */
             unreadCount: number;
             /** @description Transcript mtime, ISO-8601. */
