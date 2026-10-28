@@ -1559,12 +1559,12 @@ async fn deadline(deadline: Option<Instant>) {
 /// A pty read can land anywhere, including the middle of a UTF-8 sequence, and
 /// the frames going out are text — so a naive `from_utf8_lossy` per read would
 /// permanently corrupt any character unlucky enough to straddle two reads.
-trait CarryExt {
+trait Utf8CarryExt {
     /// Every complete character, leaving a partial one behind.
     fn take_utf8(&mut self) -> String;
 }
 
-impl CarryExt for Vec<u8> {
+impl Utf8CarryExt for Vec<u8> {
     fn take_utf8(&mut self) -> String {
 
         let mut out = String::new();
