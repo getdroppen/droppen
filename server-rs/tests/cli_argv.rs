@@ -382,15 +382,102 @@ fn plugin_and_notify_argv_keep_their_shape() {
     }
 }
 
+/// `replay` keeps its `--flag=value` refusal and its bare `--` refusal, and the shims keep the mandatory
+/// separator and the values that look like flags.
+#[test]
+fn replay_and_the_shims_keep_their_grammar() {
+    let invocation = Invocation::new();
+
+    // These parse and reach the file/spawn work (which fails in this empty home).
+    for argv in [
+        vec!["replay", "--log", "/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home"],
+        vec!["replay", "--home", "/tmp/probe-replay-home", "--log", "--"],
+        vec!["replay", "--log", "/nonexistent/a.ndjson", "--home", "/tmp/probe-replay-home", "--speed", "4", "--instant"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(!stderr(&output).to_lowercase().contains("usage"), "{argv:?} was parsed: {}", stderr(&output));
+    }
+    for argv in [
+        vec!["replay", "--log=a", "--home", "b"],
+        vec!["replay", "--log", "a", "--home", "b", "--"],
+        vec!["replay", "--log", "a", "--home", "b", "--nope"],
+        vec!["replay", "--log", "a", "--home", "b", "extra"],
+        vec!["replay", "--log", "a", "--home", "b", "--speed", "0"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}");
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+
+    // A value may be `--`, and the command after the separator is never parsed as a flag.
+    for argv in [
+        vec!["pty-shim", "--socket", "/tmp/s", "--exit-file", "/tmp/e", "--cols", "x", "--rows", "y", "--", "/nonexistent-cmd"],
+        vec!["pty-shim", "--socket", "--", "--exit-file", "/tmp/e", "--", "/nonexistent-cmd", "--socket", "-c"],
+        vec!["session-shim", "--socket", "/tmp/s", "--stderr-file", "/tmp/err", "--exit-file", "/tmp/e", "--buffer-bytes", "x", "--", "/nonexistent-cmd"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stderr(&output).contains("cannot spawn"), "{argv:?} was parsed: {}", stderr(&output));
+    }
+    for argv in [
+        vec!["pty-shim", "--socket=/tmp/s", "--exit-file", "/tmp/e", "--", "/bin/true"],
+        vec!["pty-shim", "--socket", "/tmp/s", "--exit-file", "/tmp/e", "/bin/true"],
+        vec!["pty-shim", "--socket", "/tmp/s", "--exit-file", "/tmp/e", "--"],
+        vec!["session-shim", "--socket", "/tmp/s", "--stderr-file=/tmp/err", "--exit-file", "/tmp/e", "--", "/bin/true"],
+        vec!["session-shim", "--socket", "/tmp/s", "--stderr-file", "/tmp/err", "--exit-file", "/tmp/e"],
+    ] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 1, "{argv:?}");
+        assert!(stdout(&output).is_empty(), "{argv:?}");
+        assert!(!stderr(&output).is_empty(), "{argv:?}");
+    }
+}
+
+/// `export-openapi` takes the first exact `--out` and ignores everything else, `--out=…` included.
+#[test]
+fn export_openapi_scans_its_tail() {
+    let invocation = Invocation::new();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let first = dir.path().join("first.json");
+    let second = dir.path().join("second.json");
+    let ignored = dir.path().join("ignored.json");
+
+    let output = invocation.run(&[
+        "export-openapi",
+        "--out",
+        first.to_str().expect("utf8"),
+        "junk",
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let spec = std::fs::read_to_string(&first).expect("the spec was written");
+    assert!(spec.trim_start().starts_with('{'), "{}", &spec[..spec.len().min(80)]);
+
+    let output = invocation.run(&[
+        "export-openapi",
+        &format!("--out={}", ignored.display()),
+        "--out",
+        second.to_str().expect("utf8"),
+        "--out",
+        "/nonexistent/never.json",
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(second.exists(), "the first exact --out wins");
+    assert!(!ignored.exists(), "--out=… is not the word --out");
+}
+
 /// The unconverted commands still receive their exact tail, including a `--help` that their own parser
 /// refuses, and the two whose tails are ignored stay permissive.
 #[test]
 fn the_legacy_tails_are_untouched() {
     let invocation = Invocation::new();
 
-    let output = invocation.run(&["preflight", "junk"]);
-    assert_eq!(code(&output), 0, "{}", stderr(&output));
-    assert!(stdout(&output).contains("ok (instance probe)"), "{}", stdout(&output));
+    for argv in [vec!["preflight", "junk"], vec!["preflight", "--help"], vec!["preflight", "junk", "--x"]] {
+        let output = invocation.run(&argv);
+        assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
+        assert!(stdout(&output).contains("ok (instance probe)"), "{argv:?}: {}", stdout(&output));
+    }
 
     let output = invocation.run(&["user", "list"]);
     assert_eq!(code(&output), 0, "{}", stderr(&output));

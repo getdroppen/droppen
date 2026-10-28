@@ -35,6 +35,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use clap::{CommandFactory, FromArgMatches, Parser};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{Event, Line};
@@ -82,38 +83,42 @@ impl Default for Options {
 }
 
 /// Read the command line, or say what is wrong with it.
+///
+/// Every occurrence of `--speed`/`--max-gap` is validated in the order written,
+/// not just the last: the old parser refused a bad value before it could see a
+/// later good one, and a repeated option takes the last *valid* one.
 pub fn parse(argv: &[String]) -> Result<Options, String> {
-    let mut options = Options::default();
-    let mut index = 0;
-    let value = |index: &mut usize, flag: &str| -> Result<String, String> {
-        *index += 1;
-        argv.get(*index).cloned().ok_or_else(|| format!("{flag} needs a value\n\n{USAGE}"))
-    };
-    while index < argv.len() {
-        match argv[index].as_str() {
-            "--log" => options.log = PathBuf::from(value(&mut index, "--log")?),
-            "--home" => options.home = PathBuf::from(value(&mut index, "--home")?),
-            "--instance" => options.instance = value(&mut index, "--instance")?,
-            "--speed" => {
-                let raw = value(&mut index, "--speed")?;
-                options.speed = raw.parse::<f64>().map_err(|_| format!("--speed wants a number, not {raw:?}"))?;
-                if !(options.speed.is_finite() && options.speed > 0.0) {
-                    return Err("--speed must be greater than zero".to_string());
-                }
-            }
-            "--max-gap" => {
-                let raw = value(&mut index, "--max-gap")?;
-                let secs = raw.parse::<f64>().map_err(|_| format!("--max-gap wants seconds, not {raw:?}"))?;
-                if !(secs.is_finite() && secs >= 0.0) {
-                    return Err("--max-gap must not be negative".to_string());
-                }
-                options.max_gap = Duration::from_secs_f64(secs);
-            }
-            "--instant" => options.instant = true,
-            other => return Err(format!("unknown option {other:?}\n\n{USAGE}")),
-        }
-        index += 1;
+    if let Some(token) = refused_spelling(argv) {
+        return Err(format!("unknown option {token:?}\n\n{USAGE}"));
     }
+    let cli = replay_command()
+        .try_get_matches_from(std::iter::once("replay".to_string()).chain(argv.iter().cloned()))
+        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let cli = ReplayCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{USAGE}"))?;
+    let mut options = Options::default();
+    if let Some(raw) = cli.log.last() {
+        options.log = PathBuf::from(raw);
+    }
+    if let Some(raw) = cli.home.last() {
+        options.home = PathBuf::from(raw);
+    }
+    if let Some(instance) = cli.instance.last() {
+        options.instance = instance.clone();
+    }
+    for raw in &cli.speed {
+        options.speed = raw.parse::<f64>().map_err(|_| format!("--speed wants a number, not {raw:?}"))?;
+        if !(options.speed.is_finite() && options.speed > 0.0) {
+            return Err("--speed must be greater than zero".to_string());
+        }
+    }
+    for raw in &cli.max_gap {
+        let secs = raw.parse::<f64>().map_err(|_| format!("--max-gap wants seconds, not {raw:?}"))?;
+        if !(secs.is_finite() && secs >= 0.0) {
+            return Err("--max-gap must not be negative".to_string());
+        }
+        options.max_gap = Duration::from_secs_f64(secs);
+    }
+    options.instant = cli.instant > 0;
     if options.log.as_os_str().is_empty() {
         return Err(format!("--log is required\n\n{USAGE}"));
     }
@@ -121,6 +126,67 @@ pub fn parse(argv: &[String]) -> Result<Options, String> {
         return Err(format!("--home is required\n\n{USAGE}"));
     }
     Ok(options)
+}
+
+/// The spellings this command refused before clap: `--flag=value` was an
+/// unknown option, and a bare `--` not consumed as an option's value was one
+/// too (clap would take it as a terminator and run). The token after a
+/// value-taking option is skipped: it was that option's value, whatever it
+/// looked like.
+fn refused_spelling(argv: &[String]) -> Option<&str> {
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--log" | "--home" | "--instance" | "--speed" | "--max-gap" => {
+                iter.next();
+            }
+            "--instant" => {}
+            "--" => return Some(arg),
+            other if is_attached(other) => return Some(other),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A value-taking option and its value in one word.
+fn is_attached(arg: &str) -> bool {
+    ["--log=", "--home=", "--instance=", "--speed=", "--max-gap=", "--instant="]
+        .iter()
+        .any(|prefix| arg.starts_with(prefix))
+}
+
+/// `replay`'s command tree, shown under the name this binary was run as.
+fn replay_command() -> clap::Command {
+    let name = crate::program::Name::invoked();
+    ReplayCli::command()
+        .bin_name(format!("{} replay", name.command()))
+        .after_long_help(name.rewrite(USAGE).into_owned())
+}
+
+/// `replay`'s command line. The options take the next token as their value,
+/// even one that looks like a flag, as the hand parser did.
+#[derive(Debug, Parser)]
+#[command(
+    name = "replay",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct ReplayCli {
+    #[arg(long, allow_hyphen_values = true)]
+    log: Vec<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    home: Vec<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    instance: Vec<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    speed: Vec<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    max_gap: Vec<String>,
+    #[arg(long, action = clap::ArgAction::Count)]
+    instant: u8,
 }
 
 /// What `--help` and every refusal print.
@@ -424,8 +490,14 @@ mod tests {
         assert!(bare(&["--log", "/tmp/a"]).contains("--home is required"));
         assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "0"]).contains("greater than zero"));
         assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "fast"]).contains("wants a number"));
-        assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--nope"]).contains("unknown option"));
-        assert!(bare(&["--log"]).contains("needs a value"));
+        assert!(
+            bare(&["--log", "/tmp/a", "--home", "/tmp", "--nope"]).contains("unexpected argument '--nope'"),
+            "unknown option"
+        );
+        assert!(
+            bare(&["--log"]).contains("a value is required for '--log <LOG>'"),
+            "needs a value"
+        );
     }
 
     /// The two knobs that make a six-hour session watchable in five minutes.
@@ -614,4 +686,62 @@ mod tests {
         let content = std::fs::read_to_string(&file).expect("the transcript");
         assert_eq!(content, "{\"n\":1}\n", "the second replay replaced the first: {content:?}");
     }
+    /// The replay command lines, pinned so the hand parser and clap answer
+    /// alike. A value-taking option consumes the next token whatever it looks
+    /// like, `--flag=value` is not a spelling here, and repeats take the last.
+    #[test]
+    fn the_replay_argument_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let accepted: Vec<Vec<String>> = [
+            &["--log", "a", "--home", "b"][..],
+            &["--home", "b", "--log", "a"],
+            &["--log", "a", "--home", "b", "--instance", "i", "--speed", "4", "--max-gap", "0.5", "--instant"],
+            &["--log", "a", "--log", "c", "--home", "b"],
+            &["--log", "--", "--home", "b"],
+            &["--log", "a", "--home", "--"],
+            &["--log", "a", "--home", "b", "--instant", "--instant"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &accepted {
+            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        }
+        let parsed = parse(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
+        assert_eq!(parsed.log, PathBuf::from("c"), "the last --log wins");
+        assert_eq!(parsed.home, PathBuf::from("b"));
+        assert_eq!(parse(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
+
+        let refused: Vec<Vec<String>> = [
+            &[][..],
+            &["--log", "a"],
+            &["--home", "b"],
+            &["--log"],
+            &["--log", "a", "--home", "b", "--nope"],
+            &["--log=a", "--home", "b"],
+            &["--instant"],
+            &["--log", "a", "--home", "b", "--speed"],
+            &["--log", "a", "--home", "b", "--speed", "fast"],
+            &["--log", "a", "--home", "b", "--speed", "0"],
+            &["--log", "a", "--home", "b", "--speed", "-1"],
+            &["--log", "a", "--home", "b", "--speed", "inf"],
+            &["--log", "a", "--home", "b", "--speed", "infinity"],
+            &["--log", "a", "--home", "b", "--max-gap", "x"],
+            &["--log", "a", "--home", "b", "--max-gap", "-2"],
+            &["--log", "a", "--home", "b", "--max-gap", "NaN"],
+            &["--log", "a", "--home", "b", "extra"],
+            &["--log", "a", "--home", "b", "--"],
+            &["--log", "a", "--home", "b", "--", "x"],
+            // A value-taking option before --instance takes it as its value;
+            // the word after it is then an unknown argument, as before.
+            &["--log", "--instance", "x", "--home", "y"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &refused {
+            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
 }

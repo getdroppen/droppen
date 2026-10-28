@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use clap::Parser;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, watch};
@@ -93,42 +94,16 @@ pub struct Args {
 /// command. The separator is not a nicety: a command line assembled without one
 /// eventually gets a flag-shaped argument through to the wrong parser.
 pub fn parse(argv: &[String]) -> Result<Args, String> {
-    let mut socket = None;
-    let mut exit_file = None;
-    let mut cols = None;
-    let mut rows = None;
-    let mut rest = None;
-
-    let mut index = 0;
-    while index < argv.len() {
-        match argv[index].as_str() {
-            "--" => {
-                rest = Some(argv[index + 1..].to_vec());
-                break;
-            }
-            "--socket" => {
-                socket = argv.get(index + 1).cloned();
-                index += 2;
-            }
-            "--exit-file" => {
-                exit_file = argv.get(index + 1).cloned();
-                index += 2;
-            }
-            "--cols" => {
-                cols = argv.get(index + 1).and_then(|value| value.parse::<u16>().ok());
-                index += 2;
-            }
-            "--rows" => {
-                rows = argv.get(index + 1).and_then(|value| value.parse::<u16>().ok());
-                index += 2;
-            }
-            other => return Err(format!("pty-shim: unexpected argument {other:?}")),
-        }
+    if let Some(token) = refused_spelling(argv) {
+        return Err(format!("pty-shim: unexpected argument {token:?}"));
     }
-
-    let socket = socket.ok_or_else(|| "pty-shim: --socket is required".to_string())?;
-    let exit_file = exit_file.ok_or_else(|| "pty-shim: --exit-file is required".to_string())?;
-    let mut rest = rest.ok_or_else(|| "pty-shim: the command must follow `--`".to_string())?;
+    let cli = PtyShimCli::try_parse_from(std::iter::once("pty-shim".to_string()).chain(argv.iter().cloned()))
+        .map_err(|error| error.to_string())?;
+    let socket = cli.socket.ok_or_else(|| "pty-shim: --socket is required".to_string())?;
+    let exit_file = cli.exit_file.ok_or_else(|| "pty-shim: --exit-file is required".to_string())?;
+    // Required by hand, in the old order and with the old words: clap would
+    // name the missing command first and say it differently.
+    let mut rest = cli.command;
     if rest.is_empty() {
         return Err("pty-shim: the command must follow `--`".to_string());
     }
@@ -138,9 +113,64 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
         exit_file: PathBuf::from(exit_file),
         command,
         args: rest,
-        // Both or neither: half a size is not a size.
-        size: cols.zip(rows).filter(|(cols, rows)| *cols > 0 && *rows > 0),
+        // Both or neither: half a size is not a size. A value the old parser
+        // could not read as a number is the same as one that was not given.
+        size: cli
+            .cols
+            .and_then(|value| value.parse::<u16>().ok())
+            .zip(cli.rows.and_then(|value| value.parse::<u16>().ok()))
+            .filter(|(cols, rows)| *cols > 0 && *rows > 0),
     })
+}
+
+/// The spelling this shim refused before clap: `--flag=value` was an
+/// unexpected argument. The token after a value-taking flag is skipped: it was
+/// that flag's value, whatever it looked like. The first other `--` is the
+/// mandatory separator, where the command begins.
+fn refused_spelling(argv: &[String]) -> Option<&str> {
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--" => return None,
+            "--socket" | "--exit-file" | "--cols" | "--rows" => {
+                iter.next();
+            }
+            other if is_attached(other) => return Some(other),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A flag and its value in one word.
+fn is_attached(arg: &str) -> bool {
+    ["--socket=", "--exit-file=", "--cols=", "--rows="]
+        .iter()
+        .any(|prefix| arg.starts_with(prefix))
+}
+
+/// `pty-shim`'s command line: its flags, then the mandatory `--` and the
+/// command it runs. `last` is what makes the separator mandatory and keeps
+/// everything after it out of clap's flag parsing.
+#[derive(Debug, Parser)]
+#[command(
+    name = "pty-shim",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    disable_help_subcommand = true,
+    args_override_self = true
+)]
+struct PtyShimCli {
+    #[arg(long, allow_hyphen_values = true)]
+    socket: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    exit_file: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    cols: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    rows: Option<String>,
+    #[arg(last = true, num_args = 0..)]
+    command: Vec<String>,
 }
 
 /// What a connection's mixer task is told to do.
@@ -1702,4 +1732,58 @@ mod tests {
         assert_eq!(frames[0].kind, proto::EXIT);
         assert_eq!(frames[0].parse::<Exit>().expect("an exit frame").code, 3);
     }
+    /// The shim command lines, pinned so the hand parser and clap answer alike.
+    /// A value-taking flag consumes the next token (even `--`), repeats take the
+    /// last, a bad number is ignored, and the separator is mandatory.
+    #[test]
+    fn the_pty_shim_argument_table() {
+        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
+        let accepted: Vec<Vec<String>> = [
+            &["--socket", "/s", "--exit-file", "/e", "--", "/bin/sh"][..],
+            &["--exit-file", "/e", "--socket", "/s", "--", "/bin/sh", "-l"],
+            &["--socket", "/s", "--socket", "/s2", "--exit-file", "/e", "--", "/bin/sh"],
+            &["--socket", "--", "--exit-file", "/e", "--", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--cols", "80", "--rows", "24", "--", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--cols", "80", "--", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--cols", "x", "--rows", "y", "--", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--cols", "5", "--cols", "x", "--rows", "2", "--", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--", "/bin/sh", "--socket", "-c", "echo"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &accepted {
+            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        }
+        let parsed = parse(&words(&["--socket", "/s", "--socket", "/s2", "--exit-file", "/e", "--", "/bin/sh"])).expect("parsed");
+        assert_eq!(parsed.socket, PathBuf::from("/s2"), "the last --socket wins");
+        let parsed = parse(&words(&["--socket", "--", "--exit-file", "/e", "--", "/bin/sh"])).expect("parsed");
+        assert_eq!(parsed.socket, PathBuf::from("--"), "a `--` value");
+        assert_eq!(parse(&words(&["--socket", "/s", "--exit-file", "/e", "--cols", "x", "--rows", "y", "--", "/bin/sh"])).expect("parsed").size, None);
+        let sized = parse(&words(&["--socket", "/s", "--exit-file", "/e", "--cols", "80", "--rows", "24", "--", "/bin/sh"])).expect("parsed");
+        assert_eq!(sized.size, Some((80, 24)));
+        let half = parse(&words(&["--socket", "/s", "--exit-file", "/e", "--cols", "80", "--", "/bin/sh"])).expect("parsed");
+        assert_eq!(half.size, None, "half a size is not a size");
+
+        let refused: Vec<Vec<String>> = [
+            &[][..],
+            &["--socket", "/s", "--exit-file", "/e"],
+            &["--socket", "/s", "--exit-file", "/e", "--"],
+            &["--socket", "/s", "--exit-file", "/e", "/bin/sh"],
+            &["--socket", "/s", "--exit-file", "/e", "--socket=/s2", "--", "/bin/sh"],
+            &["--socket=/s", "--exit-file", "/e", "--", "/bin/sh"],
+            &["--exit-file", "/e", "--", "/bin/sh"],
+            &["--socket", "/s", "--", "/bin/sh"],
+            &["--help"],
+            &["--socket", "/s", "--exit-file", "/e", "--help", "--", "/bin/sh"],
+            &["--socket", "--instance", "x", "--exit-file", "/e", "--", "/bin/sh"],
+        ]
+        .into_iter()
+        .map(words)
+        .collect();
+        for argv in &refused {
+            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        }
+    }
+
 }

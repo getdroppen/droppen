@@ -9,10 +9,11 @@ use remote_hand_server::GotchaResult;
 
 mod export;
 
-/// The top-level commands. The parsed values for subcommands that still have
-/// their own hand parser are not used: each is handed the original tail, so
-/// that parser sees exactly what it saw before (including a `--` it treats as
-/// an ordinary word).
+/// The top-level commands. `serve`, `up`, `preflight` and `export-openapi`
+/// carry their arguments untouched: their tails are ignored, forwarded verbatim
+/// or scanned for one exact `--out` (see `run`), none of which is a clap
+/// grammar. The other commands' own parsers receive the original tail too, so
+/// each sees exactly the bytes it saw before clap.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run the server (the default with no command).
@@ -56,10 +57,10 @@ enum Command {
     SessionShim(RawTail),
 }
 
-/// Arguments a command parses itself. Declared so clap accepts any tail at all
-/// for it; the dispatch passes the original argv tail rather than this copy,
-/// because clap reserves `--` as an option terminator and these parsers never
-/// did.
+/// Arguments a command takes untouched. Declared so clap accepts any tail at
+/// all for it; the dispatch passes the original argv tail rather than this
+/// copy, because clap reserves `--` as an option terminator and these commands
+/// never did.
 #[derive(Debug, Args)]
 struct RawTail {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0.., hide = true)]
@@ -115,6 +116,10 @@ fn main() -> std::process::ExitCode {
             print!("{text}");
             return std::process::ExitCode::SUCCESS;
         }
+        // Printed bare, with no logging and no side effects, because
+        // `POST /api/server/self-upgrade` runs exactly this on a binary it is
+        // deciding whether to install and reads the whole of stdout as the
+        // answer. Anything else on this stream would become part of the version.
         Ok(Parsed::Version) => {
             println!("{}", remote_hand_server::api::SERVER_VERSION);
             return std::process::ExitCode::SUCCESS;
@@ -236,6 +241,10 @@ async fn run(invocation: Invocation, args: Vec<String>) -> GotchaResult<()> {
         // `serve` is the default, and its tail has always been ignored.
         Invocation::Serve => RemoteHandApp::default().run_server().await,
         Invocation::ExportOpenapi => {
+            // The grammar is "the first exact --out anywhere, take the next
+            // token (whatever it is); every other argument is ignored", which
+            // clap has no way to say: a declared --out would float and
+            // `--out=value`, which is ignored here, would be accepted.
             let out = flag_value(tail, "--out").map(PathBuf::from);
             export::export_openapi(out).await
         }
@@ -375,8 +384,8 @@ else the first account is made on the page with the one-time setup code the
 server keeps in <data>/instances/<instance>/setup-code (`setup-code` shows it;
 it is printed only to a terminal). `user add` makes it here, with no code:
 whoever can run this binary already has the operating-system account the
-server runs as. An instance created on a machine that already has accounts
-inherits them. `APP_AUTH__ENABLED=false` switches authentication off — every
+server runs as. Accounts belong to one instance: another instance on the same
+machine has its own. `APP_AUTH__ENABLED=false` switches authentication off — every
 route then answers anyone who can reach the port; for development and tests
 only.
 
@@ -484,4 +493,39 @@ mod tests {
             assert!(parse(&args(&argv)).is_err(), "{argv:?} must be refused");
         }
     }
+    /// `export-openapi` takes the first exact `--out` and its next token, and
+    /// ignores every other argument; `--out=…` is not that word.
+    #[test]
+    fn export_openapi_scans_for_the_first_exact_out() {
+        assert_eq!(flag_value(&args(&["--out", "a.json"]), "--out"), Some("a.json".to_string()));
+        assert_eq!(
+            flag_value(&args(&["junk", "--out", "a.json", "--out", "b.json"]), "--out"),
+            Some("a.json".to_string()),
+            "the first one"
+        );
+        assert_eq!(flag_value(&args(&["--out=--"]), "--out"), None);
+        assert_eq!(flag_value(&args(&["--out"]), "--out"), None, "no value means stdout");
+        assert_eq!(flag_value(&args(&["--out", "--", "x"]), "--out"), Some("--".to_string()));
+        assert_eq!(flag_value(&args(&[]), "--out"), None);
+    }
+
+    /// The commands with no clap grammar still take any tail; the dispatch
+    /// ignores, forwards or scans it.
+    #[test]
+    fn the_raw_tail_commands_take_any_arguments() {
+        for argv in [
+            vec!["serve", "--help"],
+            vec!["serve", "junk", "--x"],
+            vec!["preflight", "--help"],
+            vec!["preflight", "junk"],
+            vec!["export-openapi", "--out=x"],
+            vec!["export-openapi", "--out", "x", "junk"],
+            vec!["up", "--"],
+            vec!["up", "--", "serve", "--flag"],
+            vec!["up", "--help"],
+        ] {
+            assert!(matches!(parse(&args(&argv)), Ok(Parsed::Run(_))), "{argv:?}");
+        }
+    }
+
 }
