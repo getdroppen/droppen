@@ -46,6 +46,7 @@ import { hostMode, moveOrigins } from "@/lib/hub/hosts";
 import { isLinkPath, LinkFlow, NoOpenerScreen, startHandshake, useNoOpener } from "@/features/link/link-popup";
 import { FrontPageView } from "@/features/landing/front-pages";
 import { provideCloudParts } from "@/app/cloud-parts";
+import { prefetchViews } from "@/app/view-prefetch";
 import { CloudBar } from "./cloud-bar";
 import { AddDeviceHint, SideBySideTip } from "./onboarding-hints";
 import { CopyWindowNotice } from "./plan";
@@ -1302,6 +1303,9 @@ export function GenesisScreen({ account, onDone }: { account: CloudAccount; onDo
 function ShellView({ shell, children }: { shell: HubShell; children: ReactNode }) {
   const focus = useStore(shell.focus);
   const pathname = usePathname();
+  // The machine's views, fetched while 「我的设备」 is read: the router that
+  // would start this renders only with a machine in view.
+  useEffect(prefetchViews, []);
   if (focus !== null) return <>{children}</>;
   // The account's settings: the other page with no device in view (`devices-route.ts`).
   if (isAccountPath(pathname)) return <AccountScreen account={shell.account} link={shell.link} />;

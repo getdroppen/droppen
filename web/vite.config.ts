@@ -10,6 +10,7 @@ import { pluginShared } from "./build/plugin-shared";
 import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
+import { viewPrefetch } from "./build/view-prefetch";
 
 /**
  * Which server `pnpm dev` talks to.
@@ -83,6 +84,32 @@ const ON_DEMAND = [
   "cytoscape",
   "layout-base",
   "cose-base",
+];
+
+/**
+ * The views the page fetches ahead of use once its first page is drawn
+ * (`src/app/view-prefetch.ts`, `build/view-prefetch.ts`), in this order: what
+ * a visit most likely opens next. A new session and a session, from the list
+ * the app opens on; the chats; files and terminals; settings, stats and
+ * updates; the rest. The terminal itself last: xterm is the largest by far,
+ * and only a terminal draws it. Math and diagrams stay on demand: only a
+ * message that holds one fetches them.
+ */
+const PREFETCH = [
+  "src/features/sessions/new-session-view.tsx",
+  "src/features/sessions/session-detail.tsx",
+  "src/features/chat/claude-chat-view.tsx",
+  "src/features/chat/chat-home.tsx",
+  "src/features/chat/api-chat-view.tsx",
+  "src/features/files/files-view.tsx",
+  "src/features/terminals/terminals-view.tsx",
+  "src/features/settings/settings-view.tsx",
+  "src/features/stats/stats-view.tsx",
+  "src/features/updates/updates-view.tsx",
+  "src/features/sessions/subagent-view.tsx",
+  "src/features/screens/screen-view.tsx",
+  "src/features/apps/app-view.tsx",
+  "src/features/terminals/xterm-pane.tsx",
 ];
 
 /**
@@ -203,6 +230,8 @@ export default defineConfig({
     guardBootChunks(ON_DEMAND),
     // No cloud code in the local app's boot; the shell preloads the cloud app's chunks where a hub serves it.
     localBoot(),
+    // The views' files, written into the app for it to fetch after the first page.
+    viewPrefetch(PREFETCH),
     precacheBootSet(),
     // Static-hosting output, only with `DROPPEN_WEB_MODE=cloud` (a no-op otherwise).
     cloudBuild(cloud),
