@@ -5,7 +5,7 @@ use rh_proto::identity::MachineIdentity;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::fsutil::{check_private, write_private_reporting_path};
+use droppen_base::fsutil::{check_private, write_private_reporting_path};
 use super::AgentFiles;
 use crate::paths::Paths;
 
@@ -119,7 +119,7 @@ impl FileSeedStore {
     /// Where the staging of `nonce` waits: `machine-key.next-<nonce hex>.json`
     /// beside `machine-key.json`.
     pub fn staging_path(&self, nonce: &[u8; 16]) -> PathBuf {
-        self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), crate::text::hex(nonce)))
+        self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), droppen_base::text::hex(nonce)))
     }
 
     /// `machine-key.expired-` — what a staging set aside as expired is
@@ -132,7 +132,7 @@ impl FileSeedStore {
     /// Where the staging of `nonce` is kept once set aside as expired:
     /// `machine-key.expired-<nonce hex>.json` beside `machine-key.json`.
     pub fn expired_path(&self, nonce: &[u8; 16]) -> PathBuf {
-        self.path.with_file_name(format!("{}{}.json", self.expired_prefix(), crate::text::hex(nonce)))
+        self.path.with_file_name(format!("{}{}.json", self.expired_prefix(), droppen_base::text::hex(nonce)))
     }
 
     /// The files beside the seed whose names start with `prefix`.
@@ -209,11 +209,11 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(bad(&format!("unsupported key file version {}", file.version)));
         }
-        let seed = crate::text::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
-        let nonce = crate::text::unhex(&file.nonce)
+        let seed = droppen_base::text::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let nonce = droppen_base::text::unhex(&file.nonce)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
-        let chain_head = crate::text::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
+        let chain_head = droppen_base::text::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
         let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
         Ok(StagedSeed {
             uuid: file.uuid,
@@ -258,7 +258,7 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(format!("{}: unsupported key file version {}", path.display(), file.version));
         }
-        let seed = crate::text::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
+        let seed = droppen_base::text::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
         Ok(Some(StoredSeed {
             uuid: file.uuid,
             seed: Zeroizing::new(seed),
@@ -285,10 +285,10 @@ impl FileSeedStore {
             serde_json::to_vec_pretty(&NextKeyFile {
                 version: 1,
                 uuid: staged.uuid.clone(),
-                seed: crate::text::hex(staged.seed.as_ref()),
-                nonce: crate::text::hex(&staged.nonce),
+                seed: droppen_base::text::hex(staged.seed.as_ref()),
+                nonce: droppen_base::text::hex(&staged.nonce),
                 chain_seq: staged.chain_seq,
-                chain_head: crate::text::hex(&staged.chain_head),
+                chain_head: droppen_base::text::hex(&staged.chain_head),
                 assurance: staged.assurance.to_byte(),
                 created_ms: staged.created_ms,
                 accepted_ms: staged.accepted_ms,

@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use crate::db::{scope, Db};
 use crate::paths::Paths;
-use crate::process_env::{apply_env, clean_env_bare};
+use droppen_base::process_env::{apply_env, clean_env_bare};
 
 /// What goes in the value column. Nothing reads it; the row is the fact.
 const PRESENT: &str = "1";

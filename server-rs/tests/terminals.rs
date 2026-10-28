@@ -169,7 +169,7 @@ async fn seed_mute_shim(shims: &Path, n: usize) -> tokio::net::UnixListener {
 }
 
 fn alive(pid: u32) -> bool {
-    remote_hand_server::procs::alive(pid)
+    droppen_base::procs::alive(pid)
 }
 
 fn kill_pid(pid: u32) {

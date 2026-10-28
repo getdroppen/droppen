@@ -1,7 +1,7 @@
 //! The guards every outbound webhook in this server shares.
 //!
-//! Both channels — Web Push ([`crate::push`]) and Bark
-//! ([`crate::notify::bark`]) — take an endpoint from stored configuration and
+//! Both channels — Web Push (the server's `push`) and Bark
+//! (`notify::bark`) — take an endpoint from stored configuration and
 //! POST to it. That endpoint is the one URL in a request path that ends in an
 //! outbound connection, so the two rules that keep it from becoming an SSRF
 //! jump live here, in one audited place:
@@ -24,7 +24,7 @@ use std::time::Duration;
 /// HTTPS always; plain HTTP only for loopback, and only when the caller's
 /// channel opted in. Parsing the endpoint rather than prefix-matching it is
 /// what makes `https://` and an unknown scheme fall on the right side.
-pub(crate) fn endpoint_is_acceptable(endpoint: &str, insecure_endpoints_allowed: bool) -> bool {
+pub fn endpoint_is_acceptable(endpoint: &str, insecure_endpoints_allowed: bool) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
     };
@@ -43,7 +43,7 @@ pub(crate) fn endpoint_is_acceptable(endpoint: &str, insecure_endpoints_allowed:
 /// can send that device notifications — so only the origin is ever written to a
 /// log line or shown in an API response. It is enough to tell a hosted service
 /// from a self-hosted one, and none of the secret.
-pub(crate) fn endpoint_origin(endpoint: &str) -> String {
+pub fn endpoint_origin(endpoint: &str) -> String {
     if endpoint.is_empty() {
         return String::new();
     }
@@ -63,9 +63,13 @@ pub(crate) fn endpoint_origin(endpoint: &str) -> String {
 /// on a background task, while a Bark nudge has an agent's `rh-notify` waiting
 /// on the answer. Building a client means building a rustls configuration, so
 /// each channel keeps one shared instance rather than one per request.
-pub(crate) fn no_redirect_client(timeout: Duration) -> Option<reqwest::Client> {
+///
+/// `version` is the server's own (its `CARGO_PKG_VERSION`), which the user
+/// agent `remote-hand/<version>` carries: this crate's version is not the
+/// release's.
+pub fn no_redirect_client(timeout: Duration, version: &str) -> Option<reqwest::Client> {
     reqwest::Client::builder()
-        .user_agent(concat!("remote-hand/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("remote-hand/{version}"))
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()

@@ -2,17 +2,9 @@
   "layers": [
     {
       "name": "base",
-      "about": "Helpers that know nothing of the server's subsystems: the clock, text, private files, processes, outbound requests, the environment, the config, the program's name, the instance's name and lock.",
+      "about": "What knows nothing of the server's subsystems: the config, the instance's name and lock. The other base helpers (the clock, text, private files, processes, outbound requests, the environment, the program's name) are the droppen-base crate, outside this check.",
       "modules": [
-        "time",
-        "text",
-        "fsutil",
-        "procs",
-        "outbound",
-        "env",
-        "process_env",
         "config",
-        "program",
         "instance"
       ]
     },

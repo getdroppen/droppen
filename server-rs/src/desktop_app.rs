@@ -2,7 +2,7 @@
 //!
 //! The app starts this binary as a sidecar with `DROPPEN_DESKTOP_APP=1` (and,
 //! for a pre-rename server, `RH_DESKTOP_APP=1`, which is still
-//! read: [`crate::env`]), and two things are different about such a server:
+//! read: [`droppen_base::env`]), and two things are different about such a server:
 //!
 //! * **It never replaces its binary.** The app runs the server it ships
 //!   inside its own bundle and is updated as a whole. `POST
@@ -22,8 +22,8 @@
 
 /// Whether this process was started by the desktop app.
 ///
-/// The spellings are [`crate::env::flag`]'s, like every other switch: `1`,
+/// The spellings are [`droppen_base::env::flag`]'s, like every other switch: `1`,
 /// `true`, `yes`, `on` (any case) turn it on, and nothing else does.
 pub fn from_env() -> bool {
-    crate::env::flag(crate::process_env::DESKTOP_APP_ENV)
+    droppen_base::env::flag(droppen_base::process_env::DESKTOP_APP_ENV)
 }

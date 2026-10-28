@@ -29,7 +29,7 @@ use serde_json::Value;
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use crate::paths::Paths;
-use crate::time::{iso8601, mtime_ms, now_ms};
+use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use super::transcript::title_line;
 use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};

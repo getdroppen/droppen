@@ -348,7 +348,7 @@ ticket 只活 60 秒。
 
 环境变量(服务端自己的是 `DROPPEN_*`;改名前的 `RH_*` / `REMOTE_HAND_*` 已弃用,到 v0.2.134 为止仍然认,
 用到时提示一次,v0.2.135 起不再生效——请改用同值的 `DROPPEN_*` 名字;两个都设而值不同时以新名为准,
-见 `server-rs/src/env.rs`):
+见 `server-rs/crates/droppen-base/src/env.rs`):
 
 - `APP_SERVER__HOST` / `APP_SERVER__PORT`:监听地址(默认 `127.0.0.1:8700`)。`APP_` 前缀与
   `__` 分隔是 gotcha 的配置约定。

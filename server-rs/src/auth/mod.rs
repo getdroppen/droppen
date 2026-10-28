@@ -299,7 +299,7 @@ impl Auth {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
                 rand::rngs::OsRng.fill_bytes(&mut bytes);
-                crate::text::hex(&bytes)
+                droppen_base::text::hex(&bytes)
             },
         })
     }
@@ -744,12 +744,12 @@ impl<S: Send + Sync> FromRequestParts<S> for MaybeIdentity {
 /// Write JSON `0600` through a temp file, atomically.
 ///
 /// The rule — temp, fsync, rename, `0600`, a `0700` directory — is written down
-/// once, in [`crate::fsutil::write_private`], where the other private stores of
+/// once, in [`droppen_base::fsutil::write_private`], where the other private stores of
 /// the tree write through it too. Password hashes and session tokens are what
 /// this file holds, so none of its steps is optional.
 fn write_json_private(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
     let body = format!("{}\n", serde_json::to_string_pretty(value)?);
-    crate::fsutil::write_private(path, body.as_bytes())
+    droppen_base::fsutil::write_private(path, body.as_bytes())
 }
 
 #[cfg(test)]

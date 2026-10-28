@@ -50,11 +50,11 @@ pub const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_NOTIFY_ALLOW_INSECURE_END
 /// `http://127.0.0.1:<port>/…` — that is, the loopback-only services on this
 /// host, including this server's own API.
 static CLIENT: std::sync::LazyLock<Option<reqwest::Client>> =
-    std::sync::LazyLock::new(|| crate::outbound::no_redirect_client(SEND_TIMEOUT));
+    std::sync::LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, env!("CARGO_PKG_VERSION")));
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
-    crate::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
+    droppen_base::env::flag(ALLOW_INSECURE_ENDPOINT_ENV)
 }
 
 /// What the user typed, turned into the URL a nudge is POSTed to.
@@ -103,7 +103,7 @@ pub fn normalize_endpoint(raw: &str) -> Option<String> {
 /// A *first-hop* check, which is why the shared `CLIENT` refuses to follow
 /// redirects.
 pub fn endpoint_is_acceptable(endpoint: &str) -> bool {
-    crate::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
+    droppen_base::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
 }
 
 /// An endpoint's scheme, host and port, and never its path.
@@ -115,7 +115,7 @@ pub fn endpoint_is_acceptable(endpoint: &str) -> bool {
 /// enough to tell `api.day.app` from a self-hosted server, and none of the
 /// secret.
 pub fn endpoint_origin(endpoint: &str) -> String {
-    crate::outbound::endpoint_origin(endpoint)
+    droppen_base::outbound::endpoint_origin(endpoint)
 }
 
 /// An endpoint a person can recognise but not use.

@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
 use crate::db::{self, Db};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How many random bytes a token carries. 256 bits, base64url'd to 43
 /// characters — long enough that the digest in the store is a one-way function
@@ -384,7 +384,7 @@ fn new_token() -> String {
 
 /// `sha256(token)` as lower-case hex — the only form of a token this server keeps.
 pub fn digest_of(token: &str) -> String {
-    crate::text::sha256_hex(token)
+    droppen_base::text::sha256_hex(token)
 }
 
 #[cfg(test)]

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::{FoundVia, InstallMethod, ToolFound, ToolId};
-use crate::process_env::{resolve_on_path, Env};
+use droppen_base::process_env::{resolve_on_path, Env};
 
 // The PATH rule itself lives in `droppen-path`, shared with the desktop app.
 pub use droppen_path::{base_dirs, build};

@@ -32,7 +32,7 @@ use super::{codex, transcript, SessionActivity, SessionSummary, Source};
 use crate::sessions::attention::seen;
 use crate::openapi_ext::Nullable;
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How recently a Claude subagent must have written to count as working
 /// while its parent is.

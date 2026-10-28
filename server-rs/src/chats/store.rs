@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 
 use super::{ChatError, Chats};
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How long a completion may take.
 ///

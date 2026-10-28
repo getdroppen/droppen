@@ -45,11 +45,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `terminals/` | 浏览器通过 websocket 驱动的 PTY |
 | `prefs/` `screens/` | 两个边车存储：界面偏好、持久化分屏布局 |
 | `stats/` `models.rs` | token 用量统计与模型列表 |
-| `claude_roots.rs` `process_env.rs` | 一次 spawn 跑在什么根目录下、带什么环境 |
+| `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
 | `instance.rs` | 一个服务端独占的实例目录，以及宣示所有权的 `flock` |
-| `procs.rs` | 「文件里那个 pid 还是当初那个进程吗」——重启后收养与发信号前的两道守卫 |
 | `selfupdate/` | `POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库 |
 | `supervisor.rs` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿 |
+| `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、环境变量的新旧名字（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 
 ## 四个「填坑」模块
 

@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::identity::ServerId;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
-use crate::time::mtime_ms;
+use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;
 use account::AccountRef;
 use util::TranscriptItem;

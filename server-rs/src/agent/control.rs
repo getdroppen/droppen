@@ -124,7 +124,7 @@ impl AgentStatus {
     /// files say ([`AgentFiles::rotation_status`]).
     pub fn of_instance(files: &AgentFiles, st: &AgentState) -> Self {
         Self {
-            rotation: files.rotation_status(Some(st), crate::time::now_ms_u64()),
+            rotation: files.rotation_status(Some(st), droppen_base::time::now_ms_u64()),
             ..Self::of(st)
         }
     }
@@ -509,7 +509,7 @@ impl Control {
             return Ok(false);
         }
         self.stop_locked().await;
-        super::rotation::re_enroll_fresh(&self.paths, crate::time::now_ms_u64()).map_err(ControlError::Failed)?;
+        super::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)?;
         Ok(true)
     }
 
@@ -521,7 +521,7 @@ impl Control {
     pub async fn re_enroll_fresh(&self) -> Result<MachineIdentity, ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        super::rotation::re_enroll_fresh(&self.paths, crate::time::now_ms_u64()).map_err(ControlError::Failed)
+        super::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)
     }
 
     /// Stop the link and delete everything under `agent/`: the state, the
@@ -976,7 +976,7 @@ mod tests {
         AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
         // What the crash left: the marker, the seed archived, the state kept.
         let agent = AgentFiles::of(&paths).machine_key().parent().unwrap().to_path_buf();
-        crate::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
+        droppen_base::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
         std::fs::rename(AgentFiles::of(&paths).machine_key(), AgentFiles::of(&paths).archived_key(5)).unwrap();
         control.attach(link_env(&paths));
         assert!(!AgentFiles::of(&paths).has_state(), "the old enrollment is forgotten");

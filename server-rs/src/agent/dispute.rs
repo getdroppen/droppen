@@ -37,8 +37,8 @@ use serde_json::{json, Value};
 use super::state::AgentState;
 use super::AgentFiles;
 use crate::aggregator::hub::HubOriginExt;
-use crate::text::hex;
-use crate::time::now_ms_u64;
+use droppen_base::text::hex;
+use droppen_base::time::now_ms_u64;
 
 /// The first wait after a delivery that failed…
 #[cfg(not(test))]
@@ -180,7 +180,7 @@ impl AgentFiles {
 
 fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| e.to_string())?;
-    crate::fsutil::write_private_reporting_path(path, &bytes)?;
+    droppen_base::fsutil::write_private_reporting_path(path, &bytes)?;
     super::sync_dir(path);
     Ok(())
 }
@@ -588,7 +588,7 @@ mod tests {
         assert_eq!((s.seq, s.created_ms, s.host.as_str(), s.account.as_str()), (first, 77, "m-1", "a-1"));
         assert_eq!(s.entry_hash, hex(&chain.hash_at(first).unwrap()));
         assert_eq!(s.new_sign, hex(&k1.sign_public()), "the key that renewal installed, not the latest");
-        let sig: [u8; 64] = crate::text::unhex(&s.sig).unwrap().try_into().unwrap();
+        let sig: [u8; 64] = droppen_base::text::unhex(&s.sig).unwrap().try_into().unwrap();
         assert!(chain.verify_rotate_dispute("m-1", first, &sig), "it verifies with rh-proto on the chain");
         assert!(!chain.verify_rotate_dispute("m-1", later, &sig));
         // The holder of K1 disputes the second renewal.
@@ -622,7 +622,7 @@ mod tests {
         assert!(!files.keep_dispute(&a).unwrap() && !files.keep_dispute(&b).unwrap(), "the very same ones again: duplicates");
         assert_eq!(files.kept_disputes().len(), 2);
         // Something in its place that is not it (damaged here) gives way.
-        crate::fsutil::write_private_reporting_path(&a.path(&files), b"{}").unwrap();
+        droppen_base::fsutil::write_private_reporting_path(&a.path(&files), b"{}").unwrap();
         assert!(files.keep_dispute(&a).unwrap());
         assert_eq!(files.kept_disputes().len(), 2);
         files.deliver_disputes();

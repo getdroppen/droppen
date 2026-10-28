@@ -31,13 +31,13 @@ pub const MAX_PEERS: usize = 16;
 
 /// Whether direct paths are on for this instance (`DROPPEN_AGENT_DIRECT=0` turns them off).
 pub fn enabled() -> bool {
-    crate::env::flag_or("DROPPEN_AGENT_DIRECT", true)
+    droppen_base::env::flag_or("DROPPEN_AGENT_DIRECT", true)
 }
 
 /// The peers' options: default-route host candidates and STUN.
 pub fn options() -> RtcOptions {
     RtcOptions {
-        stun: stun_from(crate::env::var_or_empty("DROPPEN_AGENT_DIRECT_STUN").as_deref()),
+        stun: stun_from(droppen_base::env::var_or_empty("DROPPEN_AGENT_DIRECT_STUN").as_deref()),
         default_route: true,
         loopback: false,
         blackhole: None,

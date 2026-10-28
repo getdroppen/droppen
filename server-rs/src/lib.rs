@@ -16,9 +16,10 @@
 //! * [`sessions`] — discovery, the transcript normalizer and the wire shapes;
 //! * [`feed`] — the per-session websocket feed, and [`feed::global`] the
 //!   session-list one behind `GET /api/events`;
-//! * [`claude_roots`] / [`process_env`] — what a spawn runs against and with;
-//! * [`env`] — the environment variables this server reads, under their
-//!   Droppen names and the ones they had before;
+//! * [`claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
+//!   against and with;
+//! * [`droppen_base::env`] — the environment variables this server reads,
+//!   under their Droppen names and the ones they had before;
 //! * [`accounts`] — several Claude logins, stored server-side, and the two pty
 //!   wizards that mint them;
 //! * [`inject`] — driving the local CLIs, one run per session;
@@ -88,12 +89,10 @@ pub mod config;
 pub mod db;
 pub mod desktop_app;
 pub mod drive;
-pub mod env;
 pub mod export;
 pub mod feed;
 pub mod files;
 pub mod http;
-pub(crate) mod fsutil;
 pub mod identity;
 pub mod inject;
 pub mod instance;
@@ -102,13 +101,9 @@ pub mod models;
 pub mod notify;
 pub mod openapi_ext;
 pub mod origin;
-pub(crate) mod outbound;
 pub mod paths;
 pub mod plugins;
 pub mod prefs;
-pub mod process_env;
-pub mod procs;
-pub mod program;
 pub mod pty_shim;
 pub mod push;
 pub mod record;
@@ -122,5 +117,3 @@ pub mod static_files;
 pub mod stats;
 pub mod supervisor;
 pub mod terminals;
-pub mod text;
-pub mod time;

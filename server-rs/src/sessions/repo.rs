@@ -113,11 +113,11 @@ const PROBE_CONCURRENCY: usize = 4;
 /// The environment a `git` probe runs with.
 ///
 /// Split out so the strip is testable without spawning anything.
-fn git_env() -> crate::process_env::Env {
+fn git_env() -> droppen_base::process_env::Env {
     // The harness's own variables would reach a hook `git` runs; the same
     // scrubbing every other spawn in the crate gets, plus the three that would
     // change the answer itself.
-    let mut env = crate::process_env::clean_env_bare();
+    let mut env = droppen_base::process_env::clean_env_bare();
     for key in GIT_LOCATION_OVERRIDES {
         env.remove(key);
     }
@@ -134,7 +134,7 @@ async fn probe(cwd: &Path) -> Option<String> {
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
-    crate::process_env::apply_env(&mut command, &git_env());
+    droppen_base::process_env::apply_env(&mut command, &git_env());
 
     let output = tokio::time::timeout(GIT_TIMEOUT, command.output()).await.ok()?.ok()?;
     if !output.status.success() {

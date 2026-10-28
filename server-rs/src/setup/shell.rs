@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use super::runner::{Invocation, RunOutput};
 use super::PathRead;
-use crate::process_env::Env;
+use droppen_base::process_env::Env;
 
 /// The opening fence.
 pub const BEGIN: &str = "__DROPPEN_SHELL_BEGIN__";

@@ -33,7 +33,7 @@
 //! common installs land in directories the server's `PATH` has from the start
 //! (`~/.local/bin`, `/opt/homebrew/bin`); for the rest, a re-read of the login
 //! shell (`POST /api/setup/tools/rescan`) rebuilds the `PATH` every child gets
-//! ([`crate::process_env::set_child_path`]) the way the desktop app builds it at
+//! ([`droppen_base::process_env::set_child_path`]) the way the desktop app builds it at
 //! launch, plus the directories the user adopted, which persist in this
 //! instance's `kv` table and are applied again at boot.
 //!
@@ -488,7 +488,7 @@ impl Setup {
             Arc::new(SystemRunner),
             Arc::new(|paths: &Paths, overlay| Probe::live(paths.home.clone(), overlay)),
             shell::login_shell(),
-            PathRead::from_app(std::env::var(crate::process_env::SHELL_READ_ENV).ok().as_deref()),
+            PathRead::from_app(std::env::var(droppen_base::process_env::SHELL_READ_ENV).ok().as_deref()),
         )
     }
 
@@ -562,9 +562,9 @@ impl Setup {
         if overlay.is_empty() {
             return;
         }
-        let path = locate::with_overlay(&crate::process_env::child_path(), &overlay);
+        let path = locate::with_overlay(&droppen_base::process_env::child_path(), &overlay);
         tracing::info!(dirs = overlay.len(), "adopted tool directories are on the children's PATH");
-        crate::process_env::set_child_path(Some(path));
+        droppen_base::process_env::set_child_path(Some(path));
     }
 
     /// The last read of the login shell, if any.
@@ -584,15 +584,15 @@ impl Setup {
     /// system's older `node`. A read that did not answer changes nothing.
     pub async fn read_shell(&self, patient: bool, adopt: bool) -> ShellSnapshot {
         let _one_at_a_time = self.shell_gate.lock().await;
-        let invocation = shell::invocation(&self.shell_program, &self.paths.home, &crate::process_env::clean_env_bare(), patient);
+        let invocation = shell::invocation(&self.shell_program, &self.paths.home, &droppen_base::process_env::clean_env_bare(), patient);
         let snapshot = shell::parse(&self.runner.run(invocation).await);
         tracing::info!(status = ?snapshot.status, adopt, "read the login shell");
         if adopt {
             if let (PathRead::Ok, Some(shell_path)) = (snapshot.status, snapshot.path.as_deref()) {
                 let built = locate::build(&self.paths.home, Some(shell_path));
-                let kept = locate::merge(&crate::process_env::inherited_path(), &built);
+                let kept = locate::merge(&droppen_base::process_env::inherited_path(), &built);
                 let path = locate::with_overlay(&kept, &self.overlay());
-                crate::process_env::set_child_path(Some(path));
+                droppen_base::process_env::set_child_path(Some(path));
             }
         }
         let mut state = self.shell.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1075,7 +1075,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::process_env::Env;
+    use droppen_base::process_env::Env;
     use runner::fixture::Fixture;
     use runner::RunOutput;
     use std::os::unix::fs::PermissionsExt;
@@ -1131,14 +1131,14 @@ pub(crate) mod tests {
     impl ChildPathGuard {
         pub(crate) fn take() -> Self {
             Self {
-                before: crate::process_env::child_path_override(),
+                before: droppen_base::process_env::child_path_override(),
             }
         }
     }
 
     impl Drop for ChildPathGuard {
         fn drop(&mut self) {
-            crate::process_env::set_child_path(self.before.take());
+            droppen_base::process_env::set_child_path(self.before.take());
         }
     }
 
@@ -1258,10 +1258,10 @@ pub(crate) mod tests {
         fixture.answer("zsh -ilc", shell_answer(&format!("PATH={}:/usr/bin", nvm.display())));
         let setup = guide(home.path(), fixture.clone(), Some(PathRead::Timeout));
 
-        let before = crate::process_env::inherited_path();
+        let before = droppen_base::process_env::inherited_path();
         let read = setup.read_shell(true, true).await;
         assert_eq!(read.status, PathRead::Ok);
-        let after = crate::process_env::child_path();
+        let after = droppen_base::process_env::child_path();
         let dirs: Vec<&str> = after.split(':').collect();
         assert!(
             dirs.contains(&nvm.to_string_lossy().as_ref()),
@@ -1275,8 +1275,8 @@ pub(crate) mod tests {
         assert_eq!(dirs[..inherited.len()], inherited[..], "a re-read keeps the inherited PATH as it was: {after}");
         assert!(dirs.len() > inherited.len(), "and adds after it: {after}");
         // Every child now starts with it: a session's CLI, a probe, a terminal.
-        assert_eq!(crate::process_env::clean_env_bare().get("PATH"), Some(&after));
-        assert_eq!(crate::process_env::claude_env_bare().get("PATH"), Some(&after));
+        assert_eq!(droppen_base::process_env::clean_env_bare().get("PATH"), Some(&after));
+        assert_eq!(droppen_base::process_env::claude_env_bare().get("PATH"), Some(&after));
         assert_eq!(setup.path_read(), PathRead::Ok, "the adopted read is the one reported");
         let asked = fixture.asked();
         assert_eq!(asked.len(), 1);
@@ -1294,9 +1294,9 @@ pub(crate) mod tests {
         let fixture = Fixture::new();
         fixture.answer("zsh -ilc", RunOutput::timeout());
         let setup = guide(home.path(), fixture, Some(PathRead::Ok));
-        let before = crate::process_env::child_path_override();
+        let before = droppen_base::process_env::child_path_override();
         assert_eq!(setup.read_shell(false, true).await.status, PathRead::Timeout);
-        assert_eq!(crate::process_env::child_path_override(), before);
+        assert_eq!(droppen_base::process_env::child_path_override(), before);
         assert_eq!(setup.path_read(), PathRead::Timeout, "the rescan's own outcome, not the app's older one");
     }
 
@@ -1310,7 +1310,7 @@ pub(crate) mod tests {
         let setup = guide(home.path(), Fixture::new(), None);
         setup.apply_overlay();
         assert_eq!(
-            crate::process_env::child_path_override(),
+            droppen_base::process_env::child_path_override(),
             _guard.before,
             "nothing adopted, nothing changed"
         );
@@ -1330,9 +1330,9 @@ pub(crate) mod tests {
             OVERLAY_KEY,
             &serde_json::to_string(&[reclaimed.to_string_lossy(), repointed.to_string_lossy(), picked.to_string_lossy()]).unwrap(),
         );
-        let before = crate::process_env::child_path();
+        let before = droppen_base::process_env::child_path();
         setup.apply_overlay();
-        let after = crate::process_env::child_path();
+        let after = droppen_base::process_env::child_path();
         assert_eq!(after, format!("{before}:{}", picked.display()));
         assert_eq!(setup.overlay(), [picked]);
     }
@@ -1583,10 +1583,10 @@ pub(crate) mod tests {
 
         for (file, functions) in [
             ("accounts/mod.rs", &["parse_auth_status"][..]),
-            ("text.rs", &["strip_ansi"][..]),
+            ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
             ("accounts/quota/mod.rs", &["claude_plan_label"][..]),
             ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
-            ("process_env.rs", &["apply_env"][..]),
+            ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
         ] {
             let source = std::fs::read_to_string(src.join(file)).expect(file);
             for name in functions {

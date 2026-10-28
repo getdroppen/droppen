@@ -16,7 +16,7 @@
 //! bit wrong points at a pid, and the boot that reads it may *signal* that pid.
 //! Hence: replaced whole on every change, never appended to, and read back
 //! defensively — a record that will not parse means "adopt nothing", never
-//! "guess". The pid in it is a claim to be checked (see [`crate::procs`]), never
+//! "guess". The pid in it is a claim to be checked (see [`droppen_base::procs`]), never
 //! an instruction to be followed.
 //!
 //! # Where the records actually are
@@ -65,7 +65,7 @@ pub struct AppRecord {
     /// been created at the moment the server restarted, and orders adoption so
     /// the titles come back in the order the user made them.
     pub started_at: String,
-    /// The pid-reuse guard: see [`crate::procs`]. `None` on a platform that has
+    /// The pid-reuse guard: see [`droppen_base::procs`]. `None` on a platform that has
     /// none, and on any record written before the guard existed — which is why
     /// it defaults rather than being required.
     #[serde(default)]

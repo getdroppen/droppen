@@ -17,11 +17,11 @@ use crate::http::error::ApiError;
 use crate::identity::ServerId;
 use crate::instance::InstanceDirs;
 use crate::paths::{ClaudeRoot, Paths};
-use crate::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};
-use crate::procs;
+use droppen_base::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};
+use droppen_base::procs;
 use crate::record;
 use crate::sessions::{claude, codex, Injection, InjectionRunState, SessionRef, SessionStatus, Source};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 use gotcha::axum::http::StatusCode;
 use gotcha::Schematic;
 
@@ -1329,9 +1329,9 @@ struct Listeners {
 }
 
 /// A duration from the environment, in milliseconds, or the fallback; under
-/// its old name too ([`crate::env::var`]).
+/// its old name too ([`droppen_base::env::var`]).
 fn env_ms(name: &str, fallback: Duration) -> Duration {
-    crate::env::var(name)
+    droppen_base::env::var(name)
         .and_then(|raw| raw.parse::<f64>().ok())
         .filter(|ms| ms.is_finite() && *ms > 0.0)
         .map(Duration::from_secs_f64_millis)
@@ -1389,7 +1389,7 @@ impl InjectionRegistry {
             // is the obvious answer, and well short of a session that is stuck.
             // Zero means "wait for ever", which is why this does not go through
             // `env_ms` either.
-            await_background: match crate::env::var("DROPPEN_AWAIT_BACKGROUND_MS")
+            await_background: match droppen_base::env::var("DROPPEN_AWAIT_BACKGROUND_MS")
                 .and_then(|raw| raw.trim().parse::<u64>().ok())
             {
                 Some(0) => None,
@@ -1399,14 +1399,14 @@ impl InjectionRegistry {
             rotate_ahead: crate::accounts::rotation::ahead_threshold_from_env(),
             // `/tmp`, not `TMPDIR`: claude writes here, and on macOS `TMPDIR` is
             // a per-process directory under `/var/folders` that it never uses.
-            task_root: crate::env::var("DROPPEN_TASK_ROOT").map(PathBuf::from).unwrap_or_else(|| {
+            task_root: droppen_base::env::var("DROPPEN_TASK_ROOT").map(PathBuf::from).unwrap_or_else(|| {
                 // SAFETY: `getuid` reads the calling process' own uid and cannot fail.
                 PathBuf::from(format!("/tmp/claude-{}", unsafe { libc::getuid() }))
             }),
             // Zero, absent and unparseable all mean "never", which is why this
             // is the one timing here that does not go through `env_ms`: its
             // fallback is not a duration.
-            resident_idle: crate::env::var("DROPPEN_RESIDENT_IDLE_MS")
+            resident_idle: droppen_base::env::var("DROPPEN_RESIDENT_IDLE_MS")
                 .and_then(|raw| raw.trim().parse::<u64>().ok())
                 .filter(|ms| *ms > 0)
                 .map(Duration::from_millis),

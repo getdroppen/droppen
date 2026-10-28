@@ -23,7 +23,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::process_env::{apply_env, Env};
+use droppen_base::process_env::{apply_env, Env};
 
 /// The most output kept from one stream of one invocation. A version string or
 /// a login status is a line; this only stops something unexpected from growing

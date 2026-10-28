@@ -1,0 +1,33 @@
+[package]
+name = "droppen-base"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's base helpers: the clock, text codecs, private files, process guards, outbound webhooks, the environment and the program's name"
+
+# Helpers that name none of the server's subsystems, so every part of the
+# server may use them and they use nothing of it.
+[dependencies]
+# `text::hex`: the spelling every binary field of the hub's control messages
+# uses, so the server's hex and the wire's are one function.
+rh-client = { path = "../rh-client" }
+chrono = "0.4"
+libc = "0.2"
+regex = "1"
+# Only the client builder and `Url` (`outbound`). `default-features = false`
+# keeps `default-tls` (native-tls, OpenSSL) out: the server links nothing but
+# rustls.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["process", "rt", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"

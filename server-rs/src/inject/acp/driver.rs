@@ -19,7 +19,7 @@ use crate::acp_agent::AcpAgent;
 use crate::inject::{InjectError, InjectionRegistry, Phase, QueueOutcome, ResidentState, Sent};
 use crate::sessions::acp_transcript::{record, Translator};
 use crate::sessions::{Injection, InjectionRunState, Source};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How long an agent process with nothing to do is kept.
 pub(super) const IDLE_EXIT: Duration = Duration::from_secs(30 * 60);
@@ -299,7 +299,7 @@ impl Process {
     /// so the group's id, cannot be anybody else's.
     fn kill_group(&self) {
         if let Some(pid) = self.0.id() {
-            crate::procs::signal_group(pid, libc::SIGKILL);
+            droppen_base::procs::signal_group(pid, libc::SIGKILL);
         }
     }
 }

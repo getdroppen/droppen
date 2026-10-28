@@ -73,7 +73,8 @@ pub fn server_env(inherited: impl IntoIterator<Item = (String, String)>, path: &
     // shared `<data>/bin`, not the app), and the web app hides what would be a
     // dead end for a login nobody types (`server-rs/src/desktop_app.rs`).
     // Under the name since the rename to Droppen and the one before it, which
-    // a server from before the rename reads instead (`server-rs/src/env.rs`).
+    // a server from before the rename reads instead
+    // (`server-rs/crates/droppen-base/src/env.rs`).
     for name in DESKTOP_APP_ENV {
         env.push((name.into(), "1".into()));
     }

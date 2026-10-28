@@ -264,7 +264,7 @@ impl<'a> Watermark<'a> {
         Self {
             path,
             size_bytes: metadata.len(),
-            mtime_ms: crate::time::mtime_ms(metadata),
+            mtime_ms: droppen_base::time::mtime_ms(metadata),
         }
     }
 }

@@ -28,7 +28,7 @@ use super::locate::{self, Search};
 use super::runner::{Invocation, RpcCall, RunOutput, Runner};
 use super::{GitState, LoginState, SetupHelpers, SetupOs, ToolFound, ToolId, ToolLogin};
 use crate::openapi_ext::Nullable;
-use crate::process_env::{resolve_on_path, Env};
+use droppen_base::process_env::{resolve_on_path, Env};
 
 /// The oldest `claude` this server's session driver is known to work with.
 ///
@@ -229,9 +229,9 @@ pub fn git_state(output: &RunOutput) -> GitState {
 pub struct Probe {
     /// The user's home: the fallbacks are under it and every CLI runs in it.
     pub home: PathBuf,
-    /// The environment children get ([`crate::process_env::clean_env_bare`]).
+    /// The environment children get ([`droppen_base::process_env::clean_env_bare`]).
     pub env: Env,
-    /// The environment a `claude` gets ([`crate::process_env::claude_env_bare`]):
+    /// The environment a `claude` gets ([`droppen_base::process_env::claude_env_bare`]):
     /// no `CLAUDE_CONFIG_DIR`, so `auth status` speaks for the local login.
     pub claude_env: Env,
     /// The `PATH` the process was started with.
@@ -249,9 +249,9 @@ impl Probe {
     pub fn live(home: PathBuf, overlay: Vec<PathBuf>) -> Self {
         Self {
             home,
-            env: crate::process_env::clean_env_bare(),
-            claude_env: crate::process_env::claude_env_bare(),
-            inherited_path: crate::process_env::inherited_path(),
+            env: droppen_base::process_env::clean_env_bare(),
+            claude_env: droppen_base::process_env::claude_env_bare(),
+            inherited_path: droppen_base::process_env::inherited_path(),
             overlay,
             system_dirs: vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")],
             macos: cfg!(target_os = "macos"),

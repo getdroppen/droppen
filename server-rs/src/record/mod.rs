@@ -27,7 +27,7 @@
 //! An account's token reaches claude in exactly one place: the store hands out
 //! an [`AccountEnv`](crate::accounts::store::AccountEnv) — a
 //! `CLAUDE_CODE_OAUTH_TOKEN` or an `ANTHROPIC_API_KEY` — which
-//! [`crate::process_env`] puts in an [`Env`](crate::process_env::Env) that the
+//! [`droppen_base::process_env`] puts in an [`Env`](droppen_base::process_env::Env) that the
 //! spawn applies over an `env_clear`. It is never written to a stream, never on
 //! a command line, and never in `runs.json`. The recorder cannot record it even
 //! by accident — [`SpawnSummary`], the only way a spawn is described to this
@@ -43,7 +43,7 @@
 //!   concurrently writing — unredacted — into `<project>/<id>.jsonl`. The
 //!   recorder copies those very files a few lines further down.
 //!
-//! So [`redact_secrets`](crate::process_env::redact_secrets) is *not* applied
+//! So [`redact_secrets`](droppen_base::process_env::redact_secrets) is *not* applied
 //! here, and that is a decision rather than an oversight: it would buy nothing
 //! (the same bytes sit in the transcript two directories away, which is what a
 //! recording is *for*) and it would cost the one property replay depends on —
@@ -72,7 +72,7 @@ use tokio::sync::mpsc;
 
 use crate::instance::InstanceDirs;
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 mod tail;
 
@@ -366,8 +366,8 @@ pub struct Recorders {
 impl Recorders {
     /// Read the configuration and name the directory recordings live in.
     pub fn new(paths: Arc<Paths>, instance: &InstanceDirs) -> Self {
-        let on = crate::env::flag_or("DROPPEN_SESSION_LOG", true);
-        let max_mb = crate::env::var("DROPPEN_SESSION_LOG_MAX_MB")
+        let on = droppen_base::env::flag_or("DROPPEN_SESSION_LOG", true);
+        let max_mb = droppen_base::env::var("DROPPEN_SESSION_LOG_MAX_MB")
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_MAX_MB);
         Self {
@@ -843,7 +843,7 @@ mod tests {
         // puts in it under exactly these names. Only the narrow summary ever
         // reaches the recorder — this environment is here to be *absent* from
         // the file below.
-        let mut env = crate::process_env::Env::new();
+        let mut env = droppen_base::process_env::Env::new();
         env.insert(
             crate::accounts::store::CLAUDE_OAUTH_ENV.into(),
             "sk-ant-oat01-SUPERSECRETVALUE-000".into(),

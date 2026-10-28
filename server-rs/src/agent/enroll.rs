@@ -31,8 +31,8 @@ use tokio_tungstenite::tungstenite::Message;
 use super::hub;
 use super::state::AgentState;
 use super::AgentFiles;
-use crate::text::hex;
-use crate::time::now_ms_u64;
+use droppen_base::text::hex;
+use droppen_base::time::now_ms_u64;
 
 /// How long to wait for the device to confirm (the code's own lifetime).
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10 * 60);

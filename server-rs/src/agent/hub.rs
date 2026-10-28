@@ -17,8 +17,8 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use crate::text::{hex, unhex32};
-use crate::time::now_ms_u64;
+use droppen_base::text::{hex, unhex32};
+use droppen_base::time::now_ms_u64;
 
 /// The agent's socket to its hub.
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;

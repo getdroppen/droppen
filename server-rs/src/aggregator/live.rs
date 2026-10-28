@@ -534,7 +534,7 @@ impl LiveCopies {
         if presence.online == online {
             return;
         }
-        *presence = Presence { online, since_ms: crate::time::now_ms_u64() };
+        *presence = Presence { online, since_ms: droppen_base::time::now_ms_u64() };
         let dir = Self::dir_of(&mut inner);
         drop(inner);
         self.send_dir(dir);
@@ -543,7 +543,7 @@ impl LiveCopies {
     /// Nothing is known of anyone's presence now (the connection to the hub went).
     pub fn presence_unknown(&self) {
         let mut inner = self.lock();
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let mut changed = false;
         for presence in inner.hosts.values_mut() {
             if presence.online.is_some() {
@@ -732,7 +732,7 @@ impl LiveCopies {
     /// The sessions pages opened, most recently first: those subscribed to
     /// now, and those let go of within [`LINGER`].
     pub fn opened(&self) -> Vec<(String, String)> {
-        let now = crate::time::now_ms_u64();
+        let now = droppen_base::time::now_ms_u64();
         let linger = LINGER.as_millis() as u64;
         let mut inner = self.lock();
         inner.interest.retain(|_, i| !i.subs.is_empty() || now.saturating_sub(i.last_ms) < linger);
@@ -832,7 +832,7 @@ impl LiveCopies {
                 });
                 first = held.subs.is_empty();
                 held.subs.insert(id);
-                held.last_ms = crate::time::now_ms_u64();
+                held.last_ms = droppen_base::time::now_ms_u64();
             }
             drop(inner);
             if first {
@@ -857,7 +857,7 @@ impl LiveCopies {
         let mut last = false;
         if let Some(interest) = inner.interest.get_mut(&(key.host.clone(), key.name.clone())) {
             if interest.subs.remove(&id) && interest.subs.is_empty() {
-                interest.last_ms = crate::time::now_ms_u64();
+                interest.last_ms = droppen_base::time::now_ms_u64();
                 last = true;
             }
         }

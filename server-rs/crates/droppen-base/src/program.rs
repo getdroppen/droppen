@@ -15,7 +15,7 @@
 //!
 //! The managed binary is not renamed: the `up` supervisor, self-upgrade and the
 //! `.prev`/`.bad` rollback ladder all stay on `<data>/bin/remote-hand-server`
-//! ([`crate::selfupdate::store`]); `droppen` there is only a link to it.
+//! (the server's `selfupdate::store`); `droppen` there is only a link to it.
 //!
 //! [`droppen_path`] is the other half: the path a person on this device types
 //! to run this server, which the web app shows in the commands it asks people
@@ -185,7 +185,7 @@ pub fn shell_word(text: &str) -> String {
 }
 
 /// `path` with a leading home directory written `~`.
-pub(crate) fn abbreviate_home(path: &Path, home: Option<&Path>) -> String {
+pub fn abbreviate_home(path: &Path, home: Option<&Path>) -> String {
     if let Some(rest) = home
         .filter(|home| home.is_absolute() && home != &Path::new("/"))
         .and_then(|home| path.strip_prefix(home).ok())

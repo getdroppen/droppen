@@ -7,7 +7,7 @@ use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, Mach
 use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, rotation, state, AgentFiles};
 use crate::paths::Paths;
-use crate::time::now_ms_u64;
+use droppen_base::time::now_ms_u64;
 
 pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool) {
     println!("Droppen agent — instance {}", paths.instance());
@@ -148,7 +148,7 @@ pub(crate) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> R
         Err(enroll::EnrollFailure::Pending(message)) => {
             // Not a failure and not done: its own exit status, so a script
             // (the installer) can start the server, which finishes it.
-            let name = crate::program::Name::invoked();
+            let name = droppen_base::program::Name::invoked();
             eprintln!("{}: {}", name.error_prefix(), name.rewrite(&message));
             std::process::exit(i32::from(ENROLL_PENDING_EXIT));
         }

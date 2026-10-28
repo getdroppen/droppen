@@ -424,7 +424,7 @@ impl InjectionRegistry {
         let env = agent.environment(clean_env_bare());
         let searched = format!("PATH={}", env.get("PATH").map(String::as_str).unwrap_or(""));
         let redact = |text: &str| self.redact_acp(agent, text);
-        let Some(resolved) = crate::process_env::resolve_on_path(agent.command.trim(), &env) else {
+        let Some(resolved) = droppen_base::process_env::resolve_on_path(agent.command.trim(), &env) else {
             let error = format!("{}: no such executable\n{searched}", agent.command.trim());
             return AcpCheck::ended(AcpCheckState::NotFound, Some(redact(&error)));
         };
@@ -837,7 +837,7 @@ mod tests {
                 .unwrap_or(false)
         };
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while crate::procs::alive(pid) && !zombie() {
+        while droppen_base::procs::alive(pid) && !zombie() {
             assert!(std::time::Instant::now() < deadline, "the helper {pid} is still running");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

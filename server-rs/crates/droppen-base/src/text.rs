@@ -13,7 +13,8 @@ use sha2::{Digest, Sha256};
 /// Lower-case hex, as `sha256sum` and the hub's wire fields spell it.
 pub use rh_client::hex;
 
-pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
+/// Bytes from hex, or `None` for anything that is not hex.
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }

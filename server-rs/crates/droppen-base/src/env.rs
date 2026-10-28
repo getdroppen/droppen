@@ -66,7 +66,7 @@ pub enum Kind {
 /// of `codex`), and the names only a test reads.
 pub const RENAMED: &[(&str, &str, Kind)] = &[
     // Where this server keeps its files, and the Claude roots it reads
-    // (`crate::paths::Paths`).
+    // (the server's `paths::Paths`).
     ("DROPPEN_DATA_DIR", "REMOTE_HAND_DATA_DIR", Kind::Setting),
     ("DROPPEN_CONFIG_DIR", "REMOTE_HAND_CONFIG_DIR", Kind::Setting),
     ("DROPPEN_CLAUDE_LOCAL_ROOT", "REMOTE_HAND_CLAUDE_LOCAL_ROOT", Kind::Setting),
@@ -78,10 +78,10 @@ pub const RENAMED: &[(&str, &str, Kind)] = &[
     ("DROPPEN_NOTIFY_ALLOW_INSECURE_ENDPOINT", "RH_NOTIFY_ALLOW_INSECURE_ENDPOINT", Kind::Setting),
     // Requests.
     ("DROPPEN_ALLOWED_ORIGINS", "RH_ALLOWED_ORIGINS", Kind::Setting),
-    // Session recordings (`crate::record`).
+    // Session recordings (the server's `record`).
     ("DROPPEN_SESSION_LOG", "RH_SESSION_LOG", Kind::Setting),
     ("DROPPEN_SESSION_LOG_MAX_MB", "RH_SESSION_LOG_MAX_MB", Kind::Setting),
-    // Driving the CLIs (`crate::inject`), and accounts.
+    // Driving the CLIs (the server's `inject`), and accounts.
     ("DROPPEN_IDLE_TIMEOUT_MS", "RH_IDLE_TIMEOUT_MS", Kind::Setting),
     ("DROPPEN_STALL_MS", "RH_STALL_MS", Kind::Setting),
     ("DROPPEN_INTERRUPT_STEP_MS", "RH_INTERRUPT_STEP_MS", Kind::Setting),
@@ -517,9 +517,11 @@ mod tests {
     fn nothing_else_reads_an_old_name() {
         // A name no code reads: a terminal test's stand-in for "any variable".
         const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP"];
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let src = manifest.join("src");
         let mut found = Vec::new();
-        let mut dirs = vec![src.clone()];
+        // The server's sources too: it reads the environment through this module.
+        let mut dirs = vec![src.clone(), manifest.join("../../src")];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).expect("read src").flatten() {
                 let path = entry.path();
@@ -543,6 +545,6 @@ mod tests {
                 }
             }
         }
-        assert!(found.is_empty(), "read these through crate::env::var under their DROPPEN_ names:\n{}", found.join("\n"));
+        assert!(found.is_empty(), "read these through droppen_base::env::var under their DROPPEN_ names:\n{}", found.join("\n"));
     }
 }

@@ -86,8 +86,8 @@ use super::link::Shared;
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed};
 use crate::paths::Paths;
-use crate::text::{hex, unhex32};
-use crate::time::now_ms_u64;
+use droppen_base::text::{hex, unhex32};
+use droppen_base::time::now_ms_u64;
 
 /// How long `POST /rh/rotate` waits for the hub to stage the proof.
 #[cfg(not(test))]
@@ -812,7 +812,7 @@ impl Request {
         let v: Value = serde_json::from_slice(body).map_err(|_| "JSON expected")?;
         let nonce = v["nonce"]
             .as_str()
-            .and_then(crate::text::unhex)
+            .and_then(droppen_base::text::unhex)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or("nonce: 16 bytes of hex expected")?;
         let eph = v["eph"].as_str().and_then(unhex32).ok_or("eph: 32 bytes of hex expected")?;
@@ -1125,7 +1125,7 @@ pub fn re_enroll_fresh(paths: &Paths, now: u64) -> Result<MachineIdentity, Strin
         }
     }
     let marker = files.re_enroll_marker();
-    crate::fsutil::write_private_reporting_path(&marker, b"{}")?;
+    droppen_base::fsutil::write_private_reporting_path(&marker, b"{}")?;
     super::sync_dir(&marker);
     forget_for_a_fresh_identity(paths, now)
 }
@@ -1673,7 +1673,7 @@ mod tests {
         let st = renewed_to(&current, &mine.identity());
         st.save(&files).unwrap();
         // The staged file is damaged.
-        crate::fsutil::write_private_reporting_path(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
+        droppen_base::fsutil::write_private_reporting_path(&store.staging_path(&mine.nonce), b"{\"version\":1,\"seed\":").unwrap();
         assert_eq!(store.unreadable().len(), 1);
         assert_eq!(verdict(&st, &current, &[], true), Verdict::Unreadable);
         assert_eq!(files.stored_verdict(&st, &current), Verdict::Unreadable);

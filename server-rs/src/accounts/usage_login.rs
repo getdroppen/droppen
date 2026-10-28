@@ -22,7 +22,7 @@ use crate::drive::Drive;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiPath;
-use crate::process_env::{claude_env, clean_env_bare, resolve_on_path};
+use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
 
 use super::store::Account;

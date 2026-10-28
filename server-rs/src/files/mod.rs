@@ -28,7 +28,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::ApiQuery;
 use crate::openapi_ext::{ExtraResponses, Nullable};
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// How much of a file `GET /api/fs/read` will return.
 const READ_LIMIT: u64 = 256 * 1024;
@@ -61,7 +61,7 @@ const PRIVATE_TO_THIS_COMPUTER: &str = "this device's Droppen data and settings 
 /// Extensions the download route is willing to serve inline, and their mime types.
 ///
 /// Narrower than the allowlist behind
-/// [`is_image_ext`](crate::text::is_image_ext) — this list decides
+/// [`is_image_ext`](droppen_base::text::is_image_ext) — this list decides
 /// what the browser is invited to render in place rather than save — but note
 /// what it still contains: an
 /// `svg` served as `image/svg+xml` with `Content-Disposition: inline` is a
@@ -617,7 +617,7 @@ impl FileRoots {
         Ok(Attachment {
             path: target.to_string_lossy().into_owned(),
             size_bytes: size as i64,
-            is_image: crate::text::is_image_ext(&extension),
+            is_image: droppen_base::text::is_image_ext(&extension),
             name,
         })
     }
@@ -1248,9 +1248,9 @@ mod tests {
     /// The upload route's extraction: a name with no dot is its own extension.
     #[test]
     fn an_upload_whose_whole_name_is_an_extension_counts_as_an_image() {
-        assert!(crate::text::is_image_ext(&extension("png")));
-        assert!(crate::text::is_image_ext(&extension("JPG")));
-        assert!(!crate::text::is_image_ext(&extension("notes")));
+        assert!(droppen_base::text::is_image_ext(&extension("png")));
+        assert!(droppen_base::text::is_image_ext(&extension("JPG")));
+        assert!(!droppen_base::text::is_image_ext(&extension("notes")));
     }
 
     #[test]

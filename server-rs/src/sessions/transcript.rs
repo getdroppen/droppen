@@ -16,7 +16,7 @@ use super::util::{
     clip, first_line_of, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
 use crate::openapi_ext::Nullable;
-use crate::text::is_image_ext;
+use droppen_base::text::is_image_ext;
 
 type Json = Map<String, Value>;
 
@@ -736,7 +736,7 @@ pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
                 entry.has_transcript = true;
                 entry.transcript_path = Some(path);
                 entry.bytes = stat.as_ref().map(std::fs::Metadata::len).unwrap_or(0);
-                entry.updated_at = stat.and_then(|stat| stat.modified().ok()).map(crate::time::iso8601);
+                entry.updated_at = stat.and_then(|stat| stat.modified().ok()).map(droppen_base::time::iso8601);
             }
         }
     }

@@ -47,7 +47,7 @@ use crate::db::{self, Db};
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::Paths;
 use crate::sessions::account::{AccountRef, LimitClass};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// Where the one setting in this store that is not a row lives.
 ///
@@ -672,7 +672,7 @@ const MAX_SECRET_LENGTH: usize = 4096;
 const MAX_LABEL_LENGTH: usize = 100;
 const MAX_BASE_URL_LENGTH: usize = 512;
 
-use crate::text::sha256_hex;
+use droppen_base::text::sha256_hex;
 
 /// Whether `id` is a plain uuid. A directory is only ever named after one.
 pub fn is_uuid(id: &str) -> bool {
@@ -1371,7 +1371,7 @@ impl AccountsStore {
 
     /// Take every stored credential out of a piece of text.
     ///
-    /// The other half of [`crate::process_env::redact_secrets`], and the half
+    /// The other half of [`droppen_base::process_env::redact_secrets`], and the half
     /// that does not have to guess. A pattern can only catch credentials that
     /// *look* like credentials, and two of the three kinds this store now holds
     /// look like nothing at all: an `auth_token` for somebody's gateway and a
@@ -1396,7 +1396,7 @@ impl AccountsStore {
         // the complaint unreadable. The longest-first rule lives with the
         // helper, so this layer and the probe's cannot drift.
         let secrets: Vec<String> = self.snapshot().accounts.iter().flat_map(StoredAccount::secrets).cloned().collect();
-        crate::process_env::redact_values(text, secrets.iter().map(String::as_str))
+        droppen_base::process_env::redact_values(text, secrets.iter().map(String::as_str))
     }
 
     /// The one place a stored secret is read for a spawn.

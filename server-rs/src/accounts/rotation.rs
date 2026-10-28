@@ -353,7 +353,7 @@ pub fn ahead_threshold(raw: Option<&str>) -> Option<f64> {
 
 /// [`ahead_threshold`] of this process' environment.
 pub fn ahead_threshold_from_env() -> Option<f64> {
-    ahead_threshold(crate::env::var("DROPPEN_ROTATE_AHEAD_PERCENT").as_deref())
+    ahead_threshold(droppen_base::env::var("DROPPEN_ROTATE_AHEAD_PERCENT").as_deref())
 }
 
 /// A window that is about to run out, as the decision and its record name it.

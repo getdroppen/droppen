@@ -404,11 +404,11 @@ fn spawn(exe: &Path, args: &[String]) -> io::Result<i32> {
         // [`crate::selfupdate::SUPERVISED_ENV`]. Under both names: after a
         // rollback the child may be a pre-rename server, which
         // reads only `RH_SUPERVISED`.
-        .envs(crate::env::with_old_name(selfupdate::SUPERVISED_ENV).map(|name| (name, "1")))
+        .envs(droppen_base::env::with_old_name(selfupdate::SUPERVISED_ENV).map(|name| (name, "1")))
         // And every setting this `up` was given under a new name, under the
         // old one too: such a child reads only `REMOTE_HAND_DATA_DIR`, and
         // without it would run on the default install's files, not this one's.
-        .envs(crate::env::settings_under_old_names())
+        .envs(droppen_base::env::settings_under_old_names())
         .process_group(0)
         .spawn()?;
     let pid = child.id() as i32;

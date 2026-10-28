@@ -46,10 +46,10 @@ use tokio::process::{ChildStdin, ChildStdout};
 use super::{window, QuotaWindow, USAGE_TTL};
 use crate::openapi_ext::Nullable;
 use super::ProbeRoots;
-use crate::process_env::{apply_env, clean_env_bare};
+use droppen_base::process_env::{apply_env, clean_env_bare};
 use crate::record::replay::parse_iso8601;
 use crate::sessions::util::{read_tail_lines, try_parse};
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// The one question this module asks. It needs no thread, no turn and no
 /// workspace: the handshake and this call are the whole conversation.
@@ -307,7 +307,7 @@ impl ProbeRoots {
 /// `None` for every failure, as [`ProbeRoots::app_server`] describes, and an `error`
 /// reply is one of them: its message describes the account and is not ours to
 /// quote (see the module's security note).
-pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &crate::process_env::Env, method: &str, timeout: Duration) -> Option<Value> {
+pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &droppen_base::process_env::Env, method: &str, timeout: Duration) -> Option<Value> {
     let mut command = tokio::process::Command::new(program);
     command
         .arg("app-server")
@@ -471,7 +471,7 @@ impl ProbeRoots {
             }
             // Unreadable file: skip.
             let Ok(metadata) = entry.metadata().await else { continue };
-            found.push((path, crate::time::mtime_ms(&metadata)));
+            found.push((path, droppen_base::time::mtime_ms(&metadata)));
         }
     }
     found.sort_by(|(_, left), (_, right)| right.partial_cmp(left).unwrap_or(std::cmp::Ordering::Equal));

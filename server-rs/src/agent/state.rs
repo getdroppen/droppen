@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::AgentFiles;
-use crate::text::{hex, unhex};
+use droppen_base::text::{hex, unhex};
 
 const VERSION: u32 = 1;
 
@@ -623,7 +623,7 @@ impl AgentState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        crate::fsutil::check_private(&path)?;
+        droppen_base::fsutil::check_private(&path)?;
         let file: StateFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         if file.version != VERSION {
             return Err(format!("{}: unsupported version {}", path.display(), file.version));
@@ -640,7 +640,7 @@ impl AgentState {
             account_fingerprint: fingerprint,
             genesis_hash: genesis,
         };
-        let mut clock = ChainClock::live(crate::time::now_ms_u64(), file.live_from);
+        let mut clock = ChainClock::live(droppen_base::time::now_ms_u64(), file.live_from);
         clock.restore(file.first_seen.clone());
         let chain = if file.chain.is_empty() {
             None
@@ -673,7 +673,7 @@ impl AgentState {
         // A file from before the record was kept: it is complete from now on.
         let (controllers_from, controllers_from_ms) = match file.controllers_from {
             Some(from) => (from, file.controllers_from_ms.unwrap_or(file.enrolled_ms)),
-            None => (chain.as_ref().map_or(0, ChainState::seq), crate::time::now_ms_u64()),
+            None => (chain.as_ref().map_or(0, ChainState::seq), droppen_base::time::now_ms_u64()),
         };
         Ok(Some(Self {
             hub: file.hub,
@@ -729,7 +729,7 @@ impl AgentState {
             rotation: self.rotation.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
-        crate::fsutil::write_private_reporting_path(&files.state(), &bytes)
+        droppen_base::fsutil::write_private_reporting_path(&files.state(), &bytes)
     }
 }
 
@@ -745,7 +745,7 @@ impl AgentFiles {
         let path = self.keys();
         let mut file: KeysFile = match std::fs::read(&path) {
             Ok(bytes) => {
-                crate::fsutil::check_private(&path)?;
+                droppen_base::fsutil::check_private(&path)?;
                 serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => KeysFile::default(),
@@ -753,7 +753,7 @@ impl AgentFiles {
         };
         file.epochs.insert(epoch, hex(key));
         let bytes = Zeroizing::new(serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?);
-        crate::fsutil::write_private_reporting_path(&path, &bytes)
+        droppen_base::fsutil::write_private_reporting_path(&path, &bytes)
     }
 
     /// Every machine-key epoch this agent holds (empty until a device delivered one).
@@ -764,7 +764,7 @@ impl AgentFiles {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        crate::fsutil::check_private(&path)?;
+        droppen_base::fsutil::check_private(&path)?;
         let file: KeysFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         file.epochs
             .iter()
@@ -883,7 +883,7 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let tampered = v["chain"][1].as_str().unwrap().replacen('0', "1", 1);
         v["chain"][1] = serde_json::Value::String(tampered);
-        crate::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
+        droppen_base::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
         assert!(AgentState::load(&files).is_err());
     }
 
@@ -1130,8 +1130,8 @@ mod tests {
         for key in ["controllers", "controllers_from", "controllers_from_ms"] {
             assert!(map.remove(key).is_some(), "{key}");
         }
-        crate::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
-        let before = crate::time::now_ms_u64();
+        droppen_base::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
+        let before = droppen_base::time::now_ms_u64();
         let mut old = AgentState::load(&files).unwrap().unwrap();
         let record = old.controllers().unwrap();
         assert_eq!((record.from, record.seq, record.devices.len()), (1, 1, 0), "complete from the upgrade on");

@@ -95,7 +95,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{self, Db};
 use crate::paths::Paths;
-use crate::time::iso8601;
+use droppen_base::time::iso8601;
 
 /// Memory cost, in KiB. 64 MiB — the OWASP baseline for argon2id at `t=3`.
 pub const MEMORY_KIB: u32 = 65536;

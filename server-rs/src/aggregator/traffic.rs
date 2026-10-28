@@ -29,7 +29,7 @@ pub const CONNECT: &str = "/v1/connect";
 fn file() -> Option<&'static Mutex<std::fs::File>> {
     static FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
     FILE.get_or_init(|| {
-        let path = crate::env::var("DROPPEN_HUB_API_TRAFFIC")?;
+        let path = droppen_base::env::var("DROPPEN_HUB_API_TRAFFIC")?;
         let mut options = std::fs::OpenOptions::new();
         options.create(true).append(true);
         #[cfg(unix)]

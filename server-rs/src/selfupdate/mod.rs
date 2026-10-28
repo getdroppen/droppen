@@ -60,7 +60,7 @@ use gotcha::{api, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::text::hex;
+use droppen_base::text::hex;
 use tokio::io::AsyncWriteExt;
 
 use crate::api::{ApiRouter, AppState};
@@ -108,7 +108,7 @@ const MAX_VERSION: usize = 200;
 /// pid 1's child means nothing after a reparent. So the supervisor says so —
 /// under this name and its old one, `RH_SUPERVISED`, the only one a pre-rename
 /// `up` sets; such an `up` stays the parent of every server a self-upgrade
-/// brings ([`crate::env`]).
+/// brings ([`droppen_base::env`]).
 pub const SUPERVISED_ENV: &str = "DROPPEN_SUPERVISED";
 
 /// What happens to this server once the new binary is installed.
@@ -133,7 +133,7 @@ impl Restart {
     /// The marker has no matching hole, because [`crate::supervisor`] sets it on
     /// every child it starts, unconditionally.
     fn detect() -> Self {
-        Self::from_marker(crate::env::var(SUPERVISED_ENV).as_deref())
+        Self::from_marker(droppen_base::env::var(SUPERVISED_ENV).as_deref())
     }
 
     /// The decision, separated from where the marker is read.

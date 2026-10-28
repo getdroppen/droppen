@@ -1183,7 +1183,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 ### 7.4 两个名字落地时的取舍（S5-1）
 
 - **一个二进制**：cargo 的 `[[bin]]` 仍叫 `remote-hand-server`（supervisor、自升级、测试和桌面 sidecar 都按这个名字找）。`droppen` 在发版包里是硬链接，在 `<数据>/bin` 里是符号链接。
-- **`argv[0]` 只管说法**（`server-rs/src/program.rs`）：最后一段是 `droppen` 时，帮助的第一行、用法、错误里建议的命令说 `droppen`，stderr 前缀是 `droppen:`；其他名字（旧名、`up` 拉起的子进程、测试）一字不改，`remote-hand:` 前缀照旧，grep 它的脚本不受影响。只改写命令，不改写路径和文件名（`<数据>/bin/remote-hand-server`、`remote-hand-server.prev` 原样）。`[rh-up]` 日志前缀不变。
+- **`argv[0]` 只管说法**（`server-rs/crates/droppen-base/src/program.rs`）：最后一段是 `droppen` 时，帮助的第一行、用法、错误里建议的命令说 `droppen`，stderr 前缀是 `droppen:`；其他名字（旧名、`up` 拉起的子进程、测试）一字不改，`remote-hand:` 前缀照旧，grep 它的脚本不受影响。只改写命令，不改写路径和文件名（`<数据>/bin/remote-hand-server`、`remote-hand-server.prev` 原样）。`[rh-up]` 日志前缀不变。
 - **发版**（`scripts/release-public.sh`）：每个平台两个包。新包 `droppen-…` 里 `droppen` 是实体、`remote-hand-server` 是它的硬链接（tar 里只存一份数据；单独解出任何一个都是完整文件，符号链接单独解出来是悬空的）；旧包 `remote-hand-…` 和以前一样只有 `remote-hand-server`。`SHA256SUMS` 列全部。每个包都解开再查一遍：成员不多不少、每个程序与前面检查和冒烟过的二进制逐字节相同、标记/glibc/`$HOME` 路径等检查再跑一遍；新包里的 `droppen` 再冒烟一次（以新名字运行）。旧名资产至少发到 2027-01-31（`OLD_ASSETS_UNTIL`）。
 - **安装脚本**：先读 `SHA256SUMS`，列了新包就下新包（取 `droppen` 成员），否则（或下载失败）下旧包（取 `remote-hand-server`）。装出来的仍是 `<数据>/bin/remote-hand-server`，与以前完全相同；plist、systemd unit、数据目录一律不动。旁边建 `droppen -> remote-hand-server`（相对链接，自升级换文件后照样指向新的；已有一个不是链接的 `droppen` 就不动它，并提示）。打印给人敲的命令（改密码、最后的 `Command:`）用 `droppen`；手动启动的 `up -- serve` 命令仍用旧路径，脚本靠这个路径认出手动启动的监督进程。卸载时连这个链接一起删。只认旧资产名的旧版脚本照常能装，所以旧资产要继续发。
 - **网页里让人敲的命令**：`GET /api/auth/status` 加 `droppenPath`——运行中二进制旁边的 `droppen`（是同一个文件才算），否则二进制本身；家目录写成 `~`，因为这个接口不登录也能读，不把账户名放出去。登录页的提示与「设置 → 访问」里的 `user add` 用它（需要时加引号）；旧服务器没有这个字段，网页说 `remote-hand-server`。

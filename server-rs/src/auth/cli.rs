@@ -45,10 +45,10 @@ use super::users::{UserError, UsersStore};
 
 /// `println!`, in the name this binary was run as: the commands a message
 /// suggests read `droppen …` when it was run as `droppen`
-/// ([`crate::program::Name::rewrite`]).
+/// ([`droppen_base::program::Name::rewrite`]).
 macro_rules! say {
     ($($arg:tt)*) => {
-        println!("{}", crate::program::Name::invoked().rewrite(&format!($($arg)*)))
+        println!("{}", droppen_base::program::Name::invoked().rewrite(&format!($($arg)*)))
     };
 }
 

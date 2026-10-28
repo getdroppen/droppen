@@ -145,7 +145,7 @@ struct PayloadEnrolled {
     i: String,
 }
 
-use crate::text::hex;
+use droppen_base::text::hex;
 
 impl Handoff {
     /// New material for `attempt` (expiring at `expires_ms`), answered at `origin`.

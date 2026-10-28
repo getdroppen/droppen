@@ -58,7 +58,7 @@ fn socket_stem(id: &str) -> String {
 
 /// The first `chars` hex characters of a sha-256 digest.
 fn hex_digest(bytes: &[u8], chars: usize) -> String {
-    crate::text::sha256_hex(bytes).chars().take(chars).collect()
+    droppen_base::text::sha256_hex(bytes).chars().take(chars).collect()
 }
 
 /// Where a terminal's socket goes: beside its other sidecars if that address

@@ -78,9 +78,9 @@ use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::Optional;
-use crate::process_env::{claude_env, clean_env_bare, resolve_on_path};
+use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
-use crate::text::strip_ansi;
+use droppen_base::text::strip_ansi;
 
 use super::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
 use super::verify::{verify_secret, Verdict};
@@ -438,7 +438,7 @@ async fn stub_browser_openers(dir: &Path) -> std::io::Result<Vec<(String, String
     }
     // The children's PATH, not the inherited one: a CLI the guide found off
     // the PATH ([`crate::setup`]) must still be found behind the stubs.
-    let inherited = crate::process_env::child_path();
+    let inherited = droppen_base::process_env::child_path();
     Ok(vec![
         ("PATH".to_string(), format!("{}:{inherited}", dir.display())),
         ("BROWSER".to_string(), dir.join("open").to_string_lossy().into_owned()),

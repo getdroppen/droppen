@@ -55,7 +55,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
-use crate::process_env::{clean_env_bare, resolve_on_path, Env};
+use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use crate::sessions::acp_transcript::{valid_agent_id, MAX_AGENT_ID};
 use crate::sessions::{SessionSummary, Source};
 
@@ -168,10 +168,10 @@ impl AcpAgent {
     }
 
     /// `text` with this agent's variables' values taken out
-    /// ([`crate::process_env::redact_values`]): they are what an API key looks
+    /// ([`droppen_base::process_env::redact_values`]): they are what an API key looks
     /// like, and anything it says may repeat one.
     pub fn without_values(&self, text: &str) -> String {
-        crate::process_env::redact_values(text, self.env.iter().map(|var| var.value.as_str()))
+        droppen_base::process_env::redact_values(text, self.env.iter().map(|var| var.value.as_str()))
     }
 
     /// Keep `check` as this agent's last, unless its command line or
@@ -595,7 +595,7 @@ impl AcpCheck {
             error
         });
         Self {
-            checked_at: crate::time::iso8601(std::time::SystemTime::now()),
+            checked_at: droppen_base::time::iso8601(std::time::SystemTime::now()),
             state,
             resolved_path: None.into(),
             protocol_version: None.into(),

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::Shared;
-use crate::text::unhex;
+use droppen_base::text::unhex;
 
 /// The most mail kept to try again as the chain catches up.
 pub(in crate::agent) const MAX_DEFERRED: usize = 64;

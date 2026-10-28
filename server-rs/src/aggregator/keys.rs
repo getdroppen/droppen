@@ -10,7 +10,7 @@
 //! before it was stored ([`rh_proto::wrap::open_host_key`]).
 //!
 //! The file is secret: 0600 in a 0700 directory, written whole and
-//! atomically ([`crate::fsutil::write_private_reporting_path`]), refused when others can read
+//! atomically ([`droppen_base::fsutil::write_private_reporting_path`]), refused when others can read
 //! it. It is bound to the account and the device id it was written for: a
 //! file another enrollment left is not read, it is started again. Turning
 //! the aggregator off, disconnecting, or being removed deletes the whole
@@ -98,13 +98,13 @@ pub struct HostKeys {
     guard: Guard,
 }
 
-/// [`crate::text::hex`], zeroized: this is key material.
+/// [`droppen_base::text::hex`], zeroized: this is key material.
 fn hex(data: &[u8]) -> Zeroizing<String> {
-    Zeroizing::new(crate::text::hex(data))
+    Zeroizing::new(droppen_base::text::hex(data))
 }
 
 fn unhex32(text: &str) -> Option<[u8; 32]> {
-    crate::text::unhex32(text)
+    droppen_base::text::unhex32(text)
 }
 
 impl HostKeys {
@@ -124,7 +124,7 @@ impl HostKeys {
         let (file, on_disk) = match std::fs::read(&path) {
             Ok(bytes) => {
                 let bytes = Zeroizing::new(bytes);
-                crate::fsutil::check_private(&path)?;
+                droppen_base::fsutil::check_private(&path)?;
                 let file: KeysFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
                 if file.account == account && file.device == device {
                     (file, true)
@@ -158,7 +158,7 @@ impl HostKeys {
                 return Err(OFF.to_string());
             }
             let bytes = Zeroizing::new(serde_json::to_vec_pretty(&self.file).map_err(|e| e.to_string())?);
-            crate::fsutil::write_private_reporting_path(&self.path, &bytes)?;
+            droppen_base::fsutil::write_private_reporting_path(&self.path, &bytes)?;
             if let Some(dir) = self.path.parent() {
                 super::exclude_from_backups(dir);
             }

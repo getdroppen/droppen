@@ -60,9 +60,9 @@ describe("the module graph of a crate", () => {
   write("src/high/mod.rs", "use crate::low;\npub struct H;\n");
   write("src/only_tests.rs", "use crate::high::H;\n");
   write("src/main.rs", "mod cli;\nfn main() { the_server::low::f(); }\n");
-  write("src/cli.rs", "use the_server::high::H;\nuse crate::main_only;\n");
+  write("src/cli.rs", "use the_server::high::H;\nuse crate::main_only;\nuse droppen_base::low::f;\n");
 
-  test("modules, their files and their edges; test files are not read", () => {
+  test("modules, their files and their edges; test files and other crates' paths are not read", () => {
     const g = moduleGraph(root);
     assert.deepEqual(g.modules, ["cli", "high", "low", "main"]);
     assert.ok(g.files.includes("src/low/inner.rs") && !g.files.includes("src/low/tests.rs") && !g.files.includes("src/only_tests.rs"));

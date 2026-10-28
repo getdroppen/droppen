@@ -31,7 +31,7 @@ use std::os::unix::fs::PermissionsExt;
 /// The parent directory must already exist; a missing one is `NotFound`, which
 /// is what every caller except the agent's own directories reported before the
 /// rule was shared.
-pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     write(path, data, false)
 }
 
@@ -48,12 +48,14 @@ pub(crate) fn write_private_creating_parent(path: &Path, data: &[u8]) -> std::io
 /// [`write_private_creating_parent`], with the path added to the error: the
 /// shape the agent's key and state stores, and the stores built like them,
 /// report.
-pub(crate) fn write_private_reporting_path(path: &Path, data: &[u8]) -> Result<(), String> {
+pub fn write_private_reporting_path(path: &Path, data: &[u8]) -> Result<(), String> {
     write_private_creating_parent(path, data).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// Fails for a file that others can read, naming it and its mode: a key store
+/// refuses such a file, a cache starts again.
 #[cfg(unix)]
-pub(crate) fn check_private(path: &Path) -> Result<(), String> {
+pub fn check_private(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(path)
         .map_err(|e| format!("{}: {e}", path.display()))?
@@ -69,8 +71,9 @@ pub(crate) fn check_private(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// No file modes to check off Unix, so every file passes.
 #[cfg(not(unix))]
-pub(crate) fn check_private(_: &Path) -> Result<(), String> {
+pub fn check_private(_: &Path) -> Result<(), String> {
     Ok(())
 }
 

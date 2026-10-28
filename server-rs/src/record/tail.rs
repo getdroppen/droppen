@@ -69,7 +69,7 @@ use super::{Event, Line, Stop, SCHEMA};
 use crate::feed::watch::{self, FileEvents};
 use crate::paths::{ClaudeRoot, Paths};
 use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
-use crate::time::{iso8601, mtime_ms};
+use droppen_base::time::{iso8601, mtime_ms};
 
 /// How often the files are looked at when the watcher says nothing.
 const POLL: Duration = Duration::from_secs(1);
