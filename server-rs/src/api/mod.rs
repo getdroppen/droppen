@@ -405,7 +405,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/settings", settings);
     let router = crate::accounts::routes(router);
     let router = crate::acp_agent::routes(router);
-    let router = crate::apps::routes(router);
+    let router = crate::apps::AppsState::routes(router);
     let router = crate::attention::routes(router);
     let router = crate::auth::routes(router);
     let router = crate::chats::routes(router);
@@ -416,16 +416,16 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::files::routes(router);
     let router = crate::media::routes(router);
     let router = crate::models::routes(router);
-    let router = crate::notify::routes(router);
+    let router = crate::notify::NotifyState::routes(router);
     let router = crate::plugins::routes::PluginsState::routes(router);
     let router = crate::prefs::routes(router);
-    let router = crate::push::routes(router);
+    let router = crate::push::PushState::routes(router);
     let router = crate::accounts::quota::routes(router);
     let router = crate::schedule::routes(router);
     let router = crate::screens::routes(router);
     let router = crate::selfupdate::routes(router);
     let router = crate::setup::routes(router);
-    let router = crate::stats::routes(router);
+    let router = crate::stats::StatsState::routes(router);
     let router = crate::terminals::routes(router);
     router
         .openapi(|mut spec| {

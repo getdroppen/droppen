@@ -68,10 +68,10 @@ use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
 use crate::sessions::attention::{self, derive};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
@@ -173,9 +173,18 @@ fn endpoint_is_acceptable(endpoint: &str) -> bool {
     droppen_base::outbound::endpoint_is_acceptable(endpoint, insecure_endpoints_allowed())
 }
 
+/// What the push routes use of the server's state: the instance whose push
+/// key and subscriptions these are.
+#[derive(Clone)]
+pub struct PushState {
+    /// The instance's paths, under which the key and the subscriptions live.
+    pub paths: Arc<Paths>,
+}
+crate::http::substate!(PushState);
+
 /// The public key browsers subscribe against, minting the keypair on first ask.
 #[api(id = "push_vapid_key", group = "push", summary = "Web Push application server key")]
-pub async fn vapid_key(State(state): State<AppState>) -> Result<Json<VapidKey>, ApiError> {
+pub async fn vapid_key(State(state): State<PushState>) -> Result<Json<VapidKey>, ApiError> {
     let public_key = store::vapid_public(state.paths.as_ref())
         .await
         .map_err(|error| ApiError::internal(format!("failed to read the push key: {error}")))?;
@@ -184,7 +193,7 @@ pub async fn vapid_key(State(state): State<AppState>) -> Result<Json<VapidKey>, 
 
 /// Register a browser for notifications, replacing any earlier one on the same endpoint.
 #[api(id = "push_subscribe", group = "push", summary = "Register a push subscription")]
-pub async fn subscribe(State(state): State<AppState>, ApiJson(body): ApiJson<SubscribeBody>) -> Result<Created<SendResult>, ApiError> {
+pub async fn subscribe(State(state): State<PushState>, ApiJson(body): ApiJson<SubscribeBody>) -> Result<Created<SendResult>, ApiError> {
     // Refused here rather than at send time: a malformed row would otherwise sit
     // in the file failing every notification, and the browser that sent it would
     // never find out.
@@ -217,19 +226,25 @@ pub async fn subscribe(State(state): State<AppState>, ApiJson(body): ApiJson<Sub
 
 /// Forget a subscription. Idempotent: unsubscribing twice is not an error.
 #[api(id = "push_unsubscribe", group = "push", summary = "Remove a push subscription")]
-pub async fn unsubscribe(State(state): State<AppState>, ApiJson(body): ApiJson<UnsubscribeBody>) -> Result<Json<SendResult>, ApiError> {
+pub async fn unsubscribe(State(state): State<PushState>, ApiJson(body): ApiJson<UnsubscribeBody>) -> Result<Json<SendResult>, ApiError> {
     store::remove(state.paths.as_ref(), &body.endpoint)
         .await
         .map_err(|error| ApiError::internal(format!("failed to remove the subscription: {error}")))?;
     Ok(Json(SendResult { accepted: true }))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/push/vapid", vapid_key)
-        .post("/api/push/subscriptions", subscribe)
-        .delete("/api/push/subscriptions", unsubscribe)
+impl PushState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        PushState: FromRef<S>,
+    {
+        router
+            .get("/api/push/vapid", vapid_key)
+            .post("/api/push/subscriptions", subscribe)
+            .delete("/api/push/subscriptions", unsubscribe)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.
