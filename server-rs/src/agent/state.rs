@@ -812,6 +812,21 @@ impl AgentFiles {
     }
 }
 
+impl crate::aggregator::Enrollment for std::sync::Mutex<AgentState> {
+    fn view(&self) -> Option<crate::aggregator::View> {
+        let st = self.lock().expect("agent state");
+        if !st.enrolled() || st.removed() {
+            return None;
+        }
+        Some(crate::aggregator::View {
+            hub: st.hub.clone(),
+            account: st.account.clone(),
+            me: st.machine.clone(),
+            chain: st.chain.clone()?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

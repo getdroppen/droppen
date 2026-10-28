@@ -64,6 +64,31 @@ pub fn enabled() -> bool {
 /// make that key retired, and its sign-in evidence against this computer.
 pub type SignInGate = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
+/// What a round sees of the agent state.
+#[derive(Clone)]
+pub struct View {
+    /// The hub (`wss://…`).
+    pub hub: String,
+    /// The account.
+    pub account: String,
+    /// This computer's id.
+    pub me: String,
+    /// The verified chain.
+    pub chain: rh_proto::chain::ChainState,
+}
+
+/// The enrollment the device role runs under, as the link it runs in holds it.
+///
+/// The device role declares what it reads and the link's agent state answers,
+/// so the aggregator sees these four fields and none of the rest of the agent.
+pub trait Enrollment: Send + Sync {
+    /// The enrollment as the agent state has it, while this computer is a
+    /// current device of it: `None` before it is enrolled and once it is
+    /// removed, and then the controller idles and the copies drop what they
+    /// follow.
+    fn view(&self) -> Option<View>;
+}
+
 /// Whether `chain` names `me` with exactly `identity`'s keys: this computer's
 /// device role signs in to the hub (a device session, `/v1/client`) only
 /// then. Once a renewal of its identity key is on the chain, the process
