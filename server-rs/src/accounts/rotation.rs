@@ -47,13 +47,14 @@ use chrono::{DateTime, Datelike, TimeZone};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use super::limits::{LimitClass, SCOPE_ALL};
+use super::limits::SCOPE_ALL;
 use super::quota::readings::UsageLogin;
 use super::quota::{QuotaCache, QuotaWindow};
 use super::rest::iso_ms;
-use super::store::{Account, AccountProvider, AccountRef, AccountsStore};
+use super::store::{Account, AccountProvider, AccountsStore};
 use crate::db::Db;
 use crate::openapi_ext::Nullable;
+use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger, SessionRotation};
 
 /// At most this many automatic switches for one message and the continuations
 /// that follow it. Three accounts refusing in a row is not bad luck.
@@ -960,113 +961,6 @@ pub fn notice(outcome: RotationOutcome, from: &str, to: &str, reason: &str, unti
 }
 
 // ------------------------------------------------------------ the record
-
-/// How a rotation decision came out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RotationOutcome {
-    /// The session now runs under the new account.
-    Switched,
-    /// No account in the pool was free.
-    NoCandidate,
-    /// The attempt limit ran out first.
-    CapReached,
-}
-
-impl RotationOutcome {
-    /// The name the table and the API use.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RotationOutcome::Switched => "switched",
-            RotationOutcome::NoCandidate => "no_candidate",
-            RotationOutcome::CapReached => "cap_reached",
-        }
-    }
-
-    /// The inverse of [`RotationOutcome::as_str`]; an unknown row reads as no
-    /// candidate, the one outcome that claims nothing moved.
-    pub fn parse(raw: &str) -> Self {
-        match raw {
-            "switched" => RotationOutcome::Switched,
-            "cap_reached" => RotationOutcome::CapReached,
-            _ => RotationOutcome::NoCandidate,
-        }
-    }
-}
-
-// Inline in `SessionRotation`, the way the contract spells `outcome`, rather
-// than a schema of its own. (`///` here would be an unused doc comment: rustdoc
-// does not document macro invocations.)
-crate::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
-
-/// What set a rotation off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RotationTrigger {
-    /// A turn of the session's own ended on the account's limit. Every row
-    /// written before the trigger was recorded is one of these.
-    Limit,
-    /// A window of the account's was about to run out, and the session was
-    /// moved at a quiet point before it did.
-    Ahead,
-}
-
-impl RotationTrigger {
-    /// The name the table and the API use.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RotationTrigger::Limit => "limit",
-            RotationTrigger::Ahead => "ahead",
-        }
-    }
-
-    /// The inverse of [`RotationTrigger::as_str`]; a row with none, or with one
-    /// this build does not know, is a limit — the only kind there used to be.
-    pub fn parse(raw: Option<&str>) -> Self {
-        match raw {
-            Some("ahead") => RotationTrigger::Ahead,
-            _ => RotationTrigger::Limit,
-        }
-    }
-}
-
-// Inline in `SessionRotation`, like `RotationOutcome`.
-crate::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
-
-/// One automatic account rotation of a session, as `SessionDetail.rotation`
-/// reports it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionRotation {
-    /// The account that hit the limit, or was about to.
-    pub from: AccountRef,
-    /// The account it was moved to; only a move when `outcome` is `switched`.
-    pub to: AccountRef,
-    /// When it happened, ISO-8601.
-    pub at: String,
-    /// Which kind of limit the old account hit, or was about to hit.
-    pub class: LimitClass,
-    /// `all`, or the model family the limit belongs to.
-    pub scope: String,
-    /// When the old account's limit lifts, ISO-8601; `null` when unknown. For
-    /// a move `ahead` of a limit, when the window that was near resets.
-    pub until_at: Nullable<String>,
-    /// Background subagents the move cut short.
-    pub interrupted_tasks: u32,
-    /// `switched` when the session now runs under `to`; `no_candidate` when no
-    /// account in the pool was free; `cap_reached` when the attempt limit ran
-    /// out first.
-    pub outcome: RotationOutcome,
-    /// `limit` when a turn ended on the old account's limit; `ahead` when the
-    /// session was moved at a quiet point because a window of the old account
-    /// was about to run out.
-    // Deliberately not `#[serde(default)]`: gotcha reads that as optional,
-    // and the contract promises the field on every response.
-    pub trigger: RotationTrigger,
-    /// For a move `ahead` of a limit, how much of the near window was gone,
-    /// 0–100; `null` otherwise.
-    pub used_percent: Option<f64>,
-}
 
 /// A decision, ready to be written down.
 #[derive(Debug, Clone, PartialEq)]

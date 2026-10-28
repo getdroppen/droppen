@@ -38,7 +38,6 @@ use crate::sessions::{claude, Source};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};
 
-pub use store::AccountRef;
 
 /// `POST /api/accounts` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -1411,7 +1410,7 @@ mod tests {
                     source: "claude:result",
                     model: None,
                     verdict: limits::Verdict {
-                        class: limits::LimitClass::Auth,
+                        class: crate::sessions::account::LimitClass::Auth,
                         scope: "all".into(),
                         until_ms: None,
                     },

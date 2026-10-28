@@ -1325,7 +1325,8 @@ mod tests {
     /// quota rest is left alone.
     #[tokio::test]
     async fn a_completed_turn_ends_a_refused_credential_rest_on_its_login() {
-        use crate::accounts::limits::{LimitClass, Verdict};
+        use crate::accounts::limits::Verdict;
+        use crate::sessions::account::LimitClass;
         use crate::accounts::local_login::LocalLoginState;
         use crate::accounts::rest::{now_ms, Observation, LOCAL_CODEX};
         let mut h = Harness::new().await;
@@ -1371,7 +1372,7 @@ mod tests {
     /// always has.
     #[tokio::test]
     async fn a_usage_limit_is_recorded_and_changes_nothing_else() {
-        use crate::accounts::limits::LimitClass;
+        use crate::sessions::account::LimitClass;
         let mut h = Harness::new().await;
         h.start().await;
         let log = h.driver.registry.accounts.limit_log();

@@ -81,10 +81,10 @@ use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use crate::accounts::AccountRef;
 use crate::drive::Drive;
 use crate::inject::drafts::Draft;
 use crate::paths::{ClaudeRoot, Paths};
+use crate::sessions::account::AccountRef;
 use crate::sessions::util::TranscriptItem;
 use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source};
 
@@ -383,7 +383,7 @@ pub struct SessionState {
     /// Written by the session's driver the moment a rotation is decided, and
     /// the driver pokes this feed right after, so it arrives without waiting
     /// for the next poll.
-    pub rotation: Option<crate::accounts::rotation::SessionRotation>,
+    pub rotation: Option<crate::sessions::account::SessionRotation>,
     /// The receipts of the messages clients named for this session, from the
     /// last two hours; see [`crate::inject::receipts`]. Always present, like
     /// `rotation`, so an absent field means a server too old to send it.
@@ -1666,8 +1666,8 @@ mod tests {
     /// shows it was the poke that sent it.
     #[tokio::test]
     async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_the_poll() {
-        use crate::accounts::limits::LimitClass;
-        use crate::accounts::rotation::{Decision, RotationOutcome, RotationTrigger};
+        use crate::accounts::rotation::Decision;
+        use crate::sessions::account::{LimitClass, RotationOutcome, RotationTrigger};
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));

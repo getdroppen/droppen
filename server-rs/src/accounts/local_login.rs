@@ -30,10 +30,10 @@
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use super::limits::LimitClass;
 use super::quota::readings::SharedReading;
 use super::quota::QuotaProbeError;
 use super::rest::{AccountRest, LimitLog, LOCAL_CLAUDE, LOCAL_CODEX};
+use crate::sessions::account::LimitClass;
 
 /// Whether the machine's own login can start a session right now, as far as
 /// this server can tell.

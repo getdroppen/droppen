@@ -518,11 +518,11 @@ pub fn notify_rotation(
     paths: Arc<Paths>,
     source: Source,
     id: String,
-    outcome: crate::accounts::rotation::RotationOutcome,
-    trigger: crate::accounts::rotation::RotationTrigger,
+    outcome: crate::sessions::account::RotationOutcome,
+    trigger: crate::sessions::account::RotationTrigger,
     text: String,
 ) {
-    use crate::accounts::rotation::{RotationOutcome, RotationTrigger};
+    use crate::sessions::account::{RotationOutcome, RotationTrigger};
     tokio::spawn(async move {
         let notice = Notice::Rotated(text.clone());
         let summary = summary_of(&paths, source, &id).await;

@@ -68,15 +68,16 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::accounts::limits::{self, LimitClass, Verdict};
+use crate::accounts::limits::{self, Verdict};
 use crate::accounts::quota::readings::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
-use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, RotationOutcome, RotationTrigger, Wait};
-use crate::accounts::store::{AccountProvider, AccountRef};
+use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
+use crate::accounts::store::AccountProvider;
 use crate::openapi_ext::Optional;
 use crate::process_env::Env;
 use crate::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
+use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
 use crate::sessions::delivery::{QuestionState, ReceiptStatus, SessionQuestion};
 use crate::sessions::{InjectionRunState, SessionStatus, Source};
 use crate::time::iso8601;
@@ -10654,7 +10655,7 @@ done
                 .collect()
         }
 
-        fn latest_rotation(&self) -> Option<rotation::SessionRotation> {
+        fn latest_rotation(&self) -> Option<crate::sessions::account::SessionRotation> {
             self.registry.accounts.rotation_log().latest(SESSION)
         }
     }
@@ -10996,7 +10997,7 @@ dir=$(dirname "$GO")
             .await
         }
 
-        fn rotations(&self) -> Vec<rotation::SessionRotation> {
+        fn rotations(&self) -> Vec<crate::sessions::account::SessionRotation> {
             self.registry.accounts.rotation_log().history(SESSION, 20)
         }
     }

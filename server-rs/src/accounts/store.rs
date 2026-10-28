@@ -42,11 +42,11 @@ use gotcha::Schematic;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use super::limits::LimitClass;
 use super::rest::{AccountRest, LimitLog};
 use crate::db::{self, Db};
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::Paths;
+use crate::sessions::account::{AccountRef, LimitClass};
 use crate::time::iso8601;
 
 /// Where the one setting in this store that is not a row lives.
@@ -428,15 +428,6 @@ pub struct Account {
     /// Defaults to `true` for a Claude OAuth account and `false` for an env or
     /// Codex account.
     pub rotation: bool,
-}
-
-/// The account a session runs under, as the session payloads name it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-pub struct AccountRef {
-    /// The account's uuid.
-    pub id: String,
-    /// Its display name.
-    pub label: String,
 }
 
 /// `GET /api/accounts` and everything that returns the whole list.
@@ -1653,7 +1644,8 @@ mod tests {
     /// the account ends them all.
     #[tokio::test]
     async fn an_account_carries_its_active_rests_and_reauthorizing_ends_the_auth_one() {
-        use super::super::limits::{LimitClass, Verdict};
+        use super::super::limits::Verdict;
+        use crate::sessions::account::LimitClass;
         use super::super::rest::{now_ms, Observation};
 
         let (_dir, store) = store();
