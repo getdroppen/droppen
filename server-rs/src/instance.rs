@@ -13,7 +13,8 @@
 //! server that wants to coexist is given a different name (`APP_INSTANCE`) and a
 //! disjoint directory, so there is nothing left to race over.
 //!
-//! Shared, non-adoptable state deliberately stays where it is: UI preferences,
+//! Shared, non-adoptable state deliberately stays where it is: the stored CLI
+//! accounts (`<config>/state.db`, [`crate::accounts::store`]), UI preferences,
 //! session titles, the seen and archived lists, uploads and `notify.json` are
 //! files two instances may legitimately both read. They are
 //! keyed by globally unique session ids or hold settings the user meant

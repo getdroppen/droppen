@@ -22,9 +22,9 @@
 //! The roots hang off a [`Paths`], which resolves both of them once at
 //! construction, so a test can point a whole server at a synthetic tree without
 //! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
-//! also answer to the names a 0.2.125 install sets,
-//! `REMOTE_HAND_CLAUDE_*_ROOT`, through [`crate::env`]; [`env_dir`] is the only
-//! place they — or any other directory override — are read.
+//! also answer to their pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through
+//! [`crate::env`]; [`env_dir`] is the only place they — or any other directory
+//! override — are read.
 
 use std::path::PathBuf;
 
@@ -214,8 +214,9 @@ pub fn migrate_legacy_managed_root(paths: &Paths) -> LegacyMigration {
 ///
 /// Not a refusal: claude 2.1.266 reads the environment rather than the file
 /// (verified with a bogus file next to a valid `CLAUDE_CODE_OAUTH_TOKEN`), so
-/// the file is worth a log line and nothing more. Refusing would only make the
-/// root's own login and account sessions mutually exclusive.
+/// the file is worth a log line and nothing more. An older claude lets the file
+/// outrank the injected token, so the log line names it. Refusing would only
+/// make the root's own login and account sessions mutually exclusive.
 pub async fn managed_root_file_credentials(paths: &Paths) -> Option<PathBuf> {
     let path = root_dir(paths, ClaudeRoot::Managed).join(".credentials.json");
     tokio::fs::metadata(&path).await.ok().map(|_| path)

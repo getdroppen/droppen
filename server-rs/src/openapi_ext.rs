@@ -10,16 +10,16 @@
 //! name) plus the status entry into the operation's `responses`.
 //!
 //! It also carries two shape fixes that keep the generated TypeScript identical
-//! to the checked-in contract (`openapi/openapi.json`, and the zod schemas it
-//! came from):
+//! to the checked-in contract (`openapi/openapi.json`):
 //!
 //! * [`Nullable`] — a value that is always present but may be `null`. gotcha maps
 //!   `Option<T>` to *optional and nullable*, but the contract means *required
 //!   and nullable*, which is a different TS type.
 //! * [`hoist_nullable_refs`] — the contract carries the nullability on a
 //!   registered object schema *inside* the component (`Injection` is
-//!   `["object","null"]`), whereas a `Nullable<Injection>` field would carry
-//!   `nullable` next to its `$ref`, where generators ignore it.
+//!   `type: object` with `nullable: true`), whereas a `Nullable<Injection>`
+//!   field would carry `nullable` next to its `$ref`, where generators ignore
+//!   it.
 
 use std::collections::BTreeMap;
 
@@ -639,8 +639,8 @@ fn declare_bearer_scheme(spec: &mut OpenAPIV3) {
 ///
 /// `$ref` siblings are ignored by every generator, so the field would come out
 /// as a non-nullable `X`. The checked-in contract puts the nullability on the
-/// component too (`Injection` is `["object","null"]` in `openapi/openapi.json`),
-/// so this both fixes the type and matches it.
+/// component too (`Injection` is `type: object` with `nullable: true` in
+/// `openapi/openapi.json`), so this both fixes the type and matches it.
 fn hoist_nullable_refs(spec: &mut OpenAPIV3) {
     let Some(schemas) = spec.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
         return;

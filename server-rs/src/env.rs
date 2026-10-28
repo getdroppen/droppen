@@ -1,12 +1,11 @@
-//! The server's environment variables, and the old names a 0.2.125 build
-//! still passes and reads.
+//! The server's environment variables, and the older `REMOTE_HAND_*` / `RH_*`
+//! names configuration written for a pre-rename install still uses.
 //!
-//! Every setting is `DROPPEN_*`; [`RENAMED`] lists each with the
-//! `REMOTE_HAND_*` or `RH_*` name the 0.2.125 upgrade floor knows. The server
-//! reads them through [`var`], which takes the new name and, when that is
-//! unset, the old one — so a launchd plist, a unit or a shell profile written
-//! for a pre-rename install keeps working until v0.2.135, when the old names are
-//! removed:
+//! Every setting is `DROPPEN_*`; [`RENAMED`] lists each with its old name. The
+//! server reads them through [`var`], which takes the new name and, when that
+//! is unset, the old one — so a launchd plist, a unit or a shell profile
+//! written for a pre-rename install keeps working until v0.2.135, when the old
+//! names are removed:
 //!
 //! * a value is trimmed, and an empty one is unset;
 //! * only the old name is set: its value is used, and the server says once that
@@ -24,10 +23,10 @@
 //! Until v0.2.135, the variables one Droppen program sets for another
 //! ([`Kind::Handoff`]: `up` for the server it runs, the desktop app for its
 //! server, a server for a session's `droppen-notify`) are written under both
-//! names ([`with_old_name`]), because either side may be a 0.2.125 binary that
-//! still passes the old names, or a pre-rename program that reads only them —
-//! an `up` from before a self-upgrade runs every server after it — and read
-//! under both without a word: an old name there was set by another Droppen
+//! names ([`with_old_name`]), because either side may be a pre-rename program
+//! that reads or writes only the old names — an `up` from before a self-upgrade
+//! runs every server after it — and read under both without a word: an old name
+//! there was set by another Droppen
 //! program, not by anybody's configuration, so there is nothing for a person
 //! to rename. When the two differ, the old name wins: only a pre-rename
 //! program writes one without the other, over a new name it inherited from
@@ -54,12 +53,13 @@ pub enum Kind {
     Handoff,
 }
 
-/// Every variable the server reads that a 0.2.125 install names differently:
-/// `(new, old, kind)`. `REMOTE_HAND_X` is `DROPPEN_X`, `RH_HUB_X` is
-/// `DROPPEN_HUB_X` and any other `RH_X` is `DROPPEN_X`.
+/// Every variable the server reads that has an older `REMOTE_HAND_*` / `RH_*`
+/// name, honoured until v0.2.135: `(new, old, kind)`. `REMOTE_HAND_X` is
+/// `DROPPEN_X`, `RH_HUB_X` is `DROPPEN_HUB_X` and any other `RH_X` is
+/// `DROPPEN_X`.
 ///
-/// Not here, because a 0.2.125 install names them the same way: `APP_*` (the
-/// framework's), `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`,
+/// Not here, because they have no other name: `APP_*` (the framework's),
+/// `DROPPEN_NOTIFY_AS`, `DROPPEN_ABSORB_POLL_MS`,
 /// `DROPPEN_DESKTOP_SHELL_READ`, `DROPPEN_ALLOWED_HOSTS`.
 /// Not here either, because no supported build reads their old names:
 /// `DROPPEN_CODEX_API_KEY` (the server sets it and names it in the same spawn
@@ -116,19 +116,18 @@ pub const RENAMED: &[(&str, &str, Kind)] = &[
     ("DROPPEN_NOTIFY_TOKEN", "RH_NOTIFY_TOKEN", Kind::Handoff),
 ];
 
-/// The old name a 0.2.125 install uses for `name`, and who sets it; `None` for
-/// a name that has no other.
+/// The old name of `name`, and who sets it; `None` for a name with no other.
 fn renamed(name: &str) -> Option<(&'static str, Kind)> {
     RENAMED.iter().find(|(new, _, _)| *new == name).map(|(_, old, kind)| (*old, *kind))
 }
 
-/// The old name a 0.2.125 install uses for `name`, if it has one.
+/// The old name of `name`, if it has one.
 pub fn old_name(name: &str) -> Option<&'static str> {
     renamed(name).map(|(old, _)| old)
 }
 
 /// `name` and its old name, for a program that sets the variable for another
-/// it starts ([`Kind::Handoff`]): an older one reads only the old name.
+/// it starts ([`Kind::Handoff`]): a pre-rename program reads only the old name.
 pub fn with_old_name(name: &'static str) -> impl Iterator<Item = &'static str> {
     std::iter::once(name).chain(old_name(name))
 }

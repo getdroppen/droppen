@@ -135,11 +135,9 @@ fn split_ids(list: Option<&str>) -> std::collections::BTreeSet<String> {
 pub struct AuthSettings {
     /// Force authentication on (`true`) or off (`false`).
     ///
-    /// Unset is the default and means *on exactly when accounts exist*: a
-    /// machine with accounts asks for a login without anyone flipping this, and
-    /// one without them stays in its setup state. `true` is the fuse for a
-    /// deployment that would rather refuse every request than serve every
-    /// request if `users.json` were ever lost.
+    /// Unset means on, the same as `true`: an instance with a user account asks
+    /// for a login, one without is in its setup state ([`crate::auth::setup`]).
+    /// `false` switches authentication off: development and tests only.
     ///
     /// The one field with no typed default — there is no TOML value meaning
     /// "unset" — so it carries its own lenient deserializer instead, and accepts

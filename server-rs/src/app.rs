@@ -257,8 +257,9 @@ impl RemoteHandApp {
                 // same lock every adoption below does.
                 crate::claude_roots::migrate_legacy_managed_root(&paths);
                 // After the move, so a legacy root's leftovers are swept too:
-                // an adoption interrupted between its copy and its rename left
-                // a full transcript nothing will ever list.
+                // an adoption by an earlier build, interrupted between its copy
+                // and its rename, leaves a full transcript nothing will ever
+                // list.
                 crate::sessions::adoption_leftovers::sweep_partial_adoptions(&paths);
                 // Who this server is, minted once and kept for ever after.
                 // Under the lock like everything else here: it writes to the
