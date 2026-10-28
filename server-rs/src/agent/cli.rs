@@ -129,7 +129,7 @@ impl AgentArgs {
                         st.machine,
                         st.account,
                         st.hub,
-                        AgentFiles::of(&paths).0.display()
+                        AgentFiles::of(&paths).dir().display()
                     ),
                     None => println!("instance {} was not enrolled; nothing under agent/ now", paths.instance()),
                 }

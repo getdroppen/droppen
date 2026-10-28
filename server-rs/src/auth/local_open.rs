@@ -87,19 +87,29 @@ pub const FRAGMENT_KEY: &str = "local-open";
 /// Its own type rather than methods on [`Paths`], so that where the socket is,
 /// and who may trust it, is this module's business alone.
 #[derive(Debug, Clone)]
-pub struct ControlSocket(Paths);
+pub struct ControlSocket {
+    dir: PathBuf,
+    /// `None` when the instance's name is not one ([`crate::instance::InstanceDirs::new`]):
+    /// then no port was recorded either.
+    port_file: Option<PathBuf>,
+}
 
 impl ControlSocket {
     /// The control socket of the instance `paths` names.
     pub fn of(paths: &Paths) -> Self {
-        Self(paths.clone())
+        Self {
+            dir: paths.instance_dir().join("control"),
+            port_file: crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
+                .ok()
+                .map(|dirs| dirs.port_file()),
+        }
     }
 }
 
 impl ControlSocket {
     /// `<instance>/control/`: the socket and the redirect pages, `0700`.
     pub fn dir(&self) -> PathBuf {
-        self.0.instance_dir().join("control")
+        self.dir.clone()
     }
 
     /// Where the control socket is: in [`ControlSocket::dir`] when the address
@@ -111,8 +121,7 @@ impl ControlSocket {
 
     /// The port this instance's server recorded when it bound.
     fn recorded_port(&self) -> Option<u16> {
-        let dirs = crate::instance::InstanceDirs::new(&self.0.data_dir(), self.0.instance()).ok()?;
-        std::fs::read_to_string(dirs.port_file()).ok()?.trim().parse().ok()
+        std::fs::read_to_string(self.port_file.as_ref()?).ok()?.trim().parse().ok()
     }
 }
 

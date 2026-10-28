@@ -349,12 +349,12 @@ pub fn parse_claude_usage(text: &str, now_ms: i64) -> Vec<QuotaWindow> {
 /// Its own type rather than methods on [`Paths`], so that starting a probe
 /// goes through this module.
 #[derive(Debug, Clone)]
-pub struct QuotaProbe {
+pub struct ProbeRoots {
     home: PathBuf,
     codex_sessions: PathBuf,
 }
 
-impl QuotaProbe {
+impl ProbeRoots {
     /// The probes of the instance `paths` names.
     pub fn of(paths: &Paths) -> Self {
         Self {
@@ -364,7 +364,7 @@ impl QuotaProbe {
     }
 }
 
-impl QuotaProbe {
+impl ProbeRoots {
     /// Run `/usage` against one config root.
     ///
     /// `config_dir` `None` means the user's own login (whatever the CLI picks
@@ -585,7 +585,7 @@ impl QuotaCache {
     /// An empty cache for one server instance.
     pub fn new(paths: Arc<Paths>) -> Self {
         Self {
-            codex: Arc::new(CodexQuotaCache::new(QuotaProbe::of(&paths))),
+            codex: Arc::new(CodexQuotaCache::new(ProbeRoots::of(&paths))),
             paths,
             in_flight: Mutex::new(HashMap::new()),
             queue: Arc::new(tokio::sync::Mutex::new(())),
@@ -748,7 +748,7 @@ impl QuotaCache {
         if !self.fallback_due(login) {
             return;
         }
-        let probe = QuotaProbe::of(&self.paths).claude_usage(target.config_dir.as_deref()).await;
+        let probe = ProbeRoots::of(&self.paths).claude_usage(target.config_dir.as_deref()).await;
         if probe.rate_limited {
             tracing::warn!(
                 login = ?login,
@@ -1011,7 +1011,7 @@ mod tests {
     }
 
     /// A real `claude -p /usage --output-format json` reading from `2026-09-10`,
-    /// spawned exactly as [`QuotaProbe::claude_usage`] spawns it.
+    /// spawned exactly as [`ProbeRoots::claude_usage`] spawns it.
     #[test]
     fn a_live_usage_reading_keeps_its_reset_instants() {
         let text = concat!(

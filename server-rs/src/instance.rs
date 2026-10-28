@@ -633,13 +633,13 @@ mod tests {
         let a = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "a");
         let b = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "b");
 
-        assert_ne!(crate::sessions::SessionFiles::of(&a).scheduled_tasks(), crate::sessions::SessionFiles::of(&b).scheduled_tasks());
+        assert_ne!(a.instance_dir().join("scheduled-tasks.json"), b.instance_dir().join("scheduled-tasks.json"));
 
         // And the sidecars that are shared by design did not move with them.
         assert_eq!(crate::prefs::PrefsStore::of(&a).file(), crate::prefs::PrefsStore::of(&b).file());
-        assert_eq!(crate::sessions::SessionFiles::of(&a).titles(), crate::sessions::SessionFiles::of(&b).titles());
-        assert_eq!(crate::sessions::SessionFiles::of(&a).seen(), crate::sessions::SessionFiles::of(&b).seen());
-        assert_eq!(crate::sessions::SessionFiles::of(&a).archived(), crate::sessions::SessionFiles::of(&b).archived());
+        assert_eq!(a.config_dir().join("titles.json"), b.config_dir().join("titles.json"));
+        assert_eq!(a.config_dir().join("seen.json"), b.config_dir().join("seen.json"));
+        assert_eq!(a.config_dir().join("archived.json"), b.config_dir().join("archived.json"));
     }
 
     #[test]

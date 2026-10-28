@@ -87,7 +87,8 @@ mod cli;
 mod seed;
 
 pub use cli::{AgentArgs, AgentCommand, ENROLL_PENDING_EXIT, USAGE};
-pub use seed::{load_or_create, load_or_create_in, FileSeedStore, StagedSeed, StoredSeed};
+pub use seed::{load_or_create, load_or_create_in, StagedSeed, StoredSeed};
+pub(in crate::agent) use seed::FileSeedStore;
 pub(in crate::agent) use seed::sync_dir;
 #[cfg(test)]
 pub(crate) use seed::dir_syncs;
@@ -106,6 +107,11 @@ impl AgentFiles {
     /// The agent files of the instance `paths` names.
     pub fn of(paths: &Paths) -> Self {
         Self(paths.instance_dir().join("agent"))
+    }
+
+    /// `<instance dir>/agent/` itself.
+    pub(in crate::agent) fn dir(&self) -> PathBuf {
+        self.0.clone()
     }
 }
 

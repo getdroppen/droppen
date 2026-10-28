@@ -77,7 +77,7 @@ impl AgentFiles {
     /// Steps 1 and 2 (see the module docs): present the code's token, prove the
     /// code and the keys, and save the enrolling state. Fast — a few round trips
     /// — and the same for the command line and the local API.
-    pub async fn begin_enrollment(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<Begun, BeginError> {
+    pub(in crate::agent) async fn begin_enrollment(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<Begun, BeginError> {
         if let Some(existing) = AgentState::load(self).map_err(BeginError::Local)? {
             if existing.enrolled() {
                 return Err(BeginError::Enrolled(format!(
@@ -176,7 +176,7 @@ impl AgentFiles {
     /// Enroll this instance with `code` at the hub at `hub_url` (see the module
     /// docs): `agent enroll` on the command line, which waits here until the
     /// page that showed the code has added this device (or the code expired).
-    pub async fn enroll(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<(), EnrollFailure> {
+    pub(in crate::agent) async fn enroll(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<(), EnrollFailure> {
         let begun = self.begin_enrollment(identity, code, hub_url)
             .await
             .map_err(|e| EnrollFailure::Failed(e.to_string()))?;
@@ -199,7 +199,7 @@ impl AgentFiles {
 impl AgentFiles {
     /// Step 3 on the enrollment's own socket: follow the account's chain until
     /// it names this machine with exactly its keys; the chain's seq then.
-    pub async fn wait_enrollment_confirmed(&self, identity: &MachineIdentity, begun: Begun, timeout: Duration) -> Result<u64, EnrollFailure> {
+    pub(in crate::agent) async fn wait_enrollment_confirmed(&self, identity: &MachineIdentity, begun: Begun, timeout: Duration) -> Result<u64, EnrollFailure> {
         let Begun {
             machine,
             mut sink,

@@ -163,7 +163,7 @@ impl AgentFiles {
     /// statement is kept already: `true` when it was written now. What is in its
     /// place is read and compared, never taken for it by its name alone; one that
     /// does not read, or is another statement, gives way.
-    pub fn keep_dispute(&self, s: &Statement) -> Result<bool, String> {
+    pub(in crate::agent) fn keep_dispute(&self, s: &Statement) -> Result<bool, String> {
         let path = s.path(self);
         match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Statement>(&bytes) {
@@ -187,7 +187,7 @@ fn write(path: &std::path::Path, s: &Statement) -> Result<(), String> {
 
 impl AgentFiles {
     /// Every statement this instance keeps, by entry.
-    pub fn kept_disputes(&self) -> Vec<(PathBuf, Statement)> {
+    pub(in crate::agent) fn kept_disputes(&self) -> Vec<(PathBuf, Statement)> {
         let key = self.machine_key();
         let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else {
             return Vec::new();
@@ -281,7 +281,7 @@ impl AgentFiles {
     /// Deliver every statement this instance keeps that the hub has not taken —
     /// at start, and whenever one is made. One delivery task per instance; none
     /// when nothing waits (or outside a runtime).
-    pub fn deliver_disputes(&self) {
+    pub(in crate::agent) fn deliver_disputes(&self) {
         if !self.kept_disputes().iter().any(|(_, s)| s.pending()) {
             return;
         }
@@ -304,7 +304,7 @@ impl AgentFiles {
 impl AgentFiles {
     /// Tests: the delivery task ends as the process would.
     #[cfg(test)]
-    pub fn stop_dispute_delivery(&self) {
+    pub(in crate::agent) fn stop_dispute_delivery(&self) {
         if let Some((_, task)) = RUNNING.lock().expect("dispute deliveries").get(&self.state_dir()) {
             task.abort();
         }
@@ -314,7 +314,7 @@ impl AgentFiles {
 impl AgentFiles {
     /// Tests: whether a delivery task runs for this instance.
     #[cfg(test)]
-    pub fn delivering_disputes(&self) -> bool {
+    pub(in crate::agent) fn delivering_disputes(&self) -> bool {
         RUNNING.lock().expect("dispute deliveries").contains_key(&self.state_dir())
     }
 }

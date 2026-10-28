@@ -921,8 +921,8 @@ mod tests {
         unsafe { libc::umask(previous) };
         result.expect("write");
 
-        assert!(!crate::sessions::SessionFiles::of(&paths).scheduled_tasks().exists(), "no task list is written out beside the database");
-        assert!(!crate::sessions::SessionFiles::of(&paths).scheduled_tasks().with_extension("json.tmp").exists());
+        assert!(!paths.instance_dir().join("scheduled-tasks.json").exists(), "no task list is written out beside the database");
+        assert!(!paths.instance_dir().join("scheduled-tasks.json").with_extension("json.tmp").exists());
         let mode = std::fs::metadata(paths.instance_db()).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
@@ -994,7 +994,7 @@ mod tests {
         // With a cache, the rungs it names are the ones that count.
         std::fs::create_dir_all(paths.codex_dir()).expect("codex dir");
         std::fs::write(
-            crate::sessions::SessionFiles::of(&paths).codex_models_cache(),
+            crate::sessions::codex::CodexHome::of(&paths).models_cache(),
             r#"{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
         )
         .expect("seed");
