@@ -54,9 +54,10 @@ export interface CloudConfig {
   relays: string[];
   /**
    * Which host this dist is deployed as: `app` (`my.`, WebAuthn and the
-   * Turnstile frame, cross-origin API) or `site` (`www.`/apex: no WebAuthn, no
-   * frame, no API calls — only this host's own files). Everything but
-   * `_headers` is the same in both.
+   * Turnstile frame, cross-origin API and its socket) or `site` (`www.`/apex:
+   * no WebAuthn, no frame, and only the HTTP API — the latest release and the
+   * waitlist — never its socket or a relay). Everything but `_headers` is the
+   * same in both.
    */
   role: "app" | "site";
 }

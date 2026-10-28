@@ -10,7 +10,7 @@
  *   hub names it (`GET /v1/releases/latest`, `lib/hub/releases.ts`), the
  *   page links it; until it does, or when it cannot, they link the release
  *   page ({@link APP_DOWNLOAD_URL}). The page never asks GitHub for anything
- *   (its `connect-src` stays the hub and its relays). Opening it starts
+ *   (GitHub is in no role's `connect-src`; the hub is). Opening it starts
  *   Droppen with no login page.
  *   Until the first one is published ({@link APP_AVAILABLE}), every place that
  *   offers it says it is coming and offers the background install instead.
