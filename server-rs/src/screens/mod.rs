@@ -275,7 +275,7 @@ impl ScreenJson for Value {
 }
 
 /// Rebuilding one node of a pane tree from checked values.
-trait ScreenNode {
+pub trait ScreenNode {
     /// An id the client supplied, or a fresh one.
     ///
     /// A blank id is as unusable as a missing one: it names nothing.
@@ -708,6 +708,10 @@ trait ScreenReads {
 
     /// The whole list and its revision, read together.
     fn list_in(&self) -> rusqlite::Result<ScreenList>;
+
+    /// [`Refused::StaleList`] when `base` is not the stored list revision;
+    /// `None` when it is, or when no base was named.
+    fn stale_list(&self, base: Option<u64>) -> rusqlite::Result<Option<Refused>>;
 }
 
 impl ScreenReads for Connection {
@@ -738,6 +742,14 @@ impl ScreenReads for Connection {
             screens: self.screens_in()?,
             list_revision: self.list_revision_in()?,
         })
+    }
+
+    fn stale_list(&self, base: Option<u64>) -> rusqlite::Result<Option<Refused>> {
+        let Some(base) = base else { return Ok(None) };
+        if self.list_revision_in()? == base {
+            return Ok(None);
+        }
+        Ok(Some(Refused::StaleList(self.list_in()?)))
     }
 }
 
@@ -933,26 +945,6 @@ impl From<Refused> for ApiError {
                 list_revision: list.list_revision,
             })),
         }
-    }
-}
-
-/// Checking a client's list revision against the stored one.
-///
-/// A trait of its own because [`Refused`] is this module's: the check cannot
-/// hang off [`ScreenReads`], whose methods return only SQLite errors.
-trait ScreenRevisionCheck {
-    /// [`Refused::StaleList`] when `base` is not the stored list revision;
-    /// `None` when it is, or when no base was named.
-    fn stale_list(&self, base: Option<u64>) -> rusqlite::Result<Option<Refused>>;
-}
-
-impl ScreenRevisionCheck for Connection {
-    fn stale_list(&self, base: Option<u64>) -> rusqlite::Result<Option<Refused>> {
-        let Some(base) = base else { return Ok(None) };
-        if self.list_revision_in()? == base {
-            return Ok(None);
-        }
-        Ok(Some(Refused::StaleList(self.list_in()?)))
     }
 }
 
