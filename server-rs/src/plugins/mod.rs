@@ -140,7 +140,8 @@ pub struct Asset {
     pub content_type: &'static str,
 }
 
-/// The plugin host of one instance. One per server, in [`crate::api::AppState`].
+/// The plugin host of one instance. One per server, which its routes reach
+/// through [`routes::PluginsState`].
 pub struct Plugins {
     instance_dir: PathBuf,
     instance_db: PathBuf,

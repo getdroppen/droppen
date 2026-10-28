@@ -22,12 +22,12 @@
 use std::sync::Arc;
 
 use gotcha::axum::body::Bytes;
-use gotcha::axum::extract::{FromRequest, Request};
+use gotcha::axum::extract::{FromRef, FromRequest, Request};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::middleware::Next;
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::{Parameter, RequestBody};
-use gotcha::{api, Either, Json, ParameterProvider, State};
+use gotcha::{api, Either, GotchaRouter, Json, ParameterProvider, State};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -38,7 +38,6 @@ use super::wire::{
     PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody, PluginTooLarge,
 };
 use super::{DecisionReason, PluginError, Plugins};
-use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
@@ -121,7 +120,7 @@ fn too_large(message: String, limit: u64) -> ApiError {
 /// `400 invalid`.
 ///
 /// The limit itself is the route's [`DefaultBodyLimit`](gotcha::axum::extract::DefaultBodyLimit),
-/// which [`routes`] raises on these routes only.
+/// which [`PluginsState::routes`] raises on these routes only.
 pub struct PluginJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for PluginJson<T>
@@ -235,9 +234,19 @@ async fn refuse_cloud_requests(request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
+/// What the plugin routes use of the server's state: the plugin host, and
+/// nothing else.
+#[derive(Clone)]
+pub struct PluginsState {
+    /// The plugins installed in this instance, their switches and document
+    /// stores.
+    pub plugins: Arc<Plugins>,
+}
+crate::http::substate!(PluginsState);
+
 /// Every plugin installed in this instance, as this instance sees it.
 #[api(id = "list_plugins", group = "plugins", summary = "List plugins")]
-pub async fn list_plugins(State(state): State<AppState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
+pub async fn list_plugins(State(state): State<PluginsState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
     who.refuse_cloud()?;
     Ok(Json(PluginList {
         plugins: state.plugins.status_async().await.into_iter().map(PluginStatus::from).collect(),
@@ -252,7 +261,7 @@ pub async fn list_plugins(State(state): State<AppState>, #[api(skip)] who: Maybe
 /// `application/octet-stream`.
 #[api(id = "install_plugin", group = "plugins", summary = "Install a plugin")]
 pub async fn install_plugin(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     #[api(skip)] who: MaybeIdentity,
     #[api(skip)] PluginTarball(tarball): PluginTarball,
 ) -> Result<Json<PluginStatus>, ApiError> {
@@ -267,7 +276,7 @@ pub async fn install_plugin(
 /// later install.
 #[api(id = "uninstall_plugin", group = "plugins", summary = "Uninstall a plugin")]
 pub async fn uninstall_plugin(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<PluginDeleted, ApiError> {
@@ -279,7 +288,7 @@ pub async fn uninstall_plugin(
 /// Turn a plugin on or off for this instance. Any signed-in user may.
 #[api(id = "set_plugin_enabled", group = "plugins", summary = "Switch a plugin")]
 pub async fn set_plugin_enabled(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<PluginSwitch>,
@@ -296,7 +305,7 @@ pub async fn set_plugin_enabled(
 /// A plugin's documents, without values, by name.
 #[api(id = "list_plugin_docs", group = "plugins", summary = "List a plugin's documents")]
 pub async fn list_plugin_docs(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<PluginDocQuery>,
     #[api(skip)] who: MaybeIdentity,
@@ -313,7 +322,7 @@ pub async fn list_plugin_docs(
 /// One document.
 #[api(id = "get_plugin_doc", group = "plugins", summary = "Read a plugin document")]
 pub async fn get_plugin_doc(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     #[api(skip)] who: MaybeIdentity,
 ) -> Result<Json<PluginDoc>, ApiError> {
@@ -326,7 +335,7 @@ pub async fn get_plugin_doc(
 /// Write one document by compare-and-set.
 #[api(id = "put_plugin_doc", group = "plugins", summary = "Write a plugin document")]
 pub async fn put_plugin_doc(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginPutDoc>,
@@ -341,7 +350,7 @@ pub async fn put_plugin_doc(
 /// Write several documents, all or none.
 #[api(id = "plugin_batch", group = "plugins", summary = "Write plugin documents together")]
 pub async fn plugin_batch(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
     PluginJson(body): PluginJson<PluginBatch>,
@@ -361,7 +370,7 @@ pub async fn plugin_batch(
 /// The versions a document was replaced from, newest first.
 #[api(id = "plugin_doc_history", group = "plugins", summary = "A plugin document's history")]
 pub async fn plugin_doc_history(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     ApiQuery(query): ApiQuery<PluginHistoryQuery>,
     #[api(skip)] who: MaybeIdentity,
@@ -379,43 +388,49 @@ pub async fn plugin_doc_history(
         })
 }
 
-/// Register the routes.
-///
-/// The two that carry a document are a sub-router of their own, so the raised
-/// body limit is theirs and no other route's (as `crate::files` does it). The
-/// read of a single document shares its path, and so its sub-router; it has no
-/// body for the limit to matter to. The install route gets a sub-router of its
-/// own for its own, larger, limit.
-///
-/// The asset route (`/plugins/…`) is registered here too, so the router claims
-/// it before the SPA fallback can hand a page its shell instead of a module.
-///
-/// The whole plugin surface is one sub-router with [`refuse_cloud_requests`]
-/// over it, so a bridged request is turned away before any body is parsed;
-/// the routers are then merged into the API's.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    let plugins = ApiRouter::default()
-        .get(LIST, list_plugins)
-        .delete(PLUGIN, uninstall_plugin)
-        .put(ENABLED, set_plugin_enabled)
-        .get(DOCS, list_plugin_docs)
-        .get(HISTORY, plugin_doc_history)
-        .merge(
-            ApiRouter::default()
-                .post(LIST, install_plugin)
-                .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)),
-        )
-        .merge(
-            ApiRouter::default()
-                .get(DOC, get_plugin_doc)
-                .put(DOC, put_plugin_doc)
-                .post(BATCH, plugin_batch)
-                .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize)),
-        )
-        .get(super::serve::ASSET_PATH, super::serve::serve_asset)
-        .head(super::serve::ASSET_PATH, super::serve::serve_asset)
-        .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
-    router.merge(plugins)
+impl PluginsState {
+    /// Register the routes.
+    ///
+    /// The two that carry a document are a sub-router of their own, so the raised
+    /// body limit is theirs and no other route's (as `crate::files` does it). The
+    /// read of a single document shares its path, and so its sub-router; it has no
+    /// body for the limit to matter to. The install route gets a sub-router of its
+    /// own for its own, larger, limit.
+    ///
+    /// The asset route (`/plugins/…`) is registered here too, so the router claims
+    /// it before the SPA fallback can hand a page its shell instead of a module.
+    ///
+    /// The whole plugin surface is one sub-router with [`refuse_cloud_requests`]
+    /// over it, so a bridged request is turned away before any body is parsed;
+    /// the routers are then merged into the API's.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        PluginsState: FromRef<S>,
+    {
+        let plugins = GotchaRouter::<S>::default()
+            .get(LIST, list_plugins)
+            .delete(PLUGIN, uninstall_plugin)
+            .put(ENABLED, set_plugin_enabled)
+            .get(DOCS, list_plugin_docs)
+            .get(HISTORY, plugin_doc_history)
+            .merge(
+                GotchaRouter::<S>::default()
+                    .post(LIST, install_plugin)
+                    .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)),
+            )
+            .merge(
+                GotchaRouter::<S>::default()
+                    .get(DOC, get_plugin_doc)
+                    .put(DOC, put_plugin_doc)
+                    .post(BATCH, plugin_batch)
+                    .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize)),
+            )
+            .get(super::serve::ASSET_PATH, super::serve::serve_asset)
+            .head(super::serve::ASSET_PATH, super::serve::serve_asset)
+            .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
+        router.merge(plugins)
+    }
 }
 
 /// Everything gotcha cannot derive about these routes.

@@ -24,6 +24,8 @@ use crate::openapi_ext::{self, ExtraResponses};
 use crate::paths::Paths;
 use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
 
+mod state;
+
 /// The router every subsystem's `routes` function extends.
 ///
 /// Spelled out once here so a subsystem's registration reads as one line rather
@@ -462,7 +464,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::media::routes(router);
     let router = crate::models::routes(router);
     let router = crate::notify::routes(router);
-    let router = crate::plugins::routes::routes(router);
+    let router = crate::plugins::routes::PluginsState::routes(router);
     let router = crate::prefs::routes(router);
     let router = crate::push::routes(router);
     let router = crate::accounts::quota::routes(router);
