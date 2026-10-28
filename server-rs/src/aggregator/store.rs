@@ -171,7 +171,7 @@ fn remove_files(path: &Path) {
 /// one others can read is a cache made again.
 fn private_file(path: &Path) -> Result<(), String> {
     if path.exists() {
-        let open_to_others = files(path).iter().filter(|f| f.exists()).any(|f| crate::agent::check_private(f).is_err());
+        let open_to_others = files(path).iter().filter(|f| f.exists()).any(|f| crate::fsutil::check_private(f).is_err());
         if !open_to_others {
             return Ok(());
         }

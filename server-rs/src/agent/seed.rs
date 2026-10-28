@@ -5,7 +5,7 @@ use rh_proto::identity::MachineIdentity;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{check_private, hub, link, write_private};
+use crate::fsutil::{check_private, write_private_reporting_path};
 use crate::sessions::Paths;
 
 /// The key file's contents.
@@ -118,7 +118,7 @@ impl FileSeedStore {
     /// Where the staging of `nonce` waits: `machine-key.next-<nonce hex>.json`
     /// beside `machine-key.json`.
     pub fn staging_path(&self, nonce: &[u8; 16]) -> PathBuf {
-        self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), hub::hex(nonce)))
+        self.path.with_file_name(format!("{}{}.json", self.staging_prefix(), crate::text::hex(nonce)))
     }
 
     /// `machine-key.expired-` — what a staging set aside as expired is
@@ -131,7 +131,7 @@ impl FileSeedStore {
     /// Where the staging of `nonce` is kept once set aside as expired:
     /// `machine-key.expired-<nonce hex>.json` beside `machine-key.json`.
     pub fn expired_path(&self, nonce: &[u8; 16]) -> PathBuf {
-        self.path.with_file_name(format!("{}{}.json", self.expired_prefix(), hub::hex(nonce)))
+        self.path.with_file_name(format!("{}{}.json", self.expired_prefix(), crate::text::hex(nonce)))
     }
 
     /// The files beside the seed whose names start with `prefix`.
@@ -208,11 +208,11 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(bad(&format!("unsupported key file version {}", file.version)));
         }
-        let seed = hub::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
-        let nonce = link::unhex(&file.nonce)
+        let seed = crate::text::unhex32(&file.seed).ok_or_else(|| bad("the seed is not 32 bytes of hex"))?;
+        let nonce = crate::text::unhex(&file.nonce)
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
-        let chain_head = hub::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
+        let chain_head = crate::text::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
         let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
         Ok(StagedSeed {
             uuid: file.uuid,
@@ -257,7 +257,7 @@ impl FileSeedStore {
         if file.version != 1 {
             return Err(format!("{}: unsupported key file version {}", path.display(), file.version));
         }
-        let seed = hub::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
+        let seed = crate::text::unhex32(&file.seed).ok_or_else(|| format!("{}: the seed is not 32 bytes of hex", path.display()))?;
         Ok(Some(StoredSeed {
             uuid: file.uuid,
             seed: Zeroizing::new(seed),
@@ -274,7 +274,7 @@ impl FileSeedStore {
             })
             .map_err(|e| e.to_string())?,
         );
-        write_private(&self.path, &file)
+        write_private_reporting_path(&self.path, &file)
     }
 
     /// Stage a seed for a renewal, by its nonce: the same nonce again is
@@ -284,10 +284,10 @@ impl FileSeedStore {
             serde_json::to_vec_pretty(&NextKeyFile {
                 version: 1,
                 uuid: staged.uuid.clone(),
-                seed: hub::hex(staged.seed.as_ref()),
-                nonce: hub::hex(&staged.nonce),
+                seed: crate::text::hex(staged.seed.as_ref()),
+                nonce: crate::text::hex(&staged.nonce),
                 chain_seq: staged.chain_seq,
-                chain_head: hub::hex(&staged.chain_head),
+                chain_head: crate::text::hex(&staged.chain_head),
                 assurance: staged.assurance.to_byte(),
                 created_ms: staged.created_ms,
                 accepted_ms: staged.accepted_ms,
@@ -299,7 +299,7 @@ impl FileSeedStore {
         // seed in use is never touched. The rename is flushed before the hub
         // hears of it: a staging the hub takes survives a crash.
         let path = self.staging_path(&staged.nonce);
-        write_private(&path, &file)?;
+        write_private_reporting_path(&path, &file)?;
         sync_dir(&path);
         Ok(())
     }

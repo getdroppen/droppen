@@ -145,7 +145,7 @@ fn deleted_dir(paths: &Paths) -> PathBuf {
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     paths
         .instance_dir()
-        .join(format!("{DELETED_PREFIX}{}-{}-{n}", std::process::id(), crate::agent::now_ms()))
+        .join(format!("{DELETED_PREFIX}{}-{}-{n}", std::process::id(), crate::time::now_ms_u64()))
 }
 
 /// The deletions running on threads of their own, for [`finish_deletions`].

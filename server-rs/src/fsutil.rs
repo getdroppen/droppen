@@ -16,6 +16,9 @@
 //!
 //! The rule was written out at each of the five sites that needed it, which is
 //! how one of the steps goes missing from one of them; this is the one copy.
+//!
+//! [`check_private`] is the reading side: it fails for a file that others can
+//! read, which a key store refuses and a cache starts again.
 
 use std::io::Write;
 use std::path::Path;
@@ -37,6 +40,38 @@ pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// have always done this; a missing `plugin export --out` directory has not.
 pub(crate) fn write_private_creating_parent(path: &Path, data: &[u8]) -> std::io::Result<()> {
     write(path, data, true)
+}
+
+/// Write `data` to `path` as a new 0600 file in a 0700 directory, atomically:
+/// a half-written key file must never be what the next run finds.
+///
+/// [`write_private_creating_parent`], with the path added to the error: the
+/// shape the agent's key and state stores, and the stores built like them,
+/// report.
+pub(crate) fn write_private_reporting_path(path: &Path, data: &[u8]) -> Result<(), String> {
+    write_private_creating_parent(path, data).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+#[cfg(unix)]
+pub(crate) fn check_private(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .permissions()
+        .mode();
+    if mode & 0o077 != 0 {
+        return Err(format!(
+            "{} is readable by others (mode {:o}); chmod 600 it, or delete it to make a new identity",
+            path.display(),
+            mode & 0o777
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn check_private(_: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 fn write(path: &Path, data: &[u8], create_parent: bool) -> std::io::Result<()> {

@@ -8,9 +8,9 @@ use rh_proto::frame::Frame;
 use tokio::sync::mpsc;
 
 use super::admit::refuse;
-use super::hub::now_ms;
 use super::state::AgentState;
 use super::{Routes, Shared, CHANNEL_STALE, LAPSE_POLL};
+use crate::time::now_ms_u64;
 
 /// This machine was removed from the account — its own verified chain says
 /// so (a hub refusing its sign-in never gets here): mark it (saved, so the
@@ -18,7 +18,7 @@ use super::{Routes, Shared, CHANNEL_STALE, LAPSE_POLL};
 /// connection, its relays and channels, the streams' writer). The server and
 /// its local API go on.
 pub(in crate::agent) fn on_removed(shared: &Arc<Shared>, why: &str) {
-    let news = shared.state.lock().expect("agent state").mark_removed(now_ms());
+    let news = shared.state.lock().expect("agent state").mark_removed(now_ms_u64());
     // What it held to control the others (their keys) goes with it (§4.7).
     shared.cancel.cancel();
     if let Err(error) = crate::aggregator::forget_all(&shared.paths) {

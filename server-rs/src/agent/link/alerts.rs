@@ -4,8 +4,8 @@ use rh_proto::chain::{Action, ChainState, Entry, Signer};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use super::hub::now_ms;
 use super::Shared;
+use crate::time::now_ms_u64;
 
 
 /// What an entry changes about who is in the account, in words, if anything:
@@ -209,7 +209,7 @@ pub(in crate::agent) fn alert_account_changes(shared: &Arc<Shared>, entries: &[E
         tracing::warn!(seq = entry.seq(), "account change: {what}");
         // Kept, and published in the encrypted status stream: every device
         // reads what this machine saw change in the account.
-        shared.state.lock().expect("agent state").note_change(now_ms(), &what);
+        shared.state.lock().expect("agent state").note_change(now_ms_u64(), &what);
         noted = true;
         crate::push::notify_account_change(Arc::new(shared.paths.clone()), "Droppen: account change".into(), what);
     }
@@ -229,7 +229,7 @@ pub(in crate::agent) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     tracing::error!("ALARM: {what}");
     let alarms = {
         let mut st = shared.state.lock().expect("agent state");
-        if !st.note_alarm(now_ms(), &what) {
+        if !st.note_alarm(now_ms_u64(), &what) {
             return;
         }
         st.alarms.clone()
@@ -246,7 +246,7 @@ pub(in crate::agent) fn ask_again_for_held(shared: &Arc<Shared>, text: &mpsc::Un
     let due = {
         let mut held = shared.held_until.lock().expect("held");
         match *held {
-            Some(at) if at <= now_ms() => held.take().is_some(),
+            Some(at) if at <= now_ms_u64() => held.take().is_some(),
             _ => false,
         }
     };

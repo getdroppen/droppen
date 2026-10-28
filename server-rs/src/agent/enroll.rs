@@ -28,9 +28,11 @@ use rh_proto::identity::{display_fingerprint, EnrollCode, MachineIdentity};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::hub::{self, hex, now_ms};
+use super::hub;
 use super::state::AgentState;
 use crate::sessions::Paths;
+use crate::text::hex;
+use crate::time::now_ms_u64;
 
 /// How long to wait for the device to confirm (the code's own lifetime).
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -105,7 +107,7 @@ impl Paths {
             .as_str()
             .ok_or_else(|| BeginError::Refused("no device id in the hub's answer".into()))?
             .to_string();
-        let time_ms = now_ms();
+        let time_ms = now_ms_u64();
         let sig = hub::login_signature(identity, &account, &machine, &origin, nonce, time_ms).map_err(BeginError::Local)?;
         let proof = code.proof(&account, &machine, &identity.sign_public(), &identity.dh_public());
         hub::send_json(
@@ -128,7 +130,7 @@ impl Paths {
                 welcome["message"]
             )));
         }
-        let state = AgentState::enrolling(&origin, &account, &machine, code.account_fingerprint, now_ms());
+        let state = AgentState::enrolling(&origin, &account, &machine, code.account_fingerprint, now_ms_u64());
         // A new machine id with new keys: what an earlier enrollment of this
         // instance left (its machine keys, its streams' store) is not this one's.
         self.forget_enrollment_leftovers().map_err(BeginError::Local)?;
@@ -247,7 +249,7 @@ impl Paths {
                         .map(|e| Entry::decode(e))
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|e| e.to_string())?;
-                    let absorbed = state.absorb(&entries, now_ms());
+                    let absorbed = state.absorb(&entries, now_ms_u64());
                     // Whatever took effect is kept, even when the batch stopped short.
                     state.save(self)?;
                     match absorbed.error {

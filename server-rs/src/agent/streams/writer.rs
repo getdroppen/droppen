@@ -317,7 +317,7 @@ impl Writer {
                         data,
                     });
                     refs.push(PageRef {
-                        hash: crate::agent::hub::hex(&hash),
+                        hash: crate::text::hex(&hash),
                         from,
                         to,
                         fp,
@@ -339,7 +339,7 @@ impl Writer {
         let head = LogWriter::new(&mk, epoch, row.stream, plan.upto, link).head(&self.signing, now_ms);
         let hashes = refs
             .iter()
-            .map(|r| crate::agent::hub::unhex32(&r.hash).ok_or("a bad page hash"))
+            .map(|r| crate::text::unhex32(&r.hash).ok_or("a bad page hash"))
             .collect::<Result<Vec<_>, _>>()?;
         let manifest = Manifest::sign(head, hashes, &self.signing).map_err(|e| e.to_string())?;
         let ch = self.request(
@@ -381,7 +381,7 @@ impl Writer {
         let hashes = row
             .pages
             .iter()
-            .map(|r| crate::agent::hub::unhex32(&r.hash))
+            .map(|r| crate::text::unhex32(&r.hash))
             .collect::<Option<Vec<_>>>()?;
         let manifest = Manifest::sign(head, hashes, &self.signing).ok()?;
         let ch = self.request(row.stream, InFlight::Resign { stream: row.stream });
@@ -762,7 +762,7 @@ mod tests {
         assert_eq!(hub.pages.len(), pages, "no page sent again");
         let m = &hub.manifest[&stream];
         assert!(m.verify(&renewed.verifying_key().to_bytes()));
-        assert_eq!(m.pages, before.pages.iter().map(|p| crate::agent::hub::unhex32(&p.hash).unwrap()).collect::<Vec<_>>());
+        assert_eq!(m.pages, before.pages.iter().map(|p| crate::text::unhex32(&p.hash).unwrap()).collect::<Vec<_>>());
         let after = w.store.get(&stream).unwrap();
         assert_eq!(
             (after.next_seq, after.link, after.manifest_upto, after.pages.len(), after.updated_ms),

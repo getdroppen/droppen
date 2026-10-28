@@ -60,14 +60,14 @@ pub(super) enum HandoffResult {
 pub(super) fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    crate::agent::hub::hex(&bytes)
+    crate::text::hex(&bytes)
 }
 
 impl Cloud {
     /// The attempt still in flight, if any (an expired one is dropped).
     pub(super) fn live_attempt(&self) -> Option<Attempt> {
         let mut slot = self.attempt.lock().expect("attempt");
-        if slot.as_ref().is_some_and(|a| a.expires_ms <= crate::agent::now_ms()) {
+        if slot.as_ref().is_some_and(|a| a.expires_ms <= crate::time::now_ms_u64()) {
             *slot = None;
             return None;
         }
@@ -79,7 +79,7 @@ impl Cloud {
         *self.handoff_outcome.lock().expect("handoff outcome") = Some(HandoffOutcome {
             attempt: attempt.id.clone(),
             owner: attempt.owner.clone(),
-            at_ms: crate::agent::now_ms(),
+            at_ms: crate::time::now_ms_u64(),
             result,
         });
     }
@@ -91,7 +91,7 @@ impl Cloud {
         let slot = self.handoff_outcome.lock().expect("handoff outcome");
         let outcome = slot
             .as_ref()
-            .filter(|o| o.owner == user && crate::agent::now_ms().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
+            .filter(|o| o.owner == user && crate::time::now_ms_u64().saturating_sub(o.at_ms) < ATTEMPT_TTL_MS)?;
         let (name, machine, error, message) = match &outcome.result {
             HandoffResult::Receiving => ("receiving", None, None, None),
             HandoffResult::HandedOver(machine) => ("handed_over", Some(machine.clone()), None, None),
@@ -165,7 +165,7 @@ pub async fn post_link(
                 .map_err(ApiError::internal)?
                 .ok_or_else(|| ApiError::internal("the agent state went away"))?;
             Some(LinkEnrolled {
-                account_fp: crate::agent::hub::hex(&st.root.account_fingerprint),
+                account_fp: crate::text::hex(&st.root.account_fingerprint),
                 id: st.machine.clone(),
             })
         }
@@ -193,7 +193,7 @@ pub async fn post_link(
     // `aggregator` stays in the answer (always null) for pages from before.
     let aggregator: Option<LinkAggregator> = None;
     let id = random_hex(16);
-    let expires_ms = crate::agent::now_ms() + ATTEMPT_TTL_MS;
+    let expires_ms = crate::time::now_ms_u64() + ATTEMPT_TTL_MS;
     let hostname = crate::api::hostname();
     // The browser hand-off (§4.9), for a page that said where it is: the
     // reply comes back to that origin, which the `/api/*` origin check has
@@ -238,8 +238,8 @@ pub async fn post_link(
         expires_ms: attempt.expires_ms,
         machine: LinkMachine {
             hostname,
-            sign_key: crate::agent::hub::hex(&identity.sign_public()),
-            dh_key: crate::agent::hub::hex(&identity.dh_public()),
+            sign_key: crate::text::hex(&identity.sign_public()),
+            dh_key: crate::text::hex(&identity.dh_public()),
             fingerprint: machine_fingerprint(&identity),
             enrolled,
         },
@@ -345,7 +345,7 @@ pub async fn post_finish(
     // failure below is said, and signing in again opens a new one.
     let attempt = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, crate::agent::now_ms())?
+        take_attempt(&mut slot, &body.attempt, &body.nonce, &user, crate::time::now_ms_u64())?
     };
     complete_sign_in(&state, attempt, &code, body.email).await
 }
@@ -379,7 +379,7 @@ pub async fn post_return(
         .ok_or_else(|| refusal(StatusCode::BAD_REQUEST, "bad_reply", "droppen.app's answer is not readable"))?;
     let (attempt, reply) = {
         let mut slot = state.cloud.attempt.lock().expect("attempt");
-        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, crate::agent::now_ms())?;
+        let taken = take_handed_back(&mut slot, &body.attempt, &sealed, crate::time::now_ms_u64())?;
         // Said before the attempt's lock goes: no look at the status ever
         // finds the attempt gone without this.
         state.cloud.record_handoff(&taken.0, HandoffResult::Receiving);
@@ -461,7 +461,7 @@ pub(super) async fn complete_sign_in(
         file.owner = Some(user.clone());
         file.aggregate = attempt.aggregate;
         file.aggregator_off = !attempt.aggregate;
-        file.linked_at = Some(crate::agent::now_ms());
+        file.linked_at = Some(crate::time::now_ms_u64());
         file.email = email;
         file.remote_access.insert(user.clone(), true);
     })?;
@@ -480,7 +480,7 @@ pub async fn post_cancel(
     let cloud = &state.cloud;
     {
         let mut slot = cloud.attempt.lock().expect("attempt");
-        match check_attempt(&slot, &body.attempt, None, &user, crate::agent::now_ms()) {
+        match check_attempt(&slot, &body.attempt, None, &user, crate::time::now_ms_u64()) {
             Ok(_) => *slot = None,
             // An attempt that expired meanwhile is gone either way.
             Err(e) if e.status() == StatusCode::GONE => *slot = None,

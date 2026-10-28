@@ -61,13 +61,13 @@ use tokio_util::sync::CancellationToken;
 use crate::drive::Drive;
 use crate::feed::{encode_fp, Transcript};
 use crate::sessions::{Paths, SessionSummary, Source};
+use crate::time::now_ms_u64;
 use content::{Delta, Scope, SessionCursor, StatusBodyExt};
 use retention::HubPlan;
 use store::{IndexDiff, Kind, PageRef, Row, Store};
 use writer::{Answer, PageSpec, Plan, Step, Writer};
 
 use super::bridge::Loopback;
-use super::hub::now_ms;
 
 /// How often the session list and transcripts are compared with the copy.
 pub const LIST_EVERY: Duration = Duration::from_secs(3);
@@ -410,9 +410,9 @@ fn manifests_to_resign(store: &Store, signer: &[u8; 32]) -> HashSet<StreamId> {
         .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
         .unwrap_or_default()
         .iter()
-        .filter_map(|s| crate::agent::hub::unhex32(s).map(StreamId))
+        .filter_map(|s| crate::text::unhex32(s).map(StreamId))
         .collect();
-    let signer_hex = crate::agent::hub::hex(signer);
+    let signer_hex = crate::text::hex(signer);
     match store.get_kv(SIGNER_KEY) {
         Some(before) if before != signer_hex => {
             let manifests: Vec<StreamId> = store.all().into_iter().filter(|r| r.manifest_upto.is_some()).map(|r| r.stream).collect();
@@ -430,7 +430,7 @@ fn manifests_to_resign(store: &Store, signer: &[u8; 32]) -> HashSet<StreamId> {
 }
 
 fn save_resign(store: &Store, resign: &HashSet<StreamId>) {
-    let list: Vec<String> = resign.iter().map(|s| crate::agent::hub::hex(&s.0)).collect();
+    let list: Vec<String> = resign.iter().map(|s| crate::text::hex(&s.0)).collect();
     store.set_kv(RESIGN_KEY, &serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()));
 }
 
@@ -492,7 +492,7 @@ impl Sync {
                 self.watched.clear();
             }
             Event::Frame(Frame::Ack { ch, head, .. }) => {
-                let answer = self.writer.on_ack(ch, head, now_ms());
+                let answer = self.writer.on_ack(ch, head, now_ms_u64());
                 self.answered(answer).await;
             }
             Event::Frame(Frame::Conflict { ch, head, .. }) => {
@@ -612,7 +612,7 @@ impl Sync {
                         .into_iter()
                         .flatten()
                         .filter_map(|s| s["stream"].as_str())
-                        .filter_map(crate::agent::hub::unhex32)
+                        .filter_map(crate::text::unhex32)
                         .map(StreamId)
                         .collect();
                     let (known, entries) = match (self.writer.store.try_all(), self.writer.store.try_index_rows()) {
@@ -642,7 +642,7 @@ impl Sync {
                         .as_array()
                         .into_iter()
                         .flatten()
-                        .filter_map(|s| s.as_str().and_then(super::hub::unhex32).map(StreamId))
+                        .filter_map(|s| s.as_str().and_then(crate::text::unhex32).map(StreamId))
                         .collect();
                     self.watch(streams);
                 }
@@ -671,7 +671,7 @@ impl Sync {
                 // More may be waiting behind this one (a backfill, a long index): look again soon.
                 self.last_list = None;
                 if let Some(row) = self.writer.store.get(&stream) {
-                    if let Some(head) = self.writer.head(&row, now_ms()) {
+                    if let Some(head) = self.writer.head(&row, now_ms_u64()) {
                         self.send(head);
                         self.beats.insert(stream, Instant::now());
                     }
@@ -681,7 +681,7 @@ impl Sync {
                 self.retry_at.remove(&stream);
                 self.resigned(&stream);
                 if let Some(row) = self.writer.store.get(&stream) {
-                    if let Some(head) = self.writer.head(&row, now_ms()) {
+                    if let Some(head) = self.writer.head(&row, now_ms_u64()) {
                         self.send(head);
                         self.beats.insert(stream, Instant::now());
                     }
@@ -704,7 +704,7 @@ impl Sync {
     /// The hub said the account's plan (after sign-in, on a change, after a
     /// write refused for the quota, hourly): keep it, and the window it makes.
     fn on_plan(&mut self, v: &Value) {
-        let Some(plan) = HubPlan::parse(v, now_ms()) else {
+        let Some(plan) = HubPlan::parse(v, now_ms_u64()) else {
             tracing::warn!("a plan message this agent cannot read; ignoring it");
             return;
         };
@@ -714,7 +714,7 @@ impl Sync {
             .as_ref()
             .is_none_or(|p| (p.plan.as_str(), p.retention_days, p.storage_bytes) != (plan.plan.as_str(), plan.retention_days, plan.storage_bytes));
         if self.plan.as_ref().is_none_or(|p| p.retention_days != plan.retention_days) {
-            self.retention_since = now_ms();
+            self.retention_since = now_ms_u64();
         }
         if changed || days != self.scope.days {
             tracing::info!(
@@ -737,7 +737,7 @@ impl Sync {
 
     /// Entries older than this are trimmed from session copies (none without a plan).
     fn trim_cutoff(&self) -> Option<u64> {
-        retention::trim_cutoff(self.plan.as_ref(), now_ms())
+        retention::trim_cutoff(self.plan.as_ref(), now_ms_u64())
     }
 
     /// The machine keys from `machine-keys.json` the chain committed — never
@@ -797,7 +797,7 @@ impl Sync {
             Some(row) => row,
             None => {
                 let epoch = self.mk().map_or(0, |(e, _)| e);
-                self.writer.store.create(&stream, kind, source, id, epoch, name_epoch, now_ms())
+                self.writer.store.create(&stream, kind, source, id, epoch, name_epoch, now_ms_u64())
             }
         }
     }
@@ -862,7 +862,7 @@ impl Sync {
         }
         self.writer.store.mark_reencrypt(&behind, current);
         self.reencrypt = self.writer.store.reencrypt_list().into_iter().collect();
-        let now = now_ms();
+        let now = now_ms_u64();
         let prior = self.writer.store.get_kv(naming::MIGRATE_AT_KEY).and_then(|v| v.parse().ok());
         let at = naming::migrate_at(now, immediate, prior, self.migrate_within, &mut rand::thread_rng());
         self.writer.store.set_kv(naming::MIGRATE_AT_KEY, &at.to_string());
@@ -937,7 +937,7 @@ impl Sync {
                 done.push(stream);
                 continue;
             }
-            match self.writer.resign(&row, now_ms()) {
+            match self.writer.resign(&row, now_ms_u64()) {
                 Some(frame) => {
                     self.send(frame);
                     sent += 1;
@@ -993,7 +993,7 @@ impl Sync {
             return HashSet::new();
         };
         let rows = self.list().await;
-        let now = now_ms();
+        let now = now_ms_u64();
         let listed: HashMap<String, &SessionSummary> = rows.iter().map(|r| (r.row_key(), r)).collect();
         // Space first: what it deletes leaves the index in this same round.
         self.space_round(&listed, now);
@@ -1388,14 +1388,14 @@ impl Sync {
     }
 
     fn checkpoint(&mut self, row: &Row, plan: Plan) -> Result<(), String> {
-        let frames = self.writer.checkpoint(row, plan, now_ms())?;
+        let frames = self.writer.checkpoint(row, plan, now_ms_u64())?;
         for frame in frames {
             if let Frame::Page { data, .. } = &frame {
                 self.budget.spend(data.len());
             }
             self.send(frame);
         }
-        self.writer.store.touch_checkpoint(&row.stream, now_ms());
+        self.writer.store.touch_checkpoint(&row.stream, now_ms_u64());
         Ok(())
     }
 
@@ -1415,7 +1415,7 @@ impl Sync {
             Kind::Index => {
                 let held_out: HashSet<String> = self.writer.store.evicted().into_keys().collect();
                 let target = self.name_target().ok_or("no machine key")?;
-                let rows = self.index_entries(&self.list().await, &held_out, target, now_ms());
+                let rows = self.index_entries(&self.list().await, &held_out, target, now_ms_u64());
                 let plan = index_plan(&rows, upto, true);
                 self.checkpoint(&row, plan)
             }
@@ -1493,7 +1493,7 @@ impl Sync {
     /// so a session back in scope later is copied again from nothing.
     fn delete_on_hub(&mut self, stream: &StreamId) {
         if let Some(text) = &self.text {
-            let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": crate::agent::hub::hex(&stream.0)}).to_string());
+            let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": crate::text::hex(&stream.0)}).to_string());
         }
         self.forget(stream);
     }
@@ -1526,7 +1526,7 @@ impl Sync {
         // The machine key epoch it writes under: a device compares it with the
         // chain's newest and hands the key over again if this machine lags.
         let mk_epoch = self.mk().map(|(e, _)| e);
-        content::status_body(now_ms(), name, mk_epoch, settings, accounts, quota, cli)
+        content::status_body(now_ms_u64(), name, mk_epoch, settings, accounts, quota, cli)
             .with_system(crate::agent::system::os(), crate::api::SERVER_VERSION)
             .with_alarms(&self.alarms)
             .with_changes(&self.changes)
@@ -1569,7 +1569,7 @@ impl Sync {
         // their last content write).
         if !row.cursor.is_empty()
             && content::status_fingerprint(row.cursor.as_bytes()) == content::status_fingerprint(&body)
-            && !retention::refresh_due(row.updated_ms, now_ms())
+            && !retention::refresh_due(row.updated_ms, now_ms_u64())
         {
             return;
         }
@@ -1600,7 +1600,7 @@ impl Sync {
             if self.beats.get(&row.stream).is_some_and(|t| now.duration_since(*t) < HEARTBEAT_EVERY) || !self.ready(&row) {
                 continue;
             }
-            if let Some(head) = self.writer.head(&row, now_ms()) {
+            if let Some(head) = self.writer.head(&row, now_ms_u64()) {
                 self.send(head);
                 self.beats.insert(row.stream, now);
                 sent += 1;
@@ -1612,7 +1612,7 @@ impl Sync {
         if self.writer.in_flight() >= MAX_IN_FLIGHT {
             return;
         }
-        let now = now_ms();
+        let now = now_ms_u64();
         let when = compaction();
         let cutoff = self.trim_cutoff();
         let due = self.writer.store.all().into_iter().find(|row| {
@@ -1844,7 +1844,7 @@ fn session_steps(transcript: &Transcript, start: usize, from: usize, len: usize,
 
 fn index_plan(rows: &BTreeMap<String, String>, upto: u64, fresh_link: bool) -> Plan {
     let all: Vec<(String, String)> = rows.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let bodies = content::index_bodies(&all, &[], true, now_ms());
+    let bodies = content::index_bodies(&all, &[], true, now_ms_u64());
     let state_bytes = bodies.iter().map(|(b, ..)| b.len() as i64).sum();
     Plan {
         fmt: FMT_INDEX_V1,
@@ -1913,7 +1913,7 @@ fn source_of(row: &Row) -> Option<Source> {
 }
 
 fn short(stream: &StreamId) -> String {
-    super::hub::hex(&stream.0[..4])
+    crate::text::hex(&stream.0[..4])
 }
 
 #[cfg(test)]

@@ -16,12 +16,12 @@ use tokio::sync::mpsc;
 
 use super::alerts::{alert_account_changes, raise_alarm};
 use super::bridge;
-use super::hub::now_ms;
 use super::lapse::{close_lapsed, drop_removed, lapse_wait, on_removed, ChainStateExt, ChannelLapse};
 use super::local::AgentLocal;
 use super::mail::retry_mail;
 use super::state::{self, AgentState};
 use super::{Pending, Routes, Shared, AGENT_UNSAVED, CHANNEL_STALE, MAX_PENDING, PENDING_FOR};
+use crate::time::now_ms_u64;
 
 /// Whether a chain error is a conflict between two views — a fork, a
 /// rollback, another genesis or account key — rather than an entry refused.
@@ -134,7 +134,7 @@ pub(in crate::agent) struct LinkAdmit {
 impl Admit for LinkAdmit {
     fn admit(&self, device: &str, bind: &DirectBinding, hello: &[u8]) -> Admission {
         let shared = &self.shared;
-        let now = now_ms();
+        let now = now_ms_u64();
         let (outcome, learnt, recorded, _) = match admit(shared, device, Hello::Direct(bind, hello), now, |_, _| ()) {
             Ok(admitted) => admitted,
             Err(NoChain) => {
@@ -325,7 +325,7 @@ pub(in crate::agent) fn on_frame(
             let (was_enrolled, absorbed) = {
                 let mut st = shared.state.lock().expect("agent state");
                 let was = st.enrolled();
-                (was, st.absorb(&entries, now_ms()))
+                (was, st.absorb(&entries, now_ms_u64()))
             };
             let now_enrolled = shared.state.lock().expect("agent state").enrolled();
             if !was_enrolled && now_enrolled && !check_enrolled_keys(shared) {
@@ -378,7 +378,7 @@ pub(in crate::agent) fn on_frame(
 /// not count, replaces it in the state. Whether the state took it.
 pub(in crate::agent) fn take_attestation(shared: &Shared, att: Attestation) -> bool {
     let mut st = shared.state.lock().expect("agent state");
-    let now = now_ms();
+    let now = now_ms_u64();
     shared.lapses.lock().expect("lapses").retain(|weak| match weak.upgrade() {
         Some(lapse) => {
             lapse.lock().expect("channel lapse").note(&st, &att, now);
@@ -464,7 +464,7 @@ pub(in crate::agent) fn accept(
     out: &mpsc::UnboundedSender<Frame>,
     text: &mpsc::UnboundedSender<String>,
 ) {
-    let now = now_ms();
+    let now = now_ms_u64();
     let (outcome, learnt, recorded, lapse) = match admit(shared, &device, Hello::Channel(message), now, |st, _| {
         // The channel's control lapse, seeded and registered while the state
         // is still this admission's: an attestation arriving from here on
@@ -552,7 +552,7 @@ pub(in crate::agent) fn accept(
                 // removal to itself.
                 let holds = || {
                     let st = shared.state.lock().expect("agent state");
-                    lapse.lock().expect("channel lapse").holds(&st, now_ms())
+                    lapse.lock().expect("channel lapse").holds(&st, now_ms_u64())
                 };
                 let mut vouched = holds();
                 loop {
@@ -560,7 +560,7 @@ pub(in crate::agent) fn accept(
                         close_lapsed(&channel, &device, ch);
                         break;
                     }
-                    let wait = lapse_wait(lapse.lock().expect("channel lapse").at(), now_ms());
+                    let wait = lapse_wait(lapse.lock().expect("channel lapse").at(), now_ms_u64());
                     let stream = tokio::select! {
                         next = incoming.recv() => match next {
                             Some(stream) => stream,
@@ -593,7 +593,7 @@ pub(in crate::agent) fn accept(
                             .chain
                             .as_ref()
                             .is_some_and(|c| c.may_control(&device, &st.machine).is_ok() && c.holds_named_key(&device, &key));
-                        (current, lapse.lock().expect("channel lapse").holds(&st, now_ms()))
+                        (current, lapse.lock().expect("channel lapse").holds(&st, now_ms_u64()))
                     };
                     if !current {
                         tracing::info!(%device, ch, "a stream from a device that may no longer control this machine; closing its channel");

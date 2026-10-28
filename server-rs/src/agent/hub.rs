@@ -17,6 +17,9 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use crate::text::{hex, unhex32};
+use crate::time::now_ms_u64;
+
 /// The agent's socket to its hub.
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// Its sending half.
@@ -66,14 +69,6 @@ pub fn origin(url: &str) -> Result<String, String> {
     Ok(format!("{}://{authority}", if secure { "wss" } else { "ws" }))
 }
 
-/// Milliseconds since the Unix epoch ([`super::now_ms`], one clock for the agent).
-pub use super::now_ms;
-
-/// Lower-case hex, as every binary field in the hub's control messages.
-pub fn hex(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Connect to `origin`'s agent socket (Nagle off: terminals) and read the challenge nonce.
 pub async fn dial(origin: &str) -> Result<(Sink, Source, [u8; 32]), String> {
     let url = format!("{origin}{}", rh_proto::frame::AGENT_PATH);
@@ -88,18 +83,6 @@ pub async fn dial(origin: &str) -> Result<(Sink, Source, [u8; 32]), String> {
     }
     let nonce = challenge["nonce"].as_str().and_then(unhex32).ok_or("the hub's challenge has no nonce")?;
     Ok((sink, source, nonce))
-}
-
-/// 32 bytes from 64 hex characters.
-pub fn unhex32(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (i, b) in out.iter_mut().enumerate() {
-        *b = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }
 
 /// The signature over the hub's `nonce` as machine `machine` of `account`.
@@ -198,7 +181,7 @@ pub async fn login(
     origin: &str,
     nonce: [u8; 32],
 ) -> Result<Value, LoginError> {
-    let time_ms = now_ms();
+    let time_ms = now_ms_u64();
     let sig = login_signature(identity, account, machine, origin, nonce, time_ms)?;
     send_json(
         sink,
