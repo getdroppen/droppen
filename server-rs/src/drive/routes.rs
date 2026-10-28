@@ -11,12 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
-use crate::api::{AppState, SendMessageResult, SendResult};
+use crate::api::AppState;
 use crate::auth::MaybeIdentity;
 use crate::config::AppConfig;
 use crate::feed;
 use crate::files;
 use crate::http::error::ApiError;
+use crate::http::SendResult;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::inject::questions::{self, Answer};
 use crate::inject::receipts::{Kind, LOOKUP_CAP};
@@ -56,6 +57,39 @@ pub struct SendMessage {
     /// (`duplicate: true`) and enqueues nothing; see `GET …/receipts`.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub client_message_id: Optional<String>,
+}
+
+/// The answer to a send, which now has one more thing to say than "done".
+///
+/// A separate type rather than a field on [`SendResult`] because the other
+/// routes that answer with one — rename, archive, interrupt — have no queue and
+/// never will, and a field that is always `false` for most of its users is a
+/// worse contract than a second shape.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Schematic)]
+pub struct SendMessageResult {
+    /// Always `true`; a refusal is an error status, not a `false`.
+    pub accepted: bool,
+    /// The message went in behind a turn that is still running, and will be
+    /// delivered when that turn ends. Only a resident claude answers `true`.
+    pub queued: bool,
+    /// The queue id the message travels under (`resident.queuedMessages[].id`),
+    /// when the request carried a `clientMessageId`.
+    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
+    pub qid: crate::openapi_ext::Optional<String>,
+    /// `true` when this answers a retry: the `clientMessageId` was already
+    /// accepted, nothing was enqueued again, and this is what the first
+    /// attempt answered.
+    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
+    pub duplicate: crate::openapi_ext::Optional<bool>,
+    /// `true` when the agent was blocked on a question and the message went in
+    /// as its answer (the question's free-text `response`) rather than into the
+    /// queue behind the turn it would otherwise have waited for; `false` when a
+    /// question was open but could not take it — answered from another screen a
+    /// moment before, stopped, or the session still reconnecting — so it was
+    /// delivered as an ordinary message (`queued` says whether it waits).
+    /// Absent when no question was open.
+    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
+    pub answered: crate::openapi_ext::Optional<bool>,
 }
 
 /// `POST /api/sessions/new` body.

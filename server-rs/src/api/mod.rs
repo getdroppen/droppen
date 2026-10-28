@@ -32,53 +32,6 @@ mod state;
 /// than three of generics.
 pub type ApiRouter = GotchaRouter<gotcha::GotchaContext<AppState, crate::config::AppConfig>>;
 
-// Defined here rather than in whichever subsystem needed it first, because
-// gotcha's component registry is flat and keyed by the Rust type name: two
-// `SendResult` types anywhere in the crate silently claim the one schema, and
-// the winner is whichever the spec walk reaches last — which made the exported
-// document flap between runs. The doc comment below becomes the component's
-// description in `openapi/openapi.json`, so it stays contract-facing and this
-// reasoning stays out of it.
-/// The answer to every route that only has to say "done".
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Schematic)]
-pub struct SendResult {
-    /// Always `true`; a refusal is an error status, not a `false`.
-    pub accepted: bool,
-}
-
-/// The answer to a send, which now has one more thing to say than "done".
-///
-/// A separate type rather than a field on [`SendResult`] because the other
-/// routes that answer with one — rename, archive, interrupt — have no queue and
-/// never will, and a field that is always `false` for most of its users is a
-/// worse contract than a second shape.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Schematic)]
-pub struct SendMessageResult {
-    /// Always `true`; a refusal is an error status, not a `false`.
-    pub accepted: bool,
-    /// The message went in behind a turn that is still running, and will be
-    /// delivered when that turn ends. Only a resident claude answers `true`.
-    pub queued: bool,
-    /// The queue id the message travels under (`resident.queuedMessages[].id`),
-    /// when the request carried a `clientMessageId`.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub qid: crate::openapi_ext::Optional<String>,
-    /// `true` when this answers a retry: the `clientMessageId` was already
-    /// accepted, nothing was enqueued again, and this is what the first
-    /// attempt answered.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub duplicate: crate::openapi_ext::Optional<bool>,
-    /// `true` when the agent was blocked on a question and the message went in
-    /// as its answer (the question's free-text `response`) rather than into the
-    /// queue behind the turn it would otherwise have waited for; `false` when a
-    /// question was open but could not take it — answered from another screen a
-    /// moment before, stopped, or the session still reconnecting — so it was
-    /// delivered as an ordinary message (`queued` says whether it waits).
-    /// Absent when no question was open.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub answered: crate::openapi_ext::Optional<bool>,
-}
-
 /// The title and version `openapi/openapi.json` carries.
 const API_TITLE: &str = "remote-hand API";
 const API_VERSION: &str = "0.1.0";

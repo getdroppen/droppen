@@ -27,10 +27,11 @@ use gotcha::axum::response::Response;
 use gotcha::{api, Json, State, WebSocketUpgrade};
 use serde::Deserialize;
 
-use crate::api::{ApiRouter, AppState, SendResult};
+use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::{send_within, WsSender as Sender};
+use crate::http::SendResult;
 use crate::openapi_ext::ExtraResponses;
 
 use super::{Chunk, TerminalCreate, TerminalError, TerminalInfo, TerminalList, TerminalRename, SLOW_NOTE};

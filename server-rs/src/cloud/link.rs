@@ -4,7 +4,7 @@
 use rand::RngCore;
 
 use crate::agent::enroll::BeginError;
-use crate::api::SendResult;
+use crate::http::SendResult;
 use crate::cloud::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 
 use crate::http::created::Accepted;
