@@ -110,7 +110,7 @@ pub enum AccountChoice {
     /// `accountId: "<uuid>"` with `accountFrom: "start"`: the account
     /// `GET /api/accounts/start` named for a pair no model-less start reaches
     /// (`placed: false`). The start rule's choice, not a person's — logged as
-    /// that, and re-checked at the spawn ([`rule_account`]).
+    /// that, and re-checked at the spawn ([`SpawnDeps::rule_account`]).
     Rule(String),
 }
 
@@ -423,17 +423,19 @@ struct ClaudeLogin {
     credential: Option<String>,
 }
 
-/// That account, plus a name for the credential it holds right now.
-///
-/// Read here rather than carried out of [`owned_claude_env`] because it is
-/// wanted on the path that does not build an environment at all — a local-login
-/// send — and because the store is the only thing that may answer it.
-async fn claude_login(deps: &SpawnDeps<'_>, account: Option<String>) -> ClaudeLogin {
-    let credential = match account.as_deref() {
-        Some(id) => deps.accounts.credential_hash(id).await,
-        None => None,
-    };
-    ClaudeLogin { account, credential }
+impl SpawnDeps<'_> {
+    /// That account, plus a name for the credential it holds right now.
+    ///
+    /// Read here rather than carried out of [`SpawnDeps::owned_claude_env`] because it is
+    /// wanted on the path that does not build an environment at all — a local-login
+    /// send — and because the store is the only thing that may answer it.
+    async fn claude_login(&self, account: Option<String>) -> ClaudeLogin {
+        let credential = match account.as_deref() {
+            Some(id) => self.accounts.credential_hash(id).await,
+            None => None,
+        };
+        ClaudeLogin { account, credential }
+    }
 }
 
 /// Where a resident runs, with a fallback that is somewhere and not anywhere.
@@ -460,29 +462,31 @@ fn claude_workdir(paths: &Paths, cwd: Option<&str>) -> PathBuf {
 
 // ------------------------------------------------------------ account resolution
 
-/// The environment a spawn against this instance's own Claude root runs with.
-///
-/// Two independent pieces:
-///
-/// * **the root.** Every session this server owns lives in
-///   `<data>/instances/<name>/claude`, so every spawn against one is pointed
-///   there. That is what makes the session resumable *here* and nowhere else.
-/// * **the token**, only when an account was chosen. Without one the spawn uses
-///   whatever login the root itself holds — which is exactly what an adopted
-///   session, or an instance the user logged into directly, needs.
-///
-/// A `.credentials.json` in the root is only worth a warning in the token case.
-/// Older CLIs let file credentials outrank the environment, which is why this
-/// used to refuse; claude 2.1.266 was checked on 2026-09-23 with a bogus file
-/// next to a valid `CLAUDE_CODE_OAUTH_TOKEN` and used the environment, and the
-/// `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` tracks sit ahead of the file as
-/// well. Refusing would only make the root's own login (which no-account
-/// sessions need) and account sessions mutually exclusive.
-async fn owned_claude_env(deps: &SpawnDeps<'_>, account_id: Option<&str>) -> Result<Env, InjectError> {
-    managed_claude_env(&deps.paths, &deps.accounts, account_id).await
+impl SpawnDeps<'_> {
+    /// The environment a spawn against this instance's own Claude root runs with.
+    ///
+    /// Two independent pieces:
+    ///
+    /// * **the root.** Every session this server owns lives in
+    ///   `<data>/instances/<name>/claude`, so every spawn against one is pointed
+    ///   there. That is what makes the session resumable *here* and nowhere else.
+    /// * **the token**, only when an account was chosen. Without one the spawn uses
+    ///   whatever login the root itself holds — which is exactly what an adopted
+    ///   session, or an instance the user logged into directly, needs.
+    ///
+    /// A `.credentials.json` in the root is only worth a warning in the token case.
+    /// Older CLIs let file credentials outrank the environment, which is why this
+    /// used to refuse; claude 2.1.266 was checked on 2026-09-23 with a bogus file
+    /// next to a valid `CLAUDE_CODE_OAUTH_TOKEN` and used the environment, and the
+    /// `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` tracks sit ahead of the file as
+    /// well. Refusing would only make the root's own login (which no-account
+    /// sessions need) and account sessions mutually exclusive.
+    async fn owned_claude_env(&self, account_id: Option<&str>) -> Result<Env, InjectError> {
+        managed_claude_env(&self.paths, &self.accounts, account_id).await
+    }
 }
 
-/// [`owned_claude_env`] from the two things it reads, for a caller that holds no
+/// [`SpawnDeps::owned_claude_env`] from the two things it reads, for a caller that holds no
 /// [`SpawnDeps`] — a session's driver, rotating it onto another
 /// account.
 async fn managed_claude_env(paths: &Paths, accounts: &crate::accounts::store::AccountsStore, account_id: Option<&str>) -> Result<Env, InjectError> {
@@ -540,54 +544,56 @@ fn inherited_var(key: &str) -> Option<String> {
     clean_env_bare().remove(key)
 }
 
-/// Which login a resume runs under.
-///
-/// A session is this server's own when its transcript sits in the root this
-/// instance owns, or when it is already bound to an account — the binding is
-/// written before the first spawn, so it is authoritative even before the CLI
-/// has created the transcript.
-///
-/// A session that is *not* this server's own reaches here only from a caller
-/// that has already checked (the send route refuses it with `external_session`),
-/// so the local-login branch survives for the account-mismatch report and for
-/// anything internal that drives a session directly.
-/// The account is returned beside the environment because a resident is
-/// fingerprinted by it: two messages billed to different logins cannot share a
-/// process, and the resolution — binding, explicit choice, default — happens
-/// only here.
-async fn resume_claude_env(deps: &SpawnDeps<'_>, id: &str, options: &SendOptions) -> Result<(Env, ClaudeLogin), InjectError> {
-    let found = claude::find_claude_session(&deps.paths, id).await;
-    let bound = deps.accounts.session_account_id(id).await;
-    let owned = found.map(|f| f.root) == Some(ClaudeRoot::Managed) || bound.is_some();
+impl SpawnDeps<'_> {
+    /// Which login a resume runs under.
+    ///
+    /// A session is this server's own when its transcript sits in the root this
+    /// instance owns, or when it is already bound to an account — the binding is
+    /// written before the first spawn, so it is authoritative even before the CLI
+    /// has created the transcript.
+    ///
+    /// A session that is *not* this server's own reaches here only from a caller
+    /// that has already checked (the send route refuses it with `external_session`),
+    /// so the local-login branch survives for the account-mismatch report and for
+    /// anything internal that drives a session directly.
+    /// The account is returned beside the environment because a resident is
+    /// fingerprinted by it: two messages billed to different logins cannot share a
+    /// process, and the resolution — binding, explicit choice, default — happens
+    /// only here.
+    async fn resume_claude_env(&self, id: &str, options: &SendOptions) -> Result<(Env, ClaudeLogin), InjectError> {
+        let found = claude::find_claude_session(&self.paths, id).await;
+        let bound = self.accounts.session_account_id(id).await;
+        let owned = found.map(|f| f.root) == Some(ClaudeRoot::Managed) || bound.is_some();
 
-    if !owned {
-        // An explicit account on a session in the user's own root is a mistake
-        // worth reporting; `accountId: null` on one is simply what it already does.
-        if options.account.named().is_some() {
-            return Err(InjectError::LocalSessionAccount);
+        if !owned {
+            // An explicit account on a session in the user's own root is a mistake
+            // worth reporting; `accountId: null` on one is simply what it already does.
+            if options.account.named().is_some() {
+                return Err(InjectError::LocalSessionAccount);
+            }
+            return Ok((claude_env_bare(), ClaudeLogin::default()));
         }
-        return Ok((claude_env_bare(), ClaudeLogin::default()));
-    }
 
-    // `accountId: null` means "no account token", which for an owned session is
-    // the root's own login rather than the user's `~/.claude`; absent means
-    // "whatever this session is already bound to".
-    let account_id = match &options.account {
-        AccountChoice::Local => None,
-        // Only a new start carries a rule's account; on a resume it is a name.
-        AccountChoice::Account(id) | AccountChoice::Rule(id) => Some(id.clone()),
-        AccountChoice::Unset => bound.clone(),
-    };
-    let env = owned_claude_env(deps, account_id.as_deref()).await?;
-    if let Some(chosen) = options.account.named() {
-        if Some(chosen) != bound.as_deref() {
-            deps.accounts.bind_session_account(id, Some(chosen), AccountProvider::Claude).await?;
-            // Somebody's choice: nothing moves it ahead of a limit for a while.
-            deps.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
+        // `accountId: null` means "no account token", which for an owned session is
+        // the root's own login rather than the user's `~/.claude`; absent means
+        // "whatever this session is already bound to".
+        let account_id = match &options.account {
+            AccountChoice::Local => None,
+            // Only a new start carries a rule's account; on a resume it is a name.
+            AccountChoice::Account(id) | AccountChoice::Rule(id) => Some(id.clone()),
+            AccountChoice::Unset => bound.clone(),
+        };
+        let env = self.owned_claude_env(account_id.as_deref()).await?;
+        if let Some(chosen) = options.account.named() {
+            if Some(chosen) != bound.as_deref() {
+                self.accounts.bind_session_account(id, Some(chosen), AccountProvider::Claude).await?;
+                // Somebody's choice: nothing moves it ahead of a limit for a while.
+                self.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
+            }
         }
+        let login = self.claude_login(account_id).await;
+        Ok((env, login))
     }
-    let login = claude_login(deps, account_id).await;
-    Ok((env, login))
 }
 
 /// Refuse an account that belongs to the other CLI.
@@ -601,45 +607,47 @@ fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Result<(
     })
 }
 
-/// Which account a codex spawn runs under, and what it puts into it.
-///
-/// The same three-state resolution [`resume_claude_env`] does, and for the same
-/// reason: `accountId: null` is "the machine's own codex login" even when a
-/// default is configured, absent is "whatever this thread is already bound to",
-/// and a named account both wins and is written down.
-///
-/// `None` is the answer for a machine with no codex accounts, and it is the
-/// answer that matters most: it must produce exactly the spawn this server made
-/// before any of this existed — no extra argv, no extra environment, codex's own
-/// `~/.codex/auth.json` and nothing else.
-async fn codex_account(deps: &SpawnDeps<'_>, id: Option<&str>, options: &SendOptions) -> Result<Option<CodexAccount>, InjectError> {
-    let bound = match id {
-        Some(id) => deps.accounts.session_account_id(id).await,
-        None => None,
-    };
-    let chosen = match &options.account {
-        AccountChoice::Local => None,
-        AccountChoice::Account(id) => Some(id.clone()),
-        AccountChoice::Rule(named) => rule_account(deps, AccountProvider::Codex, named, options.model.as_deref()).await,
-        AccountChoice::Unset => match bound.clone() {
-            Some(bound) => Some(bound),
-            // The configured default, or — with none, and `~/.codex` known to
-            // be signed out — a codex account in the pool, if one is free.
-            None if options.use_default_account => start_account(deps, AccountProvider::Codex, options.model.as_deref()).await,
+impl SpawnDeps<'_> {
+    /// Which account a codex spawn runs under, and what it puts into it.
+    ///
+    /// The same three-state resolution [`SpawnDeps::resume_claude_env`] does, and for the same
+    /// reason: `accountId: null` is "the machine's own codex login" even when a
+    /// default is configured, absent is "whatever this thread is already bound to",
+    /// and a named account both wins and is written down.
+    ///
+    /// `None` is the answer for a machine with no codex accounts, and it is the
+    /// answer that matters most: it must produce exactly the spawn this server made
+    /// before any of this existed — no extra argv, no extra environment, codex's own
+    /// `~/.codex/auth.json` and nothing else.
+    async fn codex_account(&self, id: Option<&str>, options: &SendOptions) -> Result<Option<CodexAccount>, InjectError> {
+        let bound = match id {
+            Some(id) => self.accounts.session_account_id(id).await,
             None => None,
-        },
-    };
-    let Some(account_id) = chosen else { return Ok(None) };
-    let launch = deps.accounts.account_env(&account_id).await?;
-    require_provider(&launch, AccountProvider::Codex)?;
-    // An explicit choice on a thread that already exists is also a re-binding:
-    // the next message must find the account this one asked for.
-    if let (Some(id), Some(named)) = (id, options.account.named()) {
-        if Some(named) != bound.as_deref() {
-            deps.accounts.bind_session_account(id, Some(named), AccountProvider::Codex).await?;
+        };
+        let chosen = match &options.account {
+            AccountChoice::Local => None,
+            AccountChoice::Account(id) => Some(id.clone()),
+            AccountChoice::Rule(named) => self.rule_account(AccountProvider::Codex, named, options.model.as_deref()).await,
+            AccountChoice::Unset => match bound.clone() {
+                Some(bound) => Some(bound),
+                // The configured default, or — with none, and `~/.codex` known to
+                // be signed out — a codex account in the pool, if one is free.
+                None if options.use_default_account => self.start_account(AccountProvider::Codex, options.model.as_deref()).await,
+                None => None,
+            },
+        };
+        let Some(account_id) = chosen else { return Ok(None) };
+        let launch = self.accounts.account_env(&account_id).await?;
+        require_provider(&launch, AccountProvider::Codex)?;
+        // An explicit choice on a thread that already exists is also a re-binding:
+        // the next message must find the account this one asked for.
+        if let (Some(id), Some(named)) = (id, options.account.named()) {
+            if Some(named) != bound.as_deref() {
+                self.accounts.bind_session_account(id, Some(named), AccountProvider::Codex).await?;
+            }
         }
+        Ok(Some(CodexAccount { id: account_id, launch }))
     }
-    Ok(Some(CodexAccount { id: account_id, launch }))
 }
 
 /// One codex account, resolved and ready to be spawned under.
@@ -651,19 +659,21 @@ pub(crate) struct CodexAccount {
     pub(crate) launch: AccountLaunch,
 }
 
-/// Give a claude spawn the means to notify its user, when there is a channel.
-///
-/// Claude only, for now, and the reason is the skill rather than the program:
-/// `rh-notify` would work perfectly well on a `codex exec` command line, but
-/// nothing would ever tell codex that it exists — skills are a Claude Code
-/// mechanism, and a `codex` thread's id is not even known until after the spawn
-/// that would have carried the token. See [`crate::notify::inject`].
-///
-/// Deliberately infallible. A session that cannot notify is a session; a session
-/// that would not start because a notification channel could not be set up is a
-/// bug with a very unhappy user attached.
-async fn notify_decorate(deps: &SpawnDeps<'_>, id: &str, env: &mut Env) {
-    crate::notify::inject::decorate(&deps.paths, &deps.instance, Source::Claude, id, env).await;
+impl SpawnDeps<'_> {
+    /// Give a claude spawn the means to notify its user, when there is a channel.
+    ///
+    /// Claude only, for now, and the reason is the skill rather than the program:
+    /// `rh-notify` would work perfectly well on a `codex exec` command line, but
+    /// nothing would ever tell codex that it exists — skills are a Claude Code
+    /// mechanism, and a `codex` thread's id is not even known until after the spawn
+    /// that would have carried the token. See [`crate::notify::inject`].
+    ///
+    /// Deliberately infallible. A session that cannot notify is a session; a session
+    /// that would not start because a notification channel could not be set up is a
+    /// bug with a very unhappy user attached.
+    async fn notify_decorate(&self, id: &str, env: &mut Env) {
+        crate::notify::inject::decorate(&self.paths, &self.instance, Source::Claude, id, env).await;
+    }
 }
 
 // ------------------------------------------------------------------ operations
@@ -681,196 +691,198 @@ pub struct Sent {
     pub queued: bool,
 }
 
-/// Hand a message to the CLI that owns an existing session.
-pub async fn send_to_session(
-    deps: &SpawnDeps<'_>,
-    source: Source,
-    id: &str,
-    cwd: Option<&str>,
-    text: &str,
-    options: &SendOptions,
-) -> Result<Sent, InjectError> {
-    if source == Source::Claude {
-        // Resolved before anything is built: an unusable account must not spawn.
-        let (mut env, login) = resume_claude_env(deps, id, options).await?;
-        notify_decorate(deps, id, &mut env).await;
-        let recipe = claude_recipe(&deps.paths, cwd, options, env, login);
-        // claude has no image flag, so every attachment reaches it as a path in
-        // the prompt — which now travels over stdin rather than in argv.
-        let prompt = with_claude_attachments(text, options);
-        let delivery = deps.injections.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
-        return Ok(Sent { queued: delivery.queued });
-    }
-    if source == Source::Acp {
-        // Reopened where it ran, whatever `cwd` says: see `acp_send`.
-        return deps.injections.acp_send(id, text, options).await;
+impl SpawnDeps<'_> {
+    /// Hand a message to the CLI that owns an existing session.
+    pub async fn send_to_session(
+        &self,
+        source: Source,
+        id: &str,
+        cwd: Option<&str>,
+        text: &str,
+        options: &SendOptions,
+    ) -> Result<Sent, InjectError> {
+        if source == Source::Claude {
+            // Resolved before anything is built: an unusable account must not spawn.
+            let (mut env, login) = self.resume_claude_env(id, options).await?;
+            self.notify_decorate(id, &mut env).await;
+            let recipe = claude_recipe(&self.paths, cwd, options, env, login);
+            // claude has no image flag, so every attachment reaches it as a path in
+            // the prompt — which now travels over stdin rather than in argv.
+            let prompt = with_claude_attachments(text, options);
+            let delivery = self.injections.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
+            return Ok(Sent { queued: delivery.queued });
+        }
+        if source == Source::Acp {
+            // Reopened where it ran, whatever `cwd` says: see `acp_send`.
+            return self.injections.acp_send(id, text, options).await;
+        }
+
+        // Resolved before anything is built, exactly as the claude branch does: an
+        // account that cannot be read must not reach a spawn.
+        let account = self.codex_account(Some(id), options).await?;
+        self
+            .injections
+            .codex_deliver(Some(id), cwd, text, options, account)
+            .await
+            .map(|(_, sent)| sent)
     }
 
-    // Resolved before anything is built, exactly as the claude branch does: an
-    // account that cannot be read must not reach a spawn.
-    let account = codex_account(deps, Some(id), options).await?;
-    deps
-        .injections
-        .codex_deliver(Some(id), cwd, text, options, account)
-        .await
-        .map(|(_, sent)| sent)
-}
-
-/// Start a brand-new session in `cwd` and resolve once its canonical id is known.
-pub async fn start_new_session(
-    deps: &SpawnDeps<'_>,
-    source: Source,
-    cwd: &str,
-    text: &str,
-    options: &SendOptions,
-) -> Result<String, InjectError> {
-    if source == Source::Claude {
-        // The local-login default for a claude spawn; an account overwrites it
-        // below with a managed environment, which carries the marker too.
-        let mut env = claude_env_bare();
-        let id = new_uuid();
-        let chosen = match &options.account {
-            // The configured default (moved off a rest), or — with none, and
-            // the local login known to be signed out — an account in the pool:
-            // a chat or a scheduled task started there would fail its first turn.
-            AccountChoice::Unset if options.use_default_account => {
-                start_account(deps, AccountProvider::Claude, options.model.as_deref()).await
-            }
-            AccountChoice::Unset | AccountChoice::Local => None,
-            AccountChoice::Account(id) => Some(id.clone()),
-            AccountChoice::Rule(named) => rule_account(deps, AccountProvider::Claude, named, options.model.as_deref()).await,
-        };
-        match &chosen {
-            Some(account_id) => {
-                env = owned_claude_env(deps, Some(account_id)).await?;
-                // Bound before the spawn: a crash mid-launch must not leave a
-                // managed session nobody can resume.
-                deps
-                    .accounts
-                    .bind_session_account(&id, Some(account_id), AccountProvider::Claude)
-                    .await?;
-            }
-            // The local login writes into the user's own `~/.claude`, so this
-            // session's own directory will say it belongs to nobody. It belongs
-            // to us: we just made it, and refusing to send the *second* message
-            // to a session this server started would be absurd. Recorded before
-            // the spawn, like the binding above and for the same reason.
-            None => {
-                if let Err(error) = crate::sessions::owned_sessions::record(&deps.paths, source, &id).await {
-                    tracing::error!(session = %id, %error, "cannot record this claude session as ours; it will list as external");
+    /// Start a brand-new session in `cwd` and resolve once its canonical id is known.
+    pub async fn start_new_session(
+        &self,
+        source: Source,
+        cwd: &str,
+        text: &str,
+        options: &SendOptions,
+    ) -> Result<String, InjectError> {
+        if source == Source::Claude {
+            // The local-login default for a claude spawn; an account overwrites it
+            // below with a managed environment, which carries the marker too.
+            let mut env = claude_env_bare();
+            let id = new_uuid();
+            let chosen = match &options.account {
+                // The configured default (moved off a rest), or — with none, and
+                // the local login known to be signed out — an account in the pool:
+                // a chat or a scheduled task started there would fail its first turn.
+                AccountChoice::Unset if options.use_default_account => {
+                    self.start_account(AccountProvider::Claude, options.model.as_deref()).await
+                }
+                AccountChoice::Unset | AccountChoice::Local => None,
+                AccountChoice::Account(id) => Some(id.clone()),
+                AccountChoice::Rule(named) => self.rule_account(AccountProvider::Claude, named, options.model.as_deref()).await,
+            };
+            match &chosen {
+                Some(account_id) => {
+                    env = self.owned_claude_env(Some(account_id)).await?;
+                    // Bound before the spawn: a crash mid-launch must not leave a
+                    // managed session nobody can resume.
+                    self
+                        .accounts
+                        .bind_session_account(&id, Some(account_id), AccountProvider::Claude)
+                        .await?;
+                }
+                // The local login writes into the user's own `~/.claude`, so this
+                // session's own directory will say it belongs to nobody. It belongs
+                // to us: we just made it, and refusing to send the *second* message
+                // to a session this server started would be absurd. Recorded before
+                // the spawn, like the binding above and for the same reason.
+                None => {
+                    if let Err(error) = crate::sessions::owned_sessions::record(&self.paths, source, &id).await {
+                        tracing::error!(session = %id, %error, "cannot record this claude session as ours; it will list as external");
+                    }
                 }
             }
+            // Unlike a resume, a new session waits for the launch: there is no
+            // session yet for a failure to be reported against. The resident's own
+            // spawn is what is awaited — the id is ours either way, because a
+            // session with no transcript is started with `--session-id`.
+            self.notify_decorate(&id, &mut env).await;
+            let login = self.claude_login(chosen).await;
+            let recipe = claude_recipe(&self.paths, Some(cwd), options, env, login);
+            let prompt = with_claude_attachments(text, options);
+            self.injections.deliver(&id, &prompt, recipe, options.message_id.clone()).await?;
+            return Ok(id);
         }
-        // Unlike a resume, a new session waits for the launch: there is no
-        // session yet for a failure to be reported against. The resident's own
-        // spawn is what is awaited — the id is ours either way, because a
-        // session with no transcript is started with `--session-id`.
-        notify_decorate(deps, &id, &mut env).await;
-        let login = claude_login(deps, chosen).await;
-        let recipe = claude_recipe(&deps.paths, Some(cwd), options, env, login);
-        let prompt = with_claude_attachments(text, options);
-        deps.injections.deliver(&id, &prompt, recipe, options.message_id.clone()).await?;
-        return Ok(id);
-    }
-    if source == Source::Acp {
-        // The id is this server's own and the transcript it is kept in is this
-        // instance's, so there is no ownership to record.
-        let agent = options
-            .acp_agent
-            .as_deref()
-            .ok_or_else(|| InjectError::message("a new ACP session needs the agent it runs on"))?;
-        return deps.injections.acp_start(agent, cwd, text, options).await;
+        if source == Source::Acp {
+            // The id is this server's own and the transcript it is kept in is this
+            // instance's, so there is no ownership to record.
+            let agent = options
+                .acp_agent
+                .as_deref()
+                .ok_or_else(|| InjectError::message("a new ACP session needs the agent it runs on"))?;
+            return self.injections.acp_start(agent, cwd, text, options).await;
+        }
+
+        let account = self.codex_account(None, options).await?;
+        let account_id = account.as_ref().map(|account| account.id.clone());
+        let (id, _) = self.injections.codex_deliver(None, Some(cwd), text, options, account).await?;
+        // Codex has one config root and no way to isolate it, so ownership of a
+        // thread is a record rather than a path — written the moment the CLI tells us
+        // which thread it actually made. A failure here costs the session its
+        // ownership (it lists as external) and nothing else, so it is logged rather
+        // than turned into a refusal of a run that has already started.
+        if let Err(error) = crate::sessions::owned_sessions::record(&self.paths, Source::Codex, &id).await {
+            tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
+        }
+        // Written beside the ownership record and for the same reason: the thread id
+        // does not exist until `thread/start` answers, and the next message has to
+        // find the same login this one ran under.
+        if let Some(account_id) = account_id {
+            if let Err(error) = self.accounts.bind_session_account(&id, Some(&account_id), AccountProvider::Codex).await {
+                tracing::error!(session = %id, %error, "cannot bind this codex session to its account; the next message will fall back to the default");
+            }
+        }
+        Ok(id)
     }
 
-    let account = codex_account(deps, None, options).await?;
-    let account_id = account.as_ref().map(|account| account.id.clone());
-    let (id, _) = deps.injections.codex_deliver(None, Some(cwd), text, options, account).await?;
-    // Codex has one config root and no way to isolate it, so ownership of a
-    // thread is a record rather than a path — written the moment the CLI tells us
-    // which thread it actually made. A failure here costs the session its
-    // ownership (it lists as external) and nothing else, so it is logged rather
-    // than turned into a refusal of a run that has already started.
-    if let Err(error) = crate::sessions::owned_sessions::record(&deps.paths, Source::Codex, &id).await {
-        tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
-    }
-    // Written beside the ownership record and for the same reason: the thread id
-    // does not exist until `thread/start` answers, and the next message has to
-    // find the same login this one ran under.
-    if let Some(account_id) = account_id {
-        if let Err(error) = deps.accounts.bind_session_account(&id, Some(&account_id), AccountProvider::Codex).await {
-            tracing::error!(session = %id, %error, "cannot bind this codex session to its account; the next message will fall back to the default");
+    /// An account the start rule named for a pair no model-less start reaches
+    /// (`accountFrom: "start"`), checked again now: still the login a start naming
+    /// no model gets ([`crate::accounts::rotation::StartInputs::still_names`]) —
+    /// then it, logged as the rule's choice — or, if the rule has moved on since
+    /// the page asked, wherever the rule places this start's model now.
+    async fn rule_account(&self, provider: AccountProvider, named: &str, model: Option<&str>) -> Option<String> {
+        let inputs = crate::accounts::rotation::StartInputs::gather(&self.accounts, &self.quota, provider).await;
+        if inputs.still_names(named) {
+            tracing::info!(
+                provider = provider.label(),
+                to = %named,
+                model = model.unwrap_or("-"),
+                reason = "no login's own models land on that login: the start rule named it",
+                "starting the new session on the account the start rule named"
+            );
+            return Some(named.to_string());
         }
-    }
-    Ok(id)
-}
-
-/// An account the start rule named for a pair no model-less start reaches
-/// (`accountFrom: "start"`), checked again now: still the login a start naming
-/// no model gets ([`crate::accounts::rotation::StartInputs::still_names`]) —
-/// then it, logged as the rule's choice — or, if the rule has moved on since
-/// the page asked, wherever the rule places this start's model now.
-async fn rule_account(deps: &SpawnDeps<'_>, provider: AccountProvider, named: &str, model: Option<&str>) -> Option<String> {
-    let inputs = crate::accounts::rotation::StartInputs::gather(&deps.accounts, &deps.quota, provider).await;
-    if inputs.still_names(named) {
+        let fresh = inputs.place(model).account_id.0;
         tracing::info!(
             provider = provider.label(),
-            to = %named,
+            named = %named,
+            to = fresh.as_deref().unwrap_or("local login"),
             model = model.unwrap_or("-"),
-            reason = "no login's own models land on that login: the start rule named it",
-            "starting the new session on the account the start rule named"
+            reason = "the start rule no longer names that account",
+            "placing the new session where the start rule puts it now"
         );
-        return Some(named.to_string());
+        fresh
     }
-    let fresh = inputs.place(model).account_id.0;
-    tracing::info!(
-        provider = provider.label(),
-        named = %named,
-        to = fresh.as_deref().unwrap_or("local login"),
-        model = model.unwrap_or("-"),
-        reason = "the start rule no longer names that account",
-        "placing the new session where the start rule puts it now"
-    );
-    fresh
-}
 
-/// Where a start that names no account runs ([`crate::accounts::rotation::start_for`]),
-/// and a line in the log whenever that is not simply the default or the local
-/// login: which login the start was moved off, which it went to, and why.
-async fn start_account(deps: &SpawnDeps<'_>, provider: AccountProvider, model: Option<&str>) -> Option<String> {
-    use crate::accounts::rotation::StartReason;
-    let start = crate::accounts::rotation::start_for(&deps.accounts, &deps.quota, provider, model).await;
-    let to = start.account_id.0;
-    let provider_name = provider.label();
-    let default = match start.reason {
-        StartReason::Rotated => deps.accounts.default_account_id(provider).await.unwrap_or_default(),
-        _ => String::new(),
-    };
-    match start.reason {
-        StartReason::Rotated => tracing::info!(
-            provider = provider_name,
-            from = %default,
-            to = to.as_deref().unwrap_or("-"),
-            model = model.unwrap_or("-"),
-            reason = "the default account is resting or about to run out",
-            "starting the new session on another account in the pool"
-        ),
-        StartReason::Fallback => tracing::info!(
-            provider = provider_name,
-            from = "local login",
-            to = to.as_deref().unwrap_or("-"),
-            model = model.unwrap_or("-"),
-            reason = "no default account, and the machine's own login is signed out",
-            "starting the new session on an account in the pool instead of the local login"
-        ),
-        StartReason::LocalSignedOut => tracing::info!(
-            provider = provider_name,
-            model = model.unwrap_or("-"),
-            reason = "no default account, the machine's own login is signed out, and no account in the pool is free",
-            "starting the new session on the signed-out local login; its first turn will say how to sign in"
-        ),
-        StartReason::Default | StartReason::Local | StartReason::LocalChosen => {}
+    /// Where a start that names no account runs ([`crate::accounts::rotation::start_for`]),
+    /// and a line in the log whenever that is not simply the default or the local
+    /// login: which login the start was moved off, which it went to, and why.
+    async fn start_account(&self, provider: AccountProvider, model: Option<&str>) -> Option<String> {
+        use crate::accounts::rotation::StartReason;
+        let start = crate::accounts::rotation::start_for(&self.accounts, &self.quota, provider, model).await;
+        let to = start.account_id.0;
+        let provider_name = provider.label();
+        let default = match start.reason {
+            StartReason::Rotated => self.accounts.default_account_id(provider).await.unwrap_or_default(),
+            _ => String::new(),
+        };
+        match start.reason {
+            StartReason::Rotated => tracing::info!(
+                provider = provider_name,
+                from = %default,
+                to = to.as_deref().unwrap_or("-"),
+                model = model.unwrap_or("-"),
+                reason = "the default account is resting or about to run out",
+                "starting the new session on another account in the pool"
+            ),
+            StartReason::Fallback => tracing::info!(
+                provider = provider_name,
+                from = "local login",
+                to = to.as_deref().unwrap_or("-"),
+                model = model.unwrap_or("-"),
+                reason = "no default account, and the machine's own login is signed out",
+                "starting the new session on an account in the pool instead of the local login"
+            ),
+            StartReason::LocalSignedOut => tracing::info!(
+                provider = provider_name,
+                model = model.unwrap_or("-"),
+                reason = "no default account, the machine's own login is signed out, and no account in the pool is free",
+                "starting the new session on the signed-out local login; its first turn will say how to sign in"
+            ),
+            StartReason::Default | StartReason::Local | StartReason::LocalChosen => {}
+        }
+        to
     }
-    to
 }
 
 impl InjectionRegistry {
@@ -949,7 +961,7 @@ impl InjectionRegistry {
         Ok(env)
     }
 
-    /// [`claude_login`], from the store this registry holds.
+    /// [`SpawnDeps::claude_login`], from the store this registry holds.
     async fn login_of(&self, account: Option<String>) -> ClaudeLogin {
         let credential = match account.as_deref() {
             Some(id) => self.accounts.credential_hash(id).await,

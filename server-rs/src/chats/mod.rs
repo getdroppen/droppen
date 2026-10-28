@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::{ApiRouter, AppState, SendResult};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
-use crate::inject::{self, SendOptions};
+use crate::inject::SendOptions;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::paths::Paths;
 use crate::sessions::{chats_cwd, claude, codex, Source};
@@ -376,7 +376,7 @@ pub async fn new_chat(State(state): State<AppState>, ApiJson(body): ApiJson<Chat
         use_default_account: true,
         ..Default::default()
     };
-    let id = inject::start_new_session(&state.drive.spawn_deps(), source, &cwd.to_string_lossy(), text, &options)
+    let id = state.drive.spawn_deps().start_new_session(source, &cwd.to_string_lossy(), text, &options)
         .await
         .map_err(|error| ApiError::bad_request(error.client_message("cannot create chat")))?;
     // The chat list has to show the new session before its first transcript
