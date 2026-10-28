@@ -26,6 +26,15 @@ tokio = { version = "1", features = ["process", "rt", "time"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
+# The child-PATH override per thread (`process_env`), as in this crate's own
+# unit tests, for the server's unit tests: a test that sets it is then the
+# only one that sees it. Only the server's [dev-dependencies] turn it on.
+# Cargo turns it on for the whole test build, so the binary the integration
+# tests start has it too; it changes only where a PATH the server adopted
+# (the setup guide) is seen, which no integration test does.
+[features]
+test-support = []
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }

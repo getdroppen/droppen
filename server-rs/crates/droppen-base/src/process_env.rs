@@ -52,14 +52,15 @@ fn is_server_only_variable(key: &str) -> bool {
 /// shell or adopts the directory of a CLI found off the `PATH`, so a tool
 /// installed while the server runs is found without a restart. Children that
 /// are already running keep the `PATH` they were started with.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 static CHILD_PATH: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-// In the unit tests the override is the setting thread's own: a test that
-// sets it is the only one that sees it, and every other test, running
-// alongside, keeps reading the inherited `PATH`. (A test's async code runs on
-// its own thread: `#[tokio::test]` is a current-thread runtime.)
-#[cfg(test)]
+// In the unit tests, this crate's and the server's (feature `test-support`),
+// the override is the setting thread's own: a test that sets it is the only
+// one that sees it, and every other test, running alongside, keeps reading the
+// inherited `PATH`. (A test's async code runs on its own thread:
+// `#[tokio::test]` is a current-thread runtime.)
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static CHILD_PATH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
@@ -67,12 +68,12 @@ thread_local! {
 /// Replace the `PATH` children are started with; `None` goes back to the
 /// inherited one. Returns what was there before.
 pub fn set_child_path(path: Option<String>) -> Option<String> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let mut slot = CHILD_PATH.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         std::mem::replace(&mut *slot, path)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         CHILD_PATH.with(|slot| slot.replace(path))
     }
@@ -80,11 +81,11 @@ pub fn set_child_path(path: Option<String>) -> Option<String> {
 
 /// The override [`set_child_path`] installed, if any.
 pub fn child_path_override() -> Option<String> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         CHILD_PATH.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         CHILD_PATH.with(|slot| slot.borrow().clone())
     }

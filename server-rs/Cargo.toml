@@ -191,3 +191,6 @@ opt-level = 3
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
 # be asserted without a test that actually takes minutes.
 tokio = { version = "1", features = ["test-util"] }
+# The child-PATH override per test thread, which the unit tests that set it
+# rely on (`setup::tests::ChildPathGuard`): see the feature's own comment.
+droppen-base = { path = "crates/droppen-base", features = ["test-support"] }
