@@ -12,6 +12,9 @@
 //! control messages, a device session's token redacted. Binary frames never are. What is
 //! written is what already crosses the wire to the hub or a relay (tickets
 //! and signatures among it), so the file is created `0600`; delete it after.
+//!
+//! It sits with the device role, below the link, so that both the link's
+//! sockets and the device role's `rh-client` calls can write to it.
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};

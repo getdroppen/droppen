@@ -321,7 +321,7 @@ impl AgentFiles {
 
 impl AgentFiles {
     async fn deliver_disputes_loop(self, guard: Running) {
-        crate::agent::traffic::install_client_tap();
+        crate::aggregator::traffic::install_client_tap();
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

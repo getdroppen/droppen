@@ -133,7 +133,7 @@ impl DeviceClient {
             .no_proxy()
             .build()
             .map_err(|e| e.to_string())?;
-        crate::agent::traffic::install_client_tap();
+        super::traffic::install_client_tap();
         Ok(Self {
             http,
             hub: HubUrl {

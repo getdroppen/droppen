@@ -950,7 +950,7 @@ impl Copies {
         let http = self
             .http
             .get_or_insert_with(|| {
-                crate::agent::traffic::install_client_tap();
+                super::traffic::install_client_tap();
                 reqwest::Client::builder()
                     .timeout(Duration::from_secs(15))
                     .no_proxy()

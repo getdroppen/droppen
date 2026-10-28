@@ -197,7 +197,7 @@ pub async fn login(
 
 /// Send one control message.
 pub async fn send_json(sink: &mut Sink, value: &Value) -> Result<(), String> {
-    super::traffic::agent_value(value);
+    crate::aggregator::traffic::agent_value(value);
     sink.send(Message::Text(value.to_string().into())).await.map_err(|e| e.to_string())
 }
 
@@ -224,8 +224,8 @@ impl Peer {
     /// The traffic capture's transform for this peer's control text.
     fn transform(self, text: &str) -> &str {
         match self {
-            Peer::Hub => super::traffic::agent_in(text),
-            Peer::Relay => super::traffic::relay_in(text),
+            Peer::Hub => crate::aggregator::traffic::agent_in(text),
+            Peer::Relay => crate::aggregator::traffic::relay_in(text),
         }
     }
 }

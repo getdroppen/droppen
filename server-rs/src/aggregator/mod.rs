@@ -35,6 +35,7 @@ pub mod hub;
 pub mod keys;
 pub mod live;
 pub mod store;
+pub mod traffic;
 
 use std::path::PathBuf;
 use std::sync::Mutex;

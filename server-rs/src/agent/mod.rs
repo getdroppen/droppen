@@ -78,7 +78,6 @@ mod rotation_tests;
 pub mod state;
 pub mod streams;
 pub mod system;
-pub mod traffic;
 
 use std::path::PathBuf;
 
