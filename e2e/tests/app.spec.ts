@@ -4,20 +4,31 @@ import { API, APP, HOSTS, HUB_WS, cspSources, waitForHub } from "./helpers";
 /**
  * `my.droppen.test`: the real web build, in cloud mode, with the API on a
  * different origin. This is the shape the move creates, and the one unit tests
- * cannot see: a cross-origin sign-up config, a device session, `/v1/me`, the
- * device socket, and the service worker.
+ * cannot see: a cross-origin request from the page, a device session, `/v1/me`,
+ * the device socket, and the service worker.
  */
 test.describe("app on my.", () => {
   test("loads the cloud build with the api. marker and calls the API there", async ({ page }) => {
+    const startedAt = Date.now();
     const response = await page.goto(`${APP}/signin`);
     expect(response?.status()).toBe(200);
 
     // The marker is the one source of truth for cloud mode and the API origin.
     await expect(page.locator('meta[name="rh-hub"]')).toHaveAttribute("content", HUB_WS);
 
-    // The boot asks the fake hub who may sign up; that request left my. for api.
+    // The page must reach the hub at the marker's origin with an answer CORS
+    // lets it read. What the boot asks by itself depends on the browser (one
+    // without WebAuthn asks nothing), so ask a public route from the page.
+    const status = await page.evaluate(async (hub) => {
+      const api = hub.replace(/^wss:/, "https:");
+      return (await fetch(`${api}/healthz`)).status;
+    }, HUB_WS);
+    expect(status).toBe(200);
+
+    // The first hub HTTP request this page made, whatever it asked: it left my.
+    // for api., and the API's CORS allowlist took its origin.
     const boot = await waitForHub(
-      (entry) => entry.kind === "http" && entry.method === "GET" && entry.path === "/v1/signup/config" && entry.origin === APP,
+      (entry) => entry.kind === "http" && entry.ts >= startedAt && entry.origin === APP,
     );
     expect(boot.allowed, "the API must allow my.droppen.test's CORS preflight/request").toBe(true);
     expect(boot.host).toBe(HOSTS.api);
