@@ -94,4 +94,15 @@ impl Drive {
             paths,
         })
     }
+
+    /// What a send or a start reads from this subsystem, lent for one spawn.
+    pub fn spawn_deps(&self) -> crate::inject::SpawnDeps<'_> {
+        crate::inject::SpawnDeps {
+            paths: &self.paths,
+            instance: &self.instance,
+            accounts: &self.accounts,
+            quota: &self.quota,
+            injections: &self.injections,
+        }
+    }
 }

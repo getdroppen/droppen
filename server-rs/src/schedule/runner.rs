@@ -51,7 +51,7 @@ use tokio::time::MissedTickBehavior;
 
 use super::{cron, parse_iso, ScheduledTask, TaskStatus};
 use crate::api::AppState;
-use crate::inject::{self, SendOptions};
+use crate::inject::SendOptions;
 use crate::notify::{self, Level, Nudge};
 use crate::openapi_ext::Nullable;
 use crate::paths::Paths;
@@ -296,7 +296,7 @@ async fn fire(state: &AppState, task: ScheduledTask) {
         ..Default::default()
     };
 
-    match inject::start_new_session(&state.drive, task.source, &cwd, &task.prompt, &options).await {
+    match state.drive.spawn_deps().start_new_session(task.source, &cwd, &task.prompt, &options).await {
         Ok(id) => {
             tracing::info!(task = %task.name, source = %task.source, session = %id, "a scheduled task started a session");
             record(&paths, &task.id, |stored| {

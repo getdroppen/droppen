@@ -16,7 +16,7 @@
 //! Injection into an existing session is a later version's problem.
 //!
 //! Both CLIs, though: which one a task runs is a field on it, because
-//! [`crate::inject::start_new_session`] already takes a [`Source`] and there is
+//! [`crate::inject::SpawnDeps::start_new_session`] already takes a [`Source`] and there is
 //! nothing about a timer that prefers one. The two differ in three places, all of
 //! them handled rather than papered over — the flag values each accepts (see
 //! [`crate::models::accepted_efforts`] and
