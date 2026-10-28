@@ -72,11 +72,11 @@ pub mod runner;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::api::{ApiRouter, AppState};
 use crate::db::Db;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -543,9 +543,23 @@ fn write_failed(error: std::io::Error) -> ApiError {
 
 /* ── routes ──────────────────────────────────────────────────────────── */
 
+/// What the schedule routes and the runner use of the server's state.
+#[derive(Clone)]
+pub struct ScheduleState {
+    /// The instance's paths, under which the tasks live.
+    pub paths: Arc<Paths>,
+    /// Accounts, injections and the spawn dependencies a fired task starts with.
+    pub drive: Arc<crate::drive::Drive>,
+    /// The shared session-list feed, told when a fired task's session appears.
+    pub global: Arc<crate::feed::global::GlobalFeed>,
+    /// Cancelled by the shutdown supervisor; the runner stops on it.
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+crate::http::substate!(ScheduleState);
+
 /// Every scheduled task this instance runs.
 #[api(id = "list_scheduled_tasks", group = "schedule", summary = "List scheduled tasks")]
-pub async fn list_scheduled_tasks(State(state): State<AppState>) -> Json<ScheduledTaskList> {
+pub async fn list_scheduled_tasks(State(state): State<ScheduleState>) -> Json<ScheduledTaskList> {
     Json(ScheduledTaskList {
         tasks: read_tasks(state.paths.as_ref()).await,
     })
@@ -554,7 +568,7 @@ pub async fn list_scheduled_tasks(State(state): State<AppState>) -> Json<Schedul
 /// Create a scheduled task.
 #[api(id = "create_scheduled_task", group = "schedule", summary = "Create a scheduled task")]
 pub async fn create_scheduled_task(
-    State(state): State<AppState>,
+    State(state): State<ScheduleState>,
     ApiJson(body): ApiJson<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTask>, ApiError> {
     let paths = state.paths.as_ref();
@@ -608,7 +622,7 @@ pub async fn create_scheduled_task(
 /// Change a scheduled task. Absent fields are left alone.
 #[api(id = "update_scheduled_task", group = "schedule", summary = "Update a scheduled task")]
 pub async fn update_scheduled_task(
-    State(state): State<AppState>,
+    State(state): State<ScheduleState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTask>, ApiError> {
@@ -692,7 +706,7 @@ pub async fn update_scheduled_task(
 
 /// Delete a scheduled task. Sessions it already started are left alone.
 #[api(id = "delete_scheduled_task", group = "schedule", summary = "Delete a scheduled task")]
-pub async fn delete_scheduled_task(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn delete_scheduled_task(State(state): State<ScheduleState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     let removed = update(state.paths.as_ref(), |tasks| {
         let before = tasks.len();
         tasks.retain(|task| task.id != id);
@@ -705,13 +719,19 @@ pub async fn delete_scheduled_task(State(state): State<AppState>, ApiPath(id): A
     Ok(Json(SendResult { accepted: true }))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/scheduled-tasks", list_scheduled_tasks)
-        .post("/api/scheduled-tasks", create_scheduled_task)
-        .patch("/api/scheduled-tasks/{id}", update_scheduled_task)
-        .delete("/api/scheduled-tasks/{id}", delete_scheduled_task)
+impl ScheduleState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        ScheduleState: FromRef<S>,
+    {
+        router
+            .get("/api/scheduled-tasks", list_scheduled_tasks)
+            .post("/api/scheduled-tasks", create_scheduled_task)
+            .patch("/api/scheduled-tasks/{id}", update_scheduled_task)
+            .delete("/api/scheduled-tasks/{id}", delete_scheduled_task)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

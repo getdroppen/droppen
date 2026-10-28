@@ -366,16 +366,12 @@
         "accounts::setup_token -> api",
         "accounts::usage_login -> api",
         "acp_agent -> api",
-        "attention -> api",
         "auth -> api",
         "chats -> api",
         "cloud -> api",
         "drive -> api",
         "feed -> api",
         "models -> api",
-        "prefs -> api",
-        "schedule -> api",
-        "screens -> api",
         "setup -> api",
         "terminals -> api"
       ]

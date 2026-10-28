@@ -409,7 +409,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::accounts::routes(router);
     let router = crate::acp_agent::routes(router);
     let router = crate::apps::AppsState::routes(router);
-    let router = crate::attention::routes(router);
+    let router = crate::attention::AttentionState::routes(router);
     let router = crate::auth::routes(router);
     let router = crate::chats::routes(router);
     let router = cloud::routes(router);
@@ -421,11 +421,11 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::models::routes(router);
     let router = crate::notify::NotifyState::routes(router);
     let router = crate::plugins::routes::PluginsState::routes(router);
-    let router = crate::prefs::routes(router);
+    let router = crate::prefs::PrefsState::routes(router);
     let router = crate::push::PushState::routes(router);
     let router = crate::accounts::quota::routes(router);
-    let router = crate::schedule::routes(router);
-    let router = crate::screens::routes(router);
+    let router = crate::schedule::ScheduleState::routes(router);
+    let router = crate::screens::ScreensState::routes(router);
     let router = crate::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::routes(router);
     let router = crate::stats::StatsState::routes(router);

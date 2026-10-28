@@ -1,19 +1,31 @@
 //! The read marks' routes: `POST …/seen` for a session and for one of its
 //! subagents. What a mark means, and the unread badge it feeds, are
 //! [`crate::sessions::attention`]'s.
-//!
-//! The handlers stay out of `sessions` because they take the router's
-//! `AppState`, which sits above every subsystem.
 
-use gotcha::{api, Json, Schematic, State};
+use std::sync::Arc;
+
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiPath;
+use crate::http::refresh::Refresh;
 use crate::openapi_ext::{ExtraResponses, Nullable};
+use crate::paths::Paths;
 use crate::sessions::attention::seen;
 use crate::sessions::Source;
+
+/// What the attention routes use of the server's state: where the read marks
+/// are stored, and the feed told when one moves.
+#[derive(Clone)]
+pub struct AttentionState {
+    /// The instance's paths, under which the read marks live.
+    pub paths: Arc<Paths>,
+    /// The global feed's inputs, told when a session's unread state changes.
+    pub refresh: Refresh,
+}
+crate::http::substate!(AttentionState);
 
 /// Mark a session as read, as of now.
 ///
@@ -22,7 +34,7 @@ use crate::sessions::Source;
 /// answer a request whose whole job is to write eight words to a small file. An
 /// id that names nothing costs one entry, which the store's own cap reclaims.
 #[api(id = "mark_session_seen", group = "sessions", summary = "Mark a session read")]
-pub async fn mark_seen(State(state): State<AppState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SeenResult>, ApiError> {
+pub async fn mark_seen(State(state): State<AttentionState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SeenResult>, ApiError> {
     let previous = seen::mark(state.paths.as_ref(), source, &id)
         .await
         .map_err(|error| ApiError::internal(format!("failed to record seen: {error}")))?;
@@ -44,7 +56,7 @@ pub async fn mark_seen(State(state): State<AppState>, ApiPath((source, id)): Api
 /// session (a Codex thread) is marked through the session route.
 #[api(id = "mark_agent_seen", group = "sessions", summary = "Mark a subagent read")]
 pub async fn mark_agent_seen(
-    State(state): State<AppState>,
+    State(state): State<AttentionState>,
     ApiPath(crate::drive::routes::AgentPath { source, id, agent_id }): ApiPath<crate::drive::routes::AgentPath>,
 ) -> Result<Json<SeenResult>, ApiError> {
     if !crate::drive::routes::is_agent_id(&agent_id) {
@@ -78,11 +90,17 @@ pub struct SeenResult {
     pub previous_read_at: Nullable<String>,
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .post("/api/sessions/{source}/{id}/seen", mark_seen)
-        .post("/api/sessions/{source}/{id}/agents/{agentId}/seen", mark_agent_seen)
+impl AttentionState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        AttentionState: FromRef<S>,
+    {
+        router
+            .post("/api/sessions/{source}/{id}/seen", mark_seen)
+            .post("/api/sessions/{source}/{id}/agents/{agentId}/seen", mark_agent_seen)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

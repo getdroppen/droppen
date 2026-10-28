@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use gotcha::axum::extract::FromRef;
 use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -318,7 +319,7 @@ impl RemoteHandApp {
                 // fire the user's real nine-o'clock task. Acting on a schedule
                 // without owning the instance is exactly the thing this block
                 // exists to prevent.
-                crate::schedule::runner::spawn(&state);
+                crate::schedule::runner::spawn(&crate::schedule::ScheduleState::from_ref(&state));
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
