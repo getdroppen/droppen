@@ -68,7 +68,7 @@ impl Scope {
         if row.scope != SessionScope::Owned && !self.external {
             return false;
         }
-        let Some(updated) = crate::schedule::parse_iso(&row.updated_at) else {
+        let Some(updated) = droppen_base::time::parse_iso(&row.updated_at) else {
             return false;
         };
         let updated_ms = updated.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
@@ -266,7 +266,7 @@ pub fn item_times(items: &[crate::sessions::util::TranscriptItem]) -> Vec<Option
             item.timestamp
                 .0
                 .as_deref()
-                .and_then(crate::schedule::parse_iso)
+                .and_then(droppen_base::time::parse_iso)
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64)
         })
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn the_sync_scope_is_own_sessions_of_the_last_thirty_days() {
-        let now = crate::schedule::parse_iso("2026-10-15T12:00:00Z")
+        let now = droppen_base::time::parse_iso("2026-10-15T12:00:00Z")
             .unwrap()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

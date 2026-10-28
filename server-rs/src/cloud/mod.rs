@@ -1224,7 +1224,7 @@ mod tests {
         // An owner from before accounts were bound: the account made before the sign-in only.
         let legacy = CloudFile {
             owner: Some("alice".into()),
-            linked_at: crate::record::replay::parse_iso8601(t).map(|ms| ms as u64 + 1),
+            linked_at: droppen_base::time::parse_iso_ms(t).map(|ms| ms as u64 + 1),
             ..CloudFile::default()
         };
         assert!(sees(Some(&legacy), &accounts, true, Some("alice")));

@@ -67,7 +67,7 @@ use super::tool_display::{
 };
 use super::transcript::is_renderable_image;
 use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
-use crate::record::replay::parse_iso8601;
+use droppen_base::time::parse_iso_ms;
 use droppen_base::time::iso8601;
 
 type Json = Map<String, Value>;
@@ -1577,7 +1577,7 @@ impl CodexTools {
                             call_id: id.clone(),
                             index: items.len(),
                             inner: 0,
-                            called_ms: timestamp.and_then(parse_iso8601),
+                            called_ms: timestamp.and_then(parse_iso_ms),
                             tools: inner_calls(input).into_iter().map(|inner| inner.name).collect(),
                             source: input.to_string(),
                             done: Vec::new(),
